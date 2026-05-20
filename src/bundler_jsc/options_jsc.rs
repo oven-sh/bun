@@ -1,7 +1,6 @@
 //! `from_js` bridges for `bun.options.{Target,Format,Loader}` and `CompileTarget`.
 //! Keeps `src/bundler/` free of `JSValue`/`JSGlobalObject` references.
 
-use bun_bundler::options;
 // `bun_bundler::options` re-exports `Target`/`Loader` but not `Format`; pull it
 // from the lower-tier source crate directly.
 use bun_core::ZigString;

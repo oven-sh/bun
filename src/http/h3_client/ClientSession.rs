@@ -144,7 +144,7 @@ impl ClientSession {
         }
     }
 
-    pub fn detach(&mut self, stream: *mut Stream) {
+    pub(super) fn detach(&mut self, stream: *mut Stream) {
         let st = stream_mut(stream);
         if let Some(cl) = st.client {
             client_mut(cl).h3 = None;

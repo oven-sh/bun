@@ -1,6 +1,5 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
-use bun_collections::VecExt;
 use bun_core::{OwnedString, String as BunString};
 use bun_css::targets::{Browsers, Targets};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
@@ -139,7 +138,10 @@ pub fn testing_impl(
     // writes through it during parsing; `log` outlives the parsed stylesheet and
     // is not aliased for the duration. Erasing to `'static` matches the
     // `&'static Bump` erasure above (re-threads to `'bump` with the rest of bun_css).
-    let log_ref = unsafe { &mut *(&raw mut log) };
+    let log_ptr: *mut Log = &raw mut log;
+    // SAFETY: `log` is a stack-local that outlives the parsed stylesheet and
+    // is not aliased for the duration of the parse.
+    let log_ref = unsafe { &mut *log_ptr };
 
     let mut browsers: Option<Browsers> = None;
     let parser_options = {
@@ -191,7 +193,7 @@ pub fn testing_impl(
             let local_names = LocalsResultsMap::default();
             let result = match stylesheet.to_css(
                 alloc,
-                PrinterOptions {
+                &PrinterOptions {
                     minify: match test_kind {
                         TestKind::Minify => true,
                         TestKind::Normal => false,
@@ -346,19 +348,21 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     match StyleAttribute::parse(
         alloc,
         source.slice(),
-        parser_options,
+        &parser_options,
         &mut import_records,
         bun_ast::Index::INVALID,
     ) {
         Ok(stylesheet_) => {
             let mut stylesheet = stylesheet_;
-            let mut minify_options = MinifyOptions::default();
-            minify_options.targets = targets;
+            let minify_options = MinifyOptions {
+                targets,
+                ..Default::default()
+            };
             stylesheet.minify(minify_options);
 
             let result = match stylesheet.to_css(
                 alloc,
-                PrinterOptions {
+                &PrinterOptions {
                     minify,
                     targets,
                     ..Default::default()

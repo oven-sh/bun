@@ -1,21 +1,8 @@
 // Port of src/resolver/resolver.zig
-#![allow(
-    dead_code,
-    unused_variables,
-    unused_imports,
-    unused_mut,
-    non_snake_case
-)]
-#![allow(non_camel_case_types, non_upper_case_globals, clippy::all)]
-#![allow(
-    unused_unsafe,
-    unreachable_code,
-    static_mut_refs,
-    private_interfaces,
-    private_bounds
-)]
+#![allow(non_snake_case)]
+#![allow(non_camel_case_types, non_upper_case_globals)]
+#![allow(static_mut_refs, private_interfaces, private_bounds)]
 #![warn(unused_must_use)]
-#![allow(unused_macros, ambiguous_glob_reexports)]
 #![allow(incomplete_features)]
 #![feature(adt_const_params)]
 // ──────────────────────────────────────────────────────────────────────────
@@ -97,7 +84,6 @@ pub mod fs {
     use std::io::Write as _;
 
     use bun_core::ZStr;
-    use bun_paths::resolve_path::{is_sep_any, last_index_of_sep};
 
     // ── DirnameStore / FilenameStore ─────────────────────────────────────
     // The resolver body interns paths via `dirname_store.append_slice` /
@@ -137,7 +123,7 @@ pub mod fs {
                     // formed). The returned slice borrows its never-freed backing storage
                     // (heap-owned by a `'static` `BSSStringList` or a leaked mi_malloc), so
                     // widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
+                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
                         .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 pub fn append_parts(
@@ -145,7 +131,7 @@ pub mod fs {
                     parts: &[&[u8]],
                 ) -> core::result::Result<&'static [u8], bun_core::Error> {
                     // SAFETY: see `append_slice`.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), parts) }
+                    unsafe { bun_alloc::BSSStringList::append($backing(), &parts) }
                         .map_err(|_| bun_core::err!("OutOfMemory"))
                 }
                 /// Zig: `FileSystem.DirnameStore.print(fmt, args)` — format
@@ -186,7 +172,7 @@ pub mod fs {
                     // `BSSStringList::append` takes `*mut Self` and serializes all mutation
                     // through its internal `mutex`. Returned slice borrows its never-freed
                     // storage, so widening to `'static` is sound.
-                    unsafe { bun_alloc::BSSStringList::append($backing(), value) }
+                    unsafe { bun_alloc::BSSStringList::append($backing(), &value) }
                         .map_err(|_| bun_alloc::AllocError)
                 }
                 /// Zig: `<Store>.appendLowerCase(allocator, value)`.
@@ -897,6 +883,8 @@ pub mod fs {
     // through `RealFS.entries_mutex`; Zig used a `threadlocal var instance`. The
     // raw-pointer fields are the only thing blocking auto-Sync.
     unsafe impl Sync for EntriesOption {}
+    // SAFETY: the `&'static mut DirEntry` points into the process-lifetime BSSMap
+    // singleton; ownership may cross threads under the same `entries_mutex` serialization.
     unsafe impl Send for EntriesOption {}
 
     /// Port of `FileSystem.RealFS.EntriesOption.Map` in `fs.zig`:
@@ -971,7 +959,7 @@ pub mod fs {
             // mutation must be visible — pass through directly (Zig: `*Result`).
             self.inner()
                 .put(result, value)
-                .map(|v| std::ptr::from_mut::<EntriesOption>(v))
+                .map(std::ptr::from_mut::<EntriesOption>)
                 .map_err(|_| bun_core::err!("OutOfMemory"))
         }
         pub fn mark_not_found(&mut self, result: bun_alloc::Result) {
@@ -1187,8 +1175,7 @@ pub mod fs {
             store_fd: bool,
             iterator: I,
         ) -> core::result::Result<&'static mut EntriesOption, bun_core::Error> {
-            let mut dir =
-                strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
+            let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
             let mut cache_result: Option<bun_alloc::Result> = None;
@@ -1235,7 +1222,7 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return Ok(self.read_directory_error(dir, err)?),
+                    Err(err) => return self.read_directory_error(dir, err),
                 },
             };
 
@@ -1278,7 +1265,7 @@ pub mod fs {
                         // PORT NOTE: Zig `clear_and_free`; bun_collections::StringHashMap exposes `clear`.
                         unsafe { (*existing).data.clear() };
                     }
-                    return Ok(self.read_directory_error(dir, err)?);
+                    return self.read_directory_error(dir, err);
                 }
             };
 
@@ -1347,6 +1334,7 @@ pub mod fs {
             store_fd: bool,
         ) -> core::result::Result<EntryCache, bun_core::Error> {
             use bun_paths::resolve_path::{join_abs_string_buf, platform};
+            #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
 
             let mut cache = EntryCache {
@@ -1762,10 +1750,10 @@ pub mod fs {
             }
 
             Ok(ModKey {
-                inode: stat.st_ino as u64,
+                inode: stat.st_ino,
                 size: stat.st_size as u64,
                 mtime,
-                mode: stat.st_mode as u32,
+                mode: stat.st_mode as bun_sys::Mode,
             })
         }
     }
@@ -1893,7 +1881,8 @@ pub mod dir_entry_accessor {
                     core::ptr::NonNull::new(*val).expect("EntryStore slot"),
                 );
                 let fs: *mut Implementation = &raw mut FS::instance().fs;
-                let kind = entry.kind(fs, true);
+                // SAFETY: entries_mutex held; fs points at the process-global RealFS.
+                let kind = unsafe { entry.kind(fs, true) };
                 let fskind = match kind {
                     EntryKind::File => bun_sys::FileKind::File,
                     EntryKind::Dir => bun_sys::FileKind::Directory,
@@ -2003,12 +1992,11 @@ pub mod dir_entry_accessor {
             let res = FS::instance().fs.read_directory(path, None, 0, false)?;
             match res {
                 EntriesOption::Entries(entry) => {
+                    let p: *const DirEntry = &raw const **entry;
                     // SAFETY: ARENA — `entry` (unbounded `&mut DirEntry`) borrows the BSSMap
                     // singleton; reborrow as shared 'static for the Copy handle.
-                    let p: *const DirEntry = &raw const **entry;
-                    Ok(Ok(DirEntryHandle {
-                        value: Some(unsafe { &*p }),
-                    }))
+                    let value = unsafe { &*p };
+                    Ok(Ok(DirEntryHandle { value: Some(value) }))
                 }
                 EntriesOption::Err(err) => Err(err.original_err),
             }
@@ -2126,8 +2114,10 @@ pub mod cache {
     /// provenance explicit so `deinit` matches on the variant instead of
     /// guessing — the old scheme would `heap::take` a `MutableString`-owned
     /// pointer on the `use_shared_buffer=true` path (UB).
+    #[derive(Default)]
     pub enum Contents {
         /// Empty / static literal. No-op on `deinit`.
+        #[default]
         Empty,
         /// Heap-owned buffer (default-allocator path). Freed when this variant
         /// drops. Stored as `Vec<u8>` (not `Box<[u8]>`) so a sentinel NUL can
@@ -2151,12 +2141,6 @@ pub mod cache {
         SharedBuffer { ptr: *const u8, len: usize },
         /// Native-plugin memory; freed via `Entry.external_free_function.call()`.
         External { ptr: *const u8, len: usize },
-    }
-
-    impl Default for Contents {
-        fn default() -> Self {
-            Contents::Empty
-        }
     }
 
     impl Contents {
@@ -2243,7 +2227,7 @@ pub mod cache {
     impl<'buf> From<std::borrow::Cow<'buf, [u8]>> for Contents {
         fn from(c: std::borrow::Cow<'buf, [u8]>) -> Self {
             match c {
-                std::borrow::Cow::Borrowed(s) if s.is_empty() => Contents::Empty,
+                std::borrow::Cow::Borrowed([]) => Contents::Empty,
                 std::borrow::Cow::Borrowed(s) => Contents::SharedBuffer {
                     ptr: s.as_ptr(),
                     len: s.len(),
@@ -2390,7 +2374,7 @@ pub mod cache {
                 Ok(c) => c,
                 Err(err) => {
                     if cfg!(debug_assertions) {
-                        Output::print_error(&format_args!(
+                        Output::print_error(format_args!(
                             "{}: readFile error -- {}",
                             bstr::BStr::new(path.as_bytes()),
                             bstr::BStr::new(err.name()),
@@ -2480,7 +2464,7 @@ pub mod cache {
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                             .map_err(bun_core::Error::from)?;
-                        Output::pretty_errorln(&format_args!(
+                        Output::pretty_errorln(format_args!(
                             "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
                             bstr::BStr::new(path),
                             dirname_fd,
@@ -2528,7 +2512,7 @@ pub mod cache {
                         Ok((ptr, len)) => Contents::Arena { ptr, len },
                         Err(err) => {
                             if cfg!(debug_assertions) {
-                                Output::print_error(&format_args!(
+                                Output::print_error(format_args!(
                                     "{}: readFile error -- {}",
                                     bstr::BStr::new(path),
                                     bstr::BStr::new(err.name()),
@@ -2552,7 +2536,7 @@ pub mod cache {
                         Ok(c) => c,
                         Err(err) => {
                             if cfg!(debug_assertions) {
-                                Output::print_error(&format_args!(
+                                Output::print_error(format_args!(
                                     "{}: readFile error -- {}",
                                     bstr::BStr::new(path),
                                     bstr::BStr::new(err.name()),

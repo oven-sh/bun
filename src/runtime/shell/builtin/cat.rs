@@ -1,7 +1,4 @@
-use core::ffi::CStr;
 use std::sync::Arc;
-
-use bun_ptr::AsCtxPtr;
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
@@ -63,7 +60,7 @@ impl Cat {
                 Ok(Some(rest)) => Some(args.len() - rest.len()),
                 Ok(None) => None,
                 Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Cat, e, || {
+                    return Builtin::fail_parse(interp, cmd, Kind::Cat, &e, || {
                         Self::state_mut(interp, cmd).state = CatState::WaitingWriteErr
                     });
                 }
@@ -165,7 +162,7 @@ impl Cat {
                 // `start()` (which may re-enter via the raw interp backref).
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 let reader = match &Builtin::of(interp, cmd).stdin {
-                    BuiltinInput::Fd(r) => r.clone(),
+                    BuiltinInput::Fd(r) => Arc::clone(r),
                     _ => unreachable!("needs_io() returned true"),
                 };
                 reader.set_interp(interp_ptr);
@@ -231,7 +228,7 @@ impl Cat {
                     *chunks_queued = 0;
                     *in_done = false;
                     *out_done = false;
-                    *slot = Some(reader.clone());
+                    *slot = Some(Arc::clone(&reader));
                 }
                 reader.add_reader(ReaderChildPtr {
                     node: cmd,

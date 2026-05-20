@@ -133,15 +133,21 @@ impl Heap {
         unsafe { mi_heap_calloc(self, count, size) }
     }
 
+    /// # Safety
+    /// `p` must be null or a pointer previously allocated by this heap.
     #[inline]
-    pub fn realloc(&mut self, p: *mut c_void, newsize: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap`; `p` is null or was allocated by this heap.
+    pub unsafe fn realloc(&mut self, p: *mut c_void, newsize: usize) -> *mut c_void {
+        // SAFETY: `self` is a live `*mut Heap`; caller upholds `p` contract.
         unsafe { mi_heap_realloc(self, p, newsize) }
     }
 
+    // `p` is only address-range-tested (never dereferenced) — there is no
+    // caller precondition, so this stays safe.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn is_owned(&self, p: *const c_void) -> bool {
-        // SAFETY: `self` is a live `*const Heap` obtained from mimalloc.
+        // SAFETY: `self` is a live `*const Heap` obtained from mimalloc;
+        // `mi_heap_contains` never dereferences `p`.
         unsafe { mi_heap_contains(self, p) }
     }
 }

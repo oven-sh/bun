@@ -5,7 +5,7 @@ use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
-use bun_collections::{BoundedArray, VecExt};
+use bun_collections::BoundedArray;
 use bun_core::Error;
 use bun_lolhtml_sys::lol_html as lol;
 use bun_paths::fs::Path as FsPath;

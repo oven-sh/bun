@@ -77,7 +77,7 @@ pub mod npm {
 
 use core::ptr::NonNull;
 
-use bun_alloc::{AllocError, Arena};
+use bun_alloc::Arena;
 use bun_ast as ast;
 use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
 use bun_core::{String as BunString, strings};

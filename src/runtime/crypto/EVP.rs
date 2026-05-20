@@ -2,7 +2,7 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::{self as bstr, String as BunString, ZigString, strings};
+use bun_core::{String as BunString, ZigString, strings};
 
 use crate::jsc::JSGlobalObject;
 
@@ -199,6 +199,11 @@ pub fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
 }
 
 impl EVP {
+    /// # Safety
+    /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton) and
+    /// `engine` must be either null or a valid `ENGINE` pointer.
+    // Forwards `md`/`engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn init(
         algorithm: Algorithm,
         md: *const boringssl::EVP_MD,
@@ -216,6 +221,10 @@ impl EVP {
         EVP { ctx, md, algorithm }
     }
 
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
+    // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn reset(&mut self, engine: *mut boringssl::ENGINE) {
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx was
         // initialized in init() and remains valid for the lifetime of EVP; self.md is a
@@ -226,6 +235,10 @@ impl EVP {
         }
     }
 
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
+    // Forwards `engine` to BoringSSL without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn hash(
         &mut self,
         engine: *mut boringssl::ENGINE,
@@ -252,6 +265,8 @@ impl EVP {
         Some(outsize)
     }
 
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
     pub fn r#final<'a>(
         &mut self,
         engine: *mut boringssl::ENGINE,
@@ -288,8 +303,11 @@ impl EVP {
         unsafe { boringssl::EVP_MD_CTX_size(&raw const self.ctx) as u16 }
     }
 
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
     pub fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
         boringssl::ERR_clear_error();
+        // SAFETY: self.md is a static singleton; caller upholds `engine`.
         let mut new = EVP::init(self.algorithm, self.md, engine);
         // SAFETY: FFI into BoringSSL; both new.ctx and self.ctx are initialized EVP_MD_CTX
         // values (new.ctx via EVP::init above, self.ctx via the invariant on EVP).
@@ -299,6 +317,8 @@ impl EVP {
         Ok(new)
     }
 
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
     pub fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
         // Zig used getWithEql(name, eqlCaseInsensitiveASCIIIgnoreLength).
         if let Some(algorithm) = lookup_ignore_case(name) {
@@ -306,6 +326,7 @@ impl EVP {
                 // `Algorithm::md()` lives in `bun_sha_hmac`
                 // and returns that crate's opaque `EVP_MD`; both name the same C
                 // `struct env_md_st`, so a pointer cast is the correct unification.
+                // SAFETY: md is a BoringSSL static singleton; caller upholds `engine`.
                 return Some(EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine));
             }
 
@@ -316,6 +337,7 @@ impl EVP {
             // C string, which `tag_cstr()` guarantees.
             let md = unsafe { boringssl::EVP_get_digestbyname(algorithm.tag_cstr().as_ptr()) };
             if !md.is_null() {
+                // SAFETY: md is non-null from EVP_get_digestbyname; caller upholds `engine`.
                 return Some(EVP::init(algorithm, md, engine));
             }
         }
@@ -336,6 +358,7 @@ impl EVP {
             .rare_data()
             .boring_engine()
             .cast::<boringssl::ENGINE>();
+        // SAFETY: `boring_engine()` returns the VM's lazily-initialized ENGINE (valid or null).
         Self::by_name_and_engine(engine, name_str.slice())
     }
 }

@@ -1,5 +1,3 @@
-use core::fmt;
-
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
@@ -132,13 +130,6 @@ impl<'a> Lexer<'a> {
     #[inline]
     pub fn loc(&self) -> bun_ast::Loc {
         bun_ast::usize2loc(self.start)
-    }
-
-    /// Look ahead at the next n codepoints without advancing the iterator.
-    /// If fewer than n codepoints are available, then return the remainder of the string.
-    #[inline]
-    fn peek(&self, n: usize) -> &[u8] {
-        strings::peek_n_codepoints_wtf8(&self.source.contents, self.current, n)
     }
 
     #[inline(always)]
@@ -457,7 +448,7 @@ impl<'a> Lexer<'a> {
                 // Parse a 32-bit integer (very fast path);
                 let mut number: u32 = 0;
                 for &c in text {
-                    number = number * 10 + u32::try_from(c - b'0').expect("int cast");
+                    number = number * 10 + u32::from(c - b'0');
                 }
                 self.number = number as f64;
             } else {
@@ -472,9 +463,6 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
-
-        // if it's a space, it might be a date timestamp
-        if is_identifier_part(self.code_point) || self.code_point == ' ' as CodePoint {}
 
         Ok(())
     }
@@ -1037,7 +1025,7 @@ impl<'a> Lexer<'a> {
                             c3 = iter.c;
                             width3 = iter.width;
                             match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = value * 16 | d as CodePoint,
+                                Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
                                     self.end =
                                         (start + iter.i as usize).saturating_sub(width3 as usize);
@@ -1051,7 +1039,7 @@ impl<'a> Lexer<'a> {
                             c3 = iter.c;
                             width3 = iter.width;
                             match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = value * 16 | d as CodePoint,
+                                Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
                                     self.end =
                                         (start + iter.i as usize).saturating_sub(width3 as usize);
@@ -1095,7 +1083,7 @@ impl<'a> Lexer<'a> {
                                         break 'variable_length;
                                     }
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = value * 16 | d as i64,
+                                        Some(d) => value = (value * 16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
@@ -1135,7 +1123,7 @@ impl<'a> Lexer<'a> {
                                 let mut j: usize = 0;
                                 while j < 4 {
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = value * 16 | d as i64,
+                                        Some(d) => value = (value * 16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);

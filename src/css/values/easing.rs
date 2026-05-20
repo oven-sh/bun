@@ -33,21 +33,12 @@ pub struct CubicBezier {
     pub y2: CSSNumber,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct Steps {
     /// The number of intervals in the function.
     pub count: CSSInteger,
     /// The step position.
     pub position: StepPosition,
-}
-
-impl Default for Steps {
-    fn default() -> Self {
-        Self {
-            count: 0,
-            position: StepPosition::default(),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -147,7 +138,7 @@ impl EasingFunction {
                             p.expect_comma()?;
                             StepPosition::parse(p)
                         })
-                        .unwrap_or(StepPosition::default());
+                        .unwrap_or_default();
                     Ok(EasingFunction::Steps(Steps { count, position }))
                 },
                 _ => Err(location.new_unexpected_token_error(Token::Ident(function))),
@@ -191,13 +182,13 @@ impl EasingFunction {
                 match self {
                     EasingFunction::CubicBezier(cb) => {
                         dest.write_str("cubic-bezier(")?;
-                        CSSNumberFns::to_css(&cb.x1, dest)?;
+                        CSSNumberFns::to_css(cb.x1, dest)?;
                         dest.write_char(b',')?;
-                        CSSNumberFns::to_css(&cb.y1, dest)?;
+                        CSSNumberFns::to_css(cb.y1, dest)?;
                         dest.write_char(b',')?;
-                        CSSNumberFns::to_css(&cb.x2, dest)?;
+                        CSSNumberFns::to_css(cb.x2, dest)?;
                         dest.write_char(b',')?;
-                        CSSNumberFns::to_css(&cb.y2, dest)?;
+                        CSSNumberFns::to_css(cb.y2, dest)?;
                         dest.write_char(b')')
                     }
                     EasingFunction::Steps(steps) => {
@@ -240,13 +231,14 @@ impl EasingFunction {
 }
 
 /// A [step position](https://www.w3.org/TR/css-easing-1/#step-position), used within the `steps()` function.
-#[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
 pub enum StepPosition {
     /// The first rise occurs at input progress value of 0.
     #[strum(serialize = "start")]
     Start,
     /// The last rise occurs at input progress value of 1.
     #[strum(serialize = "end")]
+    #[default]
     End,
     /// All rises occur within the range (0, 1).
     #[strum(serialize = "jump-none")]
@@ -295,8 +287,8 @@ fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
 impl StepPosition {
     // TODO(port): Zig used `css.DeriveToCss(@This()).toCss` — reflection-derived serializer.
     // Replace with `#[derive(ToCss)]` once the trait/derive exists.
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        dest.write_str(<&'static str>::from(*self))
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        dest.write_str(<&'static str>::from(self))
     }
 
     pub fn parse(input: &mut css::Parser) -> Result<StepPosition> {
@@ -319,12 +311,6 @@ impl StepPosition {
         };
 
         Ok(keyword)
-    }
-}
-
-impl Default for StepPosition {
-    fn default() -> Self {
-        StepPosition::End
     }
 }
 

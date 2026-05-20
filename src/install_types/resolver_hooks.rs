@@ -472,7 +472,7 @@ impl Clone for DependencyVersion {
                 npm: ManuallyDrop::new(unsafe { (*self.value.npm).clone() }),
             },
             // SAFETY: all non-`npm` arms hold no heap; a bitwise read is a true clone.
-            _ => unsafe { core::ptr::read(&self.value) },
+            _ => unsafe { core::ptr::read(&raw const self.value) },
         };
         Self {
             tag: self.tag,
@@ -531,22 +531,12 @@ impl DependencyVersion {
 /// `&[bun_install::Dependency]` is reinterpretable as `&[Self]` (asserted in
 /// `bun_install::auto_installer`).
 #[repr(C)]
+#[derive(Default)]
 pub struct Dependency {
     pub name_hash: PackageNameHash,
     pub name: SemverString,
     pub version: DependencyVersion,
     pub behavior: Behavior,
-}
-
-impl Default for Dependency {
-    fn default() -> Self {
-        Self {
-            name_hash: 0,
-            name: SemverString::default(),
-            version: DependencyVersion::default(),
-            behavior: Behavior::default(),
-        }
-    }
 }
 
 impl Clone for Dependency {
@@ -578,7 +568,7 @@ impl Dependency {
         }
         let lhs_name = lhs.name.slice(string_buf);
         let rhs_name = rhs.name.slice(string_buf);
-        bun_core::strings::cmp_strings_asc(&(), lhs_name, rhs_name)
+        bun_core::strings::cmp_strings_asc((), lhs_name, rhs_name)
     }
 
     /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
@@ -1047,15 +1037,15 @@ impl Clone for Repository {
 
 impl Repository {
     pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
+        let owner_order = self.owner.order(rhs.owner, lhs_buf, rhs_buf);
         if owner_order != Ordering::Equal {
             return owner_order;
         }
-        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
+        let repo_order = self.repo.order(rhs.repo, lhs_buf, rhs_buf);
         if repo_order != Ordering::Equal {
             return repo_order;
         }
-        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
+        self.committish.order(rhs.committish, lhs_buf, rhs_buf)
     }
 
     pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
@@ -1405,7 +1395,8 @@ pub struct WakeHandler {
     /// Zig: `fn(ctx: *anyopaque, pm: *PackageManager) void`.
     pub handler: Option<fn(*mut c_void, *mut c_void)>,
     /// Zig: `fn(ctx: *anyopaque, dep: Dependency, dep_id: DependencyID, err: anyerror) void`.
-    pub on_dependency_error: Option<fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
+    pub on_dependency_error:
+        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
 }
 
 impl WakeHandler {
@@ -1421,7 +1412,7 @@ impl WakeHandler {
     #[inline]
     pub fn get_on_dependency_error(
         &self,
-    ) -> fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
+    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
         // PORT NOTE: Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is
         // a Zig bug. The port reads `on_dependency_error` instead; preserving the bug would
         // require an unsound transmute between fn-pointer signatures.
@@ -1602,7 +1593,7 @@ pub trait AutoInstaller {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &bun_semver::SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     fn parse_dependency_with_tag(
         &mut self,
@@ -1611,7 +1602,7 @@ pub trait AutoInstaller {
         version: &[u8],
         tag: DependencyVersionTag,
         sliced: &bun_semver::SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     /// Port of `dependency.zig` `Version.Tag.infer` — pure string
     /// classification, but the table lives in `bun_install`.

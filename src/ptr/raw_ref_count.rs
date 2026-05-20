@@ -13,6 +13,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+#[cfg(debug_assertions)]
 use bun_core::ThreadLock;
 
 #[derive(PartialEq, Eq, Clone, Copy)]

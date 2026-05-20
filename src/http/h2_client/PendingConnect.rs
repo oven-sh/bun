@@ -12,6 +12,7 @@ use crate::NewHTTPContext;
 // (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
 use crate::ssl_config::SSLConfig;
 
+#[derive(Default)]
 pub struct PendingConnect {
     pub hostname: Box<[u8]>,
     pub port: u16,
@@ -25,18 +26,6 @@ pub struct PendingConnect {
     pub reject_unauthorized: bool,
     // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
     pub waiters: Vec<NonNull<HTTPClient<'static>>>,
-}
-
-impl Default for PendingConnect {
-    fn default() -> Self {
-        Self {
-            hostname: Box::default(),
-            port: 0,
-            ssl_config: None,
-            reject_unauthorized: false,
-            waiters: Vec::new(),
-        }
-    }
 }
 
 impl PendingConnect {

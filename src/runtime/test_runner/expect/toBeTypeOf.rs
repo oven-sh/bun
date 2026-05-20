@@ -1,6 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
 
@@ -45,31 +43,28 @@ pub fn to_be_type_of(
         )));
     };
 
-    let mut pass = false;
-    let mut what_is_the_type: &'static [u8] = b"";
-
     // Checking for function/class should be done before everything else, or it will fail.
-    if value.is_callable() {
-        what_is_the_type = b"function";
+    let what_is_the_type: &'static [u8] = if value.is_callable() {
+        b"function"
     } else if value.is_object() || value.js_type().is_array() || value.is_null() {
-        what_is_the_type = b"object";
+        b"object"
     } else if value.is_big_int() {
-        what_is_the_type = b"bigint";
+        b"bigint"
     } else if value.is_boolean() {
-        what_is_the_type = b"boolean";
+        b"boolean"
     } else if value.is_number() {
-        what_is_the_type = b"number";
+        b"number"
     } else if value.js_type().is_string() {
-        what_is_the_type = b"string";
+        b"string"
     } else if value.is_symbol() {
-        what_is_the_type = b"symbol";
+        b"symbol"
     } else if value.is_undefined() {
-        what_is_the_type = b"undefined";
+        b"undefined"
     } else {
         return Err(global.throw(format_args!("Internal consistency error: unknown JSValue type")));
-    }
+    };
 
-    pass = typeof_ == what_is_the_type;
+    let mut pass = typeof_ == what_is_the_type;
 
     if not {
         pass = !pass;

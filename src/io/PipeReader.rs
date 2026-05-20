@@ -1,8 +1,6 @@
 use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
-#[cfg(windows)]
-use std::sync::Arc;
 
 use bun_sys::{self as sys, Fd};
 
@@ -35,7 +33,7 @@ use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`is_closed` are default trait methods; bring traits into
 // scope so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
+use bun_sys::windows::libuv::UvHandle as _;
 
 // PipeReader.zig declares no `Output.scoped(.PipeReader, …)` scope; all logging
 // goes through `bun.sys.syslog` (the `SYS` scope) or `libuv::log!`.
@@ -341,10 +339,7 @@ impl PosixBufferedReader {
                 if let Err(err) = result {
                     // TODO(port): bun_core::debug_warn — macro form is
                     // broken (concat! into $fmt:literal); use the fn for now.
-                    bun_core::output::debug_warn(&format_args!(
-                        "error reading from memfd\n{}",
-                        err
-                    ));
+                    bun_core::output::debug_warn(format_args!("error reading from memfd\n{}", err));
                     return self.buffer();
                 }
             }
@@ -557,12 +552,6 @@ impl PosixBufferedReader {
         }
 
         false
-    }
-
-    fn wrap_read_fn(
-        func: fn(Fd, &mut [u8]) -> sys::Result<usize>,
-    ) -> impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize> {
-        move |fd, buf, _offset| func(fd, buf)
     }
 
     fn read_file(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {

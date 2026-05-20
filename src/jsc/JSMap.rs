@@ -1,7 +1,6 @@
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
-use crate::{JSGlobalObject, JSValue, JsError, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult};
 
 bun_opaque::opaque_ffi! {
     /// Opaque type for working with JavaScript `Map` objects.

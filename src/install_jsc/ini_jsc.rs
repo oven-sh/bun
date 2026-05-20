@@ -46,8 +46,8 @@ impl IniTestingAPIs {
         // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
         // `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at fn
         // return — same lifetime as the original arena.
-        let mut map_storage: Option<Box<dotenv::Map>> = None;
-        let mut env_storage: Option<dotenv::Loader<'_>> = None;
+        let mut map_storage: Option<Box<dotenv::Map>>;
+        let mut env_storage: Option<dotenv::Loader<'_>>;
         let env: *mut dotenv::Loader<'static> = if envjs.is_empty_or_undefined_or_null() {
             // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
             // `transpiler.env` is set during VM init (transpiler.rs).
@@ -101,10 +101,10 @@ impl IniTestingAPIs {
 
         let mut install = Box::new(BunInstall::default());
         let mut configs: Vec<config_iterator::Item> = Vec::new();
-        // SAFETY: `env` points to either the VM-singleton Loader or `env_storage`;
-        // both outlive this call and are not aliased for its duration.
         if load_npmrc(
             &mut install,
+            // SAFETY: `env` points to either the VM-singleton Loader or `env_storage`;
+            // both outlive this call and are not aliased for its duration.
             unsafe { &mut *env },
             ZStr::from_static(b".npmrc\0"),
             &mut log,
@@ -216,9 +216,10 @@ impl IniTestingAPIs {
 
         // PORT NOTE: borrowck — `Parser::parse` takes `&'a Arena` (Zig passed
         // `parser.arena.arena()`); split the borrow via raw ptr so the bump
-        // outlives the `&mut parser` for the call. SAFETY: `parser.arena` is
-        // not moved/dropped for the lifetime of `parser`.
-        let bump: &bun_alloc::Arena = unsafe { &*(&raw const parser.arena) };
+        // outlives the `&mut parser` for the call.
+        let arena_ptr: *const bun_alloc::Arena = &raw const parser.arena;
+        // SAFETY: `parser.arena` is not moved/dropped for the lifetime of `parser`.
+        let bump: &bun_alloc::Arena = unsafe { &*arena_ptr };
         parser.parse(bump)?;
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {

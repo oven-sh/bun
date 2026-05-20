@@ -147,10 +147,6 @@ impl EventLoopTimer {
         unsafe { __bun_js_timer_epoch(self.tag, self) }
     }
 
-    fn ns(&self) -> u64 {
-        self.next.ns()
-    }
-
     /// Fire the timer's callback.
     ///
     /// PORT NOTE (b0): the `match self.tag { … container_of … }` body was
@@ -225,20 +221,6 @@ impl Tag {
             => false,
             _ => true,
         }
-    }
-}
-
-// PORT NOTE: `UnreachableTimer` in Zig only existed to give `Tag.Type()` a value for
-// `WindowsNamedPipe` on non-Windows. With `fire()` expanded by hand, the non-Windows
-// arm handles this inline (see above). Kept here for parity.
-struct UnreachableTimer {
-    event_loop_timer: EventLoopTimer,
-}
-impl UnreachableTimer {
-    #[allow(dead_code)]
-    fn callback(_: &mut UnreachableTimer, _: &mut UnreachableTimer) {
-        // Zig: `bun.Environment.ci_assert` (audit assertion).
-        unreachable!();
     }
 }
 

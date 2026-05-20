@@ -1,10 +1,8 @@
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+// bun_sys is a T0 foundation crate that bun_collections depends on; importing
+// it to satisfy disallowed-types would create a dependency cycle. `File` here
+// IS the bun_sys::File the lint routes everyone else through.
+#![allow(clippy::disallowed_types, clippy::disallowed_methods)]
 #![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers (port of `src/sys/sys.zig`).
 
@@ -188,6 +186,8 @@ pub mod dir_iterator {
     // immutable kernel-filled data and the iterator is not shared across
     // threads while a `Name` is outstanding.
     unsafe impl Send for Name {}
+    // SAFETY: see `Send` above — `Name` only exposes shared reads of
+    // immutable kernel-filled bytes, so `&Name` is safe to share.
     #[cfg(not(windows))]
     unsafe impl Sync for Name {}
     #[cfg(windows)]
@@ -199,8 +199,9 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         #[inline]
         fn borrow(s: &[u8]) -> Name {
-            // The kernel guarantees `s.as_ptr().add(s.len())` reads `0` (the
-            // dirent record's NUL terminator lies inside `reclen`).
+            // SAFETY: `s` is a slice into a kernel-written dirent record; the
+            // byte at `s.as_ptr().add(s.len())` is the in-record NUL terminator
+            // and lies within the same `reclen`-sized allocation.
             debug_assert!(unsafe { *s.as_ptr().add(s.len()) } == 0);
             Name {
                 ptr: core::ptr::NonNull::from(s).cast(),
@@ -289,6 +290,8 @@ pub mod dir_iterator {
         #[inline(always)]
         unsafe fn filled(&self, len: usize) -> &[u8] {
             debug_assert!(len <= BUF_SIZE);
+            // SAFETY: caller contract — bytes `[0..len]` were initialized by
+            // the kernel; `len <= BUF_SIZE` (asserted) keeps the slice in-bounds.
             unsafe { core::slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) }
         }
     }
@@ -775,7 +778,6 @@ pub mod dir_iterator {
         // ignored (kernel readdir has no name filter; callers post-filter).
         // PORT NOTE: stored on `State` on Windows so `next()` can pass it.
         #[cfg(not(windows))]
-        #[allow(dead_code)]
         name_filter: Option<Vec<u16>>,
         state: State,
     }
@@ -951,7 +953,9 @@ pub use tmp::Tmpfile;
 // `#[cfg(windows)]` arms in dependents.
 pub mod windows;
 
-use core::ffi::{c_char, c_int, c_void};
+#[cfg(not(windows))]
+use core::ffi::c_int;
+use core::ffi::{c_char, c_void};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from lower-tier crates (PORTING.md crate map).
@@ -1055,8 +1059,11 @@ pub extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::ffi::c_c
 
 /// Small "fire and forget" wrapper around unlink for C usage that handles
 /// EINTR, Windows path conversion, etc. Zig: `export fn Bun__unlink(ptr, len)`.
+///
+/// # Safety
+/// `ptr[0..=len]` must be a valid NUL-terminated path slice for the call.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
+pub unsafe extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
     // SAFETY: caller (C++) guarantees `ptr[0..=len]` is a valid NUL-terminated
     // path slice for the duration of the call.
     let path = unsafe { ZStr::from_raw(ptr, len) };
@@ -1340,10 +1347,12 @@ pub fn to_posix_path(path: &[u8]) -> core::result::Result<std::ffi::CString, bun
 }
 
 #[inline]
+#[cfg(not(windows))]
 fn err_with(tag: Tag) -> Error {
     Error::from_code_int(last_errno(), tag)
 }
 #[inline]
+#[cfg(not(windows))]
 fn err_with_path(tag: Tag, path: &ZStr) -> Error {
     err_with(tag).with_path(path.as_bytes())
 }
@@ -1618,6 +1627,7 @@ pub const MAX_COUNT: usize = u32::MAX as usize;
 pub(crate) mod safe_libc {
     use core::ffi::c_int;
     unsafe extern "C" {
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub(crate) safe fn close(fd: c_int) -> c_int;
         pub(crate) safe fn dup2(old: c_int, new: c_int) -> c_int;
         pub(crate) safe fn isatty(fd: c_int) -> c_int;
@@ -1631,6 +1641,7 @@ pub(crate) mod safe_libc {
         pub(crate) safe fn fchown(fd: c_int, uid: libc::uid_t, gid: libc::gid_t) -> c_int;
         pub(crate) safe fn ftruncate(fd: c_int, len: libc::off_t) -> c_int;
         pub(crate) safe fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(crate) safe fn fallocate(
             fd: c_int,
             mode: c_int,
@@ -1638,16 +1649,17 @@ pub(crate) mod safe_libc {
             len: libc::off_t,
         ) -> c_int;
         // BSD/Linux event-queue / notification syscalls — all by-value scalars;
-        // bad args → errno (`EINVAL`/`EMFILE`/…), never UB. Declared without
-        // per-target `#[cfg]` (matching `fallocate` above): unused externs do
-        // not generate linker references, and every caller is cfg-gated.
+        // bad args → errno (`EINVAL`/`EMFILE`/…), never UB.
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         pub(crate) safe fn kqueue() -> c_int;
-        pub(crate) safe fn epoll_create1(flags: c_int) -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         pub(crate) safe fn eventfd(initval: libc::c_uint, flags: c_int) -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(crate) safe fn inotify_init1(flags: c_int) -> c_int;
         // bionic declares `wd` as `uint32_t`, glibc/musl as `int`; the kernel
         // ABI is the same `__s32` either way, so a `c_int` decl is ABI-correct
         // on every Linux libc.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(crate) safe fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int;
         // Out-param is `&mut [c_int; 2]` (thin pointer, non-null, valid for two
         // `c_int` writes); kernel only writes the slot and reports failure via
@@ -1695,8 +1707,6 @@ mod nocancel {
         // came out unreadable). Must be `...` (matches Zig's `std.c.open`).
         // x86-64-macOS and the Linux syscall path tolerate the non-variadic
         // form; arm64-macOS does not.
-        #[link_name = "open$NOCANCEL"]
-        pub(crate) fn open(path: *const libc::c_char, flags: c_int, ...) -> c_int;
         #[link_name = "openat$NOCANCEL"]
         pub(crate) fn openat(dirfd: c_int, path: *const libc::c_char, flags: c_int, ...) -> c_int;
         #[link_name = "read$NOCANCEL"]
@@ -1755,39 +1765,11 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
-        #[link_name = "ppoll$NOCANCEL"]
-        pub(crate) fn ppoll(
-            fds: *mut libc::pollfd,
-            nfds: libc::nfds_t,
-            ts: *const libc::timespec,
-            sigmask: *const libc::sigset_t,
-        ) -> c_int;
         // darwin.zig:12-17 + fd.zig:273 — remaining `$NOCANCEL` variants Bun
         // links against (close via Zig's std.c on Darwin).
         // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
         pub(crate) safe fn close(fd: c_int) -> c_int;
-        #[link_name = "fcntl$NOCANCEL"]
-        pub(crate) fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
-        #[link_name = "connect$NOCANCEL"]
-        pub(crate) fn connect(
-            sockfd: c_int,
-            addr: *const libc::sockaddr,
-            alen: libc::socklen_t,
-        ) -> c_int;
-        #[link_name = "accept$NOCANCEL"]
-        pub(crate) fn accept(
-            sockfd: c_int,
-            addr: *mut libc::sockaddr,
-            alen: *mut libc::socklen_t,
-        ) -> c_int;
-        #[link_name = "accept4$NOCANCEL"]
-        pub(crate) fn accept4(
-            sockfd: c_int,
-            addr: *mut libc::sockaddr,
-            alen: *mut libc::socklen_t,
-            flags: libc::c_uint,
-        ) -> c_int;
     }
 }
 
@@ -1878,6 +1860,8 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // writable bytes and `fd` is a live socket.
             unsafe { libc::recv(fd, buf, n, flags) }
         }
     }
@@ -1889,6 +1873,8 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         {
+            // SAFETY: caller contract (`unsafe fn`) — `buf` points to `n`
+            // readable bytes and `fd` is a live socket.
             unsafe { libc::send(fd, buf, n, flags) }
         }
     }
@@ -1947,6 +1933,7 @@ mod posix_impl {
         }};
     }
     // Single-shot: no EINTR retry (Darwin `$NOCANCEL` arms).
+    #[cfg(target_os = "macos")]
     macro_rules! check_once {
         ($rc:expr, $tag:expr) => {{
             let rc = $rc;
@@ -1956,6 +1943,7 @@ mod posix_impl {
             rc
         }};
     }
+    #[cfg(target_os = "macos")]
     macro_rules! check_once_p {
         ($rc:expr, $tag:expr, $path:expr) => {{
             let rc = $rc;
@@ -2177,9 +2165,8 @@ mod posix_impl {
         // glibc: libc 0.2.x exposes the full surface directly.
         #[cfg(all(target_os = "linux", not(target_env = "musl")))]
         pub(super) use libc::{
-            AT_STATX_SYNC_AS_STAT, STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME, STATX_GID,
-            STATX_INO, STATX_MODE, STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE, STATX_UID,
-            statx,
+            STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME, STATX_GID, STATX_INO, STATX_MODE,
+            STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE, STATX_UID, statx,
         };
 
         // musl/Android: `libc` gates `statx`/`STATX_*` behind a build-script
@@ -2193,7 +2180,6 @@ mod posix_impl {
             use core::ffi::{c_char, c_int, c_uint};
 
             // Kernel UAPI `<linux/stat.h>` — same on every arch/libc.
-            pub(crate) const AT_STATX_SYNC_AS_STAT: c_int = 0x0000;
             pub(crate) const STATX_TYPE: c_uint = 0x0001;
             pub(crate) const STATX_MODE: c_uint = 0x0002;
             pub(crate) const STATX_NLINK: c_uint = 0x0004;
@@ -2320,7 +2306,7 @@ mod posix_impl {
         let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
         let pathname: *const c_char = match path {
             Some(p) => p.as_ptr(),
-            None => b"\0".as_ptr().cast(),
+            None => c"".as_ptr(),
         };
         loop {
             // SAFETY: `pathname` is NUL-terminated; `buf` is a valid out-param.
@@ -2418,6 +2404,7 @@ mod posix_impl {
 
     pub fn mkdir(path: &ZStr, mode: Mode) -> Maybe<()> {
         check_p!(
+            // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
             unsafe { libc::mkdir(path.as_ptr(), mode as libc::mode_t) },
             Tag::mkdir,
             path
@@ -2428,6 +2415,8 @@ mod posix_impl {
         let dir = dir.as_fd();
         // sys.zig:809 — `mkdiratZ` tags errors as `.mkdir` (not `.mkdirat`).
         check_p!(
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
             unsafe { libc::mkdirat(dir.native(), path.as_ptr(), mode as libc::mode_t) },
             Tag::mkdir,
             path
@@ -2466,11 +2455,13 @@ mod posix_impl {
         })
     }
     pub fn unlink(path: &ZStr) -> Maybe<()> {
+        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check_p!(unsafe { libc::unlink(path.as_ptr()) }, Tag::unlink, path);
         Ok(())
     }
     pub fn rename(from: &ZStr, to: &ZStr) -> Maybe<()> {
         check_p!(
+            // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
             unsafe { libc::rename(from.as_ptr(), to.as_ptr()) },
             Tag::rename,
             from
@@ -2481,6 +2472,8 @@ mod posix_impl {
         let from_dir = from_dir.as_fd();
         let to_dir = to_dir.as_fd();
         check_p!(
+            // SAFETY: both dir fds are live (or AT_FDCWD); both `ZStr`s are
+            // valid NUL-terminated C strings.
             unsafe {
                 libc::renameat(
                     from_dir.native(),
@@ -2506,8 +2499,9 @@ mod posix_impl {
     ) -> Maybe<()> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // SAFETY: FFI; all pointers/fds valid for the duration of the call.
             check_p!(
+                // SAFETY: both dir fds are live (or AT_FDCWD); both `ZStr`s
+                // are valid NUL-terminated C strings for the syscall's duration.
                 unsafe {
                     libc::syscall(
                         libc::SYS_renameat2,
@@ -2565,6 +2559,8 @@ mod posix_impl {
     /// surfaced `SystemError` carries BOTH the dirfd and the path.
     pub fn unlinkat_with_flags(dir: Fd, path: &ZStr, flags: i32) -> Maybe<()> {
         check_fp!(
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
             unsafe { libc::unlinkat(dir.native(), path.as_ptr(), flags) },
             Tag::unlink,
             dir,
@@ -2581,6 +2577,7 @@ mod posix_impl {
     }
     pub fn symlink(target: &ZStr, link: &ZStr) -> Maybe<()> {
         check_p!(
+            // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
             unsafe { libc::symlink(target.as_ptr(), link.as_ptr()) },
             Tag::symlink,
             link
@@ -2589,6 +2586,8 @@ mod posix_impl {
     }
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
         let n = check_p!(
+            // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a valid
+            // exclusive slice and `readlink` writes at most `buf.len()` bytes.
             unsafe { libc::readlink(path.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) },
             Tag::readlink,
             path
@@ -2608,6 +2607,8 @@ mod posix_impl {
     pub fn dup(fd: Fd) -> Maybe<Fd> {
         // sys.zig:959 `errnoSysFd(.., .fcntl, fd)` — attach the fd on error.
         loop {
+            // SAFETY: `fd` is a live descriptor; `F_DUPFD_CLOEXEC` with arg `0`
+            // takes no pointer arguments.
             let rc = unsafe { libc::fcntl(fd.native(), libc::F_DUPFD_CLOEXEC, 0) };
             if rc < 0 {
                 let e = last_errno();
@@ -2635,16 +2636,20 @@ mod posix_impl {
         Ok(())
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
+        // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
+        // `buf.len()` bytes (including the NUL).
         let p = unsafe { libc::getcwd(buf.as_mut_ptr().cast(), buf.len()) };
         if p.is_null() {
             return Err(err_with(Tag::getcwd));
         }
+        // SAFETY: on success `getcwd` returns `buf`'s pointer NUL-terminated.
         Ok(unsafe { libc::strlen(p) })
     }
 
     // ── link/perm/time/access group (sys.zig:406-3973 posix arms) ──
     pub fn link(src: &ZStr, dest: &ZStr) -> Maybe<()> {
         check_p!(
+            // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
             unsafe { libc::link(src.as_ptr(), dest.as_ptr()) },
             Tag::link,
             src
@@ -2656,6 +2661,8 @@ mod posix_impl {
         let dest_dir = dest_dir.as_fd();
         // sys.zig:3963 — `linkatZ` tags as `.link`.
         check_p!(
+            // SAFETY: both dir fds are live (or AT_FDCWD); both `ZStr`s are
+            // valid NUL-terminated C strings.
             unsafe {
                 libc::linkat(
                     src_dir.native(),
@@ -2739,6 +2746,8 @@ mod posix_impl {
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
         check_p!(
+            // SAFETY: `dirfd` is a live fd (or AT_FDCWD); both `ZStr`s are
+            // valid NUL-terminated C strings.
             unsafe { libc::symlinkat(target.as_ptr(), dirfd.native(), dest.as_ptr()) },
             Tag::symlinkat,
             dest
@@ -2749,6 +2758,8 @@ mod posix_impl {
         let fd = fd.as_fd();
         // sys.zig:2390 — tags as `.readlink`.
         let n = check_p!(
+            // SAFETY: `fd` is a live dir fd; `path` is NUL-terminated (`ZStr`);
+            // `readlinkat` writes at most `buf.len()` bytes into `buf`.
             unsafe {
                 libc::readlinkat(
                     fd.native(),
@@ -2771,6 +2782,7 @@ mod posix_impl {
     }
     pub fn chmod(path: &ZStr, mode: Mode) -> Maybe<()> {
         check_p!(
+            // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
             unsafe { libc::chmod(path.as_ptr(), mode as libc::mode_t) },
             Tag::chmod,
             path
@@ -2780,6 +2792,8 @@ mod posix_impl {
     pub fn fchmodat(dir: impl AsFd, path: &ZStr, mode: Mode, flags: i32) -> Maybe<()> {
         let dir = dir.as_fd();
         check_p!(
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
             unsafe { libc::fchmodat(dir.native(), path.as_ptr(), mode as libc::mode_t, flags) },
             Tag::fchmodat,
             path
@@ -2810,6 +2824,7 @@ mod posix_impl {
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         check_p!(
+            // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
             unsafe { libc::chown(path.as_ptr(), uid, gid) },
             Tag::chown,
             path
@@ -2818,6 +2833,7 @@ mod posix_impl {
     }
     pub fn lchown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         check_p!(
+            // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
             unsafe { libc::lchown(path.as_ptr(), uid, gid) },
             Tag::lchown,
             path
@@ -2827,6 +2843,8 @@ mod posix_impl {
     pub fn fchownat(dir: impl AsFd, path: &ZStr, uid: u32, gid: u32, flags: i32) -> Maybe<()> {
         let dir = dir.as_fd();
         check_p!(
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
             unsafe { libc::fchownat(dir.native(), path.as_ptr(), uid, gid, flags) },
             Tag::fchownat,
             path
@@ -2859,6 +2877,7 @@ mod posix_impl {
     }
     pub fn access(path: &ZStr, mode: i32) -> Maybe<()> {
         check_p!(
+            // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
             unsafe { libc::access(path.as_ptr(), mode) },
             Tag::access,
             path
@@ -2868,12 +2887,16 @@ mod posix_impl {
     /// sys.zig:3504 — never returns `.err`; any non-zero rc → `Ok(false)`.
     pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
         let dir = dir.as_fd();
+        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+        // valid NUL-terminated C string.
         let rc = unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) };
         Ok(rc == 0)
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
         check!(
+            // SAFETY: `fd` is a live descriptor; `ts` is a 2-element stack
+            // array and `futimens` reads exactly two `timespec`s.
             unsafe { libc::futimens(fd.native(), ts.as_ptr()) },
             Tag::futimens
         );
@@ -2882,6 +2905,8 @@ mod posix_impl {
     pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
         check_p!(
+            // SAFETY: `path` is NUL-terminated (`ZStr`); `ts` is a 2-element
+            // stack array and `utimensat` reads exactly two `timespec`s.
             unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), ts.as_ptr(), 0) },
             Tag::utimensat,
             path
@@ -2891,6 +2916,8 @@ mod posix_impl {
     pub fn lutimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
         check_p!(
+            // SAFETY: `path` is NUL-terminated (`ZStr`); `ts` is a 2-element
+            // stack array and `utimensat` reads exactly two `timespec`s.
             unsafe {
                 libc::utimensat(
                     libc::AT_FDCWD,
@@ -2906,10 +2933,13 @@ mod posix_impl {
     }
     /// sys.zig:1748 — Windows uses `GetFileAttributesW`; posix is plain `access`.
     pub fn exists_z(path: &ZStr) -> bool {
+        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 }
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
+        // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+        // valid NUL-terminated C string.
         unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
     }
     /// sys.zig:3767 — calls extern C `is_executable_file` (c-bindings.cpp:72-89).
@@ -2922,6 +2952,7 @@ mod posix_impl {
             // its platform sign.
             fn is_executable_file(path: *const c_char) -> bool;
         }
+        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         unsafe { is_executable_file(path.as_ptr()) }
     }
     /// sys.zig:4152 — `fstat` then `@max(st_size, 0)` (clamp negative).
@@ -2938,10 +2969,14 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         use libc::realpath as _realpath;
+        // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
+        // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
         let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
         if p.is_null() {
             return Err(err_with_path(Tag::realpath, path));
         }
+        // SAFETY: on success `realpath` returned `buf`'s pointer with a
+        // NUL-terminated absolute path written into it.
         let len = unsafe { libc::strlen(p) };
         Ok(&buf.0[..len])
     }
@@ -2951,6 +2986,8 @@ mod posix_impl {
     pub fn fcntl(fd: Fd, cmd: i32, arg: isize) -> Maybe<FcntlInt> {
         // sys.zig:959-971 — `errnoSysFd(result, .fcntl, fd)`: attach the fd to the error.
         loop {
+            // SAFETY: `fd` is a live descriptor; `arg` is passed by value and
+            // interpreted per `cmd` (no pointer commands flow through here).
             let rc = unsafe { libc::fcntl(fd.native(), cmd, arg) };
             if rc < 0 {
                 let e = last_errno();
@@ -2992,6 +3029,7 @@ mod posix_impl {
         Ok(rc)
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
+        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);
         Ok(())
     }
@@ -3018,6 +3056,8 @@ mod posix_impl {
         );
         #[cfg(not(target_os = "macos"))]
         let n = check!(
+            // SAFETY: `fd` is a live socket; `buf[..len]` is a valid exclusive
+            // slice and `len <= buf.len()` (clamped above).
             unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
             Tag::recv
         );
@@ -3034,6 +3074,8 @@ mod posix_impl {
         );
         #[cfg(not(target_os = "macos"))]
         let n = check!(
+            // SAFETY: `fd` is a live socket; `buf` is a valid shared slice of
+            // `buf.len()` readable bytes.
             unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
             Tag::send
         );
@@ -3269,6 +3311,8 @@ mod posix_impl {
         fd: Fd,
         off: i64,
     ) -> Maybe<*mut u8> {
+        // SAFETY: `addr` is a hint (or null) that the kernel validates; `fd`/
+        // `off`/`len` are validated by the kernel and never dereferenced here.
         let p = unsafe { libc::mmap(addr.cast(), len, prot, flags, fd.native(), off) };
         if p == libc::MAP_FAILED {
             return Err(err_with(Tag::mmap));
@@ -3276,6 +3320,8 @@ mod posix_impl {
         Ok(p.cast())
     }
     pub fn munmap(ptr: *mut u8, len: usize) -> Maybe<()> {
+        // SAFETY: caller passes a `(ptr, len)` pair previously returned by
+        // `mmap`; `munmap` only inspects the mapping, never Rust-owned memory.
         check!(unsafe { libc::munmap(ptr.cast(), len) }, Tag::munmap);
         Ok(())
     }
@@ -3289,16 +3335,13 @@ mod posix_impl {
         wanted_size: Option<usize>,
         offset: usize,
     ) -> Maybe<&'static mut [u8]> {
-        let fd = match open(path, O::RDWR, 0) {
-            Ok(fd) => fd,
-            Err(err) => return Err(err),
-        };
+        let fd = open(path, O::RDWR, 0)?;
         // close fd regardless of mmap outcome (the mapping outlives the fd).
         let _close = CloseOnDrop::new(fd);
 
-        let stat_size = match fstat(fd) {
-            Ok(result) => usize::try_from(result.st_size).unwrap_or(0),
-            Err(err) => return Err(err),
+        let stat_size = {
+            let result = fstat(fd)?;
+            usize::try_from(result.st_size).unwrap_or(0)
         };
         let mut size = stat_size.saturating_sub(offset);
         if let Some(size_) = wanted_size {
@@ -3410,6 +3453,8 @@ mod posix_impl {
     pub fn sendfile(src: Fd, dest: Fd, len: usize) -> Maybe<usize> {
         let len = len.min(i32::MAX as usize - 1);
         loop {
+            // SAFETY: `src`/`dest` are live fds; null `offset` tells the
+            // kernel to use and update `src`'s file offset.
             let rc =
                 unsafe { libc::sendfile(dest.native(), src.native(), core::ptr::null_mut(), len) };
             if rc < 0 {
@@ -3462,9 +3507,9 @@ impl TimeLike {
     }
 }
 #[cfg(unix)]
-pub const UTIME_NOW: i64 = libc::UTIME_NOW as i64;
+pub const UTIME_NOW: i64 = libc::UTIME_NOW;
 #[cfg(unix)]
-pub const UTIME_OMIT: i64 = libc::UTIME_OMIT as i64;
+pub const UTIME_OMIT: i64 = libc::UTIME_OMIT;
 #[cfg(windows)]
 pub const UTIME_NOW: i64 = -1;
 #[cfg(windows)]
@@ -4739,6 +4784,8 @@ pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
         // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
         // field on success); `path` is NUL-terminated by `ZStr`.
         let mut st: StatFS = unsafe { bun_core::ffi::zeroed_unchecked() };
+        // SAFETY: `path` is NUL-terminated (`ZStr`); `st` is a valid
+        // out-pointer to stack storage that `_statfs` fully initializes.
         let rc = unsafe { _statfs(path.as_ptr(), &raw mut st) };
         if rc < 0 {
             let e = last_errno();
@@ -4926,6 +4973,8 @@ pub mod c {
     /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
     #[cfg(unix)]
     pub unsafe fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void {
+        // SAFETY: caller contract — `handle` is null/RTLD_DEFAULT or a live
+        // `dlopen` handle; `name` is a valid NUL-terminated C string.
         unsafe { libc::dlsym(handle, name) }
     }
     #[cfg(unix)]
@@ -5150,10 +5199,10 @@ pub mod c {
     /// `bun.c.dlsymWithHandle` — see macro `dlsym_with_handle!` for the cached
     /// per-symbol form. This is the uncached runtime variant.
     pub unsafe fn dlsym_with_handle(handle: *mut c_void, name: *const c_char) -> *mut c_void {
-        // SAFETY: `name` is NUL-terminated and live for the call; `handle`
-        // is a live `dlopen` handle or null/RTLD_DEFAULT (caller contract).
         #[cfg(unix)]
         {
+            // SAFETY: caller contract — `name` is NUL-terminated and live for
+            // the call; `handle` is a live `dlopen` handle or null/RTLD_DEFAULT.
             unsafe { libc::dlsym(handle, name) }
         }
         #[cfg(windows)]
@@ -5167,6 +5216,8 @@ pub mod c {
     #[cfg(unix)]
     #[inline]
     pub unsafe fn fork() -> libc::pid_t {
+        // SAFETY: `fork` takes no pointer arguments; the caller (`unsafe fn`)
+        // upholds async-signal-safety in the child.
         unsafe { libc::fork() }
     }
 
@@ -5226,7 +5277,7 @@ pub mod c {
 // values to mirror that.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux {
-    use core::ffi::{c_char, c_int, c_uint, c_void};
+    use core::ffi::{c_char, c_int};
     pub use libc::epoll_event;
     pub use libc::pollfd;
 
@@ -5364,6 +5415,8 @@ pub mod linux {
     // ThreadPool worker panics inside its idle wait.
     #[inline]
     pub unsafe fn futex_3arg(uaddr: *const u32, op: FutexOp, val: u32) -> isize {
+        // SAFETY: caller contract — `uaddr` points to a live, suitably-aligned
+        // `u32` for the syscall's duration.
         let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val) };
         if rc == -1 {
             -(errno() as isize)
@@ -5379,6 +5432,8 @@ pub mod linux {
         val: u32,
         timeout: *const timespec,
     ) -> isize {
+        // SAFETY: caller contract — `uaddr` points to a live `u32`; `timeout`
+        // is null or points to a valid `timespec` for the syscall's duration.
         let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) };
         if rc == -1 {
             -(errno() as isize)
@@ -5419,6 +5474,8 @@ pub mod linux {
     }
     #[inline]
     pub unsafe fn inotify_add_watch(fd: c_int, path: *const c_char, mask: u32) -> c_int {
+        // SAFETY: caller contract — `fd` is a live inotify fd and `path` is a
+        // valid NUL-terminated C string.
         unsafe { libc::inotify_add_watch(fd, path, mask) }
     }
     #[inline]
@@ -5433,11 +5490,14 @@ pub mod linux {
     pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
         // Raw syscall via rustix; libc-convention return preserved for callers
         // that decode via `GetErrno for isize`.
+        // SAFETY: caller contract — `buf` points to `count` writable bytes.
         unsafe { super::linux_syscall::read_raw(fd, buf, count) }
     }
     /// Raw `sendfile(out, in, *offset, count)` (Zig: `std.os.linux.sendfile`).
     #[inline]
     pub unsafe fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut i64, count: usize) -> isize {
+        // SAFETY: caller contract — `offset` is null or points to a live `i64`
+        // the kernel may read and update.
         unsafe { super::linux_syscall::sendfile(out_fd, in_fd, offset, count) }
     }
     /// Raw `ppoll(fds, nfds, *timeout, *sigmask)`.
@@ -5448,10 +5508,14 @@ pub mod linux {
         timeout: *const libc::timespec,
         sigmask: *const libc::sigset_t,
     ) -> c_int {
+        // SAFETY: caller contract — `fds` points to `nfds` initialized
+        // `pollfd`s; `timeout`/`sigmask` are null or valid for the call.
         unsafe { libc::ppoll(fds, nfds as _, timeout, sigmask) }
     }
     #[inline]
     pub unsafe fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: *mut epoll_event) -> c_int {
+        // SAFETY: caller contract — `event` is null (for `EPOLL_CTL_DEL`) or
+        // points to a valid `epoll_event`.
         unsafe { super::linux_syscall::epoll_ctl(epfd, op, fd, event) }
     }
 
@@ -5540,7 +5604,6 @@ pub mod linux {
 #[cfg(target_os = "macos")]
 pub mod darwin {
     use core::ffi::{c_char, c_void};
-    use core::marker::{PhantomData, PhantomPinned};
 
     bun_opaque::opaque_ffi! {
         /// Opaque `os_log_t` handle (`<os/log.h>`).
@@ -5968,6 +6031,8 @@ pub struct DynLib {
 // underlying loader is process-global and internally synchronized; `dlsym`/
 // `GetProcAddress` may be called from any thread. Matches `std::DynLib`.
 unsafe impl Send for DynLib {}
+// SAFETY: see `Send` above — the OS loader is process-global and internally
+// synchronized, so `&DynLib` may be shared across threads.
 unsafe impl Sync for DynLib {}
 impl DynLib {
     /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryA(path)`.
@@ -6003,6 +6068,8 @@ impl DynLib {
         Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
     }
     pub fn close(self) {
+        // SAFETY: `self.handle` was returned by `dlopen` in `open()` and has
+        // not been closed (this consumes `self`).
         #[cfg(unix)]
         unsafe {
             libc::dlclose(self.handle);
@@ -6186,9 +6253,7 @@ pub fn delete_tree_absolute(path: &[u8]) -> core::result::Result<(), bun_core::E
     let dir = open_dir_absolute(parent)
         .map(Dir::from_fd)
         .map_err(bun_core::Error::from)?;
-    let res = dir.delete_tree(base);
-    dir.close();
-    res
+    dir.delete_tree(base)
 }
 /// bun.zig:899 — Windows variant skips `DELETE` access; on POSIX identical.
 pub fn open_dir_absolute_not_for_deleting_or_renaming(path: &[u8]) -> Maybe<Fd> {
@@ -7576,6 +7641,7 @@ pub fn move_file_z_with_handle(
         }
         Err(e) if e.get_errno() == E::EXDEV => {
             // Cross-device: full `copyFileZSlowWithHandle` (sys.zig:4305).
+            #[cfg(unix)]
             let st = fstat(from_handle).map_err(bun_core::Error::from)?;
             // Unlink dest first — fixes ETXTBUSY on Linux.
             let _ = unlinkat(to_dir, destination);
@@ -7663,7 +7729,9 @@ pub fn make_path_w(dir: Fd, sub_path: &[u16]) -> Maybe<()> {
 // ──────────────────────────────────────────────────────────────────────────
 pub mod posix {
     pub use bun_errno::posix::*;
-    use core::ffi::{c_int, c_void};
+    use core::ffi::c_int;
+    #[cfg(not(windows))]
+    use core::ffi::c_void;
 
     // ── BSD sysctl(3) family (Zig: `std.posix.sysctlbynameZ`) ──
     // macOS/FreeBSD only — Linux dropped sysctl(2) and uses procfs instead.
@@ -7881,6 +7949,8 @@ pub mod posix {
     #[cfg(unix)]
     #[inline]
     pub unsafe fn sigaction(sig: c_int, act: *const Sigaction, oact: *mut Sigaction) -> c_int {
+        // SAFETY: caller contract — `act`/`oact` are each null or point to a
+        // valid `sigaction` struct for the call's duration.
         unsafe { libc::sigaction(sig, act, oact) }
     }
 
@@ -7904,6 +7974,7 @@ pub mod posix {
     pub unsafe fn read(fd: c_int, buf: *mut u8, count: usize) -> isize {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
+            // SAFETY: caller contract — `buf` points to `count` writable bytes.
             unsafe { super::linux_syscall::read_raw(fd, buf, count) }
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -7916,6 +7987,7 @@ pub mod posix {
     pub unsafe fn write(fd: c_int, buf: *const u8, count: usize) -> isize {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
+            // SAFETY: caller contract — `buf` points to `count` readable bytes.
             unsafe { super::linux_syscall::write_raw(fd, buf, count) }
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -7951,6 +8023,8 @@ pub mod posix {
             let rc = unsafe {
                 super::nocancel::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms)
             };
+            // SAFETY: `PollFd` is `repr(C)` and layout-identical to
+            // `libc::pollfd`; `fds` is a valid exclusive slice.
             #[cfg(not(target_os = "macos"))]
             let rc = unsafe { libc::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms) };
             if rc < 0 {
@@ -8053,6 +8127,8 @@ pub mod posix {
         callback: unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int,
         data: *mut c_void,
     ) -> c_int {
+        // SAFETY: caller contract — `callback` upholds the C ABI; `data` is
+        // opaque and only forwarded to `callback`, never dereferenced here.
         unsafe { libc::dl_iterate_phdr(Some(callback), data) }
     }
 }
@@ -8178,12 +8254,18 @@ pub mod net {
         /// Construct from a borrowed `*const sockaddr` (Zig: `Address.initPosix`).
         /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
         pub unsafe fn init_posix(addr: *const sockaddr) -> Self {
+            // SAFETY: `sockaddr_storage` is a POD C struct; all-zeros is valid.
             let mut storage: sockaddr_storage = unsafe { bun_core::ffi::zeroed_unchecked() };
+            // SAFETY: caller contract — `addr` points to a valid `sockaddr`
+            // header, so `sa_family` is readable.
             let len = match unsafe { (*addr).sa_family } as i32 {
                 AF_INET => core::mem::size_of::<sockaddr_in>(),
                 AF_INET6 => core::mem::size_of::<sockaddr_in6>(),
                 _ => core::mem::size_of::<sockaddr>(),
             };
+            // SAFETY: `len` is sized from `sa_family` and never exceeds
+            // `size_of::<sockaddr_storage>()`; caller guarantees `addr` spans
+            // `len` bytes; `storage` is fresh stack so the ranges cannot overlap.
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     addr.cast::<u8>(),
@@ -8242,6 +8324,7 @@ pub mod net {
         // SAFETY: POD, zero-valid — sockaddr union of integer fields.
         fn default() -> Self {
             Self {
+                // SAFETY: `sockaddr_storage` is POD; all-zeros is a valid value.
                 any: unsafe { bun_core::ffi::zeroed_unchecked() },
             }
         }
@@ -8262,7 +8345,7 @@ pub mod net {
                     // raw octets so both shapes resolve.
                     // SAFETY: `sin_addr` is 4 bytes of POD on every target.
                     let octets: [u8; 4] =
-                        unsafe { *(core::ptr::addr_of!(v4.sin_addr) as *const [u8; 4]) };
+                        unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
                     write!(
                         f,
                         "{}.{}.{}.{}:{}",
@@ -8465,9 +8548,7 @@ impl CloseOnDrop {
     /// Disarm the guard and return the fd without closing it.
     #[inline]
     pub fn into_inner(self) -> Fd {
-        let fd = self.0;
-        core::mem::forget(self);
-        fd
+        core::mem::ManuallyDrop::new(self).0
     }
 }
 impl Drop for CloseOnDrop {
@@ -8851,6 +8932,7 @@ pub fn move_file_z_slow(
 }
 /// sys.zig:4305 — `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
 pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
+    #[cfg(unix)]
     let st = fstat(in_handle)?;
     // Unlink dest first — fixes ETXTBUSY on Linux.
     let _ = unlinkat(to_dir, destination);
@@ -8938,9 +9020,6 @@ pub fn renameat_concurrently_without_fallback(
     to_dir_fd: Fd,
     to: &ZStr,
 ) -> Maybe<()> {
-    let mut did_atomically_replace = false;
-    let _ = did_atomically_replace; // tracked for parity with Zig
-
     'attempt: {
         {
             // Happy path: the folder doesn't exist in the cache dir, so we can
@@ -8971,7 +9050,6 @@ pub fn renameat_concurrently_without_fallback(
                 // Fallback path: the folder exists in the cache dir, it might be in a strange state
                 // let's attempt to atomically replace it with the temporary folder's version
                 if matches!(err.get_errno(), E::EEXIST | E::ENOTEMPTY | E::EOPNOTSUPP) {
-                    did_atomically_replace = true;
                     match renameat2(
                         from_dir_fd,
                         from,
@@ -8985,7 +9063,6 @@ pub fn renameat_concurrently_without_fallback(
                         Err(_) => {}
                         Ok(()) => break 'attempt,
                     }
-                    did_atomically_replace = false;
                 }
             }
             #[cfg(windows)]
@@ -9080,7 +9157,7 @@ impl<'a> Default for WriteFileArgs<'a> {
 /// `path_buf` is a scratch buffer for NUL-terminating the relative path.
 pub fn write_file_with_path_buffer(
     path_buf: &mut bun_paths::PathBuffer,
-    args: WriteFileArgs<'_>,
+    args: &WriteFileArgs<'_>,
 ) -> Maybe<usize> {
     let WriteFileData::Buffer { buffer } = args.data;
     let fd = match args.file {
@@ -9224,6 +9301,9 @@ unsafe fn adapter_write_all(
             return Ok(());
         }
     }
+    // SAFETY: `this.buf` has capacity `this.cap`; the branch above ensures
+    // `this.pos + bytes.len() <= this.cap`, so `[buf+pos, buf+pos+len)` is
+    // in-bounds and cannot overlap `bytes` (caller-owned slice).
     unsafe {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), this.buf.add(this.pos), bytes.len());
     }

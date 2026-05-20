@@ -17,12 +17,6 @@
 //! Callers should use the std types directly (PORTING.md §Pointers). This file exists so
 //! `bun_ptr::owned::*` resolves and so the Zig API surface has a 1:1 diffable mapping comment.
 
-use core::mem::ManuallyDrop;
-
-use bun_alloc::AllocError;
-
-use super::meta::{AddConst, PointerInfo}; // TODO(port): meta.zig helpers are @typeInfo-based; likely unused in Rust
-
 /// An owned pointer or slice that was allocated using the default allocator.
 ///
 /// This type is a wrapper around a pointer or slice of type `Pointer` that was allocated using
@@ -311,7 +305,5 @@ pub fn into_raw<T>(boxed: Box<T>) -> *mut T {
 }
 
 // Suppress unused-import warnings until the unused helpers are pruned.
-#[allow(unused_imports)]
-use {AddConst as _, AllocError as _, ManuallyDrop as _, PointerInfo as _};
 
 // ported from: src/ptr/owned.zig

@@ -56,52 +56,46 @@ pub trait Handler: 'static {
     const HAS_ON_CONNECTING_ERROR: bool = false;
     const HAS_ON_HANDSHAKE: bool = false;
 
-    #[allow(unused_variables)]
-    fn on_open(ext: &mut Self::Ext, s: *mut us_socket_t, is_client: bool, ip: &[u8]) {
+    fn on_open(_ext: &mut Self::Ext, _s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_data(ext: &mut Self::Ext, s: *mut us_socket_t, data: &[u8]) {
+    fn on_data(_ext: &mut Self::Ext, _s: *mut us_socket_t, _data: &[u8]) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_fd(ext: &mut Self::Ext, s: *mut us_socket_t, fd: c_int) {
+    fn on_fd(_ext: &mut Self::Ext, _s: *mut us_socket_t, _fd: c_int) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_writable(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_writable(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_close(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close(
+        _ext: &mut Self::Ext,
+        _s: *mut us_socket_t,
+        _code: i32,
+        _reason: Option<*mut c_void>,
+    ) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_long_timeout(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_long_timeout(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_end(ext: &mut Self::Ext, s: *mut us_socket_t) {
+    fn on_end(_ext: &mut Self::Ext, _s: *mut us_socket_t) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_connect_error(ext: &mut Self::Ext, s: *mut us_socket_t, code: i32) {
+    fn on_connect_error(_ext: &mut Self::Ext, _s: *mut us_socket_t, _code: i32) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_connecting_error(cs: *mut ConnectingSocket, code: i32) {
+    fn on_connecting_error(_cs: *mut ConnectingSocket, _code: i32) {
         unreachable!()
     }
-    #[allow(unused_variables)]
     fn on_handshake(
-        ext: &mut Self::Ext,
-        s: *mut us_socket_t,
-        ok: bool,
-        err: us_bun_verify_error_t,
+        _ext: &mut Self::Ext,
+        _s: *mut us_socket_t,
+        _ok: bool,
+        _err: us_bun_verify_error_t,
     ) {
         unreachable!()
     }
@@ -110,44 +104,34 @@ pub trait Handler: 'static {
     // (handlers take `(s, …)`). Rust can't change a trait method's arity by a
     // const, so the no-ext variants are separate methods. Only called when
     // `HAS_EXT == false`.
-    #[allow(unused_variables)]
-    fn on_open_no_ext(s: *mut us_socket_t, is_client: bool, ip: &[u8]) {
+    fn on_open_no_ext(_s: *mut us_socket_t, _is_client: bool, _ip: &[u8]) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
+    fn on_data_no_ext(_s: *mut us_socket_t, _data: &[u8]) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_fd_no_ext(s: *mut us_socket_t, fd: c_int) {
+    fn on_fd_no_ext(_s: *mut us_socket_t, _fd: c_int) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_writable_no_ext(s: *mut us_socket_t) {
+    fn on_writable_no_ext(_s: *mut us_socket_t) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
+    fn on_close_no_ext(_s: *mut us_socket_t, _code: i32, _reason: Option<*mut c_void>) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_timeout_no_ext(s: *mut us_socket_t) {
+    fn on_timeout_no_ext(_s: *mut us_socket_t) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_long_timeout_no_ext(s: *mut us_socket_t) {
+    fn on_long_timeout_no_ext(_s: *mut us_socket_t) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_end_no_ext(s: *mut us_socket_t) {
+    fn on_end_no_ext(_s: *mut us_socket_t) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_connect_error_no_ext(s: *mut us_socket_t, code: i32) {
+    fn on_connect_error_no_ext(_s: *mut us_socket_t, _code: i32) {
         unreachable!()
     }
-    #[allow(unused_variables)]
-    fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
+    fn on_handshake_no_ext(_s: *mut us_socket_t, _ok: bool, _err: us_bun_verify_error_t) {
         unreachable!()
     }
 }
@@ -296,9 +280,9 @@ impl<H: Handler> Trampolines<H> {
     ) -> *mut us_socket_t {
         let reason = if reason.is_null() { None } else { Some(reason) };
         if H::HAS_EXT {
-            H::on_close(Self::ext(s), s, code as i32, reason);
+            H::on_close(Self::ext(s), s, code, reason);
         } else {
-            H::on_close_no_ext(s, code as i32, reason);
+            H::on_close_no_ext(s, code, reason);
         }
         s
     }
@@ -332,9 +316,9 @@ impl<H: Handler> Trampolines<H> {
 
     pub extern "C" fn on_connect_error(s: *mut us_socket_t, code: c_int) -> *mut us_socket_t {
         if H::HAS_EXT {
-            H::on_connect_error(Self::ext(s), s, code as i32);
+            H::on_connect_error(Self::ext(s), s, code);
         } else {
-            H::on_connect_error_no_ext(s, code as i32);
+            H::on_connect_error_no_ext(s, code);
         }
         s
     }
@@ -343,7 +327,7 @@ impl<H: Handler> Trampolines<H> {
         cs: *mut ConnectingSocket,
         code: c_int,
     ) -> *mut ConnectingSocket {
-        H::on_connecting_error(cs, code as i32);
+        H::on_connecting_error(cs, code);
         cs
     }
 

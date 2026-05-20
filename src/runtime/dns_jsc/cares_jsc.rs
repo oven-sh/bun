@@ -2,7 +2,7 @@
 //! `JSValue`/`JSGlobalObject`/`CallFrame` types — the original methods on
 //! each `struct_ares_*_reply` are aliased to the free fns here.
 
-use core::ffi::{CStr, c_int};
+use core::ffi::c_int;
 
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -674,7 +674,7 @@ impl ErrorDeferred {
         })
     }
 
-    pub fn reject(mut self: Box<Self>, global_this: &JSGlobalObject) -> JsResult<()> {
+    pub fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let code = self.errno.code();
         // TODO(port): bun.String.createFormat used Zig {f} spec for bun.String — verify Display impl
         let message = if let Some(hostname) = &self.hostname {

@@ -1,4 +1,3 @@
-use core::cmp::Ordering;
 use core::fmt;
 use std::sync::OnceLock;
 
@@ -8,11 +7,7 @@ use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_core::{self, Error, Output, err};
 use bun_paths::{self as Path, PathBuffer};
-use bun_semver::String;
-use bun_semver::StringBuilder as StringBuilderLike;
 use bun_semver::string::Buf as StringBuf;
-#[allow(unused_imports)]
-use bun_sys::File;
 
 use crate::dependency as Dependency;
 use crate::hosted_git_info;

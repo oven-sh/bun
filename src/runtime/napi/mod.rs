@@ -7,9 +7,6 @@
 //! `bun_collections::LinearFifo`, `bun_threading::{Condvar, Mutex, WorkPool}`,
 //! `bun_output` macros.
 
-use core::ffi::c_void;
-use core::ptr;
-
 #[path = "napi_body.rs"]
 mod napi_body;
 pub use napi_body::{

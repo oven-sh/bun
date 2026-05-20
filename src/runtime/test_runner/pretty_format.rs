@@ -1,15 +1,13 @@
 use core::cell::{Cell, RefCell};
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
+use crate::test_runner::expect::JSValueTestExt;
 use core::ffi::c_void;
-use bun_io::Write as _;
 
 use bun_collections::HashMap;
 use bun_core::{fmt as bun_fmt, Output};
 use bun_jsc::{
-    self as jsc, CallFrame, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
+    self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
-use bun_js_parser::js_lexer as JSLexer;
 use bun_core::{strings, ZigString, ZigStringSlice};
 
 use super::expect;
@@ -104,18 +102,13 @@ impl EventType {
     }
 }
 
+#[derive(Default)]
 pub struct JestPrettyFormat {
     pub counts: Counter,
 }
 
 pub type Type = *mut c_void;
 type Counter = HashMap<u64, u32>;
-
-impl Default for JestPrettyFormat {
-    fn default() -> Self {
-        Self { counts: Counter::default() }
-    }
-}
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -148,18 +141,12 @@ pub enum MessageType {
     // TODO(port): Zig non-exhaustive enum (`_`).
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct FormatOptions {
     pub enable_colors: bool,
     pub add_newline: bool,
     pub flush: bool,
     pub quote_strings: bool,
-}
-
-impl Default for FormatOptions {
-    fn default() -> Self {
-        Self { enable_colors: false, add_newline: false, flush: false, quote_strings: false }
-    }
 }
 
 impl JestPrettyFormat {
@@ -400,16 +387,16 @@ impl<'a> Formatter<'a> {
 // the borrow-aliasing a `scopeguard` would introduce.
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
-        if let Some(node) = self.map_node.take() {
+        if let Some(mut node) = self.map_node.take() {
             // SAFETY: `node` came from `visited::Pool::get_node()` and is
             // exclusively owned for this `Formatter`'s lifetime; its `data` was
             // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
             // `Map`.
             unsafe {
-                let data = (*node.as_ptr()).data.assume_init_mut();
+                let data = node.as_mut().data.assume_init_mut();
                 *data = core::mem::take(&mut self.map);
                 data.clear();
-                visited::Pool::release(node.as_ptr());
+                visited::Pool::release(node.as_mut());
             }
         }
     }
@@ -692,10 +679,6 @@ impl Tag {
     }
 }
 
-// PORT NOTE: Zig's `CAPI.CellType` is the same enum as `JSType` (see
-// ConsoleObject.rs). The C-API alias isn't re-exported yet.
-type CellType = jsc::JSType;
-
 thread_local! {
     static NAME_BUF: RefCell<[u8; 512]> = const { RefCell::new([0u8; 512]) };
 }
@@ -714,7 +697,6 @@ impl<'a> Formatter<'a> {
         let mut slice = slice_.as_ref();
         let mut i: u32 = 0;
         let mut len: u32 = slice.len() as u32;
-        let mut any_non_ascii = false;
         while i < len {
             match slice[i as usize] {
                 b'%' => {
@@ -737,12 +719,7 @@ impl<'a> Formatter<'a> {
 
                     // Flush everything up to the %
                     let end = &slice[0..(i as usize - 1)];
-                    if !any_non_ascii {
-                        writer.write_all(end);
-                    } else {
-                        writer.write_all(end);
-                    }
-                    any_non_ascii = false;
+                    writer.write_all(end);
                     let advance = (i as usize + 1).min(slice.len());
                     slice = &slice[advance..];
                     i = 0;
@@ -788,9 +765,6 @@ impl<'a> Formatter<'a> {
                     if slice[i as usize] == b'%' {
                         i += 2;
                     }
-                }
-                128..=255 => {
-                    any_non_ascii = true;
                 }
                 _ => {}
             }
@@ -1049,7 +1023,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         Ok(())
     }
 
-    pub extern "C" fn for_each(
+    extern "C" fn for_each(
         global_this: &JSGlobalObject,
         ctx_ptr: *mut c_void,
         key_: *mut ZigString,
@@ -1109,18 +1083,9 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         if !is_symbol {
             // TODO: make this one pass?
-            if !key.is_16_bit() && bun_ast::lexer_tables::is_latin1_identifier(key.slice()) {
-                this.add_for_new_line(key.len + 2);
-
-                writer.print(format_args!(
-                    concat!("{}", "\"{}\"", "{}", ":", "{}", " "),
-                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
-                    key,
-                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
-                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
-                ));
-            } else if key.is_16_bit()
-                && bun_ast::lexer_tables::is_latin1_identifier_u16(key.utf16_slice_aligned())
+            if (!key.is_16_bit() && bun_ast::lexer_tables::is_latin1_identifier(key.slice()))
+                || (key.is_16_bit()
+                    && bun_ast::lexer_tables::is_latin1_identifier_u16(key.utf16_slice_aligned()))
             {
                 this.add_for_new_line(key.len + 2);
 
@@ -1920,7 +1885,8 @@ impl<'a> Formatter<'a> {
 
                     if length == 0 {
                         self.quote_strings = prev_quote_strings;
-                        return Ok(writer.print(format_args!("{} {{}}", map_name)));
+                        writer.print(format_args!("{} {{}}", map_name));
+                        return Ok(());
                     }
 
                     writer.print(format_args!("\n{} {{\n", map_name));
@@ -1939,7 +1905,6 @@ impl<'a> Formatter<'a> {
                             (&raw mut iter).cast::<c_void>(),
                             MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
-                        drop(iter);
                         // PORT NOTE: Zig `defer this.indent -|= 1` / `defer this.quote_strings = prev`
                         // run on every exit, including thrown exceptions — restore before propagating.
                         self.indent = self.indent.saturating_sub(1);
@@ -1966,7 +1931,8 @@ impl<'a> Formatter<'a> {
 
                     if length == 0 {
                         self.quote_strings = prev_quote_strings;
-                        return Ok(writer.print(format_args!("{} {{}}", set_name)));
+                        writer.print(format_args!("{} {{}}", set_name));
+                        return Ok(());
                     }
 
                     writer.print(format_args!("\n{} {{\n", set_name));
@@ -1982,7 +1948,6 @@ impl<'a> Formatter<'a> {
                             (&raw mut iter).cast::<c_void>(),
                             SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
-                        drop(iter);
                         // PORT NOTE: Zig `defer this.indent -|= 1` / `defer this.quote_strings = prev`
                         // run on every exit, including thrown exceptions — restore before propagating.
                         self.indent = self.indent.saturating_sub(1);
@@ -2114,15 +2079,9 @@ impl<'a> Formatter<'a> {
                                     .unwrap_or(JSValue::UNDEFINED);
                                 let tag = Tag::get(data, self.global_this)?;
 
-                                if tag.cell.is_string_like() {
-                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, data, self.global_this,
-                                    )?;
-                                } else {
-                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, data, self.global_this,
-                                    )?;
-                                }
+                                self.format::<W, ENABLE_ANSI_COLORS>(
+                                    tag, writer.ctx, data, self.global_this,
+                                )?;
                                 writer.write_all(b", \n");
                             }
                             EventType::ErrorEvent => {
@@ -2162,10 +2121,10 @@ impl<'a> Formatter<'a> {
 
                     writer.write_all(b"<");
 
-                    let mut needs_space = false;
+                    let mut needs_space;
                     let mut tag_name_str = ZigString::init(b"");
 
-                    let mut tag_name_slice: ZigStringSlice = ZigStringSlice::EMPTY;
+                    let tag_name_slice: ZigStringSlice;
                     let mut is_tag_kind_primitive = false;
 
                     // PORT NOTE: defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit()
@@ -2531,7 +2490,6 @@ impl<'a> Formatter<'a> {
 
                     let iter_i = iter.i;
                     let iter_always_newline = iter.always_newline;
-                    drop(iter);
                     // PORT NOTE: Zig `defer this.always_newline_scope = prev` /
                     // `defer this.quote_strings = prev` run on every exit — restore
                     // before propagating any exception from the property iterator.
@@ -2628,10 +2586,12 @@ impl<'a> Formatter<'a> {
 
                     macro_rules! print_typed_slice {
                         ($t:ty) => {{
-                            // SAFETY: array buffer bytes are aligned to the element type by JSC.
-                            let slice_with_type: &[$t] = unsafe {
+                            // SAFETY: `Unaligned<$t>` has align 1 and the same size as `$t`, so any
+                            // `*const u8` is a valid `*const Unaligned<$t>`; `slice` is the live
+                            // backing store of a JSC typed array whose elements are valid `$t`.
+                            let slice_with_type: &[bun_core::Unaligned<$t>] = unsafe {
                                 core::slice::from_raw_parts(
-                                    slice.as_ptr().cast::<$t>(),
+                                    slice.as_ptr().cast::<bun_core::Unaligned<$t>>(),
                                     slice.len() / core::mem::size_of::<$t>(),
                                 )
                             };
@@ -2639,7 +2599,7 @@ impl<'a> Formatter<'a> {
                             for el in slice_with_type {
                                 writer.write_all(b"\n");
                                 let _ = self.write_indent(writer.ctx);
-                                writer.print(format_args!("{},", el));
+                                writer.print(format_args!("{},", el.get()));
                             }
                             self.indent = self.indent.saturating_sub(1);
                         }};

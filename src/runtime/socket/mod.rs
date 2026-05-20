@@ -45,13 +45,14 @@ pub mod ssl_wrapper {
         is_client: bool,
         handlers: Handlers<T>,
     ) -> Result<SSLWrapper<T>, bun_core::Error> {
-        SSLWrapper::<T>::init_from_options(ssl_options.as_usockets(), is_client, handlers)
+        SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
             .map_err(bun_core::Error::from)
     }
 }
 
-#[path = "tls_socket_functions.rs"]
-mod tls_socket_functions;
+// `tls_socket_functions.rs` is `#[path]`-included from `socket_body.rs` (where
+// the functions are actually used); a second top-level include here was only
+// there for type-check parity.
 
 #[path = "udp_socket.rs"]
 pub mod udp_socket_draft;

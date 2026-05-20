@@ -98,7 +98,7 @@ where
                     }
                 }
 
-                print_updated_package::<W, ENABLE_ANSI_COLORS>(this, update_info, writer)?;
+                print_updated_package::<W, ENABLE_ANSI_COLORS>(this, &update_info, writer)?;
             }
         }
     }
@@ -173,7 +173,7 @@ enum ShouldPrintPackageInstallResult<'a> {
     Yes,
     No,
     Return,
-    Update(PackageUpdatePrintInfo<'a>),
+    Update(Box<PackageUpdatePrintInfo<'a>>),
 }
 
 fn should_print_package_install<'a>(
@@ -235,12 +235,14 @@ fn should_print_package_install<'a>(
         if let Some(entry) = manager.updating_packages.get(name) {
             if let Some(original_version) = entry.original_version {
                 if !original_version.eql(npm_version) {
-                    return ShouldPrintPackageInstallResult::Update(PackageUpdatePrintInfo {
-                        version: original_version,
-                        version_buf: entry.original_version_string_buf.as_ref(),
-                        resolution,
-                        dependency_id: dep_id,
-                    });
+                    return ShouldPrintPackageInstallResult::Update(Box::new(
+                        PackageUpdatePrintInfo {
+                            version: original_version,
+                            version_buf: entry.original_version_string_buf.as_ref(),
+                            resolution,
+                            dependency_id: dep_id,
+                        },
+                    ));
                 }
             }
         }
@@ -251,7 +253,7 @@ fn should_print_package_install<'a>(
 
 fn print_updated_package<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
-    update_info: PackageUpdatePrintInfo<'_>,
+    update_info: &PackageUpdatePrintInfo<'_>,
     writer: &mut W,
 ) -> Result<(), bun_core::Error>
 where
@@ -304,7 +306,7 @@ where
 
     let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
-        manager.format_later_version_in_cache(package_name, dependency.name_hash, resolution)
+        manager.format_later_version_in_cache(package_name, dependency.name_hash, &resolution)
     {
         // TODO(port): Output.prettyFmt comptime ANSI format string
         let fmt = if ENABLE_ANSI_COLORS {

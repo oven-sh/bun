@@ -1,7 +1,6 @@
 use bun_collections::ArrayHashMap;
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
 use enumset::{EnumSet, EnumSetType};
@@ -64,10 +63,7 @@ impl JsonCache {
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
         // runs after the `func() catch null` body; here the append is hoisted past the match.
-        let result = match func(source, &mut temp_log, bump) {
-            Ok(expr) => Some(expr),
-            Err(_) => None,
-        };
+        let result = func(source, &mut temp_log, bump).ok();
         let _ = temp_log.append_to_maybe_recycled(log, source);
         Ok(result)
     }

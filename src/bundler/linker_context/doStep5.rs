@@ -7,19 +7,19 @@
 //! each use site.
 
 use crate::mal_prelude::*;
-use core::mem::{MaybeUninit, offset_of};
+use core::mem::MaybeUninit;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::Loc;
-use bun_collections::{ArrayHashMap, HashMap, VecExt};
+use bun_collections::{HashMap, VecExt};
 use bun_core::strings;
 
-use crate::bundled_ast::{BundledAstColumns as _, Flags as AstFlags};
+use crate::bundled_ast::Flags as AstFlags;
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{
-    self as js_ast, Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part,
-    PartSymbolUseMap, Ref, S, Stmt,
+    Binding, DeclaredSymbol, DeclaredSymbolList, Dependency, E, Expr, G, Part, PartSymbolUseMap,
+    Ref, S, Stmt,
 };
 
 use crate::options::Format;
@@ -51,7 +51,7 @@ impl LinkerContext<'_> {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
-        // Shared-ref view for all read-only access. Multiple worker threads may
+        // SAFETY: shared-ref view for all read-only access. Multiple worker threads may
         // hold `&LinkerContext` simultaneously; the SoA buffers live behind raw
         // pointers inside `MultiArrayList`, so this borrow does not assert
         // immutability over the heap cells we write below.
@@ -89,14 +89,16 @@ impl LinkerContext<'_> {
             ($col:expr, $ty:ty, $i:expr) => {{
                 // SAFETY: `$col: *mut [$ty]` from `split_raw()`; `$i < len`
                 // (guarded above for `meta`, and `ast.len == meta.len`). The
-                // `as *mut $ty` fat→thin cast preserves the raw provenance
+                // `.cast::<$ty>()` fat→thin cast preserves the raw provenance
                 // from `split_raw()`.
-                unsafe { &mut *(($col as *mut $ty).add($i as usize)) }
+                unsafe { &mut *($col.cast::<$ty>().add($i as usize)) }
             }};
         }
 
-        let resolved_exports: *mut ResolvedExports =
-            (meta.resolved_exports as *mut ResolvedExports).wrapping_add(id as usize);
+        let resolved_exports: *mut ResolvedExports = meta
+            .resolved_exports
+            .cast::<ResolvedExports>()
+            .wrapping_add(id as usize);
         // Read-only columns (never written during step 5) — whole-column
         // shared slices are fine here.
         // SAFETY: `split_raw()` columns are valid for `meta.len()` elements;
@@ -205,8 +207,10 @@ impl LinkerContext<'_> {
         // raw per-row pointers via `split_raw()` so concurrent tasks never
         // hold overlapping `&mut [T]`.
         let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).as_mut_slice();
-        let named_imports: *mut crate::bundled_ast::NamedImports =
-            (ast.named_imports as *mut crate::bundled_ast::NamedImports).wrapping_add(id as usize);
+        let named_imports: *mut crate::bundled_ast::NamedImports = ast
+            .named_imports
+            .cast::<crate::bundled_ast::NamedImports>()
+            .wrapping_add(id as usize);
         // SAFETY: `named_imports` is a stable column pointer (see above). We
         // hoist the emptiness check so the per-symbol-use inner loop skips
         // the lookup entirely for files with no imports (≈ all leaf modules).
@@ -695,7 +699,7 @@ impl LinkerContext<'_> {
                     // `[MaybeUninit<Stmt>]` → `[Stmt]`. The worker arena
                     // outlives the link pass.
                     bun_ast::StoreSlice::new_mut(unsafe {
-                        &mut *(init as *mut [MaybeUninit<Stmt>] as *mut [Stmt])
+                        &mut *(std::ptr::from_mut::<[MaybeUninit<Stmt>]>(init) as *mut [Stmt])
                     })
                 } else {
                     bun_ast::StoreSlice::EMPTY

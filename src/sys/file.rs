@@ -65,9 +65,7 @@ impl File {
     /// the descriptor's lifecycle.
     #[inline]
     pub fn into_raw(self) -> Fd {
-        let fd = self.handle;
-        core::mem::forget(self);
-        fd
+        core::mem::ManuallyDrop::new(self).handle
     }
     /// Non-owning `&File` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
     #[inline]
@@ -233,6 +231,7 @@ impl File {
             }
             #[cfg(not(unix))]
             {
+                let _ = off;
                 read(self.handle, dst)
             }
         })

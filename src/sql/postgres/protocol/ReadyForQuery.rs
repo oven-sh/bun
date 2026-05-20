@@ -1,4 +1,3 @@
-use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
 use super::transaction_status_indicator::TransactionStatusIndicator;
 

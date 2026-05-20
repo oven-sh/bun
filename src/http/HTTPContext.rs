@@ -4,8 +4,7 @@ use core::ptr::NonNull;
 
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::{
-    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, ProxyTunnel,
-    get_cert_error_from_no, h2,
+    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
@@ -57,6 +56,9 @@ pub struct HTTPContext<const SSL: bool> {
     /// coalesce onto the first one's session once ALPN resolves rather
     /// than each opening its own socket.
     // TODO(port): lifetime — owned Box<PendingConnect>; `pc.deinit()` in Drop.
+    // The `Box` is load-bearing: `client.pending_h2` holds `NonNull<PendingConnect>`
+    // into the box interior; unboxing would dangle it on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     pub pending_h2_connects: Vec<Box<h2::PendingConnect>>,
 }
 
@@ -523,12 +525,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .unwrap()
             .get()
             .as_usockets_for_client_verification();
-        self.init_with_opts(opts)
+        self.init_with_opts(&opts)
     }
 
     fn init_with_opts(
         &mut self,
-        opts: uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::SocketContext::BunSocketContextOptions,
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
@@ -571,7 +573,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             request_cert: 1,
             ..Default::default()
         };
-        self.init_with_opts(opts)
+        self.init_with_opts(&opts)
     }
 
     pub fn init(&mut self) {
@@ -1187,12 +1189,15 @@ impl<const SSL: bool> Handler<SSL> {
                     }
 
                     // if checkServerIdentity returns false, we dont call firstCall — the connection was rejected
-                    let ssl_ptr = socket
-                        .get_native_handle()
-                        .map(|h| h.cast::<bun_boringssl_sys::SSL>())
-                        .unwrap_or(core::ptr::null_mut());
-                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl_ptr, true)
-                    {
+                    // SAFETY: the native handle on a TLS socket is `*mut SSL`,
+                    // live and non-null after the handshake completes.
+                    let ssl = unsafe {
+                        &mut *socket
+                            .get_native_handle()
+                            .expect("TLS socket has native handle after handshake")
+                            .cast::<bun_boringssl_sys::SSL>()
+                    };
+                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl, true) {
                         // checkServerIdentity already called closeAndFail() → fail()
                         // → result callback, which may have destroyed the
                         // AsyncHTTP that embeds `client`. Socket is terminated

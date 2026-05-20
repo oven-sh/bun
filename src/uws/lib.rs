@@ -1,13 +1,7 @@
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_char, c_void};
 
 use bun_core::ZStr;
 
@@ -142,15 +136,18 @@ pub fn on_thread_exit() {
     bun_clear_loop_at_thread_exit()
 }
 
+/// # Safety
+/// `filename` and `error_msg` must be valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
-pub extern "C" fn BUN__warn__extra_ca_load_failed(
+pub unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     filename: *const c_char,
     error_msg: *const c_char,
 ) {
-    // SAFETY: C++ caller passes valid NUL-terminated strings.
+    // SAFETY: caller contract guarantees valid NUL-terminated strings.
     let filename = unsafe { bun_core::ffi::cstr(filename) };
+    // SAFETY: caller contract guarantees valid NUL-terminated strings.
     let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
-    bun_core::Output::warn(&format_args!(
+    bun_core::Output::warn(format_args!(
         "ignoring extra certs from {}, load failed: {}",
         bstr::BStr::new(filename.to_bytes()),
         bstr::BStr::new(error_msg.to_bytes()),
@@ -196,21 +193,19 @@ pub mod ssl_wrapper {
     // declares every symbol SSLWrapper needs, so the old local shim is gone.
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
-            BIO, BIO_METHOD, BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem,
-            BIO_set_mem_eof_return, BIO_write, ERR_clear_error, SSL, SSL_CTX, SSL_CTX_free,
-            SSL_CTX_get_verify_mode, SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ,
-            SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN,
-            SSL_RECEIVED_SHUTDOWN, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake, SSL_free,
-            SSL_get_error, SSL_get_rbio, SSL_get_shutdown, SSL_get_wbio, SSL_is_init_finished,
-            SSL_new, SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio,
-            SSL_set_connect_state, SSL_set_renegotiate_mode, SSL_set_verify,
-            SSL_set0_verify_cert_store, SSL_shutdown, SSL_verify_cb, SSL_write, X509_STORE,
-            X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_mode_t,
-            ssl_renegotiate_never,
+            BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
+            BIO_write, ERR_clear_error, SSL, SSL_CTX, SSL_CTX_free, SSL_CTX_get_verify_mode,
+            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_VERIFY_NONE,
+            SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio,
+            SSL_get_shutdown, SSL_get_wbio, SSL_is_init_finished, SSL_new, SSL_read,
+            SSL_renegotiate, SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state,
+            SSL_set_renegotiate_mode, SSL_set_verify, SSL_set0_verify_cert_store, SSL_shutdown,
+            SSL_write, X509_STORE, X509_STORE_CTX, ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
-    use crate::{create_bun_socket_error_t, us_bun_verify_error_t};
+    use crate::us_bun_verify_error_t;
     use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for SSLWrapper
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
@@ -524,7 +519,7 @@ pub mod ssl_wrapper {
         /// `jsc`/`http_types` dependency. The original `SSLConfig`-taking `init` lives as
         /// an extension in the higher tier.
         pub fn init_from_options(
-            ctx_opts: crate::SocketContext::BunSocketContextOptions,
+            ctx_opts: &crate::SocketContext::BunSocketContextOptions,
             is_client: bool,
             handlers: Handlers<T>,
         ) -> Result<Self, InitError> {
@@ -665,12 +660,7 @@ pub mod ssl_wrapper {
             self.handle_traffic();
             let Some(ssl) = self.ssl else { return 0 };
             // SAFETY: ssl is a live SSL*; SSL_get_wbio returns the BIO bound in init_with_ctx.
-            let pending =
-                unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) };
-            if pending > 0 {
-                return usize::try_from(pending).expect("int cast");
-            }
-            0
+            unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) }
         }
 
         /// Return if we have pending data to be read or write
@@ -1169,15 +1159,6 @@ pub mod ssl_wrapper {
 // rather than re-exported from bun_uws_sys because that crate currently gates
 // every module and only exposes opaques — and we cannot `impl` foreign opaques.
 // When bun_uws_sys un-gates, collapse these into `pub use bun_uws_sys::loop_::*`.
-
-/// `zig_mutex_t` from loop_data.h — never touched from Rust, only sized for
-/// correct field offsets of `parent_ptr`/`jsc_vm` after it.
-#[cfg(target_vendor = "apple")]
-type ZigMutex = u32; // os_unfair_lock
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-type ZigMutex = u32;
-#[cfg(windows)]
-type ZigMutex = *mut c_void; // SRWLOCK
 
 // bun_uws_sys provides the real Loop/PosixLoop/WindowsLoop/InternalLoopData/
 // SocketGroup. Re-export them here so `bun_uws::Loop` and `bun_uws_sys::Loop`

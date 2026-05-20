@@ -332,7 +332,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 ptr::write_bytes(
                     unused.as_mut_ptr().cast::<u8>(),
                     0xAA,
-                    unused.len() * mem::size_of::<T>(),
+                    std::mem::size_of_val(unused),
                 );
             }
         }
@@ -768,26 +768,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             self.discard(written);
         }
         Ok(())
-    }
-}
-
-// PORT NOTE: Zig's `Reader = std.Io.GenericReader(*Self, error{}, readFn)` /
-// `Writer` typedefs constrain T == u8 at the type level. In Rust that
-// constraint is expressed by a separate impl block on `LinearFifo<u8, _>`, not
-// a `where B: LinearFifoBuffer<u8>` bound on the generic impl (which would not
-// constrain `T`).
-impl<B: LinearFifoBuffer<u8>> LinearFifo<u8, B> {
-    /// Same as `read` except it returns an error union
-    /// The purpose of this function existing is to match `std.io.Reader` API.
-    fn read_fn(&mut self, dest: &mut [u8]) -> Result<usize, core::convert::Infallible> {
-        Ok(self.read(dest))
-    }
-
-    /// Same as `write` except it returns the number of bytes written, which is always the same
-    /// as `bytes.len`. The purpose of this function existing is to match `std.io.Writer` API.
-    fn append_write(&mut self, bytes: &[u8]) -> Result<usize, AllocError> {
-        self.write(bytes)?;
-        Ok(bytes.len())
     }
 }
 

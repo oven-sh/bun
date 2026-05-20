@@ -519,12 +519,12 @@ impl Map {
         self.get_const(old).unwrap().link.set(new);
         // `merge_contents_with` mutates non-Cell fields (use_count_estimate,
         // must_not_be_renamed, original_name) on `new` while reading `old`.
+        let old_symbol = self.get(old).unwrap();
+        let new_symbol = self.get(new).unwrap();
         // SAFETY: `old != new` (checked above) so the two slots are disjoint
         // elements of the NestedList; `get()` derives `*mut` from Vec's raw
         // `NonNull` (write provenance preserved). Neither `&mut` outlives this
         // block (cf. split_at_mut).
-        let old_symbol = self.get(old).unwrap();
-        let new_symbol = self.get(new).unwrap();
         unsafe {
             (&mut *new_symbol).merge_contents_with(&mut *old_symbol);
         }

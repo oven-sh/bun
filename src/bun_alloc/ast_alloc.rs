@@ -143,9 +143,11 @@ fn bump_alloc(heap: *mut mimalloc::Heap, size: usize, align: usize) -> Option<*m
             // SAFETY: `pad + size <= remaining`, so `cur + pad` and
             // `cur + pad + size` stay within `[BUMP_CUR, BUMP_END]` — i.e. in
             // bounds of the chunk allocation (one-past-the-end at most).
-            let aligned = unsafe { cur.add(pad) };
-            BUMP_CUR.set(unsafe { aligned.add(size) });
-            return Some(aligned);
+            unsafe {
+                let aligned = cur.add(pad);
+                BUMP_CUR.set(aligned.add(size));
+                return Some(aligned);
+            }
         }
     }
     bump_refill(heap, size)
@@ -161,12 +163,14 @@ fn bump_refill(heap: *mut mimalloc::Heap, size: usize) -> Option<*mut u8> {
     if chunk.is_null() {
         return None;
     }
-    // `chunk` is `>= MI_MAX_ALIGN_SIZE`-aligned (mimalloc guarantee) and the
+    // SAFETY: `chunk` is `>= MI_MAX_ALIGN_SIZE`-aligned (mimalloc guarantee) and the
     // caller's `align <= MI_MAX_ALIGN_SIZE`, so carving from the front already
     // satisfies the request's alignment. `size <= BUMP_MAX < BUMP_CHUNK`, so
     // both `add`s are in bounds.
-    BUMP_CUR.set(unsafe { chunk.add(size) });
-    BUMP_END.set(unsafe { chunk.add(BUMP_CHUNK) });
+    unsafe {
+        BUMP_CUR.set(chunk.add(size));
+        BUMP_END.set(chunk.add(BUMP_CHUNK));
+    }
     BUMP_HEAP.set(heap);
     Some(chunk)
 }

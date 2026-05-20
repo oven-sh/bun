@@ -1,4 +1,4 @@
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use bun_jsc::JsCell;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -7,14 +7,13 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
-    self as jsc, CallFrame, EventLoopSqlExt as _, HasAutoFlush, JSGlobalObject,
-    JSGlobalObjectSqlExt as _, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue,
+    JsResult, VirtualMachine, VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, OffsetByteList, StringMap};
-use bun_core::String as BunString;
 use bun_core::strings;
-use bun_core::{self, Output};
+use bun_core::{self};
 use bun_io::KeepAlive;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_uws as uws;
@@ -28,11 +27,10 @@ use crate::postgres::data_cell as DataCell;
 use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
-use crate::postgres::postgres_sql_query::{self, Status as QueryStatus, js as query_js};
+use crate::postgres::postgres_sql_query::{self, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
-use crate::shared::sql_data_cell::{Tag as DataCellTag, Value as DataCellValue};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -284,6 +282,7 @@ impl PostgresSQLConnection {
     /// before any call that touches `authentication_state` again
     /// (`self.writer()` / `self.flush_data()` / `self.fail()` do not).
     #[inline]
+    #[allow(clippy::mut_from_ref)] // body projects through `JsCell` (UnsafeCell-backed); see SAFETY note
     fn sasl_state_mut(&self) -> Option<&mut crate::postgres::sasl::SASL> {
         // SAFETY: see doc comment — single-JS-thread, no re-entrant access to
         // `authentication_state` for the borrow's lifetime.
@@ -739,7 +738,7 @@ impl PostgresSQLConnection {
         let err = match create_postgres_error(
             self.global(),
             &message,
-            PostgresErrorOptions {
+            &PostgresErrorOptions {
                 code,
                 ..Default::default()
             },
@@ -792,7 +791,7 @@ impl PostgresSQLConnection {
         }
         debug!("sendStartupMessage");
         self.status.set(Status::SentStartupMessage);
-        let mut msg = protocol::StartupMessage {
+        let msg = protocol::StartupMessage {
             user: Data::Temporary(self.user),
             database: Data::Temporary(self.database),
             options: Data::Temporary(self.options),
@@ -1132,7 +1131,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::none;
         secure = vm
             .ssl_ctx_cache()
-            .get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
+            .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
         if secure.is_none() {
             drop(tls_config);
             // TODO(port): Zig `err.toJS(globalObject)` — `to_js` lives as an extension
@@ -1165,11 +1164,11 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     // moved (`move_to_slice` hands back the same allocation), so detach each
     // result to a `RawSlice` immediately — the struct stores them as
     // `RawSlice` (self-referential into `options_buf`).
-    let mut username = bun_ptr::RawSlice::<u8>::EMPTY;
-    let mut password = bun_ptr::RawSlice::<u8>::EMPTY;
-    let mut database = bun_ptr::RawSlice::<u8>::EMPTY;
-    let mut options = bun_ptr::RawSlice::<u8>::EMPTY;
-    let mut path = bun_ptr::RawSlice::<u8>::EMPTY;
+    let username: bun_ptr::RawSlice<u8>;
+    let password: bun_ptr::RawSlice<u8>;
+    let database: bun_ptr::RawSlice<u8>;
+    let options: bun_ptr::RawSlice<u8>;
+    let path: bun_ptr::RawSlice<u8>;
 
     let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
 
@@ -1222,7 +1221,7 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         (path, b"path"),
     ] {
         let entry = entry.slice();
-        if !entry.is_empty() && entry.iter().any(|&c| c == 0) {
+        if !entry.is_empty() && entry.contains(&0) {
             drop(options_buf);
             // tls_config / secure released by the errdefer above.
             // TODO(port): Zig used `entry[1] ++ " must not contain null bytes"` (comptime concat).
@@ -1357,7 +1356,6 @@ pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
     /* TODO(port): bun_core::analytics::Features::POSTGRES_CONNECTIONS counter */
-    ();
     Ok(js_value)
 }
 
@@ -1559,7 +1557,7 @@ impl PostgresSQLConnection {
                             request.on_js_error(reason, global);
                         } else {
                             request.on_error(
-                                StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
+                                &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
                                 global,
                             );
                         }
@@ -1574,7 +1572,7 @@ impl PostgresSQLConnection {
                             request.on_js_error(reason, global);
                         } else {
                             request.on_error(
-                                StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
+                                &StatementError::PostgresError(AnyPostgresError::ConnectionClosed),
                                 global,
                             );
                         }
@@ -1703,7 +1701,7 @@ impl Writer {
         Ok(())
     }
 
-    pub fn offset(&self) -> usize {
+    pub fn offset(self) -> usize {
         self.connection.write_buffer.get().len() as usize
     }
 }
@@ -1711,7 +1709,7 @@ impl Writer {
 impl protocol::WriterContext for Writer {
     #[inline]
     fn offset(self) -> usize {
-        Writer::offset(&self)
+        Writer::offset(self)
     }
     #[inline]
     fn write(mut self, bytes: &[u8]) -> Result<(), AnyPostgresError> {
@@ -1757,7 +1755,7 @@ impl Reader {
         self.connection.last_message_start.set(head);
     }
 
-    pub fn ensure_length(&self, count: usize) -> bool {
+    pub fn ensure_length(self, count: usize) -> bool {
         self.ensure_capacity(count)
     }
 
@@ -1771,14 +1769,14 @@ impl Reader {
         });
     }
 
-    pub fn ensure_capacity(&self, count: usize) -> bool {
+    pub fn ensure_capacity(self, count: usize) -> bool {
         let buf = self.read_buffer();
-        (buf.head as usize) + count <= (buf.byte_list.len() as usize)
+        (buf.head as usize) + count <= buf.byte_list.len()
     }
 
     pub fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         let remaining = self.read_buffer().remaining();
-        if (remaining.len() as usize) < count {
+        if remaining.len() < count {
             return Err(AnyPostgresError::ShortRead);
         }
 
@@ -1818,7 +1816,7 @@ impl protocol::ReaderContext for Reader {
     }
     #[inline]
     fn ensure_length(&mut self, count: usize) -> bool {
-        Reader::ensure_length(self, count)
+        Reader::ensure_length(*self, count)
     }
     #[inline]
     fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
@@ -2485,8 +2483,10 @@ impl PostgresSQLConnection {
                     // SAFETY: cells_ptr points into stack_buf/heap_cells, both declared
                     // earlier in this block and outliving this guard; `count` is the
                     // post-decode element count and never exceeds the slice length.
-                    for i in 0..count {
-                        unsafe { (*cells_ptr.add(i)).deinit() };
+                    unsafe {
+                        for i in 0..count {
+                            (*cells_ptr.add(i)).deinit();
+                        }
                     }
                     // `if free_cells free(cells)`: heap_cells Vec drops at scope end.
                 };
@@ -2686,7 +2686,7 @@ impl PostgresSQLConnection {
                             mechanism_buf[written] = 0;
                             &mechanism_buf[..written]
                         };
-                        let mut response = protocol::SASLInitialResponse {
+                        let response = protocol::SASLInitialResponse {
                             mechanism: Data::Temporary(bun_ptr::RawSlice::new(b"SCRAM-SHA-256")),
                             data: Data::Temporary(bun_ptr::RawSlice::new(mechanism)),
                         };
@@ -2802,7 +2802,7 @@ impl PostgresSQLConnection {
                             );
                         }
 
-                        let mut response = protocol::SASLResponse {
+                        let response = protocol::SASLResponse {
                             data: Data::Temporary(bun_ptr::RawSlice::new(payload.as_slice())),
                         };
 
@@ -2870,7 +2870,7 @@ impl PostgresSQLConnection {
 
                     protocol::Authentication::ClearTextPassword => {
                         debug!("ClearTextPassword");
-                        let mut response = protocol::PasswordMessage {
+                        let response = protocol::PasswordMessage {
                             // password is a valid slice into options_buf.
                             password: Data::Temporary(self.password),
                         };
@@ -2926,7 +2926,7 @@ impl PostgresSQLConnection {
                             &final_password_buf[..n]
                         };
 
-                        let mut response = protocol::PasswordMessage {
+                        let response = protocol::PasswordMessage {
                             password: Data::Temporary(bun_ptr::RawSlice::new(final_password)),
                         };
 

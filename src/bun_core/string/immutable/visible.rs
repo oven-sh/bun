@@ -4,12 +4,12 @@
 // PERF(port): swap to `bun_highway` / `std::arch` intrinsics.
 use core::ffi::c_uint;
 
-use crate::string::immutable::{
-    self as strings, U3Fast, UNICODE_REPLACEMENT, decode_wtf8_rune_t_multibyte, first_non_ascii,
-    first_non_ascii16, grapheme, index_of_char_usize, index_of_char16_usize,
-    utf16_codepoint_with_fffd, wtf8_byte_sequence_length_with_invalid,
-};
 use crate::string::immutable::{AsciiU16Vector as u16x8, AsciiVector as u8x16};
+use crate::string::immutable::{
+    U3Fast, UNICODE_REPLACEMENT, decode_wtf8_rune_t_multibyte, first_non_ascii, first_non_ascii16,
+    grapheme, index_of_char_usize, index_of_char16_usize, utf16_codepoint_with_fffd,
+    wtf8_byte_sequence_length_with_invalid,
+};
 
 pub fn is_zero_width_codepoint_type<T: Copy + Into<u32>>(cp: T) -> bool {
     let cp: u32 = cp.into();
@@ -899,7 +899,7 @@ pub mod visible {
             };
 
             let cp: u32 = if skip > 1 {
-                decode_wtf8_rune_t_multibyte(&cp_bytes, skip, UNICODE_REPLACEMENT)
+                decode_wtf8_rune_t_multibyte(cp_bytes, skip, UNICODE_REPLACEMENT)
             } else {
                 UNICODE_REPLACEMENT
             };
@@ -1325,7 +1325,7 @@ pub mod visible {
             if replacement.fail || replacement.is_lead {
                 continue;
             }
-            let cp: u32 = u32::try_from(replacement.code_point).expect("int cast");
+            let cp: u32 = replacement.code_point;
             // PORT NOTE: Zig `defer prev = cp;` — body never reads `prev` after
             // this point, so hoisted; equivalent.
             prev = Some(cp);
@@ -1375,13 +1375,7 @@ pub mod visible {
         len
     }
 
-    fn visible_latin1_width_fn(input: &[u8]) -> usize {
-        visible_latin1_width(input)
-    }
-
     pub mod width {
-        use super::*;
-
         pub fn latin1(input: &[u8]) -> usize {
             super::visible_latin1_width(input)
         }
@@ -1509,7 +1503,7 @@ pub mod visible {
                 _ => unreachable!(),
             };
             let cp: u32 = if skip > 1 {
-                decode_wtf8_rune_t_multibyte(&cp_bytes, skip, UNICODE_REPLACEMENT)
+                decode_wtf8_rune_t_multibyte(cp_bytes, skip, UNICODE_REPLACEMENT)
             } else {
                 UNICODE_REPLACEMENT
             };
@@ -1577,7 +1571,7 @@ pub(super) extern "C" fn Bun__visibleWidthExcludeANSI_latin1(ptr: *const u8, len
 /// Calculate visible width of a single codepoint
 #[unsafe(no_mangle)]
 pub(super) extern "C" fn Bun__codepointWidth(cp: u32, ambiguous_as_wide: bool) -> u8 {
-    u8::try_from(visible_codepoint_width(cp, ambiguous_as_wide)).expect("int cast")
+    visible_codepoint_width(cp, ambiguous_as_wide)
 }
 
 /// Grapheme break detection for C++ callers.

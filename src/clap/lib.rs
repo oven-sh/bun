@@ -1,4 +1,3 @@
-#![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 use core::fmt;
@@ -195,7 +194,7 @@ macro_rules! parse_params {
 }
 
 /// The names a `Param` can have.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Names {
     /// '-' prefix
     pub short: Option<u8>,
@@ -205,16 +204,6 @@ pub struct Names {
 
     /// Additional '--' prefixed aliases (e.g., --grep as alias for --test-name-pattern)
     pub long_aliases: &'static [&'static [u8]],
-}
-
-impl Default for Names {
-    fn default() -> Self {
-        Self {
-            short: None,
-            long: None,
-            long_aliases: &[],
-        }
-    }
 }
 
 impl Names {
@@ -406,17 +395,6 @@ impl Diagnostic {
     }
 }
 
-#[cfg(test)]
-fn test_diag(diag: Diagnostic, err: bun_core::Error, expected: &[u8]) {
-    // TODO(port): std.io.fixedBufferStream — Diagnostic.report ignores the writer
-    // and goes through Output, so this helper cannot capture output the same way.
-    let mut buf = [0u8; 1024];
-    let _ = &mut buf;
-    diag.report((), err).expect("unreachable");
-    let _ = expected;
-    // TODO(port): assert against captured Output
-}
-
 #[derive(Clone, Copy)]
 pub struct Help {
     /// The description text exactly as written in the param spec — may still
@@ -443,20 +421,12 @@ impl Default for Help {
 }
 
 /// Options that can be set to customize the behavior of parsing.
+#[derive(Default)]
 pub struct ParseOptions<'a> {
     // PORT NOTE: `mem.Allocator param` field deleted — non-AST crate uses
     // the global mimalloc.
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
-}
-
-impl<'a> Default for ParseOptions<'a> {
-    fn default() -> Self {
-        Self {
-            diagnostic: None,
-            stop_after_positional_at: 0,
-        }
-    }
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -656,7 +626,7 @@ where
                 stream.write_char(' ')?;
             }
             let ht2 = help_text(context, param).map_err(Into::into)?;
-            write!(stream, "\t{}\n", bstr::BStr::new(ht2))?;
+            writeln!(stream, "\t{}", bstr::BStr::new(ht2))?;
         }
     }
     Ok(())
@@ -1035,14 +1005,6 @@ where
 #[inline(never)]
 pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
     usage_ex(stream, params, get_value_simple)
-}
-
-#[cfg(test)]
-fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::Error> {
-    let mut buf = Vec::<u8>::with_capacity(1024);
-    usage(&mut bun_core::fmt::VecWriter(&mut buf), params)?;
-    assert_eq!(expected, &buf[..]);
-    Ok(())
 }
 
 #[cfg(test)]

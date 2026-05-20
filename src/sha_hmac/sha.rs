@@ -67,9 +67,11 @@ macro_rules! new_hasher {
 
             pub fn init() -> Self {
                 boringssl::load();
-                // SAFETY: BoringSSL *_Init fully initialises the context; we never
-                // read `hasher` before the call below writes it.
+                // SAFETY: `$ctx` is a BoringSSL POD context struct for which the
+                // all-zero bit pattern is a valid (uninitialised) value.
                 let mut this: Self = unsafe { bun_core::ffi::zeroed_unchecked() };
+                // SAFETY: `this.hasher` is a writable, properly sized `$ctx`;
+                // BoringSSL *_Init only writes to it and does not read prior contents.
                 let rc: c_int = unsafe { $init(&mut this.hasher) };
                 debug_assert!(rc == 1);
                 this
@@ -134,7 +136,13 @@ macro_rules! new_evp {
                 this
             }
 
-            pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size], engine: *mut ffi::ENGINE) {
+            /// # Safety
+            /// `engine` must be null (default engine) or a live `ENGINE*`.
+            pub unsafe fn hash(
+                bytes: &[u8],
+                out: &mut [u8; $digest_size],
+                engine: *mut ffi::ENGINE,
+            ) {
                 let md = ffi::$md_fn();
 
                 // SAFETY: `out` is DIGEST bytes; `size` out-param is nullable.
@@ -348,18 +356,6 @@ pub mod hashers {
 // TODO(port): `boring`, `zig`, `evp` below were Zig `[_]type{...}` comptime type
 // lists (with `void` sentinels) used for ad-hoc benchmarking against Zig's
 // `std.crypto.hash`. Rust has no type-list value equivalent and no `std.crypto`
-// counterpart; they are private and unreferenced in the Zig source, so only
-// `labels` is kept.
-
-#[allow(dead_code)]
-const LABELS: [&[u8]; 7] = [
-    b"SHA1",
-    b"SHA512",
-    b"SHA384",
-    b"SHA256",
-    b"SHA512_256",
-    b"Blake2",
-    b"Blake3",
-];
+// counterpart; they are private and unreferenced in the Zig source.
 
 // ported from: src/sha_hmac/sha.zig

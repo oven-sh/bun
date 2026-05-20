@@ -317,12 +317,6 @@ mod advanced {
         }
     }
 
-    #[repr(C, packed)]
-    struct VersionPacket {
-        type_: IPCMessageType,
-        version: u32,
-    }
-
     // comptime std.mem.asBytes(&VersionPacket{})
     static VERSION_PACKET_BYTES: [u8; HEADER_LENGTH] = {
         let v = VERSION.to_ne_bytes();
@@ -1583,13 +1577,6 @@ impl SendQueue {
         crate::GlobalRef::from(JSGlobalObject::opaque_ref(self.owner_ref().global_this()))
     }
 
-    #[cfg(windows)]
-    extern "C" fn on_server_pipe_close(this: *mut uv::Pipe) {
-        // safely free the pipes
-        // SAFETY: pipe was heap-allocated by the caller that configured it.
-        let _ = unsafe { bun_core::heap::take(this) };
-    }
-
     /// # Safety
     /// `this` must point at a live `SendQueue` and must derive from the
     /// allocation's root raw pointer (SharedReadWrite provenance), NOT from a
@@ -2183,9 +2170,7 @@ pub mod IPCHandlers {
                     let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
-                    debug_assert!(
-                        json_buf.data.len() as usize + nread <= json_buf.data.capacity() as usize
-                    );
+                    debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
                     // libuv wrote `nread` bytes at `data[old_len..]` via the
                     // slice returned from `on_read_alloc`. Only the *count*
                     // is forwarded — re-deriving a `&[u8]` over that region
@@ -2239,7 +2224,7 @@ pub mod IPCHandlers {
                     };
                     // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
                     unsafe { adv_buf.uv_commit(nread) };
-                    let total_len = adv_buf.len() as usize;
+                    let total_len = adv_buf.len();
                     let mut slice_start: usize = 0;
 
                     loop {

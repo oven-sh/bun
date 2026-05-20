@@ -1,13 +1,16 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
-use core::mem::{MaybeUninit, offset_of};
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+#[cfg(windows)]
+use core::mem::MaybeUninit;
+use core::sync::atomic::AtomicU8;
+#[cfg(not(windows))]
+use core::sync::atomic::Ordering;
 
 use crate::webcore::Lifetime;
+#[cfg(not(windows))]
+use crate::webcore::blob::ClosingState;
 use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
-use crate::webcore::blob::{
-    Blob, ClosingState, FileCloser, FileOpener, MAX_SIZE, SizeType, StoreRef,
-};
+use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, StoreRef};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
@@ -18,14 +21,15 @@ use bun_io::{self as io, FileAction};
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
-    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SysErrorJsc as _,
-    SystemError,
+    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
+#[cfg(not(windows))]
+use bun_sys::Stat;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
-use bun_sys::{self, Fd, Stat};
+use bun_sys::{self, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -34,6 +38,7 @@ bun_output::declare_scope!(ReadFile, hidden);
 macro_rules! bloblog {
     ($($t:tt)*) => { bun_output::scoped_log!(WriteFile, $($t)*) };
 }
+#[cfg(windows)]
 macro_rules! log {
     ($($t:tt)*) => { bun_output::scoped_log!(ReadFile, $($t)*) };
 }
@@ -80,18 +85,24 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
 /// the Zig spec where any code introspecting `onCompleteCtx` sees the original
 /// context pointer.
 pub trait ReadFileCompletion {
-    fn run(ctx: *mut Self, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>;
+    /// # Safety
+    /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to
+    /// this call (it is reclaimed via `bun_core::heap::take`).
+    unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>;
 }
 
 impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
-    fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
+    unsafe fn run(
+        handler: *mut Self,
+        maybe_bytes: ReadFileResultType,
+    ) -> jsc::JsTerminatedResult<()> {
         // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
         let mut handler = unsafe { bun_core::heap::take(handler) };
         // PORT NOTE: `Strong::swap()` ties the returned `&mut JSPromise` to
         // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
         // Decay to a raw pointer so `handler` can be dropped before resolution.
         let promise: *mut jsc::JSPromise = handler.promise.swap();
-        let mut blob = core::mem::take(&mut handler.context);
+        let blob = core::mem::take(&mut handler.context);
         // `context` was populated via `this.dupe()` in doReadFile(), so it
         // owns a store ref, a name ref, and possibly a content_type copy.
         // (blob is dropped at end of scope — Drop handles deinit.)
@@ -109,7 +120,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // give the same source-location/exception-scope behaviour.
                 AnyPromise::Normal(promise).wrap(global_this, move |g| {
-                    F::call(&mut blob, g, bytes, Lifetime::Temporary)
+                    F::call(&blob, g, bytes, Lifetime::Temporary)
                 })?;
             }
             ReadFileResultType::Err(err) => {
@@ -146,6 +157,9 @@ pub struct ReadFileRead {
 }
 
 /// Zig: `SystemError.Maybe(ReadFileRead)`
+// Mirrors the Zig union and is constructed/matched in Blob.rs and Body.rs;
+// boxing the Err arm would change the cross-file callback ABI for no real win.
+#[allow(clippy::large_enum_variant)]
 pub enum ReadFileResultType {
     Result(ReadFileRead),
     Err(SystemError),
@@ -153,6 +167,11 @@ pub enum ReadFileResultType {
 
 pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
 
+// `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
+// cannot be marked `unsafe fn` and the parameter type cannot change, so the
+// lint is unsatisfiable here. The pointers come from the work-pool hand-off
+// and are guaranteed live (see SAFETY notes below).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl bun_jsc::work_task::WorkTaskContext for ReadFile {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReadFileTask;
     fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
@@ -293,6 +312,11 @@ impl FileCloser for ReadFile {
         })
     }
 
+    // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
+    // the trait method cannot be marked `unsafe fn`, so the lint is
+    // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
+    // in `on_io_request_closed` and is guaranteed live.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
@@ -309,10 +333,13 @@ impl ReadFile {
         {
             return; // why
         }
-        if self.state.load(Ordering::Relaxed) == ClosingState::Closing as u8 {
-            self.on_finish();
-        } else {
-            self.do_read_loop();
+        #[cfg(not(windows))]
+        {
+            if self.state.load(Ordering::Relaxed) == ClosingState::Closing as u8 {
+                self.on_finish();
+            } else {
+                self.do_read_loop();
+            }
         }
     }
 
@@ -379,7 +406,9 @@ impl ReadFile {
         // Zig layout (no extra heap box, nothing to leak on the `Err` path).
         fn handler_run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
             // TODO(port): properly propagate exception upwards (matches Zig TODO).
-            let _ = C::run(ctx.cast::<C>(), bytes);
+            // SAFETY: `ctx` is the `*mut C` passed unmodified through
+            // `on_complete_ctx`; ownership transfers per `ReadFileCompletion::run`.
+            let _ = unsafe { C::run(ctx.cast::<C>(), bytes) };
         }
         ReadFile::create_with_ctx(
             store,
@@ -391,13 +420,6 @@ impl ReadFile {
     }
 
     pub const IO_TAG: io::Tag = io::Tag::ReadFile;
-
-    pub fn on_readable(request: *mut io::Request) {
-        // SAFETY: request points to ReadFile.io_request (intrusive field).
-        let this: &mut ReadFile =
-            unsafe { &mut *(bun_core::from_field_ptr!(ReadFile, io_request, request)) };
-        this.on_ready();
-    }
 
     pub fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
@@ -417,7 +439,7 @@ impl ReadFile {
         WorkPool::schedule(&raw mut self.task);
     }
 
-    pub fn on_io_error(&mut self, err: bun_sys::Error) {
+    pub fn on_io_error(&mut self, err: &bun_sys::Error) {
         bloblog!("ReadFile.onIOError");
         self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
         self.system_error = Some(err.to_system_error().into());
@@ -436,8 +458,8 @@ impl ReadFile {
         WorkPool::schedule(&raw mut self.task);
     }
 
-    /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), sys::Error)` shape.
-    fn on_io_error_thunk(ctx: *mut (), err: bun_sys::Error) {
+    /// Thunk matching `io::FileAction::on_error`'s `fn(*mut (), &sys::Error)` shape.
+    fn on_io_error_thunk(ctx: *mut (), err: &bun_sys::Error) {
         // SAFETY: ctx is `self as *mut ReadFile` set in on_request_readable below.
         unsafe { (*ctx.cast::<ReadFile>()).on_io_error(err) }
     }
@@ -479,6 +501,7 @@ impl ReadFile {
     /// without two live `&mut` covering overlapping memory (Stacked-Borrows
     /// UB). The slice is materialised only at the syscall boundary.
     // PORT NOTE: Zig indexed raw ptr range `items.ptr[items.len..capacity]`.
+    #[cfg(not(windows))]
     fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> (*mut u8, usize) {
         // `spare_capacity_mut()` is the safe spelling of
         // `as_mut_ptr().add(len) .. as_mut_ptr().add(cap)`; we immediately
@@ -622,21 +645,26 @@ impl ReadFile {
     fn run_async(&mut self, task: *mut ReadFileTask) {
         #[cfg(windows)]
         {
+            let _ = task;
             return; // why
         }
-        self.io_task = Some(task);
+        #[cfg(not(windows))]
+        {
+            self.io_task = Some(task);
 
-        if self.file_store.pathlike.is_fd() {
-            self.opened_fd = self.file_store.pathlike.fd();
+            if self.file_store.pathlike.is_fd() {
+                self.opened_fd = self.file_store.pathlike.fd();
+            }
+
+            self.get_fd(Self::run_async_with_fd);
         }
-
-        self.get_fd(Self::run_async_with_fd);
     }
 
     pub fn is_allowed_to_close(&self) -> bool {
         self.file_store.pathlike.is_path()
     }
 
+    #[cfg(not(windows))]
     fn on_finish(&mut self) {
         let close_after_io = self.close_after_io;
         self.size = self.buffer.len() as SizeType;
@@ -651,11 +679,13 @@ impl ReadFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 bloblog!("ReadFile.onFinish() = immediately");
-                ReadFileTask::on_finish(io_task);
+                // SAFETY: io_task is a non-null backref set in run(); WorkTask owns lifetime.
+                ReadFileTask::on_finish(unsafe { &mut *io_task });
             }
         }
     }
 
+    #[cfg(not(windows))]
     fn resolve_size_and_last_modified(&mut self, fd: Fd) {
         let stat: Stat = match bun_sys::fstat(fd) {
             Ok(result) => result,
@@ -708,6 +738,7 @@ impl ReadFile {
         }
     }
 
+    #[cfg(not(windows))]
     fn run_async_with_fd(&mut self, fd: Fd) {
         if self.errno.is_some() {
             self.on_finish();
@@ -780,124 +811,124 @@ impl ReadFile {
         this.update();
     }
 
+    #[cfg(not(windows))]
     fn do_read_loop(&mut self) {
-        #[cfg(windows)]
+        #[cfg(not(windows))]
         {
-            return; // why
-        }
-        // we hold a 64 KB stack buffer incase the amount of data to
-        // be read is greater than the reported amount
-        //
-        // 64 KB is large, but since this is running in a thread
-        // with it's own stack, it should have sufficient space.
-        // PORT NOTE: hoisted out of the loop and zero-initialized once — the
-        // one-time 64 KB memset is negligible next to the per-iteration
-        // syscall, and avoids the `MaybeUninit<u8>` → `&mut [u8]` cast (uninit
-        // bytes behind a `&[u8]` is technically UB even when never read).
-        let mut stack_buffer = [0u8; 64 * 1024];
-        while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            // PORT NOTE: reshaped for borrowck — keep the read target as a raw
-            // (ptr, len) across the `&mut self` `do_read` call; no `&mut [u8]`
-            // to `self.buffer`'s spare capacity is ever live alongside
-            // `&mut self`.
-            let stack_ptr = stack_buffer.as_mut_ptr();
-            let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
+            // we hold a 64 KB stack buffer incase the amount of data to
+            // be read is greater than the reported amount
+            //
+            // 64 KB is large, but since this is running in a thread
+            // with it's own stack, it should have sufficient space.
+            // PORT NOTE: hoisted out of the loop and zero-initialized once — the
+            // one-time 64 KB memset is negligible next to the per-iteration
+            // syscall, and avoids the `MaybeUninit<u8>` → `&mut [u8]` cast (uninit
+            // bytes behind a `&[u8]` is technically UB even when never read).
+            let mut stack_buffer = [0u8; 64 * 1024];
+            while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
+                // PORT NOTE: reshaped for borrowck — keep the read target as a raw
+                // (ptr, len) across the `&mut self` `do_read` call; no `&mut [u8]`
+                // to `self.buffer`'s spare capacity is ever live alongside
+                // `&mut self`.
+                let stack_ptr = stack_buffer.as_mut_ptr();
+                let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
 
-            if buf_len > 0 && self.errno.is_none() && !self.read_eof {
-                let mut read_amount: usize = 0;
-                let mut retry = false;
-                let continue_reading =
-                    self.do_read((buf_ptr, buf_len), &mut read_amount, &mut retry);
+                if buf_len > 0 && self.errno.is_none() && !self.read_eof {
+                    let mut read_amount: usize = 0;
+                    let mut retry = false;
+                    let continue_reading =
+                        self.do_read((buf_ptr, buf_len), &mut read_amount, &mut retry);
 
-                // We might read into the stack buffer, so we need to copy it into the heap.
-                if buf_ptr == stack_ptr {
-                    // `do_read` wrote `read_amount` initialized bytes at
-                    // `stack_buffer[..read_amount]`; the stack array is live
-                    // for this iteration.
-                    let read = &stack_buffer[..read_amount];
-                    if self.buffer.capacity() == 0 {
-                        // We need to allocate a new buffer
-                        // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount
-                        // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
-                        self.buffer.reserve_exact(read.len());
+                    // We might read into the stack buffer, so we need to copy it into the heap.
+                    if buf_ptr == stack_ptr {
+                        // `do_read` wrote `read_amount` initialized bytes at
+                        // `stack_buffer[..read_amount]`; the stack array is live
+                        // for this iteration.
+                        let read = &stack_buffer[..read_amount];
+                        if self.buffer.capacity() == 0 {
+                            // We need to allocate a new buffer
+                            // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount
+                            // We want to avoid over-allocating incase it's a large amount of data sent in a single chunk followed by a 0 byte chunk.
+                            self.buffer.reserve_exact(read.len());
+                        } else {
+                            self.buffer.reserve(read.len());
+                        }
+                        // PERF(port): was appendSliceAssumeCapacity — profile if hot.
+                        self.buffer.extend_from_slice(read);
                     } else {
-                        self.buffer.reserve(read.len());
+                        // record the amount of data read
+                        // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
+                        unsafe { bun_core::vec::commit_spare(&mut self.buffer, read_amount) };
                     }
-                    // PERF(port): was appendSliceAssumeCapacity — profile if hot.
-                    self.buffer.extend_from_slice(read);
-                } else {
-                    // record the amount of data read
-                    // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
-                    unsafe { bun_core::vec::commit_spare(&mut self.buffer, read_amount) };
-                }
-                // - If they DID set a max length, we should stop
-                //   reading after that.
-                //
-                // - If they DID NOT set a max_length, then it will
-                //   be Blob.max_size which is an impossibly large
-                //   amount to read.
-                if !self.read_eof && self.buffer.len() >= self.max_length as usize {
-                    break;
-                }
+                    // - If they DID set a max length, we should stop
+                    //   reading after that.
+                    //
+                    // - If they DID NOT set a max_length, then it will
+                    //   be Blob.max_size which is an impossibly large
+                    //   amount to read.
+                    if !self.read_eof && self.buffer.len() >= self.max_length as usize {
+                        break;
+                    }
 
-                if !continue_reading {
-                    // Stop reading, we errored
-                    break;
-                }
+                    if !continue_reading {
+                        // Stop reading, we errored
+                        break;
+                    }
 
-                // If it's not a regular file, it might be something
-                // which would block on the next read. So we should
-                // avoid immediately reading again until the next time
-                // we're scheduled to read.
-                //
-                // An example of where this happens is stdin.
-                //
-                //    await Bun.stdin.text();
-                //
-                // If we immediately call read(), it will block until stdin is
-                // readable.
-                if retry
-                    || (self.could_block
+                    // If it's not a regular file, it might be something
+                    // which would block on the next read. So we should
+                    // avoid immediately reading again until the next time
+                    // we're scheduled to read.
+                    //
+                    // An example of where this happens is stdin.
+                    //
+                    //    await Bun.stdin.text();
+                    //
+                    // If we immediately call read(), it will block until stdin is
+                    // readable.
+                    if retry
+                        || (self.could_block
                         // If we received EOF, we can skip the poll() system
                         // call. We already know it's done.
                         && !self.read_eof)
-                {
-                    if self.could_block
+                    {
+                        if self.could_block
                         // If we received EOF, we can skip the poll() system
                         // call. We already know it's done.
                         && !self.read_eof
-                    {
-                        match bun_core::is_readable(self.opened_fd) {
-                            bun_core::Pollable::NotReady => {}
-                            bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
+                        {
+                            match bun_core::is_readable(self.opened_fd) {
+                                bun_core::Pollable::NotReady => {}
+                                bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
+                            }
                         }
-                    }
-                    self.read_eof = false;
-                    self.wait_for_readable();
+                        self.read_eof = false;
+                        self.wait_for_readable();
 
-                    return;
+                        return;
+                    }
+
+                    // There can be more to read
+                    continue;
                 }
 
-                // There can be more to read
-                continue;
+                // -- We are done reading.
+                break;
             }
 
-            // -- We are done reading.
-            break;
-        }
+            if self.system_error.is_some() {
+                self.buffer = Vec::new(); // clearAndFree
+            }
 
-        if self.system_error.is_some() {
-            self.buffer = Vec::new(); // clearAndFree
+            // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
+            if self.buffer.len() + 16_000 < self.buffer.capacity() {
+                self.buffer.shrink_to_fit();
+            }
+            // PORT NOTE: Zig also wrote `byte_store = ByteStore.init(buffer.items, …)` —
+            // a non-owning alias of `buffer`. Rust `Bytes` is owning, and `then()`
+            // delivers `self.buffer` directly, so skip the alias to avoid a double-free.
+            self.on_finish();
         }
-
-        // If we over-allocated by a lot, we should shrink the buffer to conserve memory.
-        if self.buffer.len() + 16_000 < self.buffer.capacity() {
-            self.buffer.shrink_to_fit();
-        }
-        // PORT NOTE: Zig also wrote `byte_store = ByteStore.init(buffer.items, …)` —
-        // a non-owning alias of `buffer`. Rust `Bytes` is owning, and `then()`
-        // delivers `self.buffer` directly, so skip the alias to avoid a double-free.
-        self.on_finish();
     }
 }
 
@@ -1432,7 +1463,9 @@ pub trait ReadFileUvHandler {
 /// `Handler.run` is `void`-returning by contract).
 impl<C: ReadFileCompletion> ReadFileUvHandler for C {
     fn run(ctx: *mut c_void, bytes: ReadFileResultType) {
-        let _ = <C as ReadFileCompletion>::run(ctx.cast::<C>(), bytes);
+        // SAFETY: `ctx` is the `*mut C` passed unmodified through
+        // `on_complete_data`; ownership transfers per `ReadFileCompletion::run`.
+        let _ = unsafe { <C as ReadFileCompletion>::run(ctx.cast::<C>(), bytes) };
     }
 }
 

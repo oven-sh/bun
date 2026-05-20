@@ -449,7 +449,7 @@ impl S3Client {
         };
         let options = args.next_eat();
         // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
             path,
             options,
@@ -459,7 +459,7 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::S3BlobStatTask::exists(global, &mut blob)
+        S3File::S3BlobStatTask::exists(global, &blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -523,7 +523,7 @@ impl S3Client {
         };
         let options = args.next_eat();
         // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
-        let mut blob = S3File::construct_s3_file_with_s3_credentials_and_options(
+        let blob = S3File::construct_s3_file_with_s3_credentials_and_options(
             global,
             path,
             options,
@@ -533,7 +533,7 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        S3File::S3BlobStatTask::stat(global, &mut blob)
+        S3File::S3BlobStatTask::stat(global, &blob)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -577,7 +577,7 @@ impl S3Client {
         // by value while `defer blob.detach()` was still armed on the original.
         // Here we move into `PathOrBlob` directly; cleanup of the moved-out
         // value is handled by `Drop`.
-        let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(blob);
+        let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
         crate::webcore::blob::write_file_internal(
             global,
             &mut blob_internal,
@@ -722,7 +722,7 @@ impl S3Client {
             global,
             PathLike::default(),
             options,
-            existing_credentials,
+            &existing_credentials,
         )?;
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.

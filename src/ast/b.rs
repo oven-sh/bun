@@ -183,7 +183,6 @@ impl B {
 }
 
 // Keep `Binding` referenced (it's the conceptual tag-host of `B`).
-#[allow(dead_code)]
 type _BindingTagHost = Binding;
 
 pub use crate::g::Class;

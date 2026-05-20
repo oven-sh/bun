@@ -39,7 +39,7 @@ static ARENA_POOL: Cell<Option<Arena>> = Cell::new(None);
 
 #[inline]
 fn take_pooled_arena() -> Arena {
-    ARENA_POOL.take().unwrap_or_else(Arena::new)
+    ARENA_POOL.take().unwrap_or_default()
 }
 
 /// Park a *clean* (reset) arena for reuse by the next `ASTMemoryAllocator` on
@@ -188,7 +188,7 @@ impl ASTMemoryAllocator {
         self.arena_dirty = true;
         self.previous_logger = crate::data_store_override();
         self.previous_heap = bun_alloc::ast_alloc::thread_heap();
-        let arena: *const Arena = &self.arena;
+        let arena: *const Arena = &raw const self.arena;
         stmt::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
         expr::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
         crate::set_data_store_override(arena);
@@ -273,7 +273,7 @@ impl<'a> Scope<'a> {
             *mut bun_alloc::mimalloc::Heap,
         ) = match &mut self.current {
             Some(r) => {
-                let arena: *const Arena = &r.arena;
+                let arena: *const Arena = &raw const r.arena;
                 (
                     std::ptr::from_mut::<ASTMemoryAllocator>(*r),
                     arena,

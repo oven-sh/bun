@@ -134,7 +134,7 @@ pub fn mysql_error_to_js(
     create_mysql_error(
         global_object,
         msg,
-        MySQLErrorOptions {
+        &MySQLErrorOptions {
             code,
             errno: None,
             sql_state: None,

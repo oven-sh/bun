@@ -258,13 +258,12 @@ pub fn find_longest_registered_extension<'a>(
 #[unsafe(no_mangle)]
 pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,
-    str: *const BunString,
+    str: &BunString,
     loader: ApiLoader,
     value: JSValue,
 ) {
     // PERF(port): was stack-fallback (8192 bytes) — profile if it shows up on a hot path.
-    // SAFETY: C++ caller guarantees non-null str for the call's duration.
-    let str_slice = unsafe { &*str }.to_utf8();
+    let str_slice = str.to_utf8();
     if on_require_extension_modify(global, str_slice.slice(), loader, value).is_err() {
         bun_core::out_of_memory();
     }
@@ -273,11 +272,10 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
 #[unsafe(no_mangle)]
 pub extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
-    str: *const BunString,
+    str: &BunString,
 ) {
     // PERF(port): was stack-fallback (8192 bytes) — profile if it shows up on a hot path.
-    // SAFETY: C++ caller guarantees non-null str for the call's duration.
-    let str_slice = unsafe { &*str }.to_utf8();
+    let str_slice = str.to_utf8();
     if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {
         bun_core::out_of_memory();
     }

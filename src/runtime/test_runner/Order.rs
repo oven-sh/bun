@@ -33,7 +33,7 @@ impl Order {
         match current {
             TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
             TestScheduleEntry::TestCallback(test_callback) => {
-                self.generate_order_test(&raw mut **test_callback)?
+                self.generate_order_test(NonNull::from(&mut **test_callback))?
             }
         }
         Ok(())
@@ -51,7 +51,10 @@ impl Order {
             // (see below) so rustc's `invalid_reference_casting` lint does not see a local
             // `&T as *const T as *mut T` chain; field writes use raw deref to avoid materializing
             // a long-lived `&mut`.
-            let entry: *mut ExecutionEntry = box_inner_mut(entry_box);
+            let entry: *mut ExecutionEntry = box_inner_mut(&**entry_box);
+            // SAFETY: `entry` is the heap address of a live `Box<ExecutionEntry>` uniquely owned by
+            // the DescribeScope tree (see paragraph above); raw-ptr field writes uphold the Zig
+            // `*ExecutionEntry` mutation contract without materializing a long-lived `&mut`.
             unsafe {
                 if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
                     debug_assert!((*entry).next.is_none());
@@ -120,14 +123,20 @@ impl Order {
         Ok(())
     }
 
-    pub fn generate_order_test(&mut self, current: *mut ExecutionEntry) -> JsResult<()> {
-        // SAFETY: caller guarantees `current` is a valid live ExecutionEntry (Box-owned in DescribeScope.entries).
+    /// # Safety
+    /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
+    /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
+    /// `base.parent` chain reachable from `*current` must consist of live `DescribeScope` nodes.
+    pub fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>) -> JsResult<()> {
         // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
-        // loop below, so we never hold a long-lived `&mut *current` across those calls — each access
-        // dereferences the raw pointer locally.
-        debug_assert!(unsafe { (*current).base.has_callback == (*current).callback.is_some() });
-        let use_each_hooks = unsafe { (*current).base.has_callback };
-        let first_parent: Option<*mut DescribeScope> = unsafe { (*current).base.parent };
+        // loop below, so we never hold a long-lived `&mut` to it across those calls — each access
+        // dereferences the pointer locally.
+        // SAFETY: caller-guaranteed live `ExecutionEntry` (see safety doc above); read-only field access.
+        debug_assert!(unsafe { current.as_ref().base.has_callback == current.as_ref().callback.is_some() });
+        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
+        let use_each_hooks = unsafe { current.as_ref().base.has_callback };
+        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
+        let first_parent: Option<*mut DescribeScope> = unsafe { current.as_ref().base.parent };
 
         let mut list = EntryList::default();
 
@@ -140,12 +149,12 @@ impl Order {
                 // prepend in reverse so they end up in forwards order
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
+                    let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
                     // PERF(port): was arena bulk-free — Zig allocated this clone in `this.arena`.
                     // TODO(port): ownership — heap::alloc leaks without the arena; decide whether
                     // test_runner keeps an arena or tracks these for cleanup.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     // The clone is leaked (heap::alloc) so its Strong/Box fields are never dropped twice.
-                    let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
                     let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
@@ -155,7 +164,7 @@ impl Order {
         }
 
         // append test
-        list.append(current); // add entry to sequence
+        list.append(current.as_ptr()); // add entry to sequence
 
         // gather afterEach
         if use_each_hooks {
@@ -164,9 +173,9 @@ impl Order {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
                 let p = unsafe { &*p_ptr };
                 for entry in p.after_each.iter() {
+                    let src: *const ExecutionEntry = &raw const **entry;
                     // PERF(port): was arena bulk-free — see note above.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
-                    let src: *const ExecutionEntry = &raw const **entry;
                     let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.append(cloned);
                 }
@@ -176,7 +185,7 @@ impl Order {
 
         // set skip_to values
         let mut index = list.first;
-        let mut failure_skip_past: Option<*mut ExecutionEntry> = Some(current);
+        let mut failure_skip_past: Option<*mut ExecutionEntry> = Some(current.as_ptr());
         while let Some(entry_ptr) = index {
             // SAFETY: list contains valid ExecutionEntry nodes linked via `next`.
             unsafe {
@@ -192,16 +201,13 @@ impl Order {
         // SAFETY: `current` still valid; re-derive fields locally so no `&mut` outlives the
         // competing reborrows performed by `list.append` / the skip-past loop above.
         let (retry_count, repeat_count, concurrent) = unsafe {
-            (
-                (*current).retry_count,
-                (*current).repeat_count,
-                (*current).base.concurrent,
-            )
+            let cur = current.as_ref();
+            (cur.retry_count, cur.repeat_count, cur.base.concurrent)
         };
         let sequences_start = self.sequences.len();
         self.sequences.push(ExecutionSequence::init(
             list.first.and_then(NonNull::new),
-            NonNull::new(current),
+            Some(current),
             retry_count,
             repeat_count,
         )); // add sequence to concurrentgroup
@@ -308,7 +314,7 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
     (m >> 64) as u64
 }
 
-/// Recover the heap pointer of a `Box<T>` as `*mut T` given only `&Box<T>`.
+/// Recover the heap pointer behind a `Box<T>` as `*mut T` given the inner `&T`.
 ///
 /// Zig's `[]const *T` is an immutable slice of *mutable* pointers; the closest Rust shape we
 /// can accept from callers is `&[Box<T>]`, but we still need to mutate through each element.
@@ -317,8 +323,8 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
 /// `&T -> *const T -> *mut T -> &mut T` chain at the call site). The provenance caveat is
 /// real — see the SAFETY note at the call site in `generate_all_order`.
 #[inline(always)]
-fn box_inner_mut<T>(b: &Box<T>) -> *mut T {
-    core::ptr::from_ref::<T>(&**b).cast_mut()
+fn box_inner_mut<T>(b: &T) -> *mut T {
+    core::ptr::from_ref(b).cast_mut()
 }
 
 #[derive(Default)]

@@ -120,6 +120,11 @@ pub unsafe fn rename_symbols_in_chunk(
         // slice header to build a non-owning shallow `Vec` view.
         let inner = unsafe { (*symbols).symbols_for_source.slice_mut() };
         symbol::Map {
+            // SAFETY: `inner` aliases the live `c.graph.symbols` storage,
+            // which outlives the returned `ChunkRenamer`; the renamer only
+            // reads through this view and never grows or drops it (see the
+            // closure-level note above), upholding the "no drop, no grow"
+            // contract of `from_borrowed_slice_dangerous`.
             symbols_for_source: core::mem::ManuallyDrop::into_inner(unsafe {
                 <Vec<_> as bun_collections::VecExt<_>>::from_borrowed_slice_dangerous(inner)
             }),
@@ -175,14 +180,14 @@ pub unsafe fn rename_symbols_in_chunk(
         let first_top_level_slots: SlotCounts = {
             let mut slots = SlotCounts::default();
             for &i in files_in_order {
-                slots.union_max(nested_slot_counts_col[i as usize].clone());
+                slots.union_max(nested_slot_counts_col[i as usize]);
             }
             slots
         };
 
         let mut minify_renamer = MinifyRenamer::init(
             make_symbols_view(symbols),
-            first_top_level_slots,
+            &first_top_level_slots,
             reserved_names,
         )?;
 
@@ -274,10 +279,10 @@ pub unsafe fn rename_symbols_in_chunk(
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 
-    let mut r = NumberRenamer::init(make_symbols_view(symbols), reserved_names)?;
+    let mut r = NumberRenamer::init(make_symbols_view(symbols), &reserved_names)?;
     for stable_ref in &sorted_imports_from_other_chunks {
         // PORT NOTE: `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
-        r.add_top_level_symbol({ stable_ref.r#ref });
+        r.add_top_level_symbol(stable_ref.r#ref);
     }
 
     // PORT NOTE: Zig used `r.temp_arena` for this list; arena param dropped

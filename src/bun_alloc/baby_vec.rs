@@ -32,6 +32,8 @@ const _: () = assert!(size_of::<BabyVec<'static, u8>>() == 24);
 // allocator handle (`&MimallocArena: Sync` is already declared upstream; the
 // raw `NonNull<T>` is the only auto-trait opt-out).
 unsafe impl<'a, T: Send> Send for BabyVec<'a, T> {}
+// SAFETY: `&MimallocArena: Sync` and the only auto-trait opt-out is the raw
+// `NonNull<T>`; with `T: Sync` the owned `[T]` is shareable across threads.
 unsafe impl<'a, T: Sync> Sync for BabyVec<'a, T> {}
 
 impl<'a, T> BabyVec<'a, T> {

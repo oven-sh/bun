@@ -2,7 +2,9 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
+use bun_core::{Error, err};
+#[cfg(not(windows))]
+use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
@@ -76,8 +78,7 @@ impl FileCopier {
             Ok(d) => d,
             Err(e) => {
                 // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
-                #[allow(unused_mut)]
-                let mut errno: E = {
+                let errno: E = {
                     // `@as(anyerror, err)` → match against interned bun_core::Error tags.
                     let e: Error = e;
                     if e == err!("AccessDenied") {
@@ -98,9 +99,7 @@ impl FileCopier {
                         E::EROFS
                     } else if e == err!("FileSystem") {
                         E::EIO
-                    } else if e == err!("FileBusy") {
-                        E::EBUSY
-                    } else if e == err!("DeviceBusy") {
+                    } else if e == err!("FileBusy") || e == err!("DeviceBusy") {
                         E::EBUSY
                     }
                     // One of the path components was not a directory.
@@ -109,14 +108,12 @@ impl FileCopier {
                         E::ENOTDIR
                     }
                     // On Windows, file paths must be valid Unicode.
-                    else if e == err!("InvalidUtf8") {
-                        E::EINVAL
-                    } else if e == err!("InvalidWtf8") {
-                        E::EINVAL
-                    }
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
-                    else if e == err!("BadPathName") {
+                    else if e == err!("InvalidUtf8")
+                        || e == err!("InvalidWtf8")
+                        || e == err!("BadPathName")
+                    {
                         E::EINVAL
                     } else if e == err!("FileNotFound") {
                         E::ENOENT
@@ -127,23 +124,26 @@ impl FileCopier {
                     }
                 };
                 #[cfg(windows)]
-                if errno == E::ENOTDIR {
-                    errno = E::ENOENT;
-                }
+                let errno = if errno == E::ENOTDIR {
+                    E::ENOENT
+                } else {
+                    errno
+                };
 
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
             }
         };
 
+        #[cfg(not(windows))]
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 
         loop {
-            let entry = match self.walker.next() {
-                sys::Result::Ok(res) => match res {
+            let entry = {
+                let res = self.walker.next()?;
+                match res {
                     Some(entry) => entry,
                     None => break,
-                },
-                sys::Result::Err(err) => return sys::Result::Err(err),
+                }
             };
 
             #[cfg(windows)]

@@ -5,13 +5,10 @@
 //! This file is based on the code from Zig's transpiler source.
 //! Thank you to the Zig team
 
-#![allow(dead_code)]
-
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-#[allow(unused_imports)]
 use bun_core::env_var;
 
 pub const ENABLE_ALLOCATION: bool = false;
@@ -33,16 +30,10 @@ pub fn set_enable(v: bool) {
 
 #[allow(non_camel_case_types)]
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ___tracy_c_zone_context {
     pub id: u32,
     pub active: c_int,
-}
-
-impl Default for ___tracy_c_zone_context {
-    fn default() -> Self {
-        Self { id: 0, active: 0 }
-    }
 }
 
 impl ___tracy_c_zone_context {
@@ -128,7 +119,7 @@ pub fn trace_named(srcloc: &'static ___tracy_source_location_data) -> Ctx {
 }
 
 pub fn tracy_allocator() -> TracyAllocator {
-    TracyAllocator::init(None)
+    TracyAllocator::init()
 }
 
 /// Zig: `fn TracyAllocator(comptime name: ?[:0]const u8) type { return struct { ... } }`
@@ -141,22 +132,12 @@ pub fn tracy_allocator() -> TracyAllocator {
 // `bun_alloc::Mimalloc` that emits tracy alloc/free hooks (alloc/alloc_named/
 // free/free_named below). Only relevant if `ENABLE_ALLOCATION` is flipped on —
 // it is `false` today, so this is dead in practice.
-// PERF(port): Zig monomorphized on `comptime name`; Rust stores it as a field
-// because `Option<&'static CStr>` is not a valid const-generic param on stable.
-pub struct TracyAllocator {
-    name: Option<&'static core::ffi::CStr>,
-}
+pub struct TracyAllocator {}
 
 impl TracyAllocator {
-    pub fn init(name: Option<&'static core::ffi::CStr>) -> Self {
-        Self { name }
+    pub fn init() -> Self {
+        Self {}
     }
-
-    // PORT NOTE: Zig `allocFn`/`resizeFn`/`freeFn` built a `std.mem.Allocator`
-    // vtable. That concept does not exist in the Rust port (global mimalloc via
-    // `#[global_allocator]`); the tracy emit hooks they called are preserved
-    // below as `alloc`/`alloc_named`/`free`/`free_named` for a future
-    // `GlobalAlloc` shim to use.
 }
 
 /// This function only accepts comptime-known strings, see `message_copy` for runtime strings
@@ -260,64 +241,6 @@ fn frame_mark_end(name: &'static core::ffi::CStr) {
     ___tracy_emit_frame_mark_end(name.as_ptr());
 }
 
-#[inline]
-fn alloc(ptr: *mut u8, len: usize) {
-    if !enable() {
-        return;
-    }
-
-    if ENABLE_CALLSTACK {
-        ___tracy_emit_memory_alloc_callstack(ptr.cast(), len, CALLSTACK_DEPTH, 0);
-    } else {
-        ___tracy_emit_memory_alloc(ptr.cast(), len, 0);
-    }
-}
-
-#[inline]
-fn alloc_named(ptr: *mut u8, len: usize, name: &'static core::ffi::CStr) {
-    if !enable() {
-        return;
-    }
-
-    if ENABLE_CALLSTACK {
-        ___tracy_emit_memory_alloc_callstack_named(
-            ptr.cast(),
-            len,
-            CALLSTACK_DEPTH,
-            0,
-            name.as_ptr(),
-        );
-    } else {
-        ___tracy_emit_memory_alloc_named(ptr.cast(), len, 0, name.as_ptr());
-    }
-}
-
-#[inline]
-fn free(ptr: *mut u8) {
-    if !enable() {
-        return;
-    }
-
-    if ENABLE_CALLSTACK {
-        ___tracy_emit_memory_free_callstack(ptr.cast(), CALLSTACK_DEPTH, 0);
-    } else {
-        ___tracy_emit_memory_free(ptr.cast(), 0);
-    }
-}
-
-#[inline]
-fn free_named(ptr: *mut u8, name: &'static core::ffi::CStr) {
-    if !enable() {
-        return;
-    }
-
-    if ENABLE_CALLSTACK {
-        ___tracy_emit_memory_free_callstack_named(ptr.cast(), CALLSTACK_DEPTH, 0, name.as_ptr());
-    } else {
-        ___tracy_emit_memory_free_named(ptr.cast(), 0, name.as_ptr());
-    }
-}
-
 /// Function-pointer type aliases for dynamically-loaded Tracy C API.
 #[allow(non_camel_case_types)]
 mod tracy_fns {
@@ -344,26 +267,6 @@ mod tracy_fns {
     pub(super) type emit_zone_value =
         unsafe extern "C" fn(ctx: ___tracy_c_zone_context, value: u64);
     pub(super) type emit_zone_end = unsafe extern "C" fn(ctx: ___tracy_c_zone_context);
-    pub(super) type emit_memory_alloc =
-        unsafe extern "C" fn(ptr: *const c_void, size: usize, secure: c_int);
-    pub(super) type emit_memory_alloc_callstack =
-        unsafe extern "C" fn(ptr: *const c_void, size: usize, depth: c_int, secure: c_int);
-    pub(super) type emit_memory_free = unsafe extern "C" fn(ptr: *const c_void, secure: c_int);
-    pub(super) type emit_memory_free_callstack =
-        unsafe extern "C" fn(ptr: *const c_void, depth: c_int, secure: c_int);
-    pub(super) type emit_memory_alloc_named =
-        unsafe extern "C" fn(ptr: *const c_void, size: usize, secure: c_int, name: *const c_char);
-    pub(super) type emit_memory_alloc_callstack_named = unsafe extern "C" fn(
-        ptr: *const c_void,
-        size: usize,
-        depth: c_int,
-        secure: c_int,
-        name: *const c_char,
-    );
-    pub(super) type emit_memory_free_named =
-        unsafe extern "C" fn(ptr: *const c_void, secure: c_int, name: *const c_char);
-    pub(super) type emit_memory_free_callstack_named =
-        unsafe extern "C" fn(ptr: *const c_void, depth: c_int, secure: c_int, name: *const c_char);
     pub(super) type emit_message =
         unsafe extern "C" fn(txt: *const u8, size: usize, callstack: c_int);
     pub(super) type emit_message_l = unsafe extern "C" fn(txt: *const c_char, callstack: c_int);
@@ -495,88 +398,6 @@ fn ___tracy_emit_zone_end(ctx: ___tracy_c_zone_context) {
     let f = dlsym::<tracy_fns::emit_zone_end>(c"___tracy_emit_zone_end").expect("tracy symbol");
     // SAFETY: symbol resolved from libtracy with matching signature
     unsafe { f(ctx) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_alloc(ptr: *const c_void, size: usize, secure: c_int) {
-    let f =
-        dlsym::<tracy_fns::emit_memory_alloc>(c"___tracy_emit_memory_alloc").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, size, secure) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_alloc_callstack(
-    ptr: *const c_void,
-    size: usize,
-    depth: c_int,
-    secure: c_int,
-) {
-    let f =
-        dlsym::<tracy_fns::emit_memory_alloc_callstack>(c"___tracy_emit_memory_alloc_callstack")
-            .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, size, depth, secure) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_free(ptr: *const c_void, secure: c_int) {
-    let f =
-        dlsym::<tracy_fns::emit_memory_free>(c"___tracy_emit_memory_free").expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, secure) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_free_callstack(ptr: *const c_void, depth: c_int, secure: c_int) {
-    let f = dlsym::<tracy_fns::emit_memory_free_callstack>(c"___tracy_emit_memory_free_callstack")
-        .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, depth, secure) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_alloc_named(
-    ptr: *const c_void,
-    size: usize,
-    secure: c_int,
-    name: *const c_char,
-) {
-    let f = dlsym::<tracy_fns::emit_memory_alloc_named>(c"___tracy_emit_memory_alloc_named")
-        .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, size, secure, name) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_alloc_callstack_named(
-    ptr: *const c_void,
-    size: usize,
-    depth: c_int,
-    secure: c_int,
-    name: *const c_char,
-) {
-    let f = dlsym::<tracy_fns::emit_memory_alloc_callstack_named>(
-        c"___tracy_emit_memory_alloc_callstack_named",
-    )
-    .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, size, depth, secure, name) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_free_named(ptr: *const c_void, secure: c_int, name: *const c_char) {
-    let f = dlsym::<tracy_fns::emit_memory_free_named>(c"___tracy_emit_memory_free_named")
-        .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, secure, name) }
-}
-#[allow(non_snake_case)]
-fn ___tracy_emit_memory_free_callstack_named(
-    ptr: *const c_void,
-    depth: c_int,
-    secure: c_int,
-    name: *const c_char,
-) {
-    let f = dlsym::<tracy_fns::emit_memory_free_callstack_named>(
-        c"___tracy_emit_memory_free_callstack_named",
-    )
-    .expect("tracy symbol");
-    // SAFETY: symbol resolved from libtracy with matching signature
-    unsafe { f(ptr, depth, secure, name) }
 }
 #[allow(non_snake_case)]
 fn ___tracy_emit_message(txt: *const u8, size: usize, callstack: c_int) {

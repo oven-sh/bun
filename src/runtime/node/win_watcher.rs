@@ -9,13 +9,13 @@ use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
-use bun_core::{String as BunString, ZStr, strings};
+use bun_core::{String as BunString, ZStr};
 use bun_jsc as jsc;
 use bun_paths::PathBuffer;
+use bun_sys as sys;
 use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
 use bun_sys::windows::libuv::UvHandle as _;
-use bun_sys::{self as sys, windows};
 use bun_threading::Mutex;
 
 use super::path_watcher::EventType;
@@ -27,8 +27,6 @@ use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
 const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
 #[allow(non_upper_case_globals)]
 const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
-// TODO(port): confirm crate for `bun.Watcher` → assuming `bun_watcher`.
-use bun_watcher::Watcher;
 
 bun_output::declare_scope!(PathWatcherManager, visible);
 // Zig scope name is `.@"fs.watch"`; Rust identifiers cannot contain '.'.
@@ -79,6 +77,8 @@ impl PathWatcherManager {
 
     /// unregister is always called from main thread
     fn unregister_watcher(&mut self, watcher: *mut PathWatcher, path: &ZStr) {
+        #[cfg(not(debug_assertions))]
+        let _ = path;
         if let Some(index) = self.watchers.values().iter().position(|&w| w == watcher) {
             #[cfg(debug_assertions)]
             {

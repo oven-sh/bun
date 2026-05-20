@@ -1,11 +1,9 @@
 // TODO: move all custom functions from the translated file into this file, then
 // the translated file can be provided by `zig translate-c`
 
-#![allow(unused, static_mut_refs)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
-use core::ffi::CStr;
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr;
 use std::cell::Cell;
 
@@ -123,6 +121,8 @@ struct CtxStore(ptr::NonNull<boring::SSL_CTX>);
 // refcount and hand it to `SSL_new`, both of which BoringSSL documents as
 // thread-safe on a shared `SSL_CTX*`.
 unsafe impl Send for CtxStore {}
+// SAFETY: same invariant as `Send` above — BoringSSL documents `SSL_CTX` as
+// safe for concurrent use across threads, so sharing `&CtxStore` is sound.
 unsafe impl Sync for CtxStore {}
 
 static CTX_STORE: std::sync::OnceLock<CtxStore> = std::sync::OnceLock::new();
@@ -142,12 +142,17 @@ std::thread_local! {
 /// # Safety
 /// `ctx` must be a live `SSL_CTX*`.
 pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
-    AUTO_CRYPTO_BUFFER_POOL.with(|pool| unsafe {
-        if pool.get().is_null() {
-            pool.set(CRYPTO_BUFFER_POOL_new());
+    AUTO_CRYPTO_BUFFER_POOL.with(|pool| {
+        // SAFETY: caller guarantees `ctx` is a live `SSL_CTX*`; the pool pointer
+        // is either freshly returned by `CRYPTO_BUFFER_POOL_new` or a previously
+        // stored thread-local pool, and `SSL_DEFAULT_CIPHER_LIST` is a valid C string.
+        unsafe {
+            if pool.get().is_null() {
+                pool.set(CRYPTO_BUFFER_POOL_new());
+            }
+            SSL_CTX_set0_buffer_pool(ctx, pool.get());
+            let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
         }
-        SSL_CTX_set0_buffer_pool(ctx, pool.get());
-        let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
     });
 }
 
@@ -208,13 +213,15 @@ pub fn init_client() -> *mut boring::SSL {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
-    // SAFETY: mi_malloc is safe to call with any size; returns null on failure.
-    unsafe { bun_alloc::mimalloc::mi_malloc(size) }
+    bun_alloc::mimalloc::mi_malloc(size)
 }
 
 // BoringSSL always expects memory to be zero'd
+/// # Safety
+/// `ptr` must be non-null and have been returned by `OPENSSL_memory_alloc`
+/// (i.e. `mi_malloc`); BoringSSL guarantees both for this hook.
 #[unsafe(no_mangle)]
-pub extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
+pub unsafe extern "C" fn OPENSSL_memory_free(ptr: *mut c_void) {
     // SAFETY: BoringSSL guarantees ptr is non-null and was returned by
     // OPENSSL_memory_alloc above (i.e. mi_malloc).
     unsafe {
@@ -356,8 +363,7 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                 if !names_.is_null() {
                     let names = names_.cast::<boring::struct_stack_st_GENERAL_NAME>();
                     let _guard = scopeguard::guard(names, |n| {
-                        // SAFETY: `n` was returned by X509V3_EXT_d2i above and is non-null.
-                        unsafe { boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free) }
+                        boring::sk_GENERAL_NAME_pop_free(n, boring::sk_GENERAL_NAME_free)
                     });
                     for i in 0..boring::sk_GENERAL_NAME_num(names) {
                         let r#gen = boring::sk_GENERAL_NAME_value(names, i);

@@ -148,6 +148,8 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — there is no early
         // return between the body and the enqueue, so the `defer` reduces to a
         // trailing call.
+        // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
+        // ownership of it.
         vm.event_loop_shared()
             .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
     }

@@ -1,8 +1,7 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ByteVecExt, VecExt};
-use bun_options_types::{LoaderExt as _, TargetExt as _};
+use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::node::{Encoding, StringOrBuffer};
@@ -24,8 +23,8 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
-    JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsError, JsResult,
-    LogJsc, StringJsc,
+    JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
+    StringJsc,
 };
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
@@ -64,10 +63,11 @@ pub struct JSTranspiler {
 }
 
 fn default_transform_options() -> api::TransformOptions {
-    let mut opts: api::TransformOptions = api::TransformOptions::default();
-    opts.disable_hmr = true;
-    opts.target = Some(api::Target::Browser);
-    opts
+    api::TransformOptions {
+        disable_hmr: true,
+        target: Some(api::Target::Browser),
+        ..Default::default()
+    }
 }
 
 pub struct Config {
@@ -101,10 +101,9 @@ impl Default for Config {
             tsconfig_buf: Box::default(),
             macros_buf: Box::default(),
             log: bun_ast::Log::default(), // overwritten at construction
-            runtime: {
-                let mut r = Runtime::Features::default();
-                r.top_level_await = true;
-                r
+            runtime: Runtime::Features {
+                top_level_await: true,
+                ..Default::default()
             },
             tree_shaking: false,
             trim_unused_imports: None,
@@ -642,7 +641,7 @@ impl Config {
                 }
             }
 
-            tree_shaking = Some(tree_shaking.unwrap_or(replacements.count() > 0));
+            tree_shaking = Some(tree_shaking.unwrap_or_else(|| replacements.count() > 0));
             self.runtime.replace_exports = replacements;
         }
 
@@ -819,11 +818,11 @@ impl<'a> TransformTask<'a> {
             file_descriptor: None,
             loader: self.loader,
             jsx,
-            path: source.path.clone(),
+            path: source.path,
             virtual_source: Some(source),
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
-            experimental_decorators: self.tsconfig.map_or(false, |ts| ts.experimental_decorators),
-            emit_decorator_metadata: self.tsconfig.map_or(false, |ts| ts.emit_decorator_metadata),
+            experimental_decorators: self.tsconfig.is_some_and(|ts| ts.experimental_decorators),
+            emit_decorator_metadata: self.tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
             macro_js_ctx: MacroJSCtx::ZERO,
             file_hash: None,
             file_fd_ptr: None,
@@ -1072,6 +1071,8 @@ impl JSTranspiler {
         // wrapper exists) so projecting `&mut`/`*mut` from the JsCells is trivially
         // alias-free.
         let config = unsafe { this.config.get_mut() };
+        // SAFETY: same exclusive-ownership invariant as the line above — `this: Box<_>`
+        // is uniquely owned at init time, so `&mut` projection is alias-free.
         let transpiler = unsafe { this.transpiler.get_mut() };
         transpiler.set_log(&raw mut config.log);
 
@@ -1135,9 +1136,10 @@ impl Drop for JSTranspiler {
                 ctx.deinit();
             }
         });
-        // SAFETY: `transpiler.log` is a *mut Log set via `set_log` to a live Log.
         let log = self.transpiler.get().log;
         if !log.is_null() {
+            // SAFETY: `transpiler.log` was set via `set_log` to `&mut self.config.log`
+            // (heap-stable for `Self`'s lifetime) and just checked non-null.
             unsafe { (*log).clear_and_free() };
         }
         // scan_pass_result.{named_imports,import_records,used_symbols}.deinit() → field Drop
@@ -1178,6 +1180,9 @@ impl TranspilerStateGuard {
     /// this runs.
     #[inline]
     fn transpiler_mut(&mut self) -> &mut Transpiler::Transpiler<'static> {
+        // SAFETY: `self.transpiler` is non-null (set from `JsCell::as_ptr()` on the
+        // heap-stable `Box<JSTranspiler>`); the guard holds the only live `&mut`
+        // projection of that `JsCell` between construction and `Drop`.
         unsafe { &mut *self.transpiler }
     }
 
@@ -1227,7 +1232,7 @@ impl JSTranspiler {
     /// so no write provenance on the outer `JSTranspiler` is required.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     /// `*mut Log` to the resting-state `config.log`, projected through the
@@ -1251,7 +1256,10 @@ impl JSTranspiler {
     /// outer-struct fix does not address. The R-2 invariant this upholds is
     /// that no `noalias &mut JSTranspiler` is live across that re-entry.
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     unsafe fn transpiler_mut(&self) -> &mut Transpiler::Transpiler<'static> {
+        // SAFETY: caller upholds the no-aliasing precondition documented on this
+        // `unsafe fn`; `JsCell::get_mut` projects through `UnsafeCell`.
         unsafe { self.transpiler.get_mut() }
     }
 
@@ -1300,18 +1308,18 @@ impl JSTranspiler {
             file_descriptor: None,
             loader: loader.unwrap_or(config.default_loader),
             jsx,
-            path: source.path.clone(),
+            path: source.path,
             virtual_source: Some(source),
             replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
             macro_js_ctx,
             experimental_decorators: config
                 .tsconfig
                 .as_deref()
-                .map_or(false, |ts| ts.experimental_decorators),
+                .is_some_and(|ts| ts.experimental_decorators),
             emit_decorator_metadata: config
                 .tsconfig
                 .as_deref()
-                .map_or(false, |ts| ts.emit_decorator_metadata),
+                .is_some_and(|ts| ts.emit_decorator_metadata),
             file_hash: None,
             file_fd_ptr: None,
             inject_jest_globals: false,
@@ -1679,7 +1687,7 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = JscZigString::init(record.path.text.as_ref()).to_js(global);
+        let path = JscZigString::init(record.path.text).to_js(global);
         let kind = JscZigString::init(record.kind.label()).to_js(global);
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
@@ -1751,6 +1759,8 @@ impl JSTranspiler {
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
+            // SAFETY: `arena` outlives every use through `t` — `_restore` below
+            // restores `prev_arena` before `arena` drops (reverse-decl order).
             t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
             t.set_log(&raw mut log);
             prev
@@ -1782,10 +1792,9 @@ impl JSTranspiler {
         }
         opts.macro_context = transpiler.macro_context.as_mut();
 
-        // SAFETY: `options.define` is `Box<Define>` owned by the long-lived
-        // `Transpiler`; the parser borrows it for the arena lifetime. Erase to
-        // satisfy `JavaScript::scan`'s `&'a Define` param (Zig held `*const Define`).
-        let define = unsafe { &*(&raw const *transpiler.options.define) };
+        // `options.define` is `Box<Define>` owned by the long-lived `Transpiler`;
+        // the parser borrows it for the arena lifetime (Zig held `*const Define`).
+        let define = &*transpiler.options.define;
 
         // PORT NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
         // resolver-side `cache::JavaScript` is a fieldless shell with

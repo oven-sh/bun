@@ -18,7 +18,7 @@
 use core::sync::atomic::AtomicU32;
 
 #[path = "h3_client/AltSvc.rs"]
-pub mod AltSvc;
+pub mod alt_svc;
 #[path = "h3_client/callbacks.rs"]
 pub mod callbacks;
 #[path = "h3_client/ClientContext.rs"]

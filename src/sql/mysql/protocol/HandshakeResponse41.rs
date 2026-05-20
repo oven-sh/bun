@@ -2,7 +2,7 @@
 
 use super::character_set::CharacterSet;
 use super::encode_int::encode_length_int;
-use super::new_writer::{NewWriter, write_wrap};
+use super::new_writer::NewWriter;
 use crate::mysql::capabilities::Capabilities;
 use crate::shared::data::Data;
 use bun_collections::StringHashMap;
@@ -28,7 +28,7 @@ pub struct HandshakeResponse41 {
 impl HandshakeResponse41 {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
-        mut writer: NewWriter<Context>,
+        writer: NewWriter<Context>,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let mut packet = writer.start(self.sequence_id)?;

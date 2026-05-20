@@ -1,3 +1,4 @@
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 use core::ptr;
 
 use bun_core::feature_flags;

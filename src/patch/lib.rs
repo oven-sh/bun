@@ -2,13 +2,7 @@
 //!
 //! Port of `src/patch/patch.zig`.
 
-#![allow(
-    unused,
-    dead_code,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 use core::mem;
@@ -315,7 +309,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         }
     };
 
-    let mut file_line_count: usize = 0;
+    let file_line_count: usize;
     let lines_count: usize = {
         let mut count: usize = 0;
         for _ in filebuf.split(|b| *b == b'\n') {
@@ -1041,27 +1035,26 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
             }
         }
 
-        if destination_file_path.is_some()
-            && file.old_mode.is_some()
-            && file.new_mode.is_some()
-            && file.old_mode.unwrap() != file.new_mode.unwrap()
+        if let (Some(path), Some(old_mode), Some(new_mode)) =
+            (destination_file_path, file.old_mode, file.new_mode)
+            && old_mode != new_mode
         {
             result
                 .parts
                 .push(PatchFilePart::FileModeChange(Box::new(FileModeChange {
-                    path: destination_file_path.unwrap(),
-                    old_mode: parse_file_mode(file.old_mode.unwrap())
-                        .ok_or(ParseErr::bad_file_mode)?,
-                    new_mode: parse_file_mode(file.new_mode.unwrap())
-                        .ok_or(ParseErr::bad_file_mode)?,
+                    path,
+                    old_mode: parse_file_mode(old_mode).ok_or(ParseErr::bad_file_mode)?,
+                    new_mode: parse_file_mode(new_mode).ok_or(ParseErr::bad_file_mode)?,
                 })));
         }
 
-        if destination_file_path.is_some() && !file.hunks.is_empty() {
+        if let Some(path) = destination_file_path
+            && !file.hunks.is_empty()
+        {
             result
                 .parts
                 .push(PatchFilePart::FilePatch(Box::new(FilePatch {
-                    path: destination_file_path.unwrap(),
+                    path,
                     hunks: file.take_hunks(),
                     before_hash: file.before_hash,
                     after_hash: file.after_hash,
@@ -1186,7 +1179,7 @@ enum HunkLineType {
     Pragma,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct ParseOpts {
     support_legacy_diffs: bool,
 }
@@ -1215,7 +1208,7 @@ impl<'a> PatchLinesParser<'a> {
             let last_nl = file_.iter().rposition(|b| *b == b'\n');
             let last_line = match last_nl {
                 Some(i) => &file_[i + 1..],
-                None => &file_[..],
+                None => file_,
             };
             if last_line.is_empty() {
                 if let Some(i) = last_nl {
@@ -1598,7 +1591,7 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     let lmao_bro = &line[b_part_start..];
     core::hint::black_box(lmao_bro);
     let b_part_end = match strings::index_of_any(&line[b_part_start..], b" \n\r\t") {
-        Some(pos) => pos as usize + b_part_start,
+        Some(pos) => pos + b_part_start,
         None => line.len(),
     };
 
@@ -1633,8 +1626,8 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
     }
 
     let a_path_start_index: usize = 0;
-    let mut a_path_end_index: usize = 0;
-    let mut b_path_start_index: usize = 0;
+    let a_path_end_index: usize;
+    let b_path_start_index: usize;
 
     let mut i: usize = 0;
     loop {
@@ -1917,10 +1910,7 @@ pub fn git_diff_internal(
 
     // unfortunately, git diff returns non-zero exit codes even when it succeeds.
     // we have to check that stderr was not empty to know if it failed
-    let mut result = match bun_spawn::sync::spawn(&opts)? {
-        sys::Result::Ok(r) => r,
-        sys::Result::Err(e) => return Err(e.into()),
-    };
+    let mut result = bun_spawn::sync::spawn(&opts)??;
 
     // Keep envp storage alive across the spawn call; Options.envp borrows it.
     drop(opts);
@@ -2034,7 +2024,6 @@ fn git_diff_postprocess(
         if !skip {
             // a/$old_folder/
             if let Some(idx) = strings::index_of(&stdout[line_start..line_end], a_old_folder_slash)
-                .map(|i| i as usize)
             {
                 let old_folder_slash_start = idx + 2;
                 stdout.drain(
@@ -2048,7 +2037,6 @@ fn git_diff_postprocess(
             }
             // b/$new_folder/
             if let Some(idx) = strings::index_of(&stdout[line_start..line_end], b_new_folder_slash)
-                .map(|i| i as usize)
             {
                 let new_folder_slash_start = idx + 2;
                 stdout.drain(
@@ -2062,9 +2050,7 @@ fn git_diff_postprocess(
                 continue;
             }
             if saw_a_folder.is_none() || saw_a_folder.unwrap() != line_idx as usize {
-                if let Some(idx) =
-                    strings::index_of(&stdout[line_start..line_end], old_folder).map(|i| i as usize)
-                {
+                if let Some(idx) = strings::index_of(&stdout[line_start..line_end], old_folder) {
                     let line = &stdout[line_start..line_end];
                     if idx + old_folder.len() < line_len && line[idx + old_folder.len()] == b'/' {
                         stdout.drain(line_start + idx..line_start + idx + old_folder.len() + 1);
@@ -2075,9 +2061,7 @@ fn git_diff_postprocess(
                 }
             }
             if saw_b_folder.is_none() || saw_b_folder.unwrap() != line_idx as usize {
-                if let Some(idx) =
-                    strings::index_of(&stdout[line_start..line_end], new_folder).map(|i| i as usize)
-                {
+                if let Some(idx) = strings::index_of(&stdout[line_start..line_end], new_folder) {
                     let line = &stdout[line_start..line_end];
                     if idx + new_folder.len() < line_len && line[idx + new_folder.len()] == b'/' {
                         stdout.drain(line_start + idx..line_start + idx + new_folder.len() + 1);

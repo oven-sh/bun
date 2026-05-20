@@ -167,7 +167,7 @@ pub fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 
     // Generate the token
     let token_bytes = match csrf::generate(
-        csrf::GenerateOptions {
+        &csrf::GenerateOptions {
             secret: match &secret {
                 Some(s) => s.slice(),
                 // SAFETY: `bun_vm()` never returns null for a Bun-owned global; we are
@@ -305,7 +305,7 @@ pub fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         }
     }
     // Verify the token
-    let is_valid = csrf::verify(csrf::VerifyOptions {
+    let is_valid = csrf::verify(&csrf::VerifyOptions {
         token: token.slice(),
         secret: match &secret {
             Some(s) => s.slice(),

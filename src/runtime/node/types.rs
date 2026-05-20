@@ -6,13 +6,10 @@ use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{WStr, ZStr, ZigString};
 use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
-use bun_paths::{
-    self as path_handler, MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer,
-};
+use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
-use crate::webcore::BlobExt as _;
 use crate::webcore::{Blob, Request, Response};
 
 pub use bun_core::SliceWithUnderlyingString;
@@ -63,7 +60,7 @@ pub use bun_sys::PlatformIoVec;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum BlobOrStringOrBuffer {
-    Blob(Blob),
+    Blob(Box<Blob>),
     StringOrBuffer(StringOrBuffer),
 }
 
@@ -135,7 +132,7 @@ impl BlobOrStringOrBuffer {
                 }
 
                 // `Blob::dupe()` clones the StoreRef (bumps refcount) and bit-copies fields.
-                return Ok(Some(Self::Blob(blob.dupe())));
+                return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
             }
         };
 
@@ -189,7 +186,7 @@ impl BlobOrStringOrBuffer {
                 // deref proof in `JSValue`); the JS wrapper roots the payload
                 // while `value` is on the stack.
                 if let Some(blob) = value.as_class_ref::<Blob>() {
-                    return Ok(Some(Self::Blob(blob.dupe())));
+                    return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
                 }
                 if allow_request_response {
                     if let Some(request) = value.as_class_ref::<Request>() {
@@ -199,7 +196,7 @@ impl BlobOrStringOrBuffer {
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
                             let blob = any_blob.to_blob(global);
                             any_blob.detach();
-                            return Ok(Some(Self::Blob(blob)));
+                            return Ok(Some(Self::Blob(Box::new(blob))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -214,7 +211,7 @@ impl BlobOrStringOrBuffer {
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
                             let blob = any_blob.to_blob(global);
                             any_blob.detach();
-                            return Ok(Some(Self::Blob(blob)));
+                            return Ok(Some(Self::Blob(Box::new(blob))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -904,7 +901,6 @@ pub fn js_assert_encoding_valid(
 
 // ──────────────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 pub enum PathOrBuffer {
     Path(bun_core::PathString),
     Buffer(Buffer),
@@ -934,7 +930,7 @@ pub struct CallbackTask<Result> {
 // Represented here as a Rust enum; callers must keep `success` in sync.
 // TODO(refactor): drop the redundant `success` field entirely.
 pub enum CallbackTaskOption<Result> {
-    Err(bun_sys::SystemError),
+    Err(Box<bun_sys::SystemError>),
     Result(Result),
 }
 
@@ -1068,7 +1064,7 @@ impl PathLikeExt for PathLike {
                     // SAFETY: buf[4+n] == 0 written above.
                     return ZStr::from_buf(&buf[..], 4 + n);
                 }
-                return path_handler::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced)
+                return bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced)
                     .unwrap_or_else(|_| panic!("Error while resolving path."));
             }
         }
@@ -1159,11 +1155,15 @@ impl PathLikeExt for PathLike {
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
                 // `buf` is the scratch for cwd-resolution; `b` is the pooled
                 // scratch for normalisation; final wide path lands back in `buf`.
-                let resolve = path_handler::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(buf, s)
+                let resolve =
+                    bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
+                        buf, s,
+                    )
                     .unwrap_or_else(|_| panic!("Error while resolving path."));
-                let normal = path_handler::resolve_path::normalize_buf::<
-                    bun_paths::platform::Windows,
-                >(resolve, &mut b[..]);
+                let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
+                    resolve,
+                    &mut b[..],
+                );
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
                 // SAFETY: same alignment note as above.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
@@ -1175,7 +1175,7 @@ impl PathLikeExt for PathLike {
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return strings::to_kernel32_path(buf_u16, b".");
             }
-            let normal = path_handler::resolve_path::normalize_string_buf::<
+            let normal = bun_paths::resolve_path::normalize_string_buf::<
                 true,
                 bun_paths::platform::Windows,
                 false,
@@ -1292,8 +1292,8 @@ impl PathLikeExt for PathLike {
     ) -> JsResult<PathLike> {
         // TODO(port): narrow error set
         if will_be_async {
-            let mut sliced = str.to_thread_safe_slice();
-            let mut sliced = scopeguard::guard(sliced, |s| s.deinit());
+            let sliced = str.to_thread_safe_slice();
+            let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
@@ -1308,8 +1308,8 @@ impl PathLikeExt for PathLike {
             }
             Ok(Self::ThreadsafeString(sliced))
         } else {
-            let mut sliced = str.to_slice();
-            let mut sliced = scopeguard::guard(sliced, |s| s.deinit());
+            let sliced = str.to_slice();
+            let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
             // will be stored in a fixed-size PathBuffer.
@@ -1885,7 +1885,7 @@ impl Dirent {
 
 pub enum PathOrBlob {
     Path(PathOrFileDescriptor),
-    Blob(Blob),
+    Blob(Box<Blob>),
 }
 
 impl PathOrBlob {
@@ -1912,7 +1912,7 @@ impl PathOrBlob {
             // `content_type` copy. `as_class_ref` is the safe shared-borrow
             // downcast — the JS wrapper roots the payload while `arg` is on the
             // stack.
-            return Ok(PathOrBlob::Blob(blob.borrowed_view()));
+            return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
         }
         Err(ctx.throw_invalid_argument_type_value(
             b"destination",

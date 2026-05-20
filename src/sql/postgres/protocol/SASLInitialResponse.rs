@@ -1,5 +1,4 @@
 use crate::postgres::protocol::new_writer::NewWriter;
-use crate::postgres::protocol::write_wrap::WriteWrap;
 use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
 

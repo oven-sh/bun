@@ -6,13 +6,10 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
-#[allow(unused_imports)]
-use bun_core::ZigString;
-use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
+use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
-use bun_js_parser as js_ast;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
 use bun_paths::{self, PathBuffer, SEP_STR};
@@ -597,6 +594,7 @@ impl UpgradeCommand {
                 // `get_latest_version` only touches them on the !SILENT error
                 // path (no overlapping live borrows).
                 Some(unsafe { &mut *refresher }),
+                // SAFETY: progress points into the same leaked allocation (see above).
                 Some(unsafe { &mut *progress }),
                 use_profile,
             )?
@@ -606,6 +604,7 @@ impl UpgradeCommand {
 
             // SAFETY: see above.
             unsafe { (*progress).end() };
+            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
 
             if !Environment::IS_CANARY {
@@ -667,6 +666,7 @@ impl UpgradeCommand {
                 unsafe { (*refresher).start(b"Downloading", version.size as usize) };
             // SAFETY: see above.
             unsafe { (*progress).unit = Progress::Unit::Bytes };
+            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
             // Zig leaks this allocation intentionally — store in CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
@@ -714,6 +714,7 @@ impl UpgradeCommand {
 
             // SAFETY: refresher/progress are leaked allocations.
             unsafe { (*progress).end() };
+            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
 
             if bytes.is_empty() {
@@ -898,13 +899,15 @@ impl UpgradeCommand {
                     let mut buf2 = PathBuffer::uninit();
                     let powershell_path: &ZStr = match which(
                         &mut buf,
-                        env_var::PATH.get().unwrap_or(b""),
+                        bun_core::env_var::PATH.get().unwrap_or(b""),
                         b"",
                         b"powershell",
                     ) {
                         Some(p) => p,
                         None => {
-                            let system_root = env_var::SYSTEMROOT.get().unwrap_or(b"C:\\Windows");
+                            let system_root = bun_core::env_var::SYSTEMROOT
+                                .get()
+                                .unwrap_or(b"C:\\Windows");
                             let hardcoded_system_powershell =
                                 bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
                                     system_root,
@@ -1112,7 +1115,7 @@ impl UpgradeCommand {
                 )
             };
             let target_dir_ = bun_core::dirname(destination_executable)
-                .ok_or(bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
+                .ok_or_else(|| bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
             // SAFETY: in-bounds; write is at the separator byte between dirname
@@ -1390,6 +1393,7 @@ pub mod upgrade_js_bindings {
     // worker VM) a `thread_local!` would make the close see `None` and leak the
     // HANDLE. Match the Zig global with a `RacyCell`; access is test-only and
     // effectively single-threaded.
+    #[cfg(windows)]
     static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {

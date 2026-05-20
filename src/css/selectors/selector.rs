@@ -1,13 +1,12 @@
 use crate::css_parser as css;
 use crate::css_parser::compat::Feature;
 use crate::css_parser::targets::Targets;
-use crate::css_parser::{CSSString, PrintErr, Printer, StyleContext, VendorPrefix};
+use crate::css_parser::{PrintErr, Printer, StyleContext, VendorPrefix};
 use crate::{CSSStringFns, IdentFns};
 type SymbolList = Vec<bun_ast::Symbol>;
 
 use bun_alloc::Arena as Bump;
 use bun_collections::ArrayHashMap;
-use bun_core::Output;
 
 bun_core::declare_scope!(CSS_SELECTORS, visible);
 
@@ -126,7 +125,7 @@ pub fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool {
 pub fn downlevel_selectors<'bump>(
     bump: &'bump Bump,
     selectors: &mut [Selector],
-    targets: Targets,
+    targets: &Targets,
 ) -> VendorPrefix {
     let mut necessary_prefixes = VendorPrefix::empty();
     for selector in selectors.iter_mut() {
@@ -140,7 +139,7 @@ pub fn downlevel_selectors<'bump>(
 pub fn downlevel_component<'bump>(
     bump: &'bump Bump,
     component: &mut Component,
-    targets: Targets,
+    targets: &Targets,
 ) -> VendorPrefix {
     match component {
         Component::NonTsPseudoClass(pc) => {
@@ -233,7 +232,7 @@ const RTL_LANGS: &[&[u8]] = &[
     b"nqo", b"pnb", b"ps", b"sd", b"ug", b"ur", b"yi",
 ];
 
-fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: Targets) -> Component {
+fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: &Targets) -> Component {
     // Convert :dir to :lang. If supported, use a list of languages in a single :lang,
     // otherwise, use :is/:not, which may be further downleveled to e.g. :-webkit-any.
     if !targets.should_compile_same(Feature::LangSelectorList) {
@@ -308,7 +307,7 @@ pub fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     prefix
 }
 
-pub fn is_compatible(selectors: &[parser::Selector], targets: Targets) -> bool {
+pub fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
     use Feature as F;
     for selector in selectors {
         for component in selector.components.iter() {
@@ -600,7 +599,7 @@ fn is_selector_unused(
                         a == &**b
                     }
                 }
-                if unused_symbols.contains_adapted(actual_ident, SliceAdapter) {
+                if unused_symbols.contains_adapted(actual_ident, &SliceAdapter) {
                     return true;
                 }
             }
@@ -703,7 +702,7 @@ pub mod serialize {
             // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
             if is_relative && compound.len() >= 1 && matches!(compound[0], Component::Scope) {
                 if let Some(combinator) = combinators.next() {
-                    serialize_combinator(&combinator, dest)?;
+                    serialize_combinator(combinator, dest)?;
                 }
                 compound = &compound[1..];
                 is_relative = false;
@@ -847,7 +846,7 @@ pub mod serialize {
             //    single SPACE (U+0020) if the combinator was not whitespace, to
             //    s.
             if let Some(c) = next_combinator {
-                serialize_combinator(&c, dest)?;
+                serialize_combinator(c, dest)?;
             } else {
                 combinators_exhausted = true;
             }
@@ -867,7 +866,7 @@ pub mod serialize {
         context: Option<&StyleContext>,
     ) -> Result<(), PrintErr> {
         match component {
-            Component::Combinator(c) => return serialize_combinator(c, dest),
+            Component::Combinator(c) => return serialize_combinator(*c, dest),
             Component::AttributeInNoNamespace {
                 local_name,
                 operator,
@@ -1016,7 +1015,7 @@ pub mod serialize {
     }
 
     pub fn serialize_combinator(
-        combinator: &parser::Combinator,
+        combinator: parser::Combinator,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
         match combinator {
@@ -1179,11 +1178,7 @@ pub mod serialize {
 
             PseudoClass::Local { selector } => serialize_selector(selector, dest, context, false)?,
             PseudoClass::Global { selector } => {
-                let css_module = if let Some(module) = dest.css_module.take() {
-                    Some(module)
-                } else {
-                    None
-                };
+                let css_module = dest.css_module.take();
                 serialize_selector(selector, dest, context, false)?;
                 dest.css_module = css_module;
             }
@@ -1465,7 +1460,7 @@ pub mod tocss_servo {
             //
             // If we are in this case, after we have serialized the universal
             // selector, we skip Step 2 and continue with the algorithm.
-            let (can_elide_namespace, first_non_namespace): (bool, usize) = if 0 >= compound.len() {
+            let (can_elide_namespace, first_non_namespace): (bool, usize) = if compound.is_empty() {
                 (true, 0)
             } else {
                 match compound[0] {
@@ -1537,7 +1532,7 @@ pub mod tocss_servo {
             //    single SPACE (U+0020) if the combinator was not whitespace, to
             //    s.
             if let Some(c) = next_combinator {
-                to_css_combinator(&c, dest)?;
+                to_css_combinator(c, dest)?;
             } else {
                 combinators_exhausted = true;
             }
@@ -1556,7 +1551,7 @@ pub mod tocss_servo {
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
         match component {
-            Component::Combinator(c) => to_css_combinator(c, dest)?,
+            Component::Combinator(c) => to_css_combinator(*c, dest)?,
             Component::Slotted(selector) => {
                 dest.write_str(b"::slotted(")?;
                 to_css_selector(selector, dest)?;
@@ -1711,7 +1706,7 @@ pub mod tocss_servo {
     }
 
     pub fn to_css_combinator(
-        combinator: &parser::Combinator,
+        combinator: parser::Combinator,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
         match combinator {
@@ -1869,7 +1864,7 @@ impl<'a> CompoundSelectorIter<'a> {
     pub fn next(&mut self) -> Option<&'a [parser::Component]> {
         // Since we iterating backwards, we convert all indices into "backwards form" by doing `self.sel.components.len() - 1 - i`
         let items = self.sel.components.as_slice();
-        while self.i < items.len() {
+        if self.i < items.len() {
             let next_index: Option<usize> = 'next_index: {
                 for j in self.i..items.len() {
                     if items[items.len() - 1 - j].is_combinator() {

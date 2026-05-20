@@ -1,23 +1,15 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    clippy::too_many_arguments,
-    clippy::needless_late_init
-)]
+#![allow(clippy::too_many_arguments, clippy::needless_late_init)]
 //! Lowering for TC39 standard ES decorators.
 //! Extracted from P.zig to reduce duplication via shared helpers.
 
 use bun_alloc::ArenaVecExt as _;
-use core::ptr::NonNull;
 
 use bun_collections::{HashMap, VecExt};
 
 use crate::p::P;
 use crate::parser::{ARGUMENTS_STR as arguments_str, Ref};
-use bun_ast::g::{Arg, Decl, DeclList, Property, PropertyKind};
-use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, StmtNodeList, Symbol};
+use bun_ast::g::{DeclList, Property, PropertyKind};
+use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
@@ -631,7 +623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Private access rewriting ─────────────────────────
 
-    fn private_get_expr(&mut self, obj: Expr, info: PrivateLoweredInfo, l: bun_ast::Loc) -> Expr {
+    fn private_get_expr(&mut self, obj: Expr, info: &PrivateLoweredInfo, l: bun_ast::Loc) -> Expr {
         if let Some(desc_ref) = info.accessor_desc_ref {
             let storage = self.use_ref(info.storage_ref, l);
             let desc = self.use_ref(desc_ref, l);
@@ -662,7 +654,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn private_set_expr(
         &mut self,
         obj: Expr,
-        info: PrivateLoweredInfo,
+        info: &PrivateLoweredInfo,
         val: Expr,
         l: bun_ast::Loc,
     ) -> Expr {
@@ -699,7 +691,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let js_ast::ExprData::EPrivateIdentifier(pi) = &e.index.data {
                     if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
                         let target = e.target;
-                        *expr = self.private_get_expr(target, info, expr_loc);
+                        *expr = self.private_get_expr(target, &info, expr_loc);
                         return;
                     }
                 }
@@ -716,7 +708,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 self.rewrite_private_accesses_in_expr(&mut lt, map);
                                 let mut rt = e.right;
                                 self.rewrite_private_accesses_in_expr(&mut rt, map);
-                                *expr = self.private_set_expr(lt, info, rt, expr_loc);
+                                *expr = self.private_set_expr(lt, &info, rt, expr_loc);
                                 return;
                             }
                         }
@@ -746,7 +738,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(info) = map.get(&pi.ref_.inner_index()).copied() {
                             let mut obj_expr = tgt_idx.target;
                             self.rewrite_private_accesses_in_expr(&mut obj_expr, map);
-                            let private_access = self.private_get_expr(obj_expr, info, expr_loc);
+                            let private_access = self.private_get_expr(obj_expr, &info, expr_loc);
                             let call_target = self.new_expr(
                                 E::Dot {
                                     target: private_access,
@@ -1217,14 +1209,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // For named class expressions: swap to expr_class_ref for suffix ops
         let mut original_class_name_for_decorator: Option<&'a [u8]> = None;
-        if is_expr && !expr_class_is_anonymous && expr_class_ref.is_some() {
+        if is_expr
+            && !expr_class_is_anonymous
+            && let Some(ecr) = expr_class_ref
+        {
             // SAFETY: see above.
             original_class_name_for_decorator = Some(
                 p.symbols[class_name_ref.inner_index() as usize]
                     .original_name
                     .slice(),
             );
-            class_name_ref = expr_class_ref.unwrap();
+            class_name_ref = ecr;
             class_name_loc = loc;
         }
 
@@ -1251,8 +1246,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let base_assign_expr: Option<Expr> = if is_expr && base_ref.is_some() {
-            Some(p.assign_to(base_ref.unwrap(), class.extends.unwrap(), loc))
+        let base_assign_expr: Option<Expr> = if is_expr && let Some(br) = base_ref {
+            Some(p.assign_to(br, class.extends.unwrap(), loc))
         } else {
             None
         };
@@ -1331,15 +1326,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if prop.ts_decorators.len_u32() == 0 {
                 // ── Non-decorated property ──
                 if lower_all_private
-                    && prop.key.is_some()
-                    && matches!(
-                        prop.key.expect("infallible: prop has key").data,
-                        js_ast::ExprData::EPrivateIdentifier(_)
-                    )
+                    && let Some(nk_expr) = prop.key
+                    && matches!(nk_expr.data, js_ast::ExprData::EPrivateIdentifier(_))
                     && prop.kind != PropertyKind::ClassStaticBlock
                     && prop.kind != PropertyKind::AutoAccessor
                 {
-                    let nk_expr = prop.key.expect("infallible: prop has key");
                     let npriv_ref = match &nk_expr.data {
                         js_ast::ExprData::EPrivateIdentifier(pi) => pi.ref_,
                         _ => unreachable!(),
@@ -1368,7 +1359,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
                         let fn_ref = p.new_sym(js_ast::symbol::Kind::Other, fn_nm);
 
-                        let mut new_info = existing.unwrap_or(PrivateLoweredInfo::new(ws_ref));
+                        let mut new_info =
+                            existing.unwrap_or_else(|| PrivateLoweredInfo::new(ws_ref));
                         if nk == 1 {
                             new_info.method_fn_ref = Some(fn_ref);
                         } else if nk == 2 {
@@ -1635,7 +1627,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let fn_ref = p.new_sym(js_ast::symbol::Kind::Other, fn_nm);
                     private_method_fn_ref = Some(fn_ref);
 
-                    let mut new_info = existing.unwrap_or(PrivateLoweredInfo::new(ws_ref));
+                    let mut new_info = existing.unwrap_or_else(|| PrivateLoweredInfo::new(ws_ref));
                     if k == 1 {
                         new_info.method_fn_ref = Some(fn_ref);
                     } else if k == 2 {
@@ -1705,8 +1697,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // Build __decorateElement args
-            let target_ref = if is_expr && expr_class_ref.is_some() {
-                expr_class_ref.unwrap()
+            let target_ref = if is_expr && let Some(ecr) = expr_class_ref {
+                ecr
             } else {
                 class_name_ref
             };
@@ -1742,8 +1734,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             });
             dec_args.push(decorator_array);
 
-            if is_private && private_storage_ref.is_some() {
-                dec_args.push(p.use_ref(private_storage_ref.unwrap(), loc));
+            if is_private && let Some(storage_ref) = private_storage_ref {
+                dec_args.push(p.use_ref(storage_ref, loc));
                 if dec_arg_count == 6 {
                     if (1..=3).contains(&k) {
                         dec_args.push(
@@ -1751,7 +1743,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc)),
                         );
                     } else if k == 4 {
-                        dec_args.push(p.use_ref(private_storage_ref.unwrap(), loc));
+                        dec_args.push(p.use_ref(storage_ref, loc));
                     } else {
                         dec_args.push(p.new_expr(E::Undefined {}, loc));
                     }
@@ -1858,7 +1850,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     has_instance_private_methods = true;
                 }
             } else {
-                let mut new_prop = prop_copy(prop);
+                let new_prop = prop_copy(prop);
                 new_properties.push(new_prop);
                 if prop.flags.contains(Flags::Property::IsStatic) {
                     static_non_field_elements.push(element);

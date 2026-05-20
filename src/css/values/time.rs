@@ -32,7 +32,7 @@ const TAG_MILLISECONDS: u16 = 2;
 
 impl Time {
     #[inline]
-    fn tag(&self) -> u16 {
+    fn tag(self) -> u16 {
         match self {
             Time::Seconds(_) => TAG_SECONDS,
             Time::Milliseconds(_) => TAG_MILLISECONDS,
@@ -45,7 +45,7 @@ impl Time {
     // forward via UFCS (`Time::eql(a, b)`) — does not conflict with the
     // derived trait method (that one has a `&self` receiver).
     #[inline]
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub fn eql(lhs: Self, rhs: Self) -> bool {
         lhs == rhs
     }
 
@@ -83,25 +83,25 @@ impl Time {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // 0.1s is shorter than 100ms
         // anything smaller is longer
-        match *self {
+        match self {
             Time::Seconds(s) => {
                 if s > 0.0 && s < 0.1 {
-                    CSSNumberFns::to_css(&(s * 1000.0), dest)?;
+                    CSSNumberFns::to_css(s * 1000.0, dest)?;
                     dest.write_str("ms")?;
                 } else {
-                    CSSNumberFns::to_css(&s, dest)?;
+                    CSSNumberFns::to_css(s, dest)?;
                     dest.write_str("s")?;
                 }
             }
             Time::Milliseconds(ms) => {
                 if ms == 0.0 || ms >= 100.0 {
-                    CSSNumberFns::to_css(&(ms / 1000.0), dest)?;
+                    CSSNumberFns::to_css(ms / 1000.0, dest)?;
                     dest.write_str("s")?;
                 } else {
-                    CSSNumberFns::to_css(&ms, dest)?;
+                    CSSNumberFns::to_css(ms, dest)?;
                     dest.write_str("ms")?;
                 }
             }
@@ -109,16 +109,16 @@ impl Time {
         Ok(())
     }
 
-    pub fn is_zero(&self) -> bool {
-        match *self {
+    pub fn is_zero(self) -> bool {
+        match self {
             Time::Seconds(s) => s == 0.0,
             Time::Milliseconds(ms) => ms == 0.0,
         }
     }
 
     /// Returns the time in milliseconds.
-    pub fn to_ms(&self) -> CSSNumber {
-        match *self {
+    pub fn to_ms(self) -> CSSNumber {
+        match self {
             Time::Seconds(v) => v * 1000.0,
             Time::Milliseconds(v) => v,
         }
@@ -160,35 +160,35 @@ impl Time {
     pub fn add(self, other: Self) -> Time {
         // Zig arena param dropped (unused).
         // PORT NOTE: Zig passes `void` ctx + free fn; Rust closure captures nothing.
-        self.op(&other, |a, b| a + b)
+        self.op(other, |a, b| a + b)
     }
 
-    pub fn partial_cmp(&self, other: &Time) -> Option<core::cmp::Ordering> {
-        crate::generic::partial_cmp_f32(&self.to_ms(), &other.to_ms())
+    pub fn partial_cmp(self, other: Time) -> Option<core::cmp::Ordering> {
+        crate::generic::partial_cmp_f32(self.to_ms(), other.to_ms())
     }
 
-    pub fn map(&self, map_fn: impl Fn(f32) -> f32) -> Time {
+    pub fn map(self, map_fn: impl Fn(f32) -> f32) -> Time {
         // PERF(port): was comptime fn-pointer monomorphization — profile if hot.
-        match *self {
+        match self {
             Time::Seconds(s) => Time::Seconds(map_fn(s)),
             Time::Milliseconds(ms) => Time::Milliseconds(map_fn(ms)),
         }
     }
 
-    pub fn sign(&self) -> f32 {
-        match *self {
-            Time::Seconds(v) => CSSNumberFns::sign(&v),
-            Time::Milliseconds(v) => CSSNumberFns::sign(&v),
+    pub fn sign(self) -> f32 {
+        match self {
+            Time::Seconds(v) => CSSNumberFns::sign(v),
+            Time::Milliseconds(v) => CSSNumberFns::sign(v),
         }
     }
 
-    pub fn op(&self, other: &Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
+    pub fn op(self, other: Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
         // PORT NOTE: Zig uses `ctx: anytype` + comptime fn-pointer (its closure idiom).
         // Rust closures capture ctx directly, so the `ctx` param is dropped.
         // PORT NOTE: reshaped bit-packed `switch_val` into an exhaustive tuple match;
         // semantics are identical, `unreachable` arm is unnecessary.
         let _ = (self.tag(), TAG_SECONDS, TAG_MILLISECONDS); // keep tag consts referenced
-        match (*self, *other) {
+        match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => Time::Seconds(op_fn(a, b)),
             (Time::Milliseconds(a), Time::Milliseconds(b)) => Time::Milliseconds(op_fn(a, b)),
             (Time::Seconds(a), Time::Milliseconds(b)) => Time::Seconds(op_fn(a, b / 1000.0)),
@@ -196,9 +196,9 @@ impl Time {
         }
     }
 
-    pub fn op_to<R>(&self, other: &Time, op_fn: impl Fn(f32, f32) -> R) -> R {
+    pub fn op_to<R>(self, other: Time, op_fn: impl Fn(f32, f32) -> R) -> R {
         // PORT NOTE: see `op` — ctx param folded into closure; bit-packed switch reshaped.
-        match (*self, *other) {
+        match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => op_fn(a, b),
             (Time::Milliseconds(a), Time::Milliseconds(b)) => op_fn(a, b),
             (Time::Seconds(a), Time::Milliseconds(b)) => op_fn(a, b / 1000.0),

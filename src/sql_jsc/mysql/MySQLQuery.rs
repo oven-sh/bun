@@ -596,6 +596,7 @@ impl MySQLQuery {
     }
 
     #[inline]
+    #[allow(clippy::mut_from_ref)] // goes through a raw intrusive pointer; see SAFETY note below
     pub fn get_statement(&self) -> Option<&mut MySQLStatement> {
         // SAFETY: when non-null, `self.statement` is a live boxed `MySQLStatement`
         // kept alive by the intrusive ref we hold. Returning `&mut` mirrors Zig's

@@ -11,10 +11,9 @@ use crate::bundled_ast as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_ast::{ImportKind, import_record};
-use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 
-use crate::Graph::{InputFileColumns as _, InputFileFlags};
+use crate::Graph::InputFileFlags;
 use crate::Index;
 use crate::bundle_v2::BundleV2;
 use crate::bundle_v2::bv2_impl::{PatchImportRecordsCtx, ResolveImportRecordCtx};
@@ -328,7 +327,7 @@ fn resolve_barrel_records(
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
     let source_path: &'static [u8] = source.path.text;
 
-    let resolve_result = this.resolve_import_records(ResolveImportRecordCtx {
+    let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
         import_records: &mut barrel_ir,
         source: &source,
         loader,
@@ -337,7 +336,7 @@ fn resolve_barrel_records(
 
     this.graph.input_files.items_source_mut()[idx] = source;
 
-    let scheduled = this.process_resolve_queue(resolve_result.resolve_queue, target, barrel_idx);
+    let scheduled = this.process_resolve_queue(&resolve_result.resolve_queue, target, barrel_idx);
 
     this.patch_import_record_source_indices(
         &mut barrel_ir,
@@ -634,7 +633,7 @@ pub fn schedule_barrel_deferred_imports(
             }),
             RequestedExports::Partial(partial) => {
                 for key in partial.keys() {
-                    // PORT NOTE: arena-backed key slices live for the bundler
+                    // SAFETY: arena-backed key slices live for the bundler
                     // arena lifetime; raw-ptr round-trip to detach from the
                     // `&this.requested_exports` borrow before BFS mutates it.
                     let alias: &[u8] = unsafe { bun_ptr::detach_lifetime_ref(&**key) };

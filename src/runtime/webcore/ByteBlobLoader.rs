@@ -1,5 +1,3 @@
-use core::mem::offset_of;
-
 use bun_collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
@@ -180,7 +178,7 @@ impl ByteBlobLoader {
             }
         }
 
-        let mut blob = Blob::init_with_store(store, global);
+        let blob = Blob::init_with_store(store, global);
         blob.offset.set(self.offset);
         blob.size.set(self.remain);
 

@@ -1,5 +1,4 @@
 use core::ffi::{c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::mem::ManuallyDrop;
 
 use crate::{JSCell, JSGlobalObject, JSValue, JsError, JsResult};
@@ -31,16 +30,6 @@ unsafe extern "C" {
         ctx: *mut c_void,
         initializer: InitializeCallback,
     ) -> JSValue;
-    // From bun.cpp namespace; Zig calls via `bun.cpp.*` host-call wrapper.
-    // TODO(port): verify C++ return type / fromJSHostCall wrapping — raw symbol
-    // signature unconfirmed; declared `void` here to avoid guessing.
-    fn JSC__JSObject__putRecord(
-        this: *mut JSObject,
-        global: *mut JSGlobalObject,
-        key: *mut ZigString,
-        values: *mut ZigString,
-        values_len: usize,
-    );
 }
 
 bun_opaque::opaque_ffi! {
@@ -173,7 +162,12 @@ impl JSObject {
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
-    pub fn create_structure(
+    /// # Safety
+    /// `owner` must be a cell-tagged `JSValue` (its payload is a live
+    /// `JSCell*`) that remains valid for the duration of the call.
+    /// `names` must point to `length` initialized `ExternColumnIdentifier`s
+    /// valid for the duration of the call; C++ does not retain the pointer.
+    pub unsafe fn create_structure(
         global: &JSGlobalObject,
         owner: JSValue,
         length: u32,

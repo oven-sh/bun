@@ -255,7 +255,6 @@ impl LoaderExt for Loader {
             api::Loader::sqlite => Loader::Sqlite,
             api::Loader::sqlite_embedded => Loader::SqliteEmbedded,
             api::Loader::md => Loader::Md,
-            _ => Loader::File,
         }
     }
 }

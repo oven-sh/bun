@@ -109,9 +109,9 @@ impl Symlinker {
                                         false
                                     };
                                     #[cfg(not(windows))]
-                                    let is_dir = if let Some(st) =
-                                        bun_sys::lstat(self.dest.slice_z()).ok()
+                                    let is_dir = if let Ok(st) = bun_sys::lstat(self.dest.slice_z())
                                     {
+                                        // `mode_t` is `u16` on darwin/freebsd/android, `u32` on linux.
                                         bun_sys::posix::s_isdir(st.st_mode as u32)
                                     } else {
                                         false
@@ -166,6 +166,7 @@ impl Symlinker {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Strategy {
     ExpectExisting,
     ExpectMissing,

@@ -20,13 +20,7 @@
 
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
-#![allow(
-    unused,
-    nonstandard_style,
-    static_mut_refs,
-    unexpected_cfgs,
-    clippy::all
-)]
+#![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 #[path = "CPUFeatures.rs"]
@@ -105,14 +99,16 @@ pub mod debug {
     // Previously lived in `bun_jsc::btjs::zig_std_debug`; relocated here so the
     // crash handler (lower-tier crate) gets real symbol names in debug builds
     // and `btjs` re-exports from this module.
+    #[cfg(not(windows))]
+    use bun_collections::HashMap;
     use bun_core::{Error, err};
-    #[allow(unused_imports)]
-    use core::ffi::{c_int, c_void};
-    use std::collections::HashMap;
+    #[cfg(not(windows))]
+    use core::ffi::c_void;
 
     pub use bun_core::debug::{SourceLocation, SymbolInfo};
 
     pub struct SelfInfo {
+        #[cfg(not(windows))]
         address_map: HashMap<usize, Box<Module>>,
     }
 
@@ -151,10 +147,22 @@ pub mod debug {
             {
                 // SelfInfo.init — non-Windows path is just an empty address_map.
                 return Ok(SelfInfo {
+                    #[cfg(not(windows))]
                     address_map: HashMap::new(),
                 });
             }
-            #[allow(unreachable_code)]
+            #[cfg(not(any(
+                target_os = "linux",
+                target_os = "android",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "dragonfly",
+                target_os = "openbsd",
+                target_os = "macos",
+                target_os = "solaris",
+                target_os = "illumos",
+                windows,
+            )))]
             Err(err!("UnsupportedOperatingSystem"))
         }
 
@@ -259,8 +267,8 @@ pub mod debug {
         #[cfg(not(windows))]
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
             let _ = self.base_address;
-            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let mut info: libc::Dl_info = bun_core::ffi::zeroed();
+            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
             if rc == 0 || info.dli_sname.is_null() {
                 // Zig returns a default-initialized `Symbol` (`.{}` — name "???") here
@@ -328,10 +336,10 @@ pub mod debug {
         unsafe {
             let slot = &mut *SELF_DEBUG_INFO.get();
             if let Some(info) = slot {
-                return Ok(info as *mut _);
+                return Ok(std::ptr::from_mut(info));
             }
             *slot = Some(SelfInfo::open()?);
-            Ok(slot.as_mut().unwrap() as *mut _)
+            Ok(std::ptr::from_mut(slot.as_mut().unwrap()))
         }
     }
     /// Zig: `std.io.tty.detectConfig(std.io.getStdErr())`.
@@ -458,12 +466,16 @@ impl Write for StderrWriter {
 mod draft {
 
     use core::cell::Cell;
-    use core::ffi::{c_char, c_int, c_long, c_void};
+    #[cfg(not(windows))]
+    use core::ffi::c_int;
+    #[cfg(windows)]
+    use core::ffi::c_long;
+    use core::ffi::{c_char, c_void};
     use core::fmt;
     // D101: `core::fmt::Write` intentionally NOT in scope here — `bun_io::Write`
     // (via `super::Write`) supplies `write_fmt` for `BoundedArray<u8,N>`; importing
     // both makes `write!` ambiguous (E0034).
-    use core::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicUsize, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
     use bun_base64::VLQ;
     use bun_collections::BoundedArray;
@@ -510,6 +522,7 @@ mod draft {
 
     /// Zig: `bun.fmt.fmtArgv` — print an argv vector as a shell-ish line.
     /// crash_handler.zig:1024 calls this when the addr2line spawn fails.
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     fn fmt_argv<W: super::Write>(w: &mut W, argv: &[Vec<u8>]) -> Result<(), bun_core::Error> {
         for (i, a) in argv.iter().enumerate() {
             if i > 0 {
@@ -843,11 +856,7 @@ mod draft {
         let skip: usize = 'search: {
             for (i, &addr) in addrs[0..stack_trace.index].iter().enumerate() {
                 // Check if this address is close to begin_addr (within tolerance)
-                let delta = if addr >= begin_addr {
-                    addr - begin_addr
-                } else {
-                    begin_addr - addr
-                };
+                let delta = addr.abs_diff(begin_addr);
                 if delta <= TOLERANCE {
                     break 'search i;
                 }
@@ -1115,13 +1124,13 @@ mod draft {
                                 abort();
                             }
                         }
-                        if write!(writer, "{}\n", reason).is_err() {
+                        if writeln!(writer, "{}", reason).is_err() {
                             abort();
                         }
                     }
 
                     if let Some(action) = CURRENT_ACTION.with(|c| c.get()) {
-                        if write!(writer, "Crashed while {}\n", action).is_err() {
+                        if writeln!(writer, "Crashed while {}", action).is_err() {
                             abort();
                         }
                     }
@@ -1139,13 +1148,12 @@ mod draft {
                                 break 'blk ert;
                             }
                         }
-                        let desired_begin_addr =
-                            begin_addr.unwrap_or_else(|| debug::return_address());
-                        let mut idx: usize =
+                        let desired_begin_addr = begin_addr.unwrap_or_else(debug::return_address);
+                        let idx: usize =
                             debug::capture_stack_trace(desired_begin_addr, &mut addr_buf);
 
                         #[cfg(all(target_os = "linux", target_env = "gnu"))]
-                        {
+                        let idx = {
                             let mut addr_buf_libc: [usize; 20] = [0; 20];
                             // capture_libc_backtrace only writes `.index` on the StackTrace and
                             // writes frames into `addrs`; pass an empty-slice trace for the index.
@@ -1161,9 +1169,11 @@ mod draft {
                             // Use stack trace from glibc's backtrace() if it has more frames
                             if idx_holder.index > idx {
                                 addr_buf = addr_buf_libc;
-                                idx = idx_holder.index;
+                                idx_holder.index
+                            } else {
+                                idx
                             }
-                        }
+                        };
                         trace_buf = StackTrace {
                             index: idx,
                             instruction_addresses: &addr_buf,
@@ -1326,7 +1336,7 @@ mod draft {
                     bun_core::set_auto_reload_on_crash(false);
 
                     // TODO(port): pretty_fmt! color tags — runtime rewrite via pretty_fmt_args
-                    Output::pretty_errorln(&format_args!(
+                    Output::pretty_errorln(format_args!(
                         "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{}<r><d>] ---<r>",
                         bun_core::time::milli_timestamp().max(0),
                     ));
@@ -1352,7 +1362,7 @@ mod draft {
                 if write!(stderr, "\npanic: {}\n", reason).is_err() {
                     abort();
                 }
-                if write!(stderr, "panicked during a panic. Aborting.\n").is_err() {
+                if writeln!(stderr, "panicked during a panic. Aborting.").is_err() {
                     abort();
                 }
             }
@@ -1372,7 +1382,7 @@ mod draft {
     /// This is called when `main` returns a Zig error.
     /// We don't want to treat it as a crash under certain error codes.
     pub fn handle_root_error(err: bun_core::Error, error_return_trace: Option<&StackTrace>) -> ! {
-        use bun_core::{err_generic, note, pretty_error, pretty_errorln};
+        use bun_core::{err_generic, pretty_error};
 
         /// Zig: `std.posix.getrlimit(.NOFILE)`. bun_sys::posix has no rlimit yet —
         /// thin libc wrapper (POD out-param, never fails on supported targets).
@@ -1488,7 +1498,7 @@ mod draft {
             }
             #[cfg(not(unix))]
             {
-                pretty_errorln!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: bun ran out of file descriptors <d>(<red>ProcessFdQuotaExceeded<r><d>)<r>",
                 );
             }
@@ -1590,7 +1600,7 @@ mod draft {
                 CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
             },
             error_return_trace,
-            Some(begin_addr.unwrap_or_else(|| debug::return_address())),
+            Some(begin_addr.unwrap_or_else(debug::return_address)),
         );
     }
 
@@ -1874,10 +1884,10 @@ mod draft {
             if enable_ansi_colors_stderr() {
                 let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
             }
-            let _ = write!(writer, ": {}\n", reason);
+            let _ = writeln!(writer, ": {}", reason);
 
             if let Some(action) = CURRENT_ACTION.with(|c| c.get()) {
-                let _ = write!(writer, "Crashed while {}\n", action);
+                let _ = writeln!(writer, "Crashed while {}", action);
             }
 
             let mut addr_buf: [usize; 20] = [0; 20];
@@ -1969,9 +1979,9 @@ mod draft {
                 index: n,
                 instruction_addresses: &addrs,
             };
-            let _ = write!(
+            let _ = writeln!(
                 stderr,
-                "View Debug Trace: {}\n",
+                "View Debug Trace: {}",
                 TraceString {
                     action: TraceStringAction::ViewTrace,
                     reason: CrashReason::ZigError(bun_core::err!("DumpStackTrace")),
@@ -2087,7 +2097,8 @@ mod draft {
             writer.write_all(&Output::pretty_fmt::<true>("<r><d>"))?;
         }
 
-        let mut is_ancient_cpu = false;
+        #[cfg(target_arch = "x86_64")]
+        let is_ancient_cpu: bool;
 
         writer.write_all(METADATA_VERSION_LINE.as_bytes())?;
         {
@@ -2095,6 +2106,11 @@ mod draft {
 
             // TODO(port): bun_analytics::GenerateHeader::GeneratePlatform
             {
+                #[cfg(any(
+                    all(target_os = "linux", target_env = "gnu"),
+                    target_os = "freebsd",
+                    target_os = "macos"
+                ))]
                 let platform = bun_analytics::GenerateHeader::generate_platform::for_os();
                 #[cfg(all(target_os = "linux", target_env = "gnu"))]
                 {
@@ -2108,10 +2124,10 @@ mod draft {
                     };
                     let kernel_version =
                         bun_analytics::GenerateHeader::generate_platform::kernel_version();
-                    if platform.os == bun_analytics::schema::analytics::OperatingSystem::wsl {
-                        write!(
+                    if platform.os == bun_analytics::schema::analytics::OperatingSystem::Wsl {
+                        writeln!(
                             writer,
-                            "WSL Kernel v{}.{}.{} | glibc v{}\n",
+                            "WSL Kernel v{}.{}.{} | glibc v{}",
                             kernel_version.major,
                             kernel_version.minor,
                             kernel_version.patch,
@@ -2119,9 +2135,9 @@ mod draft {
                         )
                         .map_err(fmt_err)?;
                     } else {
-                        write!(
+                        writeln!(
                             writer,
-                            "Linux Kernel v{}.{}.{} | glibc v{}\n",
+                            "Linux Kernel v{}.{}.{} | glibc v{}",
                             kernel_version.major,
                             kernel_version.minor,
                             kernel_version.patch,
@@ -2184,7 +2200,7 @@ mod draft {
             }
 
             if !cpu_features.is_empty() {
-                write!(writer, "CPU: {}\n", cpu_features).map_err(fmt_err)?;
+                writeln!(writer, "CPU: {}", cpu_features).map_err(fmt_err)?;
             }
 
             write!(writer, "Args: ").map_err(fmt_err)?;
@@ -2237,9 +2253,9 @@ mod draft {
                     &raw mut page_faults,
                 );
             }
-            write!(
+            writeln!(
                 writer,
-                "Elapsed: {}ms | User: {}ms | Sys: {}ms\n",
+                "Elapsed: {}ms | User: {}ms | Sys: {}ms",
                 elapsed_msecs, user_msecs, system_msecs
             )
             .map_err(fmt_err)?;
@@ -2277,7 +2293,6 @@ mod draft {
                 )?;
             }
         }
-        let _ = is_ancient_cpu;
         Ok(())
     }
 
@@ -2304,30 +2319,12 @@ mod draft {
     ///                               ^ this tells you it is windows x86_64
     ///
     /// Baseline gets a weirder encoding of a mix of b and e.
-    #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum Platform {
-        LinuxX8664 = b'l',
-        LinuxX8664Baseline = b'B',
-        LinuxAarch64 = b'L',
-
-        MacX8664Baseline = b'b',
-        MacX8664 = b'm',
-        MacAarch64 = b'M',
-
-        WindowsX8664 = b'w',
-        WindowsX8664Baseline = b'e',
-        WindowsAarch64 = b'W',
-
-        FreebsdX8664 = b'f',
-        FreebsdX8664Baseline = b'g',
-        FreebsdAarch64 = b'F',
-    }
+    struct Platform;
 
     impl Platform {
         // TODO(port): Zig builds this via @tagName(os) ++ "_" ++ @tagName(arch) ++ baseline.
         // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
-        const CURRENT: Platform = {
+        const CURRENT: u8 = {
             // Android folds into the Linux variants — Zig's `@tagName(Environment.os)`
             // (crash_handler.zig:1153) yields `"linux"` for Android because Zig keeps
             // it under `os.tag == .linux`. bun.report decodes the same single-char
@@ -2338,7 +2335,7 @@ mod draft {
                 not(feature = "baseline")
             ))]
             {
-                Platform::LinuxX8664
+                b'l'
             }
             #[cfg(all(
                 any(target_os = "linux", target_os = "android"),
@@ -2346,38 +2343,38 @@ mod draft {
                 feature = "baseline"
             ))]
             {
-                Platform::LinuxX8664Baseline
+                b'B'
             }
             #[cfg(all(
                 any(target_os = "linux", target_os = "android"),
                 target_arch = "aarch64"
             ))]
             {
-                Platform::LinuxAarch64
+                b'L'
             }
             #[cfg(all(target_os = "macos", target_arch = "x86_64", not(feature = "baseline")))]
             {
-                Platform::MacX8664
+                b'm'
             }
             #[cfg(all(target_os = "macos", target_arch = "x86_64", feature = "baseline"))]
             {
-                Platform::MacX8664Baseline
+                b'b'
             }
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             {
-                Platform::MacAarch64
+                b'M'
             }
             #[cfg(all(windows, target_arch = "x86_64", not(feature = "baseline")))]
             {
-                Platform::WindowsX8664
+                b'w'
             }
             #[cfg(all(windows, target_arch = "x86_64", feature = "baseline"))]
             {
-                Platform::WindowsX8664Baseline
+                b'e'
             }
             #[cfg(all(windows, target_arch = "aarch64"))]
             {
-                Platform::WindowsAarch64
+                b'W'
             }
             #[cfg(all(
                 target_os = "freebsd",
@@ -2385,15 +2382,15 @@ mod draft {
                 not(feature = "baseline")
             ))]
             {
-                Platform::FreebsdX8664
+                b'f'
             }
             #[cfg(all(target_os = "freebsd", target_arch = "x86_64", feature = "baseline"))]
             {
-                Platform::FreebsdX8664Baseline
+                b'g'
             }
             #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
             {
-                Platform::FreebsdAarch64
+                b'F'
             }
         };
     }
@@ -2586,17 +2583,6 @@ mod draft {
             writer.write_all(VLQ::encode(known.address).slice())?;
             Ok(())
         }
-
-        pub(crate) fn write_decoded(
-            self_: Option<&StackLine>,
-            writer: &mut impl Write,
-        ) -> Result<(), bun_core::Error> {
-            let Some(known) = self_ else {
-                return writer.write_all(b"???");
-            };
-            let _ = write!(writer, "{}", known);
-            Ok(())
-        }
     }
 
     impl fmt::Display for StackLine {
@@ -2614,7 +2600,7 @@ mod draft {
                 self.object
                     .as_deref()
                     .map(bstr::BStr::new)
-                    .unwrap_or(bstr::BStr::new(b"")),
+                    .unwrap_or_default(),
             )
         }
     }
@@ -2649,7 +2635,7 @@ mod draft {
         writer.write_all(b"/")?;
         writer.write_all(Environment::VERSION_STRING.as_bytes())?;
         writer.write_all(b"/")?;
-        writer.write_all(&[Platform::CURRENT as u8])?;
+        writer.write_all(&[Platform::CURRENT])?;
         writer.write_byte(cli_state::cmd_char().unwrap_or(b'_'))?;
 
         writer.write_all(VERSION_CHAR.as_bytes())?;
@@ -2940,7 +2926,7 @@ mod draft {
 
             let argv: [*const c_char; 4] = [
                 curl.as_ptr(),
-                b"-fsSL\0".as_ptr().cast(),
+                c"-fsSL".as_ptr(),
                 cmd_line.const_slice().as_ptr().cast(),
                 core::ptr::null(),
             ];
@@ -2966,10 +2952,11 @@ mod draft {
                     }
                 }
                 // success and failure cases: ignore the result
-                _ => return,
+                _ => {}
             }
         }
         // TODO(port): wasm @compileError("Not implemented")
+        #[cfg(not(unix))]
         let _ = url;
     }
 
@@ -3127,9 +3114,9 @@ mod draft {
         let stderr = &mut stderr_writer();
         if !Environment::SHOW_CRASH_TRACE {
             // debug symbols aren't available, lets print a tracestring
-            let _ = write!(
+            let _ = writeln!(
                 stderr,
-                "View Debug Trace: {}\n",
+                "View Debug Trace: {}",
                 TraceString {
                     action: TraceStringAction::ViewTrace,
                     reason: CrashReason::ZigError(bun_core::err!("DumpStackTrace")),
@@ -3220,46 +3207,44 @@ mod draft {
             }
         }
 
-        let programs: &[&bun_core::ZStr] = if cfg!(windows) {
-            &[bun_core::zstr!("pdb-addr2line")]
-        } else {
-            // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-21`
-            &[
-                bun_core::zstr!("llvm-symbolizer"),
-                bun_core::zstr!("llvm-symbolizer-21"),
-            ]
-        };
-        for &program in programs {
-            // PERF(port): was arena bulk-free + StackFallbackAllocator — using global allocator here.
-            match spawn_symbolizer(program, trace) {
-                // try next program if this one wasn't found
-                Err(e) if e == bun_core::err!("FileNotFound") => continue,
-                // Windows: `bun_core::spawn_sync_inherit` is currently a `#[cfg(not(unix))]`
-                // stub returning `Unexpected`. Zig's `std.process.Child` *does* work on
-                // Windows, so until the stub is filled in, treat the sentinel like
-                // FileNotFound and fall through to the WTF fallback below instead of
-                // returning with no trace at all.
-                #[cfg(windows)]
-                Err(e) if e == bun_core::err!("Unexpected") => continue,
-                Err(_) => {}
-                Ok(()) => {}
+        #[cfg(any(windows, target_os = "linux", target_os = "android"))]
+        {
+            let programs: &[&bun_core::ZStr] = if cfg!(windows) {
+                &[bun_core::zstr!("pdb-addr2line")]
+            } else {
+                // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-21`
+                &[
+                    bun_core::zstr!("llvm-symbolizer"),
+                    bun_core::zstr!("llvm-symbolizer-21"),
+                ]
+            };
+            for &program in programs {
+                // PERF(port): was arena bulk-free + StackFallbackAllocator — using global allocator here.
+                // Only stop once a symbolizer actually ran and exited 0. Any failure
+                // (not found, spawn error, or non-zero exit) tries the next program and
+                // ultimately falls through to the WTF fallback below — a found-but-broken
+                // symbolizer must not leave the crash report with no trace at all.
+                match spawn_symbolizer(program, trace) {
+                    Ok(()) => return,
+                    Err(_) => continue,
+                }
             }
-            return;
-        }
-        let _ = limits;
-        // INTENTIONAL DIVERGENCE from Zig spec (crash_handler.zig:1749-1760 falls
-        // off the end of the `for (programs)` loop with no further fallback). On
-        // Windows, `spawn_sync_inherit` is stubbed and `pdb-addr2line` is rarely
-        // installed, so without this the user would get *only* "Fallback trace:"
-        // and nothing else. Hand the raw addresses to WTF (always linked) so there
-        // is at least some trace. Windows crash-trace snapshot tests must account
-        // for this extra output.
-        // SAFETY: trace.instruction_addresses is a valid slice of `index` entries
-        unsafe {
-            WTF__DumpStackTrace(trace.instruction_addresses.as_ptr(), trace.index);
+            let _ = limits;
+            // INTENTIONAL DIVERGENCE from Zig spec (crash_handler.zig:1749-1760 falls
+            // off the end of the `for (programs)` loop with no further fallback). On
+            // Windows, `spawn_sync_inherit` is stubbed and `pdb-addr2line` is rarely
+            // installed, so without this the user would get *only* "Fallback trace:"
+            // and nothing else. Hand the raw addresses to WTF (always linked) so there
+            // is at least some trace. Windows crash-trace snapshot tests must account
+            // for this extra output.
+            // SAFETY: trace.instruction_addresses is a valid slice of `index` entries
+            unsafe {
+                WTF__DumpStackTrace(trace.instruction_addresses.as_ptr(), trace.index);
+            }
         }
     }
 
+    #[cfg(any(windows, target_os = "linux", target_os = "android"))]
     fn spawn_symbolizer(
         program: &bun_core::ZStr,
         trace: &StackTrace,
@@ -3294,20 +3279,20 @@ mod draft {
 
         // PORTING.md: no std::process — routed through bun_core::spawn_sync_inherit (posix_spawn).
         let stderr = &mut stderr_writer();
-        let result = bun_core::spawn_sync_inherit(&argv).map_err(|err| {
+        let result = bun_core::spawn_sync_inherit(&argv).inspect_err(|_err| {
         let _ = stderr.write_all(b"Failed to invoke command: ");
         let _ = fmt_argv(stderr, &argv);
         let _ = stderr.write_all(b"\n");
         if cfg!(windows) {
             let _ = stderr.write_all(b"(You can compile pdb-addr2line from https://github.com/oven-sh/bun.report, cd pdb-addr2line && cargo build)\n");
         }
-        err
     })?;
 
         if !result.is_ok() {
             let _ = stderr.write_all(b"Failed to invoke command: ");
             let _ = fmt_argv(stderr, &argv);
             let _ = stderr.write_all(b"\n");
+            return Err(bun_core::err!("Unexpected"));
         }
         Ok(())
     }
@@ -3315,7 +3300,7 @@ mod draft {
     pub fn dump_current_stack_trace(first_address: Option<usize>, limits: WriteStackTraceLimits) {
         let mut addrs: [usize; 32] = [0; 32];
         let n = debug::capture_stack_trace(
-            first_address.unwrap_or_else(|| debug::return_address()),
+            first_address.unwrap_or_else(debug::return_address),
             &mut addrs,
         );
         let stack = StackTrace {
@@ -3367,8 +3352,6 @@ mod draft {
 
     // TODO(port): move to *_jsc — `pub const js_bindings = @import("../runtime/api/crash_handler_jsc.zig").js_bindings;`
     // Per PORTING.md this *_jsc alias is deleted; the bindings live as an extension trait in bun_runtime.
-
-    type OnBeforeCrash = fn(opaque_ptr: *mut c_void);
 
     /// For large codebases such as bun.bake.DevServer, it may be helpful
     /// to dump a large amount of state to a file to aid debugging a crash.
@@ -3512,18 +3495,18 @@ mod draft {
             let dropped_frames = stack_trace.index - stack_trace.instruction_addresses.len();
 
             let _ = tty_config.set_color(out_stream, Color::Bold);
-            write!(
+            writeln!(
                 out_stream,
-                "({} additional stack frames not recorded...)\n",
+                "({} additional stack frames not recorded...)",
                 dropped_frames
             )
             .map_err(fmt_err)?;
             let _ = tty_config.set_color(out_stream, Color::Reset);
         } else if frames_left != 0 {
             let _ = tty_config.set_color(out_stream, Color::Bold);
-            write!(
+            writeln!(
                 out_stream,
-                "({} additional stack frames skipped...)\n",
+                "({} additional stack frames skipped...)",
                 frames_left
             )
             .map_err(fmt_err)?;
@@ -3804,8 +3787,10 @@ mod draft {
         INSIDE_NATIVE_PLUGIN.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
     }
 
+    /// # Safety
+    /// `name` must be a valid NUL-terminated C string.
     #[unsafe(no_mangle)]
-    pub extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
+    pub unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
         // TODO(port): bun_analytics::Features::increment_unsupported_uv_function
         UNSUPPORTED_UV_FUNCTION.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
@@ -3824,8 +3809,10 @@ mod draft {
         panic_impl(msg.slice(), None, None);
     }
 
+    /// # Safety
+    /// `message_ptr` must be valid for reads of `message_len` bytes.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__crashHandler(message_ptr: *const u8, message_len: usize) -> ! {
+    pub unsafe extern "C" fn Bun__crashHandler(message_ptr: *const u8, message_len: usize) -> ! {
         // SAFETY: caller passes a valid (ptr, len) byte slice
         let msg = unsafe { core::slice::from_raw_parts(message_ptr, message_len) };
         crash_handler(
@@ -3836,18 +3823,17 @@ mod draft {
         );
     }
 
+    /// # Safety
+    /// `action` must be null or a valid NUL-terminated C string that outlives the dlopen call.
     #[unsafe(no_mangle)]
-    pub extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
+    pub unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
         if !action.is_null() {
             debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
             // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
             let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
             // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
-            CURRENT_ACTION.with(|c| {
-                c.set(Some(Action::Dlopen(unsafe {
-                    bun_collections::detach_lifetime(s)
-                })))
-            });
+            let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
+            CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(s))));
         } else {
             debug_assert!(matches!(
                 CURRENT_ACTION.with(|c| c.get()),

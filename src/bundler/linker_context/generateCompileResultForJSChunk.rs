@@ -1,15 +1,14 @@
 use crate::mal_prelude::*;
-use core::mem::offset_of;
 use core::sync::atomic::Ordering;
 
 use bun_ast::Scope;
 use bun_js_printer::{self as js_printer, PrintResult};
 use bun_threading::thread_pool as ThreadPoolLib;
 
-use crate::linker_context_mod::{LinkerContext, PendingPartRange};
+use crate::linker_context_mod::LinkerContext;
 use crate::options::OutputFormat;
 use crate::thread_pool::Worker;
-use crate::{BundleV2, Chunk, CompileResult, Index, PartRange};
+use crate::{Chunk, CompileResult, Index, PartRange};
 
 use super::generate_code_for_file_in_chunk_js::{
     DeclCollector, generate_code_for_file_in_chunk_js,
@@ -23,7 +22,13 @@ use super::generate_code_for_file_in_chunk_js::{
 // `&LinkerContext` (see `generate_code_for_file_in_chunk_js`).
 // `PendingPartRange` is `Send` because its only non-auto-`Send` field is
 // `&GenerateChunkCtx` whose pointee is `unsafe impl Send + Sync`.
-pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
+//
+/// # Safety
+///
+/// `task` must be the intrusive `task` field of a live `PendingPartRange`
+/// scheduled by `generate_chunks_in_parallel`. Matches the
+/// `Task::callback: unsafe fn(*mut Task)` contract.
+pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
     let (part_range, c_ptr, chunk_ptr, mut worker) =
@@ -51,14 +56,15 @@ pub fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Task) {
         }
     }
 
-    // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
-    // contract is documented on `pending_part_range_prologue`. The `&mut`
-    // borrows below are scoped to the impl call so they do not overlap the
-    // raw slot write that follows. (Peer tasks still hold their own `&mut`
-    // views into the same `LinkerContext`/`Chunk` for read-only printer use —
-    // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
     let result = {
+        // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
+        // contract is documented on `pending_part_range_prologue`. The `&mut`
+        // borrows below are scoped to the impl call so they do not overlap the
+        // raw slot write that follows. (Peer tasks still hold their own `&mut`
+        // views into the same `LinkerContext`/`Chunk` for read-only printer use —
+        // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
         let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
+        // SAFETY: same mutable-provenance / disjoint-write contract as `c_ptr` above.
         let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
         generate_compile_result_for_js_chunk_impl(
             &mut **worker,
@@ -165,6 +171,9 @@ fn generate_compile_result_for_js_chunk_impl(
     let result = generate_code_for_file_in_chunk_js(
         c,
         &mut buffer_writer,
+        // SAFETY: split borrow of `*chunk` — `renamer_ptr` aliases only
+        // `chunk.renamer`, which the callee never touches via its `chunk`
+        // parameter, so this deref does not overlap the `chunk` reborrow below.
         unsafe { (*renamer_ptr).as_renamer() },
         chunk,
         part_range,

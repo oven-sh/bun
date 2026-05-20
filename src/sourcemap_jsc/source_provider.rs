@@ -4,9 +4,6 @@
 //! `get_source_map_impl` calls it via a trait bound (Zig used
 //! `@hasDecl(SourceProviderKind, "getExternalData")`).
 
-use core::cell::UnsafeCell;
-use core::marker::{PhantomData, PhantomPinned};
-
 use bun_core::String as BunString;
 use bun_jsc::JSGlobalObject;
 use bun_sourcemap::{
@@ -67,10 +64,12 @@ impl BakeSourceProvider {
         // (cold path — error-stack source-map resolution).
         let hooks = bun_jsc::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: `pt` is the live `*mut PerThread` per above; called on the JS
-        // thread. The returned slice borrows `PerThread.bundled_outputs`, which
-        // outlives this `BakeSourceProvider` (the provider is created from a
-        // `bundled_outputs` entry), so reborrowing as `&'self [u8]` is sound.
+        // thread.
         if let Some(slice) = unsafe { (hooks.bake_per_thread_source_map)(pt, source_filename) } {
+            // SAFETY: `slice` borrows `PerThread.bundled_outputs`, which
+            // outlives this `BakeSourceProvider` (the provider is created from
+            // a `bundled_outputs` entry), so reborrowing as `&'self [u8]` is
+            // sound.
             return Some(unsafe { &*slice });
         }
         Some(b"")

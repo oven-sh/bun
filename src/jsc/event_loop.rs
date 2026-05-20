@@ -212,10 +212,9 @@ impl Debug {
     }
 }
 
-#[repr(u8)]
-enum DrainMicrotasksResult {
-    Success = 0,
-    JsTerminated = 1,
+mod drain_result {
+    pub const SUCCESS: u8 = 0;
+    pub const JS_TERMINATED: u8 = 1;
 }
 
 // TODO(port): move to jsc_sys
@@ -223,7 +222,7 @@ enum DrainMicrotasksResult {
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ mutating
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> DrainMicrotasksResult;
+    safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -384,7 +383,7 @@ impl EventLoop {
 
     /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
     /// buffer. Caller must not hold another live `&mut` to it.
-    pub unsafe fn pipe_read_buffer(&self) -> &mut [u8] {
+    pub unsafe fn pipe_read_buffer(&mut self) -> &mut [u8] {
         // SAFETY: vm() is the live owning VM; rare_data() lazily inits the
         // per-VM scratch buffer. Caller contract (see doc): no concurrent &mut.
         unsafe { &mut (*self.vm()).rare_data().pipe_read_buffer()[..] }
@@ -393,7 +392,7 @@ impl EventLoop {
     pub fn drain_microtasks_with_global(
         &mut self,
         global_object: &JSGlobalObject,
-        jsc_vm: *mut jsc::VM,
+        jsc_vm: &jsc::VM,
     ) -> Result<(), JsTerminated> {
         // Hoist the VM backref once. LLVM can't CSE the `Option<NonNull>` field
         // load across the FFI calls below (`release_weak_refs`, `drainMicrotasks`,
@@ -410,12 +409,12 @@ impl EventLoop {
         }
 
         jsc::mark_binding();
-        // SAFETY: `jsc_vm` is the live JSC::VM for this thread.
-        unsafe { (*jsc_vm).release_weak_refs() };
+        jsc_vm.release_weak_refs();
 
         match JSC__JSGlobalObject__drainMicrotasks(global_object) {
-            DrainMicrotasksResult::Success => {}
-            DrainMicrotasksResult::JsTerminated => return Err(JsTerminated::JSTerminated),
+            drain_result::SUCCESS => {}
+            drain_result::JS_TERMINATED => return Err(JsTerminated::JSTerminated),
+            _ => unreachable!(),
         }
 
         // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
@@ -447,7 +446,7 @@ impl EventLoop {
         // it via `global_ref()` instead of round-tripping through
         // `virtual_machine` (saves a dependent load on the hot path).
         let global = self.global_ref();
-        let jsc_vm = self.vm_ref().jsc_vm;
+        let jsc_vm = self.vm_ref().jsc_vm();
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
@@ -700,7 +699,7 @@ impl EventLoop {
         // PORT NOTE: reshaped for borrowck — `vm_ref()` is `&'static`, so the
         // global borrow detaches from `&self` and survives the `&mut self` call.
         let global = self.vm_ref().global();
-        let global_vm = self.vm_ref().jsc_vm;
+        let global_vm = self.vm_ref().jsc_vm();
 
         loop {
             // Zig: while (tickWithCount > 0) : (handleRejectedPromises) { tickConcurrent } else { ... }
@@ -893,7 +892,10 @@ impl EventLoop {
     /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard, spec Timer.zig:251-256).
-    pub fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
+    ///
+    /// # Safety
+    /// `virtual_machine` must be the live per-thread VM that owns this `EventLoop`.
+    pub unsafe fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
         // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
         // the only thing reaching the `__bun_run_immediate_task` extern call is
@@ -909,7 +911,7 @@ impl EventLoop {
         // SAFETY: `this` is the unique live `EventLoop`; each access below is a
         // short-lived `&mut` that does not overlap re-entry.
         let mut to_run_now = core::mem::take(unsafe { &mut (*this).immediate_tasks });
-
+        // SAFETY: as above.
         unsafe { (*this).immediate_tasks = core::mem::take(&mut (*this).next_immediate_tasks) };
 
         let mut exception_thrown = false;
@@ -982,8 +984,9 @@ impl EventLoop {
         // typed `set_parent_event_loop` extension trait in `bun_uws` expects
         // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
         // exposes `into_tag_ptr()` — go straight to the sys-level setter.
-        let (tag, ptr) = EventLoopHandle::init(std::ptr::from_mut::<EventLoop>(self).cast::<()>())
-            .into_tag_ptr();
+        // `self` is the live per-thread `jsc::EventLoop` (mut ref) — non-null.
+        let self_ptr = core::ptr::from_mut(self).cast::<()>();
+        let (tag, ptr) = EventLoopHandle::init(self_ptr).into_tag_ptr();
         // SAFETY: `uws::Loop::get()` returns the live process-global uws loop.
         unsafe {
             (*uws::Loop::get())
@@ -1054,7 +1057,10 @@ impl EventLoop {
         }
     }
 
-    pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTaskItem) {
+    /// `task` must be a live `ConcurrentTaskItem` that the queue may take
+    /// ownership of via its intrusive `next` link. All callers pass a
+    /// freshly-allocated or struct-embedded task — never null.
+    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTaskItem>) {
         if cfg!(debug_assertions) {
             if self.vm_ref().has_terminated {
                 panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
@@ -1120,8 +1126,12 @@ impl EventLoop {
 }
 
 impl EventLoop {
-    pub fn tick_while_paused(&mut self, done: &mut bool) {
-        while !*done {
+    /// # Safety
+    /// `done` must point to a live `bool`; C++ writes `true` through it from a
+    /// callback inside `tick()`, so it cannot be a Rust `&mut` (would alias).
+    pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
+        // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
+        while !unsafe { done.read_volatile() } {
             self.vm_ref()
                 .platform_loop_opt()
                 .expect("event_loop_handle")
@@ -1139,7 +1149,7 @@ impl EventLoop {
     ) -> JsResult<JSValue> {
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
-        let jsc_vm = global_object.bun_vm().as_mut().jsc_vm;
+        let jsc_vm = global_object.bun_vm().jsc_vm();
         self.drain_microtasks_with_global(global_object, jsc_vm)?;
         Ok(result)
     }
@@ -1226,7 +1236,14 @@ impl EventLoop {
             !batch.front.is_null() && !batch.last.is_null(),
             "enqueue_task_concurrent_batch: empty batch",
         );
-        self.concurrent_tasks.push_batch(batch.front, batch.last);
+        // SAFETY: asserted non-null above; `batch` was produced by `pop_batch`,
+        // so `last` is reachable from `front` and every node is live.
+        unsafe {
+            self.concurrent_tasks.push_batch(
+                core::ptr::NonNull::new_unchecked(batch.front),
+                core::ptr::NonNull::new_unchecked(batch.last),
+            )
+        };
         self.wakeup();
     }
 }
@@ -1337,6 +1354,7 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 /// SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
 #[inline(always)]
 fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
+    // SAFETY: vtable contract — `owner` was erased from a live `*mut EventLoop`.
     unsafe { &mut *owner.cast::<EventLoop>() }
 }
 
@@ -1374,7 +1392,8 @@ bun_event_loop::link_impl_JsEventLoop! {
                     .as_mut(),
             );
             let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
-            (*store).put(poll, ctx, was_ever_registered);
+            // `poll` is a live hive-slot pointer (vtable contract) — non-null.
+            (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
         },
         uws_loop() => (*this).usockets_loop(),
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),

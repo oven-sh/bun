@@ -1,13 +1,7 @@
 #![feature(inherent_associated_types)]
 #![feature(adt_const_params, allocator_api, thread_local)]
 #![allow(incomplete_features)] // inherent_associated_types — used only for ThreadPool::Worker path compat with Zig
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
 // Shared value types + crate-name shims for the `Chunk` / `LinkerContext` /
@@ -151,11 +145,7 @@ pub mod linker_context {
     pub use crate::linker_context_mod::{
         ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
     };
-    /// `Output.scoped(.LinkerCtx, .visible)` — re-export the canonical scope
-    /// static + `debug!` macro from `linker_context_mod` so every
-    /// `linker_context/*` submodule logs under one `[linkerctx]` tag without
-    /// redeclaring the scope.
-    pub(crate) use crate::linker_context_mod::{LinkerCtx, debug};
+
     pub use output_file_list_builder::OutputFileList as OutputFileListBuilder;
     pub use static_route_visitor::StaticRouteVisitor;
 }
@@ -325,7 +315,13 @@ bun_dispatch::link_interface! {
         fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
     }
 }
+// SAFETY: the handle is `{ kind, owner: *mut () }`; the raw pointer is what
+// defeats the auto-impl. `owner` is the single per-process `bake::DevServer`
+// (established at `unsafe fn new()`), which outlives every bundler worker
+// thread that carries this handle; thread-safety of each dispatched method is
+// upheld by the `link_impl_DevServerHandle!` bodies, not by the handle itself.
 unsafe impl Send for DevServerHandle {}
+// SAFETY: see `Send` above — sharing the tagged pointer is sound for the same reason.
 unsafe impl Sync for DevServerHandle {}
 
 // VirtualMachine accessors for `normalize_specifier` / `get_loader_and_virtual_source`.

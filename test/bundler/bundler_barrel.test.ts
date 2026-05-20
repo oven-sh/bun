@@ -221,6 +221,52 @@ describe("bundler", () => {
     },
   });
 
+  // Same scenario but the resolution path goes through a plugin that
+  // returns undefined (onResolve "NoMatch"), forcing the bundler down the
+  // `run_resolver` → `enqueue_parse_task` fallback. That path wasn't
+  // propagating `primary_side_effects_data` at all (pre-existing bug that
+  // also made `sideEffects: false` fail on the plugin NoMatch fallback),
+  // so the optimizeImports override was getting dropped before it reached
+  // the linker. Companion to `OptimizeImportsMixedBarrel`.
+  itBundled("barrel/OptimizeImportsMixedBarrelWithPluginNoMatch", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Alpha } from 'mixedoptplug';
+        console.log(Alpha);
+      `,
+      "/node_modules/mixedoptplug/package.json": JSON.stringify({
+        name: "mixedoptplug",
+        main: "./index.js",
+      }),
+      "/node_modules/mixedoptplug/index.js": /* js */ `
+        export { Alpha } from './Alpha.js';
+        export { Beta } from './Beta.js';
+        export const VERSION = "1.0.0";
+      `,
+      "/node_modules/mixedoptplug/Alpha.js": /* js */ `
+        export const Alpha = "ALPHA_MARKER_" + "aaaaaaaa".repeat(10);
+      `,
+      "/node_modules/mixedoptplug/Beta.js": /* js */ `
+        export const Beta = "BETA_MARKER_" + "bbbbbbbb".repeat(10);
+      `,
+    },
+    optimizeImports: ["mixedoptplug"],
+    outdir: "/out",
+    // Filter /.*/ so the plugin intercepts every resolve — including the
+    // nested `./Alpha.js` / `./Beta.js` specifiers — and returns undefined
+    // for all of them. Each goes through `run_resolver` → `enqueue_parse_task`.
+    // Without the enqueue_parse_task fix, `side_effects = loader.side_effects()`
+    // was stamped as HasSideEffects for every submodule and Beta leaked into
+    // the bundle even though entry.js only reads Alpha.
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("ALPHA_MARKER_");
+      api.expectFile("/out/entry.js").not.toContain("BETA_MARKER_");
+    },
+  });
+
   // --- import * (namespace import) must load all submodules ---
 
   itBundled("barrel/NamespaceImportLoadsAll", {

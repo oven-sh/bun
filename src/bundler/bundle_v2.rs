@@ -2455,6 +2455,7 @@ pub mod bv2_impl {
                 }
             };
             let mut resolve_result = resolve_result;
+            self.apply_optimize_imports_side_effects_override(&mut resolve_result);
 
             let out_source_index: Option<Index>;
 
@@ -3593,10 +3594,23 @@ pub mod bv2_impl {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
+            // Prefer resolver-supplied side-effects data (from package.json
+            // sideEffects: false, data URLs, or the optimizeImports override)
+            // when it's more optimistic than the loader default. The loader
+            // fallback still covers data loaders (JSON/TOML/etc.) whose
+            // resolver result stays at the default HasSideEffects.
+            let side_effects = if resolve_result.primary_side_effects_data
+                != bun_ast::SideEffects::HasSideEffects
+            {
+                resolve_result.primary_side_effects_data
+            } else {
+                loader.side_effects()
+            };
+
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
                 loader,
-                side_effects: loader.side_effects(),
+                side_effects,
                 ..Default::default()
             })?;
             // PORT NOTE: `ParseTask::init` takes `bun_ast::Index`; both Index newtypes

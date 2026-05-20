@@ -1629,8 +1629,6 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
-            // `defer { if (cwd().fd != destination_dir.fd) destination_dir.close(); }`
-
             let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir.fd());
 
             let install_result: package_install::InstallResult = match resolution.tag {
@@ -1653,7 +1651,6 @@ impl<'a> PackageInstaller<'a> {
                             }
                         };
 
-                        // Zig (PackageInstaller.zig:1131) leaked this fd — no `defer`.
                         let owned_cache_dir = match self.root_node_modules_folder.open_dir(
                             dir_name,
                             bun_sys::OpenDirOptions {

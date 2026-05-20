@@ -1249,7 +1249,6 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
             Global::crash();
         }
     };
-    // Zig: `defer node_gyp_tempdir.close()`
 
     #[cfg(windows)]
     const FILE_NAME: &str = "node-gyp.cmd";
@@ -1680,7 +1679,6 @@ pub fn init(
                             continue;
                         }
                     };
-                    // Zig: `defer if (!found) json_file.close()`
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file.pread_all(&mut json_buf, 0)?;

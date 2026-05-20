@@ -727,7 +727,6 @@ pub fn migrate_yarn_lockfile<'a>(
         else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
-        // Zig: `defer package_json_fd.close()`
         let Ok(package_json_contents) = package_json_fd.read_to_end() else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };

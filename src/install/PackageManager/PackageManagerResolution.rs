@@ -164,7 +164,6 @@ impl PackageManager {
             }
             Err(e) => return Err(e),
         };
-        // Zig: `defer dir.close()`
         let mut iter = bun_sys::iterate_dir(dir.fd);
 
         loop {

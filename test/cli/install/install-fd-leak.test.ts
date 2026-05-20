@@ -5,15 +5,8 @@ import { bunEnv, bunExe, isMacOS, isWindows, readdirSorted, tempDir } from "harn
 import { join } from "path";
 
 // Installing a package with many files must not exhaust the file-descriptor
-// table. The Rust port of the isolated-install copyfile path
-// (`src/install/isolated_install/FileCopier.rs`) replaced Zig's
-// `defer src.close()` / `defer dest.close()` with comments saying "handled by
-// Drop", but `Fd` and `bun_sys::File` are Copy types with no Drop impl, so
-// every iteration leaked two fds and a low NOFILE rlimit triggered EMFILE.
-//
-// Run the matrix to keep all linker × backend copy paths covered. The package
-// comes from a local tarball so this never touches a registry, and each test
-// also re-installs after invalidating the existing copy to cover the
+// table. Runs the linker × backend matrix from a local tarball (no registry),
+// then re-installs after invalidating the existing copy to cover the
 // uninstall-then-reinstall path.
 
 const NUM_FILES = 1500;

@@ -288,10 +288,8 @@ impl Entry {
 
         // First we open the tmpfile, to avoid any other work in the event of failure.
         let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
-        // Zig: `defer tmpfile.fd.close()`
         let _close_guard = sys::CloseOnDrop::new(tmpfile.fd);
         {
-            // Zig: `errdefer if (!tmpfile.using_tmpfile) unlinkat(...)`
             let errdefer = scopeguard::guard(tmpfile.using_tmpfile, |using_tmpfile| {
                 if !using_tmpfile {
                     let _ = sys::unlinkat(destination_dir, tmpfilename);
@@ -819,9 +817,6 @@ impl RuntimeTranspilerCache {
     ) -> Result<Entry, bun_core::Error> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
         let cache_fd = sys::open(cache_file_path.slice_assume_z(), sys::O::RDONLY, 0)?;
-        // Zig: `defer cache_fd.close()`. Declared before `unlink_guard` so the
-        // unlink (errdefer) runs before the close (defer), matching Zig's LIFO
-        // defer order.
         let file = sys::File::from_fd(cache_fd);
         // Zig: `errdefer { _ = bun.sys.unlink(...) }` — on any error, delete the
         // cache file.
@@ -908,7 +903,6 @@ impl RuntimeTranspilerCache {
                 // Zig: `std.fs.cwd().makeOpenPath(dirname, .{ .access_sub_paths = true })`
                 let dir =
                     sys::Dir::cwd().make_open_path(dirname, sys::OpenDirOptions::default())?;
-                // Zig: `errdefer dir.close()` (brk-scoped)
                 let dfd = dir.into_raw();
                 break 'brk match dfd.make_lib_uv_owned() {
                     Ok(f) => f,

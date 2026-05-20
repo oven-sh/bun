@@ -955,7 +955,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }
-            // Zig: `task.log.deinit();`
             task.log.reset();
         }
 
@@ -1296,7 +1295,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // forever on the entry's pending-task slot.
                         let mut drained_any = false;
                         if let Some(waiters) = manager.task_queue.remove(&task.id) {
-                            // Zig: defer waiters.deinit()
                             let pkg_resolutions = manager.lockfile.packages.items_resolution();
                             for waiter in waiters.iter() {
                                 let dep_id = match waiter {

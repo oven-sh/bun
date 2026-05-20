@@ -315,8 +315,6 @@ pub(crate) struct FileSystem {
 }
 
 thread_local! {
-    // PORT NOTE: store a raw `Fd` (Copy) rather than `bun_sys::Dir` — the
-    // cached tmpdir fd is process-lifetime (never closed) and must fit in `Cell`.
     static TMPDIR_HANDLE: Cell<Option<Fd>> = const { Cell::new(None) };
 }
 
@@ -1543,7 +1541,6 @@ impl RealFS {
                 // / `existing.entries.data` go through one `*DirEntry`; mirror that.
                 let prev_map_ptr: *mut dir_entry::EntryMap =
                     unsafe { core::ptr::addr_of_mut!((*entries_ptr).data) };
-                // Zig: defer handle.close()
                 let handle_dir = match bun_sys::Dir::open(dir_path) {
                     Ok(h) => h,
                     Err(err) => {
@@ -1810,7 +1807,6 @@ impl RealFS {
     }
 
     pub fn mod_key(&mut self, path: &[u8]) -> Result<ModKey, bun_core::Error> {
-        // Zig (fs.zig:920) leaked this fd — `mod_key_with_file` only `fstat`s.
         let file = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)?;
         self.mod_key_with_file(path, &file)
     }
@@ -1867,7 +1863,6 @@ impl TmpfilePosix {
     /// `Dir::borrow(&fd)` if you need `Dir` methods.
     #[inline]
     pub(crate) fn dir(&self) -> Fd {
-        // PORT NOTE: `Tmpfile.dir()` in Zig returned a non-owning `std.fs.Dir`.
         self.dir_fd
     }
 
@@ -2074,7 +2069,6 @@ impl RealFS {
         let handle_fd = handle.fd();
         let mut iter = bun_sys::iterate_dir(handle_fd);
         let mut dir = DirEntry::init(dir_, generation);
-        // Zig: errdefer dir.deinit()
         let mut prev_map = prev_map;
 
         if store_fd {
@@ -2248,7 +2242,6 @@ impl RealFS {
         }
 
         let had_handle = maybe_handle.is_some();
-        // Zig: `defer { if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) handle.close(); }`
         let mut _opened: Option<bun_sys::Dir> = None;
         let handle: &bun_sys::Dir = match maybe_handle {
             Some(h) => h,

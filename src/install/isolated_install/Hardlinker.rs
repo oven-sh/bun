@@ -47,8 +47,6 @@ impl Hardlinker {
         })
     }
 
-    // Zig `deinit` only called `this.walker.deinit()`.
-
     pub fn link(&mut self) -> Result<sys::Result<()>, AllocError> {
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(

@@ -2668,7 +2668,6 @@ impl CompilerRT {
         else {
             return;
         };
-        // `defer bunCC.close()`
 
         // Spec ffi.zig:2344-2350 — `inline for (decls) |d| bunCC.writeFile(d) catch {}`.
         for (name, source) in CompilerRtSources::SOURCES {

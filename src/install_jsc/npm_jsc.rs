@@ -149,7 +149,6 @@ pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             )));
         }
     };
-    // Zig: `defer manifest_file.close()`
 
     // PORT NOTE: Zig built a borrowing `bun.URL` struct literal (host/hostname/
     // href/origin/protocol all slicing `registry`). The Rust `Scope.url` field

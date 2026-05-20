@@ -56,7 +56,6 @@ where
     // It's possible to have duplicate dependencies with the same version and resolution.
     // While both are technically installed, only one was chosen and should be printed.
     let mut dep_dedupe: HashMap<PackageNameHash, ()> = HashMap::new();
-    // Zig: `defer dep_dedupe.deinit()`
 
     // PORT NOTE: reshaped for borrowck — `id_map` is reborrowed per call below.
     let mut id_map = id_map;

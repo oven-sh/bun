@@ -947,7 +947,6 @@ impl<'a> CopyFile<'a> {
 
 impl Drop for CopyFile<'_> {
     fn drop(&mut self) {
-        // Zig deinit():
         if let PathOrFileDescriptor::Path(p) = &self.source_file_store.pathlike {
             if p.is_string() && self.system_error.is_none() {
                 // TODO(port): the Zig frees the path slice here. In Rust, ownership of

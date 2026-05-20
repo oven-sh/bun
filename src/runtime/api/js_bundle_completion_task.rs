@@ -274,8 +274,6 @@ impl JSBundleCompletionTask {
 
     /// Port of `JSBundleCompletionTask.doCompilation`.
     fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
-        // `defer { if root_dir != cwd, root_dir.close() }`
-
         // PORT NOTE: reshaped for borrowck — `self.config` is reborrowed for
         // every field projection so the `&mut self` receiver stays usable for
         // `self.env` below.

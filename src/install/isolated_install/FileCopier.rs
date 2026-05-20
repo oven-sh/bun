@@ -134,7 +134,6 @@ impl FileCopier {
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
             }
         };
-        // Zig: `defer dest_dir.close();`
 
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 

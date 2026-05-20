@@ -461,11 +461,6 @@ impl OutputFile {
                     // Zig: `std.fs.path.dirname` returns `null` when there's no
                     // separator; the Rust port returns `b""` instead.
                     let parent = resolve_path::dirname::<platform::Auto>(rel_path);
-                    // PORT NOTE: Zig (OutputFile.zig:262) also gates on
-                    // `parent.len > root_dir_path.len`, but `parent` is a
-                    // relative path at this point — the comparison is almost
-                    // always false and `makePath` never runs, so nested
-                    // outputs can ENOENT. The non-empty check is sufficient.
                     if !parent.is_empty() {
                         bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                     }

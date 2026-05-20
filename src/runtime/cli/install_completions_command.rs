@@ -559,8 +559,6 @@ impl InstallCompletionsCommand {
             Global::exit(fail_exit_code);
         }
 
-        // Zig: `output_dir.close()` (eager, not defer). `output_dir` is a raw
-        // `Fd`, not an owning `Dir`, so close it explicitly.
         let _ = bun_sys::close(output_dir);
 
         // Check if they need to load the zsh completions file into their .zshrc

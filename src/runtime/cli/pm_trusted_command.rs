@@ -364,8 +364,6 @@ impl TrustCommand {
                 }
                 Err(e) => return Err(e),
             };
-            // PORT NOTE: Zig `defer node_modules_dir.close()`. The Zig only opened
-            // it to detect ENOENT; nothing reads from it.
 
             for &dep_id in node_modules.dependencies {
                 if !untrusted_dep_ids.contains(&dep_id) {

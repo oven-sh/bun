@@ -2916,9 +2916,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
         ctx.stats.packed_size = size;
         None
     };
-    // Zig: `defer tarball_file.close()` fires here (end of the hashing block).
-    // `into_raw()`'d the tarball into `file_reader` above; close it now so
-    // the fd doesn't stay open through `postpack` (Windows file locking).
     let _ = core::mem::replace(
         &mut file_reader.unbuffered_reader,
         File::from_fd(Fd::invalid()),

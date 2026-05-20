@@ -283,7 +283,6 @@ impl BunxCommand {
         subpath_z: &ZStr,
     ) -> Result<Box<[u8]>, bun_core::Error> {
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
-        // Zig: `defer target_package_json.close()`
         let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
         // TODO: make this better
@@ -1215,7 +1214,6 @@ impl BunxCommand {
                 Err(_) => break 'create_package_json,
             };
             let _ = package_json.write_all(b"{}\n");
-            // Zig: `defer package_json.close()`
         }
 
         let install_args: [&[u8]; 4] = [

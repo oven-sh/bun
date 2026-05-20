@@ -266,7 +266,6 @@ impl ExtractTarball {
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
-            // `defer extract_destination.close()`
 
             use bun_libarchive::Archiver;
             use bun_zlib as Zlib;
@@ -712,8 +711,6 @@ impl ExtractTarball {
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
-            // `defer final_dir.close()`
-            // and get the fd path
             let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
@@ -856,7 +853,6 @@ impl ExtractTarball {
                             ) else {
                                 break 'create_index;
                             };
-                            // `defer index_dir.close()`
 
                             let mut dest_buf = PathBuffer::uninit();
                             dest_buf[..dest_name.len()].copy_from_slice(dest_name);

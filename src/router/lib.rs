@@ -754,7 +754,6 @@ impl<'a> RouteLoader<'a> {
             index: None,
             route_dirname_len,
         };
-        // Zig: `defer this.dedupe_dynamic.deinit()`
         this.load(resolver, root_dir_info, base_dir);
         if this.all_routes.is_empty() {
             return Routes {

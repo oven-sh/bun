@@ -301,8 +301,6 @@ struct InstallDirState {
 
 impl InstallDirState {
     #[allow(dead_code)]
-    // PORT NOTE: callers now field-project `state.walker` directly so the
-    // `&Dir` borrow of `state.subdir` stays disjoint; kept for parity with the Zig accessor.
     #[inline]
     fn walker(&mut self) -> &mut Walker {
         // SAFETY: `init_install_dir` always populates `walker` before any backend calls `copy()`.

@@ -504,7 +504,6 @@ impl DeferredPromise {
     }
 
     pub fn reset(&mut self) {
-        // Zig: `this.strong.deinit()`
         self.strong = jsc::JSPromiseStrong::empty();
         self.route_bundle_indices.clear_retaining_capacity();
     }
@@ -524,7 +523,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     #[cfg(feature = "bake_debugging_features")]
     let dump_dir = if let Some(dir) = options.dump_sources {
-        // Zig: `std.fs.cwd().makeOpenPath(dir, .{})`
         match sys::Dir::cwd().make_open_path(dir, Default::default()) {
             Ok(d) => Some(d),
             Err(err) => {
@@ -540,11 +538,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     #[cfg(not(feature = "bake_debugging_features"))]
     let dump_dir = ();
-    // Zig: `errdefer dump_dir.close()` — handled by `Drop` on `sys::Dir`, but
-    // ONLY while `dump_dir` is still a live local. `Box<MaybeUninit<DevServer>>`
-    // never runs field destructors, so the move into `(*p).dump_dir` must be the
-    // *last* field write before `assume_init()`; otherwise any `?` between the
-    // move and `assume_init()` would leak the fd.
 
     let separate_ssr_graph = options
         .framework
@@ -715,7 +708,6 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
     unsafe { w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher)) };
-    // errdefer dev.bun_watcher.deinit(false)
 
     // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
     // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
@@ -799,12 +791,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(bundler_framework_views, bundler_framework_views);
     }
 
-    // `dump_dir` is moved into the struct as the *last* field write so that
-    // its `Drop` (which closes the fd) still runs if any earlier `?` above
-    // returned early. `MaybeUninit` never runs field destructors, so writing
-    // it any sooner would leak the fd on those error paths. This mirrors
-    // Zig's `errdefer dump_dir.close()`, which stayed armed until `init()`
-    // returned successfully.
+    // `dump_dir` is moved into the struct as the *last* field write so its
+    // `Drop` (which closes the fd) still runs if any earlier `?` above
+    // returned early — `MaybeUninit` never runs field destructors.
     // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
     unsafe { w!(dump_dir, dump_dir) };
 
@@ -5539,7 +5528,6 @@ pub fn dump_bundle(
     }
 
     bufw.flush()?;
-    // Zig: `defer file.close()` / `defer inner_dir.close()`
     Ok(())
 }
 

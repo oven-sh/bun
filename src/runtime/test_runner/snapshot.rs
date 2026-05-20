@@ -446,7 +446,6 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
             };
-            // Zig: `errdefer file.file.close()`
             let mut file = File {
                 id: file_id,
                 file: bun_sys::File::from_fd(fd),
@@ -918,7 +917,6 @@ impl<'a> Snapshots<'a> {
                 id: file_id,
                 file: bun_sys::File::from_fd(fd),
             };
-            // Zig: `errdefer file.file.close()`
 
             if self.update_snapshots {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);

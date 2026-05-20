@@ -1065,7 +1065,6 @@ impl WriteContext {
             Ok(f) => f,
         };
 
-        // Zig: `defer file.close()`
         match file.write_all(data_to_write) {
             Err(err) => WriteResult::SysErr(err),
             Ok(_) => WriteResult::Success,

@@ -1095,7 +1095,6 @@ pub mod fs {
         ) -> core::result::Result<DirEntry, bun_core::Error> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
-            // errdefer dir.deinit()
 
             if store_fd {
                 FileSystem::set_max_fd(bun_sys::Fd::native(handle));
@@ -1192,9 +1191,6 @@ pub mod fs {
 
             crate::Resolver::assert_valid_cache_key(dir);
             let mut cache_result: Option<bun_alloc::Result> = None;
-            // Zig: `entries_mutex.lock(); defer entries_mutex.unlock();`
-            // `MutexGuard` stores a raw `*const Mutex` so it does not keep `&self`
-            // borrowed across the body below.
             let _unlock_guard = if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 Some(self.entries_mutex.lock_guard())
             } else {

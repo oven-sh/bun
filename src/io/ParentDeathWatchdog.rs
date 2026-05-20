@@ -734,8 +734,6 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    // PORT NOTE: Zig `defer file.close()`. `bun_sys::open()` returns a raw `Fd`
-    // (Copy, no Drop); close explicitly on every exit path via scopeguard.
     let _guard = scopeguard::guard(fd, |fd| {
         let _ = bun_sys::close(fd);
     });

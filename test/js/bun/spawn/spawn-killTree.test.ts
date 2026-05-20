@@ -189,7 +189,9 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
 
   test("catchable signal is delivered (SIGCONT wakes stopped descendants)", async () => {
     // SIGSTOP → verify → SIGTERM → SIGCONT: the descendant must actually
-    // receive SIGTERM rather than stay frozen with it pending.
+    // receive SIGTERM rather than stay frozen with it pending. Two levels
+    // (root bun → sh) is enough — we only need one stopped descendant to
+    // observe the wake-up.
     using dir = tempDir("killTree-catchable", {
       "root.js": `
         const child = Bun.spawn({
@@ -205,7 +207,8 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
           line += dec.decode(value, { stream: true });
         }
         reader.releaseLock();
-        console.log(process.pid + " " + child.pid + " " + line.trim());
+        // child.pid == sh's $$, so just pass through the sh pid.
+        console.log(process.pid + " " + line.trim());
         setInterval(() => {}, 1e6);
       `,
     });
@@ -228,21 +231,20 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
       line += dec.decode(value, { stream: true });
     }
     reader.releaseLock();
-    const [, childPid, shPid] = line.trim().split(/\s+/).map(Number);
-    expect(isAlive(childPid)).toBe(true);
+    const [rootPid, shPid] = line.trim().split(/\s+/).map(Number);
+    expect(rootPid).toBe(proc.pid);
     expect(isAlive(shPid)).toBe(true);
 
     try {
       proc.killTree("SIGTERM");
       await proc.exited;
 
-      const childDied = await waitUntilDead(childPid, 10000);
       const shDied = await waitUntilDead(shPid, 10000);
 
       expect(proc.signalCode).toBe("SIGTERM");
-      expect({ childDied, shDied }).toEqual({ childDied: true, shDied: true });
+      expect(shDied).toBe(true);
     } finally {
-      reap(childPid, shPid);
+      reap(shPid);
     }
   });
 

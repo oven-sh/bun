@@ -31,7 +31,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_options_types::schema::api;
 
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
@@ -314,8 +314,7 @@ impl Config {
                     break 'tsconfig;
                 }
                 let kind = tsconfig.js_type();
-                let mut out = BunString::empty();
-                // `defer out.deref()` → Drop on bun_core::String
+                let mut out = OwnedString::new(BunString::empty());
 
                 if kind.is_array() {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -327,7 +326,7 @@ impl Config {
                     // Use jsonStringifyFast for SIMD-optimized serialization
                     tsconfig.json_stringify_fast(global, &mut out)?;
                 } else {
-                    out = tsconfig.to_bun_string(global)?;
+                    out = OwnedString::new(tsconfig.to_bun_string(global)?);
                 }
 
                 if out.is_empty() {
@@ -367,14 +366,13 @@ impl Config {
                     );
                 }
 
-                let mut out = BunString::empty();
-                // `defer out.deref()` → Drop
+                let mut out = OwnedString::new(BunString::empty());
                 // TODO: write a converter between JSC types and Bun AST types
                 if is_object {
                     // Use jsonStringifyFast for SIMD-optimized serialization
                     macros.json_stringify_fast(global, &mut out)?;
                 } else {
-                    out = macros.to_bun_string(global)?;
+                    out = OwnedString::new(macros.to_bun_string(global)?);
                 }
 
                 if out.is_empty() {
@@ -613,8 +611,8 @@ impl Config {
                                 export_replacement_value(replacement_value, global, arena)?
                             {
                                 let replacement_key = value.get_index(global, 0)?;
-                                let slice = replacement_key.to_bun_string(global)?;
-                                // errdefer slice.deinit() → Drop
+                                let slice =
+                                    OwnedString::new(replacement_key.to_bun_string(global)?);
                                 let replacement_name = slice.to_owned_slice();
 
                                 if !JSLexer::is_identifier(&replacement_name) {
@@ -768,11 +766,30 @@ impl<'a> TransformTask<'a> {
 
     pub fn run(&mut self) {
         let name = self.loader.stdin_name();
-        let source = bun_ast::Source::init_path_string(name, self.input_code.slice());
 
         // PERF(port): was MimallocArena bulk-free — profile if hot.
         let arena = Arena::new();
         // defer arena.deinit() → Drop
+
+        // `self.transpiler` is a `ManuallyDrop` bytewise copy of the
+        // `JSTranspiler`'s long-lived transpiler (`ptr::read` in `create()`),
+        // so its `macro_context` may alias a box the `JSTranspiler` still owns
+        // — and that box's `resolver`/`remap` raw pointers point at the
+        // *original* transpiler, not this copy. Null it so `parse()` lazily
+        // creates a fresh one whose self-refs target this copy, then reclaim
+        // the fresh box on every return path (mirrors `RuntimeTranspilerStore`).
+        self.transpiler.macro_context = None;
+        let _macro_ctx_guard = scopeguard::guard(
+            core::ptr::addr_of_mut!(self.transpiler.macro_context),
+            |slot| {
+                // SAFETY: `slot` points into the heap-stable `TransformTask`
+                // box; only this thread holds `&mut self`, and the parser's
+                // `&mut MacroContext` borrow ended with `parse()`.
+                if let Some(ctx) = unsafe { (*slot).take() } {
+                    ctx.deinit();
+                }
+            },
+        );
 
         // TODO(port): ASTMemoryAllocator scope — typed_arena in AST crates; here we just
         // construct one and enter it. Model as RAII guard.
@@ -781,27 +798,29 @@ impl<'a> TransformTask<'a> {
 
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
-        self.transpiler
-            .set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let source: &bun_ast::Source = arena_ref.alloc(bun_ast::Source::init_path_string(
+            name,
+            self.input_code.slice(),
+        ));
+        self.transpiler.set_arena(arena_ref);
         self.transpiler.set_log(&raw mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match self.tsconfig {
-            Some(ts) => ts
-                .merge_jsx(self.transpiler.options.jsx.clone().into())
-                .into(),
+            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone()),
             None => self.transpiler.options.jsx.clone(),
         };
 
         let parse_options = ParseOptions {
-            arena: &arena,
+            arena: arena_ref,
             macro_remappings: clone_macro_map(&self.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: self.loader,
             jsx,
             path: source.path.clone(),
-            virtual_source: Some(&source),
+            virtual_source: Some(source),
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
             experimental_decorators: self.tsconfig.map_or(false, |ts| ts.experimental_decorators),
             emit_decorator_metadata: self.tsconfig.map_or(false, |ts| ts.emit_decorator_metadata),
@@ -837,7 +856,9 @@ impl<'a> TransformTask<'a> {
         buffer_writer.reset();
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
+        // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
         let printed = match self.transpiler.print(
+            &arena,
             parse_result,
             &mut printer,
             Transpiler::transpiler::PrintFormat::EsmAscii,
@@ -900,13 +921,14 @@ impl<'a> TransformTask<'a> {
     }
 }
 
-// `Drop for TransformTask` is implicit:
-//   log.deinit() → bun_ast::Log: Drop
-//   input_code → ThreadSafe<StringOrBuffer>: unprotect + Drop
-//   output_code.deref() → BunString: Drop
-//   tsconfig is owned by JSTranspiler, not by TransformTask — JSTranspiler::drop handles it.
-//   js_instance.deref() → IntrusiveRc::drop
-//   bun.destroy(this) → Box drop by owner
+// `js_instance: IntrusiveRc` (= `RefPtr`) has NO Drop impl; its strong ref must be
+// released explicitly or the `JSTranspiler` never reaches refcount 0.
+impl<'a> Drop for TransformTask<'a> {
+    fn drop(&mut self) {
+        // Release the +1 taken in `TransformTask::create` (Zig: `transpiler.deref()`).
+        bun_ptr::RefPtr::deref(&self.js_instance);
+    }
+}
 
 fn export_replacement_value(
     value: JSValue,
@@ -1103,6 +1125,16 @@ impl JSTranspiler {
 
 impl Drop for JSTranspiler {
     fn drop(&mut self) {
+        // `scan()` / `scanImports()` lazily create a `MacroContext` on
+        // `self.transpiler` and (unlike `transformSync`) leave it in place
+        // for reuse across calls. The boxed `bun_js_parser_jsc::MacroContext`
+        // behind `.data` has no `Drop` glue — release it explicitly.
+        // `with_mut` borrow is closure-scoped; no JS re-entry inside.
+        self.transpiler.with_mut(|t| {
+            if let Some(ctx) = t.macro_context.take() {
+                ctx.deinit();
+            }
+        });
         // SAFETY: `transpiler.log` is a *mut Log set via `set_log` to a live Log.
         let log = self.transpiler.get().log;
         if !log.is_null() {
@@ -1173,6 +1205,14 @@ impl Drop for TranspilerStateGuard {
         transpiler.set_log(restore_log);
         transpiler.arena = prev_arena;
         if let Some(prev) = prev_macro_context {
+            // `transformSync` created a fresh MacroContext for this parse and
+            // stored it in `transpiler.macro_context`; the box behind its
+            // `data` pointer is heap-owned and `MacroContext` has no `Drop`,
+            // so overwriting it with `prev` would strand the box. Free it
+            // explicitly before restoring the outer state.
+            if let Some(new_ctx) = transpiler.macro_context.take() {
+                new_ctx.deinit();
+            }
             transpiler.macro_context = prev;
         }
     }
@@ -1219,11 +1259,11 @@ impl JSTranspiler {
 
     fn get_parse_result(
         &self,
-        arena: &Arena,
+        arena: &'static Arena,
         code: &[u8],
         loader: Option<Loader>,
         macro_js_ctx: MacroJSCtx,
-    ) -> Option<ParseResult> {
+    ) -> Option<ParseResult<'static>> {
         let config = self.config.get();
         let name = config.default_loader.stdin_name();
 
@@ -1245,24 +1285,23 @@ impl JSTranspiler {
             code
         };
 
-        let source = bun_ast::Source::init_path_string(name, processed_code);
+        let source: &bun_ast::Source =
+            arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
 
         let jsx = match config.tsconfig.as_deref() {
-            Some(ts) => ts
-                .merge_jsx(self.transpiler.get().options.jsx.clone().into())
-                .into(),
+            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
             None => self.transpiler.get().options.jsx.clone(),
         };
 
         let parse_options = ParseOptions {
-            arena: arena,
+            arena,
             macro_remappings: clone_macro_map(&config.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: loader.unwrap_or(config.default_loader),
             jsx,
             path: source.path.clone(),
-            virtual_source: Some(&source),
+            virtual_source: Some(source),
             replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
             macro_js_ctx,
             experimental_decorators: config
@@ -1329,9 +1368,10 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena` and `&self.config.log` before either local drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
         let prev_arena = self.transpiler.with_mut(|t| {
             let prev = t.arena;
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_arena(arena_ref);
             t.set_log(&raw mut log);
             prev
         });
@@ -1345,7 +1385,7 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let parse_result = self.get_parse_result(&arena, code, loader, MacroJSCtx::ZERO);
+        let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1362,7 +1402,7 @@ impl JSTranspiler {
         let imports_label = ZigString::static_(b"imports");
         let named_imports_value = named_imports_to_js(
             global,
-            parse_result.ast.import_records.slice(),
+            parse_result.ast.import_records.as_slice(),
             self.config.get().trim_unused_imports.unwrap_or(false),
         )?;
 
@@ -1518,11 +1558,12 @@ impl JSTranspiler {
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
         let (prev_arena, prev_macro_context) = self.transpiler.with_mut(|t| {
             let prev_arena = t.arena;
             // `take()` both reads the prior value AND nulls it (spec: `macro_context = null`).
             let prev_mc = t.macro_context.take();
-            t.set_arena(unsafe { bun_ptr::detach_lifetime_ref(&arena) });
+            t.set_arena(arena_ref);
             t.set_log(&raw mut log);
             (prev_arena, prev_mc)
         });
@@ -1535,7 +1576,7 @@ impl JSTranspiler {
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        let parse_result = self.get_parse_result(&arena, code, loader, macro_js_ctx);
+        let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
         let log_ref = self.transpiler.get().log_mut();
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1561,7 +1602,9 @@ impl JSTranspiler {
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
+        // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
         if let Err(err) = unsafe { self.transpiler_mut() }.print(
+            &arena,
             parse_result,
             &mut printer,
             Transpiler::transpiler::PrintFormat::EsmAscii,
@@ -1724,13 +1767,11 @@ impl JSTranspiler {
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
         let jsx = match self.config.get().tsconfig.as_deref() {
-            Some(ts) => ts
-                .merge_jsx(self.transpiler.get().options.jsx.clone().into())
-                .into(),
+            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
             None => self.transpiler.get().options.jsx.clone(),
         };
 
-        let mut opts = bun_js_parser::ParserOptions::init(jsx.into(), loader);
+        let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.

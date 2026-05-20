@@ -208,6 +208,12 @@ pub struct VirtualMachine {
 
     pub is_printing_plugin: bool,
     pub is_shutting_down: bool,
+    /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
+    /// After this point the cleanup-hook list is never iterated again, so
+    /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
+    /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would
+    /// only leak the hook's `ctx` allocation.
+    pub has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
@@ -234,6 +240,13 @@ pub struct VirtualMachine {
     // TODO(b2-cycle): `MacroEntryPoint` from `bun_bundler::entry_points` (gated).
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
+    /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
+    /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
+    /// (whose `load_macro_entry_point` runs the macro module's top-level via
+    /// `wait_for_promise`) hold a guard. `enable_/disable_macro_mode` are gated
+    /// on the 0↔1 transition so the guard is reentrant; this is the signal
+    /// [`drop_source_code_printer_if_macro_owned`] uses.
+    pub macro_guard_depth: u32,
     pub no_macros: bool,
     pub auto_killer: ProcessAutoKiller::ProcessAutoKiller,
 
@@ -269,6 +282,7 @@ pub struct VirtualMachine {
 
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
+    pub resolved_path_dups: Vec<Box<[u8]>>,
     pub is_us_loop_entered: bool,
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
     pub pending_internal_promise_is_protected: bool,
@@ -580,7 +594,16 @@ impl MacroModeGuard {
     #[inline]
     pub fn new(vm: *mut VirtualMachine) -> Self {
         let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
-        vm.get().as_mut().enable_macro_mode();
+        let vm_mut = vm.get().as_mut();
+        // Reentrant: only the outermost guard flips the VM into macro mode and
+        // back; inner guards (e.g. a macro that calls
+        // `Bun.Transpiler#transformSync` which itself enters a guard) just bump
+        // the depth so their `Drop` doesn't reset `macro_mode`/`event_loop`/
+        // `transpiler.target`/`transpiler_store.enabled` underneath the outer.
+        vm_mut.macro_guard_depth += 1;
+        if vm_mut.macro_guard_depth == 1 {
+            vm_mut.enable_macro_mode();
+        }
         Self { vm }
     }
 }
@@ -588,7 +611,11 @@ impl Drop for MacroModeGuard {
     #[inline]
     fn drop(&mut self) {
         // Per `new` contract — `vm` outlives the guard (BackRef invariant).
-        self.vm.get().as_mut().disable_macro_mode();
+        let vm_mut = self.vm.get().as_mut();
+        vm_mut.macro_guard_depth = vm_mut.macro_guard_depth.saturating_sub(1);
+        if vm_mut.macro_guard_depth == 0 {
+            vm_mut.disable_macro_mode();
+        }
     }
 }
 
@@ -984,6 +1011,10 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
+    pub fn has_run_cleanup_hooks(&self) -> bool {
+        self.has_run_cleanup_hooks
+    }
+
     /// Port of `VirtualMachine.scriptExecutionStatus` (VirtualMachine.zig:885).
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
@@ -1136,8 +1167,17 @@ impl VirtualMachine {
             self.macro_event_loop.virtual_machine = NonNull::new(std::ptr::from_mut(self));
             self.macro_event_loop.global = NonNull::new(self.global);
             self.macro_event_loop.concurrent_tasks = Default::default();
-            ensure_source_code_printer();
         }
+        // Idempotent; outside the `has_enabled_macro_mode` guard because
+        // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
+        // scopeguard, JSTranspiler TransformTask, bundler `Worker::deinit`) and
+        // frees the printer while this VM survives with the flag still set —
+        // the next macro on the same pool thread would otherwise skip re-init
+        // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
+        if SOURCE_CODE_PRINTER.get().is_none() {
+            SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
+        }
+        ensure_source_code_printer();
         self.transpiler.options.target = bun_ast::Target::BunMacro;
         self.transpiler
             .resolver
@@ -1506,6 +1546,7 @@ impl VirtualMachine {
         }
         // Zig `defer rare_data.cleanup_hooks.clearAndFree(...)` — `mem::take`
         // above leaves an empty `Vec` (capacity already freed by drop).
+        self.has_run_cleanup_hooks = true;
     }
 
     pub fn global_exit(&mut self) -> ! {
@@ -1522,6 +1563,19 @@ impl VirtualMachine {
                 // VirtualMachine.zig:967 `t.deinit(true)`.
                 unsafe { uws::Timer::close::<true>(t.as_ptr()) };
             }
+            // Drain `TimeoutObject`s / `ImmediateObject`s from `All.timers`
+            // while `runtime_state`, the event loop, and the JSC heap are all
+            // still alive: drops their JS pins and in-heap `+1` refs so the GC
+            // sweep below (`destructOnExit` → `lastChanceToFinalize`) collects
+            // them instead of leaking. Must precede `close_all_socket_groups`
+            // and `~RunLoop::Timer` so no dangling `WTFTimer` heap node is
+            // observed during the walk.
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: `self` is the live per-thread VM on the JS thread;
+                // `runtime_state` is still installed (it's torn down in
+                // `destroy()`, well after `global_exit`).
+                unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+            }
             // Detached worker threads may still be in startVM()/spin() using
             // the process-global resolver BSSMap singletons. transpiler.deinit()
             // below frees those singletons, so request termination of every
@@ -1531,6 +1585,15 @@ impl VirtualMachine {
                 // until each unparks at shutdown().
                 (hooks.terminate_all_workers_and_wait)(10_000);
             }
+
+            // Every worker has now posted its close task to our concurrent
+            // queue (OUTSTANDING is decremented after dispatchExit). Drop
+            // those queued lambdas — without running them — so the captured
+            // `Ref<Worker>` releases and the final GC sweep below brings the
+            // refcount to zero (`~Worker` → `WebWorker__destroy`). Must
+            // precede `destructOnExit`: deleting after JSC VM teardown would
+            // run `~JSEventListener` against freed Weak handle storage.
+            self.event_loop_mut().drop_concurrent_cpp_tasks();
 
             // Embedded per-VM socket groups must drain while JSC is still
             // alive (closeAll() fires on_close → JS). After JSC teardown,
@@ -1548,6 +1611,20 @@ impl VirtualMachine {
                     .close_all_socket_groups(vm_ref);
             }
 
+            // The HTTP daemon thread holds a `Box<ThreadlocalAsyncHTTP>` per
+            // in-flight request; with the JS thread exiting those never reach
+            // a terminal state. Ask it to reclaim them now (waits up to 1s).
+            bun_http::shutdown_for_exit();
+
+            // The HTTP daemon is parked. Release any task it posted to our
+            // queue before observing `is_shutting_down` (the read is
+            // non-atomic and can lag the JS-thread store) — `FetchTasklet`'s
+            // `on_progress_update` would have dropped the JS-side ref, and
+            // without it the tasklet ⇄ `Box<AsyncHTTP>` cycle leaks. Must
+            // precede `destructOnExit` so `FetchTasklet::deinit` can drop its
+            // JSC `Strong`/`Weak` handles against a live HandleSet.
+            self.event_loop_mut().release_queued_tasks_for_shutdown();
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
@@ -1558,8 +1635,6 @@ impl VirtualMachine {
             // loop, which is live for the process lifetime.
             unsafe { (*uws::Loop::get()).drain_closed_sockets() };
 
-            // TODO(port): `self.transpiler.deinit()` — `Transpiler<'_>` has no
-            // `deinit()` yet (resolver BSSMap teardown not ported).
             self.gc_controller.deinit();
             self.destroy();
         }
@@ -1773,6 +1848,15 @@ pub struct RuntimeHooks {
     /// dispatches here. No-op when `bun test` isn't running.
     pub retroactively_report_discovered_tests:
         unsafe fn(agent: *mut crate::debugger::TestReporterHandle),
+    /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
+    /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
+    /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
+    /// callers (`global_exit`, `WebWorker::shutdown`) are in this crate.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM; `runtime_state` must still be installed
+    /// and the JSC heap must not have been swept yet.
+    pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS
@@ -2052,6 +2136,7 @@ impl VirtualMachine {
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
+            addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -2892,6 +2977,16 @@ pub struct ResolveFunctionResult {
 pub static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
     Cell::new(None);
 
+/// `true` when [`enable_macro_mode`](VirtualMachine::enable_macro_mode)
+/// allocated [`SOURCE_CODE_PRINTER`] on this thread and no runtime VM has since
+/// claimed it via [`VirtualMachine::load_extra_env_and_source_code_printer`]
+/// (i.e. a bundler worker thread running a macro). Lets
+/// `__bun_macro_context_deinit` free the printer on worker teardown without
+/// touching the runtime VM's printer when an inline `Bun.build()` macro ran on
+/// the JS thread.
+#[thread_local]
+static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
+
 /// Spec VirtualMachine.zig:1712 `normalizeSpecifierForResolution`.
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
@@ -2929,6 +3024,77 @@ fn ensure_source_code_printer() {
         printer.ctx.append_null_byte = false;
         SOURCE_CODE_PRINTER.set(NonNull::new(bun_core::heap::into_raw(printer)));
     }
+}
+
+/// Free this thread's [`SOURCE_CODE_PRINTER`] Box (if any).
+fn drop_source_code_printer() {
+    if let Some(printer) = SOURCE_CODE_PRINTER.take() {
+        // SAFETY: `printer` was produced by `heap::into_raw` in
+        // `ensure_source_code_printer` and is exclusively owned by this thread.
+        drop(unsafe { bun_core::heap::take(printer.as_ptr()) });
+    }
+    SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
+}
+
+/// Free this thread's [`SOURCE_CODE_PRINTER`] Box only if
+/// [`enable_macro_mode`](VirtualMachine::enable_macro_mode) allocated it.
+/// Called from `js_parser_jsc::Macro::__bun_macro_context_deinit` on bundler
+/// worker teardown — the macro VM never reaches `VirtualMachine::deinit`, so
+/// the box would otherwise leak when the worker thread's TLS block is torn down
+/// before LSan scans (issue 03830 on debian-13-asan after the
+/// `leak:bun_js_parser_jsc::Macro` suppression was removed in #30875). A no-op
+/// on threads where the runtime VM had already initialized the printer (e.g. an
+/// inline `Bun.build()` macro on the JS thread), so subsequent module loads
+/// keep their printer.
+///
+/// Also a no-op while a [`MacroModeGuard`] is still active on this thread:
+/// `__bun_macro_context_deinit` can fire *inside* the guard scope (e.g. a
+/// macro that calls `new Bun.Transpiler().transformSync(...)` —
+/// `TranspilerStateGuard::drop` deinits the nested `MacroContext`), and freeing
+/// here would panic the next module fetch at
+/// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
+/// `enable_macro_mode()`. Gated on `macro_guard_depth`: nonzero exactly while a
+/// guard is on the stack (both `MacroContext::call` and `Macro::init` hold one,
+/// so the macro module's top-level is covered too).
+pub fn drop_source_code_printer_if_macro_owned() {
+    if !SOURCE_CODE_PRINTER_FROM_MACRO.get() {
+        return;
+    }
+    if let Some(vm) = VM.get() {
+        // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only
+        // read the depth counter and never alias `&mut`.
+        if unsafe { (*vm).macro_guard_depth } > 0 {
+            return;
+        }
+    }
+    drop_source_code_printer();
+}
+
+/// Run a synchronous GC sweep on this thread's VM iff it was created for a
+/// bundler-worker macro (via `Macro::init`) and is otherwise quiescent. The
+/// macro VM is intentionally never `destroy()`'d (per-worker dealloc is
+/// unimplemented), so JS-wrapper-owned native boxes — e.g. a
+/// `new Bun.Transpiler()` constructed inside a macro body — would otherwise
+/// outlive the worker thread's TLS root and be reported by LSan once the
+/// `leak:bun_js_parser_jsc::Macro` suppression is gone.
+///
+/// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
+/// is the discriminant — JS `Worker` threads never reach it), after both
+/// per-worker `MacroContext` boxes are freed. Not called from
+/// `__bun_macro_context_deinit`: that path is reached from
+/// `TranspilerStateGuard::drop` and `JSTranspiler::Drop` (during a sweep),
+/// where re-entering `run_gc` would be a recursion hazard.
+pub fn collect_macro_vm_garbage() {
+    let Some(vm) = VM.get() else { return };
+    // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only read
+    // plain fields and call `jsc_vm()` (which the C++ side locks internally).
+    let vm_ref = unsafe { &*vm };
+    if !vm_ref.has_enabled_macro_mode {
+        return;
+    }
+    debug_assert!(!vm_ref.is_main_thread);
+    debug_assert_eq!(vm_ref.macro_guard_depth, 0);
+    vm_ref.jsc_vm().run_gc(true);
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {
@@ -3095,6 +3261,9 @@ impl VirtualMachine {
         let map = &mut *env.map;
 
         ensure_source_code_printer();
+        // The runtime VM owns the printer from here on — even if a macro had
+        // allocated it first, `__bun_macro_context_deinit` must not free it.
+        SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 
         if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
             self.hide_bun_stackframes = false;
@@ -3892,15 +4061,14 @@ impl VirtualMachine {
         ret.unwrap()
     }
 
-    /// Zig `bun.default_allocator.dupe(u8, s)` for the `_resolve`
-    /// fast-paths. The spec intentionally never frees these — they back
-    /// `ResolveFunctionResult.path` for the VM lifetime (see the field's
-    /// `TODO(port): lifetime` note). Returning a `'static` borrow of the
-    /// boxed bytes mirrors that contract.
-    fn dupe_resolved_path(s: &[u8]) -> &'static [u8] {
-        // SAFETY: allocation is VM-lifetime by spec (VirtualMachine.zig:1740,
-        // :1744, :1755, :1761) — never freed in `deinit`.
-        unsafe { &*bun_core::heap::into_raw(s.to_vec().into_boxed_slice()) }
+    /// Zig `bun.default_allocator.dupe(u8, s)` for the `_resolve` fast-paths.
+    fn dupe_resolved_path(&mut self, s: &[u8]) -> &'static [u8] {
+        let boxed: Box<[u8]> = s.to_vec().into_boxed_slice();
+        // SAFETY: `boxed`'s heap allocation has a stable address for as long
+        // as the owning `Box` lives in `resolved_path_dups` (drained in `destroy()`).
+        let slice: &'static [u8] = unsafe { core::mem::transmute::<&[u8], &'static [u8]>(&*boxed) };
+        self.resolved_path_dups.push(boxed);
+        slice
     }
 
     /// Spec VirtualMachine.zig:1724 `_resolve`.
@@ -3937,12 +4105,12 @@ impl VirtualMachine {
         }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
             ret.result = None;
-            ret.path = Self::dupe_resolved_path(specifier);
+            ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if specifier.starts_with(node_fallbacks::IMPORT_PATH) {
             ret.result = None;
-            ret.path = Self::dupe_resolved_path(specifier);
+            ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
@@ -3959,7 +4127,7 @@ impl VirtualMachine {
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
         {
             ret.result = None;
-            ret.path = Self::dupe_resolved_path(specifier);
+            ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
@@ -3970,7 +4138,7 @@ impl VirtualMachine {
                 .map(|h| (h.has_blob_url)(blob_id))
                 .unwrap_or(false);
             if has {
-                ret.path = Self::dupe_resolved_path(specifier);
+                ret.path = self.dupe_resolved_path(specifier);
                 return Ok(());
             }
             return Err(bun_core::err!("ModuleNotFound"));
@@ -4140,7 +4308,7 @@ impl VirtualMachine {
                 specifier_utf8.slice(),
                 source_utf8.slice(),
                 bun_core::err!("NameTooLong"),
-                import_kind.into(),
+                import_kind,
             );
             let msg = bun_ast::Msg {
                 data: bun_ast::range_data(None, bun_ast::Range::NONE, printed),
@@ -4204,8 +4372,12 @@ impl VirtualMachine {
         let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
-        // TODO(b2-cycle): `transpiler.linker.log` / `resolver.package_manager.log`
-        // — gated bundler fields.
+        jsc_vm.transpiler.linker.log = &raw mut log;
+        if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
+            // SAFETY: the `dyn AutoInstaller` is always `PackageManager`
+            // (sole impl — see `VirtualMachine::package_manager`).
+            unsafe { (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = &raw mut log };
+        }
         // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
         // (including `?` from `ResolveMessage::create` below), so the VM's
         // `log` cannot be left pointing at the dropped stack `log`. Hand-roll
@@ -4223,6 +4395,17 @@ impl VirtualMachine {
                 let jsc_vm = self.vm.get().as_mut();
                 jsc_vm.log = Some(self.old_log);
                 jsc_vm.transpiler.resolver.log = self.old_log;
+                jsc_vm.transpiler.linker.log = self.old_log.as_ptr();
+                // `_resolve` may have lazily created the PM with
+                // `pm.log = resolver.log` (our stack `log`), so restore even
+                // if it was `None` when we swapped.
+                if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
+                    // SAFETY: sole `dyn AutoInstaller` impl is `PackageManager`.
+                    unsafe {
+                        (*pm.cast::<bun_install::PackageManager>().as_ptr()).log =
+                            self.old_log.as_ptr();
+                    }
+                }
             }
         }
         let _restore = RestoreLog {
@@ -4267,13 +4450,13 @@ impl VirtualMachine {
                         specifier_utf8.slice(),
                         source_utf8.slice(),
                         err,
-                        import_kind.into(),
+                        import_kind,
                     );
                     bun_ast::Msg {
                         data: bun_ast::range_data(None, bun_ast::Range::NONE, printed.clone()),
                         metadata: bun_ast::Metadata::Resolve(bun_ast::MetadataResolve {
                             specifier: bun_ast::BabyString::r#in(&printed, specifier_utf8.slice()),
-                            import_kind: import_kind.into(),
+                            import_kind,
                             err,
                         }),
                         ..Default::default()
@@ -4300,19 +4483,14 @@ impl VirtualMachine {
     /// `VirtualMachine.deinit` — worker-thread teardown. Spec
     /// VirtualMachine.zig:2109.
     pub fn destroy(&mut self) {
+        self.regular_event_loop.deinit();
+        self.macro_event_loop.deinit();
+
         // PORT NOTE: Zig `auto_killer.deinit()` — `ProcessAutoKiller`'s `Drop`
         // is the deinit body; take()+drop runs it without dropping `self`.
         drop(core::mem::take(&mut self.auto_killer));
 
-        // PORT NOTE: Zig frees the thread-local `source_code_printer` static
-        // in `deinit`; here it's `SOURCE_CODE_PRINTER` (boxed via
-        // `ensure_source_code_printer`).
-        if let Some(printer) = SOURCE_CODE_PRINTER.take() {
-            // SAFETY: `printer` was produced by `heap::alloc` in
-            // `ensure_source_code_printer` and is exclusively owned by this
-            // thread's VM.
-            drop(unsafe { bun_core::heap::take(printer.as_ptr()) });
-        }
+        drop_source_code_printer();
 
         // PORT NOTE: `SavedSourceMap`'s `Drop` is the Zig `deinit()`; it frees
         // each stored map and `deinit()`s the sibling `saved_source_map_table`.
@@ -4335,6 +4513,18 @@ impl VirtualMachine {
         // PORT NOTE: Zig `proxy_env_storage.deinit()` — drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
+
+        // The VM box is `dealloc`'d raw by the worker (see `web_worker.rs`
+        // section 5) so field `Drop`s never run; reclaim the boxed
+        // `ModuleLoader` payloads explicitly. `eval_source.contents` may be
+        // mmap-backed (`MAPPED_CONTENTS_CACHE`) — `Source`'s `Drop` is a
+        // no-op, so dropping the box just frees its own allocation.
+        drop(core::mem::take(&mut self.module_loader));
+
+        self.transpiler.deinit();
+
+        drop(core::mem::take(&mut self.resolved_path_dups));
+
         self.overridden_main.deinit();
 
         // PORT NOTE: Zig frees `timer`/`entry_point` as value fields of `self`;
@@ -6522,7 +6712,7 @@ pub fn plugin_runner_on_resolve_jsc(
         )));
     }
 
-    let file_path = path_value.to_bun_string(global)?;
+    let file_path = bun_core::OwnedString::new(path_value.to_bun_string(global)?);
 
     if file_path.length() == 0 {
         return Ok(Some(ErrorableString::err(

@@ -149,7 +149,7 @@ fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static
 fn task_callback(
     task: &mut ServerComponentParseTask,
     log: &mut Log,
-    bump: &Arena,
+    bump: &'static Arena,
 ) -> Result<Success, OOM> {
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2; safe `Deref`.
     let ctx: &BundleV2 = task

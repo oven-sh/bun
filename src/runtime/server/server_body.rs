@@ -1665,7 +1665,7 @@ where
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        let topic = ZigString::from(topic_value.get_zig_string(global)?);
+        let topic = topic_value.get_zig_string(global)?;
         // jsc.JSValue
         let message_value = iter
             .next_eat()
@@ -2480,13 +2480,16 @@ where
 
             let mut url = URL::parse(temp_url_str);
 
-            // Both branches produce a heap-owned buffer that `url.href` borrows.
-            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so this
-            // buffer must be freed before we leave the block.
-            let owned_url_buf: Vec<u8> = if url.hostname.is_empty() {
-                strings::append(&self.base_url_string_for_joining, url.pathname).into_vec()
+            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so the
+            // joined buffer only needs to live through this block. The else arm
+            // borrows `temp_url_str` (kept alive by `url_zig_str`) instead of
+            // duping it just to satisfy a uniform `defer free` like the Zig did.
+            let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
+                std::borrow::Cow::Owned(
+                    strings::append(&self.base_url_string_for_joining, url.pathname).into_vec(),
+                )
             } else {
-                temp_url_str.to_vec()
+                std::borrow::Cow::Borrowed(temp_url_str)
             };
             url = URL::parse(&owned_url_buf);
 
@@ -3171,11 +3174,9 @@ where
         };
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
-        // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
-        // owned by the per-thread VirtualMachine.
-        self.vm_ref()
-            .jsc_vm()
-            .deprecated_report_extra_memory(mem::size_of::<Ctx>());
+
+        // Don't report extra GC memory here: ctx is a recycled pool slot,
+        // not a fresh heap allocation (see NewServer::on_request).
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — pooled body slot,
         // ref_count = 1.
@@ -3218,20 +3219,23 @@ where
                 ))
             }));
             // PORT NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
-            // returned slices alias the same uWS-owned header buffer. Snapshot
-            // `host` into an owned buffer first so the second borrow for `url`
-            // is unconflicted.
-            let host: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|h| h.to_vec());
+            // returned slices alias the same uWS-owned header buffer. Format
+            // the `https://{host}` prefix while `host` is borrowed so the
+            // second `&mut req` borrow for `url` is unconflicted.
+            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|host| {
+                let fmt = bun_fmt::HostFormatter {
+                    is_https: true,
+                    host,
+                    port: None,
+                };
+                let mut s = Vec::new();
+                write!(&mut s, "https://{}", fmt).ok();
+                s
+            });
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
-                if let Some(host) = host.as_deref() {
-                    let fmt = bun_fmt::HostFormatter {
-                        is_https: true,
-                        host,
-                        port: None,
-                    };
-                    let mut s = Vec::new();
-                    write!(&mut s, "https://{}{}", fmt, BStr::new(path)).ok();
+                if let Some(mut s) = prefix {
+                    s.extend_from_slice(path);
                     request_object.url.set(BunString::clone_utf8(&s));
                 } else {
                     request_object.url.set(BunString::clone_utf8(path));

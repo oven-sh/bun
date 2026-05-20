@@ -35,7 +35,7 @@ pub fn to_have_last_returned_with(
         if last_result.is_object() {
             let result_type = last_result.get(global_this, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = result_type.to_bun_string(global_this)?;
+                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global_this)?);
 
                 if type_str.eql_comptime("return") {
                     last_return_value =

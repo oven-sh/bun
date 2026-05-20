@@ -296,6 +296,7 @@ impl DirInfo {
         }
     }
 
+    #[inline]
     pub fn get_parent(&self) -> Option<DirInfoRef> {
         ref_at_index(self.parent)
     }
@@ -322,11 +323,17 @@ static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
 
 /// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
 /// per-access under the resolver mutex — PORTING.md §Global mutable state.
-#[inline]
+#[inline(always)]
 pub fn hash_map_instance() -> *mut HashMap {
     if let Some(p) = DIR_INFO_MAP.load() {
         return p.as_ptr();
     }
+    hash_map_instance_init()
+}
+
+#[cold]
+#[inline(never)]
+fn hash_map_instance_init() -> *mut HashMap {
     // First access: initialize and publish. Resolver init is single-threaded
     // in practice, but use CAS so a race (if it ever happens) doesn't tear
     // the pointer; the loser's `init()` result is leaked, which is fine for

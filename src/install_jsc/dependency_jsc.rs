@@ -124,7 +124,7 @@ pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         return Ok(JSValue::UNDEFINED);
     }
 
-    let dependency_str = arguments[0].to_bun_string(global)?;
+    let dependency_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global)?);
     let as_utf8 = dependency_str.to_utf8();
 
     let tag = Tag::infer(as_utf8.slice());

@@ -38,7 +38,7 @@ use bun_standalone_graph::StandaloneModuleGraph::{
     self as standalone_graph, CompileErrorReason, CompileResult, Flags as StandaloneFlags,
     target_base_public_path, to_executable,
 };
-use bun_sys::{self as sys, Dir, Fd, OpenDirOptions};
+use bun_sys::{self as sys, Dir, OpenDirOptions};
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
@@ -274,17 +274,6 @@ impl JSBundleCompletionTask {
 
     /// Port of `JSBundleCompletionTask.doCompilation`.
     fn do_compilation(&mut self, output_files: &mut Vec<OutputFile>) -> CompileResult {
-        /// `defer { if root_dir != cwd, root_dir.close() }` — Zig captures
-        /// `root_dir` by reference; the POSIX path reassigns it.
-        struct DirGuard(Dir);
-        impl Drop for DirGuard {
-            fn drop(&mut self) {
-                if self.0.fd != Fd::cwd() {
-                    self.0.close();
-                }
-            }
-        }
-
         // PORT NOTE: reshaped for borrowck — `self.config` is reborrowed for
         // every field projection so the `&mut self` receiver stays usable for
         // `self.env` below.
@@ -349,7 +338,7 @@ impl JSBundleCompletionTask {
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
 
-        let mut root_dir = DirGuard(Dir::cwd());
+        let mut root_dir = Dir::cwd();
 
         // On Windows, don't change root_dir, just pass the full relative path
         // On POSIX, change root_dir to the target directory and pass basename
@@ -363,10 +352,7 @@ impl JSBundleCompletionTask {
             #[cfg(not(windows))]
             {
                 // On POSIX, makeOpenPath and change root_dir
-                root_dir.0 = match root_dir
-                    .0
-                    .make_open_path(dirname, OpenDirOptions::default())
-                {
+                root_dir = match root_dir.make_open_path(dirname, OpenDirOptions::default()) {
                     Ok(d) => d,
                     Err(err) => {
                         return CompileResult::fail_fmt(format_args!(
@@ -380,7 +366,7 @@ impl JSBundleCompletionTask {
             #[cfg(windows)]
             {
                 // On Windows, ensure directories exist but don't change root_dir
-                if let Err(err) = sys::make_path(root_dir.0, dirname) {
+                if let Err(err) = root_dir.make_path(dirname) {
                     return CompileResult::fail_fmt(format_args!(
                         "Failed to create output directory {}: {}",
                         bstr::BStr::new(dirname),
@@ -414,7 +400,7 @@ impl JSBundleCompletionTask {
         let result = match to_executable(
             &compile_options.compile_target,
             output_files,
-            root_dir.0.fd,
+            root_dir.fd,
             module_prefix,
             outfile_for_executable,
             env,
@@ -514,7 +500,7 @@ impl JSBundleCompletionTask {
                         data: StringOrBuffer::EncodedSlice(
                             bun_core::zig_string::Slice::from_utf8_never_free(bytes),
                         ),
-                        dirfd: root_dir.0.fd,
+                        dirfd: root_dir.fd,
                         signal: None,
                     };
                     match NodeFS::write_file_with_path_buffer(&mut pathbuf, &write_args) {
@@ -824,7 +810,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn configure_bundler<'a>(
         &mut self,
         transpiler: &mut Transpiler<'a>,
-        bump: &'a Arena,
+        _bump: &'a Arena,
     ) -> Result<(), bun_core::Error> {
         let config = &mut self.config;
 
@@ -962,12 +948,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.metafile_markdown_path =
             Box::from(config.metafile_markdown_path.list.as_slice());
         if config.optimize_imports.count() > 0 {
-            // PORT NOTE: Zig `&config.optimize_imports` is a borrow into
-            // `*JSBundleCompletionTask` (lives for the bundle). The Rust
-            // `BundleOptions.optimize_imports: Option<&'a StringSet>` borrows
-            // arena lifetime — bump-alloc a copy so `'a == 'bump`.
+            // SAFETY: `self.config` outlives `bump` and `optimize_imports` is not mutated
+            // during the bundle; a bump.alloc'd clone leaked (arena never runs Drop).
             transpiler.options.optimize_imports =
-                Some(&*bump.alloc(config.optimize_imports.clone()?));
+                Some(unsafe { &*core::ptr::from_ref(&config.optimize_imports) });
         }
 
         if transpiler.options.compile {
@@ -1096,19 +1080,13 @@ impl CompletionStruct for JSBundleCompletionTask {
         bump: &'a Arena,
         thread_pool: *mut bun_threading::ThreadPool,
     ) -> Result<(), bun_core::Error> {
-        // `jsc.AnyEventLoop.init(allocator)` — Mini loop owned by the bump.
-        // The linker stores `Option<NonNull<AnyEventLoop<'static>>>` (lifetime
-        // erased BACKREF — see LinkerContext.rs:50); cast through raw to erase
-        // `'a` since the loop lives exactly as long as `bump` and `BundleV2`.
-        let any_loop = bump.alloc(bun_event_loop::AnyEventLoop::default());
+        // `jsc.AnyEventLoop.init(allocator)` — Mini loop. Stack-owned (not
+        // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
+        // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so
+        // it outlives the BACKREF in `linker.loop`.
+        let mut any_loop = bun_event_loop::AnyEventLoop::default();
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(NonNull::from(&mut *any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
-
-        // Zig passed the same `heap` by value (mimalloc handle struct copy);
-        // bumpalo arenas can't be aliased that way, so `BundleV2` owns its
-        // own arena (its only consumer is `linker.graph.bump`, repointed in
-        // `BundleV2::init`). Transpiler/AST allocations stay in `bump`.
-        let heap = Arena::new();
+            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
         // process-lifetime, concurrently read by worker threads). Do NOT
@@ -1117,7 +1095,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         // (`NonNull`) end-to-end; `ThreadPool::init` stores it as `*mut`.
         let worker_pool = NonNull::new(thread_pool);
 
-        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, heap)?;
+        // Zig passed the same `heap` by value (mimalloc handle struct copy);
+        // `Graph.heap` is now a borrow, so reuse the caller-owned `bump`.
+        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
 
         bv2.plugins = self.plugins();
         bv2.completion = Some(self.as_js_bundle_completion_task());

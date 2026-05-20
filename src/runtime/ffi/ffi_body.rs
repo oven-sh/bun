@@ -249,11 +249,21 @@ impl Default for FFI {
 impl FFI {
     pub fn finalize(self: Box<Self>) {
         // Zig spec (ffi.zig:69): `pub fn finalize(_: *FFI) callconv(.c) void {}` —
-        // INTENTIONAL no-op. Compiled trampolines / dlopen'd symbols may still be
-        // reachable from JS after the wrapper is GC'd; teardown is owned by
-        // `close()`. Under the `Box<Self>` finalize contract an empty body would
-        // drop, so leak the allocation back to preserve the spec'd no-op.
-        let _ = bun_core::heap::release(self);
+        // INTENTIONAL no-op when not closed. Compiled trampolines / dlopen'd
+        // symbols may still be reachable from JS after the wrapper is GC'd
+        // (e.g. `const { fn } = dlopen(...).symbols`); teardown is owned by
+        // `close()`. Dropping the Box would run `Function::drop` →
+        // `tcc_delete()`, freeing the executable pages those JSFunctions still
+        // jump into.
+        //
+        // When `close()` HAS run, the functions map is empty and the dylib /
+        // shared TCC state are already gone, so the Box only owns the (empty)
+        // hashmap's retained-capacity buffer. Drop it instead of leaking.
+        if self.closed.get() {
+            drop(self);
+        } else {
+            let _ = bun_core::heap::release(self);
+        }
     }
 }
 
@@ -2658,8 +2668,6 @@ impl CompilerRT {
         else {
             return;
         };
-        // `defer bunCC.close()`.
-        let bun_cc = scopeguard::guard(bun_cc, |d| d.close());
 
         // Spec ffi.zig:2344-2350 — `inline for (decls) |d| bunCC.writeFile(d) catch {}`.
         for (name, source) in CompilerRtSources::SOURCES {

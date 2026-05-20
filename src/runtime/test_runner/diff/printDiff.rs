@@ -170,7 +170,7 @@ pub fn print_diff_main(
                     });
                 }
             } else {
-                new_diff_segments.push(diff_segment.clone());
+                new_diff_segments.push(*diff_segment);
             }
         }
 
@@ -318,7 +318,7 @@ pub enum DiffSegmentMode {
 
 // TODO(port): lifetime — `removed`/`inserted` borrow from caller input and diff_match_patch output;
 // in Zig these were arena-backed slices. Revisit ownership.
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct DiffSegment<'a> {
     pub removed: &'a [u8],
     pub inserted: &'a [u8],

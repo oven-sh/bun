@@ -437,7 +437,12 @@ impl Drop for Handlers {
     fn drop(&mut self) {
         // Zig deinit: unprotect() + promise.deinit() + this.* = undefined
         self.unprotect();
-        // `promise: Strong` drops itself.
+        if self.vm.is_shutting_down() {
+            // `~VM` may have already torn down the HandleSet that
+            // `Strong::drop` writes back into; the slot is bulk-freed by the
+            // VM destructor, so leaking it here is correct.
+            core::mem::forget(self.promise.replace(Strong::empty()));
+        }
     }
 }
 

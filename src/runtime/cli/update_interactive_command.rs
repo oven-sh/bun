@@ -207,7 +207,7 @@ impl UpdateInteractiveCommand {
         // re-read — only `source.contents` is written back below.
         if let Err(err) = js_printer::print_json(
             &mut package_json_writer,
-            package_json.root.into(),
+            package_json.root,
             &package_json.source,
             PrintJsonOptions {
                 indent: package_json.indentation,
@@ -241,21 +241,14 @@ impl UpdateInteractiveCommand {
         // Update the cache so installWithManager sees the new package.json
         // This is critical - without this, installWithManager will use the cached old version
         //
-        // PORT NOTE: `Source.contents` is `Cow<'static, [u8]>`. The cached
-        // `root` AST's `EString.data` slices (every JSON key/value string)
-        // borrow the *old* contents buffer — `deep_clone` copies the slice,
-        // not the bytes. Zig overwrote `source.contents` as a raw slice and
-        // leaked the old buffer; assigning a new `Cow::Owned` here would drop
-        // it and leave every cached string dangling, which
-        // `process_workspace_name` then dereferences via `root.get("name")`
-        // during `installWithManager`. Leak the old buffer to match Zig.
-        // PERF(port): `WorkspacePackageJSONCache` is process-lifetime; both
-        // buffers live for the process anyway.
+        // PORT NOTE: cached `root` AST slices still borrow the *old*
+        // `source.contents`; stash it instead of `mem::forget`-ing so it's
+        // freed when the entry drops (`PackageManager::deinit_caches()`).
         let old = core::mem::replace(
             &mut package_json.source.contents,
             Cow::Owned(new_package_json_source.into_vec()),
         );
-        core::mem::forget(old);
+        package_json.stale_contents.push(old);
         Ok(())
     }
 

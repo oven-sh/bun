@@ -2743,10 +2743,10 @@ impl ExpectCustomAsymmetricMatcher {
                     Ok(r) => r,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
                 };
-                let s = match result.to_bun_string(global_this) {
+                let s = bun_core::OwnedString::new(match result.to_bun_string(global_this) {
                     Ok(s) => s,
                     Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-                };
+                });
                 write!(writer, "{}", s)?;
             }
         }

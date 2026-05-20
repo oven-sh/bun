@@ -89,11 +89,9 @@ impl PackageManifestMap {
     pub fn insert(
         &mut self,
         name_hash: PackageNameHash,
-        manifest: &npm::PackageManifest,
+        manifest: npm::PackageManifest,
     ) -> Result<(), bun_alloc::AllocError> {
-        // Zig: `.{ .manifest = manifest.* }` — struct copy; `PackageManifest: Clone`.
-        self.hash_map
-            .insert(name_hash, Value::Manifest(manifest.clone()));
+        self.hash_map.insert(name_hash, Value::Manifest(manifest));
         Ok(())
     }
 

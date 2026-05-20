@@ -129,6 +129,7 @@ impl JSSourceMap {
                 global.throw_invalid_arguments(format_args!("payload 'mappings' must be a string"))
             );
         };
+        let mappings_value = bstring::OwnedString::new(mappings_value);
 
         let mappings_str = mappings_value.to_utf8();
 

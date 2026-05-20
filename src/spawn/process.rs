@@ -594,14 +594,20 @@ impl Process {
     pub fn close(&mut self) {
         #[cfg(unix)]
         {
+            let mut stranded_watch_ref = false;
             // Route the `Fd` arm through the centralized `fd_poll_mut()`
             // accessor instead of open-coding `(*poll.as_ptr()).deinit()`.
             if let Some(poll) = self.poller.fd_poll_mut() {
+                stranded_watch_ref = poll.is_registered();
                 poll.deinit();
             } else if let Poller::WaiterThread(waiter) = &mut self.poller {
                 waiter.disable();
             }
             self.poller = Poller::Detached;
+            if stranded_watch_ref && !self.has_exited() {
+                // SAFETY: callers hold their own +1, so this never drops to zero.
+                unsafe { Self::deref(std::ptr::from_mut(self)) };
+            }
         }
         #[cfg(windows)]
         {
@@ -1079,7 +1085,6 @@ pub mod waiter_thread_posix {
 
         pub fn run_from_main_thread(self: Box<Self>) {
             let this = *self;
-            // bun.destroy(self) — Box dropped here.
             // SAFETY: subprocess strong-ref'd before append(); released by
             // on_wait_pid_from_waiter_thread → deref().
             unsafe {
@@ -1110,7 +1115,6 @@ pub mod waiter_thread_posix {
         pub fn run_from_main_thread(self: Box<Self>) {
             let result = self.result;
             let subprocess = self.subprocess;
-            // bun.destroy(self) — Box drops at end of scope.
             // SAFETY: see ResultTask::run_from_main_thread.
             unsafe { T::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed()) };
         }
@@ -1192,7 +1196,6 @@ pub mod waiter_thread_posix {
                     let task = unsafe { bun_core::heap::take(task) };
                     // PERF(port): was assume_capacity
                     active.push(task.process);
-                    // task drops here (TrivialDeinit)
                 }
             }
 
@@ -2391,7 +2394,6 @@ mod spawn_process_body {
                 self.status.is_ok()
             }
         }
-        // deinit → Drop (Vec<u8> auto-frees)
 
         #[cfg(windows)]
         pub struct SyncWindowsPipeReader {
@@ -2529,7 +2531,6 @@ mod spawn_process_body {
                 };
                 let tag = this_ref.tag;
                 let on_done_callback = this_ref.on_done_callback;
-                // bun.default_allocator.destroy(this.pipe) — Box<uv::Pipe> drops with `this`
                 // bun.default_allocator.destroy(this)
                 // SAFETY: this was heap-allocated in start(); reclaim and drop
                 drop(unsafe { bun_core::heap::take(this) });
@@ -2658,9 +2659,7 @@ mod spawn_process_body {
             let mut result = Vec::with_capacity(total_size);
             for chunk in chunks {
                 result.extend_from_slice(&chunk);
-                // chunks_allocator.free(chunk) — Box drops
             }
-            // chunks_allocator.free(chunks) — Vec drops
             result
         }
 
@@ -3041,7 +3040,16 @@ mod spawn_process_body {
             // run the wait loop or the cleanup defers. Callers
             // (`runBinaryWithoutBunxPath`, `bunx`) set the flag unconditionally;
             // on Linux it's a spawn-side no-op so no-orphans must stay armed there.
+            //
+            // Also disabled off the watchdog-arming (main) thread: the subreaper
+            // toggle is process-wide and `wait4(-1)` reaps *any* child, so
+            // concurrent calls from a worker pool (install's `repository::exec`
+            // git clones) would race the subreaper flag and steal each other's
+            // exit statuses. Those callers fall through to the plain
+            // `reap_child(pid)` path below; the inherited PDEATHSIG on the main
+            // thread still tears the whole process down if our parent dies.
             let no_orphans = ParentDeathWatchdog::is_enabled()
+                && bun_spawn_sys::pdeathsig::is_arming_thread()
                 && !(cfg!(target_os = "macos") && options.use_execve_on_macos);
 
             // Snapshot pre-existing direct children so the disarm defer can tell
@@ -3243,6 +3251,7 @@ mod spawn_process_body {
                     let r: Option<Maybe<Status>> = wait_linux_signalfd(
                         process.pid,
                         ppid,
+                        no_orphans,
                         &*jc,
                         &mut out,
                         &mut out_fds_to_wait_for,
@@ -3318,11 +3327,12 @@ mod spawn_process_body {
             {
                 for (idx, &memfd) in process.memfds[1..].iter().enumerate() {
                     if memfd {
-                        out[idx] = (bun_sys::File {
-                            handle: out_fds[idx],
-                        })
-                        .read_to_end()
-                        .unwrap_or_default();
+                        // `out_fds[idx]` is closed by `cleanup_spawn_posix` below;
+                        // borrow a non-owning `File` view so the temporary doesn't
+                        // close it on drop (which would double-close).
+                        out[idx] = bun_sys::File::borrow(&out_fds[idx])
+                            .read_to_end()
+                            .unwrap_or_default();
                     }
                 }
             }
@@ -3633,6 +3643,7 @@ mod spawn_process_body {
         fn wait_linux_signalfd(
             child: libc::pid_t,
             ppid: libc::pid_t,
+            drain_orphans: bool,
             jc: &JobControl,
             out: &mut [Vec<u8>; 2],
             out_fds_to_wait_for: &mut [Fd; 2],
@@ -3681,6 +3692,19 @@ mod spawn_process_body {
             // preserved (close signalfd, then restore the signal mask).
             let chld_fd = AutoCloseFd::new(chld_fd);
 
+            // Child-exit, take 2: pidfd. signalfd only fires if SIGCHLD stays
+            // pending — i.e. is blocked on *every* thread. PackageManager / HTTP
+            // client threads created before we got here don't block it, so the
+            // kernel can hand the signal to one of them and the signalfd never
+            // wakes. A pidfd becomes readable on child exit regardless of signal
+            // masking, so poll it too. Keep the signalfd for the subreaper-adopted
+            // orphans (whose pidfds we don't have) and as the gVisor / pre-5.3
+            // fallback when pidfd_open is unavailable.
+            let child_pidfd = match bun_sys::pidfd_open(child, 0) {
+                Ok(fd) => AutoCloseFd::new(fd),
+                Err(_) => AutoCloseFd::invalid(),
+            };
+
             // Parent-death: pidfd when available (instant wake). When not
             // (gVisor, sandboxes, pre-5.3): bound the poll at 100ms and recheck
             // `getppid()`.
@@ -3718,7 +3742,10 @@ mod spawn_process_body {
             }
 
             let need_ppid_fallback = ppid > 1 && ppid_fd.fd() == Fd::INVALID;
-            let timeout_ms: i32 = if need_ppid_fallback || chld_fd.fd() == Fd::INVALID {
+            // Only block forever when we have a wake source for *both* events we
+            // care about. signalfd alone is not a reliable child-exit wake (see
+            // the `child_pidfd` comment above), so require the pidfd for `-1`.
+            let timeout_ms: i32 = if need_ppid_fallback || child_pidfd.fd() == Fd::INVALID {
                 100
             } else {
                 -1
@@ -3731,17 +3758,24 @@ mod spawn_process_body {
                 // sigprocmask above, in which case the kernel discarded SIGCHLD
                 // (default disposition is ignore) and signalfd will never wake;
                 // (b) the no-signalfd fallback; (c) subreaper-adopted orphans that
-                // would otherwise re-fire SIGCHLD forever. `wait4(-1)` is safe
-                // here: spawnSync callers (`bun run`, `bunx`, CLI subcommands)
-                // have no JS event loop and no other `Process` watchers — every
-                // pid we see is either `child` or a subreaper-adopted orphan.
+                // would otherwise re-fire SIGCHLD forever.
+                //
+                // The `wait4(-1)` orphan drain is only valid when `drain_orphans`
+                // (i.e. on the watchdog-arming thread, where subreaper is armed
+                // and there is exactly one wait loop in the process). Off-thread
+                // callers — install's threadpool `git` clones — run several wait
+                // loops concurrently with no subreaper; a `wait4(-1)` there would
+                // reap a sibling thread's `git` child, discard its status as an
+                // "orphan", and leave that sibling busy-polling a permanently-
+                // readable pidfd. Target `child` directly in that case.
                 //
                 // WUNTRACED only on a TTY: bridges Ctrl-Z via `JobControl`.
                 // Non-TTY callers never see stops, matching plain `bun run`.
                 let wopts: u32 =
                     (libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 }) as u32;
+                let wait_target: libc::pid_t = if drain_orphans { -1 } else { child };
                 loop {
-                    let r = posix_spawn::wait4(-1, wopts, None);
+                    let r = posix_spawn::wait4(wait_target, wopts, None);
                     let w = match &r {
                         Err(_) => break,
                         Ok(w) => *w,
@@ -3771,9 +3805,9 @@ mod spawn_process_body {
                 }
 
                 // SAFETY: zeroed pollfd is valid
-                let mut buf: [libc::pollfd; 4] = bun_core::ffi::zeroed();
+                let mut buf: [libc::pollfd; 5] = bun_core::ffi::zeroed();
                 let mut pfds_len: usize = 0;
-                let push = |l: &mut [libc::pollfd; 4], len: &mut usize, fd: Fd| {
+                let push = |l: &mut [libc::pollfd; 5], len: &mut usize, fd: Fd| {
                     l[*len] = libc::pollfd {
                         fd: fd.native(),
                         events: libc::POLLIN | libc::POLLERR | libc::POLLHUP,
@@ -3793,6 +3827,9 @@ mod spawn_process_body {
                 let chld_idx = pfds_len;
                 if chld_fd.fd() != Fd::INVALID {
                     push(&mut buf, &mut pfds_len, chld_fd.fd());
+                }
+                if child_pidfd.fd() != Fd::INVALID {
+                    push(&mut buf, &mut pfds_len, child_pidfd.fd());
                 }
 
                 // SAFETY: valid pollfd array

@@ -663,7 +663,26 @@ impl ValkeyClient {
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
+        if socket.is_closed() {
+            return;
+        }
+        // usockets does not dispatch `on_close`/`on_connect_error` when an
+        // application explicitly closes a `us_socket_t` whose TCP connect
+        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
+        // synchronously so `connect()` got a real `us_socket_t*` rather than
+        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
+        // The valkey client relies on one of those callbacks (via
+        // `on_valkey_close`/`on_valkey_reconnect`) to release the `+1`
+        // keep-alive ref `connect()` took, so without one the
+        // `JSValkeyClient` box leaks. Detect a SEMI_SOCKET before closing
+        // and run the close path ourselves afterwards.
+        let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
+            && !socket.is_established();
         socket.close(uws::CloseCode::Normal);
+        if is_semi_socket {
+            self.status = Status::Disconnected;
+            let _ = self.on_close();
+        }
     }
 
     /// Handle connection closed event

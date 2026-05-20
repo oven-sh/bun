@@ -27,11 +27,8 @@ impl Url {
     }
 
     /// Returns whether the URL is absolute, and not relative.
-    pub fn is_absolute(&self, import_records: &Vec<ImportRecord>) -> bool {
-        let url: &[u8] = import_records
-            .at(self.import_record_idx as usize)
-            .path
-            .pretty;
+    pub fn is_absolute(&self, import_records: &[ImportRecord]) -> bool {
+        let url: &[u8] = import_records[self.import_record_idx as usize].path.pretty;
 
         // Quick checks. If the url starts with '.', it is relative.
         if strings::starts_with_char(url, b'.') {

@@ -66,36 +66,21 @@ type AddrInfo = netc::addrinfo;
 type Sockaddr = netc::sockaddr;
 
 /// Helper: fetch the per-VM global DNS resolver (port of
-/// `RareData::globalDNSResolver`). The slot itself lives in `bun_jsc::RareData`
-/// as a type-erased `Option<NonNull<c_void>>` to break the
-/// `bun_jsc → bun_runtime` dependency cycle; this function owns the lazy init
-/// and the cast back to `*mut GlobalData`.
+/// `RareData::globalDNSResolver`). The storage is
+/// [`crate::jsc_hooks::RuntimeState::global_dns_data`] — concrete
+/// `Option<Box<GlobalData>>`, freed by `deinit_runtime_state` on VM teardown.
 ///
 /// R-2: returns `&Resolver` (shared). All Resolver mutation routes through
 /// `Cell` / `JsCell` fields, so a shared borrow is sufficient and avoids the
 /// `noalias` hazard when c-ares callbacks re-enter on the same global resolver.
 #[inline]
 pub(crate) fn global_resolver(global_this: &JSGlobalObject) -> &Resolver {
-    let vm = global_this.bun_vm();
-    // PORT NOTE: reshaped for borrowck — `GlobalData::init` needs
-    // `&VirtualMachine` while `rare_data()` needs `&mut VirtualMachine`. Read
-    // the slot, drop the borrow, init if empty, then re-acquire the slot to
-    // store. The two `as_mut()` borrows are sequenced (no overlap).
-    let existing = *vm.as_mut().rare_data().global_dns_data_slot();
-    let data: *mut GlobalData = match existing {
-        Some(nn) => nn.as_ptr().cast::<GlobalData>(),
-        None => {
-            let gd_nn = bun_core::heap::into_raw_nn(GlobalData::init(vm));
-            let gd = gd_nn.as_ptr();
-            *vm.as_mut().rare_data().global_dns_data_slot() = Some(gd_nn.cast::<c_void>());
-            // SAFETY: `gd` points to a live, freshly-allocated GlobalData.
-            unsafe { (*gd).resolver.ref_() }; // live forever
-            gd
-        }
-    };
-    // SAFETY: `data` is the heap allocation owned by the RareData slot; it
-    // outlives every caller (freed only at VM teardown).
-    unsafe { &(*data).resolver }
+    let gd = crate::jsc_hooks::global_dns_data().get_or_init(|| {
+        let gd = GlobalData::init(global_this.bun_vm());
+        gd.resolver.ref_(); // pin for the VM's lifetime
+        gd
+    });
+    &gd.resolver
 }
 
 /// Send-wrapper for raw pointers handed to the threaded work pool. The DNS
@@ -1819,7 +1804,12 @@ impl Drop for CAresReverse {
     fn drop(&mut self) {
         let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
-        // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
+        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
+        // by `init_ref` in `init()` / `GetHostByAddrInfoRequest::init()`.
+        if let Some(resolver) = self.resolver.take() {
+            resolver.deref();
+        }
+        // self.name freed by Box<[u8]> Drop
     }
 }
 
@@ -1962,7 +1952,12 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
         let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
-        // self.name / self.resolver freed by field Drop (Box / IntrusiveRc deref)
+        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
+        // by `init_ref` in `init()` / `ResolveInfoRequest::init()`.
+        if let Some(resolver) = self.resolver.take() {
+            resolver.deref();
+        }
+        // self.name freed by Box<[u8]> Drop
     }
 }
 
@@ -2140,7 +2135,11 @@ impl Drop for DNSLookup {
         self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
             Async::AllocatorType::Js,
         ));
-        // self.resolver freed by IntrusiveRc Drop → deref
+        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
+        // by `init_ref` in `init()` / `GetAddrInfoRequest::init()`.
+        if let Some(resolver) = self.resolver.take() {
+            resolver.deref();
+        }
     }
 }
 
@@ -2157,6 +2156,17 @@ impl GlobalData {
         Box::new(Self {
             resolver: Resolver::setup(vm),
         })
+    }
+}
+
+impl Drop for GlobalData {
+    fn drop(&mut self) {
+        // `Resolver::deinit` ends with `heap::take(this)`, which is wrong for a
+        // value field — open-code the channel teardown so the c-ares state
+        // frees when this box drops in `deinit_runtime_state`.
+        if let Some(channel) = self.resolver.channel.take() {
+            unsafe { c_ares::Channel::destroy(channel) };
+        }
     }
 }
 
@@ -5721,9 +5731,11 @@ impl Resolver {
                 );
             }
 
-            let address_string = triple
-                .get_index(global_this, 1)?
-                .to_bun_string(global_this)?;
+            let address_string = bun_core::OwnedString::new(
+                triple
+                    .get_index(global_this, 1)?
+                    .to_bun_string(global_this)?,
+            );
             let address_slice = address_string.to_owned_slice();
 
             let mut address_buffer = vec![0u8; address_slice.len() + 1];

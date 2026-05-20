@@ -1221,7 +1221,19 @@ impl Thread {
             let wait_start = if stats { now_ns() } else { 0 };
             is_waking = match pool.wait(is_waking) {
                 Ok(w) => w,
-                Err(_) => return,
+                Err(_) => {
+                    // `shutdown()` raced `wake_for_idle_events()`: the bundler
+                    // pushes per-worker `deinit_task`s into `idle_queue`, wakes
+                    // us, then immediately drops the (CLI-owned) pool — and
+                    // `wait()` observes `Shutdown` before we loop back to
+                    // `drain_idle_events`. Run them once on the way out so the
+                    // worker thread tears down its own `Worker`/`WorkerData`
+                    // (whose `ThreadLocalArena` is mimalloc thread-local and
+                    // must be freed here, not from the bundler thread).
+                    // SAFETY: self_ptr is our own stack-local Thread.
+                    unsafe { (*self_ptr).drain_idle_events() };
+                    return;
+                }
             };
             if stats {
                 pool.stats

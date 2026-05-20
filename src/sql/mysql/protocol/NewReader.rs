@@ -88,16 +88,21 @@ impl<C: ReaderContext> NewReader<C> {
         Ok(I::from_ne_slice(&data.slice()[..I::SIZE]))
     }
 
-    /// Zig `reader.int(u24)` — read 3 little-endian bytes, zero-extend to u32.
+    /// Zig `reader.int(u24)`. MySQL's binary result-row protocol transmits
+    /// `MYSQL_TYPE_INT24` as a fixed 4-byte field; Zig consumes `@sizeOf(u24)`
+    /// (== 4, ABI size rounds 24 bits up to 4-byte alignment) and decodes the
+    /// low 3 bytes. Consuming only 3 leaves the cursor 1 byte behind and
+    /// corrupts every subsequent column.
     pub fn int_u24(self) -> Result<u32, AnyMySQLError> {
-        let data = self.read(3)?;
+        let data = self.read(4)?;
         let s = data.slice();
         Ok(u32::from_le_bytes([s[0], s[1], s[2], 0]))
     }
 
-    /// Zig `reader.int(i24)` — read 3 little-endian bytes, sign-extend to i32.
+    /// Zig `reader.int(i24)` — consume 4 bytes (see [`Self::int_u24`]), decode
+    /// the low 3 little-endian bytes and sign-extend to i32.
     pub fn int_i24(self) -> Result<i32, AnyMySQLError> {
-        let data = self.read(3)?;
+        let data = self.read(4)?;
         let s = data.slice();
         let u = u32::from_le_bytes([s[0], s[1], s[2], 0]);
         // sign-extend 24 -> 32

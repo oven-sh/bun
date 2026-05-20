@@ -134,7 +134,7 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     // Create parent directories if needed
     let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
     if !dirname.is_empty() {
-        let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
+        let _ = bun_sys::Dir::cwd().make_path(dirname);
     }
 
     // Open file for writing
@@ -147,11 +147,7 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
         bun_sys::Result::Ok(fd) => fd,
         bun_sys::Result::Err(err) => return bun_sys::Result::Err(err),
     };
-    // TODO(port): RAII fd guard — `defer fd.close()` semantics
-    let close_guard = scopeguard::guard(fd, |fd| fd.close());
-
-    // Write contents
-    match bun_sys::File::from_fd(*close_guard).write_all(contents) {
+    match bun_sys::File::from_fd(fd).write_all(contents) {
         bun_sys::Result::Ok(()) => bun_sys::Result::Ok(true),
         bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
     }
@@ -622,7 +618,7 @@ fn get_shadcn_components(
         match loaders[file.get() as usize] {
             bun_ast::Loader::Tsx | bun_ast::Loader::Jsx => {
                 let import_records = &all[file.get() as usize];
-                for import_record in import_records.slice() {
+                for import_record in import_records.as_slice() {
                     if import_record.path.text.starts_with(b"@/components/ui/") {
                         icons.insert(&import_record.path.text[b"@/components/ui/".len()..])?;
                     }
@@ -660,7 +656,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 return Some(b"default");
             }
 
-            let export_names: &[Box<[u8]>] = exports.keys();
+            let export_names = exports.keys();
             if export_names.len() == 1 {
                 // If there's only one export it can only be this.
                 return Some(&export_names[0][..]);
@@ -671,7 +667,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 continue;
             }
 
-            let filename = source.path.name.non_unique_name_string_base();
+            let filename = source.path.name().non_unique_name_string_base();
             if filename.is_empty() {
                 bun_core::hint::cold();
                 continue;

@@ -48,8 +48,14 @@ use bun_core::output;
 
 /// mimalloc as the process allocator — matches Zig's `bun.default_allocator`
 /// and the `uv_replace_allocator(mi_*)` call in `main.zig` on Windows.
+#[cfg(not(bun_asan))]
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
+
+/// Under ASAN, use the system allocator so the interceptor sees every allocation.
+#[cfg(bun_asan)]
+#[global_allocator]
+static ALLOC: std::alloc::System = std::alloc::System;
 
 /// ASAN runtime options override. Lives in the binary crate so it is a direct
 /// link input — the ASAN runtime weak-defines this symbol, and an rlib/archive
@@ -107,61 +113,28 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 #[unsafe(no_mangle)]
 pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     // One rule per line. Substring match on any frame in the allocation stack.
-    // Keep this list 1:1 with the Zig-named entries in `test/leaksan.supp`;
-    // C/C++ symbol entries stay in that file (their names did not change).
+    //
+    // Every entry below is a structural / process-lifetime allocation that has
+    // been investigated and is intentionally suppressed — not a leak. New
+    // entries here require a comment naming the owner and why it cannot be
+    // freed before exit. Do NOT add a suppression to silence a CI flake; fix
+    // the lifecycle instead.
     concat!(
-        // Rust std false positive — detached threads' Arc<thread::Inner>.
+        // Rust std false positive — a detached thread's `Arc<thread::Inner>`
+        // is held by the OS thread's TLS, which LSan does not scan as a root.
         "leak:std::thread::thread::Thread>::new\n",
-        // ── ported Zig-named entries ────────────────────────────────────────
-        "leak:bun_runtime::api::server::ServerAllConnectionsClosedTask\n",
-        "leak:bun_cli::bunfig::Bunfig>::parse\n",
-        "leak:bun_resolver::resolver::Resolver>::parse_package_json\n",
-        "leak:bun_resolver::package_json::PackageJSON>::parse\n",
-        "leak:bun_resolver::resolver::Resolver>::parse_tsconfig\n",
-        "leak:bun_jsc::JSGlobalObject::JSGlobalObject>::create\n",
-        "leak:bun_js_printer::js_printer::print_ast\n",
-        "leak:bun_jsc::ipc::on_data2\n",
+        // macOS-only `dlopen("CoreFoundation")` / `dlopen("CoreServices")`
+        // and the per-process `FSEventStream` / `CFRunLoop` they require.
+        // These are platform singletons by design (CF objects are not safely
+        // disposable while the dylib remains loaded).
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        "leak:bun_bake::framework_router::JSFrameworkRouter\n",
-        "leak:bun_js_parser_jsc::Macro\n",
-        "leak:bun_runtime::webcore::Blob>::find_or_create_file_from_path\n",
-        "leak:bun_runtime::node::node_fs_binding\n",
-        "leak:bun_jsc::module_loader::fetch_builtin_module\n",
-        "leak:bun_boringssl::boringssl::check_x509_server_identity\n",
-        "leak:bun_runtime::cli::pack_command\n",
-        "leak:bun_runtime::dns_jsc::dns::GetAddrInfoRequest\n",
-        "leak:bun_tcc_sys::tcc::State>::init\n",
-        "leak:bun_runtime::api::bun::dynamic_library\n",
-        "leak:bun_runtime::webcore::body::Value>::from_js\n",
-        "leak:bun_sys_jsc::error_jsc::error_to_system_error\n",
-        "leak:bun_runtime::webcore::Blob>::get_name_string\n",
-        "leak:bun_patch::patch::PatchFile>::apply\n",
-        "leak:bun_jsc::module_loader::RuntimeTranspilerStore\n",
-        "leak:bun_runtime::webcore::blob::Store>::init_s3\n",
-        "leak:bun_runtime::webcore::s3::list_objects\n",
-        "leak:bun_runtime::webcore::S3Client\n",
-        "leak:bun_runtime::node::node_fs::NodeFS>::realpath_inner\n",
-        "leak:bun_sys_jsc::error_jsc::error_to_shell_system_error\n",
-        "leak:bun_runtime::api::filesystem_router::FileSystemRouter\n",
-        "leak:bun_runtime::dns_jsc::dns::Resolver\n",
-        "leak:bun_runtime::node::node_os::version\n",
-        "leak:bun_runtime::node::node_os::release\n",
-        "leak:bun_runtime::node::util::parse_args\n",
-        "leak:bun_runtime::node::node_fs_watcher::FSWatcher\n",
-        "leak:bun_jsc::web_worker::WebWorker>::create\n",
-        "leak:bun_runtime::node::native_zlib_impl::Context>::init\n",
-        "leak:bun_sql_jsc::postgres\n",
-        "leak:bun_sql::postgres::protocol::FieldMessage\n",
-        "leak:bun_runtime::webcore::fetch::FetchTasklet>::to_response\n",
-        "leak:bun_lolhtml_sys::lol_html::HTMLString\n",
-        // Zig `jsc.Debugger.startJSDebuggerThread` — the Rust module is
-        // lowercase (`#[path = "Debugger.rs"] pub mod debugger;`), so the
-        // demangled frame is `<bun_jsc::debugger::Debugger>::…`; the previous
-        // `bun_jsc::Debugger` substring missed it (capital-D after `::`).
+        // Process-lifetime inspector thread. The debugger handles SIGINT and
+        // serves the WebSocket protocol up to (and during) `process.exit()`;
+        // joining it from `global_exit` would deadlock when the user is
+        // mid-breakpoint. The thread's stack/Arc are reclaimed by the OS.
         "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
-        "leak:bun_runtime::socket::udp_socket::UDPSocket\n",
         "\0",
     )
     .as_ptr()

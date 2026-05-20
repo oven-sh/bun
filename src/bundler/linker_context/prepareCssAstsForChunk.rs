@@ -1,7 +1,7 @@
 use crate::mal_prelude::*;
 use core::mem::offset_of;
 
-use bun_alloc::Arena as Bump;
+use bun_alloc::{Arena as Bump, ArenaVec, ArenaVecExt};
 use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::{BundleV2, Chunk, LinkerContext};
@@ -110,8 +110,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                 CssImportOrderKind::Layers(layers) => {
                     let inner = layers.inner();
                     let len = inner.len();
-                    let mut rules = BundlerCssRuleList::default();
-                    if len > 0 {
+                    let rules = if len > 0 {
                         // PORT NOTE: Zig `SmallList(LayerName,1).fromBabyListNoDeinit(layers.inner().*)`
                         // is a bitwise Vec→SmallList header transfer. In Rust the
                         // `Chunk::Layers` payload is the lifetime-erased shadow
@@ -120,24 +119,35 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                         // so the layouts differ. Rebuild the real list element-by-element;
                         // segments are arena-owned (`'bump`-laundered to `'static`) so the
                         // `&[u8]` reborrows below are valid for the chunk lifetime.
-                        let mut names = SmallList::<LayerName, 1>::default();
-                        for shadow in inner.slice() {
-                            let mut real = LayerName::default();
-                            for seg in shadow.v.slice() {
-                                // `seg` borrows arena-owned bytes that outlive this
-                                // stylesheet; route through `StoreStr` for the lifetime
-                                // erasure (see layer.rs TODO(port)).
-                                real.v.append(bun_ast::StoreStr::new(seg.as_ref()).slice());
-                            }
-                            names.append(real);
-                        }
-                        rules
-                            .v
-                            .push(BundlerCssRule::LayerStatement(LayerStatementRule {
+                        //
+                        // Both `SmallList` levels go into the arena-backed rule list
+                        // that `CssChunk::Drop` `set_len(0)`s without running element
+                        // destructors, so any global heap spill would leak. Build them
+                        // via `from_arena_iter` so the spill (if any) lives in `bump`.
+                        let names = SmallList::<LayerName, 1>::from_arena_iter(
+                            bump,
+                            inner.slice().iter().map(|shadow| LayerName {
+                                v: SmallList::from_arena_iter(
+                                    bump,
+                                    shadow.v.slice().iter().map(|seg| {
+                                        // `seg` borrows arena-owned bytes that outlive this
+                                        // stylesheet; route through `StoreStr` for the lifetime
+                                        // erasure (see layer.rs TODO(port)).
+                                        bun_ast::StoreStr::new(seg.as_ref()).slice()
+                                    }),
+                                ),
+                            }),
+                        );
+                        arena_rule_list_one(
+                            bump,
+                            BundlerCssRule::LayerStatement(LayerStatementRule {
                                 names,
                                 loc: Location::dummy(),
-                            }));
-                    }
+                            }),
+                        )
+                    } else {
+                        BundlerCssRuleList::default()
+                    };
                     let mut ast = BundlerStyleSheet {
                         rules,
                         sources: Default::default(),
@@ -192,18 +202,14 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // (`MediaList.media_queries: Vec`, `SupportsCondition::{Box,Vec}`,
                             // `LayerName.v: SmallList`) that are still owned by
                             // `entry.conditions[j]`, i.e. a double-free / UAF. Wrap in
-                            // `ManuallyDrop` to mirror Zig's leak-on-scope-exit; the only
-                            // *fresh* allocation this leaks is the 1-element `rules.v` Vec
-                            // buffer — same trade-off documented at the top of
-                            // findImportedFilesInCSSOrder.rs for the `entry.conditions`
-                            // ecosystem.
+                            // `ManuallyDrop` to mirror Zig's leak-on-scope-exit; the rule
+                            // slab itself is arena-owned so it is reclaimed on arena reset.
                             let ast_import = core::mem::ManuallyDrop::new(BundlerStyleSheet {
                                 options: ParserOptions::default(None),
                                 license_comments: Default::default(),
                                 sources: Default::default(),
                                 source_map_urls: Default::default(),
-                                rules: 'rules: {
-                                    let mut rules = BundlerCssRuleList::default();
+                                rules: {
                                     let mut import_rule = ImportRule {
                                         url: p.pretty,
                                         import_record_idx: entry.condition_import_records.len()
@@ -217,8 +223,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                                     // `entry.conditions[j]`.
                                     *import_rule.conditions_mut() =
                                         unsafe { core::ptr::read(entry.conditions.at(j)) };
-                                    rules.v.push(BundlerCssRule::Import(import_rule));
-                                    break 'rules rules;
+                                    arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                                 },
                                 composes: Default::default(),
                                 ..BundlerStyleSheet::empty()
@@ -312,8 +317,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                     });
 
                     css_chunk.asts[i] = BundlerStyleSheet {
-                        rules: 'rules: {
-                            let mut rules = BundlerCssRuleList::default();
+                        rules: {
                             let mut import_rule = ImportRule::from_url_and_import_record_idx(
                                 p.pretty,
                                 entry.condition_import_records.len() as u32,
@@ -321,8 +325,7 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // SAFETY: Zig `actual_conditions.*` — shallow struct copy.
                             *import_rule.conditions_mut() =
                                 unsafe { core::ptr::read(actual_conditions) };
-                            rules.v.push(BundlerCssRule::Import(import_rule));
-                            break 'rules rules;
+                            arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                         },
                         sources: Default::default(),
                         source_map_urls: Default::default(),
@@ -394,16 +397,20 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // so we don't mutate the shared backing array.
                             // Preserve the "@layer" statements from the
                             // prefix and append the remaining tail.
-                            let mut new_rules = BundlerCssRuleList::default();
+                            let mut new_rules: ArenaVec<BundlerCssRule> =
+                                ArenaVec::with_capacity_in(
+                                    layer_count + (original_rules.len() - prefix_end),
+                                    bump,
+                                );
                             for rule in &original_rules[0..prefix_end] {
                                 if matches!(rule, BundlerCssRule::LayerStatement(_)) {
                                     // SAFETY: Zig by-value copy of arena-backed rule.
-                                    new_rules.v.push(unsafe { core::ptr::read(rule) });
+                                    new_rules.push(unsafe { core::ptr::read(rule) });
                                 }
                             }
                             for rule in &original_rules[prefix_end..] {
                                 // SAFETY: Zig by-value copy of arena-backed rule.
-                                new_rules.v.push(unsafe { core::ptr::read(rule) });
+                                new_rules.push(unsafe { core::ptr::read(rule) });
                             }
                             // `ast.rules` is the shallow-copied header aliasing the
                             // source stylesheet's arena buffer (see `ptr::read` above).
@@ -411,7 +418,10 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
                             // free the shared backing array. Leak the header (Zig
                             // semantics: bitwise overwrite) before installing the
                             // freshly-allocated list.
-                            core::mem::forget(core::mem::replace(&mut ast.rules, new_rules));
+                            core::mem::forget(core::mem::replace(
+                                &mut ast.rules,
+                                arena_rule_list(new_rules),
+                            ));
                         }
                     }
 
@@ -421,6 +431,35 @@ fn prepare_css_asts_for_chunk_impl(c: &mut LinkerContext, chunk: &mut Chunk, bum
             }
         }
     }
+}
+
+/// Builds a `BundlerCssRuleList` whose backing storage is arena-owned.
+///
+/// `CssRuleList::v` is a global `Vec`, but every rule slab built here must be
+/// arena-backed: the elements bitwise-alias the source AST and must never run
+/// `Drop`, and the slab itself must outlive the chunk without a side-channel
+/// owner. Reinterpreting the leaked arena slice as a global `Vec` is sound
+/// because the resulting `Vec` is never dropped (`CssChunk::Drop` `forget`s
+/// the `asts` slab) and never grown after this point; the arena reclaims the
+/// storage on `reset`.
+fn arena_rule_list(rules: ArenaVec<'_, BundlerCssRule>) -> BundlerCssRuleList {
+    let len = rules.len();
+    if len == 0 {
+        return BundlerCssRuleList::default();
+    }
+    let slab = rules.into_bump_slice_mut();
+    BundlerCssRuleList {
+        // SAFETY: `slab` is arena-owned; the `Vec` is never dropped or grown
+        // (see fn doc).
+        v: unsafe { Vec::from_raw_parts(slab.as_mut_ptr(), len, len) },
+    }
+}
+
+/// Single-element shorthand for [`arena_rule_list`].
+fn arena_rule_list_one(bump: &Bump, rule: BundlerCssRule) -> BundlerCssRuleList {
+    let mut v: ArenaVec<BundlerCssRule> = ArenaVec::with_capacity_in(1, bump);
+    v.push(rule);
+    arena_rule_list(v)
 }
 
 fn wrap_rules_with_conditions(
@@ -460,9 +499,9 @@ fn wrap_rules_with_conditions(
                 }
             }
 
-            ast.rules = 'brk: {
-                let mut new_rules = BundlerCssRuleList::default();
-                new_rules.v.push(if do_block_rule {
+            ast.rules = arena_rule_list_one(
+                temp_bump,
+                if do_block_rule {
                     BundlerCssRule::LayerBlock(BundlerLayerBlockRule {
                         name: layer,
                         rules: core::mem::take(&mut ast.rules),
@@ -477,45 +516,39 @@ fn wrap_rules_with_conditions(
                         },
                         loc: Location::dummy(),
                     })
-                });
-
-                break 'brk new_rules;
-            };
+                },
+            );
         }
 
         // Generate "@supports" wrappers. This is not done if the rule block is
         // empty because empty "@supports" rules have no effect.
         if !ast.rules.v.is_empty() {
             if let Some(supports) = &item.supports {
-                ast.rules = 'brk: {
-                    let mut new_rules = BundlerCssRuleList::default();
-                    new_rules
-                        .v
-                        .push(BundlerCssRule::Supports(BundlerSupportsRule {
-                            condition: supports
-                                .clone_with_import_records(temp_bump, &mut dummy_import_records),
-                            rules: core::mem::take(&mut ast.rules),
-                            loc: Location::dummy(),
-                        }));
-                    break 'brk new_rules;
-                };
+                ast.rules = arena_rule_list_one(
+                    temp_bump,
+                    BundlerCssRule::Supports(BundlerSupportsRule {
+                        condition: supports
+                            .clone_with_import_records(temp_bump, &mut dummy_import_records),
+                        rules: core::mem::take(&mut ast.rules),
+                        loc: Location::dummy(),
+                    }),
+                );
             }
         }
 
         // Generate "@media" wrappers. This is not done if the rule block is
         // empty because empty "@media" rules have no effect.
         if !ast.rules.v.is_empty() && !item.media.media_queries.is_empty() {
-            ast.rules = 'brk: {
-                let mut new_rules = BundlerCssRuleList::default();
-                new_rules.v.push(BundlerCssRule::Media(BundlerMediaRule {
+            ast.rules = arena_rule_list_one(
+                temp_bump,
+                BundlerCssRule::Media(BundlerMediaRule {
                     query: item
                         .media
                         .clone_with_import_records(temp_bump, &mut dummy_import_records),
                     rules: core::mem::take(&mut ast.rules),
                     loc: Location::dummy(),
-                }));
-                break 'brk new_rules;
-            };
+                }),
+            );
         }
     }
 

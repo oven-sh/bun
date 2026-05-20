@@ -831,18 +831,18 @@ pub mod fs {
     /// of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
     /// …) live on `bun_resolver::fs::PathResolverExt`.
     #[repr(C)]
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Copy)]
     pub struct Path<'a> {
         /// Display path — relative to cwd in the bundler; forward-slash on Windows.
         pub pretty: &'a [u8],
         /// Canonical location. For `file` namespace, usually absolute with native seps.
         pub text: &'a [u8],
         pub namespace: &'a [u8],
-        // TODO(@paperclover): investigate removing or simplifying this property (it's 64 bytes)
-        pub name: PathName<'a>,
         pub is_disabled: bool,
         pub is_symlink: bool,
     }
+
+    const _: () = assert!(core::mem::size_of::<Path<'static>>() <= 56);
 
     impl<'a> Default for Path<'a> {
         #[inline]
@@ -851,7 +851,6 @@ pub mod fs {
                 pretty: b"",
                 text: b"",
                 namespace: b"",
-                name: PathName::default(),
                 is_disabled: false,
                 is_symlink: false,
             }
@@ -864,9 +863,8 @@ pub mod fs {
         /// `Path<'static>` until the arena lifetime is re-threaded crate-wide.
         ///
         /// # Safety
-        /// Every borrowed slice in `self` (text/pretty/namespace and the
-        /// `PathName` sub-slices) must outlive every read through the
-        /// returned `Path<'static>`.
+        /// Every borrowed slice in `self` (text/pretty/namespace) must outlive
+        /// every read through the returned `Path<'static>`.
         #[inline]
         pub unsafe fn into_static(self) -> Path<'static> {
             #[inline(always)]
@@ -880,12 +878,6 @@ pub mod fs {
                     pretty: d(self.pretty),
                     text: d(self.text),
                     namespace: d(self.namespace),
-                    name: PathName {
-                        base: d(self.name.base),
-                        dir: d(self.name.dir),
-                        ext: d(self.name.ext),
-                        filename: d(self.name.filename),
-                    },
                     is_disabled: self.is_disabled,
                     is_symlink: self.is_symlink,
                 }
@@ -897,48 +889,50 @@ pub mod fs {
             pretty: b"",
             text: b"",
             namespace: b"file",
-            name: PathName {
-                base: b"",
-                dir: b"",
-                ext: b"",
-                filename: b"",
-            },
             is_disabled: false,
             is_symlink: false,
         };
 
-        /// Zig: `Path.init(text)` — sets `text`/`pretty` to the same slice, parses `name`,
+        /// Parsed (dir/base/ext/filename) view of `text`. Computed on demand —
+        /// the four slices borrow `text`, so the returned `PathName` carries
+        /// lifetime `'a` (same as the old stored field).
+        #[inline]
+        pub fn name(&self) -> PathName<'a> {
+            PathName::init(self.text)
+        }
+
+        /// Zig: `Path.init(text)` — sets `text`/`pretty` to the same slice,
         /// namespace defaults to `"file"`.
-        pub fn init(text: &'a [u8]) -> Self {
+        #[inline]
+        pub const fn init(text: &'a [u8]) -> Self {
             Self {
                 pretty: text,
                 text,
                 namespace: b"file",
-                name: PathName::init(text),
                 is_disabled: false,
                 is_symlink: false,
             }
         }
 
         /// Zig: `Path.initWithPretty`.
-        pub fn init_with_pretty(text: &'a [u8], pretty: &'a [u8]) -> Self {
+        #[inline]
+        pub const fn init_with_pretty(text: &'a [u8], pretty: &'a [u8]) -> Self {
             Self {
                 pretty,
                 text,
                 namespace: b"file",
-                name: PathName::init(text),
                 is_disabled: false,
                 is_symlink: false,
             }
         }
 
         /// Zig: `Path.initWithNamespace`.
-        pub fn init_with_namespace(text: &'a [u8], namespace: &'a [u8]) -> Self {
+        #[inline]
+        pub const fn init_with_namespace(text: &'a [u8], namespace: &'a [u8]) -> Self {
             Self {
                 pretty: text,
                 text,
                 namespace,
-                name: PathName::init(text),
                 is_disabled: false,
                 is_symlink: false,
             }
@@ -949,7 +943,7 @@ pub mod fs {
         /// `const_format::concatcp!` can't accept fn-param `&str`, so callers pass
         /// the precomputed `concatcp!` result as `pretty`.
         #[inline]
-        pub fn init_with_namespace_virtual(
+        pub const fn init_with_namespace_virtual(
             text: &'static [u8],
             namespace: &'static [u8],
             pretty: &'static [u8],
@@ -959,7 +953,6 @@ pub mod fs {
                 is_symlink: true,
                 text,
                 namespace,
-                name: PathName::init(text),
                 is_disabled: false,
             }
         }
@@ -967,9 +960,8 @@ pub mod fs {
         /// Zig: `Path.initForKitBuiltIn`.
         /// PORT NOTE: same comptime-concat caveat as `init_with_namespace_virtual`.
         #[inline]
-        pub fn init_for_kit_built_in(
+        pub const fn init_for_kit_built_in(
             namespace: &'static [u8],
-            package: &'static [u8],
             pretty: &'static [u8],
             text: &'static [u8],
         ) -> Path<'static> {
@@ -978,7 +970,6 @@ pub mod fs {
                 is_symlink: true,
                 text,
                 namespace,
-                name: PathName::init(package),
                 is_disabled: false,
             }
         }
@@ -1044,26 +1035,26 @@ pub mod fs {
         /// Zig: `pub inline fn sourceDir(this: *const Path) string`
         #[inline]
         pub fn source_dir(&self) -> &'a [u8] {
-            self.name.dir_with_trailing_slash()
+            self.name().dir_with_trailing_slash()
         }
 
         /// Zig: `pub inline fn prettyDir(this: *const Path) string`
         #[inline]
         pub fn pretty_dir(&self) -> &'a [u8] {
-            self.name.dir_with_trailing_slash()
+            self.name().dir_with_trailing_slash()
         }
 
         /// Zig: `Path.isNodeModule` — checks for `<sep>node_modules<sep>` in the
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
             use bstr::ByteSlice;
-            self.name.dir.rfind(crate::NODE_MODULES_NEEDLE).is_some()
+            self.name().dir.rfind(crate::NODE_MODULES_NEEDLE).is_some()
         }
 
         /// Zig: `Path.isJSXFile`.
         #[inline]
         pub fn is_jsx_file(&self) -> bool {
-            let f = self.name.filename;
+            let f = self.name().filename;
             f.ends_with(b".jsx") || f.ends_with(b".tsx")
         }
 
@@ -1081,7 +1072,6 @@ pub mod fs {
         pub fn set_realpath(&mut self, to: &'a [u8]) {
             let old_path = self.text;
             self.text = to;
-            self.name = PathName::init(to);
             self.pretty = old_path;
             self.is_symlink = true;
         }

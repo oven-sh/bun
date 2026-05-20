@@ -4,7 +4,7 @@ use crate as css;
 use crate::{Parser, PrintErr, Printer, VendorPrefix};
 
 /// A value for the [display](https://drafts.csswg.org/css-display-3/#the-display-properties) property.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Display {
     /// A display keyword.
     Keyword(DisplayKeyword),

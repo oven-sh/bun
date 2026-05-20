@@ -479,13 +479,15 @@ impl ShellSubprocess {
                 }
                 Writable::Buffer(_) => {
                     self.on_static_pipe_writer_done();
-                    // PORT NOTE: reshaped for borrowck — re-match after the &mut self call above.
-                    if let Writable::Buffer(buffer) = &mut self.stdin {
-                        // SAFETY: single-threaded; no other borrow of the
-                        // payload is live across this temporary `&mut`.
-                        unsafe { buffer_mut(buffer) }.source.detach();
+                    // RefPtr has no Drop — move it out before reassigning so the
+                    // create ref is actually released (mirrors Zig `buffer.deref()`).
+                    if let Writable::Buffer(buffer) =
+                        core::mem::replace(&mut self.stdin, Writable::Ignore)
+                    {
+                        // SAFETY: single-threaded; sole borrow of the payload.
+                        unsafe { buffer_mut(&buffer) }.source.detach();
+                        buffer.deref();
                     }
-                    self.stdin = Writable::Ignore;
                 }
                 _ => {}
             },

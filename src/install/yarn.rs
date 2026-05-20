@@ -629,7 +629,7 @@ fn process_deps(
                 dep_version
             };
 
-            deps_buf[count] = Dependency {
+            let dep = Dependency {
                 name: dep_name_str,
                 name_hash: dep_name_hash,
                 version: Dependency::parse(
@@ -654,6 +654,8 @@ fn process_deps(
             }
 
             if let Some(pkg_id) = found_package_id {
+                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
+                unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
                 res_buf[count] = pkg_id;
                 count += 1;
             }
@@ -725,11 +727,6 @@ pub fn migrate_yarn_lockfile<'a>(
         else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
-        // Zig: `defer package_json_fd.close()` — guard so every early-return
-        // below (read_to_end / get_fd_path failure) still closes the fd.
-        let package_json_fd = scopeguard::guard(package_json_fd, |f| {
-            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-        });
         let Ok(package_json_contents) = package_json_fd.read_to_end() else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
@@ -1270,20 +1267,28 @@ pub fn migrate_yarn_lockfile<'a>(
                 let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
                 let version_string = sbuf!().append(&dep.version)?;
 
-                dependencies_buf[actual_root_dep_count as usize] = Dependency {
-                    name: dep_name_string,
-                    name_hash,
-                    version: Dependency::parse(
-                        dep_name_string,
-                        Some(name_hash),
-                        version_string.slice(this.buffers.string_bytes.as_slice()),
-                        &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                        Some(&mut *log),
-                        Some(&mut *manager),
-                    )
-                    .unwrap_or_default(),
-                    behavior: behavior_for(dep.dep_type, false),
-                };
+                // SAFETY: `dependencies_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
+                unsafe {
+                    core::ptr::write(
+                        dependencies_buf
+                            .as_mut_ptr()
+                            .add(actual_root_dep_count as usize),
+                        Dependency {
+                            name: dep_name_string,
+                            name_hash,
+                            version: Dependency::parse(
+                                dep_name_string,
+                                Some(name_hash),
+                                version_string.slice(this.buffers.string_bytes.as_slice()),
+                                &version_string.sliced(this.buffers.string_bytes.as_slice()),
+                                Some(&mut *log),
+                                Some(&mut *manager),
+                            )
+                            .unwrap_or_default(),
+                            behavior: behavior_for(dep.dep_type, false),
+                        },
+                    );
+                }
 
                 resolutions_buf[actual_root_dep_count as usize] = yarn_entry_to_package_id[idx];
                 actual_root_dep_count += 1;

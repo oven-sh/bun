@@ -1128,7 +1128,7 @@ impl Bunfig {
         // Zig. Parsed config lives for the process lifetime either way.
         let bump = Bump::borrowing_default();
 
-        let ext = source.path.name.ext;
+        let ext = source.path.name().ext;
         // Zig: `if (strings.eqlComptime(source.path.name.ext[1..], "toml"))`
         let is_toml = ext.len() > 1 && &ext[1..] == b"toml";
 

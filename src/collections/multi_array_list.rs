@@ -864,9 +864,9 @@ impl<T> Slice<T> {
 
 // ───────────────────────────── MultiArrayList ─────────────────────────────
 
-impl<T> Default for MultiArrayList<T, Global> {
+impl<T, A: Allocator + Default> Default for MultiArrayList<T, A> {
     fn default() -> Self {
-        Self::new_in(Global)
+        Self::new_in(A::default())
     }
 }
 

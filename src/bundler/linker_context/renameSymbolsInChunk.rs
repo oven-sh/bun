@@ -231,8 +231,9 @@ pub unsafe fn rename_symbols_in_chunk(
                 )?;
             }
 
-            for part in parts.as_slice() {
-                if !part.is_live {
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            for (part_index, part) in parts.as_slice().iter().enumerate() {
+                if !parts_live.is_set(part_index) {
                     continue;
                 }
 
@@ -399,8 +400,9 @@ pub unsafe fn rename_symbols_in_chunk(
             WrapKind::None => {}
         }
 
-        for part in parts.iter_mut() {
-            if !part.is_live {
+        let parts_live = &c.graph.parts_live[source_index as usize];
+        for (part_index, part) in parts.iter_mut().enumerate() {
+            if !parts_live.is_set(part_index) {
                 continue;
             }
 

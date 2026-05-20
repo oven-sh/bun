@@ -373,7 +373,7 @@ impl<'a> ImportScanner<'a> {
                                         alias_loc: Some(item.loc),
                                         namespace_ref: Some(namespace_ref),
                                         import_record_index: st.import_record_index,
-                                        local_parts_with_uses: Default::default(),
+                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                         alias_is_star: false,
                                         is_exported: false,
                                     },
@@ -425,7 +425,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(loc),
                                     namespace_ref: Some(Ref::NONE),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     is_exported: false,
                                 },
                             );
@@ -443,7 +443,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(default.loc),
                                     namespace_ref: Some(namespace_ref),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -462,7 +462,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(name.loc),
                                     namespace_ref: Some(namespace_ref),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -493,7 +493,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(name.loc),
                                     namespace_ref: Some(namespace_ref),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -719,7 +719,7 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: Some(Ref::NONE),
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: Default::default(),
+                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                             },
                         )?;
                         let original: &'p [u8] = alias.original_name.slice();
@@ -756,7 +756,7 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: Some(st.namespace_ref),
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: Default::default(),
+                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                             },
                         )?;
                         // SAFETY: arena-owned alias slice valid for 'p.

@@ -84,7 +84,7 @@ pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, RootPathPair};
 pub use result::{
     DebugLogs, DebugMeta, DirEntryResolveQueueItem, FlushMode, LoadResult, MatchResult,
-    MatchResultUnion, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
+    MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
     ResultUnion, SideEffectsData,
 };
 pub use standalone_module_graph::StandaloneModuleGraph;
@@ -647,14 +647,15 @@ pub mod fs {
                 return Some(Loader::Dataurl);
             }
 
-            let ext = self.name.ext;
+            let name = self.name();
+            let ext = name.ext;
 
             let result = loaders
                 .get(ext)
                 .copied()
                 .or_else(|| Loader::from_string(ext));
             if result.is_none() || result == Some(Loader::Json) {
-                let str = self.name.filename;
+                let str = name.filename;
                 if str == b"package.json" || str == b"bun.lock" {
                     return Some(Loader::Jsonc);
                 }

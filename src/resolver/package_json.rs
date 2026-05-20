@@ -338,7 +338,7 @@ impl PackageJSON {
         if strings::index_of(self.source.path.text, NODE_MODULES_PATH.as_bytes()).is_some() {
             Ok(Box::from(&*self.name))
         } else {
-            let parent = self.source.path.name.dir_with_trailing_slash();
+            let parent = self.source.path.name().dir_with_trailing_slash();
             let top_level_dir = fs::FileSystem::instance().top_level_dir;
             if let Some(i) = strings::index_of(parent, top_level_dir) {
                 let relative_dir = &parent[i + top_level_dir.len()..];
@@ -1410,7 +1410,7 @@ impl PackageJSON {
 
                             // Store the pattern relative to the package directory
                             let joined: [&[u8]; 2] =
-                                [json_source.path.name.dir_with_trailing_slash(), name];
+                                [json_source.path.name().dir_with_trailing_slash(), name];
 
                             let pattern = r_fs.join(&joined);
 
@@ -1446,7 +1446,7 @@ impl PackageJSON {
 
                             // Store the pattern relative to the package directory
                             let joined: [&[u8]; 2] =
-                                [json_source.path.name.dir_with_trailing_slash(), name];
+                                [json_source.path.name().dir_with_trailing_slash(), name];
 
                             let pattern = r_fs.join(&joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility
@@ -1463,7 +1463,7 @@ impl PackageJSON {
                     for item in items {
                         if let Some(name) = item.as_utf8_string_literal() {
                             let joined: [&[u8]; 2] =
-                                [json_source.path.name.dir_with_trailing_slash(), name];
+                                [json_source.path.name().dir_with_trailing_slash(), name];
 
                             // PERF(port): was getOrPutAssumeCapacity
                             let _ =

@@ -244,8 +244,9 @@ impl<'a> Snapshots<'a> {
             let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
             &(*p).files.items_source()[file.id as usize]
         };
-        let test_filename = test_file_source.path.name.filename;
-        let dir_path = test_file_source.path.name.dir_with_trailing_slash();
+        let name = test_file_source.path.name();
+        let test_filename = name.filename;
+        let dir_path = name.dir_with_trailing_slash();
 
         let mut snapshot_file_path_buf = PathBuffer::uninit();
         let buf = snapshot_file_path_buf.0.as_mut_slice();
@@ -864,8 +865,9 @@ impl<'a> Snapshots<'a> {
                 let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
             };
-            let test_filename = test_file_source.path.name.filename;
-            let dir_path = test_file_source.path.name.dir_with_trailing_slash();
+            let name = test_file_source.path.name();
+            let test_filename = name.filename;
+            let dir_path = name.dir_with_trailing_slash();
 
             let mut snapshot_file_path_buf = PathBuffer::uninit();
             let buf = snapshot_file_path_buf.0.as_mut_slice();

@@ -1758,7 +1758,7 @@ pub fn init(
                                 child_cwd
                             } else {
                                 resolve_path::relative_normalized::<platform::Auto, true>(
-                                    json_source.path.name.dir,
+                                    json_source.path.name().dir,
                                     child_cwd,
                                 )
                             };

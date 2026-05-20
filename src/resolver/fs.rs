@@ -2330,10 +2330,7 @@ impl RealFS {
                         .expect("in_place entry must exist in BSSMap")
                 }
                 None => {
-                    // PORT NOTE: Zig used bun.default_allocator.create(DirEntry); EntriesOption owns Box<DirEntry>
-                    let mut boxed = Box::new(DirEntry::init(dir, generation));
-                    *boxed = entries;
-                    let result = EntriesOption::Entries(boxed);
+                    let result = EntriesOption::Entries(Box::new(entries));
                     map.put(cache_result.as_mut().unwrap(), result)?
                 }
             };

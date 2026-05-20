@@ -575,7 +575,6 @@ pub mod parse_worker {
             path: bun_paths::fs::Path {
                 text: b"runtime",
                 namespace: b"bun:runtime",
-                name: bun_paths::fs::PathName::init(b"runtime"),
                 pretty: b"",
                 is_disabled: false,
                 is_symlink: false,
@@ -1171,9 +1170,11 @@ pub mod parse_worker {
                 // gave up on figuring out how to fix it so that
                 // this feature could ship.
                 ast.has_lazy_export = false;
+                // Liveness for this synthetic part is seeded in
+                // `tree_shaking_and_code_splitting` (the per-part bitset
+                // does not exist at parse time).
                 ast.parts.as_mut_slice()[1] = Part {
                     stmts: ast::StoreSlice::EMPTY,
-                    is_live: true,
                     import_record_indices: {
                         // Generate a single part that depends on all the import records.
                         // This is to ensure that we generate a JavaScript bundle containing all the user's code.
@@ -2381,7 +2382,6 @@ pub mod parse_worker {
             path: bun_paths::fs::Path {
                 text: file_path.text,
                 namespace: file_path.namespace,
-                name: bun_paths::fs::PathName::init(file_path.text),
                 pretty: file_path.pretty,
                 is_disabled: file_path.is_disabled,
                 is_symlink: file_path.is_symlink,

@@ -2986,7 +2986,7 @@ impl<'a> Transpiler<'a> {
         // expect `bun_paths::fs::Path<'_>` / `bun_paths::fs::Path<'static>`. Re-init via
         // `text` (the only field both shapes share semantically).
         let file_path_text: &'static [u8] = crate::linker::dupe(file_path_ref.text);
-        let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name.ext);
+        let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name().ext);
 
         // Step 1. Parse & scan
         // Spec (transpiler.zig:397) keys the loader on the ORIGINAL resolve
@@ -3000,7 +3000,7 @@ impl<'a> Transpiler<'a> {
         let (file_path_text, file_path_ext) = if let Some(cep) = client_entry_point_.as_deref() {
             (
                 crate::linker::dupe(cep.source.path.text),
-                crate::linker::dupe(cep.source.path.name.ext),
+                crate::linker::dupe(cep.source.path.name().ext),
             )
         } else {
             (file_path_text, file_path_ext)

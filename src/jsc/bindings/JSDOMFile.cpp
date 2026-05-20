@@ -3,6 +3,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include "JSDOMFile.h"
 
 using namespace JSC;
@@ -58,9 +59,44 @@ public:
         if (!value.isObject())
             return false;
 
-        // Note: this breaks [Symbol.hasInstance]
-        // We must do this for now until we update the code generator to export classes
-        return JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value));
+        // Walk the prototype chain ourselves instead of relying on
+        // OrdinaryHasInstance. File.prototype is currently the same object as
+        // Blob.prototype (see the TODO at the top of this file), so the
+        // standard walk would say true for any value that has Blob.prototype in
+        // its chain — including real Blob instances, proxies wrapping them,
+        // and `Object.create(blob)`. Reject when we pass through a JSBlob that
+        // doesn't have the `is_jsdom_file` flag set, before reaching the
+        // prototype property. See https://github.com/oven-sh/bun/issues/25422.
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue prototype = object->getDirect(vm, vm.propertyNames->prototype);
+        if (!prototype.isObject())
+            return false;
+
+        JSValue current = value;
+        while (true) {
+            // Unwrap proxies so we look at the underlying cell type, not the
+            // ProxyObject wrapper.
+            JSObject* unwrapped = current.getObject();
+            while (auto* proxy = dynamicDowncast<ProxyObject>(unwrapped)) {
+                unwrapped = proxy->target();
+                if (!unwrapped)
+                    break;
+            }
+            if (unwrapped
+                && unwrapped->inherits<WebCore::JSBlob>()
+                && !JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(unwrapped)))
+                return false;
+
+            // [[GetPrototypeOf]] respects Proxy traps.
+            JSValue next = current.getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (next.isUndefinedOrNull())
+                return false;
+            if (next == prototype)
+                return true;
+            current = next;
+        }
     }
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
@@ -323,4 +323,115 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   const clonedType = cloned.headers.get("content-type");
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
+});
+
+describe("File `instanceof` checks", () => {
+  // https://github.com/oven-sh/bun/issues/25422
+  test("respects Proxy getPrototypeOf trap returning File.prototype", () => {
+    class Foo {}
+    const proxy = new Proxy(new Foo(), {
+      getPrototypeOf() {
+        return File.prototype;
+      },
+    });
+    expect(proxy instanceof Foo).toBe(false);
+    expect(proxy instanceof File).toBe(true);
+  });
+
+  test("Object.create(File.prototype) is instanceof File", () => {
+    const o = Object.create(File.prototype);
+    expect(o instanceof File).toBe(true);
+    expect(o instanceof Blob).toBe(true);
+  });
+
+  test("real File and Blob instances behave as expected", () => {
+    const file = new File(["hi"], "f.txt");
+    const blob = new Blob(["hi"]);
+    expect(file instanceof File).toBe(true);
+    expect(file instanceof Blob).toBe(true);
+    // Blob instances must not be considered File instances even though
+    // File.prototype === Blob.prototype internally.
+    expect(blob instanceof File).toBe(false);
+    expect(blob instanceof Blob).toBe(true);
+  });
+
+  test("a transparent Proxy wrapping a Blob is not instanceof File", () => {
+    // The "blob is not a File" invariant must survive a Proxy wrapper. Without
+    // unwrapping, defaultHasInstance would forward through the proxy back to
+    // Blob.prototype (which equals File.prototype internally) and incorrectly
+    // declare the proxy `instanceof File`. Browsers and Node both return false.
+    const blob = new Blob(["hi"]);
+    const proxy = new Proxy(blob, {});
+    expect(proxy instanceof File).toBe(false);
+    expect(proxy instanceof Blob).toBe(true);
+
+    // Nested proxies must unwrap all the way down to the underlying Blob.
+    const nested = new Proxy(new Proxy(blob, {}), {});
+    expect(nested instanceof File).toBe(false);
+  });
+
+  test("a transparent Proxy wrapping a File is instanceof File", () => {
+    // The motivating SvelteKit case: a Proxy around a real File should still
+    // satisfy `instanceof File`, mirroring browsers and Node. The unwrap loop
+    // that catches `Proxy(Blob)` must not over-reject `Proxy(File)`.
+    const file = new File(["hi"], "a.txt");
+    const proxy = new Proxy(file, {});
+    expect(proxy instanceof File).toBe(true);
+    expect(proxy instanceof Blob).toBe(true);
+
+    const nested = new Proxy(new Proxy(file, {}), {});
+    expect(nested instanceof File).toBe(true);
+    expect(nested instanceof Blob).toBe(true);
+  });
+
+  test("an object whose prototype chain passes through a Blob is not instanceof File", () => {
+    // The JS prototype-chain analogue of the Proxy(Blob) case: walking
+    // `Object.create(blob)` upward goes through a real Blob before reaching
+    // Blob.prototype (which equals File.prototype internally). Browsers and
+    // Node both return false because File.prototype is genuinely not in the
+    // chain there; we have to mimic that by rejecting when the chain crosses
+    // a non-File JSBlob.
+    const blob = new Blob(["hi"]);
+    expect(Object.create(blob) instanceof File).toBe(false);
+    expect(Object.create(blob) instanceof Blob).toBe(true);
+    expect(({ __proto__: blob } as any) instanceof File).toBe(false);
+  });
+
+  test("a File whose prototype has been stripped is not instanceof File", () => {
+    // setPrototypeOf(f, null) cuts the JS chain to nothing. Browsers and Node
+    // honour [[GetPrototypeOf]] and return false; previously Bun's fast path
+    // ignored the chain and returned true based on the underlying cell flag.
+    const f = new File(["hi"], "x.txt");
+    Object.setPrototypeOf(f, null);
+    expect(f instanceof File).toBe(false);
+    expect(f instanceof Blob).toBe(false);
+  });
+
+  test("Proxy with getPrototypeOf trap that disclaims File is not instanceof File", () => {
+    // If the trap explicitly returns a non-File prototype, the value should not
+    // be `instanceof File` even if the underlying target is a real File.
+    const file = new File(["hi"], "a.txt");
+    const proxy = new Proxy(file, {
+      getPrototypeOf() {
+        return Object.prototype;
+      },
+    });
+    expect(proxy instanceof File).toBe(false);
+  });
+
+  test("primitives and non-objects are not instanceof File", () => {
+    expect((null as any) instanceof File).toBe(false);
+    expect((undefined as any) instanceof File).toBe(false);
+    expect((42 as any) instanceof File).toBe(false);
+    expect(("hi" as any) instanceof File).toBe(false);
+    expect(({} as any) instanceof File).toBe(false);
+  });
+
+  test("subclassing File still satisfies instanceof File", () => {
+    class MyFile extends File {}
+    const f = new MyFile(["hi"], "x.txt");
+    expect(f instanceof MyFile).toBe(true);
+    expect(f instanceof File).toBe(true);
+    expect(f instanceof Blob).toBe(true);
+  });
 });

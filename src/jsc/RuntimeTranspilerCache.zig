@@ -17,8 +17,9 @@
 /// Version 18: Include ESM record (module info) with an ES Module, see #15758
 /// Version 19: Sourcemap blob is InternalSourceMap (varint stream + sync points), not VLQ.
 /// Version 20: InternalSourceMap stream is bit-packed windows.
-/// Version 21: Emits UTF-8 files in rare cases (tagged templates, regex with unicode)
-const expected_version = 21;
+/// Version 21: ModuleInfo records a phase byte per requested module (`import defer`).
+/// Version 22: Emits UTF-8 files in rare cases (tagged templates, regex with unicode)
+const expected_version = 22;
 
 const debug = Output.scoped(.cache, .visible);
 // Source files smaller than this are not written to / read from the on-disk

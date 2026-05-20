@@ -37,7 +37,10 @@ describeWithContainer(
               GRANT ALL PRIVILEGES ON bun_sql_test.* TO caching@'%';
             FLUSH PRIVILEGES;`.simple();
       }
-      await using sql = new SQL(`mysql://caching:bunbun@${container.host}:${container.port}/bun_sql_test`);
+      await using sql = new SQL({
+        url: `mysql://caching:bunbun@${container.host}:${container.port}/bun_sql_test`,
+        allowPublicKeyRetrieval: true,
+      });
       const result = await sql`select 1 as x`;
       expect(result).toEqual([{ x: 1 }]);
       await sql.end();

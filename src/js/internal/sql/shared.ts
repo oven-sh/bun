@@ -865,6 +865,7 @@ function parseOptions(
     database,
     tls,
     prepare,
+    allowPublicKeyRetrieval: !!options.allowPublicKeyRetrieval,
     bigint,
     sslMode,
     query,

@@ -12,6 +12,7 @@ pub enum Error {
     AuthenticationFailed,
     FailedToEncryptPassword,
     InvalidPublicKey,
+    PublicKeyRetrievalNotAllowed,
     UnsupportedAuthPlugin,
     UnsupportedProtocolVersion,
 

@@ -87,6 +87,7 @@ pub struct MySQLConnection {
     tls_config: SSLConfig,
     tls_status: TLSStatus,
     ssl_mode: SSLMode,
+    allow_public_key_retrieval: bool,
     flags: ConnectionFlags,
 }
 
@@ -118,6 +119,7 @@ impl Default for MySQLConnection {
             tls_config: SSLConfig::default(),
             tls_status: TLSStatus::None,
             ssl_mode: SSLMode::Disable,
+            allow_public_key_retrieval: false,
             flags: ConnectionFlags::default(),
         }
     }
@@ -138,6 +140,7 @@ impl MySQLConnection {
         tls_config: SSLConfig,
         secure: Option<*mut SslCtx>,
         ssl_mode: SSLMode,
+        allow_public_key_retrieval: bool,
     ) -> Self {
         Self {
             database,
@@ -151,6 +154,7 @@ impl MySQLConnection {
             tls_config,
             secure,
             ssl_mode,
+            allow_public_key_retrieval,
             tls_status: if ssl_mode != SSLMode::Disable {
                 TLSStatus::Pending
             } else {
@@ -819,6 +823,15 @@ impl MySQLConnection {
                                     bun_core::scoped_log!(MySQLConnection, "continue auth");
 
                                     if self.tls_status != TLSStatus::SslOk {
+                                        // Over plain TCP, an on-path attacker can answer the
+                                        // public-key request with their own key and recover the
+                                        // password. Match mysql2 / Connector/J: refuse unless the
+                                        // user explicitly opted in.
+                                        if !self.allow_public_key_retrieval {
+                                            return Err(
+                                                AnyMySQLError::PublicKeyRetrievalNotAllowed,
+                                            );
+                                        }
                                         // we are in plain TCP so we need to request the public key
                                         self.set_status(ConnectionState::AuthenticationAwaitingPk);
                                         bun_core::scoped_log!(

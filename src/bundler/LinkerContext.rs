@@ -2827,10 +2827,15 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
-            // Also include any statement-level imports
-            // PORT NOTE: clone indices to avoid holding borrow across recursive call
-            let import_indices: Vec<u32> = part.import_record_indices.slice().to_vec();
-            for import_index in import_indices {
+            // Also include any statement-level imports. Iterate by index so we
+            // don't hold a borrow of `part`/`parts` across the recursive call —
+            // the recursion never resizes this part's `import_record_indices`
+            // (only flips `is_live`), so re-slicing each iteration is sound and
+            // matches Zig's plain `for (part.import_record_indices.slice())`.
+            let import_indices_len = part.import_record_indices.len();
+            for ii in 0..import_indices_len {
+                let import_index =
+                    parts[source_index as usize].as_slice()[part_index].import_record_indices[ii];
                 let record = &import_records[source_index as usize][import_index as usize];
                 if record.kind != ImportKind::Stmt {
                     continue;
@@ -2944,9 +2949,6 @@ impl<'a> LinkerContext<'a> {
         #[cfg(debug_assertions)]
         scopeguard::defer! { debug_tree_shake!("end()"); }
 
-        // PORT NOTE: reshaped for borrowck — clone dependencies before recursing (recursion mutates `parts`)
-        let dependencies: Vec<Dependency> = part.dependencies.slice().to_vec();
-
         // Include the file containing this part
         self.mark_file_live_for_tree_shaking(
             source_index,
@@ -2957,8 +2959,15 @@ impl<'a> LinkerContext<'a> {
             css_reprs,
         );
 
+        // The recursion above/below only flips `is_live` flags; it never resizes
+        // any part's `dependencies`, so the slice's len/ptr are stable. Iterate
+        // by index and re-borrow per iteration to satisfy borrowck without the
+        // per-call `Vec` clone the original port did.
+        let dependencies_len =
+            parts[source_index as usize].as_slice()[part_index as usize].dependencies.len();
+
         #[cfg(feature = "debug_logs")]
-        if dependencies.is_empty() {
+        if dependencies_len == 0 {
             log_part_dependency_tree!(
                 "markPartLiveForTreeShaking {}:{} | EMPTY",
                 source_index,
@@ -2966,7 +2975,9 @@ impl<'a> LinkerContext<'a> {
             );
         }
 
-        for dependency in &dependencies {
+        for di in 0..dependencies_len {
+            let dependency =
+                parts[source_index as usize].as_slice()[part_index as usize].dependencies[di];
             #[cfg(feature = "debug_logs")]
             if source_index != 0 && dependency.source_index.get() != 0 {
                 log_part_dependency_tree!(

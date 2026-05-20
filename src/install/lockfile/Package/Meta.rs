@@ -1,5 +1,5 @@
 use bun_install::integrity::Integrity;
-use bun_install::npm::{Architecture, OperatingSystem};
+use bun_install::npm::{Architecture, Libc, OperatingSystem};
 use bun_install::{INVALID_PACKAGE_ID, Origin, PackageID};
 use bun_semver::String;
 
@@ -18,7 +18,8 @@ pub struct Meta {
 
     pub arch: Architecture,
     pub os: OperatingSystem,
-    pub _padding_os: u16,
+    pub libc: Libc,
+    pub _padding_os: u8,
 
     pub id: PackageID,
 
@@ -52,6 +53,7 @@ impl Default for Meta {
             _padding_origin: 0,
             arch: Architecture::ALL,
             os: OperatingSystem::ALL,
+            libc: Libc::NONE,
             _padding_os: 0,
             id: INVALID_PACKAGE_ID,
             man_dir: String::default(),
@@ -63,10 +65,14 @@ impl Default for Meta {
 }
 
 impl Meta {
-    /// Does the `cpu` arch and `os` match the requirements listed in the package?
+    /// Does the `cpu` arch, `os`, and `libc` match the requirements listed in the package?
     /// This is completely unrelated to "devDependencies", "peerDependencies", "optionalDependencies" etc
-    pub fn is_disabled(&self, cpu: Architecture, os: OperatingSystem) -> bool {
-        !self.arch.is_match(cpu) || !self.os.is_match(os)
+    pub fn is_disabled(&self, cpu: Architecture, os: OperatingSystem, libc: Libc) -> bool {
+        !self.arch.is_match(cpu)
+            || !self.os.is_match(os)
+            // `libc` is NONE both for packages without a `libc` field and for
+            // lockfiles written before libc was recorded; treat that as unconstrained.
+            || (self.libc != Libc::NONE && !self.libc.is_match(libc))
     }
 
     pub fn has_install_script(&self) -> bool {
@@ -111,6 +117,7 @@ impl Meta {
             integrity: self.integrity,
             arch: self.arch,
             os: self.os,
+            libc: self.libc,
             origin: self.origin,
             has_install_script: self.has_install_script,
             ..Meta::default()

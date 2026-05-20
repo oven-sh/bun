@@ -222,6 +222,7 @@ fn should_print_package_install<'a>(
         &pkg_metas[package_id as usize],
         this.options.cpu,
         this.options.os,
+        this.options.libc,
     ) {
         return ShouldPrintPackageInstallResult::No;
     }

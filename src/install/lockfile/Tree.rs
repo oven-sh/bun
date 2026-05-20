@@ -594,7 +594,7 @@ pub fn is_filtered_dependency_or_workspace(
     let res = &pkg_resolutions[pkg_id as usize];
     let parent_res = &pkg_resolutions[parent_pkg_id as usize];
 
-    if pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os) {
+    if pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os, manager.options.libc) {
         if manager.options.log_level.is_verbose() {
             let meta = &pkg_metas[pkg_id as usize];
             let name = lockfile.str(&pkg_names[pkg_id as usize]);

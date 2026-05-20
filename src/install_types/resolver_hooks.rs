@@ -916,8 +916,17 @@ impl Libc {
 
     pub const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    // TODO: (matches Zig — runtime libc detection)
+    // The libc of the running binary: a musl-target build can only run on musl,
+    // a gnu-target build on glibc, so the compile-time target_env is the host libc.
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    pub const CURRENT: Self = Self(Self::MUSL);
+    #[cfg(not(all(target_os = "linux", target_env = "musl")))]
     pub const CURRENT: Self = Self(Self::GLIBC);
+
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    pub const CURRENT_NAME: &'static str = "musl";
+    #[cfg(not(all(target_os = "linux", target_env = "musl")))]
+    pub const CURRENT_NAME: &'static str = "glibc";
 
     #[inline]
     pub const fn none() -> Self {

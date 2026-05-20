@@ -92,6 +92,8 @@ pub struct Options {
     pub cpu: Npm::Architecture,
     /// Override OS for optional dependencies filtering
     pub os: Npm::OperatingSystem,
+    /// Override libc for optional dependencies filtering
+    pub libc: Npm::Libc,
 
     pub config_version: Option<ConfigVersion>,
 }
@@ -156,6 +158,7 @@ impl Default for Options {
             minimum_release_age_excludes: None,
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
+            libc: Npm::Libc::CURRENT,
             config_version: None,
         }
     }
@@ -801,9 +804,10 @@ impl Options {
                     .store(backend as u8, core::sync::atomic::Ordering::Relaxed);
             }
 
-            // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+            // CPU, OS, and libc are now parsed as enums in CommandLineArguments, just copy them
             self.cpu = cli.cpu;
             self.os = cli.os;
+            self.libc = cli.libc;
 
             self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
             self.do_.set(Do::RECURSIVE, cli.recursive);

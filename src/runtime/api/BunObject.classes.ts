@@ -96,6 +96,10 @@ export default [
         fn: "kill",
         length: 1,
       },
+      killTree: {
+        fn: "killTree",
+        length: 1,
+      },
       disconnect: {
         fn: "disconnect",
         length: 0,

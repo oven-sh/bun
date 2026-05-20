@@ -65,7 +65,8 @@ macro_rules! opaque_ffi {
             /// [`bun_opaque::opaque_deref`](crate::opaque_deref) for the
             /// soundness proof; panics on null.
             #[inline(always)]
-                        pub fn opaque_ref<'a>(p: *const Self) -> &'a Self {
+            #[allow(dead_code)]
+            pub fn opaque_ref<'a>(p: *const Self) -> &'a Self {
                 $crate::opaque_deref(p)
             }
             /// Unchecked `*const Self → &Self` for an opaque ZST handle on a
@@ -75,7 +76,8 @@ macro_rules! opaque_ffi {
             /// # Safety
             /// `p` must be non-null.
             #[inline(always)]
-                        pub unsafe fn opaque_ref_nn<'a>(p: *const Self) -> &'a Self {
+            #[allow(dead_code)]
+            pub unsafe fn opaque_ref_nn<'a>(p: *const Self) -> &'a Self {
                 // SAFETY: forwarded to caller.
                 unsafe { $crate::opaque_deref_nn(p) }
             }
@@ -83,7 +85,8 @@ macro_rules! opaque_ffi {
             /// [`bun_opaque::opaque_deref_mut`](crate::opaque_deref_mut) for
             /// the soundness proof; panics on null.
             #[inline(always)]
-                        pub fn opaque_mut<'a>(p: *mut Self) -> &'a mut Self {
+            #[allow(dead_code)]
+            pub fn opaque_mut<'a>(p: *mut Self) -> &'a mut Self {
                 $crate::opaque_deref_mut(p)
             }
             /// Unchecked `*mut Self → &mut Self`. See [`opaque_ref_nn`].
@@ -91,7 +94,8 @@ macro_rules! opaque_ffi {
             /// # Safety
             /// `p` must be non-null.
             #[inline(always)]
-                        pub unsafe fn opaque_mut_nn<'a>(p: *mut Self) -> &'a mut Self {
+            #[allow(dead_code)]
+            pub unsafe fn opaque_mut_nn<'a>(p: *mut Self) -> &'a mut Self {
                 // SAFETY: forwarded to caller.
                 unsafe { $crate::opaque_deref_mut_nn(p) }
             }
@@ -105,7 +109,8 @@ macro_rules! opaque_ffi {
             /// freely mutate the real allocation through the returned pointer;
             /// `&Self` covers zero Rust-visible bytes so cannot alias it.
             #[inline(always)]
-                        pub fn as_mut_ptr(&self) -> *mut Self {
+            #[allow(dead_code)]
+            pub fn as_mut_ptr(&self) -> *mut Self {
                 self._p.get().cast::<Self>()
             }
         }

@@ -783,7 +783,8 @@ macro_rules! platform_specific_new {
                 { return POSIX_KEY; }
                 #[cfg(windows)]
                 { return WINDOWS_KEY; }
-                                None
+                #[allow(unreachable_code)]
+                None
             }
 
             // TODO(port): `getNotEmpty` only makes sense for string-kind vars (it calls `.len`).

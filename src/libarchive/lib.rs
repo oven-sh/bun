@@ -34,11 +34,11 @@ pub mod lib {
     pub type la_int64_t = i64;
     type time_t = isize;
 
-    /// Opaque libarchive `struct archive`. Always used behind `*mut Archive`.
-    /// Contains `UnsafeCell` so that `&Archive` does not assert immutability
-    /// (libarchive mutates through every call), making `&self -> *mut Self`
-    /// sound under Stacked Borrows.
     bun_opaque::opaque_ffi! {
+        /// Opaque libarchive `struct archive`. Always used behind `*mut Archive`.
+        /// Contains `UnsafeCell` so that `&Archive` does not assert immutability
+        /// (libarchive mutates through every call), making `&self -> *mut Self`
+        /// sound under Stacked Borrows.
         pub struct Archive;
         /// Opaque libarchive `struct archive_entry`. Always used behind `*mut Entry`.
         /// Contains `UnsafeCell` for the same reason as `Archive` — the C side

@@ -1724,7 +1724,8 @@ macro_rules! define_scoped_log {
         $crate::define_scoped_log!(@inner $mac, $scope, $);
     };
     (@inner $mac:ident, $scope:path, $d:tt) => {
-                macro_rules! $mac {
+        #[allow(unused_macros)]
+        macro_rules! $mac {
             ($d($d arg:tt)*) => { $crate::scoped_log!($scope, $d($d arg)*) };
         }
     };

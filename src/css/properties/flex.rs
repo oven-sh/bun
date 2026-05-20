@@ -842,7 +842,8 @@ impl FlexHandler {
                     if !prefix.is_empty() {
                         prefix = context.targets.prefixes(prefix, PrefixFeature::$feature);
                         // 2009 block
-                                                {
+                        #[allow(unused)]
+                        {
                             if prefix.contains(VendorPrefix::NONE) {
                                 // 2009 spec, implemented by webkit and firefox
                                 if let Some(targets) = &context.targets.browsers {

@@ -24,7 +24,8 @@
 macro_rules! new_store {
     ($mod_name:ident, [$($T:ty),+ $(,)?], $count:expr) => {
         pub mod $mod_name {
-                        use super::*;
+            #[allow(unused_imports)]
+            use super::*;
             use ::core::mem::{align_of, size_of, MaybeUninit};
             use ::core::ptr::{addr_of_mut, NonNull};
 

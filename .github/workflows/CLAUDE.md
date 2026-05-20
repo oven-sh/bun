@@ -55,7 +55,8 @@ The workflow runs all three formatters simultaneously:
 
 1. Bump `channel` in `rust-toolchain.toml` (and `Dockerfile`/`bootstrap.sh` to match).
 2. Bump `RUSTUP_TOOLCHAIN` in the `Format Code` step's `env:` block in `format.yml` to the same value.
-3. `cargo fmt` formatting can change between nightlies; run `cargo fmt --all` locally on the new toolchain and include the resulting diff in the same PR.
+3. Bump `RUSTUP_TOOLCHAIN` in the workflow-level `env:` block in `clippy.yml` to the same value.
+4. `cargo fmt` formatting can change between nightlies; run `cargo fmt --all` locally on the new toolchain and include the resulting diff in the same PR.
 
 #### To update clang-format version:
 

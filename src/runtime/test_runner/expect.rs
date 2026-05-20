@@ -3352,7 +3352,8 @@ mod tests {
         }
     }
 
-        fn test_one(input: &[u8]) {
+    #[allow(dead_code)]
+    fn test_one(input: &[u8]) {
         let mut cpy = vec![0u8; input.len()];
         let res = Expect::trim_leading_whitespace_for_inline_snapshot(input, &mut cpy);
         sanity_check(input, &res);

@@ -66,7 +66,8 @@ bun_core::declare_scope!(CowFd, hidden);
 #[macro_export]
 macro_rules! shell_log {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {{
-                use $crate::shell::interpreter::SHELL;
+        #[allow(unused_imports)]
+        use $crate::shell::interpreter::SHELL;
         bun_core::scoped_log!(SHELL, $fmt $(, $arg)*);
     }};
 }

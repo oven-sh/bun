@@ -213,8 +213,7 @@ pub fn init_client() -> *mut boring::SSL {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn OPENSSL_memory_alloc(size: usize) -> *mut c_void {
-    // SAFETY: mi_malloc is safe to call with any size; returns null on failure.
-    unsafe { bun_alloc::mimalloc::mi_malloc(size) }
+    bun_alloc::mimalloc::mi_malloc(size)
 }
 
 // BoringSSL always expects memory to be zero'd

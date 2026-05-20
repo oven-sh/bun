@@ -407,7 +407,8 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
             #[derive(Clone, Copy)]
             #[repr(u8)]
             pub enum Gc { #( #variants, )* }
-                        impl Gc {
+            #[allow(dead_code)]
+            impl Gc {
                 #[inline] pub fn get(self, this_value: ::bun_jsc::JSValue) -> ::core::option::Option<::bun_jsc::JSValue> {
                     match self { #( #get_arms )* }
                 }

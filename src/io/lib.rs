@@ -428,7 +428,8 @@ macro_rules! __impl_buffered_reader_parent_body {
                 $crate::BufferedReaderParentLinkKind::$variant;
             const HAS_ON_READ_CHUNK: bool = $has;
             $(
-                                unsafe fn on_read_chunk(
+                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+                unsafe fn on_read_chunk(
                     $rc_this: *mut Self,
                     $rc_chunk: &[u8],
                     $rc_more: $crate::ReadState,
@@ -436,20 +437,25 @@ macro_rules! __impl_buffered_reader_parent_body {
                     unsafe { $rc }
                 }
             )?
-                        unsafe fn on_reader_done($rd_this: *mut Self) {
+            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+            unsafe fn on_reader_done($rd_this: *mut Self) {
                 unsafe { $rd }
             }
-                        unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
+            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+            unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
                 unsafe { $re }
             }
-                        unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
+            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+            unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
                 unsafe { $lp }
             }
-                        unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
+            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+            unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
                 unsafe { $ev }
             }
             $(
-                                unsafe fn on_max_buffer_overflow(
+                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
+                unsafe fn on_max_buffer_overflow(
                     $mb_this: *mut Self,
                     $mb_buf: ::core::ptr::NonNull<$crate::max_buf::MaxBuf>,
                 ) {

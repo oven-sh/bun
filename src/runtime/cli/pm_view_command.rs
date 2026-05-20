@@ -1,5 +1,5 @@
 use bstr::BStr;
-use bun_alloc::{AllocError, Arena as Bump};
+use bun_alloc::Arena as Bump;
 use bun_collections::VecExt;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -185,9 +185,9 @@ pub fn view(
     };
 
     // Now use the existing version resolution logic from outdated_command
-    let mut manifest = json;
+    let mut manifest;
 
-    let mut versions_len: usize = 1;
+    let versions_len: usize;
 
     // PORT NOTE: reshaped for borrowck — Zig used a labeled block returning a tuple to reassign (version, manifest)
     'brk: {
@@ -318,10 +318,10 @@ pub fn view(
                 if json_output {
                     Output::print(format_args!(
                         "{}\n",
-                        bun_fmt::format_json_string_utf8(&slice, Default::default())
+                        bun_fmt::format_json_string_utf8(slice, Default::default())
                     ));
                 } else {
-                    Output::print(format_args!("{}\n", BStr::new(&*slice)));
+                    Output::print(format_args!("{}\n", BStr::new(slice)));
                 }
                 Output::flush();
                 return Ok(());

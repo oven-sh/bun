@@ -18,8 +18,8 @@ use core::fmt::{self, Write};
 
 use super::parse::SmolList;
 use super::parse::ast::{
-    Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, CondExprOp, Expr, If,
-    JSBuf, Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
+    Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, Expr, If, JSBuf,
+    Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
 };
 
 // ───────────────────────────── primitives ─────────────────────────────
@@ -233,13 +233,13 @@ fn write_redirect(w: &mut impl Write, r: &Redirect<'_>) -> fmt::Result {
         }
         Redirect::JsBuf(j) => {
             w.write_str("{\"jsbuf\":")?;
-            write_jsbuf(w, j)?;
+            write_jsbuf(w, *j)?;
         }
     }
     w.write_char('}')
 }
 
-fn write_jsbuf(w: &mut impl Write, j: &JSBuf) -> fmt::Result {
+fn write_jsbuf(w: &mut impl Write, j: JSBuf) -> fmt::Result {
     write!(w, "{{\"idx\":{}}}", j.idx)
 }
 

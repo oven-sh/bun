@@ -12,16 +12,15 @@ use bun_ast::{Loc, Log, Source};
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
 use bun_ast::ast_result::NamedExports;
-use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt, symbol};
+use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
 use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
-use bun_resolver as _resolver;
 
 use crate::AstBuilder::AstBuilder;
 use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
-use crate::options::{self, Loader, Target};
+use crate::options::{Loader, Target};
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
 use crate::ungate_support::JSAst;
 
@@ -29,7 +28,6 @@ pub use crate::ThreadPool;
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::parse_task::ParseTask;
-use bun_ast::{Index, Ref};
 
 pub struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
@@ -41,6 +39,9 @@ pub struct ServerComponentParseTask {
     pub source: Source,
 }
 
+// `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
+// would leak. The size diff is acceptable.
+#[allow(clippy::large_enum_variant)]
 pub enum Data {
     /// Generate server-side code for a "use client" module. Given the
     /// client ast, a "reference proxy" is created with identical exports.
@@ -124,17 +125,23 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         bun_event_loop::AnyEventLoop::Js { owner } => {
             owner.enqueue_task_concurrent(
                 bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                    on_complete(p);
+                    // SAFETY: `p` is the `result` Box leaked above; ownership
+                    // transfers to `on_complete`, which deallocates it.
+                    unsafe { on_complete(p) };
                     Ok(())
                 }),
             );
         }
         bun_event_loop::AnyEventLoop::Mini(mini) => {
-            mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
-                result,
-                on_complete_mini,
-                offset_of!(parse_task::Result, task),
-            );
+            // SAFETY: `result` is a freshly Box-leaked `parse_task::Result` (above) and
+            // `offset_of!(parse_task::Result, task)` is the intrusive task field within it.
+            unsafe {
+                mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
+                    result,
+                    on_complete_mini,
+                    offset_of!(parse_task::Result, task),
+                );
+            }
         }
     }
     // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
@@ -143,7 +150,9 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
 
 fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static>) {
     // `on_complete` already recovers `ctx` from `result.ctx`.
-    on_complete(result);
+    // SAFETY: callback contract — `result` is the uniquely-owned Box leaked in
+    // `run_from_thread_pool`; ownership transfers to `on_complete`.
+    unsafe { on_complete(result) };
 }
 
 fn task_callback(

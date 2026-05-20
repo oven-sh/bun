@@ -1,5 +1,3 @@
-use bun_ptr::AsCtxPtr;
-
 use crate::shell::ast;
 use crate::shell::interpreter::{
     Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind, closefd, log,
@@ -150,7 +148,7 @@ impl Pipeline {
                         // syscall in a loop (spec: setupCommands → start →
                         // .waiting_write_err → suspended).
                         interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
-                        interp.throw(ShellErr::new_sys(e));
+                        interp.throw(ShellErr::new_sys(&e));
                         return Yield::failed();
                     }
                 }
@@ -249,7 +247,7 @@ impl Pipeline {
                     }
                     me.state = PipelineState::WaitingWriteErr;
                 }
-                interp.throw(ShellErr::new_sys(e));
+                interp.throw(ShellErr::new_sys(&e));
                 return Yield::failed();
             }
         };
@@ -358,6 +356,8 @@ impl Pipeline {
             if let Some(base) = interp.node_mut(child).base_mut() {
                 let shell = core::mem::replace(&mut base.shell, core::ptr::null_mut());
                 if !shell.is_null() {
+                    // SAFETY: `shell` is the duped env this pipeline child owned;
+                    // null-checked above and exclusively held here.
                     ShellExecEnv::deinit_impl(shell);
                 }
             }

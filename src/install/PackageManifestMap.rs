@@ -20,7 +20,7 @@ pub enum Value {
 }
 
 impl Value {
-    /// Zig: `entry.value_ptr.manifest` field projection on the `.manifest` arm.
+    // Zig: `entry.value_ptr.manifest` field projection on the `.manifest` arm.
     bun_core::enum_unwrap!(pub Value, Manifest => fn manifest / manifest_mut -> npm::PackageManifest);
 }
 
@@ -165,9 +165,7 @@ impl PackageManifestMap {
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
         if cache_behavior == CacheBehavior::LoadFromMemory {
-            let Some(entry) = self.hash_map.get_mut(&name_hash) else {
-                return None;
-            };
+            let entry = self.hash_map.get_mut(&name_hash)?;
             return match entry {
                 Value::Manifest(m) => Some(m),
                 Value::Expired(m) => {

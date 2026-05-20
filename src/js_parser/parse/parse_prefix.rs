@@ -1,14 +1,6 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    clippy::single_match
-)]
+#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
-use bun_core::strings;
 
 use crate::lexer::T;
 use crate::p::P;
@@ -18,7 +10,7 @@ use crate::parser::{
 };
 use bun_ast::e::UnaryFlags;
 use bun_ast::expr::EFlags;
-use bun_ast::g::{Arg, Property, PropertyKind};
+use bun_ast::g::{Arg, PropertyKind};
 use bun_ast::op::Level;
 use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, scope, symbol};
 
@@ -598,7 +590,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let class = p.parse_class(
             class_keyword,
             name,
-            ParseClassOptions {
+            &ParseClassOptions {
                 allow_ts_decorators: Self::IS_TYPESCRIPT_ENABLED
                     || p.options.features.standard_decorators,
                 ..Default::default()
@@ -672,7 +664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let class = p.parse_class(
             class_keyword,
             name,
-            ParseClassOptions {
+            &ParseClassOptions {
                 ts_decorators: ts_decorators_slice,
                 allow_ts_decorators: true,
                 ..Default::default()

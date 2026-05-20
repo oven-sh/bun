@@ -2,14 +2,17 @@ use core::ptr::NonNull;
 
 use crate::webcore::ReadableStream;
 use bun_io::BufferedReader;
+#[cfg(unix)]
 use bun_io::FilePollFlag;
 use bun_io::Loop as AsyncLoop;
 use bun_io::max_buf::MaxBuf;
+#[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
-use bun_io::pipes::ReadState;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
-use bun_ptr::{IntrusiveRc, ParentRef, RefCount, RefCounted, ScopedRef};
+#[cfg(not(windows))]
+use bun_ptr::ScopedRef;
+use bun_ptr::{IntrusiveRc, ParentRef, RefCount};
 use bun_sys;
 
 use super::readable::Readable;
@@ -18,16 +21,12 @@ use super::{StdioKind, StdioResult, Subprocess};
 pub type IOReader = BufferedReader;
 pub type Poll = IOReader;
 
+#[derive(Default)]
 pub enum State {
+    #[default]
     Pending,
     Done(Vec<u8>),
     Err(bun_sys::Error),
-}
-
-impl Default for State {
-    fn default() -> Self {
-        State::Pending
-    }
 }
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive, single-thread.
@@ -101,6 +100,7 @@ impl PipeReader {
     pub unsafe fn detach(this: *mut Self) {
         // SAFETY: `this` is live; raw-ptr field write avoids holding a `&mut` across deref.
         unsafe { (*this).process = None };
+        // SAFETY: caller contract — `this` is live with refcount > 0; no borrow of `*this` outlives this call.
         unsafe { PipeReader::deref(this) };
     }
 

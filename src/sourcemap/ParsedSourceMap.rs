@@ -115,9 +115,15 @@ impl AnySourceProvider {
             AnySourceProvider::Zig(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
+            // SAFETY: pointer originates from SourceContentPtr::from_bake_provider; the
+            // BakeSourceProvider FFI handle outlives any ParsedSourceMap that stores it,
+            // so it is valid for the duration of this call.
             AnySourceProvider::Bake(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },
+            // SAFETY: pointer originates from SourceContentPtr::from_dev_server_provider; the
+            // DevServerSourceProvider FFI handle outlives any ParsedSourceMap that stores it,
+            // so it is valid for the duration of this call.
             AnySourceProvider::DevServer(p) => unsafe {
                 (**p).get_source_map(source_filename, load_hint, result)
             },

@@ -2,7 +2,6 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_core::fmt::PathSep;
-use bun_core::output::ErrName as _;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_paths::platform;
@@ -32,20 +31,11 @@ fn string_hash(s: &[u8]) -> u64 {
     bun_semver::semver_string::Builder::string_hash(s)
 }
 
+#[derive(Default)]
 pub struct PatchCommitResult {
     pub patch_key: Box<[u8]>,
     pub patchfile_path: Box<[u8]>,
     pub not_in_workspace_root: bool,
-}
-
-impl Default for PatchCommitResult {
-    fn default() -> Self {
-        Self {
-            patch_key: Box::default(),
-            patchfile_path: Box::default(),
-            not_in_workspace_root: false,
-        }
-    }
 }
 
 /// - Arg is the dir containing the package with changes OR name and version
@@ -59,7 +49,7 @@ pub fn do_patch_commit(
     log_level: LogLevel,
 ) -> Result<Option<PatchCommitResult>, bun_core::Error> {
     let mut folder_path_buf = PathBuffer::uninit();
-    let mut lockfile: Box<Lockfile> = Box::new(Lockfile::default());
+    let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
     // TODO(port): narrow error set
     match lockfile.load_from_cwd::<true>(Some(manager), log) {
@@ -670,24 +660,6 @@ pub fn do_patch_commit(
     }))
 }
 
-#[allow(dead_code)]
-fn patch_commit_get_version<'a>(
-    buf: &'a mut [u8; 1024],
-    patch_tag_path: &ZStr,
-) -> sys::Maybe<&'a [u8]> {
-    let patch_tag = sys::File::open(patch_tag_path, sys::O::RDONLY, 0)?;
-    let _cleanup = scopeguard::guard(patch_tag, |f| {
-        drop(f);
-        let _ = sys::unlink(patch_tag_path);
-    });
-
-    let version = _cleanup.read_fill_buf(&mut buf[..])?;
-
-    // maybe if someone opens it in their editor and hits save a newline will be inserted,
-    // so trim that off
-    Ok(strings::trim_right(version, b" \n\r\t"))
-}
-
 fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
     #[derive(Copy, Clone, PartialEq, Eq)]
     #[repr(u8)]
@@ -1109,6 +1081,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             #[cfg(not(windows))]
             {
                 if let Ok(st) = sys::lstat(p.slice_z()) {
+                    // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
                     sys::posix::s_islnk(st.st_mode as u32)
                 } else {
                     return;
@@ -1256,7 +1229,7 @@ fn node_modules_folder_for_dependency_ids(
         let node_modules = iterator.next(None)?;
         let mut found = false;
         for id in ids {
-            if node_modules.dependencies.iter().any(|d| *d == id.0) {
+            if node_modules.dependencies.contains(&id.0) {
                 found = true;
                 break;
             }
@@ -1273,11 +1246,7 @@ fn node_modules_folder_for_dependency_id(
 ) -> Option<Vec<u8>> {
     loop {
         let node_modules = iterator.next(None)?;
-        if !node_modules
-            .dependencies
-            .iter()
-            .any(|d| *d == dependency_id)
-        {
+        if !node_modules.dependencies.contains(&dependency_id) {
             continue;
         }
         return Some(node_modules.relative_path.as_bytes().to_vec());

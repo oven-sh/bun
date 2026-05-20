@@ -4,7 +4,7 @@
 //! Calling `cancel` will cancel the stream, onEnd will be called with the reason passed to cancel.
 //! Different from JSSink this is not intended to be exposed to the users, like FileSink or HTTPRequestSink etc.
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use core::cell::Cell;
 
 use bun_core::String as BunString;
@@ -121,11 +121,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     fn set_stream(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
         Js::stream_set_cached(this_value, global, value);
     }
-    #[allow(dead_code)]
-    #[inline]
-    fn get_stream(this_value: JSValue) -> Option<JSValue> {
-        Js::stream_get_cached(this_value)
-    }
 
     #[inline]
     fn on_write(ctx: *mut Context, bytes: &[u8]) -> ResumableSinkBackpressure {
@@ -176,7 +171,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         if stream.is_locked(global_this) || stream.is_disturbed(global_this) {
             // PORT NOTE: `SystemError` has no `Default` impl upstream — spell out
             // every field with its Zig default (SystemError.zig:1).
-            let mut err = SystemError {
+            let err = SystemError {
                 errno: 0,
                 code: BunString::static_(<&'static str>::from(ErrorCode::ERR_STREAM_CANNOT_PIPE)),
                 message: BunString::static_("Stream already used, please create a new one"),

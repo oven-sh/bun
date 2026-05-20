@@ -590,7 +590,7 @@ pub mod entry {
             let l_dep_name = l_dep.name;
             let r_dep_name = r_dep.name;
 
-            l_dep_name.order(&r_dep_name, string_buf, string_buf)
+            l_dep_name.order(r_dep_name, string_buf, string_buf)
         }
     }
 
@@ -738,7 +738,7 @@ pub mod node {
             let l_pkg_name = pkg_names[l_pkg_id as usize];
             let r_pkg_name = pkg_names[r_pkg_id as usize];
 
-            l_pkg_name.order(&r_pkg_name, string_buf, string_buf)
+            l_pkg_name.order(r_pkg_name, string_buf, string_buf)
         }
     }
 

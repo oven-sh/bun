@@ -14,15 +14,11 @@
 
 use core::sync::atomic::Ordering;
 
-use core::ptr::NonNull;
-
 use bun_collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_sys::FdExt as _;
 
-use super::framework_router::{self, OpaqueFileId};
 use super::jsc;
 use super::{Graph, Side};
-use crate::server::StaticRoute;
 
 // ─── submodule bodies ────────────────────────────────────────────────────────
 // Each is a faithful port of the `.zig` sibling. Assets body dissolved into
@@ -666,6 +662,8 @@ impl HotReloadEvent {
         {
             // SAFETY: `first` is live and exclusively owned by this thread.
             debug_assert!(unsafe { (*first).debug_mutex.try_lock() });
+            // SAFETY: `first` is live (caller contract); atomic load needs no
+            // exclusivity and does not alias any `&mut` borrow.
             debug_assert!(unsafe { (*first).contention_indicator.load(Ordering::SeqCst) } == 0);
         }
 
@@ -787,12 +785,16 @@ impl WatcherAtomics {
     /// so on, until this function returns `None`.
     ///
     /// Runs on dev server thread.
-    pub fn recycle_event_from_dev_server(
+    ///
+    /// # Safety
+    /// `old_event` must be a live `HotReloadEvent` previously submitted to the
+    /// dev server thread (a slot in `self.events`) and now exclusively owned by
+    /// the caller for reset.
+    pub(crate) fn recycle_event_from_dev_server(
         &mut self,
         old_event: *mut HotReloadEvent,
     ) -> Option<*mut HotReloadEvent> {
-        // SAFETY: `old_event` was previously submitted to the dev server thread and is now
-        // exclusively owned by it for reset.
+        // SAFETY: per this function's contract.
         unsafe { (*old_event).reset() };
 
         #[cfg(debug_assertions)]
@@ -898,9 +900,15 @@ impl WatcherAtomics {
     /// if it contains new files.
     ///
     /// Called from watcher thread.
-    pub fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
-        // SAFETY: `ev` was returned by `watcher_acquire_event` and points into `self.events`;
-        // the watcher thread has exclusive access until it is submitted below.
+    ///
+    /// # Safety
+    /// `ev` must be the pointer returned by the matching
+    /// `watcher_acquire_event` call (a slot in `self.events`), and the watcher
+    /// thread must still hold exclusive access to it.
+    // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
+    #[allow(clippy::needless_borrow)]
+    pub(crate) fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
+        // SAFETY: per this function's contract.
         let ev_ref = unsafe { &mut *ev };
 
         ev_ref.assert_watcher_thread_locked();
@@ -963,8 +971,9 @@ impl WatcherAtomics {
                 // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
                 // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
                 unsafe {
-                    (*(&(*ev_ref.owner).vm).event_loop)
-                        .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
+                    (*(&(*ev_ref.owner).vm).event_loop).enqueue_task_concurrent(
+                        core::ptr::NonNull::from(&mut ev_ref.concurrent_task),
+                    );
                 }
             }
 
@@ -1281,11 +1290,17 @@ impl DirectoryWatchStore {
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             Graph::Client => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `client_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).client_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
             }
             Graph::Server | Graph::Ssr => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `server_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).server_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key

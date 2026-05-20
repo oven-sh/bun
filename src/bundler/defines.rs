@@ -1,9 +1,7 @@
 use bun_ast::ExprData;
 use bun_ast::Ref;
 use bun_collections::StringHashMap;
-use bun_collections::VecExt;
 use bun_core::strings;
-use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
 
 use crate::defines_table::{
@@ -248,12 +246,10 @@ impl DefineExt for Define {
             // Zig: define.arena.free(gpe.value_ptr.*); — handled by Vec drop on assign
             *existing = list;
         } else {
-            let mut list: Vec<DotDefine> = Vec::with_capacity(1);
-            // PERF(port): was appendAssumeCapacity — profile if hot.
-            list.push(DotDefine {
+            let list: Vec<DotDefine> = vec![DotDefine {
                 parts,
                 data: value_define.clone(),
-            });
+            }];
             self.dots.put_assume_capacity(key, list);
         }
         Ok(())
@@ -605,10 +601,6 @@ impl DefineDataExt for DefineData {
         Ok(user_defines)
     }
 }
-
-// var nan_val = try arena.create(js_ast.E.Number);
-#[allow(dead_code)]
-const NAN_VAL: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
 
 // Zig `deinit` freed `dots` values, cleared maps, and destroyed `self`.
 // In Rust: `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their

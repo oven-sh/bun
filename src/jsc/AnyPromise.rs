@@ -2,7 +2,6 @@ use core::ffi::c_void;
 
 use crate::host_fn::to_js_host_call;
 use crate::js_promise::{Status, UnwrapMode, Unwrapped};
-use crate::top_exception_scope::{SourceLocation, TopExceptionScope};
 use crate::{JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsResult, JsTerminated, VM};
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise` (AnyPromise.zig).

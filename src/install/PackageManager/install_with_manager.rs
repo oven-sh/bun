@@ -1,18 +1,17 @@
 use core::sync::atomic::Ordering;
 
 use bun_core::time::nano_timestamp;
-use bun_core::{Global, Output, Progress};
+use bun_core::{Global, Output};
 
 use crate::bun_fs::FileSystem;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
-use bun_paths as Path;
 use bun_semver::String as SemverString;
 
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::Subcommand;
 use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
-use crate::lockfile::{self, Lockfile, Package};
+use crate::lockfile::{self, Lockfile};
 use crate::resolution::Tag as ResolutionTag;
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
@@ -203,6 +202,8 @@ pub fn install_with_manager(
                     let mgr: *mut PackageManager = manager;
                     maybe_root.parse(
                         &mut lockfile,
+                        // SAFETY: `mgr` is the sole provenance root for `*manager`; `log` is a
+                        // disjoint backref and `lockfile` is a stack local, so this `&mut` is unique.
                         unsafe { &mut *mgr },
                         log,
                         &source_copy,
@@ -232,13 +233,19 @@ pub fn install_with_manager(
                     // `&mut` to `*mgr` exists across the call.
                     let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
                     let update_requests = if to_update {
+                        // SAFETY: shared reborrow of a field disjoint from `lockfile`; `mgr` is the
+                        // sole provenance root and `Diff::generate` does not mutate `update_requests`.
                         Some(unsafe { &(&(*mgr).update_requests)[..] })
                     } else {
                         None
                     };
                     Diff::generate(
+                        // SAFETY: `mgr` is the sole provenance root; `Diff::generate` touches only
+                        // `PackageManager` fields disjoint from `lockfile`/`update_requests` via this.
                         unsafe { &mut *mgr },
                         log,
+                        // SAFETY: `from_lockfile` projects `(*mgr).lockfile`; `Diff::generate` never
+                        // reaches `manager.lockfile` through the `&mut *mgr` arg, so this is unique.
                         unsafe { &mut *from_lockfile },
                         &mut lockfile,
                         &root,
@@ -398,8 +405,7 @@ pub fn install_with_manager(
                     {
                         lf.workspace_paths.reserve(lockfile.workspace_paths.len());
                         lf.workspace_paths.clear();
-                        let mut iter = lockfile.workspace_paths.iter();
-                        while let Some((key, value)) = iter.next() {
+                        for (key, value) in lockfile.workspace_paths.iter() {
                             // The string offsets will be wrong so fix them
                             let path = value.slice(&lockfile.buffers.string_bytes);
                             let str = builder.append::<SemverString>(path);
@@ -413,8 +419,7 @@ pub fn install_with_manager(
                         lf.workspace_versions
                             .reserve(lockfile.workspace_versions.len());
                         lf.workspace_versions.clear();
-                        let mut iter = lockfile.workspace_versions.iter();
-                        while let Some((key, value)) = iter.next() {
+                        for (key, value) in lockfile.workspace_versions.iter() {
                             // Copy version string offsets
                             let version = value.append(&lockfile.buffers.string_bytes, builder);
                             // PERF(port): was assume_capacity
@@ -424,8 +429,7 @@ pub fn install_with_manager(
 
                     // Update patched dependencies
                     {
-                        let mut iter = lockfile.patched_dependencies.iter();
-                        while let Some((key, value)) = iter.next() {
+                        for (key, value) in lockfile.patched_dependencies.iter() {
                             let pkg_name_and_version_hash = *key;
                             debug_assert!(value.patchfile_hash_is_null);
                             let gop = lf.patched_dependencies.entry(pkg_name_and_version_hash);
@@ -479,7 +483,6 @@ pub fn install_with_manager(
                     }
 
                     builder.clamp();
-                    drop(builder_);
 
                     // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
                     // which grows `buffers.dependencies` and may reallocate it.
@@ -582,7 +585,8 @@ pub fn install_with_manager(
             let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
             for key in keys {
                 let task = PatchTask::new_calc_patch_hash(manager, key, None);
-                enqueue_patch_task_pre(manager, task);
+                // SAFETY: `task` is a fresh `heap::alloc` from `new_calc_patch_hash`.
+                unsafe { enqueue_patch_task_pre(manager, task) };
             }
         }
         // Anything that needs to be downloaded from an update needs to be scheduled here
@@ -1152,10 +1156,19 @@ fn print_summary_tree(
     let writer = Output::writer_buffered();
     // Runtime bool → comptime dispatch (Zig `switch (b) { inline else => |c| ... }`).
     if Output::enable_ansi_colors_stdout() {
-        LockfilePrinter::Tree::print::<_, true>(&printer, unsafe { &mut *mgr }, writer, log_level)?;
+        LockfilePrinter::Tree::print::<_, true>(
+            &printer,
+            // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
+            // disjoint from `printer`'s shared `lockfile`/`options`/`update_requests` borrows.
+            unsafe { &mut *mgr },
+            writer,
+            log_level,
+        )?;
     } else {
         LockfilePrinter::Tree::print::<_, false>(
             &printer,
+            // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
+            // disjoint from `printer`'s shared `lockfile`/`options`/`update_requests` borrows.
             unsafe { &mut *mgr },
             writer,
             log_level,
@@ -1293,12 +1306,12 @@ pub fn get_workspace_filters(
 
             #[cfg(windows)]
             {
-                let abs_path = Path::path_to_posix_buf::<u8>(
+                let abs_path = bun_paths::path_to_posix_buf::<u8>(
                     FileSystem::instance().top_level_dir,
                     &mut path_buf.0,
                 );
                 break 'abs_root_path strings::without_trailing_slash(
-                    &abs_path[Path::windows_volume_name_len(abs_path).0..],
+                    &abs_path[bun_paths::windows_volume_name_len(abs_path).0..],
                 );
             }
         };
@@ -1569,7 +1582,10 @@ fn create_new_lockfile_and_enqueue(
         // disjoint `lockfile` field through it. No other live `&mut` to
         // `*mgr` exists across the call.
         root.parse(
+            // SAFETY: disjoint field projection through the sole provenance root `mgr`.
             unsafe { &mut (*mgr).lockfile },
+            // SAFETY: `parse` touches only `PackageManager` fields disjoint from
+            // `lockfile` through this borrow; `mgr` is the sole provenance root.
             unsafe { &mut *mgr },
             log,
             &source_copy,
@@ -1578,7 +1594,7 @@ fn create_new_lockfile_and_enqueue(
         )?;
     }
 
-    root = manager.lockfile.append_package(root)?;
+    root = manager.lockfile.append_package(&root)?;
 
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
@@ -1588,7 +1604,8 @@ fn create_new_lockfile_and_enqueue(
         let keys: Vec<u64> = manager.lockfile.patched_dependencies.keys().to_vec();
         for key in keys {
             let task = PatchTask::new_calc_patch_hash(manager, key, None);
-            enqueue_patch_task_pre(manager, task);
+            // SAFETY: `task` is a fresh `heap::alloc` from `new_calc_patch_hash`.
+            unsafe { enqueue_patch_task_pre(manager, task) };
         }
     }
     enqueue_dependency_list(manager, root.dependencies);

@@ -14,12 +14,15 @@ use bun_core::{self, Error, err};
 // through to fp-walking exactly as Zig does on targets without DWARF support.
 #[cfg(debug_assertions)]
 mod zig_std_debug {
-    #[allow(unused_imports)]
-    use core::ffi::{c_int, c_void};
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use core::ffi::c_int;
+    use core::ffi::c_void;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use core::sync::atomic::{AtomicI32, Ordering};
 
-    use bun_core::{Error, err};
+    use bun_core::Error;
+    #[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
+    use bun_core::err;
 
     // ── ThreadContext / have_ucontext ────────────────────────────────────
     // Zig: `pub const ThreadContext = if (windows) windows.CONTEXT else if (have_ucontext) posix.ucontext_t else void;`
@@ -32,6 +35,7 @@ mod zig_std_debug {
     pub const HAVE_UCONTEXT: bool = cfg!(not(windows));
     // Zig: `pub const have_getcontext = @TypeOf(posix.system.getcontext) != void;`
     // Android / OpenBSD / Haiku lack getcontext; everywhere else we link libc's.
+    #[cfg(not(windows))]
     const HAVE_GETCONTEXT: bool = cfg!(all(
         not(windows),
         not(target_os = "android"),
@@ -40,6 +44,7 @@ mod zig_std_debug {
 
     // DWARF unwinding requires the full `Dwarf` parser (not ported). Zig falls back to
     // fp-walking when `SelfInfo.supports_unwinding == false`; we hard-code that here.
+    #[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
     const SUPPORTS_UNWINDING: bool = false;
 
     // ── std.debug.getContext ─────────────────────────────────────────────
@@ -136,7 +141,7 @@ mod zig_std_debug {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         mem: c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        mem: (),
+        _mem: (),
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -147,7 +152,7 @@ mod zig_std_debug {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             mem: -1,
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            mem: (),
+            _mem: (),
         };
 
         fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
@@ -373,15 +378,17 @@ mod zig_std_debug {
             {
                 // SAFETY: caller passes a `getcontext`-initialized ucontext; mcontext is non-null.
                 let fp = unsafe { (*(*context).uc_mcontext).__ss.__fp } as usize;
-                return Ok(Self::init(first_address, Some(fp)));
+                Ok(Self::init(first_address, Some(fp)))
             }
-            #[allow(unreachable_code)]
-            if SUPPORTS_UNWINDING {
-                // PORT NOTE: DWARF `UnwindContext::init` not ported — `SUPPORTS_UNWINDING`
-                // is `false`, so this branch is dead. Kept to mirror Zig structure.
-                return Err(err!("UnsupportedCpuArchitecture"));
+            #[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
+            {
+                if SUPPORTS_UNWINDING {
+                    // PORT NOTE: DWARF `UnwindContext::init` not ported — `SUPPORTS_UNWINDING`
+                    // is `false`, so this branch is dead. Kept to mirror Zig structure.
+                    return Err(err!("UnsupportedCpuArchitecture"));
+                }
+                Ok(Self::init(first_address, None))
             }
-            Ok(Self::init(first_address, None))
         }
 
         pub fn get_last_error(&mut self) -> Option<LastUnwindError> {
@@ -592,7 +599,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
             )
             .is_err()
             {
-                return b"<oom>\0".as_ptr().cast::<c_char>();
+                return c"<oom>".as_ptr();
             }
             // leak intentionally — caller is lldb and never frees
             return bun_core::heap::into_raw(result_writer.into_boxed_slice())
@@ -610,7 +617,6 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let mut context: ThreadContext = unsafe { bun_core::ffi::zeroed_unchecked() };
     let has_context = get_context(&mut context);
 
-    #[allow(unused_mut)]
     let mut it: StackIterator = (if has_context && !cfg!(windows) {
         stack_iterator_init_with_context(None, debug_info, &mut context).ok()
     } else {
@@ -620,7 +626,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     // defer it.deinit() — handled by Drop
 
     while let Some(return_address) = it.next() {
-        print_last_unwind_error(&mut it, debug_info, w, &tty_config);
+        print_last_unwind_error(&mut it, debug_info, w, tty_config);
 
         // On arm64 macOS, the address of the last frame is 0x0 rather than 0x1 as on x86_64 macOS,
         // therefore, we do a check for `return_address == 0` before subtracting 1 from it to avoid
@@ -628,10 +634,10 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
         // condition on the subsequent iteration and return `null` thus terminating the loop.
         // same behaviour for x86-windows-msvc
         let address = return_address.saturating_sub(1);
-        let _ = print_source_at_address(debug_info, w, address, &tty_config, it.fp);
+        let _ = print_source_at_address(debug_info, w, address, tty_config, it.fp);
     }
     // Zig `while ... else` runs after normal loop exit (no `break` in body), so this is unconditional:
-    print_last_unwind_error(&mut it, debug_info, w, &tty_config);
+    print_last_unwind_error(&mut it, debug_info, w, tty_config);
 
     // remove nulls
     for itm in result_writer.iter_mut() {
@@ -652,7 +658,7 @@ fn print_source_at_address(
     debug_info: &mut SelfInfo,
     out_stream: &mut Vec<u8>,
     address: usize,
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
     fp: usize,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
@@ -732,7 +738,7 @@ fn print_unknown_source(
     debug_info: &mut SelfInfo,
     out_stream: &mut Vec<u8>,
     address: usize,
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
@@ -758,7 +764,7 @@ fn print_line_info(
     address: usize,
     symbol_name: &[u8],
     compile_unit_name: &[u8],
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
     // Zig: `comptime printLineFromFile: anytype` — anytype maps to generic/impl-Trait so it
     // monomorphizes (PORTING.md type map), not a runtime fn pointer.
     print_line_from_file: impl Fn(&mut Vec<u8>, &SourceLocation) -> Result<(), Error>,
@@ -909,7 +915,7 @@ fn print_last_unwind_error(
     it: &mut StackIterator,
     debug_info: &mut SelfInfo,
     out_stream: &mut Vec<u8>,
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
 ) {
     if !cfg!(debug_assertions) {
         unreachable!();
@@ -934,7 +940,7 @@ fn print_unwind_error(
     out_stream: &mut Vec<u8>,
     address: usize,
     err: UnwindError,
-    tty_config: &tty::Config,
+    tty_config: tty::Config,
 ) -> Result<(), Error> {
     // TODO(port): narrow error set
     if !cfg!(debug_assertions) {

@@ -660,7 +660,6 @@ pub fn load(
                         package_manager: manager.as_deref_mut(),
                     };
                     let value = dependency::to_dependency(*dep, &mut context);
-                    drop(context);
                     // PERF(port): was assume_capacity
                     catalogs.default.put_assume_capacity_context(
                         *dep_name,
@@ -688,7 +687,7 @@ pub fn load(
                     } else {
                         let entry = catalogs
                             .groups
-                            .get_or_put_adapted(*catalog_name, StringCtxAdapter(&str_ctx))?;
+                            .get_or_put_adapted(catalog_name, &StringCtxAdapter(&str_ctx))?;
                         if !entry.found_existing {
                             *entry.key_ptr = *catalog_name;
                             *entry.value_ptr = super::catalog_map::Map::default();
@@ -706,7 +705,6 @@ pub fn load(
                             package_manager: manager.as_deref_mut(),
                         };
                         let value = dependency::to_dependency(*dep, &mut context);
-                        drop(context);
                         // PERF(port): was assume_capacity
                         group.put_assume_capacity_context(
                             *dep_name,

@@ -8,13 +8,13 @@
 //! through the `bun_bundler::bundle_v2::CompletionStruct` trait
 //! (layout-agnostic).
 
-use bun_options_types::{LoaderExt as _, TargetExt as _};
+use bun_options_types::TargetExt as _;
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
-    BundleThread, BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
+    BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
     JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
 };
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
@@ -22,23 +22,24 @@ use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
 use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
-use bun_core::strings;
 use bun_io::KeepAlive;
 use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::WorkPool;
 use bun_jsc::event_loop::EventLoop;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsError};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, PathBuffer, SEP};
 use bun_ptr::BackRef;
-use bun_ptr::{RefCount, RefCounted};
+use bun_ptr::RefCount;
 use bun_standalone_graph::StandaloneModuleGraph::{
-    self as standalone_graph, CompileErrorReason, CompileResult, Flags as StandaloneFlags,
-    target_base_public_path, to_executable,
+    CompileErrorReason, CompileResult, Flags as StandaloneFlags, target_base_public_path,
+    to_executable,
 };
-use bun_sys::{self as sys, Dir, OpenDirOptions};
+use bun_sys::Dir;
+#[cfg(not(windows))]
+use bun_sys::OpenDirOptions;
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
@@ -338,7 +339,10 @@ impl JSBundleCompletionTask {
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
 
+        #[cfg(not(windows))]
         let mut root_dir = Dir::cwd();
+        #[cfg(windows)]
+        let root_dir = Dir::cwd();
 
         // On Windows, don't change root_dir, just pass the full relative path
         // On POSIX, change root_dir to the target directory and pass basename
@@ -405,7 +409,7 @@ impl JSBundleCompletionTask {
             outfile_for_executable,
             env,
             self.config.format,
-            WindowsOptions {
+            &WindowsOptions {
                 hide_console: compile_options.windows_hide_console,
                 icon: opt_box(&compile_options.windows_icon_path.list),
                 title: opt_box(&compile_options.windows_title.list),
@@ -430,7 +434,7 @@ impl JSBundleCompletionTask {
 
         if matches!(result, CompileResult::Success) {
             let entry = &mut output_files[entry_point_index];
-            entry.dest_path = full_outfile_path.clone();
+            entry.dest_path.clone_from(&full_outfile_path);
             entry.is_executable = true;
         }
 
@@ -547,8 +551,9 @@ impl JSBundleCompletionTask {
         let _drop_ref = unsafe { bun_ptr::ScopedRef::<Self>::adopt(ctx) };
 
         let vm = this.global_this.bun_vm_ptr();
+        // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
-            .unref(jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm));
+            .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
         if this.cancelled {
             return Ok(());
         }
@@ -785,9 +790,13 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
         // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        from_completion_handle(c)
-            .jsc_event_loop
-            .enqueue_task_concurrent(task)
+        // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
+        // passed through from the bundler vtable; the queue takes ownership.
+        unsafe {
+            from_completion_handle(c)
+                .jsc_event_loop
+                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
+        }
     },
 };
 
@@ -878,9 +887,18 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.no_macros = config.no_macros;
         transpiler.options.loaders =
             options::loaders_from_transform_options(config.loaders.as_ref(), config.target)?;
-        transpiler.options.entry_naming = config.names.entry_point.data.clone();
-        transpiler.options.chunk_naming = config.names.chunk.data.clone();
-        transpiler.options.asset_naming = config.names.asset.data.clone();
+        transpiler
+            .options
+            .entry_naming
+            .clone_from(&config.names.entry_point.data);
+        transpiler
+            .options
+            .chunk_naming
+            .clone_from(&config.names.chunk.data);
+        transpiler
+            .options
+            .asset_naming
+            .clone_from(&config.names.asset.data);
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
@@ -968,10 +986,10 @@ impl CompletionStruct for JSBundleCompletionTask {
                 .conditions
                 .append_slice(&[b"development"])?;
         }
-        // SAFETY: `transpiler.env` is the dotenv loader installed by
+        // `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
         transpiler.resolver.env_loader =
-            NonNull::new(unsafe { transpiler.env.cast::<bun_dotenv::Loader<'_>>() });
+            NonNull::new(transpiler.env.cast::<bun_dotenv::Loader<'_>>());
         // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options` (Zig assigned
         // the struct by value: `resolver.opts = transpiler.options`).
@@ -980,8 +998,9 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref;
-        // `enqueue_task_concurrent` takes `&self`.
+        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
+        // `ConcurrentTask::create` heap-allocates a fresh task; the
+        // queue takes ownership of it.
         self.jsc_event_loop
             .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
     }

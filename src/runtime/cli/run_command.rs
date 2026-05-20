@@ -13,7 +13,6 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::MutableString;
 use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
@@ -26,14 +25,11 @@ use bun_options_types::schema::api;
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_resolver::dir_info::DirInfo;
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_threading::Channel;
 use bun_which::which;
 
 use crate::cli;
-use crate::cli::Command;
 use crate::cli::arguments;
 use crate::cli::command::{ContextData, Tag as CommandTag};
 use crate::cli::shell_completions::ShellCompletions;
@@ -81,6 +77,7 @@ impl NpmArgs {
 
 /// Runtime knobs `Command::start` passes through; mirrors the Zig
 /// `comptime`-tuple that selected the per-tag exec body.
+#[derive(Clone, Copy)]
 pub struct ExecCfg {
     pub bin_dirs_only: bool,
     pub log_errors: bool,
@@ -154,6 +151,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Output::flush();
     }
 
+    #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// `findShell` — locate a POSIX shell on `$PATH`, falling back to a
@@ -251,7 +249,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use_system_shell: bool,
     ) -> Result<(), bun_core::Error> {
         let shell_bin = Self::find_shell(env.get(b"PATH").unwrap_or(b""), cwd)
-            .ok_or(bun_core::err!("MissingShell"))?;
+            .ok_or_else(|| bun_core::err!("MissingShell"))?;
         env.map
             .put(b"npm_lifecycle_event", name)
             .expect("unreachable");
@@ -905,10 +903,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         path_buf[entry_path.len()] = 0;
         // SAFETY: NUL-terminated above; `path_buf` outlives the call.
         let path_z = ZStr::from_buf(&path_buf[..], entry_path.len());
-        let src = match sys::File::read_from(Fd::cwd(), path_z) {
-            Ok(bytes) => bytes,
-            Err(err) => return Err(err.into()),
-        };
+        let src = sys::File::read_from(Fd::cwd(), path_z)?;
 
         crate::shell::Interpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
     }
@@ -981,7 +976,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.set_main(entry);
 
         if !ctx.runtime_options.eval.script.is_empty() {
-            // PORT NOTE: `ctx.runtime_options.eval.script` is process-lifetime
+            // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
             let script: &'static [u8] = unsafe {
@@ -1334,6 +1329,7 @@ impl Run {
         // SAFETY: `self.vm`/`self.ctx` are process-lifetime; written by
         // `boot()` before the API-lock trampoline runs.
         let vm = unsafe { &*self.vm };
+        // SAFETY: `self.ctx` is process-lifetime; see comment on `vm` above.
         let ro = unsafe { &(*self.ctx).runtime_options };
         if !ro.eval.script.is_empty() {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
@@ -1348,7 +1344,7 @@ impl Run {
     /// `Run.start` — load the entry point, run the event loop until idle,
     /// fire `beforeExit`/`exit`, then `globalExit`. Called under the JSC API
     /// lock via `hold_api_lock`.
-    #[allow(unused_assignments)] // `printed_…` writes before `global_exit` are intentional Zig-shape.
+    // `printed_…` writes before `global_exit` are intentional Zig-shape.
     fn start(&mut self) -> ! {
         // PORT NOTE: deref the raw VM/ctx pointers once so the rest of this
         // body can borrow `vm` and `ctx` alongside `self.entry_path`.
@@ -1356,6 +1352,7 @@ impl Run {
         // is the CLI's process-lifetime `ContextData`. Both are written by
         // `boot()`/`boot_standalone()` before the API-lock trampoline runs.
         let vm = unsafe { &mut *self.vm };
+        // SAFETY: `self.ctx` is process-lifetime; see comment on `vm` above.
         let ctx = unsafe { &*self.ctx };
         // SAFETY: `entry_path` is process-lifetime (heap from `heap::alloc`
         // or a borrow into the standalone graph); deref to a `'static` slice
@@ -1370,9 +1367,12 @@ impl Run {
             let opts = &ctx.runtime_options.cpu_prof;
             // SAFETY: `ctx` is process-lifetime; erase `Box<[u8]>` borrows to
             // `'static` for `CPUProfilerConfig` (Zig stored borrowed slices).
+            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
+            // SAFETY: same process-lifetime erasure as `name` above.
+            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
             vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name: unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) },
-                dir: unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) },
+                name,
+                dir,
                 md_format: opts.md_format,
                 json_format: opts.json_format,
                 interval: opts.interval,
@@ -1387,9 +1387,12 @@ impl Run {
         if ctx.runtime_options.heap_prof.enabled {
             let opts = &ctx.runtime_options.heap_prof;
             // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
+            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
+            // SAFETY: same process-lifetime erasure as `name` above.
+            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
             vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name: unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) },
-                dir: unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) },
+                name,
+                dir,
                 text_format: opts.text_format,
             });
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
@@ -1469,16 +1472,24 @@ impl Run {
         // ── hot-reloader enable (bun.js.zig:390-394) ───────────────────────
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                    self.vm,
-                    Some(entry),
-                )
+                // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
+                // (process-lifetime); it outlives the leaked reloader.
+                unsafe {
+                    bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+                        self.vm,
+                        Some(entry),
+                    )
+                }
             }
             cli::command::HotReload::Watch => {
-                bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                    self.vm,
-                    Some(entry),
-                )
+                // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
+                // (process-lifetime); it outlives the leaked reloader.
+                unsafe {
+                    bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                        self.vm,
+                        Some(entry),
+                    )
+                }
             }
             _ => {}
         }
@@ -1530,7 +1541,7 @@ impl Run {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => entry_point_load_failed(vm, &err),
+            Err(err) => entry_point_load_failed(vm, err),
         }
 
         // don't run the GC if we don't actually need to
@@ -1716,7 +1727,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn entry_point_load_failed(vm: &mut VirtualMachine, err: &bun_core::Error) -> ! {
+fn entry_point_load_failed(vm: &mut VirtualMachine, err: bun_core::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);
@@ -1944,12 +1955,12 @@ impl RunCommand {
             .map(<[u8]>::to_vec)
             .unwrap_or_default();
         if let Some(op) = original_path {
-            *op = path.clone();
+            op.clone_from(&path);
         }
 
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win = bun_paths::dirname(bun_node_exe.as_bytes())
-            .ok_or(bun_core::err!("FailedToGetTempPath"))?;
+            .ok_or_else(|| bun_core::err!("FailedToGetTempPath"))?;
         let found_node = env_loader
             .load_node_js_config(
                 bun_paths::fs::FileSystem::instance(),
@@ -2108,7 +2119,7 @@ impl RunCommand {
         Self::run_binary_without_bunx_path(
             ctx,
             executable,
-            executable_z.as_ptr().cast::<c_char>(),
+            executable_z,
             cwd,
             env,
             passthrough,
@@ -2116,7 +2127,7 @@ impl RunCommand {
         )
     }
 
-    fn run_binary_generic_error(executable: &[u8], silent: bool, err: sys::Error) -> ! {
+    fn run_binary_generic_error(executable: &[u8], silent: bool, err: &sys::Error) -> ! {
         if !silent {
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
@@ -2127,10 +2138,11 @@ impl RunCommand {
         Global::exit(1);
     }
 
+    /// `executable_z` is the NUL-terminated form of `executable`.
     pub fn run_binary_without_bunx_path(
         ctx: &mut ContextData,
         executable: &[u8],
-        executable_z: *const c_char,
+        executable_z: &ZStr,
         cwd: &[u8],
         env: &mut DotEnv::Loader<'static>,
         passthrough: &[Box<[u8]>],
@@ -2152,7 +2164,7 @@ impl RunCommand {
 
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
-            argv0: Some(executable_z),
+            argv0: Some(executable_z.as_ptr().cast::<c_char>()),
             envp: Some(envp.as_ptr().cast::<*const c_char>()),
             cwd: cwd.to_vec().into_boxed_slice(),
             stderr: sync::SyncStdio::Inherit,
@@ -2185,13 +2197,7 @@ impl RunCommand {
                     if !silent {
                         #[cfg(unix)]
                         {
-                            // SAFETY: `executable_z` is the NUL-terminated form
-                            // of `executable` (caller invariant).
-                            let exec_z = unsafe {
-                                let cstr = bun_core::ffi::cstr(executable_z);
-                                ZStr::from_raw(cstr.as_ptr().cast(), cstr.to_bytes().len())
-                            };
-                            match sys::stat(exec_z) {
+                            match sys::stat(executable_z) {
                                 Ok(stat) => {
                                     if sys::S::ISDIR(stat.st_mode as _) {
                                         pretty_errorln!(
@@ -2229,14 +2235,14 @@ impl RunCommand {
         match spawn_result {
             Err(err) => {
                 // an error occurred while spawning the process
-                Self::run_binary_generic_error(executable, silent, err);
+                Self::run_binary_generic_error(executable, silent, &err);
             }
             Ok(result) => {
                 let signal_code = result.status.signal_code();
                 match result.status {
                     // An error occurred after the process was spawned.
                     SpawnStatus::Err(err) => {
-                        Self::run_binary_generic_error(executable, silent, err);
+                        Self::run_binary_generic_error(executable, silent, &err);
                     }
 
                     SpawnStatus::Signaled(signal) => {
@@ -2381,10 +2387,7 @@ impl RunCommand {
 
         let mut try_fast_run = false;
         let mut skip_script_check = false;
-        if !target_name.is_empty() && target_name[0] == b'.' {
-            try_fast_run = true;
-            skip_script_check = true;
-        } else if paths::is_absolute(target_name) {
+        if (!target_name.is_empty() && target_name[0] == b'.') || paths::is_absolute(target_name) {
             try_fast_run = true;
             skip_script_check = true;
         } else if cfg.allow_fast_run_for_extensions {
@@ -2569,11 +2572,13 @@ impl RunCommand {
         // ── module resolution fallback (run_command.zig:1820-1857) ──────────
         // load module and run that module
         // TODO: run module resolution here - try the next condition if the module can't be found
+        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
+        let fs_top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
         bun_core::scoped_log!(
             RUN_LOG,
             "Try resolve `{}` in `{}`",
             bstr::BStr::new(target_name),
-            bstr::BStr::new(unsafe { (*this_transpiler.fs).top_level_dir }),
+            bstr::BStr::new(fs_top_level_dir),
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve. Zig: `defer resolver.opts.preserve_symlinks = saved`.
@@ -2717,7 +2722,7 @@ impl RunCommand {
                     Self::run_binary_without_bunx_path(
                         ctx,
                         stored,
-                        destination.as_ptr().cast::<c_char>(),
+                        destination,
                         top_level_dir,
                         env_loader,
                         &passthrough,
@@ -2735,9 +2740,10 @@ impl RunCommand {
         // `bun feedback` (run_command.zig:1921-1925).
         // SAFETY: `cli::CMD` is written once during single-threaded CLI
         // startup before any worker thread is spawned; read-only here.
+        let current_cmd = unsafe { cli::CMD.read() };
         if ctx.filters.is_empty()
             && !ctx.workspaces
-            && unsafe { cli::CMD.read() } == Some(CommandTag::AutoCommand)
+            && current_cmd == Some(CommandTag::AutoCommand)
             && target_name == b"feedback"
         {
             Self::bun_feedback(ctx)?;
@@ -3311,6 +3317,8 @@ impl RunCommand {
                 let url = &*::core::ptr::addr_of!((*slot).url);
                 ::core::slice::from_raw_parts(url.as_ptr(), url.len())
             };
+            // SAFETY: `slot` is the freshly-allocated `MaybeUninit` heap slot
+            // and `response_buffer` was `ptr::write`n above; address is valid.
             let response_buffer_ptr: *mut bun_core::MutableString =
                 unsafe { ::core::ptr::addr_of_mut!((*slot).response_buffer) };
             let d_ptr: *mut RemoteImageDownload = slot;
@@ -3463,7 +3471,7 @@ impl RunCommand {
             // directly. Honor COLUMNS so piped output and tests can
             // pin a width.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
-                if let Some(n) = bun_core::fmt::parse_int::<u16>(env, 10).ok() {
+                if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
                     if n > 0 {
                         break 'brk n;
                     }
@@ -3672,8 +3680,7 @@ impl RunCommand {
                     .ok()
                     .flatten()
                 {
-                    // SAFETY: resolver cache owns the DirInfo for the process lifetime.
-                    if let Some(entries) = unsafe { &*bin_dir }.get_entries_const() {
+                    if let Some(entries) = bin_dir.get_entries_const() {
                         let mut path_buf = PathBuffer::uninit();
                         let mut iter = entries.data.iter();
                         let mut has_copied = false;
@@ -3682,8 +3689,9 @@ impl RunCommand {
                             // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
                             // the resolver dir-cache for the process lifetime.
                             let value = unsafe { &**entry.1 };
-                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                            if value.kind(unsafe { &raw mut (*this_transpiler.fs).fs }, true)
+                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
+                            // non-null process-static singleton.
+                            if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                             {
                                 if !has_copied {
@@ -3744,8 +3752,9 @@ impl RunCommand {
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
-                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                            && value.kind(unsafe { &raw mut (*this_transpiler.fs).fs }, true)
+                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
+                            // non-null process-static singleton.
+                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                         {
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.

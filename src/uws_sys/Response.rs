@@ -558,7 +558,7 @@ impl<const SSL: bool> Response<SSL> {
                 sec_web_socket_protocol.len(),
                 sec_web_socket_extensions.as_ptr(),
                 sec_web_socket_extensions.len(),
-                ctx.map_or(core::ptr::null_mut(), |c| std::ptr::from_mut(c)),
+                ctx.map_or(core::ptr::null_mut(), std::ptr::from_mut),
             )
         }
     }

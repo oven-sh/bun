@@ -4,7 +4,7 @@ use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::server_component_boundary;
-use bun_collections::{MultiArrayList, VecExt};
+use bun_collections::MultiArrayList;
 use enum_map::EnumMap;
 
 use crate::IndexStringMap::IndexStringMap;
@@ -13,7 +13,6 @@ use crate::options;
 use crate::{AdditionalFile, BundleV2, ThreadPool};
 
 use bun_ast::Index;
-use bun_ast::Ref;
 
 // `bun.ast.Index.Int` — the underlying integer repr of `Index`.
 pub(crate) use crate::IndexInt;

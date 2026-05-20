@@ -1,5 +1,4 @@
 //! CSS dependency tracking — `@import` and `url()` references collected during printing.
-use bun_collections::VecExt;
 
 use crate::SourceLocation;
 // const Location = css.Location; — shadowed by the local `Location` below in Zig too.
@@ -70,7 +69,7 @@ impl ImportDependency {
             let s = crate::to_css::string(
                 bump,
                 supports,
-                crate::PrinterOptions::default(),
+                &crate::PrinterOptions::default(),
                 None,
                 local_names,
                 symbols,
@@ -91,7 +90,7 @@ impl ImportDependency {
             let s = crate::to_css::string(
                 bump,
                 &rule.media,
-                crate::PrinterOptions::default(),
+                &crate::PrinterOptions::default(),
                 None,
                 local_names,
                 symbols,

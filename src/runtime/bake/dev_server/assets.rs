@@ -1,7 +1,5 @@
 //! `DevServer.Assets` — content-addressable store on `/_bun/asset/{hash}.ext`.
 
-use core::mem::offset_of;
-
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{Output, fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;

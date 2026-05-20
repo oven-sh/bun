@@ -1,5 +1,4 @@
 use core::alloc::Allocator;
-use core::mem;
 use std::alloc::Global;
 
 use bun_alloc::AllocError;
@@ -128,10 +127,9 @@ impl LineOffsetTable {
         let loc_start = usize::try_from(loc.start).expect("int cast");
 
         let mut count = byte_offsets_to_start_of_line.len();
-        let mut i: usize = 0;
         while count > 0 {
             let step = count / 2;
-            i = original_line + step;
+            let i = original_line + step;
             let byte_offset = byte_offsets_to_start_of_line[i] as usize;
             if byte_offset == loc_start {
                 return Some(i);
@@ -209,7 +207,7 @@ impl LineOffsetTable {
                 let mut cp_bytes = [0u8; 4];
                 let take = (len_ as usize).min(remaining.len());
                 cp_bytes[..take].copy_from_slice(&remaining[..take]);
-                strings::decode_wtf8_rune_t::<i32>(&cp_bytes, len_, 0)
+                strings::decode_wtf8_rune_t::<i32>(cp_bytes, len_, 0)
             };
             let cp_len = len_ as usize;
 

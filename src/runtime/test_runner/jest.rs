@@ -1,5 +1,4 @@
 use core::ptr::NonNull;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
@@ -10,14 +9,12 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
 };
-#[allow(unused_imports)]
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
-use bun_core::strings;
 
 pub use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
-use super::scope_functions::{self, create_bound, strings as scope_strings, Mode as ScopeKind};
+use super::scope_functions::{create_bound, strings as scope_strings, Mode as ScopeKind};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
 use bun_test::js_fns::generic_hook;
@@ -480,8 +477,7 @@ pub mod Jest {
     pub fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let vm = global_object.bun_vm();
 
-        // SAFETY: bun_vm() returns the live per-thread VM; deref for a single field read.
-        if unsafe { (*vm).is_in_preload } || runner().is_none() {
+        if vm.is_in_preload || runner().is_none() {
             // in preload, no arguments needed
         } else {
             let arguments = callframe.arguments_old::<2>();
@@ -546,7 +542,7 @@ pub mod on_unhandled_rejection {
             // PORT NOTE: split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
-                .map(|e| std::ptr::from_mut::<bun_test::ExecutionEntry>(e));
+                .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
             if let Some(entry) = entry_ptr {
                 if let Some(sequence) = current_state_data.sequence(buntest) {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry) {
@@ -559,10 +555,10 @@ pub mod on_unhandled_rejection {
                 global_object,
                 Some(rejection),
                 true,
-                current_state_data.clone(),
+                &current_state_data,
             );
             buntest.add_result(current_state_data);
-            if let Err(e) = bun_test::BunTest::run(buntest_strong, global_object) {
+            if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
                 // TODO(blocked_on: bun_jsc::JSGlobalObject::report_uncaught_exception_from_error):
                 // the inherent method lives in the cfg-gated JSGlobalObject.rs impl.
                 let _ = e;
@@ -586,7 +582,7 @@ fn consume_arg(
     str_idx: &mut usize,
     args_idx: &mut usize,
     array_list: &mut Vec<u8>,
-    arg: &JSValue,
+    arg: JSValue,
     fallback: &[u8],
 ) -> JsResult<()> {
     // TODO(port): narrow error set
@@ -687,7 +683,7 @@ pub fn format_label(
                         &mut idx,
                         &mut args_idx,
                         &mut list,
-                        &current_arg,
+                        current_arg,
                         b"%s",
                     )?;
                 }
@@ -698,7 +694,7 @@ pub fn format_label(
                         &mut idx,
                         &mut args_idx,
                         &mut list,
-                        &current_arg,
+                        current_arg,
                         b"%i",
                     )?;
                 }
@@ -709,7 +705,7 @@ pub fn format_label(
                         &mut idx,
                         &mut args_idx,
                         &mut list,
-                        &current_arg,
+                        current_arg,
                         b"%d",
                     )?;
                 }
@@ -720,7 +716,7 @@ pub fn format_label(
                         &mut idx,
                         &mut args_idx,
                         &mut list,
-                        &current_arg,
+                        current_arg,
                         b"%f",
                     )?;
                 }

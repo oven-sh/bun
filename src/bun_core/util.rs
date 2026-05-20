@@ -242,7 +242,7 @@ impl<T: Copy> Unaligned<T> {
     #[inline]
     pub fn slice_align_cast(slice: &[Unaligned<T>]) -> &[T] {
         debug_assert!(
-            (slice.as_ptr() as usize) % core::mem::align_of::<T>() == 0,
+            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
             "Unaligned::slice_align_cast: pointer is not {}-byte aligned",
             core::mem::align_of::<T>(),
         );
@@ -256,7 +256,7 @@ impl<T: Copy> Unaligned<T> {
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
         debug_assert!(
-            (slice.as_ptr() as usize) % core::mem::align_of::<T>() == 0,
+            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
             "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
             core::mem::align_of::<T>(),
         );
@@ -267,15 +267,6 @@ impl<T: Copy> Unaligned<T> {
 
 // ─── needsAllocator ───────────────────────────────────────────────────────────
 // Zig: `fn needsAllocator(comptime Fn: anytype) bool { ArgsTuple(Fn).len > 2 }`
-// Used only to decide whether to pass `allocator` to `ensureUnusedCapacity`.
-// Allocator params are dropped in Rust (non-AST crate), so this is dead.
-// TODO(port): delete once all callers are migrated.
-#[doc(hidden)]
-#[inline(always)]
-const fn needs_allocator() -> bool {
-    false
-}
-
 // ─── trait impls for concrete collections ─────────────────────────────────────
 // PORT NOTE: these did not exist in the Zig — they are the Rust replacement for
 // the `@hasField` / `@hasDecl` probes. Impls for HashMap/Vec/MultiArrayList
@@ -321,11 +312,15 @@ impl<T> ArrayLike for Vec<T> {
 pub struct ZStr([u8]);
 
 impl ZStr {
-    pub const EMPTY: &'static ZStr = unsafe { Self::from_raw(b"\0".as_ptr(), 0) };
+    // SAFETY: `b"\0"` is a 'static 1-byte allocation with `ptr[0] == 0`, so
+    // `ptr[len] == 0` holds for `len = 0` and `ptr[..0]` is trivially readable.
+    pub const EMPTY: &'static ZStr = unsafe { Self::from_raw(c"".as_ptr().cast::<u8>(), 0) };
 
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
+        // SAFETY: caller upholds `ptr[..len]` readable for `'a`; `ZStr` is
+        // `repr(transparent)` over `[u8]` so the fat-pointer cast preserves layout.
         unsafe {
             &*(std::ptr::from_ref::<[u8]>(core::slice::from_raw_parts(ptr, len)) as *const ZStr)
         }
@@ -333,6 +328,7 @@ impl ZStr {
     /// SAFETY: `ptr[len] == 0` and `ptr[..=len]` is writable for `'a`.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u8, len: usize) -> &'a mut ZStr {
+        // SAFETY: caller contract above; `repr(transparent)` over `[u8]`.
         unsafe {
             &mut *(std::ptr::from_mut::<[u8]>(core::slice::from_raw_parts_mut(ptr, len))
                 as *mut ZStr)
@@ -674,10 +670,14 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
 pub struct WStr([u16]);
 
 impl WStr {
+    // SAFETY: `[0u16]` is a 'static 1-unit allocation with `ptr[0] == 0`, so
+    // `ptr[len] == 0` holds for `len = 0` and `ptr[..0]` is trivially readable.
     pub const EMPTY: &'static WStr = unsafe { Self::from_raw([0u16].as_ptr(), 0) };
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
     pub const unsafe fn from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
+        // SAFETY: caller upholds `ptr[..len]` readable for `'a`; `WStr` is
+        // `repr(transparent)` over `[u16]` so the fat-pointer cast preserves layout.
         unsafe {
             &*(std::ptr::from_ref::<[u16]>(core::slice::from_raw_parts(ptr, len)) as *const WStr)
         }
@@ -744,7 +744,12 @@ impl WStr {
     /// through an owned buffer.
     #[inline]
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
-        unsafe { &mut *(core::slice::from_raw_parts_mut(ptr, len) as *mut [u16] as *mut WStr) }
+        // SAFETY: caller upholds `ptr[..=len]` writable for `'a`; `WStr` is
+        // `repr(transparent)` over `[u16]` so the fat-pointer cast preserves layout.
+        unsafe {
+            &mut *(std::ptr::from_mut::<[u16]>(core::slice::from_raw_parts_mut(ptr, len))
+                as *mut WStr)
+        }
     }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {
@@ -1339,7 +1344,7 @@ impl Fd {
     #[cfg(not(windows))]
     #[inline]
     pub const fn is_stdio(self) -> bool {
-        matches!(self.0, 0 | 1 | 2)
+        matches!(self.0, 0..=2)
     }
     #[cfg(windows)]
     pub fn is_stdio(self) -> bool {
@@ -1606,6 +1611,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     }
     #[cfg(target_os = "macos")]
     {
+        let _ = cap;
         // SAFETY: F_GETPATH expects buf with at least MAXPATHLEN bytes; callers
         // pass ≥1024 which is the platform MAXPATHLEN on Darwin.
         let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
@@ -1766,6 +1772,7 @@ impl core::fmt::Display for Fd {
 /// crate dep, just `extern` symbols; libuv is linked into the final binary).
 pub mod fd {
     use super::Fd;
+    #[cfg(windows)]
     use core::ffi::{c_int, c_void};
 
     // Written once in windows_stdio::init() during single-threaded startup
@@ -1971,10 +1978,16 @@ pub mod io {
     impl Writer {
         #[inline]
         pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
+            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter
+            // (see type doc); `self` was produced by upcasting `&mut Adapter`,
+            // so the vtable fn receives the same pointer it was registered with.
             unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
         }
         #[inline]
         pub fn flush(&mut self) -> Result<(), crate::Error> {
+            // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter;
+            // `self` is the same pointer the adapter registered its vtable with,
+            // so the callee's downcast back to the concrete type is sound.
             unsafe { (self.flush)(std::ptr::from_mut(self)) }
         }
         /// Alias for `print` so `write!(w, ...)` works.
@@ -2189,10 +2202,14 @@ pub mod io {
     impl Write for Writer {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
+            // receives the same pointer it was registered with (see type doc).
             unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
         }
         #[inline]
         fn flush(&mut self) -> Result<(), crate::Error> {
+            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
+            // receives the same pointer it was registered with (see type doc).
             unsafe { (self.flush)(core::ptr::from_mut(self)) }
         }
     }
@@ -2304,6 +2321,8 @@ pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
 // `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
 // hazard is fully accounted for by this `unsafe impl Sync`.)
 unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
+// SAFETY: `RacyCell<T>` owns a `T` by value via `Cell<T>`; sending the cell to
+// another thread is sound exactly when sending `T` itself is (`T: Send`).
 unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
 
 impl<T> RacyCell<T> {
@@ -2362,6 +2381,7 @@ pub struct ThreadLock {
 // `Cell` is `!Sync` but the AcqRel `swap` on `owning_thread` is the lock that
 // serializes its non-atomic load/store across threads.
 unsafe impl Sync for ThreadLock {}
+#[cfg(debug_assertions)]
 const INVALID_THREAD_ID: u64 = 0;
 impl ThreadLock {
     pub const fn init_unlocked() -> Self {
@@ -2549,7 +2569,7 @@ impl StackCheck {
     /// Is there enough stack space to safely recurse?
     /// Zig: `> 256K` on Windows, `> 128K` elsewhere (bun.zig:3762).
     #[inline]
-    pub fn is_safe_to_recurse(&self) -> bool {
+    pub fn is_safe_to_recurse(self) -> bool {
         // Zig uses `-|` (saturating sub): if probe < end (already past limit),
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
@@ -2568,7 +2588,7 @@ impl StackCheck {
     /// next check — on Windows a single stack `PathBuffer` is ~96 KB, so a
     /// chain of two or three exceeds the default 256 KB headroom.
     #[inline]
-    pub fn is_safe_to_recurse_with_extra(&self, extra: usize) -> bool {
+    pub fn is_safe_to_recurse_with_extra(self, extra: usize) -> bool {
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
         let threshold: usize = if cfg!(windows) {
             256 * 1024
@@ -2713,6 +2733,9 @@ pub struct Once<T, F = ()> {
 // `std::sync::OnceLock` (`T: Send` because init may happen on a different
 // thread than the reader; `T: Sync` because `&T` crosses threads).
 unsafe impl<T: Send + Sync, F: Sync> Sync for Once<T, F> {}
+// SAFETY: `Once<T, F>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`) and an
+// `F` by value; sending the whole struct to another thread is sound exactly
+// when sending its owned fields is (`T: Send`, `F: Send`).
 unsafe impl<T: Send, F: Send> Send for Once<T, F> {}
 impl<T: core::panic::RefUnwindSafe, F: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe
     for Once<T, F>
@@ -2793,7 +2816,7 @@ impl<T, F> Once<T, F> {
             // SAFETY: we hold BUSY exclusively (CAS won); no other thread can
             // be reading or writing `cell` until we publish DONE below.
             unsafe { (*self.cell.get()).write(v) };
-            core::mem::forget(guard);
+            let _ = core::mem::ManuallyDrop::new(guard);
             self.state
                 .store(ONCE_DONE, core::sync::atomic::Ordering::Release);
         }
@@ -3089,8 +3112,7 @@ pub fn csprng(bytes: &mut [u8]) {
 pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
     static CELL: Once<Result<ZBox, crate::Error>> = Once::new();
     let r = CELL.get_or_init(|| {
-        #[allow(unused_mut)]
-        let mut path = std::env::current_exe().map_err(crate::Error::from)?;
+        let path = std::env::current_exe().map_err(crate::Error::from)?;
         // PORT NOTE: Zig's `std.fs.selfExePath` resolves symlinks. Rust's
         // `current_exe()` already does on Linux (`readlink /proc/self/exe`),
         // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
@@ -3103,9 +3125,7 @@ pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
         // (test/js/node/process/process-args.test.js,
         //  test/js/node/test/parallel/test-process-execpath.js).
         #[cfg(any(target_vendor = "apple", windows))]
-        if let Ok(real) = path.canonicalize() {
-            path = real;
-        }
+        let path = path.canonicalize().unwrap_or(path);
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStringExt;
@@ -3313,12 +3333,35 @@ pub enum EmbedKind {
 pub type EmbedDir = EmbedKind;
 
 pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static str {
-    debug_assert!(crate::Environment::IS_DEBUG);
     panic!(
         "runtime_embed_file({sub_path}): non-embedded debug load requires a per-site \
          static cache — migrate this call to `bun_core::runtime_embed_file!` or rebuild \
          with codegen_embed",
     );
+}
+
+#[doc(hidden)]
+pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
+    // SAFETY: CODEGEN_PATH/BASE_PATH originate from `option_env!` (`&'static str`
+    // → bytes), so the bytes are valid UTF-8 by construction.
+    let from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
+    let mut p = match kind {
+        EmbedKind::Codegen | EmbedKind::CodegenEager => {
+            ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH))
+        }
+        EmbedKind::Src | EmbedKind::SrcEager => {
+            let mut b = ::std::path::PathBuf::from(from(crate::build_options::BASE_PATH));
+            b.push("src");
+            b
+        }
+    };
+    p.push(sub);
+    ::std::fs::read_to_string(&p).unwrap_or_else(|e| {
+        panic!(
+            "Failed to load '{}': {e}\n\nTo improve iteration speed, some files are not embedded but loaded at runtime, at the cost of making the binary non-portable. To fix this, build with codegen_embed.",
+            p.display(),
+        )
+    })
 }
 
 /// Per-call-site embedded file. `($root, $sub_path)` mirrors the Zig
@@ -3379,32 +3422,7 @@ macro_rules! __runtime_embed_impl {
     }};
     (@load $kind:expr, $sub:literal) => {{
         static __CELL: $crate::Once<String> = $crate::Once::new();
-        __CELL.get_or_init(|| {
-            // CODEGEN_PATH/BASE_PATH come from `option_env!` (always &str → bytes);
-            // round-tripping through validation is wasted work.
-            // SAFETY: see above — provenance is a `&'static str` literal.
-            let __from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
-            let mut p = match $kind {
-                $crate::EmbedKind::Codegen | $crate::EmbedKind::CodegenEager => {
-                    ::std::path::PathBuf::from(__from($crate::build_options::CODEGEN_PATH))
-                }
-                $crate::EmbedKind::Src | $crate::EmbedKind::SrcEager => {
-                    let mut b = ::std::path::PathBuf::from(__from($crate::build_options::BASE_PATH));
-                    b.push("src");
-                    b
-                }
-            };
-            p.push($sub);
-            ::std::fs::read_to_string(&p).unwrap_or_else(|e| {
-                panic!(
-                    "Failed to load '{}': {e}\n\n\
-                     To improve iteration speed, some files are not embedded but loaded \
-                     at runtime, at the cost of making the binary non-portable. To fix \
-                     this, build with codegen_embed.",
-                    p.display(),
-                )
-            })
-        }).as_str()
+        __CELL.get_or_init(|| $crate::__runtime_embed_load($kind, $sub)).as_str()
     }};
 }
 
@@ -3437,7 +3455,7 @@ pub struct StringPointer {
 }
 impl StringPointer {
     #[inline]
-    pub fn slice<'a>(&self, buf: &'a [u8]) -> &'a [u8] {
+    pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
         &buf[self.offset as usize..(self.offset + self.length) as usize]
     }
     #[inline]
@@ -3651,10 +3669,7 @@ macro_rules! extern_union_accessors {
 /// accepts anything that is itself viewable as bytes (covers the actual call
 /// sites: `u8` tags, `usize` lengths, `Index` newtypes).
 #[inline]
-pub fn write_any_to_hasher<H: Hasher + ?Sized, T: AsBytes + ?Sized>(hasher: &mut H, thing: T)
-where
-    T: Sized,
-{
+pub fn write_any_to_hasher<H: Hasher + ?Sized, T: AsBytes>(hasher: &mut H, thing: T) {
     hasher.update(thing.as_bytes_for_hash());
 }
 
@@ -3768,7 +3783,7 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
     #[inline]
-    pub fn sort_fn_asc(_: &(), a: &Self, b: &Self) -> bool {
+    pub fn sort_fn_asc(_: (), a: &Self, b: &Self) -> bool {
         a.0 < b.0
     }
 }
@@ -4057,7 +4072,7 @@ pub mod base64 {
     /// `std.base64.standard.Encoder.calcSize` — alias of `encode_len` taking a length.
     #[inline]
     pub const fn standard_encoder_calc_size(source_len: usize) -> usize {
-        ((source_len + 2) / 3) * 4
+        source_len.div_ceil(3) * 4
     }
 
     /// `std.base64.standard.Encoder.encode` returning the written sub-slice.
@@ -4205,11 +4220,12 @@ static OS_ARGV: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
 /// already have been populated from the fallback path.
 pub unsafe fn init_argv(argc: core::ffi::c_int, argv: *const *const core::ffi::c_char) {
     OS_ARGC.store(argc.max(0) as usize, core::sync::atomic::Ordering::Relaxed);
-    OS_ARGV.store(argv as *mut _, core::sync::atomic::Ordering::Relaxed);
+    OS_ARGV.store(argv.cast_mut(), core::sync::atomic::Ordering::Relaxed);
 }
 
 /// Kernel-provided argv slice if [`init_argv`] was called, else `None`.
 #[inline]
+#[cfg(not(windows))]
 fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
     let p = OS_ARGV.load(core::sync::atomic::Ordering::Relaxed);
     if p.is_null() {
@@ -4587,6 +4603,9 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 /// `PathBuffer` and returns the NUL-terminated slice on success.
 pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     #[cfg(unix)]
+    // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
+    // success the returned pointer aliases `buf` and is NUL-terminated, so
+    // `strlen` reads in-bounds.
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
@@ -4678,6 +4697,8 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         n += bin.len();
         buf.0[n] = 0;
         #[cfg(unix)]
+        // SAFETY: `buf.0[n] == 0` was just written, so `buf.0.as_ptr()` is a
+        // valid NUL-terminated C string for `access(2)`.
         unsafe {
             if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
                 return Some(n);
@@ -4762,7 +4783,7 @@ pub fn exit_thread() -> ! {
     #[cfg(windows)]
     // `ExitThread` is declared `safe fn` in `bun_windows_sys::kernel32`.
     crate::windows_sys::kernel32::ExitThread(0);
-    #[allow(unreachable_code)]
+    #[cfg(not(any(unix, windows)))]
     loop {
         core::hint::spin_loop();
     }
@@ -4876,6 +4897,10 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
+    // SAFETY: the FFI calls below (`on_before_reload_process_linux`, `execve`)
+    // receive only locally-built NUL-terminated argv/envp arrays terminated by
+    // a null pointer; on success `execve` never returns, on failure errno is
+    // read. No borrowed Rust state is observed after the exec.
     unsafe {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
@@ -4915,7 +4940,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // execve only returns on error.
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
         if may_return {
-            crate::output::pretty_errorln(&format_args!(
+            crate::output::pretty_errorln(format_args!(
                 "error: Failed to reload process: errno {}",
                 errno
             ));
@@ -4944,7 +4969,7 @@ pub struct SpawnStatus {
 }
 impl SpawnStatus {
     #[inline]
-    pub fn is_ok(&self) -> bool {
+    pub fn is_ok(self) -> bool {
         self.code == 0
     }
 }
@@ -5062,6 +5087,10 @@ pub mod spawn_ffi {
 
 pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
     #[cfg(unix)]
+    // SAFETY: argv strings are owned `ZBox`es (NUL-terminated) kept alive in
+    // `cargs` for the duration of the spawn; `ptrs`/`environ` are null-
+    // terminated `*const c_char` arrays as required by `posix_spawn_bun` /
+    // `posix_spawnp`. `waitpid` is passed a valid `&mut c_int` out-param.
     unsafe {
         let cargs: Vec<ZBox> = argv
             .iter()
@@ -5280,9 +5309,7 @@ impl Timespec {
         if self.sec <= 0 {
             return self.nsec.max(0) as u64;
         }
-        let s_ns = (self.sec as u64)
-            .checked_mul(Self::NS_PER_S as u64)
-            .unwrap_or(u64::MAX);
+        let s_ns = (self.sec as u64).saturating_mul(Self::NS_PER_S as u64);
         // Zig-exact (bun.zig:3313 returns maxInt(i64))
         s_ns.checked_add(self.nsec.max(0) as u64)
             .unwrap_or(i64::MAX as u64)
@@ -5421,8 +5448,8 @@ impl Timespec {
             };
             clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
             Timespec {
-                sec: ts.tv_sec as i64,
-                nsec: ts.tv_nsec as i64,
+                sec: ts.tv_sec,
+                nsec: ts.tv_nsec,
             }
         }
         #[cfg(not(unix))]
@@ -5495,7 +5522,7 @@ pub mod mock_time {
 // soft-float decode; revisit once `core::f16` stabilizes.
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Default, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub struct f16(pub u16);
 
 impl f16 {
@@ -5548,6 +5575,8 @@ impl From<f16> for f32 {
 // `f16`, no padding, `Copy + 'static`. Enables safe `bytemuck::cast_slice`
 // from `&[u8]` for Float16Array printing (ConsoleObject).
 unsafe impl bytemuck::Zeroable for f16 {}
+// SAFETY: `#[repr(transparent)]` over `u16` — no padding, every bit pattern is
+// valid, `Copy + Zeroable + 'static`; satisfies all `bytemuck::Pod` invariants.
 unsafe impl bytemuck::Pod for f16 {}
 impl core::fmt::Display for f16 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -5651,7 +5680,7 @@ pub mod perf {
                 linux: Some(Linux::init(name)),
             };
         }
-        #[allow(unreachable_code)]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = name;
             Ctx::DISABLED
@@ -5698,7 +5727,7 @@ pub mod perf {
             // SAFETY: FFI; pointer is NUL-terminated within `buf`.
             let _ = unsafe {
                 sys::Bun__linux_trace_emit(
-                    buf.as_ptr() as *const core::ffi::c_char,
+                    buf.as_ptr().cast::<core::ffi::c_char>(),
                     i64::try_from(duration).unwrap_or(i64::MAX),
                 )
             };
@@ -5715,7 +5744,6 @@ pub mod perf {
             /// No preconditions; returns 0/1 based on tracefs availability.
             pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
             /// No preconditions.
-            #[allow(dead_code)]
             pub safe fn Bun__linux_trace_close();
             pub fn Bun__linux_trace_emit(
                 event_name: *const core::ffi::c_char,

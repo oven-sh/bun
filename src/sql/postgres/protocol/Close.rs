@@ -1,6 +1,5 @@
 use super::new_writer::NewWriter;
 use super::portal_or_prepared_statement::PortalOrPreparedStatement;
-use super::write_wrap::WriteWrap;
 
 /// Close (F)
 /// Byte1('C')

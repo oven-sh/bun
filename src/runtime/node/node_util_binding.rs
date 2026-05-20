@@ -185,7 +185,7 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     for (k, v) in map.iter() {
         obj.put(
             global,
-            &ZigString::init_utf8(k),
+            ZigString::init_utf8(k),
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         );
     }

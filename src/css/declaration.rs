@@ -43,16 +43,6 @@ pub struct DeclarationBlock<'bump> {
     pub declarations: DeclarationList<'bump>,
 }
 
-// SAFETY: `bun_alloc::ArenaVec<'bump, T>` is `!Send`/`!Sync` because it
-// holds a raw `NonNull<T>` and `&'bump Bump` (Bump is `!Sync`). After parsing,
-// the CSS AST is treated as an immutable, owned tree shared read-only across
-// the bundler thread pool (Zig passes the same arena-backed AST between
-// threads freely). The `&Bump` is never used to allocate post-parse, and the
-// element storage is uniquely owned exactly like `Vec<T>`, so thread-safety
-// follows `Property`'s auto-traits.
-unsafe impl<'bump> Send for DeclarationBlock<'bump> {}
-unsafe impl<'bump> Sync for DeclarationBlock<'bump> {}
-
 pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
 // blocked_on: Printer::new signature (Zig passes arena + Managed(u8) +
@@ -69,7 +59,7 @@ impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
             &bump,
             bun_alloc::ArenaVec::<u8>::new_in(&bump),
             &mut arraylist,
-            css::PrinterOptions::default(),
+            &css::PrinterOptions::default(),
             None,
             None,
             &symbols,
@@ -80,7 +70,7 @@ impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
         match res {
             Ok(()) => {}
             Err(e) => {
-                return write!(writer, "<error writing declaration block: {}>\n", e.name());
+                return writeln!(writer, "<error writing declaration block: {}>", e.name());
             }
         }
         write!(writer, "{}", bstr::BStr::new(&arraylist))
@@ -263,7 +253,7 @@ impl DeclarationBlock<'static> {
         while let Some(res) = parser.next() {
             if let Err(e) = res {
                 if options.error_recovery {
-                    options.warn(e);
+                    options.warn(&e);
                     continue;
                 }
                 // errdefer doesn't fire on `return .{ .err = ... }` — Result(T) is a tagged
@@ -300,7 +290,6 @@ impl<'bump> DeclarationBlock<'bump> {
     }
 
     pub fn eql(&self, other: &Self) -> bool {
-        use crate::generics::CssEql;
         if self.declarations.len() != other.declarations.len()
             || self.important_declarations.len() != other.important_declarations.len()
         {

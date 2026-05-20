@@ -89,7 +89,6 @@ macro_rules! jsc_host_abi {
 // Capitalized re-exports — Zig spells these `JSHostFn*` (acronym-caps); the
 // PORTING.md acronym rule lowercases to `Js…`, but enough call sites (and the
 // crate-root re-export in lib.rs) use the Zig spelling that both must resolve.
-#[allow(non_camel_case_types)]
 pub use {
     JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig,
     JsHostFnZigWithContext as JSHostFnZigWithContext,
@@ -395,9 +394,13 @@ pub fn host_fn_static_passthrough(
 /// from the running VM and `callFrame` is the on-stack frame pointer — so the
 /// unchecked `_nn` variant is used to drop the two `testq; je <panic>` pairs
 /// from every `HOST_EXPORT` entry (`debug_assert!`ed in debug builds).
+///
+/// # Safety
+/// `global` and `callframe` must be non-null and valid for the duration of the
+/// call (guaranteed by the JSC host-function ABI for every `JsHostFn` thunk).
 #[track_caller]
 #[inline]
-pub fn host_fn_static_raw<R: IntoHostFnReturn>(
+pub unsafe fn host_fn_static_raw<R: IntoHostFnReturn>(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
@@ -410,8 +413,12 @@ pub fn host_fn_static_raw<R: IntoHostFnReturn>(
 
 /// Raw-pointer entry for `host`-shape exports, no exception scope.
 /// See [`host_fn_static_raw`].
+///
+/// # Safety
+/// `global` and `callframe` must be non-null and valid for the duration of the
+/// call (guaranteed by the JSC host-function ABI for every `JsHostFn` thunk).
 #[inline]
-pub fn host_fn_static_passthrough_raw(
+pub unsafe fn host_fn_static_passthrough_raw(
     global: *mut JSGlobalObject,
     callframe: *mut CallFrame,
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
@@ -618,8 +625,13 @@ pub fn host_fn_internal_props_shared<T, R: IntoHostFnReturn>(
 /// impl MUST `Box::leak`/`Box::into_raw` as its FIRST step (before any
 /// fallible work) so the allocation is not freed by Box drop on panic while
 /// other ref holders still alias it.
+///
+/// # Safety
+/// `this` must be the unique GC-owned `m_ctx` pointer originally produced by
+/// `Box::into_raw` in the construct path (`IntoHostConstructReturn`), valid
+/// and not concurrently accessed.
 #[inline]
-pub fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
+pub unsafe fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box<T>)) {
     // SAFETY: `this` is the GC-owned `m_ctx` pointer, valid and not
     // concurrently accessed (mutator-thread sweep). It was produced by
     // `Box::into_raw` in the construct path (`IntoHostConstructReturn`).
@@ -733,37 +745,6 @@ pub fn from_js_host_call_generic<R>(
 }
 
 // ───────────────────────── error-set parsing (comptime) ─────────────────────────
-
-#[derive(Default, Clone, Copy)]
-struct ParsedHostFunctionErrorSet {
-    out_of_memory: bool,
-    js_error: bool,
-}
-
-// Zig: `inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ...`
-//
-// Zig iterated `@typeInfo(ErrorSet)` at comptime; Rust has no error-set reflection, so the
-// `#[bun_jsc::host_fn]` proc-macro supplies the variant names as string literals and this
-// helper validates them at const-eval time. An unknown name `panic!`s — the const-context
-// analogue of Zig's `@compileError`. The `T: type` parameter (used only for the diagnostic
-// string in Zig) is dropped; the macro embeds the function name in its own error message.
-#[allow(dead_code)]
-const fn parse_error_set(errors: &[&str]) -> ParsedHostFunctionErrorSet {
-    let mut errs = ParsedHostFunctionErrorSet { out_of_memory: false, js_error: false };
-    let mut i = 0;
-    while i < errors.len() {
-        if bun_collections::const_str_eq(errors[i], "OutOfMemory") {
-            errs.out_of_memory = true;
-        } else if bun_collections::const_str_eq(errors[i], "JSError") {
-            errs.js_error = true;
-        } else {
-            // Zig: @compileError("Return value from host function '...' can not contain error '...'")
-            panic!("Return value from host function can not contain this error");
-        }
-        i += 1;
-    }
-    errs
-}
 
 // For when bubbling up errors to functions that require a C ABI boundary
 // TODO: make this not need a 'global_this'

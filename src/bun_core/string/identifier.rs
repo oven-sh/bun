@@ -92,7 +92,7 @@ pub fn is_id_start_es5(cp: u32) -> bool {
     let stage2_idx = id_start_es5::STAGE1[high] as u32;
     let bit_pos = stage2_idx + low;
     let u64_idx = (bit_pos >> 6) as usize;
-    let bit_idx = (bit_pos & 63) as u32;
+    let bit_idx = bit_pos & 63;
     (id_start_es5::STAGE2[u64_idx] & (1u64 << bit_idx)) != 0
 }
 mod id_start_es5 {
@@ -554,7 +554,7 @@ pub fn is_id_continue_es5(cp: u32) -> bool {
     let stage2_idx = id_continue_es5::STAGE1[high] as u32;
     let bit_pos = stage2_idx + low;
     let u64_idx = (bit_pos >> 6) as usize;
-    let bit_idx = (bit_pos & 63) as u32;
+    let bit_idx = bit_pos & 63;
     (id_continue_es5::STAGE2[u64_idx] & (1u64 << bit_idx)) != 0
 }
 mod id_continue_es5 {
@@ -1016,7 +1016,7 @@ pub fn is_id_start_es_next(cp: u32) -> bool {
     let stage2_idx = id_start_es_next::STAGE1[high] as u32;
     let bit_pos = stage2_idx + low;
     let u64_idx = (bit_pos >> 6) as usize;
-    let bit_idx = (bit_pos & 63) as u32;
+    let bit_idx = bit_pos & 63;
     (id_start_es_next::STAGE2[u64_idx] & (1u64 << bit_idx)) != 0
 }
 mod id_start_es_next {
@@ -1791,7 +1791,7 @@ pub fn is_id_continue_es_next(cp: u32) -> bool {
     let stage2_idx = id_continue_es_next::STAGE1[high] as u32;
     let bit_pos = stage2_idx + low;
     let u64_idx = (bit_pos >> 6) as usize;
-    let bit_idx = (bit_pos & 63) as u32;
+    let bit_idx = bit_pos & 63;
     (id_continue_es_next::STAGE2[u64_idx] & (1u64 << bit_idx)) != 0
 }
 mod id_continue_es_next {

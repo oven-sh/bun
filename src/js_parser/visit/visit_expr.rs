@@ -1,13 +1,5 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    unreachable_code
-)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -21,14 +13,9 @@ use crate::parser::{
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
-use bun_alloc::ArenaVecExt as _;
-use bun_alloc::ArenaVecExt as _;
-use bun_alloc::ArenaVecExt as _;
-use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
-use bun_ast::G::Property;
 use bun_ast::flags as Flags;
-use bun_ast::{B, E, Expr, ExprNodeIndex, ExprNodeList, G, Scope, Stmt, Symbol};
+use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Stmt, Symbol};
 
 // Local short-hands so the visitor bodies read close to the Zig
 // (`expr.data.e_dot`, `Expr.Data.e_binary`, `Op.Code.un_typeof`) without a
@@ -728,9 +715,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     _ => None,
                 };
 
-                if ref_.is_some() && !p.options.features.is_macro_runtime {
-                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_.unwrap()).copied() {
-                        p.ignore_usage(ref_.unwrap());
+                if let Some(ref_) = ref_
+                    && !p.options.features.is_macro_runtime
+                {
+                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied() {
+                        p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
                             return;
@@ -819,7 +808,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
-        let mut e_ = expr.data.e_binary().expect("infallible: variant checked");
+        let e_ = expr.data.e_binary().expect("infallible: variant checked");
 
         // The handling of binary expressions is convoluted because we're using
         // iteration on the heap instead of recursion on the call stack to avoid
@@ -1086,7 +1075,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && number.value % 1.0 == 0.0
                 {
                     // "foo"[2] -> "o"
-                    if let Some(mut str_) = target.data.as_e_string() {
+                    if let Some(str_) = target.data.as_e_string() {
                         if !str_.is_utf16 {
                             let literal = str_.data;
                             let num: usize = index
@@ -1733,41 +1722,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            if property.value.is_some() {
+            if let Some(value) = &mut property.value {
                 // Propagate name from property key for decorated anonymous class expressions
                 // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
                 if in_.assign_target == js_ast::AssignTarget::None
-                    && matches!(
-                        property.value.expect("infallible: prop has value").data,
-                        Data::EClass(..)
-                    )
-                    && property
-                        .value
-                        .unwrap()
+                    && matches!(value.data, Data::EClass(..))
+                    && value
                         .data
                         .e_class()
                         .unwrap()
                         .should_lower_standard_decorators
-                    && property
-                        .value
-                        .expect("infallible: prop has value")
+                    && value
                         .data
                         .e_class()
                         .expect("infallible: variant checked")
                         .class_name
                         .is_none()
-                    && property.key.is_some()
-                    && matches!(
-                        property.key.expect("infallible: prop has key").data,
-                        Data::EString(..)
-                    )
+                    && let Some(key) = property.key
+                    && matches!(key.data, Data::EString(..))
                 {
-                    let key_str = property
-                        .key
-                        .expect("infallible: prop has key")
-                        .data
-                        .e_string()
-                        .expect("infallible: variant checked");
+                    let key_str = key.data.e_string().expect("infallible: variant checked");
                     // PORT NOTE: Zig `string(arena)` transcodes UTF-16; while
                     // E.rs has duplicate impls (E0034), reach the bytes directly
                     // — class-name keys are parser-produced (UTF-8, no rope).
@@ -1778,7 +1752,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                 }
                 p.visit_expr_in_out(
-                    property.value.as_mut().expect("infallible: prop has value"),
+                    value,
                     ExprIn {
                         assign_target: in_.assign_target,
                         ..Default::default()
@@ -2516,7 +2490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
             args_mut,
-            VisitArgsOpts {
+            &VisitArgsOpts {
                 has_rest_arg: e_.has_rest_arg,
                 body: dupe,
                 is_unique_formal_parameters: true,

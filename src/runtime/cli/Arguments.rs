@@ -8,7 +8,7 @@
 //! const-fn slice concat (`bun_clap::concat_params!`), matching Zig's comptime
 //! `clap.parseParam(...) ++ ...`.
 
-use bun_options_types::{LoaderExt as _, TargetExt as _};
+use bun_options_types::LoaderExt as _;
 
 use bstr::BStr;
 use bun_bundler::options;
@@ -25,10 +25,8 @@ use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptio
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, platform};
-use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::cli;
-use crate::cli::Bunfig;
 use crate::cli::colon_list_type::ColonListType;
 use crate::cli::command::{self, Context, Tag as CommandTag};
 use crate::cli::concat_params;
@@ -43,7 +41,7 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 
 pub fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {
     let option_loader =
-        bun_ast::Loader::from_string(input).ok_or(bun_core::err!("InvalidLoader"))?;
+        bun_ast::Loader::from_string(input).ok_or_else(|| bun_core::err!("InvalidLoader"))?;
     Ok(option_loader.to_api())
 }
 
@@ -1347,10 +1345,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
     }
 
-    if opts.port.is_some() && opts.origin.is_none() {
+    if let (Some(port), true) = (opts.port, opts.origin.is_none()) {
         let mut v: Vec<u8> = Vec::new();
         use std::io::Write;
-        write!(&mut v, "http://localhost:{}/", opts.port.unwrap()).expect("write to Vec");
+        write!(&mut v, "http://localhost:{}/", port).expect("write to Vec");
         opts.origin = Some(v.into_boxed_slice());
     }
 

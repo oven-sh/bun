@@ -1,4 +1,3 @@
-#![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
 #![warn(unused_must_use)]
 // `Platform` is used as a const-generic param (Zig: `comptime _platform: Platform`)
 // in resolve_path.rs and downstream (`bun_runtime::node::path::normalize_string_t`).
@@ -767,7 +766,7 @@ pub mod fs {
             let mut is_absolute = true;
             let has_disk_designator = path.len() > 2
                 && path[1] == b':'
-                && matches!(path[0], b'a'..=b'z' | b'A'..=b'Z')
+                && path[0].is_ascii_alphabetic()
                 && is_sep_any(path[2]);
             if has_disk_designator {
                 path = &path[2..];

@@ -2,6 +2,7 @@ use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
 use bun_core::Output;
+#[cfg(debug_assertions)]
 use bun_core::strings;
 
 // PORT NOTE: `use super::{self as lockfile, ...}` and bare `use super as lockfile;`
@@ -13,9 +14,7 @@ use super::{
 };
 use crate::lockfile_real as lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
-use crate::{
-    Aligner, Dependency, DependencyID, PackageID, PackageManager, dependency, invalid_package_id,
-};
+use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
 
 #[derive(Default)]
 pub struct Buffers {
@@ -78,15 +77,6 @@ impl Buffers {
 // ──────────────────────────────────────────────────────────────────────────
 mod sizes {
     use super::*;
-
-    pub const NAMES: [&str; 6] = [
-        "trees",
-        "hoisted_dependencies",
-        "resolutions",
-        "dependencies",
-        "extern_strings",
-        "string_bytes",
-    ];
 
     /// Alignment used by `Aligner::write` for every array payload (Zig: `sizes.types[0]`).
     ///
@@ -460,7 +450,7 @@ pub fn load(
     pm_: Option<&mut PackageManager>,
 ) -> Result<Buffers, bun_core::Error> {
     let mut this = Buffers::default();
-    let mut external_dependency_list_: Vec<dependency::External> = Vec::new();
+    let external_dependency_list_: Vec<dependency::External>;
 
     // PORT NOTE: Zig `inline for (sizes.names)` unrolled — see `sizes` module note.
 

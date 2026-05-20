@@ -4,11 +4,11 @@ use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
-use crate::options_impl::{LoaderExt as _, TargetExt as _};
+use crate::options_impl::TargetExt as _;
 use crate::ungate_support::DeclInfoKind;
 use crate::{
-    Chunk, CompileResult, CompileResultForSourceMap, Index, JSAst, JSMeta, RefImportData,
-    ResolvedExports, ThreadPool,
+    Chunk, CompileResult, CompileResultForSourceMap, Index, RefImportData, ResolvedExports,
+    ThreadPool,
 };
 use bun_alloc::Arena;
 use bun_ast::{
@@ -68,7 +68,7 @@ pub fn post_process_js_chunk(
     // the renamer field, or an explicit `chunk.renamer.take()` at fn exit. Verify.
 
     // PERF(port): was arena bulk-free — profile if hot.
-    let mut arena = Arena::new();
+    let arena = Arena::new();
 
     // Also generate the cross-chunk binding code
     let mut cross_chunk_prefix: PrintResult;
@@ -854,7 +854,7 @@ pub fn post_process_js_chunk(
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
-            compile_results_for_source_map,
+            &compile_results_for_source_map,
             &resolver.opts.output_dir,
             can_have_shifts,
         )?;

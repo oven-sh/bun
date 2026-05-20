@@ -9,7 +9,7 @@ use std::io::Write as _;
 
 use bun_core::env::{Architecture, OperatingSystem};
 use bun_core::{Environment, Global, env_var, fmt as bun_fmt};
-use bun_core::{MutableString, ZStr, strings};
+use bun_core::{ZStr, strings};
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{SlicedString, Version};
 use bun_sys::Fd;

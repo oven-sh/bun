@@ -1,30 +1,26 @@
 //! Port of src/bundler/LinkerContext.zig
 
 use crate::mal_prelude::*;
-use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt};
-use bun_core::{self as bun, Environment, Error as BunError, FeatureFlags, Output};
+use bun_core::{self as bun, Error as BunError, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
-    self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapShifts,
-    SourceMapState,
+    self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,
 };
 // PORT NOTE: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
 use bun_ast::{ImportKind, ImportRecord};
-use bun_threading::{self as sync, WaitGroup, thread_pool as ThreadPoolLib};
+use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 // TODO(port): bake_types arrives from move-in (TYPE_ONLY → bundler)
 use crate::bake_types as bake;
-use crate::bun_css as css;
 
 use crate::BundledAst as JSAst;
 use bun_ast::{
-    self as js_ast, Binding, DeclaredSymbol, Dependency, ExportsKind, Expr, NamedImport, Part, Ref,
-    Stmt, Symbol, TlaCheck,
+    Binding, DeclaredSymbol, Dependency, ExportsKind, Expr, NamedImport, Part, Ref, Stmt, TlaCheck,
 };
 // PORT NOTE: `crate::Index` (= `bun_ast::Index`) — the
 // bundler's source-index newtype. `bun_ast::Index` is layout-identical
@@ -35,18 +31,15 @@ use bun_ast::{E, G, S};
 use bun_js_parser::lexer as lex;
 use bun_js_printer::{self as js_printer, renamer};
 
-use crate::bun_fs as Fs;
 use crate::bun_node_fallbacks as NodeFallbackModules;
-use crate::ungate_support::perf;
 use bun_ast::SideEffects;
-use bun_resolver::{self as _resolver, Resolver};
+use bun_resolver::Resolver;
 
 use crate::Graph::Graph;
-use crate::options::{self, Format, Loader, SourceMapOption, Target};
+use crate::options::{Format, Loader, SourceMapOption, Target};
 use crate::{
-    AdditionalFile, BundleV2, Chunk, CompileResult, CompileResultForSourceMap, ContentHasher,
-    ImportTracker, LinkerGraph, MangledProps, PartRange, ServerComponentBoundary, StableRef,
-    ThreadPool, WrapKind,
+    AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
+    LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
 };
 
 /// `bun.jsc.AnyEventLoop` (LinkerContext.zig:28). `bun_event_loop` is a
@@ -131,8 +124,6 @@ pub fn bundle_generate_chunk_action(
 bun_core::define_scoped_log!(debug, crate::linker_context_mod::LinkerCtx);
 pub(crate) use debug;
 bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
-#[allow(unused_imports)]
-pub(crate) use debug_tree_shake;
 
 // Re-exports from sibling modules in `linker_context/`.
 // `LinkerGraph` SoA accessors are real now (`` on
@@ -237,6 +228,7 @@ pub struct LinkerContext<'a> {
 // to disjoint SoA slots (see `compute_line_offsets`). This mirrors Zig's
 // freely-aliased `*LinkerContext`.
 unsafe impl<'a> Send for LinkerContext<'a> {}
+// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
 
 impl<'a> Default for LinkerContext<'a> {
@@ -291,7 +283,7 @@ impl<'a> LinkerContext<'a> {
     /// `generate_isolated_hash`) must continue to deref the raw
     /// `self.parse_graph` field directly.
     #[inline]
-    pub fn parse_graph(&self) -> &Graph {
+    pub fn parse_graph(&self) -> &Graph<'_> {
         debug_assert!(
             !self.parse_graph.is_null(),
             "LinkerContext.parse_graph accessed before load()"
@@ -454,11 +446,8 @@ impl<'a> LinkerContext<'a> {
 pub mod EntryPoint {
     pub use crate::ungate_support::entry_point::Kind;
 }
-use crate::Graph::InputFileColumns as _;
 use crate::bundled_ast::Flags as AstFlags;
 use crate::ungate_support::generic_path_with_pretty_initialized;
-use crate::ungate_support::{CompileResultForSourceMapColumns as _, EntryPointColumns as _};
-use bun_ast::SideEffects as _GraphSideEffects;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
 // TODO(port): method bodies depend on `LinkerGraph` SoA accessors
@@ -475,7 +464,7 @@ impl<'a> LinkerContext<'a> {
 
     pub fn path_with_pretty_initialized(
         &mut self,
-        path: bun_paths::fs::Path<'static>,
+        path: &bun_paths::fs::Path<'static>,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, self.arena())
@@ -739,26 +728,25 @@ impl<'a> LinkerContext<'a> {
                         .push(source_index)
                 };
 
-                // S.LazyExport is a call to __jsonParse.
-                // SAFETY: `Part.stmts` is a raw `*mut [Stmt]` arena pointer;
-                // valid for the link step. Each accessor returns `Option`;
-                // `.unwrap()` mirrors Zig's untagged-union field reads (panic
-                // on shape mismatch).
-                let original_ref = unsafe {
-                    (*self.graph.ast.items_parts()[html_import as usize][1].stmts)[0]
-                        .data
-                        .s_lazy_export()
-                        .unwrap()
-                        .e_call()
-                        .unwrap()
-                        .target
-                        .data
-                        .e_import_identifier()
-                        .unwrap()
-                        .ref_
-                };
+                // S.LazyExport is a call to __jsonParse. Each accessor returns
+                // `Option`; `.unwrap()` mirrors Zig's untagged-union field
+                // reads (panic on shape mismatch).
+                let original_ref = (*self.graph.ast.items_parts()[html_import as usize][1].stmts)
+                    [0]
+                .data
+                .s_lazy_export()
+                .unwrap()
+                .e_call()
+                .unwrap()
+                .target
+                .data
+                .e_import_identifier()
+                .unwrap()
+                .ref_;
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
+                // SAFETY: `original_ref`'s symbol slot is disjoint from any live borrow here
+                // (only `actual_ref` is held, a `Copy` value).
                 unsafe { self.graph.symbol_mut(original_ref) }
                     .link
                     .set(actual_ref);
@@ -1045,7 +1033,7 @@ impl<'a> LinkerContext<'a> {
     // `post_process_*` callees take `GenerateChunkCtx` by value and deref
     // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
     // raw-ptr writes (see `postProcessJSChunk.rs`).
-    pub fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the duration of this body. ctx.c points into BundleV2.linker;
         // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
@@ -1074,7 +1062,11 @@ impl<'a> LinkerContext<'a> {
     // `ctx.c.options` shared. `rename_symbols_in_chunk` takes `*mut
     // LinkerContext` raw and never materializes `&mut LinkerContext` while
     // peer renamer tasks are live (see its CONCURRENCY note).
-    pub fn generate_js_renamer(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+    pub(crate) fn generate_js_renamer(
+        ctx: &GenerateChunkCtx,
+        chunk: *mut Chunk,
+        chunk_index: usize,
+    ) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the body. container_of pattern — see `generate_chunk` above.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
@@ -1113,7 +1105,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         isolated_hash: u64,
         _worker: &mut crate::thread_pool::Worker,
-        results: MultiArrayList<CompileResultForSourceMap>,
+        results: &MultiArrayList<CompileResultForSourceMap>,
         chunk_abs_dir: &[u8],
         can_have_shifts: bool,
     ) -> Result<SourceMapPieces, BunError> {
@@ -1431,7 +1423,7 @@ impl SourceMapDataTask {
     // `&mut LinkerContext` — `compute_line_offsets` takes a `ParentRef` (yields
     // `&LinkerContext` only) and writes the single SoA cell via raw per-row
     // pointer.
-    pub fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
+    pub(crate) fn run_line_offset(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
@@ -1452,6 +1444,8 @@ impl SourceMapDataTask {
         // UB. `Worker::get` only needs `&BundleV2` (reads `graph.pool`), and
         // that shared borrow ends before any per-slot write below.
         let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        // SAFETY: `bundle` is a valid backref into the owning `BundleV2` (see above);
+        // only a shared borrow is formed and it ends before any per-slot write.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
         SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
@@ -1465,7 +1459,7 @@ impl SourceMapDataTask {
     // `&mut LinkerContext` — `compute_quoted_source_contents` takes a
     // `ParentRef` (yields `&LinkerContext` only) and writes the single SoA cell
     // via raw per-row pointer.
-    pub fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
+    pub(crate) fn run_quoted_source_contents(thread_task: *mut ThreadPoolLib::Task) {
         // SAFETY: thread_task points to SourceMapDataTask.thread_task
         let task: &mut SourceMapDataTask = unsafe {
             &mut *(bun_core::from_field_ptr!(SourceMapDataTask, thread_task, thread_task))
@@ -1482,6 +1476,8 @@ impl SourceMapDataTask {
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
         // materialized over the shared `BundleV2` while peer tasks are live.
         let bundle: *const BundleV2 = unsafe { LinkerContext::bundle_v2_ptr(ctx.as_mut_ptr()) };
+        // SAFETY: `bundle` is a valid backref (see `run_line_offset`); only a shared
+        // borrow is formed for `Worker::get`, which reads `graph.pool` under a mutex.
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
 
         // Use the default arena when using DevServer and the file
@@ -1551,12 +1547,12 @@ impl SourceMapData {
         let approximate_line_count =
             this.graph.ast.items_approximate_newline_count()[source_index as usize];
 
+        let _ = alloc;
         // SAFETY: sole writer to this slot (disjoint by source_index).
         // `Worker::get` (the caller) brackets this in `ast_memory_store.push()/
         // pop()`, so `AST_HEAP` points at this worker's `MimallocArena` and the
         // `AstAlloc` route lands the SoA slab + every `columns_for_non_ascii`
         // payload there for bulk-free on `pool.deinit()`.
-        let _ = alloc;
         unsafe {
             *line_offset_table = LineOffsetTable::generate_in::<bun_alloc::AstAlloc>(
                 &source.contents,
@@ -1679,6 +1675,7 @@ pub struct GenerateChunkCtx<'a> {
 }
 // SAFETY: see PORT NOTE above — mirrors Zig's freely-aliased `*LinkerContext`.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
+// SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
 
 impl<'a> GenerateChunkCtx<'a> {
@@ -1785,11 +1782,6 @@ pub(crate) fn crash_guard_for_part_range(
     bun_crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
 }
 
-struct SubstituteChunkFinalPathResult {
-    j: StringJoiner,
-    shifts: Box<[SourceMapShifts]>,
-}
-
 // TODO(port): scan/tree-shake/link method bodies. These reach into
 // `LinkerGraph` SoA fields (`graph.files`, `graph.meta`, `graph.ast`), the
 // gated `linker_context/scanImportsAndExports.rs`, `bun_resolve_builtins`,
@@ -1818,7 +1810,7 @@ impl<'a> LinkerContext<'a> {
                         // independent (relative paths and the "/" path separator)
                         if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
                             source.path = self
-                                .path_with_pretty_initialized(source.path.clone())
+                                .path_with_pretty_initialized(&source.path)
                                 .expect("OOM");
                         }
                         // PORT NOTE: `Path::assert_pretty_is_valid` lives on the
@@ -1826,18 +1818,18 @@ impl<'a> LinkerContext<'a> {
                         // such debug hook yet.
                         debug_assert!(source.path.text.as_ptr() != source.path.pretty.as_ptr());
 
-                        break 'brk &source.path.pretty;
+                        break 'brk source.path.pretty;
                     } else {
                         // If this isn't in the "file" namespace, just use the full path text
                         // verbatim. This could be a source of cross-platform differences if
                         // plugins are storing platform-specific information in here, but then
                         // that problem isn't caused by esbuild itself.
-                        break 'brk &source.path.text;
+                        break 'brk source.path.text;
                     }
                 };
 
                 // Include the path namespace in the hash
-                hasher.write(&source.path.namespace);
+                hasher.write(source.path.namespace);
 
                 // Then include the file path
                 hasher.write(file_path);
@@ -1865,7 +1857,7 @@ impl<'a> LinkerContext<'a> {
                 .options
                 .public_path
         } else {
-            &self.options.public_path
+            self.options.public_path
         };
 
         // Also hash the public path. If provided, this is used whenever files
@@ -1982,7 +1974,7 @@ impl<'a> LinkerContext<'a> {
 
                             if parent_result_tla_keyword.len > 0 {
                                 let source = &input_files[other_source_index as usize];
-                                tla_pretty_path = &source.path.pretty;
+                                tla_pretty_path = source.path.pretty;
                                 let mut text = Vec::new();
                                 use std::io::Write;
                                 write!(
@@ -2249,10 +2241,16 @@ impl<'a> LinkerContext<'a> {
         // the duration of this call; the printer only reads from them.
         let ts_enums: &bun_ast::ast_result::TsEnumsMap =
             unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
+        // SAFETY: `graph.files` SoA columns are stable heap allocations valid for this
+        // call (see above); the printer only reads from this slot.
         let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
-            &*(&raw const self.graph.files.items_line_offset_table()[source_index.get() as usize])
+            bun_ptr::detach_lifetime_ref(
+                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
+            )
         };
         let mangled_props: &MangledProps =
+            // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
+            // outlives only this call (see above).
             unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
 
         let print_options = js_printer::Options {
@@ -3083,7 +3081,7 @@ impl<'a> LinkerContext<'a> {
     /// `log` is an explicit parameter (not `self.log`) because the dev-server
     /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
     /// initialized `self.log`, passing a stack-local `Log` instead.
-    pub fn scan_css_imports(
+    pub(crate) fn scan_css_imports(
         file_source_index: u32,
         file_import_records: &[ImportRecord],
         css_asts: *const [crate::bundled_ast::CssCol],
@@ -3630,24 +3628,17 @@ impl<'a> LinkerContext<'a> {
                         .get(&tracker.import_ref)
                         .unwrap();
 
-                    if named_import.namespace_ref.is_some()
-                        && named_import
-                            .namespace_ref
-                            .expect("infallible: checked is_some")
-                            .is_valid()
+                    if let Some(namespace_ref) = named_import.namespace_ref
+                        && namespace_ref.is_valid()
                     {
                         if result.kind == MatchImportKind::Normal {
                             result.kind = MatchImportKind::NormalAndNamespace;
-                            result.namespace_ref = named_import
-                                .namespace_ref
-                                .expect("infallible: checked is_some");
+                            result.namespace_ref = namespace_ref;
                             result.alias = named_import.alias.expect("infallible: alias present");
                         } else {
                             result = MatchImport {
                                 kind: MatchImportKind::Namespace,
-                                namespace_ref: named_import
-                                    .namespace_ref
-                                    .expect("infallible: checked is_some"),
+                                namespace_ref,
                                 alias: named_import.alias.expect("infallible: alias present"),
                                 ..Default::default()
                             };
@@ -3691,7 +3682,7 @@ impl<'a> LinkerContext<'a> {
                             .expect("infallible: checked is_some")
                             .is_valid()
                     {
-                        // `named_import` borrows `graph.ast`; the symbol slot is a
+                        // SAFETY: `named_import` borrows `graph.ast`; the symbol slot is a
                         // disjoint allocation, so no aliasing with this `&mut`.
                         let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
                         symbol.import_item_status = ImportItemStatus::Missing;
@@ -3730,7 +3721,7 @@ impl<'a> LinkerContext<'a> {
                 }
                 ImportTrackerStatus::NoMatch => {
                     // Report mismatched imports and exports
-                    // The mutated symbol slot is disjoint from the later borrows
+                    // SAFETY: the mutated symbol slot is disjoint from the later borrows
                     // (`named_import` from graph.ast, `get_source` from parse_graph,
                     // `log_disjoint`) — all separate allocations.
                     let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
@@ -3763,7 +3754,7 @@ impl<'a> LinkerContext<'a> {
 
                         if self.resolver().opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
-                                &next_source.path.pretty,
+                                next_source.path.pretty,
                                 Target::Bun,
                                 bun_resolve_builtins::Cfg::default(),
                             )
@@ -3923,7 +3914,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Spec: `LinkerContext.zig:2471 matchImportsWithExportsForFile`.
-    pub fn match_imports_with_exports_for_file(
+    pub(crate) fn match_imports_with_exports_for_file(
         &mut self,
         named_imports_ptr: *const crate::bundled_ast::NamedImports,
         imports_to_bind: &mut crate::RefImportData,
@@ -3949,15 +3940,17 @@ impl<'a> LinkerContext<'a> {
         // `meta.probably_typescript_type`), so the backing `keys`/`values`
         // slices stay valid for the whole loop.
         let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
+        // SAFETY: same column-validity invariant as `keys` above.
         let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
+        // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
         let mut order: Vec<usize> = (0..unsafe { (&*keys).len() }).collect();
+        // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
         order
             .sort_by(|&a, &b| unsafe { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
 
         for &i in &order {
-            // SAFETY: see above.
-            let import_ref = unsafe { (*keys)[i] };
-            let named_import = unsafe { &(*values)[i] };
+            // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
+            let (import_ref, named_import) = unsafe { ((*keys)[i], &(*values)[i]) };
 
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
@@ -3989,6 +3982,8 @@ impl<'a> LinkerContext<'a> {
                         .expect("unreachable");
                 }
                 MatchImportKind::Namespace => {
+                    // SAFETY: the mutated symbol slot is disjoint from `named_import`
+                    // (graph.ast SoA) and `result` (stack local).
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
@@ -4011,8 +4006,8 @@ impl<'a> LinkerContext<'a> {
                         )
                         .expect("unreachable");
 
-                    // One-shot field store after `imports_to_bind.put` (disjoint
-                    // map) has fully returned.
+                    // SAFETY: one-shot field store after `imports_to_bind.put` (disjoint
+                    // map) has fully returned; no other live borrow aliases this symbol slot.
                     unsafe { self.graph.symbol_mut(import_ref) }.namespace_alias =
                         Some(G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
@@ -4024,7 +4019,7 @@ impl<'a> LinkerContext<'a> {
                     let source = self.get_source(source_index);
                     let r = lex::range_of_identifier(
                         source,
-                        named_import.alias_loc.unwrap_or(Loc::default()),
+                        named_import.alias_loc.unwrap_or_default(),
                     );
                     // SAFETY: arena `*const [u8]` valid for the link pass.
                     let alias = named_import
@@ -4051,12 +4046,12 @@ impl<'a> LinkerContext<'a> {
                     let source = self.get_source(source_index);
                     let r = lex::range_of_identifier(
                         source,
-                        named_import.alias_loc.unwrap_or(Loc::default()),
+                        named_import.alias_loc.unwrap_or_default(),
                     );
 
                     // TODO: log locations of the ambiguous exports
 
-                    // The mutated symbol slot is disjoint from `source`/`r`
+                    // SAFETY: the mutated symbol slot is disjoint from `source`/`r`
                     // (parse_graph), `named_import`/`alias` (arena slices), and
                     // `log_disjoint` — all separate allocations.
                     let symbol = unsafe { self.graph.symbol_mut(import_ref) };

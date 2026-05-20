@@ -4,8 +4,7 @@ use core::ptr;
 pub use bun_brotli_sys::brotli_c as c;
 use c::{BrotliDecoder, BrotliEncoder};
 
-#[allow(unused_imports)]
-use bun_core::{self as bun, Error, err};
+use bun_core::{Error, err};
 
 // ──────────────────────────────────────────────────────────────────────────
 // BrotliAllocator
@@ -28,18 +27,10 @@ pub struct DecoderOptions {
 /// Zig: `std.enums.EnumFieldStruct(c.BrotliDecoderParameter, bool, false)` —
 /// one `bool` per `BrotliDecoderParameter` variant, default `false`.
 // TODO(port): if BrotliDecoderParameter grows more variants, mirror them here.
+#[derive(Default)]
 pub struct DecoderParams {
     pub large_window: bool,
     pub disable_ring_buffer_reallocation: bool,
-}
-
-impl Default for DecoderParams {
-    fn default() -> Self {
-        Self {
-            large_window: false,
-            disable_ring_buffer_reallocation: false,
-        }
-    }
 }
 
 impl Default for DecoderOptions {
@@ -103,7 +94,7 @@ impl<'a> BrotliReaderArrayList<'a> {
     pub fn new_with_options(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
-        options: DecoderOptions,
+        options: &DecoderOptions,
     ) -> Result<Box<Self>, Error> {
         // TODO(port): narrow error set
         Ok(Self::new(Self::init_with_options(
@@ -119,7 +110,7 @@ impl<'a> BrotliReaderArrayList<'a> {
     pub fn init_with_options(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
-        options: DecoderOptions,
+        options: &DecoderOptions,
         flush_op: c::BrotliEncoderOperation,
         finish_flush_op: c::BrotliEncoderOperation,
         full_flush_op: c::BrotliEncoderOperation,
@@ -131,12 +122,14 @@ impl<'a> BrotliReaderArrayList<'a> {
 
         // SAFETY: brotli FFI constructor; alloc/free are valid extern "C"
         // fns and opaque is null (unused by our allocator).
-        let brotli = BrotliDecoder::create_instance(
-            Some(BrotliAllocator::alloc),
-            Some(BrotliAllocator::free),
-            ptr::null_mut(),
-        )
-        .ok_or(err!("BrotliFailedToCreateInstance"))?;
+        let brotli = unsafe {
+            BrotliDecoder::create_instance(
+                Some(BrotliAllocator::alloc),
+                Some(BrotliAllocator::free),
+                ptr::null_mut(),
+            )
+        }
+        .ok_or_else(|| err!("BrotliFailedToCreateInstance"))?;
 
         if options.params.large_window {
             let _ =
@@ -221,7 +214,7 @@ impl<'a> BrotliReaderArrayList<'a> {
                     self.state = ReaderState::Error;
                     if cfg!(debug_assertions) {
                         let code = BrotliDecoder::get_error_code(self.brotli());
-                        bun_core::Output::debug_warn(&format_args!(
+                        bun_core::Output::debug_warn(format_args!(
                             "Brotli error: {:?} ({})",
                             code, code as i32
                         ));
@@ -295,12 +288,16 @@ impl BrotliCompressionStream {
         full_flush_op: c::BrotliEncoderOperation,
     ) -> Result<Self, Error> {
         // TODO(port): narrow error set
-        let instance = BrotliEncoder::create_instance(
-            Some(BrotliAllocator::alloc),
-            Some(BrotliAllocator::free),
-            ptr::null_mut(),
-        )
-        .ok_or(err!("BrotliFailedToCreateInstance"))?;
+        // SAFETY: brotli FFI constructor; alloc/free are valid extern "C"
+        // fns and opaque is null (unused by our allocator).
+        let instance = unsafe {
+            BrotliEncoder::create_instance(
+                Some(BrotliAllocator::alloc),
+                Some(BrotliAllocator::free),
+                ptr::null_mut(),
+            )
+        }
+        .ok_or_else(|| err!("BrotliFailedToCreateInstance"))?;
 
         Ok(Self {
             brotli: instance,

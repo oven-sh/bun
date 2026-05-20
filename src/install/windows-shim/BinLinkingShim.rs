@@ -367,7 +367,7 @@ mod host {
             } else {
                 0
             };
-            debug_assert!(l % 2 == 0);
+            debug_assert!(l.is_multiple_of(2));
             l
         }
 
@@ -474,7 +474,7 @@ mod host {
                 let bin_path_byte_len =
                     bytemuck::pod_read_unaligned::<u32>(&input[off..off + size_of::<u32>()])
                         as usize;
-                if bin_path_byte_len % 2 != 0 {
+                if !bin_path_byte_len.is_multiple_of(2) {
                     return None;
                 }
                 if bin_path_byte_len > (input.len() - 8) {
@@ -487,7 +487,7 @@ mod host {
             &input[0..input.len() - FLAGS_SIZE]
         };
 
-        if bin_path_u8.len() % 2 != 0 {
+        if !bin_path_u8.len().is_multiple_of(2) {
             return None;
         }
 

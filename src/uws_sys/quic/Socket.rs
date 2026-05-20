@@ -3,7 +3,6 @@
 //! after, so callers must drop the pointer inside that callback.
 
 use core::ffi::{c_int, c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 bun_opaque::opaque_ffi! {

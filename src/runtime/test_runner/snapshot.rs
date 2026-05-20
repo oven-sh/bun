@@ -1,23 +1,20 @@
-#[allow(unused_imports)]
-use crate::test_runner::expect::{JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
-use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_ulong;
 use std::io::Write as _;
 
-use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
+use bun_collections::{HashMap, StringHashMap};
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
 use bun_core::{self, Error};
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_sys::{self, Fd};
+use bun_paths::{self, PathBuffer};
+use bun_sys::{self};
 use bun_wyhash::hash;
 
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
-use super::jest::{FileColumns as _, Jest, TestRunner};
+use super::jest::{FileColumns as _, Jest};
 
 // TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
 type FileId = super::jest::FileId;
@@ -134,7 +131,9 @@ impl<'a> Snapshots<'a> {
         hint: &[u8],
     ) -> Result<Option<&[u8]>, Error> {
         // TODO(port): narrow error set
-        let mut buntest_strong = expect.bun_test().ok_or(bun_core::err!("SnapshotFailed"))?;
+        let buntest_strong = expect
+            .bun_test()
+            .ok_or_else(|| bun_core::err!("SnapshotFailed"))?;
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
@@ -341,7 +340,7 @@ impl<'a> Snapshots<'a> {
 
     pub fn write_snapshot_file(&mut self) -> Result<(), Error> {
         // TODO(port): narrow error set
-        if let Some(mut file) = self._current_file.take() {
+        if let Some(file) = self._current_file.take() {
             file.file
                 .write_all(self.file_buf)
                 .map_err(|_| bun_core::err!("FailedToWriteSnapshotFile"))?;
@@ -447,12 +446,12 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
             };
-            let mut file = File {
+            let file = File {
                 id: file_id,
                 file: bun_sys::File::from_fd(fd),
             };
 
-            let file_text: Vec<u8> = file.file.read_to_end().map_err(|e| Error::from(e))?;
+            let file_text: Vec<u8> = file.file.read_to_end().map_err(Error::from)?;
 
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
@@ -560,6 +559,9 @@ impl<'a> Snapshots<'a> {
                     // discussion.
                     let log_ptr: *mut bun_ast::Log = &raw mut *log;
                     let mut lexer = js_lexer::Lexer::init_without_reading(
+                        // SAFETY: `log_ptr` derived from `&raw mut *log` just above; `log`
+                        // outlives `'blk` and no other `&mut Log` is live until `lexer` is
+                        // moved into `parser` below.
                         unsafe { &mut *log_ptr },
                         &source,
                         &arena,

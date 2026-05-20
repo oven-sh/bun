@@ -52,7 +52,7 @@ use syn::{
 #[proc_macro_derive(DeepClone)]
 pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    expand_deep_clone(input)
+    expand_deep_clone(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
@@ -80,7 +80,7 @@ pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(CssEql, attributes(css))]
 pub fn derive_css_eql(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    expand_css_eql(input)
+    expand_css_eql(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
@@ -88,7 +88,7 @@ pub fn derive_css_eql(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(CssHash, attributes(css))]
 pub fn derive_css_hash(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    expand_css_hash(input)
+    expand_css_hash(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
@@ -118,7 +118,7 @@ fn has_css_skip(attrs: &[Attribute]) -> bool {
 
 /// Clone the input generics and append `where T: $trait_path` for every type
 /// parameter so generic containers (`Foo<T>`) constrain their payload.
-fn with_trait_bounds(input: &DeriveInput, trait_path: TokenStream2) -> syn::Generics {
+fn with_trait_bounds(input: &DeriveInput, trait_path: &TokenStream2) -> syn::Generics {
     let mut g = input.generics.clone();
     let ty_params: Vec<_> = input
         .generics
@@ -134,9 +134,9 @@ fn with_trait_bounds(input: &DeriveInput, trait_path: TokenStream2) -> syn::Gene
     g
 }
 
-fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let generics = with_trait_bounds(&input, quote!(::bun_css::generics::CssEql));
+    let generics = with_trait_bounds(input, &quote!(::bun_css::generics::CssEql));
     let (impl_g, ty_g, where_g) = generics.split_for_impl();
 
     let body = match &input.data {
@@ -257,9 +257,9 @@ fn expand_css_eql(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_css_hash(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let generics = with_trait_bounds(&input, quote!(::bun_css::generics::CssHash));
+    let generics = with_trait_bounds(input, &quote!(::bun_css::generics::CssHash));
     let (impl_g, ty_g, where_g) = generics.split_for_impl();
 
     let body = match &input.data {
@@ -379,14 +379,14 @@ fn expand_css_hash(input: DeriveInput) -> syn::Result<TokenStream2> {
 #[proc_macro_derive(IsCompatible, attributes(css))]
 pub fn derive_is_compatible(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    expand_is_compatible(input)
+    expand_is_compatible(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
 
-fn expand_is_compatible(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_is_compatible(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let generics = with_trait_bounds(&input, quote!(::bun_css::generics::IsCompatible));
+    let generics = with_trait_bounds(input, &quote!(::bun_css::generics::IsCompatible));
     let (impl_g, ty_g, where_g) = generics.split_for_impl();
 
     let body = match &input.data {
@@ -485,14 +485,14 @@ fn expand_is_compatible(input: DeriveInput) -> syn::Result<TokenStream2> {
         impl #impl_g ::bun_css::generics::IsCompatible for #name #ty_g #where_g {
             #[inline]
             #[allow(unused_variables)]
-            fn is_compatible(&self, __browsers: ::bun_css::targets::Browsers) -> bool {
+            fn is_compatible(&self, __browsers: &::bun_css::targets::Browsers) -> bool {
                 #body
             }
         }
     })
 }
 
-fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_deep_clone(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
 
     // Pick the arena lifetime: reuse the type's first lifetime param, or mint
@@ -535,7 +535,7 @@ fn expand_deep_clone(input: DeriveInput) -> syn::Result<TokenStream2> {
     let (_, ty_g, _) = input.generics.split_for_impl();
 
     let body = match &input.data {
-        Data::Struct(s) => clone_fields(&s.fields, quote!(Self)),
+        Data::Struct(s) => clone_fields(&s.fields, &quote!(Self)),
         Data::Enum(e) => {
             let arms = e.variants.iter().map(|v| {
                 let vname = &v.ident;
@@ -686,12 +686,12 @@ fn variant_keyword(ident: &syn::Ident, attrs: &[Attribute]) -> String {
 #[proc_macro_derive(DefineEnumProperty, attributes(css))]
 pub fn derive_define_enum_property(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    expand_enum_property(input)
+    expand_enum_property(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
 
-fn expand_enum_property(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let Data::Enum(data) = &input.data else {
         return Err(syn::Error::new_spanned(
@@ -806,7 +806,7 @@ fn expand_enum_property(input: DeriveInput) -> syn::Result<TokenStream2> {
 #[proc_macro_derive(Parse, attributes(css))]
 pub fn derive_parse(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    expand_derive_parse(input)
+    expand_derive_parse(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
@@ -814,7 +814,7 @@ pub fn derive_parse(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(ToCss, attributes(css))]
 pub fn derive_to_css(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    expand_derive_to_css(input)
+    expand_derive_to_css(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
@@ -947,12 +947,12 @@ fn is_option_type(ty: &syn::Type) -> bool {
     )
 }
 
-fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     // Trait-impl generics carry `T: generics::ToCss` for every type parameter
     // so generic containers (`Foo<T>`) constrain their payload. The inherent
     // forwarder reuses the same bounds (it calls the trait method).
-    let bounded = with_trait_bounds(&input, quote!(::bun_css::generics::ToCss));
+    let bounded = with_trait_bounds(input, &quote!(::bun_css::generics::ToCss));
     let (impl_g, ty_g, where_g) = bounded.split_for_impl();
 
     let body = match &input.data {
@@ -1062,7 +1062,7 @@ fn expand_derive_to_css(input: DeriveInput) -> syn::Result<TokenStream2> {
     })
 }
 
-fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
+fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let Data::Enum(data) = &input.data else {
         return Err(syn::Error::new_spanned(
@@ -1198,7 +1198,7 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
     // `parse` is kept as a thin forwarder for call sites that don't import the
     // trait. `ParseWithOptions` ignores options (Zig fallthrough) — types that
     // genuinely consume options hand-write their own impl instead of deriving.
-    let bounded = with_trait_bounds(&input, quote!(::bun_css::generics::Parse));
+    let bounded = with_trait_bounds(input, &quote!(::bun_css::generics::Parse));
     let (b_impl_g, _, b_where_g) = bounded.split_for_impl();
 
     Ok(quote! {
@@ -1240,7 +1240,7 @@ fn expand_derive_parse(input: DeriveInput) -> syn::Result<TokenStream2> {
 
 /// Field-wise clone body for a struct (or a single enum variant's payload).
 /// `ctor` is the path to construct (`Self` or `Self::Variant`).
-fn clone_fields(fields: &Fields, ctor: TokenStream2) -> TokenStream2 {
+fn clone_fields(fields: &Fields, ctor: &TokenStream2) -> TokenStream2 {
     match fields {
         Fields::Unit => quote! { #ctor },
         Fields::Unnamed(fs) => {

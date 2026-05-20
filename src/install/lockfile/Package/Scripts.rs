@@ -201,7 +201,6 @@ impl Scripts {
                         Some(Box::<[u8]>::from(self.prepare.slice(lockfile_buf)));
                     counter += 1;
                 }
-                script_index += 2;
             }
             _ => {}
         }

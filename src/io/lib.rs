@@ -11,7 +11,6 @@
 // `bun_core::debug_warn`).
 // ════════════════════════════════════════════════════════════════════════════
 
-#![allow(dead_code, unused_variables, unused_imports, unused_mut, clippy::all)]
 #![allow(unsafe_op_in_unsafe_fn)]
 // ── submodules ──────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
@@ -135,7 +134,10 @@ bun_dispatch::link_interface! {
         fn ref_concurrently();
         fn unref_concurrently();
         fn after_event_loop_callback() -> Option<OpaqueCallback>;
-        fn set_after_event_loop_callback(cb: Option<OpaqueCallback>, ctx: *mut core::ffi::c_void);
+        fn set_after_event_loop_callback(
+            cb: Option<OpaqueCallback>,
+            ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
+        );
         fn pipe_read_buffer() -> *mut [u8];
     }
 }
@@ -146,7 +148,7 @@ impl EventLoopCtx {
     /// SAFETY: caller must not hold another live `&mut` to the same loop
     /// across this borrow (resolver-style accessor; the loop is per-thread).
     #[inline]
-    pub unsafe fn platform_event_loop(&self) -> &mut bun_uws_sys::Loop {
+    pub unsafe fn platform_event_loop(&self) -> &'static mut bun_uws_sys::Loop {
         // Route through the single nonnull-asref accessor below; the `unsafe`
         // on this fn's signature is the caller-side aliasing contract — the
         // body itself needs no extra `unsafe`.
@@ -154,7 +156,7 @@ impl EventLoopCtx {
     }
     /// SAFETY: same aliasing hazard as [`platform_event_loop`].
     #[inline]
-    pub unsafe fn file_polls(&self) -> &mut Store {
+    pub unsafe fn file_polls(&self) -> &'static mut Store {
         self.file_polls_mut()
     }
 
@@ -176,7 +178,7 @@ impl EventLoopCtx {
     // `posix_event_loop`/`windows_event_loop` route their N identical
     // `ctx.platform_event_loop()` derefs through this single accessor.
     #[inline]
-    pub(crate) fn loop_mut(&self) -> &mut bun_uws_sys::Loop {
+    pub(crate) fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
         // SAFETY: per-thread set-once pointer (the uws loop singleton); the
         // event loop is single-threaded so no concurrent `&mut` exists, and
         // every crate-internal caller is a leaf op that drops the borrow
@@ -191,7 +193,7 @@ impl EventLoopCtx {
     /// (`deinit_possibly_defer`) or holds none (`init_with_owner`,
     /// `alloc_file_poll`), so no two `&mut Store` ever coexist.
     #[inline]
-    pub(crate) fn file_polls_mut(&self) -> &mut Store {
+    pub(crate) fn file_polls_mut(&self) -> &'static mut Store {
         // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
         // loop is single-threaded so no concurrent `&mut Store` exists, and
         // every crate-internal caller upholds the leaf-op / decayed-slot
@@ -319,7 +321,6 @@ pub use write::{
     AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, Result, Write,
 };
 
-#[allow(non_snake_case)]
 pub use max_buf as MaxBuf;
 pub use pipes::{FileType, ReadState};
 
@@ -512,14 +513,13 @@ pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
 // ════════════════════════════════════════════════════════════════════════════
 
-use core::ffi::{c_int, c_void};
-use core::mem::offset_of;
-use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
+#[cfg(not(windows))]
+use core::ffi::c_int;
+use core::sync::atomic::Ordering;
 
 pub use crate::closer::Closer;
 pub use crate::waker::Waker;
-use bun_sys::{self as sys, E, Fd, FdExt};
+use bun_sys::{self as sys, E, Fd};
 
 // Zig scope name is `.loop` (io.zig:11). `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
@@ -555,8 +555,11 @@ mod windows_ffi {
 mod safe_c {
     use core::ffi::c_int;
     unsafe extern "C" {
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         pub(super) safe fn kqueue() -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         pub(super) safe fn eventfd(initval: libc::c_uint, flags: c_int) -> c_int;
         // Out-param `tp` is `&mut timespec` (non-null, valid for write); libc
         // only writes the slot and reports failure via the return value —
@@ -673,9 +676,11 @@ pub struct IoRequestLoop {
 // happens-before for init.
 static LOOP: bun_core::ThreadCell<core::mem::MaybeUninit<IoRequestLoop>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
+#[cfg(not(windows))]
 static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
 impl IoRequestLoop {
+    #[cfg(not(windows))]
     fn load() {
         // SAFETY: called exactly once via `ONCE.get_or_init`; no other access
         // until this returns. `get_unchecked` because this runs on the
@@ -697,7 +702,7 @@ impl IoRequestLoop {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC | 0);
+            let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC);
             if raw < 0 {
                 panic!("Failed to create epoll file descriptor");
             }
@@ -812,6 +817,7 @@ impl IoRequestLoop {
         Self::ensure_init();
         debug_assert!(!request.scheduled);
         request.scheduled = true;
+        let request = core::ptr::NonNull::from(request);
         // SAFETY: `ONCE` above established happens-before for `load()`'s
         // init of `pending`/`waker`. We use `get_unchecked` (no owner assert)
         // and stay in raw-ptr land via `addr_of_mut!` so we never materialize
@@ -877,7 +883,7 @@ impl IoRequestLoop {
                                 readable.fd,
                             ) {
                                 Err(err) => {
-                                    (readable.on_error)(readable.ctx, err);
+                                    (readable.on_error)(readable.ctx, &err);
                                 }
                                 Ok(()) => {
                                     self.active.set(self.active.get() + 1);
@@ -893,7 +899,7 @@ impl IoRequestLoop {
                                 writable.fd,
                             ) {
                                 Err(err) => {
-                                    (writable.on_error)(writable.ctx, err);
+                                    (writable.on_error)(writable.ctx, &err);
                                 }
                                 Ok(()) => {
                                     self.active.set(self.active.get() + 1);
@@ -958,7 +964,13 @@ impl IoRequestLoop {
                         continue;
                     }
                 }
-                Poll::on_update_epoll(pollable.poll(), pollable.tag(), *event);
+                // `pollable.poll()` is the `io_poll` field pointer this loop
+                // registered via `register_for_epoll`; the owner is live and
+                // non-null (the kernel hands back the udata we registered).
+                let Some(poll) = core::ptr::NonNull::new(pollable.poll()) else {
+                    continue;
+                };
+                Poll::on_update_epoll(poll, pollable.tag(), *event);
             }
         }
     }
@@ -1094,6 +1106,7 @@ impl IoRequestLoop {
         }
     }
 
+    #[cfg(not(windows))]
     fn update_now(&self) {
         let mut ts = self.cached_now.get();
         Self::update_timespec(&mut ts);
@@ -1305,7 +1318,7 @@ pub struct FileAction<'a> {
     pub poll: &'a mut Poll,
     pub ctx: *mut (),
     pub tag: PollableTag,
-    pub on_error: fn(*mut (), sys::Error),
+    pub on_error: fn(*mut (), &sys::Error),
 }
 
 pub struct CloseAction<'a> {
@@ -1332,14 +1345,18 @@ pub enum PollableTag {
 /// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so we keep the
 /// packed addr:49 + tag:15 layout locally.
 /// PERF(port): was TaggedPointer pack — load-bearing (kernel-surface u64).
+#[cfg(not(windows))]
 #[derive(Clone, Copy)]
 struct Pollable {
     value: u64,
 }
 
+#[cfg(not(windows))]
 const POLLABLE_ADDR_BITS: u64 = 49;
+#[cfg(not(windows))]
 const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
+#[cfg(not(windows))]
 impl Pollable {
     pub(crate) fn init(t: PollableTag, p: *mut Poll) -> Pollable {
         let addr = p as usize as u64;
@@ -1379,8 +1396,6 @@ impl Pollable {
 
 #[cfg(all(target_os = "macos", debug_assertions))]
 type GenerationNumberInt = u64;
-#[cfg(not(all(target_os = "macos", debug_assertions)))]
-type GenerationNumberInt = (); // Zig: u0
 
 // PORTING.md §Global mutable state: counter → Atomic. Only the IO thread
 // touches this, so `Relaxed` matches the Zig non-atomic `+= 1`.
@@ -1414,7 +1429,7 @@ unsafe extern "Rust" {
     /// struct via `container_of(io_poll)` per spec `io.zig:626`.
     /// PERF(port): was inline switch (cold path — Bun.write / Bun.file().text() only).
     fn __bun_io_pollable_on_ready(tag: PollableTag, poll: *mut Poll);
-    fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: sys::Error);
+    fn __bun_io_pollable_on_io_error(tag: PollableTag, poll: *mut Poll, err: &sys::Error);
 }
 
 #[derive(enumset::EnumSetType)]
@@ -1663,7 +1678,7 @@ impl Poll {
                     // closed `sys::Errno` enum (size mismatch on darwin/freebsd where it
                     // is `#[repr(u16)]`, and UB for unmapped discriminants). Store the
                     // raw integer via `from_code_int` (Zig: `@enumFromInt(event.data)`).
-                    sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
+                    &sys::Error::from_code_int(event.data as core::ffi::c_int, sys::Tag::kevent),
                 )
             };
         } else {
@@ -1674,11 +1689,16 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn on_update_epoll(poll: *mut Poll, tag: PollableTag, event: linux::epoll_event) {
+    pub fn on_update_epoll(
+        poll: core::ptr::NonNull<Poll>,
+        tag: PollableTag,
+        event: linux::epoll_event,
+    ) {
         // ignore empty tags. This case should be unreachable in practice
         if tag == PollableTag::Empty {
             return;
         }
+        let poll = poll.as_ptr();
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.
@@ -1692,7 +1712,7 @@ impl Poll {
                 __bun_io_pollable_on_io_error(
                     tag,
                     poll,
-                    sys::Error::from_code(errno, sys::Tag::TODO),
+                    &sys::Error::from_code(errno, sys::Tag::TODO),
                 )
             };
         } else {
@@ -1793,7 +1813,9 @@ impl Poll {
 
 pub const RETRY: E = E::EAGAIN;
 
-use crate::posix_event_loop::{Flags as PollFlags, FlagsSet as PollFlagsSet, OneShotFlag};
+#[cfg(not(windows))]
+use crate::posix_event_loop::OneShotFlag;
+use crate::posix_event_loop::{Flags as PollFlags, FlagsSet as PollFlagsSet};
 
 pub type EventLoopHandle = EventLoopCtx;
 
@@ -1999,6 +2021,7 @@ pub enum PathOrFileDescriptor {
 // Waker so `Loop::load` has no upward dep on bun_io (T3). bun_io re-exports.
 
 pub mod waker {
+    #[cfg(not(windows))]
     use bun_sys::Fd;
 
     #[cfg(target_os = "macos")]
@@ -2082,7 +2105,6 @@ pub mod waker {
     unsafe extern "C" {
         // Defined in src/io/io_darwin.cpp. `mach_port` is a by-value `u32`;
         // bad/dead ports are reported by mach return codes, not UB.
-        safe fn io_darwin_close_machport(port: bun_core::mach_port);
         fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> bun_core::mach_port;
         safe fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
     }

@@ -63,7 +63,7 @@ pub struct BlockList {
     // `*mut Self`; a borrowed lifetime param cannot be threaded through that.
     // TODO(port): lifetime — field is write-only (assigned in constructor,
     // never read; `deinit` ignores it).
-    global_this: *const JSGlobalObject,
+    _global_this: *const JSGlobalObject,
     // R-2: interior mutability so every host_fn takes `&self`. All access is
     // serialized by `mutex` (held across every read and every `with_mut`), so
     // the `JsCell` single-thread invariant is upheld even though `BlockList`
@@ -97,7 +97,7 @@ impl BlockList {
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         let ptr = bun_core::heap::into_raw(Box::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            global_this: std::ptr::from_ref(global),
+            _global_this: std::ptr::from_ref(global),
             da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
             estimated_size: AtomicU32::new(0),
@@ -391,6 +391,10 @@ impl BlockList {
         _ = writer.write_int_le(std::ptr::from_ref::<Self>(this) as usize);
     }
 
+    // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
+    // signature is fixed by `generate-classes.ts`, so the deref is documented with
+    // the SAFETY comment below.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_structured_clone_deserialize(
         global: &JSGlobalObject,
         ptr: *mut *mut u8,
@@ -401,6 +405,9 @@ impl BlockList {
         // non-null out-param the caller expects us to advance.
         let ptr = unsafe { &mut *ptr };
         let total_length: usize = (end as usize) - (*ptr as usize);
+        // SAFETY: `*ptr` through `end` is the contiguous C++-owned deserialization
+        // buffer (see above); `total_length = end - *ptr`, so the resulting slice
+        // is exactly that buffer and stays valid for the lifetime of `r`.
         let mut r =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
 

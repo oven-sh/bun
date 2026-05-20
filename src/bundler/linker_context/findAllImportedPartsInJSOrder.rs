@@ -3,12 +3,10 @@ use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, HashMap, VecExt};
 
 use crate::{
-    Chunk, Index, IndexInt, JSMeta, LinkerContext, Part, PartRange,
+    Chunk, Index, IndexInt, LinkerContext, PartRange,
     chunk::{self, EntryPoint, Order},
     js_meta::Wrap,
-    linker_graph::FileColumns as _,
 };
-use bun_ast as js_ast;
 use bun_core::perf;
 
 pub fn find_all_imported_parts_in_js_order(

@@ -11,13 +11,12 @@ use core::ptr::NonNull;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
-use bun_ast::{ImportKind, ImportRecord, import_record};
+use bun_ast::{ImportKind, ImportRecord};
 use bun_ast::{Loc, Log, Range, Source};
 use bun_collections::VecExt;
 use bun_core::Output;
 use bun_core::{MutableString, strings};
 
-use bun_ast as js_ast;
 use bun_ast::ast_result::{NamedExports, NamedImports, TopLevelSymbolToParts};
 use bun_ast::b::B;
 use bun_ast::base::{RefInt, RefTag};
@@ -27,7 +26,7 @@ use bun_ast::stmt::StatementData;
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{
     Binding, ClauseItem, DeclaredSymbol, DeclaredSymbolList, ExportsKind, Expr, LocRef,
-    NamedExport, Part, PartList, PartSymbolUseMap, Scope, Stmt, Symbol,
+    NamedExport, Part, PartSymbolUseMap, Scope, Stmt, Symbol,
 };
 use bun_ast::{E, G, S};
 use bun_js_parser as js_parser;
@@ -694,8 +693,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 }
 
 use bun_ast::Ref;
-
-use bun_ast::Index;
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;

@@ -45,12 +45,6 @@ const POINTER_BITS: u32 = if USE_SMALL_PATH_STRING_ {
 } else {
     usize::BITS
 };
-#[allow(dead_code)]
-const LEN_BITS: u32 = if USE_SMALL_PATH_STRING_ {
-    PATH_INT_LEN_BITS
-} else {
-    usize::BITS
-};
 
 // macOS sets file path limit to 1024
 // Since a pointer on x64 is 64 bits and only 46 bits are used
@@ -158,7 +152,7 @@ impl PathString {
         }
         // SAFETY: caller contract — (ptr,len) is exactly the `Box<[u8]>` that
         // `init_owned` released via `into_raw`.
-        drop(unsafe { crate::heap::take(core::slice::from_raw_parts_mut(ptr as *mut u8, len)) });
+        drop(unsafe { crate::heap::take(std::ptr::slice_from_raw_parts_mut(ptr as *mut u8, len)) });
     }
 
     #[inline]

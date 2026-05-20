@@ -10,8 +10,6 @@
 //! Full earlier drafts are preserved gated under ` mod *_draft`
 //! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
 
-use core::mem::offset_of;
-
 use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
 #[cfg(windows)]
@@ -31,7 +29,7 @@ pub use bun_event_loop::EventLoopTimer::{
 // lower tier switches to `bun_core::Timespec`.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::jsc::JSValue;
 
 // ─── JS-facing surface (`impl All { set_timeout / clear_* / … }`) ────────────
 // Named `timer` so codegen (`generated_js2native.rs`) resolves
@@ -305,7 +303,7 @@ pub struct TimerHeapCtx;
 
 impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
     #[inline]
-    fn less(&self, a: *mut EventLoopTimer, b: *mut EventLoopTimer) -> bool {
+    unsafe fn less(&self, a: *mut EventLoopTimer, b: *mut EventLoopTimer) -> bool {
         // SAFETY: `Intrusive` only ever calls `less` with non-null nodes that
         // are live members of the heap (caller invariant on insert/meld).
         EventLoopTimer::less((), unsafe { &*a }, unsafe { &*b })
@@ -617,7 +615,7 @@ pub unsafe fn js_timer_flags_ptr(
             }
             _ => return None,
         };
-        Some(NonNull::new_unchecked(p as *mut TimerFlags))
+        Some(NonNull::new_unchecked(p.cast_mut()))
     }
 }
 
@@ -831,6 +829,14 @@ impl All {
     }
 
     /// Remove the EventLoopTimer if necessary, then re-insert at `time`.
+    ///
+    /// # Safety
+    /// `timer` must point to a live `EventLoopTimer` with whole-container
+    /// provenance for its tag (see [`js_timer_flags_ptr`]).
+    // `timer` must stay `*mut`: the body forms only short-lived `&mut *timer`
+    // so re-entrant `remove_lock_held` does not alias an outstanding `&mut`
+    // (see PORT NOTEs below); contract is documented in `# Safety`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         self.lock.lock();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
@@ -868,10 +874,6 @@ impl All {
         self.lock.unlock();
     }
 
-    fn is_date_timer_active(&self) -> bool {
-        self.date_header_timer.event_loop_timer.state == EventLoopTimerState::ACTIVE
-    }
-
     /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
     /// Returns `true` if `spec` was written.
     ///
@@ -879,6 +881,13 @@ impl All {
     /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
     /// it needs — `event_loop.immediate_tasks.len()` and the QUIC tick — are
     /// passed in pre-computed until the cycle is broken.
+    ///
+    /// # Safety
+    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
+    /// must remain live across any `EventLoopTimer::fire` re-entry.
+    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn get_timeout(
         &mut self,
         spec: &mut Timespec,
@@ -1013,6 +1022,12 @@ impl All {
         out
     }
 
+    /// # Safety
+    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
+    /// must remain live across any `EventLoopTimer::fire` re-entry.
+    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
         // PORT NOTE (§Forbidden aliased-&mut): spec Timer.zig:346-354 takes
         // `*All` (raw pointer) because fired handlers re-enter `vm.timer`
@@ -1053,6 +1068,12 @@ impl All {
         }
     }
 
+    /// # Safety
+    /// `uws_loop` must point to the calling VM's live uws loop.
+    // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
+    // documented in `# Safety` above. Cannot be `&mut` without breaking the
+    // out-of-file call sites that hold raw pointers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;
@@ -1097,6 +1118,12 @@ impl All {
         // prevent libuv from polling forever
     }
 
+    /// # Safety
+    /// `uws_loop` must point to the calling VM's live uws loop.
+    // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
+    // documented in `# Safety` above. Cannot be `&mut` without breaking the
+    // out-of-file call sites that hold raw pointers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.active_timer_count;
         let new = old + delta;
@@ -1176,11 +1203,15 @@ impl All {
                     // SAFETY: tag invariant — `node` IS the `event_loop_timer`
                     // field of a live `TimeoutObject`.
                     let parent = unsafe { TimeoutObject::from_timer_ptr(node) };
+                    // SAFETY: `parent` points at the live `TimeoutObject` recovered
+                    // above; `addr_of!` projects the in-bounds `internals` field.
                     to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
                 }
                 EventLoopTimerTag::ImmediateObject => {
                     // SAFETY: tag invariant — see above.
                     let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
+                    // SAFETY: `parent` points at the live `ImmediateObject` recovered
+                    // above; `addr_of!` projects the in-bounds `internals` field.
                     to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
                 }
                 EventLoopTimerTag::AbortSignalTimeout => {

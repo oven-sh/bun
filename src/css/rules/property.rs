@@ -97,9 +97,7 @@ impl PropertyRule {
         {
             let mut decl_parser = RuleBodyParser::new(input, &mut p);
             while let Some(decl) = decl_parser.next() {
-                if let Err(e) = decl {
-                    return Err(e);
-                }
+                decl?;
             }
         }
 
@@ -171,7 +169,6 @@ pub struct PropertyRuleDeclarationParser {
 // namespaces are structural duck-typing for RuleBodyParser; in Rust these
 // become trait impls.
 const _: () = {
-    use bun_core::strings;
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };

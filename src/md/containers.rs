@@ -192,6 +192,7 @@ impl Parser<'_> {
         // Reuse containers array for tight/loose tracking (same approach as md4c).
         // The containers are no longer needed for line analysis at this point.
         self.n_containers = 0;
+        let mut block_lines: Vec<VerbatimLine> = Vec::new();
 
         while off < bytes_len {
             // Align to BlockHeader
@@ -201,9 +202,10 @@ impl Parser<'_> {
                 break;
             }
 
-            // SAFETY: bytes_ptr+off is within bounds (checked above) and was written
-            // at BlockHeader alignment by push_container_bytes / current_block writes.
-            let hdr: &BlockHeader = unsafe { &*bytes_ptr.add(off).cast::<BlockHeader>() };
+            // SAFETY: off + size_of::<BlockHeader>() <= bytes_len (checked above) and the
+            // block parser wrote a valid BlockHeader at this offset.
+            let hdr: BlockHeader =
+                unsafe { bytes_ptr.add(off).cast::<BlockHeader>().read_unaligned() };
             off += size_of::<BlockHeader>();
 
             let block_type = hdr.block_type;
@@ -216,14 +218,18 @@ impl Parser<'_> {
             if off + lines_size > bytes_len {
                 break;
             }
-            // SAFETY: bytes_ptr+off..+lines_size is within bounds (checked above) and
-            // VerbatimLine entries were written contiguously after the header.
-            let block_lines: &[VerbatimLine] = unsafe {
-                core::slice::from_raw_parts(
-                    bytes_ptr.add(off).cast::<VerbatimLine>(),
-                    n_lines as usize,
-                )
-            };
+            block_lines.clear();
+            for li in 0..n_lines as usize {
+                // SAFETY: li < n_lines so off + li*size_of::<VerbatimLine>() is within the
+                // [off, off + lines_size) range bounds-checked above; end_current_block wrote
+                // n_lines contiguous VerbatimLine entries there.
+                block_lines.push(unsafe {
+                    bytes_ptr
+                        .add(off + li * size_of::<VerbatimLine>())
+                        .cast::<VerbatimLine>()
+                        .read_unaligned()
+                });
+            }
             off += lines_size;
 
             // Handle container openers/closers
@@ -274,12 +280,12 @@ impl Parser<'_> {
             }
             match block_type {
                 BlockType::Hr => {}
-                BlockType::Code => self.process_code_block(block_lines, data, flags)?,
-                BlockType::Html => self.process_html_block(block_lines)?,
-                BlockType::Table => self.process_table_block(block_lines, data)?,
-                BlockType::P => self.process_leaf_block(block_lines, true)?,
-                BlockType::H => self.process_leaf_block(block_lines, true)?,
-                _ => self.process_leaf_block(block_lines, false)?,
+                BlockType::Code => self.process_code_block(&block_lines, data, flags)?,
+                BlockType::Html => self.process_html_block(&block_lines)?,
+                BlockType::Table => self.process_table_block(&block_lines, data)?,
+                BlockType::P => self.process_leaf_block(&block_lines, true)?,
+                BlockType::H => self.process_leaf_block(&block_lines, true)?,
+                _ => self.process_leaf_block(&block_lines, false)?,
             }
             if !is_in_tight_list || block_type != BlockType::P {
                 self.leave_block(block_type, data)?;

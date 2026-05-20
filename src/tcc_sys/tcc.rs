@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::ZStr;
@@ -121,9 +120,10 @@ pub enum Error {
 bun_core::named_error_set!(Error);
 
 #[repr(i32)] // Zig: enum(c_int) — c_int == i32 on all Bun targets
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
     /// Output will be run in memory
+    #[default]
     Memory = TCC_OUTPUT_MEMORY as _,
     /// Executable file
     Exe = TCC_OUTPUT_EXE as _,
@@ -135,14 +135,8 @@ pub enum OutputFormat {
     Preprocess = TCC_OUTPUT_PREPROCESS as _,
 }
 
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Memory
-    }
-}
-
-/// Nominal type for some registered symbol. Used to force pointer-cast usage without
-/// allowing for interop with other APIs taking `*mut c_void` pointers.
+// Nominal type for some registered symbol. Used to force pointer-cast usage without
+// allowing for interop with other APIs taking `*mut c_void` pointers.
 bun_opaque::opaque_ffi! { pub struct Symbol; }
 
 /// Zig: `Symbol.Callback = fn (?*anyopaque, [*:0]const u8, ?*const Symbol) void`
@@ -193,7 +187,7 @@ impl State {
 
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
-        config: Config<ErrCtx>,
+        config: &Config<ErrCtx>,
     ) -> Result<NonNull<State>, bun_core::Error> {
         // TODO(port): narrow error set to (AllocError | Error)
         let state_ptr = State::new()?;
@@ -244,6 +238,7 @@ impl State {
     /// `s` must have been returned by [`State::new`]/[`State::init`] and not yet freed.
     pub unsafe fn destroy(s: *mut State) {
         // PORT NOTE: opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
+        // SAFETY: caller's contract guarantees `s` is a live `tcc_new` handle not yet deleted.
         unsafe { tcc_delete(s) }
     }
 
@@ -428,7 +423,10 @@ impl State {
         Ok(())
     }
 
-    /// Add a symbol to the compiled program
+    /// Add a symbol to the compiled program. `val` is stored as the symbol's
+    /// address and never dereferenced here; it must remain valid for any JIT'd
+    /// code that calls it (same precondition as `add_symbols`).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn add_symbol(&mut self, name: &ZStr, val: *const c_void) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; name is NUL-terminated; val is an opaque address.
         if unsafe { tcc_add_symbol(self, name.as_ptr(), val) } != 0 {
@@ -513,7 +511,10 @@ impl State {
         NonNull::new(unsafe { tcc_get_symbol(self, name.as_ptr()) }.cast::<Symbol>())
     }
 
-    /// Return symbol value or NULL if not found
+    /// Return symbol value or NULL if not found.
+    /// `ctx` is forwarded opaquely to `symbol_cb`; it must be valid for every
+    /// callback invocation (or null if `symbol_cb` ignores it).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn list_symbols(&mut self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param); mirrors Zig's implicit ptrcast.

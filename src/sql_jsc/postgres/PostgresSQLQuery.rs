@@ -169,6 +169,7 @@ impl PostgresSQLQuery {
     /// `&mut` is exclusive for the borrow's lifetime; callers must not hold two
     /// results live simultaneously (the request FIFO never does).
     #[inline]
+    #[allow(clippy::mut_from_ref)] // intrusive raw pointer; see SAFETY in doc comment
     pub fn statement_mut(&self) -> Option<&mut PostgresSQLStatement> {
         // SAFETY: see doc comment — intrusive ref held by `self` keeps the
         // pointee alive; single-JS-thread exclusivity.
@@ -283,7 +284,7 @@ impl PostgresSQLQuery {
 
     pub fn on_error(
         &self,
-        err: super::postgres_sql_statement::Error,
+        err: &super::postgres_sql_statement::Error,
         global_object: &JSGlobalObject,
     ) {
         let Ok(e) = err.to_js(global_object) else {
@@ -609,7 +610,11 @@ impl PostgresSQLQuery {
             } else {
                 this.status.set(Status::Pending);
             }
-            if let Err(_) = connection.requests.with_mut(|q| q.write_item(this_ptr)) {
+            if connection
+                .requests
+                .with_mut(|q| q.write_item(this_ptr))
+                .is_err()
+            {
                 // fail to run do cleanup — sole owner just created above
                 // (rc=1); `release_statement` decrements → 0 frees.
                 this.release_statement();
@@ -907,7 +912,11 @@ impl PostgresSQLQuery {
             }
         }
 
-        if let Err(_) = connection.requests.with_mut(|q| q.write_item(this_ptr)) {
+        if connection
+            .requests
+            .with_mut(|q| q.write_item(this_ptr))
+            .is_err()
+        {
             return Err(global_object.throw_out_of_memory());
         }
         this.this_value.with_mut(|r| r.upgrade(global_object));

@@ -85,6 +85,7 @@ pub static BACKEND: core::sync::atomic::AtomicU8 =
 /// `#[cfg(any(target_os = "macos", windows))]` gate at each call site (types
 /// can't be runtime-conditional, so the two stay separate). On platforms with
 /// no backend the cfg is comptime-dead and this is never referenced.
+#[cfg(any(target_os = "macos", windows))]
 #[inline]
 fn use_system() -> bool {
     BACKEND.load(core::sync::atomic::Ordering::Relaxed) == Backend::System as u8
@@ -317,11 +318,10 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
 
 // PORT NOTE: Zig returned `(Error || error{BackendUnavailable})!Decoded`;
 // reshaped to `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
-#[allow(unused_variables)]
-fn decode_via_system(bytes: &[u8], max_pixels: u64) -> Result<Option<Decoded>, Error> {
+fn decode_via_system(_bytes: &[u8], _max_pixels: u64) -> Result<Option<Decoded>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
-        return system_backend::BackendError::split(system_backend::decode(bytes, max_pixels));
+        return system_backend::BackendError::split(system_backend::decode(_bytes, _max_pixels));
     }
     Ok(None)
 }
@@ -347,8 +347,8 @@ pub struct Probe {
 /// metadata() and bytes() agree on what's "too big".
 pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
-    let mut w: u32 = 0;
-    let mut h: u32 = 0;
+    let w: u32;
+    let h: u32;
     match fmt {
         Format::Png => {
             // sig(8) · IHDR{len(4) type(4) w(4) h(4) ...}

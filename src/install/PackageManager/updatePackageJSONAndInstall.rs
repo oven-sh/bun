@@ -8,11 +8,10 @@ use bstr::BStr;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as json;
-use bun_core::{Error, Global, Output, err};
+use bun_core::{Error, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_install::PackageNameHash;
 use bun_js_printer as js_printer;
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
 
 use super::{
@@ -23,7 +22,6 @@ use super::{
 // its functions directly on the `package_json_editor` module.
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
-use super::patch_package::{do_patch_commit, prepare_patch};
 use super::update_request::Array as UpdateRequestArray;
 
 pub fn update_package_json_and_install_with_manager(
@@ -281,7 +279,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
                             let changed = new_len != dependencies.len();
                             if changed {
-                                e_object.properties.truncate((new_len) as usize);
+                                e_object.properties.truncate(new_len);
 
                                 // If the dependencies list is now empty, remove it from the package.json
                                 // since we're swapRemove, we have to re-sort it
@@ -808,7 +806,7 @@ pub fn update_package_json_and_install_and_cli(
     // SAFETY: `super::init` returns a `*mut PackageManager` to the process-static
     // singleton (Zig `*PackageManager`). We are on the single CLI thread; no worker
     // threads deref `get()` until `install_with_manager` spawns the HTTP thread.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
+    let manager: &mut PackageManager = &mut *manager_ptr;
 
     if manager.options.should_print_command_name() {
         // Zig: `"..." ++ Global.package_json_version_with_sha ++ "..."` (comptime concat).

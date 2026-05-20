@@ -34,7 +34,6 @@ use std::sync::Arc;
 // TODO(port): this struct is kept only as documentation of the Zig surface; no
 // Rust code should construct it. Remove once all `WithOptions` call sites are
 // migrated to plain `Rc<T>`/`Arc<T>`.
-#[allow(dead_code)]
 pub struct Options {
     // If non-null, the shared pointer will always use the provided allocator. This saves a small
     // amount of memory, but it means the shared pointer will be a different type from shared

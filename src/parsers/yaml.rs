@@ -15,7 +15,7 @@ use core::fmt;
 
 use bun_alloc::AllocError;
 use bun_ast::{self, E, Expr, G};
-use bun_ast::{self as ast, Loc, Log, Source};
+use bun_ast::{self as ast, Loc};
 use bun_collections::{StringHashMap, VecExt};
 use bun_core::{self, StackCheck};
 
@@ -833,7 +833,7 @@ pub struct StringRangeStart {
 
 impl StringRangeStart {
     #[inline]
-    pub fn end(&self, end: Pos) -> StringRange {
+    pub fn end(self, end: Pos) -> StringRange {
         StringRange { off: self.off, end }
     }
 }
@@ -896,24 +896,28 @@ pub struct StringBuilder<'a, Enc: Encoding> {
 }
 
 impl<'a, Enc: Encoding> StringBuilder<'a, Enc> {
-    // SAFETY: callers construct StringBuilder via Parser::string_builder{,_raw}()
-    // which stores `self as *mut Parser`; the builder never outlives the parser
-    // stack frame and is the sole mutator of `whitespace_buf` while live.
     #[inline]
     fn parser(&self) -> &Parser<'a, Enc> {
+        // SAFETY: callers construct StringBuilder via Parser::string_builder{,_raw}()
+        // which stores `self as *mut Parser`; the builder never outlives the parser
+        // stack frame and is the sole mutator of `whitespace_buf` while live.
         unsafe { &*self.parser }
     }
     #[inline]
     fn parser_mut(&mut self) -> &mut Parser<'a, Enc> {
+        // SAFETY: same backref invariant as `parser()`; `&mut self` guarantees
+        // exclusive access to the builder so the derived `&mut Parser` does not
+        // alias another live borrow.
         unsafe { &mut *self.parser }
     }
     /// Shortcut for `self.parser().input` that returns the slice with its
     /// original `'a` lifetime (decoupled from `&self`), so it can be hoisted
     /// above `match &mut self.str` without tripping borrowck.
-    // SAFETY: see `parser()` note above; `input` is a `&'a` borrow stored in
-    // the Parser and is unaffected by any mutation this builder performs.
     #[inline]
     fn input(&self) -> &'a [Enc::Unit] {
+        // SAFETY: same backref invariant as `parser()`; `input` is a `&'a`
+        // borrow stored in the Parser and is unaffected by any mutation this
+        // builder performs.
         unsafe { (*self.parser).input }
     }
 
@@ -1332,6 +1336,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         let raw_parser: *mut Parser<'i, Enc> = self.parser;
         macro_rules! parser {
             () => {
+                // SAFETY: `raw_parser` is `self.parser`, set from `&mut Parser`
+                // in `scan_plain_scalar`; ctx never outlives that borrow and each
+                // expansion's `&mut` is dropped before the next is derived.
                 unsafe { &mut *raw_parser }
             };
         }
@@ -1488,7 +1495,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 }
 
                 0x2C | 0x5D | 0x7D /* , ] } */ => {
-                    first = false;
                     match parser!().context.get() {
                         // it's valid for ',' ']' '}' to end the scalar
                         // in flow context
@@ -1606,7 +1612,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                     continue;
                 }
                 _ => {
-                    first = false;
                     break 'end (parser!().pos, false);
                 }
             }
@@ -2389,19 +2394,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn remain_starts_with(&self, cs: impl AsRef<[Enc::Unit]>) -> bool {
         self.remain().starts_with(cs.as_ref())
-    }
-
-    fn remain_starts_with_char(&self, ch: Enc::Unit) -> bool {
-        let r = self.remain();
-        !r.is_empty() && r[0] == ch
-    }
-
-    fn remain_starts_with_any(&self, cs: &[Enc::Unit]) -> bool {
-        let r = self.remain();
-        if r.is_empty() {
-            return false;
-        }
-        cs.iter().any(|c| *c == r[0])
     }
 
     // ── parseDirective ──────────────────────────────────────────────────────
@@ -3447,7 +3439,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
 
                     let mut copy = match self.anchors.get(Enc::key_bytes(alias.slice(self.input))) {
-                        Some(e) => e.clone(),
+                        Some(e) => *e,
                         None => {
                             // we failed to find the alias, but it might be cyclic and
                             // available later. (see Zig comment block)
@@ -3508,7 +3500,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors
-                                .put(Enc::key_bytes(key_anchor.slice(self.input)), seq.clone())?;
+                                .put(Enc::key_bytes(key_anchor.slice(self.input)), seq)?;
                         }
 
                         let map = self.parse_block_mapping(
@@ -3519,10 +3511,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors.put(
-                                Enc::key_bytes(mapping_anchor.slice(self.input)),
-                                map.clone(),
-                            )?;
+                            self.anchors
+                                .put(Enc::key_bytes(mapping_anchor.slice(self.input)), map)?;
                         }
 
                         return Ok(map);
@@ -3578,7 +3568,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors
-                                .put(Enc::key_bytes(key_anchor.slice(self.input)), map.clone())?;
+                                .put(Enc::key_bytes(key_anchor.slice(self.input)), map)?;
                         }
 
                         let parent_map = self.parse_block_mapping(
@@ -3591,7 +3581,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
                             self.anchors.put(
                                 Enc::key_bytes(mapping_anchor.slice(self.input)),
-                                parent_map.clone(),
+                                parent_map,
                             )?;
                         }
 
@@ -3708,10 +3698,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line);
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
-                            self.anchors.put(
-                                Enc::key_bytes(key_anchor.slice(self.input)),
-                                implicit_key.clone(),
-                            )?;
+                            self.anchors
+                                .put(Enc::key_bytes(key_anchor.slice(self.input)), implicit_key)?;
                         }
 
                         let mapping = self.parse_block_mapping(
@@ -3722,10 +3710,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors.put(
-                                Enc::key_bytes(mapping_anchor.slice(self.input)),
-                                mapping.clone(),
-                            )?;
+                            self.anchors
+                                .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
                         }
 
                         return Ok(mapping);
@@ -3756,7 +3742,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         if let Some(anchor) = node_props.anchor() {
             self.anchors
-                .put(Enc::key_bytes(anchor.slice(self.input)), resolved.clone())?;
+                .put(Enc::key_bytes(anchor.slice(self.input)), resolved)?;
         }
 
         Ok(resolved)
@@ -3829,11 +3815,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
         let parser: *mut Parser<'i, Enc> = self;
-        // SAFETY: single provenance chain — once the raw pointer is derived,
-        // route ALL parser access through it; never touch `self` directly again
-        // (Stacked Borrows: reborrowing `self` would invalidate `parser`).
         macro_rules! parser {
             () => {
+                // SAFETY: single provenance chain — `parser` was derived from
+                // `&mut self` above; all access routes through it (never reborrow
+                // `self` directly), and each expansion's `&mut` is dropped before
+                // the next is derived.
                 unsafe { &mut *parser }
             };
         }
@@ -4784,7 +4771,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                 }
                 0x22 /* '"' */ => {
-                    nl = false;
                     self.inc(1);
                     return Ok(Token::scalar(ScalarInit {
                         start,
@@ -5517,14 +5503,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         false
     }
 
-    fn is_any_at(&self, values: &[Enc::Unit], n: usize) -> bool {
-        let pos = self.pos.add(n);
-        if pos.is_less_than(self.input.len()) {
-            return values.contains(&self.input[pos.cast()]);
-        }
-        false
-    }
-
     fn is_any_or_eof_at(&self, values: impl AsRef<[Enc::Unit]>, n: usize) -> bool {
         let pos = self.pos.add(n);
         if pos.is_less_than(self.input.len()) {
@@ -5536,10 +5514,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn is_eof(&self) -> bool {
         !self.pos.is_less_than(self.input.len())
-    }
-
-    fn is_eof_at(&self, n: usize) -> bool {
-        !self.pos.add(n).is_less_than(self.input.len())
     }
 
     fn is_b_char(&self) -> bool {
@@ -5554,15 +5528,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let pos = self.pos;
         if pos.is_less_than(self.input.len()) {
             return chars::is_b_char::<Enc>(self.input[pos.cast()]);
-        }
-        true
-    }
-
-    fn is_s_white_or_b_char_or_eof(&self) -> bool {
-        let pos = self.pos;
-        if pos.is_less_than(self.input.len()) {
-            let c = self.input[pos.cast()];
-            return chars::is_s_white::<Enc>(c) || chars::is_b_char::<Enc>(c);
         }
         true
     }
@@ -5597,14 +5562,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.inc(1);
         }
         Ok(())
-    }
-
-    fn is_ns_hex_digit(&self) -> bool {
-        let pos = self.pos;
-        if pos.is_less_than(self.input.len()) {
-            return chars::is_ns_hex_digit::<Enc>(self.input[pos.cast()]);
-        }
-        false
     }
 
     fn is_ns_dec_digit(&self) -> bool {
@@ -5653,39 +5610,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
-    fn try_skip_ns_uri_chars(&mut self) -> Result<(), ParseError> {
-        if !self.is_ns_uri_char() {
-            return Err(ParseError::UnexpectedCharacter);
-        }
-        self.skip_ns_uri_chars();
-        Ok(())
-    }
-
     fn string_range(&self) -> StringRangeStart {
         StringRangeStart { off: self.pos }
-    }
-
-    fn string_builder(&mut self) -> StringBuilder<'i, Enc> {
-        StringBuilder {
-            parser: std::ptr::from_mut::<Parser<'i, Enc>>(self),
-            str: YamlString::Range(StringRange {
-                off: Pos::ZERO,
-                end: Pos::ZERO,
-            }),
-        }
-    }
-
-    // SAFETY: caller guarantees the returned builder does not outlive `*self`
-    // and that no other &mut borrow of `*self` overlaps with builder method
-    // calls that touch `whitespace_buf`/`input`. Used by scan_plain_scalar.
-    unsafe fn string_builder_raw(&mut self) -> StringBuilder<'i, Enc> {
-        StringBuilder {
-            parser: std::ptr::from_mut::<Parser<'i, Enc>>(self),
-            str: YamlString::Range(StringRange {
-                off: Pos::ZERO,
-                end: Pos::ZERO,
-            }),
-        }
     }
 }
 

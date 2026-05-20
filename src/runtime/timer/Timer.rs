@@ -9,11 +9,8 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use core::mem::offset_of;
-
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
-use bun_jsc::host_fn::to_js_host_call;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
 use bun_uws::Loop as UwsLoop;
@@ -42,6 +39,13 @@ impl All {
         }
     }
 
+    /// # Safety
+    /// `vm` must point to the live per-thread `VirtualMachine`.
+    // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
+    // the raw pointer is intentional (avoids aliased-`&mut` across the
+    // jsc/runtime crate cycle — see DateHeaderTimer.rs). Opaque-token
+    // forwarding makes not_unsafe_ptr_arg_deref a false positive.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,
@@ -50,12 +54,15 @@ impl All {
         if loop_.should_enable_date_header_timer() {
             // PORT NOTE: `is_date_timer_active()` is private to mod.rs; inline.
             if self.date_header_timer.event_loop_timer.state != EventLoopTimerState::ACTIVE {
-                self.date_header_timer.enable(
-                    vm,
-                    // Be careful to avoid adding extra calls to bun.timespec.now()
-                    // when it's not needed.
-                    &Timespec::now(TimespecMockMode::AllowMockedTime),
-                );
+                // SAFETY: caller contract guarantees `vm` is valid.
+                unsafe {
+                    self.date_header_timer.enable(
+                        vm,
+                        // Be careful to avoid adding extra calls to bun.timespec.now()
+                        // when it's not needed.
+                        &Timespec::now(TimespecMockMode::AllowMockedTime),
+                    );
+                }
             }
         } else {
             // don't un-schedule it here.
@@ -299,10 +306,9 @@ impl All {
         // exposes `get_index` + `swap_remove_at`, so combine them.
         let value: *mut EventLoopTimer = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             self.maps.set_timeout.swap_remove_at(idx).1
-        } else if let Some(idx) = self.maps.set_interval.get_index(&id) {
-            self.maps.set_interval.swap_remove_at(idx).1
         } else {
-            return None;
+            let idx = self.maps.set_interval.get_index(&id)?;
+            self.maps.set_interval.swap_remove_at(idx).1
         };
         // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
         debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
@@ -454,7 +460,11 @@ impl DateHeaderTimer {
     /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
     /// 2. If the timer is stale (> 1 second since last update), update the date
     ///    immediately and reschedule
-    pub fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
+    ///
+    /// # Safety
+    /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
+    /// must outlive this call.
+    pub(super) unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
         // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub

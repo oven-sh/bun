@@ -8,24 +8,13 @@ use crate::mysql::mysql_types::FieldType;
 
 bun_core::declare_scope!(PreparedStatement, hidden);
 
+#[derive(Default)]
 pub struct PrepareOK {
     pub status: u8,
     pub statement_id: u32,
     pub num_columns: u16,
     pub num_params: u16,
     pub warning_count: u16,
-}
-
-impl Default for PrepareOK {
-    fn default() -> Self {
-        Self {
-            status: 0,
-            statement_id: 0,
-            num_columns: 0,
-            num_params: 0,
-            warning_count: 0,
-        }
-    }
 }
 
 impl PrepareOK {
@@ -105,7 +94,7 @@ impl<'a> Execute<'a> {
         const MYSQL_MAX_PARAMS: usize = (u16::MAX as usize / 8) + 1;
 
         let mut null_bitmap_buf = [0u8; MYSQL_MAX_PARAMS];
-        let bitmap_bytes = (self.params.len + 7) / 8;
+        let bitmap_bytes = self.params.len.div_ceil(8);
         let null_bitmap = &mut null_bitmap_buf[0..bitmap_bytes];
         null_bitmap.fill(0);
 

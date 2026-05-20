@@ -451,9 +451,7 @@ impl ConvertedTable {
                 let mut j = idx;
                 while j < self.long_index.len() && self.long_index[j].hash == h {
                     let p = &self.converted[self.long_index[j].idx as usize];
-                    if p.names.long.map_or(false, |l| l == key)
-                        || p.names.long_aliases.iter().any(|a| *a == key)
-                    {
+                    if (p.names.long == Some(key)) || p.names.long_aliases.contains(&key) {
                         return p;
                     }
                     j += 1;

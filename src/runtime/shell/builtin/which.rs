@@ -4,8 +4,6 @@
 //! is not found, exit code becomes 1, but continues execution until all args
 //! are processed.
 
-use core::ffi::CStr;
-
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::env_str::EnvStr;
 use crate::shell::interpreter::{Interpreter, NodeId};

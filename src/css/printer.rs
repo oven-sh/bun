@@ -1,10 +1,10 @@
+#[cfg(debug_assertions)]
 use core::cell::Cell;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
-use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_alloc::ArenaVec as BumpVec;
 use bun_ast::ImportRecord;
-use bun_collections::VecExt;
 
 use crate::css_parser as css;
 use crate::sourcemap;
@@ -269,7 +269,7 @@ impl<'a> Printer<'a> {
         arena: &'a Bump,
         scratchbuf: BumpVec<'a, u8>,
         dest: &'a mut dyn Write,
-        options: PrinterOptions<'a>,
+        options: &PrinterOptions<'a>,
         import_info: Option<ImportInfo<'a>>,
         local_names: Option<&'a css::LocalsResultsMap>,
         symbols: &'a SymbolMap,
@@ -329,7 +329,7 @@ impl<'a> Printer<'a> {
             arena,
             BumpVec::new_in(arena),
             dest,
-            PrinterOptions::default(),
+            &PrinterOptions::default(),
             import_info,
             local_names,
             symbols,
@@ -348,7 +348,7 @@ impl<'a> Printer<'a> {
         if let Some(info) = &self.import_info {
             let import_record = &info.import_records[import_record_idx as usize];
             let [a, b] =
-                bun_core::cheap_prefix_normalizer(self.public_path, &import_record.path.text);
+                bun_core::cheap_prefix_normalizer(self.public_path, import_record.path.text);
             // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
@@ -388,7 +388,7 @@ impl<'a> Printer<'a> {
             }
         }
         // External URL stays as-is
-        Ok(&record.path.text)
+        Ok(record.path.text)
     }
 
     pub fn context(&self) -> Option<&css::StyleContext<'a>> {
@@ -832,27 +832,6 @@ impl<'a> Printer<'a> {
         self.indent_amt -= 2;
     }
 
-    fn get_indent(&mut self, idnt: u8) -> &[u8] {
-        // divide by 2 to get index into table
-        let i = (idnt >> 1) as usize;
-        // PERF: may be faster to just do `i < (IDENTS.len - 1) * 2` (e.g. 62 if IDENTS.len == 32) here
-        if i < INDENTS_LEVELS {
-            return &INDENT_SPACES[..i * 2];
-        }
-        if self.indentation_buf.len() < idnt as usize {
-            // PORT NOTE: Zig had `appendNTimes(' ', items.len - idnt)` which underflows when
-            // len < idnt — preserving the (buggy) arithmetic verbatim would panic in Rust.
-            // Mirroring intent: pad up to `idnt` spaces.
-            // TODO(port): verify upstream bug; Zig wrapping-sub here is suspicious.
-            let need = idnt as usize - self.indentation_buf.len();
-            self.indentation_buf
-                .extend(core::iter::repeat(b' ').take(need));
-        } else {
-            self.indentation_buf.truncate(idnt as usize);
-        }
-        &self.indentation_buf
-    }
-
     fn write_indent(&mut self) -> PrintResult<()> {
         debug_assert!(!self.minify);
         if self.indent_amt > 0 {
@@ -868,11 +847,6 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 }
-
-// PORT NOTE: Zig built a comptime [32][]const u8 table of " " * (i*2). Equivalent here is a
-// single static buffer of 64 spaces, sliced on demand — same observable behavior, simpler const.
-const INDENTS_LEVELS: usize = 32;
-static INDENT_SPACES: [u8; INDENTS_LEVELS * 2] = [b' '; INDENTS_LEVELS * 2];
 
 // bun.ast.Symbol.Map — lives in bun_logger.
 type SymbolMap = bun_ast::symbol::Map;

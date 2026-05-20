@@ -1,5 +1,3 @@
-use core::marker::{PhantomData, PhantomPinned};
-
 use bun_core::String as BunString;
 
 bun_opaque::opaque_ffi! {

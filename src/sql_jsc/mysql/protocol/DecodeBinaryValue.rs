@@ -1,6 +1,4 @@
 use crate::jsc::JSGlobalObject;
-#[allow(unused_imports)]
-use crate::mysql::my_sql_value::Value;
 use crate::mysql::my_sql_value::{DateTime, Time};
 use crate::shared::sql_data_cell::SQLDataCell;
 use crate::shared::sql_data_cell::{Tag as CellTag, Value as CellValue};
@@ -223,11 +221,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     Ok(SQLDataCell {
                         tag: CellTag::String,
                         value: CellValue {
-                            string: if !slice.is_empty() {
-                                clone_utf8_wtf_impl(slice)
-                            } else {
-                                core::ptr::null_mut()
-                            },
+                            string: clone_utf8_wtf_impl(slice),
                         },
                         free_value: 1,
                         ..Default::default()

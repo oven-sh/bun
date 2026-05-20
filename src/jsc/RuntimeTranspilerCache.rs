@@ -1,14 +1,12 @@
-#![allow(unused_imports, unused_variables, dead_code, unreachable_code)]
 #![warn(unused_must_use)]
 
 use core::cell::{Cell, RefCell};
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::ExportsKind;
 use bun_ast::Source;
-use bun_core::{self as bun, FeatureFlags, env_var};
+use bun_core::{FeatureFlags, env_var};
 use bun_core::{PathString, String as BunString, ZStr};
-use bun_io::Write as _;
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
@@ -1078,8 +1076,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
     Jsc for bun_ast::RuntimeTranspilerCache => |this| {
         get(source, parser_options, used_jsx) => {
             let this = &mut *this;
-            let source = &*source;
-            let parser_options = &*parser_options.cast::<ParserOptions<'_>>();
+            let parser_options = parser_options.cast::<ParserOptions<'_>>().as_ref();
 
             let mut jsc = RuntimeTranspilerCache {
                 input_hash: this.input_hash,

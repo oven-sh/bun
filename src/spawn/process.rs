@@ -7,7 +7,7 @@ use core::sync::atomic::Ordering;
 // (std::sync::Arc removed — Process is intrusively ref-counted via
 // bun_ptr::ThreadSafeRefCount; see SyncWindowsProcess below.)
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use bun_core::Global;
 use bun_core::Output;
 use bun_event_loop::EventLoopHandle;
@@ -24,7 +24,7 @@ use bun_sys::{self, Fd, Maybe};
 use uv::{UvHandle as _, UvStream as _};
 
 // posix_spawn(2) wrappers — owned by the `bun_spawn_sys` leaf crate.
-#[allow(unused_imports)]
+#[cfg(unix)]
 use bun_spawn_sys::posix_spawn::posix_spawn;
 /// `posix_spawn::WaitPidResult` — re-exported from `bun_spawn_sys`. `status`
 /// is `u32` there (Zig `c_int` reinterpreted via the `W*` macros);
@@ -96,16 +96,12 @@ const PROCESS_POLL_ONE_SHOT: bool = !cfg!(any(target_os = "linux", target_os = "
 
 pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 
-#[cfg(windows)]
-type SyncProcess = sync::SyncWindowsProcess;
 // `opaque_ffi!` emits an inherent `impl` that doesn't carry inner `#[cfg]`
 // attrs, so gate the whole macro invocation rather than the struct alone.
 #[cfg(not(windows))]
 bun_opaque::opaque_ffi! {
     pub struct SyncProcessPosix;
 }
-#[cfg(not(windows))]
-type SyncProcess = SyncProcessPosix;
 
 #[inline]
 pub(crate) fn call_exit_handler(
@@ -194,6 +190,7 @@ impl Process {
     /// `this` must point at a live `Process` with refcount ≥ 1.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: caller contract — `this` is a live `Process` with refcount ≥ 1.
         unsafe { bun_ptr::ThreadSafeRefCount::<Process>::deref(this) };
     }
 
@@ -249,7 +246,7 @@ impl Process {
 
     #[cfg(unix)]
     pub fn init_posix(
-        posix: PosixSpawnResult,
+        posix: &PosixSpawnResult,
         event_loop: EventLoopHandle,
         sync_: bool,
     ) -> *mut Process {
@@ -344,8 +341,10 @@ impl Process {
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
         // Mutated only on the macOS ESRCH retry path below.
-        #[allow(unused_mut)]
+        #[cfg(target_os = "macos")]
         let mut rusage_result = *rusage;
+        #[cfg(not(target_os = "macos"))]
+        let rusage_result = *rusage;
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
             match self.rewatch_posix() {
@@ -516,7 +515,7 @@ impl Process {
         // SAFETY: libuv passes the live handle; only reads its POD fields.
         let rusage = uv_getrusage(unsafe { &mut *process });
         // SAFETY: raw read of POD `pid` field on the live handle.
-        let pid = unsafe { (*process).pid };
+        let _pid = unsafe { (*process).pid };
         // SAFETY: `data` was set to the owning `*mut Process` before
         // `uv_spawn`; libuv never overwrites it. `process` is not
         // dereferenced again after this point.
@@ -537,7 +536,7 @@ impl Process {
 
         bun_sys::windows::libuv::log!(
             "Process.onExit({}) code: {}, signal: {:?}",
-            pid,
+            _pid,
             exit_code,
             signal_code
         );
@@ -575,14 +574,14 @@ impl Process {
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
         // SAFETY: read POD `pid` first — `uv_handle` points at the inline
         // `Poller::Uv` payload inside `*this` (see `on_exit_uv`).
-        let pid = unsafe { (*uv_handle).pid };
+        let _pid = unsafe { (*uv_handle).pid };
         // SAFETY: `*mut Process` back-pointer stashed in `data` at spawn. Stay
         // raw — `ScopedRef::Drop` may free the allocation, so never bind a
         // `&mut Process` whose tag would have to outlive that.
         let this: *mut Process = unsafe { (*uv_handle).data.cast() };
         // SAFETY: adopts the +1 ref taken at `uv_spawn`.
         let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        bun_sys::windows::libuv::log!("Process.onClose({})", pid);
+        bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
         // SAFETY: `_g` keeps `this` live for this block.
         unsafe {
             if matches!((*this).poller, Poller::Uv(_)) {
@@ -720,8 +719,9 @@ impl Process {
 // PORT NOTE: not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest. The
 // Zig `union(enum)` is copyable because its `.err` arm borrows the path; the
 // Rust port owns it (see Error.rs TODO). Callers use `.clone()`.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum Status {
+    #[default]
     Running,
     Exited(Exited),
     /// Raw signal byte. Zig: `.signaled: bun.SignalCode` where `SignalCode` is a
@@ -732,12 +732,6 @@ pub enum Status {
     /// byte and range-check in `signal_code()` instead.
     Signaled(u8),
     Err(bun_sys::Error),
-}
-
-impl Default for Status {
-    fn default() -> Self {
-        Status::Running
-    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1079,20 +1073,19 @@ pub mod waiter_thread_posix {
             bun_core::heap::into_raw(Box::new(v))
         }
 
-        pub fn run_from_js_thread(self: Box<Self>) {
+        pub fn run_from_js_thread(self) {
             self.run_from_main_thread();
         }
 
-        pub fn run_from_main_thread(self: Box<Self>) {
-            let this = *self;
+        pub fn run_from_main_thread(self) {
             // SAFETY: subprocess strong-ref'd before append(); released by
             // on_wait_pid_from_waiter_thread → deref().
             unsafe {
-                T::on_wait_pid_from_waiter_thread(this.subprocess, &this.result, &this.rusage)
+                T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage)
             };
         }
 
-        pub fn run_from_main_thread_mini(self: Box<Self>, _: *mut ()) {
+        pub fn run_from_main_thread_mini(self, _: *mut ()) {
             self.run_from_main_thread();
         }
     }
@@ -1112,7 +1105,7 @@ pub mod waiter_thread_posix {
             bun_core::heap::into_raw(Box::new(v))
         }
 
-        pub fn run_from_main_thread(self: Box<Self>) {
+        pub fn run_from_main_thread(self) {
             let result = self.result;
             let subprocess = self.subprocess;
             // SAFETY: see ResultTask::run_from_main_thread.
@@ -1121,7 +1114,7 @@ pub mod waiter_thread_posix {
 
         /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
         /// shape — `C = ()`). Default Rust ABI.
-        pub fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
+        fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
             // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
             // event loop hands ownership back here exactly once.
             unsafe { bun_core::heap::take(this) }.run_from_main_thread();
@@ -1170,11 +1163,14 @@ pub mod waiter_thread_posix {
 
     impl<T: ProcessLike> NewQueue<T> {
         pub fn append(&self, process: *mut T) {
+            // freshly boxed `TaskQueueEntry`; `into_raw` yields a valid owned pointer.
+            let entry = bun_core::heap::into_raw(Box::new(TaskQueueEntry {
+                process,
+                next: bun_threading::Link::new(),
+            }));
+            // SAFETY: `entry` was just `into_raw`'d from a live Box (non-null).
             self.queue
-                .push(bun_core::heap::into_raw(Box::new(TaskQueueEntry {
-                    process,
-                    next: bun_threading::Link::new(),
-                })));
+                .push(unsafe { core::ptr::NonNull::new_unchecked(entry) });
         }
 
         pub fn loop_(&self) {
@@ -1243,14 +1239,16 @@ pub mod waiter_thread_posix {
                                     subprocess: process,
                                     task: AnyTaskWithExtraContext::default(),
                                 });
-                                // SAFETY: `out` just produced by heap::alloc.
+                                // SAFETY: `out` just produced by heap::alloc — non-null.
                                 unsafe {
                                     (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
                                         out,
                                         ResultTaskMini::<T>::run_from_main_thread_mini,
                                     );
                                     mini.get_mut().enqueue_task_concurrent(
-                                        core::ptr::addr_of_mut!((*out).task),
+                                        core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!(
+                                            (*out).task
+                                        )),
                                     );
                                 }
                                 // PORT NOTE: `out` is now owned by the mini queue;
@@ -1287,6 +1285,7 @@ pub mod waiter_thread_posix {
         js_process: ProcessQueue::new(),
     }));
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     fn instance() -> *mut WaiterThreadPosix {
         INSTANCE.0.get()
@@ -1379,7 +1378,7 @@ pub mod waiter_thread_posix {
                     flags: core::ffi::c_int,
                 ) -> core::ffi::c_int;
             }
-            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC | 0);
+            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC);
             if fd < 0 {
                 return Err(std::io::Error::last_os_error());
             }
@@ -1412,7 +1411,6 @@ pub mod waiter_thread_posix {
         // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
         let this: &'static WaiterThreadPosix = instance_ref();
 
-        #[allow(unused_labels)]
         'outer: loop {
             // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
             // in `append()` (interior mutability via `active: UnsafeCell`).
@@ -1740,7 +1738,7 @@ pub trait SpawnResultExt {
 #[cfg(unix)]
 impl SpawnResultExt for PosixSpawnResult {
     fn to_process(self, event_loop: EventLoopHandle, sync_: bool) -> *mut Process {
-        Process::init_posix(self, event_loop, sync_)
+        Process::init_posix(&self, event_loop, sync_)
     }
 }
 
@@ -1770,10 +1768,10 @@ mod spawn_process_body {
 
     /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
     /// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     struct AutoCloseFd(Fd);
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     impl AutoCloseFd {
         #[inline]
         const fn new(fd: Fd) -> Self {
@@ -1789,7 +1787,7 @@ mod spawn_process_body {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     impl Drop for AutoCloseFd {
         fn drop(&mut self) {
             if self.0 != Fd::INVALID {
@@ -1798,14 +1796,20 @@ mod spawn_process_body {
         }
     }
 
-    pub fn spawn_process(
+    /// # Safety
+    /// `argv` must point to a null-terminated array of NUL-terminated C
+    /// strings with at least one non-null element; `envp` must point to a
+    /// null-terminated array of NUL-terminated C strings. Both must remain
+    /// valid for the duration of the call.
+    pub unsafe fn spawn_process(
         options: &SpawnOptions,
         argv: Argv, // [*:null]?[*:0]const u8
         envp: Envp,
     ) -> Result<bun_sys::Result<SpawnProcessResult>, bun_core::Error> {
         #[cfg(unix)]
         {
-            spawn_process_posix(options, argv, envp)
+            // SAFETY: forwarded from this function's safety contract.
+            unsafe { spawn_process_posix(options, argv, envp) }
         }
         #[cfg(not(unix))]
         {
@@ -2300,7 +2304,7 @@ mod spawn_process_body {
         }
 
         impl SyncStdio {
-            pub fn to_stdio(&self) -> SpawnOptionsStdio {
+            pub fn to_stdio(self) -> SpawnOptionsStdio {
                 match self {
                     SyncStdio::Inherit => SpawnOptionsStdio::inherit(),
                     SyncStdio::Ignore => SpawnOptionsStdio::ignore(),
@@ -2651,6 +2655,7 @@ mod spawn_process_body {
             }
         }
 
+        #[cfg(windows)]
         fn flatten_owned_chunks(chunks: Vec<Box<[u8]>>) -> Vec<u8> {
             let mut total_size: usize = 0;
             for chunk in &chunks {
@@ -2842,7 +2847,7 @@ mod spawn_process_body {
         pub fn spawn(options: &Options) -> core::result::Result<Maybe<Result>, bun_core::Error> {
             // [*:null]?[*:0]const u8
             // SAFETY: std.c.environ is the C environ array
-            let envp: *const *const c_char = options.envp.unwrap_or_else(|| bun_sys::environ_ptr());
+            let envp: *const *const c_char = options.envp.unwrap_or_else(bun_sys::environ_ptr);
             let argv = &options.argv;
             let mut string_builder = bun_core::StringBuilder::default();
             for arg in argv {
@@ -2883,11 +2888,15 @@ mod spawn_process_body {
 
         // Forward signals from parent to the child process.
         // FFI decls live in `bun_spawn_sys::ffi` (leaf -sys crate).
-        #[allow(unused_imports)]
+        #[cfg(unix)]
         use bun_spawn_sys::ffi::{
-            Bun__currentSyncPID, Bun__noOrphans_begin, Bun__noOrphans_onExit,
-            Bun__noOrphans_onFork, Bun__noOrphans_releaseKq, Bun__registerSignalsForForwarding,
+            Bun__currentSyncPID, Bun__registerSignalsForForwarding,
             Bun__sendPendingSignalIfNecessary, Bun__unregisterSignalsForForwarding,
+        };
+        #[cfg(target_os = "macos")]
+        use bun_spawn_sys::ffi::{
+            Bun__noOrphans_begin, Bun__noOrphans_onExit, Bun__noOrphans_onFork,
+            Bun__noOrphans_releaseKq,
         };
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
@@ -2939,8 +2948,10 @@ mod spawn_process_body {
             safe fn tcgetpgrp(fd: c_int) -> libc::pid_t;
             safe fn tcsetpgrp(fd: c_int, pgrp: libc::pid_t) -> c_int;
             safe fn getpgrp() -> libc::pid_t;
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             safe fn getppid() -> libc::pid_t;
             safe fn isatty(fd: c_int) -> c_int;
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             safe fn raise(sig: c_int) -> c_int;
             safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
             /// No args; returns -1/errno on failure. macOS-only caller below.
@@ -2950,6 +2961,7 @@ mod spawn_process_body {
 
         #[cfg(unix)]
         impl JobControl {
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             pub(crate) fn is_active(&self) -> bool {
                 self.prev > 0
             }
@@ -2987,6 +2999,7 @@ mod spawn_process_body {
             /// returns, and on resume gives the terminal back to the script (only
             /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
             /// the script runs as a background pgroup like any other job).
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             fn on_child_stopped(&self) {
                 if self.prev <= 0 {
                     return; // non-TTY: never asked for stop reports
@@ -3104,7 +3117,7 @@ mod spawn_process_body {
             // scan root after spawn.
             // LIFO: `no_orphans_kq` drops (closes) LAST — after killSyncScriptTree()
             // (which scans via m_kq) and the releaseKq() defer below.
-            #[allow(unused_mut, unused_variables)]
+            #[cfg(target_os = "macos")]
             let mut no_orphans_kq = AutoCloseFd::invalid();
             #[cfg(target_os = "macos")]
             if no_orphans {
@@ -3125,11 +3138,14 @@ mod spawn_process_body {
             Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
             let _signals = SignalForwarding::register();
 
-            let process =
-                match spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)? {
-                    Err(err) => return Ok(Err(err)),
-                    Ok(proces) => proces,
-                };
+            // SAFETY: caller-built argv/envp are null-terminated C-string
+            // arrays with argv[0] non-null; valid for this call.
+            let process = match unsafe {
+                spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)
+            }? {
+                Err(err) => return Ok(Err(err)),
+                Ok(proces) => proces,
+            };
             // Negative → kill() in the C++ signal forwarder targets the pgroup, so
             // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
             // that hasn't `setsid()`-escaped.
@@ -3163,8 +3179,10 @@ mod spawn_process_body {
                 }
             }
             // Move `jc` into the guard so the defer closure owns it (avoids holding
-            // a mutable borrow across the wait loop below); access via `&*jc` deref.
-            let jc = scopeguard::guard(jc, move |mut jc| {
+            // a mutable borrow across the wait loop below); access via `&*_jc` deref.
+            // `_`-prefixed: on freebsd the guard is held only for its `Drop`
+            // (`restore()`); the binding is read only on linux/macos.
+            let _jc = scopeguard::guard(jc, move |mut jc| {
                 if no_orphans {
                     jc.restore();
                     // pgroup → tracked uniqueids (macOS). Do NOT call the
@@ -3241,7 +3259,7 @@ mod spawn_process_body {
                     let r: Option<Maybe<Status>> = wait_mac_kqueue(
                         process.pid,
                         ppid,
-                        &*jc,
+                        &*_jc,
                         no_orphans_kq.fd(),
                         &mut out,
                         &mut out_fds_to_wait_for,
@@ -3252,7 +3270,7 @@ mod spawn_process_body {
                         process.pid,
                         ppid,
                         no_orphans,
-                        &*jc,
+                        &*_jc,
                         &mut out,
                         &mut out_fds_to_wait_for,
                         &mut out_fds,
@@ -3269,7 +3287,7 @@ mod spawn_process_body {
                     if let Some(maybe) = r {
                         match maybe {
                             Err(err) => {
-                                cleanup_spawn_posix(&mut out, &out_fds, &process, success);
+                                cleanup_spawn_posix(&mut out, out_fds, &process, success);
                                 return Ok(Err(err));
                             }
                             Ok(st) => break 'blk st,
@@ -3285,7 +3303,7 @@ mod spawn_process_body {
                         if let Some(err) =
                             drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i])
                         {
-                            cleanup_spawn_posix(&mut out, &out_fds, &process, success);
+                            cleanup_spawn_posix(&mut out, out_fds, &process, success);
                             return Ok(Err(err));
                         }
                     }
@@ -3315,7 +3333,7 @@ mod spawn_process_body {
                         bun_sys::E::SUCCESS => {}
                         bun_sys::E::EAGAIN | bun_sys::E::EINTR => continue,
                         err => {
-                            cleanup_spawn_posix(&mut out, &out_fds, &process, success);
+                            cleanup_spawn_posix(&mut out, out_fds, &process, success);
                             return Ok(Err(bun_sys::Error::from_code(err, bun_sys::Tag::poll)));
                         }
                     }
@@ -3340,7 +3358,7 @@ mod spawn_process_body {
             success = true;
             let stdout = core::mem::take(&mut out[0]);
             let stderr = core::mem::take(&mut out[1]);
-            cleanup_spawn_posix(&mut out, &out_fds, &process, success);
+            cleanup_spawn_posix(&mut out, out_fds, &process, success);
             Ok(Ok(Result {
                 status,
                 stdout,
@@ -3351,7 +3369,7 @@ mod spawn_process_body {
         #[cfg(unix)]
         fn cleanup_spawn_posix(
             out: &mut [Vec<u8>; 2],
-            out_fds: &[Fd; 2],
+            out_fds: [Fd; 2],
             process: &PosixSpawnResult,
             success: bool,
         ) {
@@ -3366,7 +3384,7 @@ mod spawn_process_body {
                 let _ = kill(process.pid, 1);
             }
 
-            for &fd in out_fds {
+            for fd in out_fds {
                 if fd != Fd::INVALID {
                     fd.close();
                 }

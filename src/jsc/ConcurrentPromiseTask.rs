@@ -81,7 +81,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         this
     }
 
-    pub fn run_from_thread_pool(task: *mut WorkPoolTask) {
+    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
         // `create_on_js_thread`; the WorkPool calls back with exactly that
@@ -114,11 +114,13 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // the pointer (does not dereference it).
         let this_ref = unsafe { &mut *this };
         let event_loop = this_ref.event_loop;
-        let task = std::ptr::from_mut(
+        let task = core::ptr::NonNull::from(
             this_ref
                 .concurrent_task
                 .from(this, AutoDeinit::ManualDeinit),
         );
+        // `task` is the live `concurrent_task` field of the heap-allocated
+        // job; the queue takes ownership of its intrusive `next` link.
         event_loop.enqueue_task_concurrent(task);
     }
 

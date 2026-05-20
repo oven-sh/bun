@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use crate as css;
 use crate::{Parser, PrintErr, Printer, VendorPrefix};
@@ -22,16 +21,16 @@ impl Display {
         DisplayPair::parse(input).map(Display::Pair)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Display::Keyword(kw) => kw.to_css(dest),
             Display::Pair(p) => p.to_css(dest),
         }
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
         // All payloads are Copy.
-        self.clone()
+        self
     }
 }
 
@@ -166,7 +165,7 @@ impl DisplayPair {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         // PORT NOTE: reshaped Zig if-else chain into match for tagged-union payload extraction.
         match (self.outside, &self.inside, self.is_list_item) {
             (DisplayOutside::Inline, DisplayInside::FlowRoot, false) => {
@@ -277,14 +276,14 @@ impl DisplayInside {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             DisplayInside::Flow => dest.write_str("flow"),
             DisplayInside::FlowRoot => dest.write_str("flow-root"),
             DisplayInside::Table => dest.write_str("table"),
             DisplayInside::Flex(prefix) => {
                 prefix.to_css(dest)?;
-                if *prefix == VendorPrefix::MS {
+                if prefix == VendorPrefix::MS {
                     dest.write_str("flexbox")
                 } else {
                     dest.write_str("flex")

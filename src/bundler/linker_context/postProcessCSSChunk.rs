@@ -1,6 +1,5 @@
 use crate::mal_prelude::*;
 use bun_collections::MultiArrayList;
-use bun_collections::VecExt;
 use bun_core::string_joiner::{StringJoiner, Watcher};
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
@@ -146,7 +145,7 @@ pub fn post_process_css_chunk(
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
-            compile_results_for_source_map,
+            &compile_results_for_source_map,
             output_dir,
             can_have_shifts,
         )?;

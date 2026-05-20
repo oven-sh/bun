@@ -1,4 +1,3 @@
-use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_core::{Global, OrWriteFailed as _, Output};
@@ -18,74 +17,6 @@ pub const OPENER: &[u8] = b"/usr/bin/open";
 pub const OPENER: &[u8] = b"start";
 #[cfg(not(any(target_os = "macos", windows)))]
 pub const OPENER: &[u8] = b"xdg-open";
-
-fn fallback(url: &[u8]) {
-    Output::prettyln(format_args!("-> {}", bstr::BStr::new(url)));
-    Output::flush();
-}
-
-pub fn open_url(url: &ZStr) {
-    #[cfg(target_os = "wasi")]
-    {
-        return fallback(url.as_bytes());
-    }
-
-    // TODO(port): ZStr literals — Zig used [:0]const u8 array; using &[u8] here and
-    // relying on spawn_sync to NUL-terminate as needed.
-    #[cfg(target_os = "android")]
-    let am_args: [&[u8]; 6] = [
-        b"/system/bin/am",
-        b"start",
-        b"-a",
-        b"android.intent.action.VIEW",
-        b"-d",
-        url.as_bytes(),
-    ];
-    let two_args: [&[u8]; 2] = [OPENER, url.as_bytes()];
-
-    #[cfg(target_os = "android")]
-    let args_buf: &[&[u8]] = &am_args;
-    #[cfg(not(target_os = "android"))]
-    let args_buf: &[&[u8]] = &two_args;
-
-    let argv: Vec<Box<[u8]>> = args_buf
-        .iter()
-        .map(|s| s.to_vec().into_boxed_slice())
-        .collect();
-
-    'maybe_fallback: {
-        let spawn_result = match sync::spawn(&sync::Options {
-            argv,
-            envp: None,
-            stderr: sync::SyncStdio::Inherit,
-            stdout: sync::SyncStdio::Inherit,
-            stdin: sync::SyncStdio::Inherit,
-            #[cfg(windows)]
-            windows: crate::api::bun::process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(None, None),
-                ),
-                ..Default::default()
-            },
-            ..Default::default()
-        }) {
-            Ok(r) => r,
-            Err(_) => break 'maybe_fallback,
-        };
-
-        match spawn_result {
-            // don't fallback:
-            Ok(result) => {
-                if result.is_ok() {
-                    return;
-                }
-            }
-            Err(_) => {}
-        }
-    }
-
-    fallback(url.as_bytes());
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -403,7 +334,7 @@ pub const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
 // PORT NOTE: was `pub const bin_name: std.EnumMap(Editor, string)` built in a comptime block.
 pub static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
     std::sync::LazyLock::new(|| {
-        enum_map::enum_map! {
+        enum_map::EnumMap::from_fn(|k| match k {
             Editor::Sublime => Some(&b"subl"[..]),
             Editor::Vscode => Some(&b"code"[..]),
             Editor::Atom => Some(&b"atom"[..]),
@@ -415,7 +346,7 @@ pub static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'stat
             Editor::Emacs => Some(&b"emacs"[..]),
             Editor::Other => Some(&b""[..]),
             Editor::None => None,
-        }
+        })
     });
 
 // PORT NOTE: was `pub const bin_path: std.EnumMap(Editor, []const [:0]const u8)`.
@@ -637,10 +568,10 @@ impl EditorContext {
 
             // "vscode"
             if let Some(editor_) = Editor::by_name(bun_paths::basename(self.name)) {
-                // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
                 if Editor::by_path_for_editor(
                     env,
                     editor_,
+                    // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
                     unsafe { &mut *buf_ptr },
                     Fs::FileSystem::instance().top_level_dir,
                     &mut out,
@@ -668,10 +599,10 @@ impl EditorContext {
 
         // EDITOR=code
         if let Some(editor_) = Editor::detect(env) {
-            // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
             if Editor::by_path_for_editor(
                 env,
                 editor_,
+                // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
                 unsafe { &mut *buf_ptr },
                 Fs::FileSystem::instance().top_level_dir,
                 &mut out,
@@ -697,9 +628,9 @@ impl EditorContext {
         }
 
         // Don't know, so we will just guess based on what exists
-        // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
         if let Some(editor_) = Editor::by_fallback(
             env,
+            // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
             unsafe { &mut *buf_ptr },
             Fs::FileSystem::instance().top_level_dir,
             &mut out,

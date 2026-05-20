@@ -5,11 +5,11 @@ use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{
-    self as path, MAX_PATH_BYTES, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR, WPathBuffer,
-};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
 use bun_semver::String as SemverString;
-use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, OpenDirOptions, walker_skippable};
+#[cfg(not(windows))]
+use bun_sys::OpenDirOptions;
+use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 use bun_threading::{ThreadPool, WaitGroup};
@@ -121,55 +121,54 @@ pub static METHOD_MAP: phf::Map<&'static [u8], Method> = phf::phf_map! {
 };
 
 impl Method {
-    // TODO(port): EnumMap const-init — `enum_map!` macro at static init.
     pub fn macos() -> BackendSupport {
-        enum_map::enum_map! {
+        enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => true,
             Method::ClonefileEachDir => true,
             Method::Hardlink => true,
             Method::Copyfile => true,
             Method::Symlink => true,
-        }
+        })
     }
 
     pub fn linux() -> BackendSupport {
-        enum_map::enum_map! {
+        enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
             Method::Hardlink => true,
             Method::Copyfile => true,
             Method::Symlink => true,
-        }
+        })
     }
 
     pub fn windows() -> BackendSupport {
-        enum_map::enum_map! {
+        enum_map::EnumMap::from_fn(|k| match k {
             Method::Clonefile => false,
             Method::ClonefileEachDir => false,
             Method::Hardlink => true,
             Method::Copyfile => true,
             Method::Symlink => false,
-        }
+        })
     }
 
     #[inline]
     pub fn is_supported(self) -> bool {
         #[cfg(target_os = "macos")]
-        {
-            return Self::macos()[self];
-        }
+        return Self::macos()[self];
         // PORT NOTE: Zig `Environment.isLinux` (os.tag == .linux) includes the Android ABI,
         // whereas Rust's `target_os = "linux"` does not — list `android` explicitly.
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-        {
-            return Self::linux()[self];
-        }
+        return Self::linux()[self];
         #[cfg(windows)]
-        {
-            return Self::windows()[self];
-        }
-        #[allow(unreachable_code)]
-        false
+        return Self::windows()[self];
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            windows
+        )))]
+        return false;
     }
 }
 
@@ -191,7 +190,7 @@ impl Failure {
 
 pub enum InstallResult {
     Success,
-    Failure(Failure),
+    Failure(Box<Failure>),
 }
 
 impl InstallResult {
@@ -202,7 +201,7 @@ impl InstallResult {
         step: Step,
         _trace: Option<&bun_crash_handler::StackTrace>,
     ) -> InstallResult {
-        InstallResult::Failure(Failure {
+        InstallResult::Failure(Box::new(Failure {
             err,
             step,
             #[cfg(debug_assertions)]
@@ -210,7 +209,7 @@ impl InstallResult {
                 Some(t) => bun_core::StoredTrace::from(Some(t)),
                 None => bun_core::StoredTrace::capture(None /* @returnAddress() */),
             },
-        })
+        }))
     }
 
     pub fn is_fail(&self) -> bool {
@@ -297,15 +296,6 @@ struct InstallDirState {
     to_copy_buf_off: usize, // offset into `buf` where the copy-target tail starts
     #[cfg(windows)]
     to_copy_buf2_off: usize, // offset into `buf2` where the copy-target tail starts
-}
-
-impl InstallDirState {
-    #[allow(dead_code)]
-    #[inline]
-    fn walker(&mut self) -> &mut Walker {
-        // SAFETY: `init_install_dir` always populates `walker` before any backend calls `copy()`.
-        self.walker.as_mut().unwrap()
-    }
 }
 
 impl Default for InstallDirState {
@@ -480,12 +470,16 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.finish();
     }
 
-    pub fn push(&self, task: *mut TaskType)
+    /// # Safety
+    /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
+    /// being handed to the thread pool; the worker reclaims it in its callback.
+    pub unsafe fn push(&self, task: *mut TaskType)
     where
         TaskType: HasWorkPoolTask,
     {
         self.wait_group.add_one();
-        // SAFETY: task is a valid Box-allocated task; .task field is the intrusive node.
+        // SAFETY: caller contract — `task` is a valid Box-allocated task; `.task()`
+        // is the intrusive node field.
         self.thread_pool.schedule(Batch::from(unsafe {
             std::ptr::from_mut::<WorkPoolTask>((*task).task())
         }));
@@ -628,7 +622,7 @@ impl HardLinkWindowsInstallTask {
     }
 
     fn run(&mut self) -> Option<bun_core::Error> {
-        use bun_sys::windows::{self, Win32ErrorExt as _};
+        use bun_sys::windows;
         // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
         // overlaps the slice borrows below.
         let src_len = self.src_len;
@@ -779,7 +773,7 @@ impl UninstallTask {
 
 impl<'a> PackageInstall<'a> {
     ///
-    fn verify_patch_hash(&mut self, patch: &Patch, root_node_modules_dir: &Dir) -> bool {
+    fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: &Dir) -> bool {
         // hash from the .patch file, to be checked against bun tag
         let patchfile_contents_hash = patch.contents_hash;
         let mut buf: BuntagHashBuf = BuntagHashBuf::default();
@@ -872,7 +866,7 @@ impl<'a> PackageInstall<'a> {
             if !verified {
                 return false;
             }
-            return self.verify_patch_hash(&patch, root_node_modules_dir);
+            return self.verify_patch_hash(patch, root_node_modules_dir);
         }
         verified
     }
@@ -1083,7 +1077,7 @@ impl<'a> PackageInstall<'a> {
         fn copy(destination_dir_: &Dir, walker: &mut Walker) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
             let mut real_file_count: u32 = 0;
-            let mut stackpath = [0u8; MAX_PATH_BYTES];
+            let mut stackpath = [0u8; path::MAX_PATH_BYTES];
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
@@ -1373,14 +1367,20 @@ impl<'a> PackageInstall<'a> {
             destination_dir_: &Dir,
             walker: &mut Walker,
             mut progress_: Option<&mut Progress>,
-            #[allow(unused)] to_copy_into1_offset: WinOffset,
-            #[allow(unused)] head1: WinSlice<'_>,
-            #[allow(unused)] to_copy_into2_offset: WinOffset,
-            #[allow(unused)] head2: WinSlice<'_>,
+            to_copy_into1_offset: WinOffset,
+            head1: WinSlice<'_>,
+            to_copy_into2_offset: WinOffset,
+            head2: WinSlice<'_>,
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
+            #[cfg(not(windows))]
             let mut real_file_count: u32 = 0;
+            #[cfg(windows)]
+            let real_file_count: u32 = 0;
+            #[cfg(not(windows))]
             let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
+            #[cfg(not(windows))]
+            let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
 
             while let Some(entry) = walker.next()? {
                 #[cfg(windows)]
@@ -1622,13 +1622,17 @@ impl<'a> PackageInstall<'a> {
         fn copy(
             destination_dir: &Dir,
             walker: &mut Walker,
-            #[allow(unused)] to_copy_into1_offset: WinOffset,
-            #[allow(unused)] head1: WinSlice<'_>,
-            #[allow(unused)] to_copy_into2_offset: WinOffset,
-            #[allow(unused)] head2: WinSlice<'_>,
+            to_copy_into1_offset: WinOffset,
+            head1: WinSlice<'_>,
+            to_copy_into2_offset: WinOffset,
+            head2: WinSlice<'_>,
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
             let mut real_file_count: u32 = 0;
+            #[cfg(not(windows))]
+            let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
+            #[cfg(windows)]
+            let _ = destination_dir;
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
             // PORT NOTE: on Windows, tasks already pushed to `queue` are running on
@@ -1719,11 +1723,15 @@ impl<'a> PackageInstall<'a> {
                     head2[src_len] = 0;
                     let src = bun_core::WStr::from_buf(head2, src_len);
 
-                    queue.push(HardLinkWindowsInstallTask::init(
-                        src.as_slice(),
-                        dest.as_slice(),
-                        entry.basename.as_slice(),
-                    ));
+                    // SAFETY: `init` returns a fresh Box-allocated task; ownership
+                    // transfers to the thread pool, reclaimed in `run_from_thread_pool`.
+                    unsafe {
+                        queue.push(HardLinkWindowsInstallTask::init(
+                            src.as_slice(),
+                            dest.as_slice(),
+                            entry.basename.as_slice(),
+                        ));
+                    }
                     real_file_count += 1;
                 }
             }
@@ -1799,9 +1807,10 @@ impl<'a> PackageInstall<'a> {
             return Ok(res);
         }
 
+        #[cfg(not(windows))]
         let mut buf2 = PathBuffer::uninit();
-        #[allow(unused)]
-        let mut to_copy_buf2_offset: usize = 0;
+        #[cfg(not(windows))]
+        let to_copy_buf2_offset: usize;
         #[cfg(unix)]
         {
             let cache_dir_path = sys::get_fd_path(state.cached_package_dir.fd(), &mut buf2)?;
@@ -1834,13 +1843,18 @@ impl<'a> PackageInstall<'a> {
         fn copy(
             destination_dir: &Dir,
             walker: &mut Walker,
-            #[allow(unused)] to_copy_into1_offset: WinOffset,
-            #[allow(unused)] head1: WinSlice<'_>,
-            #[allow(unused)] to_copy_into2_offset: usize,
+            to_copy_into1_offset: WinOffset,
+            head1: WinSlice<'_>,
+            to_copy_into2_offset: usize,
             head2: &mut [Head2Char],
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
+            #[cfg(not(windows))]
             let mut real_file_count: u32 = 0;
+            #[cfg(windows)]
+            let real_file_count: u32 = 0;
+            #[cfg(not(windows))]
+            let _ = (to_copy_into1_offset, head1);
             while let Some(entry) = walker.next()? {
                 #[cfg(unix)]
                 {
@@ -1857,7 +1871,7 @@ impl<'a> PackageInstall<'a> {
                                 .copy_from_slice(entry.path.as_bytes());
                             head2[target_len] = 0;
                             // SAFETY: NUL written above.
-                            let target = ZStr::from_buf(&head2, target_len);
+                            let target = ZStr::from_buf(head2, target_len);
 
                             if let Err(err) =
                                 sys::symlinkat(target, destination_dir.fd(), entry.path)
@@ -2115,7 +2129,6 @@ impl<'a> PackageInstall<'a> {
         path: &[u16],
         temp_buffer: &mut [u8],
     ) -> bool {
-        use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
         let bin_path = 'bin_path: {
             let Ok(file) =
                 sys::openat_windows(node_mod_fd, path, sys::O::RDONLY, 0).map(sys::File::from_fd)
@@ -2211,14 +2224,12 @@ impl<'a> PackageInstall<'a> {
                 }
             }
         };
-        let to_path_len = to_path.len();
-
         let dest = bun_paths::basename(dest_path.as_bytes());
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
             use bun_sys::windows::{self, Win32ErrorExt as _};
-            let mut wbuf = WPathBuffer::uninit();
+            let mut wbuf = bun_paths::WPathBuffer::uninit();
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.
             let dest_path_length = unsafe {

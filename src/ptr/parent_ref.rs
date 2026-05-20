@@ -216,7 +216,7 @@ impl<T: ?Sized> ParentRef<T> {
     pub const unsafe fn from_raw(p: *const T) -> Self {
         Self {
             // SAFETY: caller contract — `p` is non-null.
-            ptr: unsafe { NonNull::new_unchecked(p as *mut T) },
+            ptr: unsafe { NonNull::new_unchecked(p.cast_mut()) },
             #[cfg(debug_assertions)]
             generation: 0,
             #[cfg(debug_assertions)]
@@ -404,6 +404,8 @@ impl<T: ?Sized> Eq for ParentRef<T> {}
 // Match `&T` auto-trait rules: `&T: Send ⇔ T: Sync`, `&T: Sync ⇔ T: Sync`.
 // The debug-only `marker: Option<NonNull<AtomicU64>>` is `Sync`-safe (atomic).
 unsafe impl<T: ?Sized + Sync> Send for ParentRef<T> {}
+// SAFETY: same as the `Send` impl above — `ParentRef<T>` projects only `&T`, so
+// sharing `&ParentRef<T>` across threads is sound exactly when `T: Sync`.
 unsafe impl<T: ?Sized + Sync> Sync for ParentRef<T> {}
 
 #[cfg(all(test, not(debug_assertions)))]

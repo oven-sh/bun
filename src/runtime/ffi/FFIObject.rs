@@ -7,9 +7,6 @@ use bun_jsc::{
     JSValue, JsResult,
 };
 
-// Non-throwing `toInvalidArguments` shim — see ffi_body.rs for rationale.
-use super::ffi_body::GlobalObjectFfiExt as _;
-
 /// Reinterpret a user-supplied raw address (from `bun:ffi` JS land) as a
 /// JSC typed-array bytes deallocator. Centralized so the `usize → fn ptr`
 /// reinterpretation lives in one place.
@@ -635,7 +632,7 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 
         let bytei64 = off.to_int64();
         if bytei64 < 0 {
-            addr = addr.saturating_sub(usize::try_from(bytei64 * -1).expect("int cast"));
+            addr = addr.saturating_sub(usize::try_from(-bytei64).expect("int cast"));
         } else {
             addr += usize::try_from(bytei64).expect("int cast");
         }
@@ -708,7 +705,7 @@ fn get_ptr_slice(
         if byte_off.is_number() {
             let off = byte_off.to_int64();
             if off < 0 {
-                addr = addr.saturating_sub(usize::try_from(off * -1).expect("int cast"));
+                addr = addr.saturating_sub(usize::try_from(-off).expect("int cast"));
             } else {
                 addr = addr.saturating_add(usize::try_from(off).expect("int cast"));
             }

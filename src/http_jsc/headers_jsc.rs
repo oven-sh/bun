@@ -69,10 +69,9 @@ pub fn from_fetch_headers(
     let sliced = headers.entries.slice();
     // SAFETY: `Name`/`Value` columns are both `StringPointer`; `Slice::items_raw`
     // contract is satisfied. Disjoint backing memory ⇒ no aliasing.
-    let names_ptr: *mut api::StringPointer =
-        unsafe { sliced.items_raw::<"name", api::StringPointer>() };
-    let values_ptr: *mut api::StringPointer =
-        unsafe { sliced.items_raw::<"value", api::StringPointer>() };
+    let names_ptr: *mut api::StringPointer = sliced.items_raw::<"name", api::StringPointer>();
+    // SAFETY: same `items_raw` contract as above; `value` column is a disjoint allocation.
+    let values_ptr: *mut api::StringPointer = sliced.items_raw::<"value", api::StringPointer>();
     if let Some(h) = h_ptr {
         // SAFETY: `h` is a valid `&FetchHeaders` for the call; columns sized by `count` above.
         unsafe { (*h).copy_to(names_ptr, values_ptr, headers.buf.as_mut_ptr()) };
@@ -124,6 +123,8 @@ pub fn to_fetch_headers(
     }
     let names: &[StringPointer] = this.entries.items_name();
     let values: &[StringPointer] = this.entries.items_value();
+    // SAFETY: `names`/`values` point into live slices of `this.entries.len()`
+    // entries; C++ reads exactly `count_` of each and does not retain the pointers.
     FetchHeaders::create(
         global,
         // PORT NOTE: C++ side reads only; cast_mut() is safe (no mutation).

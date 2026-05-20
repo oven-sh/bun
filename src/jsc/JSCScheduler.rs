@@ -2,7 +2,6 @@ use core::ffi::c_int;
 
 use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
 
-use crate::ExceptionValidationScope;
 use crate::event_loop::{EventLoop, JsTerminated};
 use crate::virtual_machine::VirtualMachine;
 
@@ -63,13 +62,18 @@ pub extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     loop_.enqueue_task_concurrent(ConcurrentTask::create_from(task));
 }
 
+/// # Safety
+/// `paused` must point to a live `bool`; C++ writes `true` through it from a
+/// callback inside `tick()`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
+pub unsafe extern "C" fn Bun__tickWhilePaused(paused: *mut bool) {
     crate::mark_binding!();
-    // SAFETY: `paused` points to a live bool for the duration of the call.
-    VirtualMachine::get()
-        .event_loop_mut()
-        .tick_while_paused(unsafe { &mut *paused });
+    // SAFETY: see fn contract.
+    unsafe {
+        VirtualMachine::get()
+            .event_loop_mut()
+            .tick_while_paused(paused.cast_const());
+    }
 }
 
 // Zig `comptime { _ = Bun__... }` force-reference block dropped — Rust links what's `pub`.

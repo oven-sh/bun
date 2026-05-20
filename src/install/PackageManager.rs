@@ -11,18 +11,17 @@ use bun_alloc::AllocError;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
 use bun_core::ZBox;
-use bun_core::{Error, Global, Once, Output, err};
+use bun_core::{Error, Global, Output, err};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
-use bun_http::AsyncHTTP;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
-use bun_paths::{self as path, DELIMITER, PathBuffer, SEP, SEP_STR};
-use bun_semver::{self as Semver, String as SemverString};
+use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
+use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler::{self as transpiler, Transpiler};
@@ -221,10 +220,9 @@ use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::FolderResolution;
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
-    ArrayIdentityContext, Dependency, DependencyID, Features, IdentityContext,
-    LifecycleScriptSubprocess, NetworkTask, PackageID, PackageManifestMap,
-    PackageNameAndVersionHash, PackageNameHash, PatchTask, PostinstallOptimizer, PreinstallState,
-    TaskCallbackContext, initialize_store,
+    Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
+    PackageNameAndVersionHash, PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
+    initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -237,7 +235,6 @@ pub use self::package_manager_options::Options;
 // Zig's `PackageJSONEditor` is a file-level namespace (no struct) — re-export
 // the module itself so `PackageJSONEditor::edit(...)` resolves to the free fns.
 pub use self::install_with_manager::install_with_manager;
-#[allow(non_snake_case)]
 pub use self::package_json_editor as PackageJSONEditor;
 pub use self::update_request::UpdateRequest;
 pub use self::workspace_package_json_cache::WorkspacePackageJSONCache;
@@ -635,16 +632,12 @@ pub struct PackageUpdateInfo {
     pub original_version: Option<Semver::Version>,
 }
 
+#[derive(Default)]
 pub enum TrackInstalledBin {
+    #[default]
     None,
     Pending,
     Basename(Box<[u8]>),
-}
-
-impl Default for TrackInstalledBin {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 pub struct ScriptRunEnvironment {
@@ -980,7 +973,16 @@ impl PackageManager {
         err: Error,
     ) {
         if let Some(ctx) = self.on_wake.context {
-            (self.on_wake.get_on_dependency_error())(ctx.as_ptr(), dependency, dependency_id, err);
+            // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
+            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
+            unsafe {
+                (self.on_wake.get_on_dependency_error())(
+                    ctx.as_ptr(),
+                    dependency,
+                    dependency_id,
+                    err,
+                );
+            }
         }
     }
 
@@ -1003,6 +1005,9 @@ impl PackageManager {
     /// # Safety
     /// `this` must point to a live `PackageManager` (BACKREF).
     pub unsafe fn wake_raw(this: *mut Self) {
+        // SAFETY: caller guarantees `this` points to a live `PackageManager`; we
+        // only form field pointers via `addr_of!`/`addr_of_mut!` (no whole-struct
+        // borrow) and `wakeup()` is internally synchronized for cross-thread use.
         unsafe {
             let on_wake = &*core::ptr::addr_of!((*this).on_wake);
             if let Some(ctx) = on_wake.context {
@@ -1043,10 +1048,10 @@ impl PackageManager {
             is_done: fn(&mut C) -> bool,
         }
         fn trampoline<C>(p: *mut c_void) -> bool {
+            let erased = p as *const Erased<C>;
             // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below. We only
             // read its two POD fields here (no `&mut Erased` materialized — the local
             // `&mut erased` borrow in the caller is still notionally live across the call).
-            let erased = p as *const Erased<C>;
             let (ctx_ptr, is_done) = unsafe { ((*erased).ctx, (*erased).is_done) };
             // SAFETY: `ctx_ptr` was derived from the caller's exclusive `closure: &mut C`
             // and the caller does not touch `closure` again until `tick_raw` returns, so
@@ -1157,7 +1162,7 @@ fn configure_env_for_scripts_run(
     // (lib.rs) `.write()`s the slot via `Transpiler::init` before returning
     // `Ok` — same contract as the runtime impl (run_command.rs:628) and the
     // Zig spec (run_command.zig:780 `this_transpiler.* = try Transpiler.init(...)`).
-    let mut this_transpiler = unsafe { this_transpiler_slot.assume_init() };
+    let this_transpiler = unsafe { this_transpiler_slot.assume_init() };
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
@@ -1402,18 +1407,12 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 // ──────────────────────────────────────────────────────────────────────────
 
 pub fn allocate_package_manager() {
-    // SAFETY: called once before get(); allocates uninitialized PackageManager.
     // Zig: `bun.handleOom(bun.default_allocator.create(PackageManager))` — uninitialized
     // memory, abort-on-OOM. The init() functions below write the full struct via
     // `core::ptr::write` (no Drop on the uninit bytes).
-    unsafe {
-        let layout = core::alloc::Layout::new::<PackageManager>();
-        let ptr = std::alloc::alloc(layout).cast::<PackageManager>();
-        if ptr.is_null() {
-            bun_alloc::out_of_memory();
-        }
-        holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
-    }
+    let ptr =
+        bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
+    holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
     bun_core::add_exit_callback(deinit_caches_at_exit);
 }
 
@@ -1492,8 +1491,10 @@ pub fn init(
         let cwd_ptr = CWD_BUF.get().cast::<u8>();
         #[cfg(windows)]
         {
-            let _ =
-                path::path_to_posix_buf::<u8>(top_level_dir_no_trailing_slash, &mut *CWD_BUF.get());
+            let _ = bun_paths::path_to_posix_buf::<u8>(
+                top_level_dir_no_trailing_slash,
+                &mut *CWD_BUF.get(),
+            );
         }
         #[cfg(not(windows))]
         {
@@ -1717,7 +1718,7 @@ pub fn init(
 
                     use crate::bun_json::ExprData;
                     if let Some(prop) = json.as_property(b"workspaces") {
-                        let mut json_array = match prop.expr.data {
+                        let json_array = match prop.expr.data {
                             ExprData::EArray(arr) => arr,
                             ExprData::EObject(obj) => {
                                 if let Some(packages) = obj.get().get(b"packages") {
@@ -1814,7 +1815,7 @@ pub fn init(
     // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
     ::bun_bunfig::arguments::load_config(
         bun_options_types::command_tag::Tag::InstallCommand,
-        cli.config.as_deref(),
+        cli.config,
         ctx,
     )?;
     // SAFETY: main-thread global
@@ -1856,20 +1857,10 @@ pub fn init(
     // both into process-lifetime statics (same allocate-then-fill pattern as `holder::RAW_PTR`)
     // instead of `Box::leak`. Zig: `ctx.allocator.create(dot_env::Map)` + `create(dot_env::Loader)`.
     let env: &mut dot_env::Loader = unsafe {
-        let map_ptr =
-            std::alloc::alloc(core::alloc::Layout::new::<dot_env::Map>()).cast::<dot_env::Map>();
-        if map_ptr.is_null() {
-            bun_alloc::out_of_memory();
-        }
-        core::ptr::write(map_ptr, dot_env::Map::init());
+        let map_ptr = bun_core::heap::alloc(dot_env::Map::init());
         holder::ENV_MAP.store(map_ptr);
 
-        let loader_ptr = std::alloc::alloc(core::alloc::Layout::new::<dot_env::Loader<'static>>())
-            .cast::<dot_env::Loader<'static>>();
-        if loader_ptr.is_null() {
-            bun_alloc::out_of_memory();
-        }
-        core::ptr::write(loader_ptr, dot_env::Loader::init(&mut *map_ptr));
+        let loader_ptr = bun_core::heap::alloc(dot_env::Loader::init(&mut *map_ptr));
         holder::ENV_LOADER.store(loader_ptr);
         &mut *loader_ptr
     };
@@ -1878,8 +1869,8 @@ pub fn init(
     // Zig: `try env.load(entries_option.entries, &[_][]u8{}, .production, false)`
     // (PackageManager.zig:794). Reborrow the BSSMap-owned `*DirEntry` for the
     // call; `env.load` only reads it (`hasComptimeQuery` lookups for `.env*`).
-    // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
     env.load(
+        // SAFETY: see `entries_option` above — single-threaded init, BSSMap-owned.
         unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(entries_option) },
         &[],
         dot_env::DotEnvFileSuffix::Production,
@@ -2122,6 +2113,9 @@ pub fn init(
         // parent so uSockets timers / lifecycle subprocess waiters can find the
         // mini event loop on tick.
         let uws_loop = manager.event_loop.r#loop();
+        // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
+        // the handle's backref is `manager.event_loop`, owned by the singleton.
+        let uws_loop = unsafe { &mut *uws_loop };
         EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
     }
     // PORT NOTE: Zig `manager.lockfile = try ctx.allocator.create(Lockfile)` —
@@ -2150,14 +2144,14 @@ pub fn init(
         // normalized.deinit() → Drop (stack buffer)
     }
 
-    // SAFETY: singleton fully initialized; main thread, no workers yet.
     // Zig: `jsc.MiniEventLoop.global = &manager.event_loop.mini` — set the
     // thread-local global to point at the embedded mini loop. The Rust port
     // stores it in `bun_event_loop::mini_event_loop::GLOBAL`.
     {
+        // SAFETY: singleton fully initialized; main thread, no workers yet.
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
-            let mini_ptr: *mut MiniEventLoop<'static> = mini;
+            let mini_ptr: *mut MiniEventLoop<'static> = &raw mut **mini;
             // Zig spec (PackageManager.zig:893) sets ONLY `MiniEventLoop.global`,
             // NOT `globalInitialized`. The distinction is load-bearing: a later
             // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /
@@ -2193,17 +2187,15 @@ pub fn init(
             }
         }
 
-        manager
-            .options
+        manager.options.load(
             // SAFETY: ctx.log is the process-lifetime CLI log set by
             // create_context_data(); single-threaded init region.
-            .load(
-                unsafe { &mut *ctx.log },
-                env,
-                Some(cli),
-                ctx.install.as_deref(),
-                subcommand,
-            )?;
+            unsafe { &mut *ctx.log },
+            env,
+            Some(cli),
+            ctx.install.as_deref(),
+            subcommand,
+        )?;
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {
@@ -2239,15 +2231,15 @@ pub fn init(
         let options = &mgr_ref.options;
         if !options.ca_file_name.is_empty() {
             // resolve with original cwd
-            if bun_paths::is_absolute(&options.ca_file_name) {
-                abs_ca_file_name = ZBox::from_bytes(&options.ca_file_name);
+            if bun_paths::is_absolute(options.ca_file_name) {
+                abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
             } else {
                 let mut path_buf = PathBuffer::uninit();
                 abs_ca_file_name =
                     ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
                         &original_cwd_clone,
                         &mut path_buf,
-                        &[&options.ca_file_name],
+                        &[options.ca_file_name],
                     ));
             }
         }

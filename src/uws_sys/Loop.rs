@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_longlong, c_uint, c_void};
+use core::ffi::{c_int, c_uint, c_void};
 
 use crate::InternalLoopData;
 use crate::Timespec;
@@ -221,10 +221,7 @@ impl PosixLoop {
     pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>) {
         // SAFETY: self is a valid loop pointer
         unsafe {
-            c::us_loop_run_bun_tick(
-                self,
-                timespec.map_or(core::ptr::null(), |t| std::ptr::from_ref(t)),
-            )
+            c::us_loop_run_bun_tick(self, timespec.map_or(core::ptr::null(), std::ptr::from_ref))
         };
     }
 
@@ -601,20 +598,19 @@ mod c {
             ext_size: c_uint,
         ) -> *mut Loop;
         pub fn us_loop_free(loop_: *mut Loop);
-        pub fn us_loop_ext(loop_: *mut Loop) -> *mut c_void;
         pub fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
         pub fn us_loop_run(loop_: *mut Loop);
+        #[cfg(windows)]
         pub fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
-        pub fn us_loop_integrate(loop_: *mut Loop);
-        pub fn us_loop_iteration_number(loop_: *mut Loop) -> c_longlong;
         pub fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub fn uws_loop_removePreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
+        #[cfg(not(windows))]
         pub fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
         pub fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
+        #[cfg(not(windows))]
         pub safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
         pub fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;

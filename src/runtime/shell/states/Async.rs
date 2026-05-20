@@ -20,17 +20,14 @@ pub struct Async {
     // TODO(port): bun_jsc::EventLoopTask — concurrent_task field
 }
 
-#[derive(strum::IntoStaticStr)]
+#[derive(Default, strum::IntoStaticStr)]
 pub enum AsyncState {
+    #[default]
     Idle,
-    Exec { child: Option<NodeId> },
+    Exec {
+        child: Option<NodeId>,
+    },
     Done(ExitCode),
-}
-
-impl Default for AsyncState {
-    fn default() -> Self {
-        AsyncState::Idle
-    }
 }
 
 impl Async {

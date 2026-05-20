@@ -974,9 +974,7 @@ folded: >
         });
 
         test("nested under sequence (V9D5 pattern)", () => {
-          expect(YAML.parse("- ? earth: blue\n  : moon: white\n")).toEqual([
-            { "[object Object]": { moon: "white" } },
-          ]);
+          expect(YAML.parse("- ? earth: blue\n  : moon: white\n")).toEqual([{ "[object Object]": { moon: "white" } }]);
         });
 
         test("compact ? : (M2N8/00 pattern)", () => {

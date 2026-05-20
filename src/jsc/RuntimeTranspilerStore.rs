@@ -1133,6 +1133,11 @@ impl TranspilerJob {
             } else {
                 None
             };
+
+        if let Some(mi) = module_info.as_mut() {
+            mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
+        }
+
         // PORT NOTE: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
         // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the
         // closure returns; the raw pointer stays valid until `module_info` is

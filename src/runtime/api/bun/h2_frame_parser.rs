@@ -3265,7 +3265,8 @@ impl H2FrameParser {
 
             // RFC 7540 Section 6.5.2: Calculate header list size
             // Size = name length + value length + HPACK entry overhead per header
-            stream.header_block_size += header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
+            stream.header_block_size +=
+                header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
 
             // Check against maxHeaderListSize setting
             if stream.header_block_size > self.local_settings.get().max_header_list_size as usize {

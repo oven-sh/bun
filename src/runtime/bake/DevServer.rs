@@ -1453,8 +1453,9 @@ fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
         return true;
     }
     if let Some(server) = dev.server.as_ref() {
-        if let crate::server::server_config::Address::Tcp { hostname: Some(h), .. } =
-            &server.config().address
+        if let crate::server::server_config::Address::Tcp {
+            hostname: Some(h), ..
+        } = &server.config().address
         {
             return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
         }

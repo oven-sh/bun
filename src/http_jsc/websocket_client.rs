@@ -951,7 +951,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                     }
                 }
                 ReceiveState::NeedBody => {
-                    if self.receive_buffer.readable_length().saturating_add(receive_body_remain)
+                    if self
+                        .receive_buffer
+                        .readable_length()
+                        .saturating_add(receive_body_remain)
                         > MAX_RECEIVE_MESSAGE_LENGTH
                     {
                         self.terminate(ErrorCode::MessageTooBig);

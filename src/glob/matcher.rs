@@ -148,7 +148,14 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     // PORT NOTE: `BraceStack.init(0) catch unreachable` — zero-length init cannot fail.
     let mut brace_stack = BraceStack::default();
     let mut brace_budget = BRACE_BRANCH_BUDGET;
-    let matched = glob_match_impl(&mut state, glob, 0, path, &mut brace_stack, &mut brace_budget);
+    let matched = glob_match_impl(
+        &mut state,
+        glob,
+        0,
+        path,
+        &mut brace_stack,
+        &mut brace_budget,
+    );
 
     // TODO: consider just returning a bool
     // return matched != negated;

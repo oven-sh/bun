@@ -362,72 +362,139 @@ extern "C" fn on_process_exit() {
 }
 
 /// Walk the process tree rooted at `getpid()` and SIGKILL every descendant.
+/// Thin wrapper over [`signal_process_tree`] with `root = getpid()` (root
+/// excluded from the signal set) and `signal = SIGKILL`.
+pub(crate) fn kill_descendants() {
+    #[cfg(unix)]
+    {
+        signal_process_tree(getpid(), None, libc::SIGKILL);
+    }
+}
+
+/// Walk the process tree rooted at `root` (a direct child of ours) and send
+/// `signal` to `root` and every descendant. Public entry point for
+/// `Subprocess.killTree()`. `root`'s ppid is verified against `getpid()`
+/// before anything is signalled, so a recycled pid is left alone.
+pub fn kill_process_tree(root: libc::pid_t, signal: c_int) {
+    #[cfg(unix)]
+    {
+        signal_process_tree(root, Some(getpid()), signal);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (root, signal);
+    }
+}
+
+/// Freeze-walk the process tree rooted at `root` and send `signal` to every
+/// verified descendant (and to `root` itself when `expected_ppid_of_root` is
+/// `Some`).
 ///
 /// Pid-reuse safety: enumeration is a point-in-time snapshot, so a pid we
 /// collect could exit and be recycled by an unrelated process before we
 /// signal it. To avoid killing an innocent process we use a
-/// stop-verify-kill pattern:
+/// stop-verify-signal pattern:
 ///   1. Enumerate children of `parent`.
 ///   2. For each child `c`: SIGSTOP it, then re-read `c`'s ppid. If it's no
 ///      longer `parent`, the pid was recycled in the (microsecond) window
 ///      between enumerate and STOP — undo with SIGCONT and skip. Otherwise
 ///      `c` is now frozen and confirmed ours; recurse into it.
-///   3. Once the whole tree is frozen, SIGKILL each pid (leaves-first).
-///      SIGKILL terminates stopped processes directly — no SIGCONT needed —
-///      and unlike SIGTERM can't be trapped or ignored.
+///   3. Once the whole tree is frozen, send `signal` to each pid
+///      (leaves-first). SIGKILL terminates stopped processes directly; any
+///      other signal is queued while stopped, so a follow-up SIGCONT is sent
+///      to let it deliver.
 /// A frozen process can neither exit (so its pid can't be reused) nor fork
 /// (so its child set is stable while we recurse), which is what makes the
-/// verify step sufficient. The only forking process is `self`, and we're in
-/// the exit handler — not forking.
-pub(crate) fn kill_descendants() {
-    #[cfg(unix)]
-    {
-        let self_pid = getpid();
+/// verify step sufficient.
+///
+/// `expected_ppid_of_root`:
+///   - `Some(ppid)` — `root` is frozen, its ppid verified against `ppid`, and
+///     it is included in the signal set. Used when `root` is a child process
+///     we want to signal along with its descendants.
+///   - `None` — `root` is left untouched (neither frozen nor signalled). Used
+///     when `root == getpid()` and we only want to reach our descendants.
+#[cfg(unix)]
+fn signal_process_tree(
+    root: libc::pid_t,
+    expected_ppid_of_root: Option<libc::pid_t>,
+    signal: c_int,
+) {
+    let self_pid = getpid();
 
-        let mut to_visit: Vec<libc::pid_t> = Vec::new();
-        let mut to_kill: Vec<libc::pid_t> = Vec::new();
+    let mut to_visit: Vec<libc::pid_t> = Vec::new();
+    let mut to_kill: Vec<libc::pid_t> = Vec::new();
 
-        to_visit.push(self_pid);
-
-        let mut buf: [libc::pid_t; 4096] = [0; 4096];
-        // Hard cap on tree size so a fork bomb under us can't make exit hang.
-        while !to_visit.is_empty() && to_kill.len() < 4096 {
-            let parent = to_visit.swap_remove(to_visit.len() - 1);
-            let Some(n) = list_child_pids(parent, &mut buf) else {
-                continue;
-            };
-            for &child in &buf[..n] {
-                if child == self_pid || child <= 1 {
-                    continue;
-                }
-                // Freeze first, then confirm it's still the process we enumerated.
-                if kill(child, libc::SIGSTOP) != 0 {
-                    continue;
-                }
-                if parent_pid_of(child) != parent {
-                    // Recycled between enumerate and STOP — undo and skip.
-                    let _ = kill(child, libc::SIGCONT);
-                    continue;
-                }
-                if to_kill.try_reserve(1).is_err() {
-                    // OOM after we've already STOPped+verified this child — kill it
-                    // now rather than leaving it frozen and absent from to_kill.
-                    let _ = kill(child, libc::SIGKILL);
-                    break;
-                }
-                to_kill.push(child);
-                if to_visit.try_reserve(1).is_err() {
-                    break;
-                }
-                to_visit.push(child);
-            }
+    // Deliver `signal` to a STOPped+verified pid we couldn't record (OOM).
+    // Runs immediately so we don't leave it frozen.
+    let signal_now = |pid: libc::pid_t| {
+        let _ = kill(pid, signal);
+        if signal != libc::SIGKILL && signal != libc::SIGSTOP {
+            let _ = kill(pid, libc::SIGCONT);
         }
+    };
 
-        // Reverse: leaves first. SIGKILL terminates stopped processes directly.
-        let mut i = to_kill.len();
-        while i > 0 {
-            i -= 1;
-            let _ = kill(to_kill[i], libc::SIGKILL);
+    if let Some(expected_ppid) = expected_ppid_of_root {
+        if kill(root, libc::SIGSTOP) != 0 {
+            return;
+        }
+        if parent_pid_of(root) != expected_ppid {
+            let _ = kill(root, libc::SIGCONT);
+            return;
+        }
+        if to_kill.try_reserve(1).is_err() {
+            signal_now(root);
+            return;
+        }
+        to_kill.push(root);
+    }
+    to_visit.push(root);
+
+    let mut buf: [libc::pid_t; 4096] = [0; 4096];
+    // Hard cap on tree size so a fork bomb under us can't make this hang.
+    while !to_visit.is_empty() && to_kill.len() < 4096 {
+        let parent = to_visit.swap_remove(to_visit.len() - 1);
+        let Some(n) = list_child_pids(parent, &mut buf) else {
+            continue;
+        };
+        for &child in &buf[..n] {
+            if child == self_pid || child <= 1 {
+                continue;
+            }
+            // Freeze first, then confirm it's still the process we enumerated.
+            if kill(child, libc::SIGSTOP) != 0 {
+                continue;
+            }
+            if parent_pid_of(child) != parent {
+                // Recycled between enumerate and STOP — undo and skip.
+                let _ = kill(child, libc::SIGCONT);
+                continue;
+            }
+            if to_kill.try_reserve(1).is_err() {
+                // OOM after we've already STOPped+verified this child — signal it
+                // now rather than leaving it frozen and absent from to_kill.
+                signal_now(child);
+                break;
+            }
+            to_kill.push(child);
+            if to_visit.try_reserve(1).is_err() {
+                break;
+            }
+            to_visit.push(child);
+        }
+    }
+
+    // Reverse: leaves first. SIGKILL terminates stopped processes directly.
+    let mut i = to_kill.len();
+    while i > 0 {
+        i -= 1;
+        let _ = kill(to_kill[i], signal);
+    }
+    // Catchable signals are queued while stopped — wake each so it delivers.
+    // SIGKILL/SIGSTOP bypass this (the former already terminated them; the
+    // latter is what the caller asked for).
+    if signal != libc::SIGKILL && signal != libc::SIGSTOP {
+        for &pid in &to_kill {
+            let _ = kill(pid, libc::SIGCONT);
         }
     }
 }
@@ -513,58 +580,7 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
 /// `root` itself before recursing (ppid==us for subreaper adoptees).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
-    let mut to_visit: Vec<libc::pid_t> = Vec::new();
-    let mut to_kill: Vec<libc::pid_t> = Vec::new();
-
-    if kill(root, libc::SIGSTOP) != 0 {
-        return;
-    }
-    if parent_pid_of(root) != expected_ppid_of_root {
-        let _ = kill(root, libc::SIGCONT);
-        return;
-    }
-    if to_kill.try_reserve(1).is_err() {
-        let _ = kill(root, libc::SIGKILL);
-        return;
-    }
-    to_kill.push(root);
-    let _ = to_visit.try_reserve(1);
-    to_visit.push(root);
-
-    let mut buf: [libc::pid_t; 4096] = [0; 4096];
-    while !to_visit.is_empty() && to_kill.len() < 4096 {
-        let parent = to_visit.swap_remove(to_visit.len() - 1);
-        let Some(n) = list_child_pids(parent, &mut buf) else {
-            continue;
-        };
-        for &child in &buf[..n] {
-            if child <= 1 {
-                continue;
-            }
-            if kill(child, libc::SIGSTOP) != 0 {
-                continue;
-            }
-            if parent_pid_of(child) != parent {
-                let _ = kill(child, libc::SIGCONT);
-                continue;
-            }
-            if to_kill.try_reserve(1).is_err() {
-                let _ = kill(child, libc::SIGKILL);
-                break;
-            }
-            to_kill.push(child);
-            if to_visit.try_reserve(1).is_err() {
-                break;
-            }
-            to_visit.push(child);
-        }
-    }
-
-    let mut i = to_kill.len();
-    while i > 0 {
-        i -= 1;
-        let _ = kill(to_kill[i], libc::SIGKILL);
-    }
+    signal_process_tree(root, Some(expected_ppid_of_root), libc::SIGKILL);
 }
 
 /// Best-effort ppid lookup for an arbitrary pid. Returns 0 if the process

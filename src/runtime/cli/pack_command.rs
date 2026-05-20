@@ -42,17 +42,14 @@ use bun_sys::{
 // local shims for upstream-stub gaps
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `std.fs.Dir.openDirZ(path, .{ .iterate = true })` — `bun_sys::Dir` has no
-/// such inherent method; route through `bun_sys::open_dir_at`.
+/// `std.fs.Dir.openDirZ(path, .{ .iterate = true })`.
 #[inline]
 fn dir_open_dir_z(
-    dir: Dir,
+    dir: &Dir,
     path: &ZStr,
-    _opts: bun_sys::OpenDirOptions,
+    opts: bun_sys::OpenDirOptions,
 ) -> Result<Dir, bun_core::Error> {
-    bun_sys::open_dir_at(dir.fd, path.as_bytes())
-        .map(Dir::from_fd)
-        .map_err(Into::into)
+    dir.open_dir(path.as_bytes(), opts)
 }
 
 /// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
@@ -72,7 +69,7 @@ fn pack_bump() -> &'static bun_alloc::Arena {
 
 /// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
 /// can't depend on `bun_logger`, but `bun_runtime` already does).
-fn file_to_source_at(dir: Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> {
+fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> {
     let bytes = File::read_from(dir.fd, path)?;
     Ok(bun_ast::Source::init_path_string_owned(
         path.as_bytes(),
@@ -511,7 +508,7 @@ fn iterate_included_project_tree(
     bins: &[BinInfo],
     includes: &[Pattern],
     excludes: &[Pattern],
-    root_dir: Dir,
+    root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
     if cfg!(debug_assertions) {
@@ -528,7 +525,7 @@ fn iterate_included_project_tree(
     let _ = &mut ignores; // unused in this fn body in Zig too (declared but not read)
 
     let mut dirs: Vec<DirInfo> = Vec::new();
-    dirs.push(DirInfo(root_dir, Box::from(&b""[..]), 1));
+    dirs.push(DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1));
 
     let mut included_dirs: Vec<DirInfo> = Vec::new();
 
@@ -537,10 +534,15 @@ fn iterate_included_project_tree(
     // first find included dirs and files
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        // Root (depth 1) is borrowed `Fd::cwd()`-ish; only close subdirs we opened.
-        let close_guard = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
+        // Root (depth 1) is borrowed from the caller's `root_dir`; only close
+        // subdirs we opened.
+        let dir = scopeguard::guard(dir, move |d| {
+            if dir_depth == 1 {
+                let _ = d.into_raw();
+            }
+        });
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
+        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             // PORT NOTE: `.unwrap() catch null` → on iterator error, treat as end
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
@@ -639,7 +641,7 @@ fn iterate_included_project_tree(
                             continue 'next_entry;
                         }
                     }
-                    let subdir = open_subdir(dir, entry_name, &entry_subpath);
+                    let subdir = open_subdir(&dir, entry_name, &entry_subpath);
                     dirs.push(DirInfo(
                         subdir,
                         entry_subpath.as_bytes().into(),
@@ -659,7 +661,7 @@ fn iterate_included_project_tree(
                             continue 'next_entry;
                         }
                     }
-                    let subdir = open_subdir(dir, entry_name, &entry_subpath);
+                    let subdir = open_subdir(&dir, entry_name, &entry_subpath);
                     included_dirs.push(DirInfo(
                         subdir,
                         entry_subpath.as_bytes().into(),
@@ -690,7 +692,7 @@ fn iterate_included_project_tree(
             }
         }
 
-        drop(close_guard);
+        drop(dir);
     }
 
     // for each included dir, traverse its entries, exclude any with `negate_no_match`.
@@ -745,17 +747,15 @@ fn add_entire_tree(
 
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        let _close = CloseOnDrop::dir(dir);
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {
                 break;
             }
-            // last.deinit() handled by Drop
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth)? {
+        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
             ignores.push(patterns);
         }
 
@@ -768,7 +768,7 @@ fn add_entire_tree(
             }
         }
 
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
+        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -832,7 +832,7 @@ fn add_entire_tree(
                         }
                     }
 
-                    let subdir = open_subdir(dir, entry_name, &entry_subpath);
+                    let subdir = open_subdir(&dir, entry_name, &entry_subpath);
 
                     dirs.push(DirInfo(
                         subdir,
@@ -848,7 +848,7 @@ fn add_entire_tree(
     Ok(())
 }
 
-fn open_subdir(dir: Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
+fn open_subdir(dir: &Dir, entry_name: &[u8], entry_subpath: &ZStr) -> Dir {
     match dir_open_dir_z(
         dir,
         entry_name_z(entry_name, entry_subpath),
@@ -895,7 +895,7 @@ fn entry_name_z<'a>(entry_name: &[u8], entry_subpath: &'a ZStr) -> &'a ZStr {
 
 fn iterate_bundled_deps(
     ctx: &mut Context<'_>,
-    root_dir: Dir,
+    root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<PackQueue, AllocError> {
     let mut bundled_pack_queue = new_pack_queue();
@@ -925,7 +925,6 @@ fn iterate_bundled_deps(
             Global::crash();
         }
     };
-    let _close = CloseOnDrop::dir(dir);
 
     // A set of bundled dependency locations
     // - node_modules/is-even
@@ -936,7 +935,7 @@ fn iterate_bundled_deps(
 
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
 
-    let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
+    let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
     while let Some(entry) = iter.next().ok().flatten() {
         if entry.kind != bun_sys::FileKind::Directory {
             continue;
@@ -958,9 +957,8 @@ fn iterate_bundled_deps(
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            let _close_scoped = CloseOnDrop::dir(scoped_dir);
 
-            let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(scoped_dir));
+            let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
 
@@ -983,7 +981,7 @@ fn iterate_bundled_deps(
                     continue;
                 }
 
-                let subdir = open_subdir(dir, entry_name.as_bytes(), &entry_subpath_);
+                let subdir = open_subdir(&dir, entry_name.as_bytes(), &entry_subpath_);
                 add_bundled_dep(
                     ctx,
                     &root_dir,
@@ -1013,7 +1011,7 @@ fn iterate_bundled_deps(
                 continue;
             }
 
-            let subdir = open_subdir(dir, entry_name, &entry_subpath_);
+            let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
             add_bundled_dep(
                 ctx,
                 &root_dir,
@@ -1074,9 +1072,8 @@ fn add_bundled_dep(
 
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        let _close = CloseOnDrop::dir(dir);
 
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(dir));
+        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -1093,7 +1090,7 @@ fn add_bundled_dep(
                         }
                         // find more dependencies to bundle
                         let source =
-                            match file_to_source_at(dir, entry_name_z(entry_name, &entry_subpath_))
+                            match file_to_source_at(&dir, entry_name_z(entry_name, &entry_subpath_))
                             {
                                 Ok(s) => s,
                                 Err(err) => {
@@ -1172,7 +1169,7 @@ fn add_bundled_dep(
                                 let mut dep_dir_depth: usize = bundled_root_depth + 2;
 
                                 match dir_open_dir_z(
-                                    *root_dir,
+                                    root_dir,
                                     dep_subpath,
                                     bun_sys::OpenDirOptions {
                                         iterate: true,
@@ -1218,7 +1215,7 @@ fn add_bundled_dep(
                                             remain_end = node_modules_start;
 
                                             let parent_dep_dir = match dir_open_dir_z(
-                                                *root_dir,
+                                                root_dir,
                                                 parent_dep_subpath,
                                                 bun_sys::OpenDirOptions {
                                                     iterate: true,
@@ -1286,7 +1283,7 @@ fn add_bundled_dep(
                     })?;
                 }
                 bun_sys::FileKind::Directory => {
-                    let subdir = open_subdir(dir, entry_name, &entry_subpath_);
+                    let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
 
                     dirs.push(DirInfo(
                         subdir,
@@ -1319,7 +1316,11 @@ fn iterate_project_tree(
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
         // Root (depth 1) is caller-owned; only close subdirs we opened.
-        let _close = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
+        let dir = scopeguard::guard(dir, move |d| {
+            if dir_depth == 1 {
+                let _ = d.into_raw();
+            }
+        });
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {
@@ -1329,7 +1330,7 @@ fn iterate_project_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth)? {
+        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
             ignores.push(patterns);
         }
 
@@ -1342,7 +1343,7 @@ fn iterate_project_tree(
             }
         }
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
+        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -1409,7 +1410,7 @@ fn iterate_project_tree(
                         }
                     }
 
-                    let subdir = open_subdir(dir, entry_name, &entry_subpath_);
+                    let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
 
                     dirs.push(DirInfo(
                         subdir,
@@ -1891,9 +1892,14 @@ fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader
 /// Re-seat the underlying file and reset the buffer cursor in place — avoids
 /// the 512 KiB stack temporary that `*file_reader = BufferedFileReader { ... }`
 /// would create. Zig: `file_reader.* = .{ .unbuffered_reader = ..., .buf = undefined }`.
+///
+/// `unbuffered_reader` is a *view* of a fd that the call site owns (e.g. via
+/// a `CloseOnDrop` or a `File` whose Drop fires after the read loop). The
+/// previous fd may already be closed; disarm its `File::Drop` before
+/// overwriting so we never close a stale (potentially-recycled) fd.
 #[inline]
 fn reset_buffered_file_reader(r: &mut BufferedFileReader, file: bun_sys::File) {
-    r.unbuffered_reader = file;
+    let _ = core::mem::replace(&mut r.unbuffered_reader, file).into_raw();
     r.start = 0;
     r.end = 0;
 }
@@ -2043,7 +2049,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
         }
     }
-    // defer if (!for_publish) free(package_name) — handled by Drop
     if package_name.is_empty() {
         return Err(PackError::InvalidPackageName);
     }
@@ -2296,14 +2301,14 @@ pub fn pack<const FOR_PUBLISH: bool>(
     // Create the edited package.json content after lifecycle scripts have run
     let edited_package_json = edit_root_package_json(ctx.lockfile, &mut json)?;
 
-    let mut root_dir: Dir = 'root_dir: {
+    let root_dir: Dir = 'root_dir: {
         let mut path_buf = PathBuffer::uninit();
         path_buf[..abs_workspace_path.len()].copy_from_slice(abs_workspace_path);
         path_buf[abs_workspace_path.len()] = 0;
         // SAFETY: NUL written above
         let z = ZStr::from_buf(&path_buf[..], abs_workspace_path.len());
         match dir_open_dir_z(
-            Dir::cwd(),
+            &Dir::cwd(),
             z,
             bun_sys::OpenDirOptions {
                 iterate: true,
@@ -2321,7 +2326,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
         }
     };
-    let _close_root = CloseOnDrop::dir(root_dir);
 
     // Scan for a README file so the registry receives the same
     // `readme` / `readmeFilename` metadata that `npm publish` sends.
@@ -2342,7 +2346,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut pack_queue: PackQueue = new_pack_queue();
 
     let bins = get_package_bins(&json.root)?;
-    // defer free(bin.path) — handled by Drop on Vec<BinInfo>
 
     for bin in &bins {
         match bin.ty {
@@ -2355,7 +2358,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
             BinType::Dir => {
                 let bin_dir = match dir_open_dir_z(
-                    root_dir,
+                    &root_dir,
                     &bin.path,
                     bun_sys::OpenDirOptions {
                         iterate: true,
@@ -2419,7 +2422,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                         &bins,
                         &includes,
                         &excludes,
-                        root_dir, // TODO(port): borrowck — root_dir reused after this; could pass &Dir
+                        &root_dir,
                         log_level,
                     )?;
                     break 'iterate_project_tree;
@@ -2436,14 +2439,13 @@ pub fn pack<const FOR_PUBLISH: bool>(
             iterate_project_tree(
                 &mut pack_queue,
                 &bins,
-                DirInfo(root_dir, Box::from(&b""[..]), 1),
-                // TODO(port): borrowck — root_dir reused after this; could pass &Dir or dup fd
+                DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
                 log_level,
             )?;
         }
     }
 
-    let mut bundled_pack_queue = iterate_bundled_deps(ctx, root_dir, log_level)?;
+    let mut bundled_pack_queue = iterate_bundled_deps(ctx, &root_dir, log_level)?;
 
     // +1 for package.json
     ctx.stats.total_files = pack_queue.count() + bundled_pack_queue.count() + 1;
@@ -2620,7 +2622,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         dest_buf[abs_tarball_dest_dir_end] = 0;
         // SAFETY: NUL written above
         let abs_tarball_dest_dir = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_dir_end);
-        let _ = bun_sys::make_path(Dir::cwd(), abs_tarball_dest_dir.as_bytes());
+        let _ = bun_sys::Dir::cwd().make_path(abs_tarball_dest_dir.as_bytes());
         dest_buf[abs_tarball_dest_dir_end] = most_likely_a_slash;
     }
 
@@ -2680,7 +2682,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         while let Some(item) = pack_queue.remove_or_null() {
             let file = match bun_sys::openat(
-                Fd::from_std_dir(root_dir),
+                Fd::from_std_dir(&root_dir),
                 &item.path,
                 bun_sys::O::RDONLY,
                 0,
@@ -2761,12 +2763,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
 
         while let Some(item) = bundled_pack_queue.remove_or_null() {
-            let file = match File::openat(
-                Fd::from_std_dir(root_dir),
-                &item.path,
-                bun_sys::O::RDONLY,
-                0,
-            ) {
+            let file = match root_dir.open_file(&item.path, bun_sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {
                     if item.optional {
@@ -2786,7 +2783,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     Global::crash();
                 }
             };
-            let _close_file = CloseOnDrop::file(&file);
             let stat = match file.stat() {
                 Ok(s) => s,
                 Err(err) => {
@@ -2867,7 +2863,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 Global::crash();
             }
         };
-        let _close_tarball = CloseOnDrop::file(&tarball_file);
 
         let mut sha1 = sha::SHA1::init();
         let mut sha512 = sha::SHA512::init();
@@ -2896,7 +2891,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             break 'tarball_bytes Some(bytes);
         }
 
-        reset_buffered_file_reader(&mut file_reader, File::from_fd(tarball_file.handle));
+        reset_buffered_file_reader(&mut file_reader, File::from_fd(tarball_file.into_raw()));
 
         let mut size: usize = 0;
         let mut read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {
@@ -2933,6 +2928,10 @@ pub fn pack<const FOR_PUBLISH: bool>(
         ctx.stats.packed_size = size;
         None
     };
+    let _ = core::mem::replace(
+        &mut file_reader.unbuffered_reader,
+        File::from_fd(Fd::invalid()),
+    );
 
     let normalized_pkg_info: Option<Box<[u8]>> = if FOR_PUBLISH {
         // The mutated tree is consumed inside `normalized_package` (it prints
@@ -3225,7 +3224,7 @@ fn archive_package_json(
 ) -> Result<*mut ArchiveEntry, AllocError> {
     // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
     let entry = ArchiveEntry::opaque_ref(entry);
-    let stat = match bun_sys::fstatat(Fd::from_std_dir(*root_dir), bun_core::zstr!("package.json"))
+    let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), bun_core::zstr!("package.json"))
     {
         Ok(s) => s,
         Err(err) => {
@@ -3360,6 +3359,12 @@ fn add_archive_entry(
             }
         };
     }
+
+    // `file` is the caller's fd (closed by its `_close_fd` / `File` after this
+    // returns). Reset the reader's view to a sentinel so neither the next
+    // `reset_buffered_file_reader` nor `file_reader`'s eventual Drop tries to
+    // close a fd we don't own.
+    reset_buffered_file_reader(file_reader, File::from_fd(Fd::invalid()));
 
     Ok(entry.clear())
 }
@@ -3730,8 +3735,6 @@ impl Pattern {
     }
 }
 
-// deinit → Drop on CowString handles freeing
-
 // ───────────────────────────────────────────────────────────────────────────
 // IgnorePatterns
 // ───────────────────────────────────────────────────────────────────────────
@@ -3772,13 +3775,13 @@ enum IgnoreFileFailReason {
 
 impl IgnorePatterns {
     fn ignore_file_fail(
-        dir: Dir,
+        dir: &Dir,
         ignore_kind: IgnorePatternsKind,
         reason: IgnoreFileFailReason,
         err: bun_core::Error,
     ) -> ! {
         let mut buf = PathBuffer::uninit();
-        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
+        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(&dir), &mut buf) {
             Ok(p) => &*p,
             Err(_) => b"",
         };
@@ -3811,14 +3814,14 @@ impl IgnorePatterns {
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
     pub fn read_from_disk(
-        dir: Dir,
+        dir: &Dir,
         dir_depth: usize,
     ) -> Result<Option<IgnorePatterns>, AllocError> {
         let mut patterns: Vec<Pattern> = Vec::new();
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;
 
-        let ignore_file: File = match File::openat(dir.fd(), b".npmignore", bun_sys::O::RDONLY, 0) {
+        let ignore_file: File = match dir.open_file(b".npmignore", bun_sys::O::RDONLY, 0) {
             Ok(f) => f,
             Err(err) => 'ignore_file: {
                 if err.get_errno() != bun_sys::E::ENOENT {
@@ -3832,7 +3835,7 @@ impl IgnorePatterns {
                     );
                 }
                 ignore_kind = IgnorePatternsKind::Gitignore;
-                match File::openat(dir.fd(), b".gitignore", bun_sys::O::RDONLY, 0) {
+                match dir.open_file(b".gitignore", bun_sys::O::RDONLY, 0) {
                     Ok(f) => break 'ignore_file f,
                     Err(err2) => {
                         if err2.get_errno() != bun_sys::E::ENOENT {
@@ -3856,7 +3859,6 @@ impl IgnorePatterns {
             }
         };
         let _ = ignore_file.close();
-        // contents freed by Drop
 
         let mut has_rel_path = false;
 
@@ -3902,8 +3904,6 @@ impl IgnorePatterns {
     }
 }
 
-// deinit → Drop on Box<[Pattern]> + each Pattern's CowString
-
 // ───────────────────────────────────────────────────────────────────────────
 // printArchivedFilesAndPackages
 // ───────────────────────────────────────────────────────────────────────────
@@ -3921,7 +3921,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
     pack_list: PackListOrQueue<'_>,
     package_json_len: usize,
 ) {
-    let root_dir = Fd::from_std_dir(*root_dir_std);
+    let root_dir = Fd::from_std_dir(root_dir_std);
     if ctx.manager.options.log_level == LogLevel::Silent
         || ctx.manager.options.log_level == LogLevel::Quiet
     {
@@ -4132,7 +4132,6 @@ pub mod bindings {
             }
         };
         let _ = tarball_file.close();
-        // tarball freed by Drop
 
         let mut sha1_digest: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
         let mut sha1 = sha::SHA1::init();

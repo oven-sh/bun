@@ -295,13 +295,13 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if !explicit_global_dir.is_empty() {
         return Dir::cwd()
             .make_open_path(explicit_global_dir, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
@@ -310,7 +310,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
@@ -322,7 +322,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     Err(bun_core::err!("No global directory found"))
@@ -337,7 +337,7 @@ pub fn open_global_bin_dir(
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
         return Dir::cwd()
             .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if let Some(opts) = opts_ {
@@ -345,7 +345,7 @@ pub fn open_global_bin_dir(
             if !home_dir.is_empty() {
                 return Dir::cwd()
                     .make_open_path(home_dir, OpenDirOptions::default())
-                    .map(|d| d.fd);
+                    .map(|d| d.into_raw());
             }
         }
     }
@@ -356,7 +356,7 @@ pub fn open_global_bin_dir(
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
@@ -368,7 +368,7 @@ pub fn open_global_bin_dir(
         let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
         return Dir::cwd()
             .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.fd);
+            .map(|d| d.into_raw());
     }
 
     Err(bun_core::err!(

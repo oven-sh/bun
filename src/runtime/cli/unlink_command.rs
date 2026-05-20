@@ -152,6 +152,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
 
             match manager
                 .global_dir
+                .as_ref()
                 .unwrap()
                 .make_open_path(b"node_modules", Default::default())
             {
@@ -180,7 +181,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             // the fd path twice (cheap: one `getFdPath` syscall) into two
             // independent `AbsPath` buffers.
             let mut node_modules_path =
-                match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
+                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
                     Ok(p) => p,
                     Err(e) => {
                         if manager.options.log_level != LogLevel::Silent {
@@ -190,7 +191,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
                     }
                 };
             let target_node_modules_path =
-                match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
+                match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
                     Ok(p) => p,
                     Err(e) => {
                         if manager.options.log_level != LogLevel::Silent {
@@ -199,7 +200,6 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
                         Global::crash();
                     }
                 };
-            // `defer node_modules_path.deinit()` — handled by Drop.
 
             let mut bin_linker = bin::Linker {
                 target_node_modules_path: &raw const target_node_modules_path,

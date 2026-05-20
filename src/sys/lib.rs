@@ -872,7 +872,8 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
     }
 }
 
-pub fn lstatat(fd: Fd, path: &ZStr) -> Result<Stat> {
+pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
+    let fd = fd.as_fd();
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // sys.zig:874 — `bun.invalid_fd` means cwd-relative.
@@ -965,6 +966,39 @@ use core::ffi::{c_char, c_int, c_void};
 /// write `bun_sys::errno_to_zig_err(..)` without also importing `bun_core`.
 pub use bun_core::errno_to_zig_err;
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional, FileKind, Mode, Stdio, kind_from_mode};
+
+/// Anything that can hand out an [`Fd`] without giving up ownership: a raw
+/// `Fd`, or a reference to an owning [`File`] / [`Dir`]. Mirrors
+/// `std::os::fd::AsFd`. Implemented for references only (not owned `File` /
+/// `Dir`) so syscall wrappers can't accidentally consume and drop-close an
+/// owned handle.
+pub trait AsFd: Copy {
+    fn as_fd(&self) -> Fd;
+}
+impl AsFd for Fd {
+    #[inline]
+    fn as_fd(&self) -> Fd {
+        *self
+    }
+}
+impl AsFd for &Fd {
+    #[inline]
+    fn as_fd(&self) -> Fd {
+        **self
+    }
+}
+impl AsFd for &File {
+    #[inline]
+    fn as_fd(&self) -> Fd {
+        self.handle
+    }
+}
+impl AsFd for &Dir {
+    #[inline]
+    fn as_fd(&self) -> Fd {
+        self.fd
+    }
+}
 
 // Raw Linux syscalls via rustix (linux_raw backend). Hot-path I/O on Linux
 // routes through here instead of glibc — see module doc. Android: same kernel,
@@ -1949,7 +1983,8 @@ mod posix_impl {
         // `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
         openat(Fd::cwd(), path, flags, mode)
     }
-    pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+    pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        let dir = dir.as_fd();
         // sys.zig:1706-1712 — .mac arm: single `openat$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         {
@@ -2399,7 +2434,8 @@ mod posix_impl {
         );
         Ok(())
     }
-    pub fn mkdirat(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()> {
+    pub fn mkdirat(dir: impl AsFd, path: &ZStr, mode: Mode) -> Maybe<()> {
+        let dir = dir.as_fd();
         // sys.zig:809 — `mkdiratZ` tags errors as `.mkdir` (not `.mkdirat`).
         check_p!(
             // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
@@ -2413,7 +2449,8 @@ mod posix_impl {
     /// `bun.makePath` — `mkdirat` walking up parents on ENOENT, like `mkdir -p`.
     /// Port of std.fs.Dir.makePath (Zig std/fs/Dir.zig).
     #[inline]
-    pub fn mkdir_recursive_at(dir: Fd, sub_path: &[u8]) -> Maybe<()> {
+    pub fn mkdir_recursive_at(dir: impl AsFd, sub_path: &[u8]) -> Maybe<()> {
+        let dir = dir.as_fd();
         mkdir_recursive_at_mode(dir, sub_path, 0o755)
     }
     /// `mkdir_recursive_at` with an explicit `mode` for created directories
@@ -2454,7 +2491,9 @@ mod posix_impl {
         );
         Ok(())
     }
-    pub fn renameat(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()> {
+    pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
+        let from_dir = from_dir.as_fd();
+        let to_dir = to_dir.as_fd();
         check_p!(
             // SAFETY: both dir fds are live (or AT_FDCWD); both `ZStr`s are
             // valid NUL-terminated C strings.
@@ -2555,7 +2594,8 @@ mod posix_impl {
     /// sys.zig:2912 `unlinkat` — 2-arg form (`flags = 0`). Zig's surface is
     /// 2-arg; the 3-arg variant is `unlinkatWithFlags`.
     #[inline]
-    pub fn unlinkat(dir: Fd, path: &ZStr) -> Maybe<()> {
+    pub fn unlinkat(dir: impl AsFd, path: &ZStr) -> Maybe<()> {
+        let dir = dir.as_fd();
         unlinkat_with_flags(dir, path, 0)
     }
     pub fn symlink(target: &ZStr, link: &ZStr) -> Maybe<()> {
@@ -2639,7 +2679,9 @@ mod posix_impl {
         );
         Ok(())
     }
-    pub fn linkat(src_dir: Fd, src: &ZStr, dest_dir: Fd, dest: &ZStr) -> Maybe<()> {
+    pub fn linkat(src_dir: impl AsFd, src: &ZStr, dest_dir: impl AsFd, dest: &ZStr) -> Maybe<()> {
+        let src_dir = src_dir.as_fd();
+        let dest_dir = dest_dir.as_fd();
         // sys.zig:3963 — `linkatZ` tags as `.link`.
         check_p!(
             // SAFETY: both dir fds are live (or AT_FDCWD); both `ZStr`s are
@@ -2724,7 +2766,8 @@ mod posix_impl {
         // sys.zig:4010 — `linkatTmpfile` tags as `.link` (matches Linux arm).
         Err(Error::from_code_int(libc::EOPNOTSUPP, Tag::link).with_path(name.as_bytes()))
     }
-    pub fn symlinkat(target: &ZStr, dirfd: Fd, dest: &ZStr) -> Maybe<()> {
+    pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
+        let dirfd = dirfd.as_fd();
         check_p!(
             // SAFETY: `dirfd` is a live fd (or AT_FDCWD); both `ZStr`s are
             // valid NUL-terminated C strings.
@@ -2734,7 +2777,8 @@ mod posix_impl {
         );
         Ok(())
     }
-    pub fn readlinkat(fd: Fd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
+    pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
+        let fd = fd.as_fd();
         // sys.zig:2390 — tags as `.readlink`.
         let n = check_p!(
             // SAFETY: `fd` is a live dir fd; `path` is NUL-terminated (`ZStr`);
@@ -2768,7 +2812,8 @@ mod posix_impl {
         );
         Ok(())
     }
-    pub fn fchmodat(dir: Fd, path: &ZStr, mode: Mode, flags: i32) -> Maybe<()> {
+    pub fn fchmodat(dir: impl AsFd, path: &ZStr, mode: Mode, flags: i32) -> Maybe<()> {
+        let dir = dir.as_fd();
         check_p!(
             // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
             // valid NUL-terminated C string.
@@ -2818,7 +2863,8 @@ mod posix_impl {
         );
         Ok(())
     }
-    pub fn fchownat(dir: Fd, path: &ZStr, uid: u32, gid: u32, flags: i32) -> Maybe<()> {
+    pub fn fchownat(dir: impl AsFd, path: &ZStr, uid: u32, gid: u32, flags: i32) -> Maybe<()> {
+        let dir = dir.as_fd();
         check_p!(
             // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
             // valid NUL-terminated C string.
@@ -2828,7 +2874,8 @@ mod posix_impl {
         );
         Ok(())
     }
-    pub fn fstatat(fd: Fd, path: &ZStr) -> Maybe<Stat> {
+    pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
+        let fd = fd.as_fd();
         // sys.zig:848 — `bun.invalid_fd` means cwd-relative.
         let dirfd = if fd.is_valid() {
             fd.native()
@@ -2861,7 +2908,8 @@ mod posix_impl {
         Ok(())
     }
     /// sys.zig:3504 — never returns `.err`; any non-zero rc → `Ok(false)`.
-    pub fn faccessat(dir: Fd, sub: &ZStr) -> Maybe<bool> {
+    pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
+        let dir = dir.as_fd();
         // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
         // valid NUL-terminated C string.
         let rc = unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) };
@@ -2911,7 +2959,8 @@ mod posix_impl {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 }
     }
-    pub fn exists_at(dir: Fd, sub: &ZStr) -> bool {
+    pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
+        let dir = dir.as_fd();
         // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
         // valid NUL-terminated C string.
         unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
@@ -3768,7 +3817,8 @@ mod windows_impl {
     }
 
     // ── kernel32 / ntdll arms (sys.zig windows branches) ─────────────────
-    pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+    pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        let dir = dir.as_fd();
         // sys.zig:1773 — `if (Environment.isWindows) return openatWindowsT(u8,
         // dirfd, file_path, flags, perm)`. Route through the NtCreateFile path
         // (normalize → `open_file_at_windows_nt_path`) so the result is a
@@ -3821,7 +3871,8 @@ mod windows_impl {
         let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
         Ok(utf8.len())
     }
-    pub fn mkdirat(dir: Fd, path: &ZStr, _mode: Mode) -> Maybe<()> {
+    pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
+        let dir = dir.as_fd();
         // sys.zig:829 mkdiratW — `openDirAtWindowsNtPath(dir, path,
         // .{ .iterable = false, .can_rename_or_delete = true, .op = .only_create })`
         // then close the resulting handle on success.
@@ -3840,7 +3891,9 @@ mod windows_impl {
         made.close();
         Ok(())
     }
-    pub fn renameat(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()> {
+    pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
+        let from_dir = from_dir.as_fd();
+        let to_dir = to_dir.as_fd();
         // sys.zig:2572 — windows arm goes through renameAtW.
         let mut wf = WPathBuffer::default();
         let mut wt = WPathBuffer::default();
@@ -3882,11 +3935,13 @@ mod windows_impl {
     }
     /// sys.zig:2912 `unlinkat` — 2-arg form (`flags = 0`).
     #[inline]
-    pub fn unlinkat(dir: Fd, path: &ZStr) -> Maybe<()> {
+    pub fn unlinkat(dir: impl AsFd, path: &ZStr) -> Maybe<()> {
+        let dir = dir.as_fd();
         unlinkat_with_flags(dir, path, 0)
     }
     #[inline]
-    pub fn mkdir_recursive_at(dir: Fd, sub: &[u8]) -> Maybe<()> {
+    pub fn mkdir_recursive_at(dir: impl AsFd, sub: &[u8]) -> Maybe<()> {
+        let dir = dir.as_fd();
         mkdir_recursive_at_mode(dir, sub, 0o777)
     }
     pub fn mkdir_recursive_at_mode(dir: Fd, sub: &[u8], mode: Mode) -> Maybe<()> {
@@ -4012,7 +4067,9 @@ mod windows_impl {
             }
         })
     }
-    pub fn linkat(src_dir: Fd, src: &ZStr, dest_dir: Fd, dest: &ZStr) -> Maybe<()> {
+    pub fn linkat(src_dir: impl AsFd, src: &ZStr, dest_dir: impl AsFd, dest: &ZStr) -> Maybe<()> {
+        let src_dir = src_dir.as_fd();
+        let dest_dir = dest_dir.as_fd();
         // No native `linkat` on Windows — resolve to absolute and CreateHardLinkW.
         let mut sb = bun_core::PathBuffer::default();
         let mut db = bun_core::PathBuffer::default();
@@ -4034,7 +4091,8 @@ mod windows_impl {
         // sys.zig:3973 — `if (!Environment.isLinux) @compileError("Linux only")`.
         Err(Error::new(E::ENOTSUP, Tag::link))
     }
-    pub fn symlinkat(target: &ZStr, dirfd: Fd, dest: &ZStr) -> Maybe<()> {
+    pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
+        let dirfd = dirfd.as_fd();
         // sys.zig:2641 — windows: resolve `dest` against `dirfd`, then symlinkUV.
         let mut db = bun_core::PathBuffer::default();
         let d = super::get_fd_path(dirfd, &mut db)?;
@@ -4045,7 +4103,8 @@ mod windows_impl {
         );
         sys_uv::symlink_uv(target, d_abs, 0)
     }
-    pub fn readlinkat(fd: Fd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
+    pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
+        let fd = fd.as_fd();
         // No `readlinkat` on Windows — resolve and call `readlink`.
         let mut db = bun_core::PathBuffer::default();
         let d = super::get_fd_path(fd, &mut db)?;
@@ -4056,7 +4115,8 @@ mod windows_impl {
         );
         readlink(abs, buf)
     }
-    pub fn fchmodat(dir: Fd, path: &ZStr, mode: Mode, _flags: i32) -> Maybe<()> {
+    pub fn fchmodat(dir: impl AsFd, path: &ZStr, mode: Mode, _flags: i32) -> Maybe<()> {
+        let dir = dir.as_fd();
         let mut db = bun_core::PathBuffer::default();
         let d = super::get_fd_path(dir, &mut db)?;
         let mut dj = bun_core::PathBuffer::default();
@@ -4074,11 +4134,13 @@ mod windows_impl {
         // Windows has no ownership model; libuv uv_fs_lchown is a no-op success.
         Ok(())
     }
-    pub fn fchownat(_dir: Fd, _path: &ZStr, _uid: u32, _gid: u32, _flags: i32) -> Maybe<()> {
+    pub fn fchownat(_dir: impl AsFd, _path: &ZStr, _uid: u32, _gid: u32, _flags: i32) -> Maybe<()> {
+        let _dir = _dir.as_fd();
         // See `lchown` — no-op on Windows.
         Ok(())
     }
-    pub fn fstatat(fd: Fd, path: &ZStr) -> Maybe<Stat> {
+    pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
+        let fd = fd.as_fd();
         // sys.zig:838-846 — windows arm: `openatWindowsA(fd, path, 0, 0)` (flags=0
         // → FOLLOWS reparse points) then `fstat(file)`. Do NOT use `lstat` here —
         // that's the `lstatat` (sys.zig:863) no-follow variant.
@@ -4105,7 +4167,8 @@ mod windows_impl {
         }
         Ok(())
     }
-    pub fn faccessat(dir: Fd, sub: &ZStr) -> Maybe<bool> {
+    pub fn faccessat(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
+        let dir = dir.as_fd();
         // sys.zig:3504-3531 — `faccessat` NEVER returns `.err`: rc==0 → `.result
         // = true`, else → `.result = false` regardless of errno. There is no
         // dedicated windows arm in the spec; collapse all errors to `Ok(false)`.
@@ -4189,7 +4252,8 @@ mod windows_impl {
         // sys.zig:3482 — windows arm: GetFileAttributesW != INVALID.
         access(path, 0).is_ok()
     }
-    pub fn exists_at(dir: Fd, sub: &ZStr) -> bool {
+    pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
+        let dir = dir.as_fd();
         // sys.zig:3726-3731 — windows arm: `existsAtType(fd, subpath) == .file`.
         // Directories yield `false` (resolver/install code uses `existsAt` to
         // mean "a *file* exists here").
@@ -6124,7 +6188,8 @@ pub fn open_a(path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
     openat_a(Fd::cwd(), path, flags, perm)
 }
 /// `openatA` — like `openat` but takes a non-NUL-terminated slice.
-pub fn openat_a(dir: Fd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
+pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
+    let dir = dir.as_fd();
     let mut buf = bun_paths::PathBuffer::default();
     if path.len() >= buf.0.len() {
         return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
@@ -6160,11 +6225,13 @@ pub fn openat_os_path(
 }
 /// `mkdiratZ` — `mkdirat` with already-NUL-terminated path. Same as `mkdirat`.
 #[inline]
-pub fn mkdirat_z(dir: Fd, path: &ZStr, mode: Mode) -> Maybe<()> {
+pub fn mkdirat_z(dir: impl AsFd, path: &ZStr, mode: Mode) -> Maybe<()> {
+    let dir = dir.as_fd();
     mkdirat(dir, path, mode)
 }
 /// bun.zig:879 `openDirA` — open a path as an iterable directory fd.
-pub fn open_dir_at(dir: Fd, path: &[u8]) -> Maybe<Fd> {
+pub fn open_dir_at(dir: impl AsFd, path: &[u8]) -> Maybe<Fd> {
+    let dir = dir.as_fd();
     openat_a(dir, path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
 }
 /// bun.zig:890 `openDirAbsolute`. PORT NOTE: returns `Fd`, not `std.fs.Dir`.
@@ -6197,9 +6264,7 @@ pub fn delete_tree_absolute(path: &[u8]) -> core::result::Result<(), bun_core::E
     let dir = open_dir_absolute(parent)
         .map(Dir::from_fd)
         .map_err(bun_core::Error::from)?;
-    let res = dir.delete_tree(base);
-    dir.close();
-    res
+    dir.delete_tree(base)
 }
 /// bun.zig:899 — Windows variant skips `DELETE` access; on POSIX identical.
 pub fn open_dir_absolute_not_for_deleting_or_renaming(path: &[u8]) -> Maybe<Fd> {
@@ -6759,7 +6824,12 @@ pub fn open_dir_at_windows(dir_fd: Fd, path: &[u16], options: WindowsOpenDirOpti
 }
 #[cfg(windows)]
 #[inline(never)]
-pub fn open_dir_at_windows_a(dir_fd: Fd, path: &[u8], options: WindowsOpenDirOptions) -> Maybe<Fd> {
+pub fn open_dir_at_windows_a(
+    dir_fd: impl AsFd,
+    path: &[u8],
+    options: WindowsOpenDirOptions,
+) -> Maybe<Fd> {
+    let dir_fd = dir_fd.as_fd();
     // sys.zig:1262 `openDirAtWindowsT(u8, …)` → `normalizePathWindows(u8, dirFd,
     // path, wbuf, .{})` does the UTF-8→UTF-16 conversion internally and THEN
     // applies the absolute/relative/device-path logic. Do the plain transcode
@@ -6781,7 +6851,12 @@ pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions)
 /// NT-prefix yet — `normalize_path_windows` adds that) then defer to
 /// [`open_file_at_windows`].
 #[cfg(windows)]
-pub fn open_file_at_windows_a(dir_fd: Fd, path: &[u8], opts: NtCreateFileOptions) -> Maybe<Fd> {
+pub fn open_file_at_windows_a(
+    dir_fd: impl AsFd,
+    path: &[u8],
+    opts: NtCreateFileOptions,
+) -> Maybe<Fd> {
+    let dir_fd = dir_fd.as_fd();
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let wide = convert_path_u8_to_u16(&mut wbuf.0[..], path)?;
     open_file_at_windows(dir_fd, wide, opts)
@@ -6878,7 +6953,8 @@ pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd
 /// sys.zig:1690 `openatWindowsA` — UTF-8 input.
 #[cfg(windows)]
 #[inline(never)]
-pub fn openat_windows_a(dir: Fd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
+pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd> {
+    let dir = dir.as_fd();
     // sys.zig `openatWindowsT(u8, …)` — `normalizePathWindows` does the
     // UTF-8→UTF-16 conversion internally; mirror that with a plain transcode
     // (no NT-prefix) so relative paths stay relative against `dir`.
@@ -7072,7 +7148,8 @@ pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     exists_at_type_nt(dir, path)
 }
 /// sys.zig:3533 — `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
-pub fn directory_exists_at(dir: Fd, sub: &ZStr) -> Maybe<bool> {
+pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
+    let dir = dir.as_fd();
     match exists_at_type(dir, sub) {
         Ok(t) => Ok(t == ExistsAtType::Directory),
         Err(e) if e.get_errno() == E::ENOENT => Ok(false),
@@ -7308,7 +7385,9 @@ pub fn clonefile(from: &ZStr, to: &ZStr) -> Maybe<()> {
 /// `clonefileat` — macOS-only CoW copy relative to directory fds. On
 /// non-Darwin returns ENOTSUP so callers can fall back to a manual copy.
 #[cfg(not(target_os = "macos"))]
-pub fn clonefileat(_from_dir: Fd, from: &ZStr, _to_dir: Fd, to: &ZStr) -> Maybe<()> {
+pub fn clonefileat(_from_dir: impl AsFd, from: &ZStr, _to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
+    let _from_dir = _from_dir.as_fd();
+    let _to_dir = _to_dir.as_fd();
     Err(Error::from_code_int(libc::ENOTSUP, Tag::clonefileat)
         .with_path_dest(from.as_bytes(), to.as_bytes()))
 }
@@ -7635,12 +7714,7 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
     }
 }
 
-/// `bun.makePath` — free-fn form taking a `Dir` (Zig: `bun.makePath(dir, sub)`).
-#[inline]
-pub fn make_path(dir: Dir, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
-    mkdir_recursive_at(dir.fd, sub_path).map_err(Into::into)
-}
-/// `bun.mkdirRecursive` — like `make_path` but cwd-relative, taking a slice.
+/// `bun.mkdirRecursive` — `make_path` cwd-relative, taking a slice.
 #[inline]
 pub fn mkdir_recursive(sub_path: &[u8]) -> Maybe<()> {
     mkdir_recursive_at(Fd::cwd(), sub_path)
@@ -8467,26 +8541,17 @@ pub mod freebsd {
 #[cfg(not(target_os = "freebsd"))]
 pub mod freebsd {}
 
-/// RAII guard that closes an [`Fd`] on drop.
-///
-/// `Fd`/`Dir`/`File` are intentionally non-owning `Copy` handles (matching
-/// Zig). When a scope owns one and must close it on every exit path
-/// (Zig: `defer fd.close()`), wrap the fd in this guard — do not hand-roll a
-/// `scopeguard` closure.
+/// RAII guard that closes a raw [`Fd`] on drop. Most code should prefer
+/// [`File`] / [`Dir`], which are owning RAII handles already; reach for this
+/// only when working with a bare `Fd` in a context where a typed wrapper
+/// would be misleading (e.g. an fd that is sometimes a file, sometimes a
+/// directory, sometimes a pipe).
 #[must_use = "dropping immediately closes the fd; bind to `let _close = ...`"]
 pub struct CloseOnDrop(Fd);
 impl CloseOnDrop {
     #[inline]
     pub fn new(fd: Fd) -> Self {
         Self(fd)
-    }
-    #[inline]
-    pub fn dir(dir: Dir) -> Self {
-        Self(dir.fd)
-    }
-    #[inline]
-    pub fn file(file: &File) -> Self {
-        Self(file.handle)
     }
     /// Disarm the guard and return the fd without closing it.
     #[inline]
@@ -8507,7 +8572,7 @@ pub mod make_path {
     use super::*;
     #[inline]
     pub fn make_open_path(
-        dir: Dir,
+        dir: &Dir,
         sub_path: &[u8],
         opts: OpenDirOptions,
     ) -> core::result::Result<Dir, bun_core::Error> {
@@ -8536,14 +8601,14 @@ pub mod make_path {
     /// width so callers can pass `OSPathChar` slices unchanged.
     #[inline]
     pub fn make_path<T: MakePathUnit>(
-        dir: Dir,
+        dir: &Dir,
         sub_path: &[T],
     ) -> core::result::Result<(), bun_core::Error> {
         T::make_path_at(dir.fd, sub_path)
     }
     /// Explicit UTF-16 form (Windows). On POSIX transcodes via `make_path_w`.
     #[inline]
-    pub fn make_path_u16(dir: Dir, sub_path: &[u16]) -> core::result::Result<(), bun_core::Error> {
+    pub fn make_path_u16(dir: &Dir, sub_path: &[u16]) -> core::result::Result<(), bun_core::Error> {
         make_path_w(dir.fd, sub_path).map_err(Into::into)
     }
 }
@@ -8903,7 +8968,9 @@ pub fn copy_file_z_slow_with_handle(in_handle: Fd, to_dir: Fd, destination: &ZSt
 }
 /// `renameatZ` alias (bun_install reaches for it as the NUL-terminated form).
 #[inline]
-pub fn renameat_z(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> Maybe<()> {
+pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
+    let from_dir = from_dir.as_fd();
+    let to_dir = to_dir.as_fd();
     renameat(from_dir, from, to_dir, to)
 }
 
@@ -9018,7 +9085,7 @@ pub fn renameat_concurrently_without_fallback(
 
         //  sad path: let's try to delete the folder and then rename it
         if to_dir_fd.is_valid() {
-            let _ = Dir::from_fd(to_dir_fd).delete_tree(to.as_bytes());
+            let _ = Dir::borrow(&to_dir_fd).delete_tree(to.as_bytes());
         } else {
             let _ = delete_tree_absolute(to.as_bytes());
         }
@@ -9124,7 +9191,7 @@ pub fn write_file_with_path_buffer(
             )?
         }
     };
-    let r = File::from_fd(fd).write_all(buffer);
+    let r = File::borrow(&fd).write_all(buffer);
     if !matches!(args.file, PathOrFileDescriptor::Fd(_)) {
         let _ = close(fd);
     }
@@ -9330,3 +9397,49 @@ bun_core::link_impl_OutputSink! {
 // (former `__bun_uws_stat_file` provider deleted — body moved DOWN into
 // `bun_uws_sys::socket_context::stat_for_digest`, which calls `libc::stat`
 // directly. uws_sys already links libc; the cross-crate hook bought nothing.)
+
+#[cfg(test)]
+mod owned_handle_tests {
+    use super::*;
+
+    /// `renameat_concurrently_without_fallback` falls back to `delete_tree` +
+    /// retry when the destination exists. The `delete_tree` is run via a `Dir`
+    /// borrowed from the caller's `to_dir_fd`; if it took ownership instead,
+    /// `to_dir_fd` would be closed out from under the caller.
+    #[test]
+    fn renameat_concurrently_does_not_close_caller_fd() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let mut tmp = std::env::temp_dir().as_os_str().as_encoded_bytes().to_vec();
+        tmp.extend_from_slice(b"/bun_sys_renameat_test");
+        // Set up: create a dir tree with `from/sub`, `to/sub`.
+        let _ = open_dir_at(Fd::cwd(), &tmp).map(close);
+        let _ = mkdir_recursive_at(Fd::cwd(), &tmp);
+        let root = open_dir_at(Fd::cwd(), &tmp).expect("open root");
+        let _ = mkdir_recursive_at(root, b"from/sub");
+        let _ = mkdir_recursive_at(root, b"to/sub");
+        let to_dir = open_dir_at(root, b"to").expect("open to");
+
+        // The dest `to/sub` exists, so the rename must `delete_tree` it first.
+        renameat_concurrently_a(
+            root,
+            b"from/sub",
+            to_dir,
+            b"sub",
+            RenameatConcurrentlyOptions {
+                move_fallback: true,
+            },
+        )
+        .expect("rename");
+
+        // The caller's `to_dir` must still be valid after the rename.
+        assert!(
+            fstat(to_dir).is_ok(),
+            "to_dir closed by renameat_concurrently"
+        );
+
+        // Cleanup.
+        let _ = close(to_dir);
+        let _ = close(root);
+        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+    }
+}

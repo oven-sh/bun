@@ -335,12 +335,21 @@ impl Linker {
         file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
     ) -> Result<Fs::ModKey, bun_core::Error> {
-        let file: bun_sys::File = if let Some(f) = fd {
-            bun_sys::File::from_fd(f)
-        } else {
-            bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?
+        // Borrow the cached fd; own the freshly-opened one.
+        let _owned: Option<bun_sys::File>;
+        let raw_fd = match fd {
+            Some(f) => {
+                _owned = None;
+                f
+            }
+            None => {
+                let f = bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?;
+                let raw = f.handle();
+                _owned = Some(f);
+                raw
+            }
         };
-        let _close = fd.is_none().then(|| bun_sys::CloseOnDrop::file(&file));
+        let file = bun_sys::File::borrow(&raw_fd);
         Fs::FileSystem::set_max_fd(file.handle().native());
         // PORT NOTE: spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
         // path, file)`; both leading args are unread (fs.rs:1386). The inline
@@ -348,7 +357,7 @@ impl Linker {
         // `fs_full::RealFS` are distinct types, so route through the
         // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
         // re-export.
-        Fs::ModKey::from_file(&file)
+        Fs::ModKey::from_file(file)
     }
 
     pub fn get_hashed_filename(

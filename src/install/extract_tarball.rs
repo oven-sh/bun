@@ -25,8 +25,12 @@ type Error = bun_core::Error;
 pub struct ExtractTarball {
     pub name: StringOrTinyString,
     pub resolution: Resolution,
-    pub cache_dir: Dir,
-    pub temp_dir: Dir,
+    /// Borrowed view of `PackageManager`'s cache directory fd; the manager
+    /// owns and closes it, so this stays a non-owning raw `Fd`.
+    pub cache_dir: Fd,
+    /// Borrowed view of `PackageManager`'s temp directory fd (same ownership
+    /// story as `cache_dir`).
+    pub temp_dir: Fd,
     pub dependency_id: DependencyID,
     pub skip_verify: bool,    // = false
     pub integrity: Integrity, // = Integrity::default()
@@ -228,7 +232,7 @@ impl ExtractTarball {
     fn extract(&self, log: &mut bun_ast::Log, tgz_bytes: &[u8]) -> Result<ExtractData, Error> {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
-        let tmpdir = self.temp_dir;
+        let tmpdir = Dir::borrow(&self.temp_dir);
         // Zig: `var tmpname_buf: [bun.MAX_PATH_BYTES]u8` — UTF-8 on every
         // platform; the Windows tmpdir path is converted to wide at the
         // `open_dir_at_windows_a` boundary, not here.
@@ -262,10 +266,6 @@ impl ExtractTarball {
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
-            // `defer extract_destination.close()` — bun_sys::Dir is Copy with NO Drop impl
-            // (see src/sys/lib.rs: "close on Drop is NOT done"), so close explicitly via
-            // scopeguard. `Dir` is Copy, so `extract_destination` remains usable below.
-            let _close_extract_destination = scopeguard::guard(extract_destination, |d| d.close());
 
             use bun_libarchive::Archiver;
             use bun_zlib as Zlib;
@@ -448,6 +448,12 @@ impl ExtractTarball {
                 }
             }
 
+            // Explicitly close the temp extraction dir before the rename. On
+            // Windows a still-open handle to the source directory can fail
+            // `NtSetInformationFile` with EBUSY; spelling out the close keeps
+            // the timing visible instead of relying on block-end Drop.
+            drop(extract_destination);
+
             if PackageManager::verbose_install() {
                 let elapsed = bun_core::Timespec::now_allow_mocked_time().ns()
                     - time_started_for_verbose_logs;
@@ -477,7 +483,7 @@ impl ExtractTarball {
     ) -> Result<ExtractData, Error> {
         let package_manager = self.package_manager.get();
 
-        let tmpdir = self.temp_dir;
+        let tmpdir = Dir::borrow(&self.temp_dir);
         TL_BUFS.with_borrow_mut(|bufs| {
             // PORT NOTE: reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
             // here the entire body lives inside the thread_local borrow closure.
@@ -509,7 +515,7 @@ impl ExtractTarball {
             if folder_name.is_empty() || (folder_name.len() == 1 && folder_name[0] == b'/') {
                 panic!("Tried to delete root and stopped it");
             }
-            let cache_dir = self.cache_dir;
+            let cache_dir = Dir::borrow(&self.cache_dir);
 
             // e.g. @next
             // if it's a namespace package, we need to make sure the @name folder exists
@@ -518,7 +524,12 @@ impl ExtractTarball {
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
-                let mut did_retry = false;
+                // Windows EBUSY/SHARING_VIOLATION on `NtSetInformationFile` is
+                // transient when a concurrent process (another `bun install`
+                // sharing the cache, AV, the Search Indexer) is closing its
+                // handle to the destination. Back off briefly between retries.
+                const MAX_RETRIES: u32 = 4;
+                let mut retries: u32 = 0;
                 let mut path2_buf = WPathBuffer::uninit();
                 let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);
                 if create_subdir {
@@ -531,7 +542,7 @@ impl ExtractTarball {
 
                 loop {
                     let dir_to_move = match sys::open_dir_at_windows_a(
-                        self.temp_dir.fd(),
+                        self.temp_dir,
                         tmpname.as_bytes(),
                         sys::WindowsOpenDirOptions {
                             can_rename_or_delete: true,
@@ -565,7 +576,7 @@ impl ExtractTarball {
                         true,
                     ) {
                         bun_sys::Result::Err(err) => {
-                            if !did_retry {
+                            if retries < MAX_RETRIES {
                                 match err.get_errno() {
                                     sys::Errno::NOTEMPTY
                                     | sys::Errno::PERM
@@ -604,7 +615,14 @@ impl ExtractTarball {
                                                 let _ = tmpdir.delete_tree(tempdest.as_bytes());
                                             }
                                         }
-                                        did_retry = true;
+                                        retries += 1;
+                                        // 10ms, 20ms, 40ms, 80ms — long enough
+                                        // for a concurrent close to land,
+                                        // short enough to not slow a legit
+                                        // failure noticeably.
+                                        std::thread::sleep(std::time::Duration::from_millis(
+                                            10u64 << (retries - 1),
+                                        ));
                                         continue;
                                     }
                                     _ => {}
@@ -675,7 +693,10 @@ impl ExtractTarball {
 
             // We return a resolved absolute absolute file path to the cache dir.
             // To get that directory, we open the directory again.
-            let final_dir = match bun_sys::open_dir(cache_dir, folder_name) {
+            let final_dir = match cache_dir
+                .open_at(folder_name)
+                .map_err(bun_core::Error::from)
+            {
                 Ok(d) => d,
                 Err(err) => {
                     log.add_error_fmt(
@@ -690,10 +711,6 @@ impl ExtractTarball {
                     return Err(bun_core::err!("InstallFailed"));
                 }
             };
-            // `defer final_dir.close()` — bun_sys::Dir is Copy with NO Drop impl; close
-            // explicitly via scopeguard so all subsequent early returns release the fd.
-            let _close_final_dir = scopeguard::guard(final_dir, |d| d.close());
-            // and get the fd path
             let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
                 Ok(p) => p,
                 Err(err) => {
@@ -829,22 +846,19 @@ impl ExtractTarball {
                         }
                         #[cfg(not(windows))]
                         {
-                            let Ok(index_dir_std) = bun_sys::make_path::make_open_path(
+                            let Ok(index_dir) = bun_sys::make_path::make_open_path(
                                 cache_dir,
                                 name,
                                 Default::default(),
                             ) else {
                                 break 'create_index;
                             };
-                            let index_dir = index_dir_std.fd();
-                            // `defer index_dir.close()` → close explicitly after symlinkat.
 
                             let mut dest_buf = PathBuffer::uninit();
                             dest_buf[..dest_name.len()].copy_from_slice(dest_name);
                             dest_buf[dest_name.len()] = 0;
                             let dest_z = ZStr::from_buf(&dest_buf, dest_name.len());
-                            let _ = sys::symlinkat(final_path, index_dir, dest_z);
-                            let _ = sys::close(index_dir);
+                            let _ = sys::symlinkat(final_path, index_dir.fd(), dest_z);
                         }
                     }
                 }

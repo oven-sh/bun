@@ -257,7 +257,7 @@ pub mod lib {
             let mut target_offset: i64 = 0; // Updated by archive.next() — where this block should be written
             let mut actual_offset: i64 = 0; // Where we've actually written to (for write() path)
             let mut final_offset: i64 = 0; // Furthest point the file must extend to
-            let file = bun_sys::File { handle: fd };
+            let file = bun_sys::File::borrow(&fd);
 
             while let Some(block) = self.next(&mut target_offset) {
                 if block.result != Result::Ok {
@@ -306,7 +306,7 @@ pub mod lib {
                         if block.offset > actual_offset {
                             // Write zeros to fill the gap
                             let zero_count = (block.offset - actual_offset) as usize;
-                            let zero_result = Self::write_zeros_to_file(&file, zero_count);
+                            let zero_result = Self::write_zeros_to_file(file, zero_count);
                             if zero_result != Result::Ok {
                                 return zero_result;
                             }
@@ -1639,7 +1639,6 @@ impl Archiver {
         let mut ctx = ctx;
 
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
-        // (guard Drop puts the buffer back to the pool)
 
         #[cfg(unix)]
         let mut created_symlinks: Vec<Vec<u8>> = Vec::new();

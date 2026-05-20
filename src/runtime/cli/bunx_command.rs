@@ -283,12 +283,7 @@ impl BunxCommand {
         subpath_z: &ZStr,
     ) -> Result<Box<[u8]>, bun_core::Error> {
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
-        // Zig: `defer target_package_json.close()` — bun_sys::File is a non-owning
-        // Copy handle (no Drop), so guard the fd explicitly.
-        let _close_pkg_json = bun_sys::CloseOnDrop::new(target_package_json_fd);
-        let target_package_json = bun_sys::File {
-            handle: target_package_json_fd,
-        };
+        let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
         // TODO: make this better
         let package_json_bytes = target_package_json.read_to_end()?;
@@ -419,9 +414,7 @@ impl BunxCommand {
                 Ok(fd) => fd,
                 Err(_) => return Err(bun_core::err!("NeedToInstall")),
             };
-            let target_package_json = bun_sys::File {
-                handle: target_package_json_fd,
-            };
+            let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
             let is_stale: bool = 'is_stale: {
                 #[cfg(windows)]
@@ -1224,8 +1217,6 @@ impl BunxCommand {
                 Err(_) => break 'create_package_json,
             };
             let _ = package_json.write_all(b"{}\n");
-            // Zig: `defer package_json.close()` — bun_sys::File has no Drop.
-            let _ = package_json.close();
         }
 
         let install_args: [&[u8]; 4] = [

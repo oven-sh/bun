@@ -53,9 +53,7 @@ pub trait FileSystemTmpdirExt {
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
     fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error> {
-        sys::open_dir_absolute(fs::RealFS::tmpdir_path())
-            .map(sys::Dir::from_fd)
-            .map_err(Into::into)
+        sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
     }
 }
 
@@ -776,15 +774,12 @@ impl UpgradeCommand {
             };
 
             // PORT NOTE: Zig used std.fs.Dir.createFileZ(.{ .truncate = true }); mapped to
-            // bun_sys::openat with WRONLY|CREAT|TRUNC and wrapped in sys::File for write_all.
-            let zip_file = match sys::openat_a(
-                save_dir.fd(),
+            // Dir::open_file with WRONLY|CREAT|TRUNC.
+            let zip_file = match save_dir.open_file(
                 tmpname.as_bytes(),
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                 0o644,
-            )
-            .map(sys::File::from_fd)
-            {
+            ) {
                 Ok(f) => f,
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
@@ -797,7 +792,7 @@ impl UpgradeCommand {
 
             {
                 if let Err(err) = zip_file.write_all(bytes) {
-                    let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                    let _ = sys::unlinkat(&save_dir, tmpname);
                     Output::pretty_errorln(format_args!(
                         "<r><red>error:<r> Failed to write to temp file {}",
                         bstr::BStr::new(err.name())
@@ -809,7 +804,7 @@ impl UpgradeCommand {
 
             {
                 scopeguard::defer! {
-                    let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                    let _ = sys::unlinkat(&save_dir, tmpname);
                 }
 
                 #[cfg(unix)]
@@ -821,7 +816,7 @@ impl UpgradeCommand {
                         filesystem.top_level_dir,
                         b"unzip",
                     ) else {
-                        let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                        let _ = sys::unlinkat(&save_dir, tmpname);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
                         ));
@@ -851,7 +846,7 @@ impl UpgradeCommand {
                     }) {
                         Ok(Ok(r)) => r,
                         Ok(Err(err)) => {
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 bstr::BStr::new(err.name())
@@ -859,7 +854,7 @@ impl UpgradeCommand {
                             Global::exit(1);
                         }
                         Err(err) => {
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 err.name()
@@ -875,7 +870,7 @@ impl UpgradeCommand {
                                 "<r><red>Unzip failed<r> (exit code: {})",
                                 e.code
                             ));
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
                         other => {
@@ -883,7 +878,7 @@ impl UpgradeCommand {
                                 "<r><red>Unzip failed<r> ({})",
                                 other
                             ));
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
                     }
@@ -1134,8 +1129,8 @@ impl UpgradeCommand {
             // writes. Each mutation re-establishes the NUL before
             // `target_dirname` is read again.
             let target_dirname = unsafe { ZStr::from_raw(buf_ptr, target_dir_len) };
-            let target_dir_it = match sys::open_dir_absolute(target_dirname.as_bytes()) {
-                Ok(d) => sys::Dir::from_fd(d),
+            let target_dir_it = match sys::Dir::open(target_dirname.as_bytes()) {
+                Ok(d) => d,
                 Err(err) => {
                     let _ = save_dir_.delete_tree(&version_name);
                     Output::pretty_errorln(format_args!(
@@ -1157,7 +1152,7 @@ impl UpgradeCommand {
 
             if use_canary {
                 // Check if the versions are the same
-                let target_stat = match sys::fstatat(target_dir.fd(), target_filename) {
+                let target_stat = match sys::fstatat(&target_dir, target_filename) {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);
@@ -1170,7 +1165,7 @@ impl UpgradeCommand {
                     }
                 };
 
-                let dest_stat = match sys::fstatat(save_dir.fd(), exe_z) {
+                let dest_stat = match sys::fstatat(&save_dir, exe_z) {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);
@@ -1188,17 +1183,13 @@ impl UpgradeCommand {
 
                     // PORT NOTE: `Dir::read_file` (Zig std.fs.Dir.readFile) is open + read_all + close.
                     let target_hash = hash(
-                        match sys::File::openat(
-                            target_dir.fd(),
-                            target_filename.as_bytes(),
-                            sys::O::RDONLY,
-                            0,
-                        )
-                        .and_then(|f| {
-                            let n = f.read_all(&mut input_buf);
-                            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                            n
-                        }) {
+                        match target_dir
+                            .open_file(target_filename.as_bytes(), sys::O::RDONLY, 0)
+                            .and_then(|f| {
+                                let n = f.read_all(&mut input_buf);
+                                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                                n
+                            }) {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
@@ -1212,13 +1203,11 @@ impl UpgradeCommand {
                     );
 
                     let source_hash = hash(
-                        match sys::File::openat(save_dir.fd(), exe, sys::O::RDONLY, 0).and_then(
-                            |f| {
-                                let n = f.read_all(&mut input_buf);
-                                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                                n
-                            },
-                        ) {
+                        match save_dir.open_file(exe, sys::O::RDONLY, 0).and_then(|f| {
+                            let n = f.read_all(&mut input_buf);
+                            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                            n
+                        }) {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);

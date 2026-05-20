@@ -3071,6 +3071,33 @@ pub fn drop_source_code_printer_if_macro_owned() {
     drop_source_code_printer();
 }
 
+/// Run a synchronous GC sweep on this thread's VM iff it was created for a
+/// bundler-worker macro (via `Macro::init`) and is otherwise quiescent. The
+/// macro VM is intentionally never `destroy()`'d (per-worker dealloc is
+/// unimplemented), so JS-wrapper-owned native boxes — e.g. a
+/// `new Bun.Transpiler()` constructed inside a macro body — would otherwise
+/// outlive the worker thread's TLS root and be reported by LSan once the
+/// `leak:bun_js_parser_jsc::Macro` suppression is gone.
+///
+/// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
+/// is the discriminant — JS `Worker` threads never reach it), after both
+/// per-worker `MacroContext` boxes are freed. Not called from
+/// `__bun_macro_context_deinit`: that path is reached from
+/// `TranspilerStateGuard::drop` and `JSTranspiler::Drop` (during a sweep),
+/// where re-entering `run_gc` would be a recursion hazard.
+pub fn collect_macro_vm_garbage() {
+    let Some(vm) = VM.get() else { return };
+    // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only read
+    // plain fields and call `jsc_vm()` (which the C++ side locks internally).
+    let vm_ref = unsafe { &*vm };
+    if !vm_ref.has_enabled_macro_mode {
+        return;
+    }
+    debug_assert!(!vm_ref.is_main_thread);
+    debug_assert_eq!(vm_ref.macro_guard_depth, 0);
+    vm_ref.jsc_vm().run_gc(true);
+}
+
 fn normalize_source(source: &[u8]) -> &[u8] {
     if let Some(rest) = source.strip_prefix(b"file://") {
         return rest;

@@ -1,8 +1,10 @@
 //! `bun.sys.File` — high-level file handle. Port of `src/sys/File.zig`.
 //!
-//! Thin `#[repr(transparent)]` wrapper over [`crate::Fd`]. Unlike `std::fs::File`,
-//! this is `Copy` and **does not close on Drop** — callers must `.close()`
-//! explicitly (matching Zig). All methods preserve OS errno via [`crate::Maybe`].
+//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and stdio
+//! so `File::stdin()`/`stdout()`/`stderr()` and default-constructed handles
+//! are safe to drop). Use [`File::into_raw`] to hand the fd off,
+//! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
+//! All methods preserve OS errno via [`crate::Maybe`].
 #![allow(clippy::module_inception)]
 
 use super::*;
@@ -10,6 +12,15 @@ use super::*;
 #[repr(transparent)]
 pub struct File {
     pub handle: Fd,
+}
+
+impl Drop for File {
+    #[inline]
+    fn drop(&mut self) {
+        if self.handle != Fd::INVALID && !self.handle.is_stdio() {
+            let _ = close(self.handle);
+        }
+    }
 }
 
 /// Port of `bun.sys.File.ReadToEndResult` — `{ bytes, err? }` pair so
@@ -40,9 +51,27 @@ impl File {
     pub fn from_fd(fd: Fd) -> Self {
         Self { handle: fd }
     }
+    /// The underlying [`Fd`]. Does not affect ownership.
     #[inline]
     pub fn handle(&self) -> Fd {
         self.handle
+    }
+    /// Alias for [`File::handle`].
+    #[inline]
+    pub fn fd(&self) -> Fd {
+        self.handle
+    }
+    /// Disarm the drop guard and return the raw [`Fd`]. The caller takes over
+    /// the descriptor's lifecycle.
+    #[inline]
+    pub fn into_raw(self) -> Fd {
+        core::mem::ManuallyDrop::new(self).handle
+    }
+    /// Non-owning `&File` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
+    #[inline]
+    pub fn borrow(fd: &Fd) -> &File {
+        // SAFETY: `File` is `#[repr(transparent)]` over `Fd`.
+        unsafe { &*(core::ptr::from_ref(fd).cast::<File>()) }
     }
     /// `bun.sys.File.from(.stdin())` — wrap the cached stdin fd. Do not close.
     #[inline]
@@ -70,12 +99,14 @@ impl File {
     /// File.zig `openat` — accepts a non-sentinel `&[u8]` (Zig: `path: anytype`
     /// dispatches to `openatA` for non-sentinel slices). `&ZStr` callers
     /// deref-coerce to `&[u8]`.
-    pub fn openat(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+        let dir = dir.as_fd();
         openat_a(dir, path, flags, mode).map(Self::from_fd)
     }
     /// snake_case alias (Zig: `File.openat`).
     #[inline]
-    pub fn open_at(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn open_at(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+        let dir = dir.as_fd();
         Self::openat(dir, path, flags, mode)
     }
     /// File.zig `makeOpen` — `openat` against cwd, auto-creating parent
@@ -89,7 +120,8 @@ impl File {
     /// (errors from `makePath` are swallowed, matching `catch {}` in Zig) then
     /// retry the open once. If `path` has no dirname, the original error is
     /// returned.
-    pub fn make_openat(dir: Fd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+    pub fn make_openat(dir: impl AsFd, path: &[u8], flags: i32, mode: Mode) -> Maybe<Self> {
+        let dir = dir.as_fd();
         match openat_a(dir, path, flags, mode) {
             Ok(fd) => Ok(Self::from_fd(fd)),
             Err(err) => {
@@ -102,14 +134,16 @@ impl File {
         }
     }
     /// `std.fs.cwd().createFile(path, .{ .truncate })` replacement.
-    pub fn create(dir: Fd, path: &[u8], truncate: bool) -> Maybe<Self> {
+    pub fn create(dir: impl AsFd, path: &[u8], truncate: bool) -> Maybe<Self> {
+        let dir = dir.as_fd();
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | if truncate { O::TRUNC } else { 0 };
         openat_a(dir, path, flags, 0o666).map(Self::from_fd)
     }
     /// `std.fs.cwd().createFileW(path, .{})` replacement (Windows wide-path).
     /// Default `.{}` in Zig means `.truncate = true, .read = false`.
     #[cfg(windows)]
-    pub fn create_w(dir: Fd, path: &[u16]) -> Maybe<Self> {
+    pub fn create_w(dir: impl AsFd, path: &[u16]) -> Maybe<Self> {
+        let dir = dir.as_fd();
         let flags = O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC;
         openat_windows(dir, path, flags, 0o666).map(Self::from_fd)
     }
@@ -118,11 +152,12 @@ impl File {
     /// Windows). Returns a `File` wrapper around the opened fd.
     #[inline]
     pub fn openat_os_path(
-        dir: Fd,
+        dir: impl AsFd,
         path: &bun_paths::OSPathSliceZ,
         flags: i32,
         mode: Mode,
     ) -> Maybe<File> {
+        let dir = dir.as_fd();
         openat_os_path(dir, path, flags, mode).map(|fd| File { handle: fd })
     }
 
@@ -304,8 +339,14 @@ impl File {
             })
         }
     }
+    /// Close now. Equivalent to dropping `self` but the syscall result is
+    /// observable. Skips the same sentinels as `Drop`.
     pub fn close(self) -> Maybe<()> {
-        close(self.handle)
+        let fd = self.into_raw();
+        if fd == Fd::INVALID || fd.is_stdio() {
+            return Ok(());
+        }
+        close(fd)
     }
     /// `File.closeAndMoveTo` — atomically rename `src` → `dest` (cwd-relative),
     /// closing the handle after the rename so `move_file_z_with_handle`'s
@@ -338,27 +379,26 @@ impl File {
     // ── one-shot path helpers (open + io + close) ───────────────────────
     /// `bun.sys.File.readFrom` — open + read + close. Accepts `&[u8]` (Zig:
     /// `path: anytype`); `&ZStr` callers deref-coerce.
-    pub fn read_from(dir: Fd, path: &[u8]) -> Maybe<Vec<u8>> {
+    pub fn read_from(dir: impl AsFd, path: &[u8]) -> Maybe<Vec<u8>> {
+        let dir = dir.as_fd();
         let f = Self::openat(dir, path, O::RDONLY, 0)?;
-        // File.zig: closes the fd on the error path too (no leak on read failure).
-        let v = f.read_to_end();
-        let _ = close(f.handle);
-        v
+        // File.zig: closes the fd on the error path too (no leak on read
+        // failure). `Drop` covers all paths.
+        f.read_to_end()
     }
     /// `bun.sys.File.readFileFrom` (File.zig:381) — open + read; returns BOTH
     /// the open `File` handle and the bytes. Caller owns the fd and must
     /// `close()` it. On read error the fd is closed before returning (no leak).
     pub fn read_file_from(
-        dir: Fd,
+        dir: impl AsFd,
         path: &[u8],
     ) -> core::result::Result<(Self, Vec<u8>), bun_core::Error> {
+        let dir = dir.as_fd();
         let f = Self::openat(dir, path, O::RDONLY, 0).map_err(Into::<bun_core::Error>::into)?;
         match f.read_to_end() {
             Ok(bytes) => Ok((f, bytes)),
-            Err(e) => {
-                let _ = close(f.handle);
-                Err(e.into())
-            }
+            // The fd escapes only on success; `Drop` closes it here.
+            Err(e) => Err(e.into()),
         }
     }
     /// `bun.sys.File.readFromUserInput` (File.zig:367) — normalize a
@@ -370,10 +410,11 @@ impl File {
     /// (T1) must not depend on (PORTING.md §Forbidden: no fn-ptr hooks to
     /// break dep cycles). Callers pass `top_level_dir` explicitly instead.
     pub fn read_from_user_input(
-        dir: Fd,
+        dir: impl AsFd,
         top_level_dir: &[u8],
         input_path: &[u8],
     ) -> Maybe<Vec<u8>> {
+        let dir = dir.as_fd();
         let mut buf = bun_paths::PathBuffer::default();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
             top_level_dir,
@@ -383,21 +424,24 @@ impl File {
         Self::read_from(dir, normalized.as_bytes())
     }
     /// `bun.sys.File.writeFile` — open + write + close.
-    pub fn write_file(dir: Fd, path: &ZStr, data: &[u8]) -> Maybe<()> {
-        // File.zig:141 — mode 0o664; `defer file.close()` (close on all paths).
+    pub fn write_file(dir: impl AsFd, path: &ZStr, data: &[u8]) -> Maybe<()> {
+        let dir = dir.as_fd();
+        // File.zig:141 — mode 0o664; `defer file.close()`. `Drop` covers all
+        // paths.
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
-        let r = f.write_all(data);
-        let _ = close(f.handle);
-        r
+        f.write_all(data)
     }
     /// Port of `bun.sys.File.writeFileWithPathBuffer` (File.zig) Windows arm —
     /// like [`write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
-    pub fn write_file_os_path(dir: Fd, path: &bun_paths::OSPathSliceZ, data: &[u8]) -> Maybe<()> {
+    pub fn write_file_os_path(
+        dir: impl AsFd,
+        path: &bun_paths::OSPathSliceZ,
+        data: &[u8],
+    ) -> Maybe<()> {
+        let dir = dir.as_fd();
         let file = File::openat_os_path(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
-        let result = file.write_all(data);
-        let _ = close(file.handle);
-        result
+        file.write_all(data)
     }
 
     // ── std::io adapters ─────────────────────────────────────────────────
@@ -414,5 +458,88 @@ impl File {
     /// `File.bufferedWriter()` — `std.io.BufferedWriter` wrapping this fd.
     pub fn buffered_writer(&self) -> std::io::BufWriter<FileWriter> {
         std::io::BufWriter::new(FileWriter(self.handle))
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    /// Serialize fd-touching tests: `cargo test` runs `#[test]` fns as
+    /// threads in one process; a sibling test's `open()` between a `Drop`
+    /// close and the `fstat` assertion could be allocated the just-closed fd
+    /// (POSIX lowest-fd guarantee), making the assertion spuriously fail.
+    pub(crate) static FD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn open_cwd() -> File {
+        File::open(ZStr::from_static(b".\0"), O::RDONLY, 0).unwrap()
+    }
+
+    #[test]
+    fn drop_closes_fd() {
+        let _g = FD_TEST_LOCK.lock();
+        let raw = {
+            let f = open_cwd();
+            f.fd()
+        };
+        assert!(fstat(raw).is_err());
+    }
+
+    #[test]
+    fn close_disarms_drop() {
+        let _g = FD_TEST_LOCK.lock();
+        let f = open_cwd();
+        f.close().unwrap();
+    }
+
+    #[test]
+    fn close_skips_invalid_sentinel() {
+        let _g = FD_TEST_LOCK.lock();
+        // `File::close()` must not call the syscall on `Fd::INVALID`.
+        let f = File::from_fd(Fd::INVALID);
+        assert!(f.close().is_ok());
+    }
+
+    #[test]
+    fn into_raw_disarms_drop() {
+        let _g = FD_TEST_LOCK.lock();
+        let f = open_cwd();
+        let raw = f.into_raw();
+        assert!(fstat(raw).is_ok());
+        let _ = close(raw);
+    }
+
+    #[test]
+    fn borrow_does_not_close() {
+        let _g = FD_TEST_LOCK.lock();
+        let f = open_cwd();
+        let raw = f.fd();
+        {
+            let view = File::borrow(&raw);
+            let _ = view;
+        }
+        assert!(fstat(raw).is_ok());
+    }
+
+    #[test]
+    fn dropping_stdio_is_safe() {
+        let _g = FD_TEST_LOCK.lock();
+        // `File::stdin()` / `stdout()` / `stderr()` wrap process-shared
+        // descriptors that the caller does not own. Dropping the wrapper must
+        // not tear down the test harness's output.
+        for _ in 0..16 {
+            let _ = File::stdin();
+            let _ = File::stdout();
+            let _ = File::stderr();
+        }
+        assert!(fstat(Fd::stdout()).is_ok());
+    }
+
+    #[test]
+    fn dropping_invalid_fd_is_safe() {
+        let _g = FD_TEST_LOCK.lock();
+        for _ in 0..16 {
+            let _ = File::from_fd(Fd::INVALID);
+        }
     }
 }

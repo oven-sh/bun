@@ -754,8 +754,8 @@ pub mod fs {
     }
     impl RealFsTmpfile {
         #[inline]
-        pub fn file(&self) -> bun_sys::File {
-            bun_sys::File::from_fd(self.fd)
+        pub fn file(&self) -> &bun_sys::File {
+            bun_sys::File::borrow(&self.fd)
         }
 
         pub fn close(&mut self) {
@@ -1097,7 +1097,6 @@ pub mod fs {
         ) -> core::result::Result<DirEntry, bun_core::Error> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
-            // errdefer dir.deinit() — DirEntry: Drop frees `data` on `?`.
 
             if store_fd {
                 FileSystem::set_max_fd(bun_sys::Fd::native(handle));
@@ -1194,9 +1193,6 @@ pub mod fs {
 
             crate::Resolver::assert_valid_cache_key(dir);
             let mut cache_result: Option<bun_alloc::Result> = None;
-            // Zig: `entries_mutex.lock(); defer entries_mutex.unlock();` — RAII guard.
-            // `MutexGuard` stores a raw `*const Mutex` so it does not keep `&self`
-            // borrowed across the body below.
             let _unlock_guard = if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
                 Some(self.entries_mutex.lock_guard())
             } else {
@@ -1473,7 +1469,7 @@ pub mod fs {
                             absolute_path_c,
                             bun_sys::OpenFlags::READ_ONLY,
                         )?
-                        .handle()
+                        .into_raw()
                     } else {
                         // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
                         // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
@@ -2306,11 +2302,6 @@ pub mod cache {
                 // SAFETY: ctx/function pair was supplied together by the native plugin.
                 unsafe { func(self.external_free_function.ctx) };
             }
-            // Replacing the variant drops `Owned(Vec<u8>)` (matches Zig's
-            // `allocator.free(entry.contents)`); `Arena`/`SharedBuffer`/
-            // `External`/`Empty` have trivial drops, so the shared-buffer and
-            // arena paths are correct no-ops instead of the UB `heap::take`
-            // they used to be.
             self.contents = Contents::Empty;
         }
 
@@ -2373,25 +2364,22 @@ pub mod cache {
         ) -> Result<Entry, bun_core::Error> {
             let rfs = &_fs.fs;
 
-            let file_handle: bun_sys::File = if let Some(fd) = cached_file_descriptor {
+            let mut owned: Option<bun_sys::File> = None;
+            let fd: Fd = if let Some(fd) = cached_file_descriptor {
                 // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
                 bun_sys::lseek(fd, 0, libc::SEEK_SET).map_err(bun_core::Error::from)?;
-                bun_sys::File::from_fd(fd)
+                fd
             } else {
-                bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
-                    .map_err(bun_core::Error::from)?
+                let f = bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
+                    .map_err(bun_core::Error::from)?;
+                let raw = f.handle();
+                owned = Some(f);
+                raw
             };
-
-            let will_close = rfs.need_to_close_files() && cached_file_descriptor.is_none();
-            let fd = file_handle.handle();
-            let file_handle = scopeguard::guard(file_handle, move |fh| {
-                if will_close {
-                    let _ = fh.close();
-                }
-            });
+            let file_handle = bun_sys::File::borrow(&fd);
 
             let contents = match fs_mod::read_file_contents(
-                &file_handle,
+                file_handle,
                 path.as_bytes(),
                 true,
                 shared,
@@ -2412,13 +2400,16 @@ pub mod cache {
                 }
             };
 
+            let will_close = cached_file_descriptor.is_none() && rfs.need_to_close_files();
+            let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
+            if publish_fd {
+                if let Some(f) = owned.take() {
+                    let _ = f.into_raw();
+                }
+            }
             Ok(Entry {
                 contents,
-                fd: if feature_flags::STORE_FILE_DESCRIPTORS {
-                    fd
-                } else {
-                    Fd::INVALID
-                },
+                fd: if publish_fd { fd } else { Fd::INVALID },
                 external_free_function: ExternalFreeFunction::NONE,
             })
         }
@@ -2470,6 +2461,8 @@ pub mod cache {
         ) -> Result<Entry, bun_core::Error> {
             let rfs = &_fs.fs;
 
+            let will_close = rfs.need_to_close_files() && _file_handle.is_none();
+
             // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
             // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.
@@ -2501,7 +2494,15 @@ pub mod cache {
                     .map_err(bun_core::Error::from)?
             };
 
-            let fd = file_handle.handle();
+            let mut owned: Option<bun_sys::File> = None;
+            let fd: Fd = if _file_handle.is_some() {
+                file_handle.into_raw()
+            } else {
+                let raw = file_handle.handle();
+                owned = Some(file_handle);
+                raw
+            };
+            let file_handle = bun_sys::File::borrow(&fd);
 
             #[cfg(not(windows))] // skip on Windows because NTCreateFile will do it.
             bun_core::scoped_log!(
@@ -2511,14 +2512,6 @@ pub mod cache {
                 bstr::BStr::new(path),
                 fd
             );
-
-            let will_close = rfs.need_to_close_files() && _file_handle.is_none();
-            let file_handle = scopeguard::guard(file_handle, move |fh| {
-                if will_close {
-                    bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fh.handle());
-                    let _ = fh.close();
-                }
-            });
 
             // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
             // the shared buffer.
@@ -2530,7 +2523,7 @@ pub mod cache {
                 // are reclaimed by `mi_heap_destroy` instead of pinning a
                 // segment in the worker thread's default heap.
                 (false, Some(arena)) => {
-                    match fs_mod::read_file_contents_in_arena(&file_handle, path, arena) {
+                    match fs_mod::read_file_contents_in_arena(file_handle, path, arena) {
                         Ok((_, 0)) => Contents::Empty,
                         Ok((ptr, len)) => Contents::Arena { ptr, len },
                         Err(err) => {
@@ -2548,7 +2541,7 @@ pub mod cache {
                 _ => {
                     let shared = self.shared_buffer();
                     match fs_mod::read_file_contents(
-                        &file_handle,
+                        file_handle,
                         path,
                         use_shared_buffer,
                         shared,
@@ -2571,13 +2564,17 @@ pub mod cache {
                 }
             };
 
+            let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;
+            if publish_fd {
+                if let Some(f) = owned.take() {
+                    let _ = f.into_raw();
+                }
+            } else if will_close {
+                bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fd);
+            }
             Ok(Entry {
                 contents,
-                fd: if feature_flags::STORE_FILE_DESCRIPTORS && !will_close {
-                    fd
-                } else {
-                    Fd::INVALID
-                },
+                fd: if publish_fd { fd } else { Fd::INVALID },
                 external_free_function: ExternalFreeFunction::NONE,
             })
         }

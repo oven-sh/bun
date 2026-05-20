@@ -1081,7 +1081,6 @@ pub mod waiter_thread_posix {
 
         pub fn run_from_main_thread(self: Box<Self>) {
             let this = *self;
-            // bun.destroy(self) — Box dropped here.
             // SAFETY: subprocess strong-ref'd before append(); released by
             // on_wait_pid_from_waiter_thread → deref().
             unsafe {
@@ -1112,7 +1111,6 @@ pub mod waiter_thread_posix {
         pub fn run_from_main_thread(self: Box<Self>) {
             let result = self.result;
             let subprocess = self.subprocess;
-            // bun.destroy(self) — Box drops at end of scope.
             // SAFETY: see ResultTask::run_from_main_thread.
             unsafe { T::on_wait_pid_from_waiter_thread(subprocess, &result, &rusage_zeroed()) };
         }
@@ -1197,7 +1195,6 @@ pub mod waiter_thread_posix {
                     let task = unsafe { bun_core::heap::take(task) };
                     // PERF(port): was assume_capacity
                     active.push(task.process);
-                    // task drops here (TrivialDeinit)
                 }
             }
 
@@ -2402,7 +2399,6 @@ mod spawn_process_body {
                 self.status.is_ok()
             }
         }
-        // deinit → Drop (Vec<u8> auto-frees)
 
         #[cfg(windows)]
         pub struct SyncWindowsPipeReader {
@@ -2540,7 +2536,6 @@ mod spawn_process_body {
                 };
                 let tag = this_ref.tag;
                 let on_done_callback = this_ref.on_done_callback;
-                // bun.default_allocator.destroy(this.pipe) — Box<uv::Pipe> drops with `this`
                 // bun.default_allocator.destroy(this)
                 // SAFETY: this was heap-allocated in start(); reclaim and drop
                 drop(unsafe { bun_core::heap::take(this) });
@@ -2669,9 +2664,7 @@ mod spawn_process_body {
             let mut result = Vec::with_capacity(total_size);
             for chunk in chunks {
                 result.extend_from_slice(&chunk);
-                // chunks_allocator.free(chunk) — Box drops
             }
-            // chunks_allocator.free(chunks) — Vec drops
             result
         }
 
@@ -3342,11 +3335,12 @@ mod spawn_process_body {
             {
                 for (idx, &memfd) in process.memfds[1..].iter().enumerate() {
                     if memfd {
-                        out[idx] = (bun_sys::File {
-                            handle: out_fds[idx],
-                        })
-                        .read_to_end()
-                        .unwrap_or_default();
+                        // `out_fds[idx]` is closed by `cleanup_spawn_posix` below;
+                        // borrow a non-owning `File` view so the temporary doesn't
+                        // close it on drop (which would double-close).
+                        out[idx] = bun_sys::File::borrow(&out_fds[idx])
+                            .read_to_end()
+                            .unwrap_or_default();
                     }
                 }
             }

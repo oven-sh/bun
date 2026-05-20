@@ -388,7 +388,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"cache") {
             let mut dir = PathBuffer::uninit();
             let fd = get_cache_directory(pm);
-            let outpath = match bun_sys::get_fd_path(fd.fd(), &mut dir) {
+            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
                 Ok(p) => &p[..],
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
@@ -414,8 +414,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();
-                    let tmp_dir = match bun_sys::open_dir_absolute(tmp) {
-                        Ok(d) => Dir::from_fd(d),
+                    let tmp_dir = match Dir::open(tmp) {
+                        Ok(d) => d,
                         Err(err) => {
                             Output::err(
                                 bun_core::Error::from(err),

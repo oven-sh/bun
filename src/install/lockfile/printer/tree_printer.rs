@@ -13,7 +13,7 @@ use bun_install::{
 // accessors on `MultiArrayList<Package>` / its `Slice`.
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
-use bun_sys::{Dir as SysDir, Fd};
+use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
 
@@ -56,7 +56,6 @@ where
     // It's possible to have duplicate dependencies with the same version and resolution.
     // While both are technically installed, only one was chosen and should be printed.
     let mut dep_dedupe: HashMap<PackageNameHash, ()> = HashMap::new();
-    // `defer dep_dedupe.deinit()` — Drop handles this.
 
     // PORT NOTE: reshaped for borrowck — `id_map` is reborrowed per call below.
     let mut id_map = id_map;
@@ -384,7 +383,6 @@ where
         return Ok(());
     }
     let mut id_map: Vec<DependencyID> = vec![INVALID_PACKAGE_ID; this.updates.len()];
-    // `defer free` — Drop handles this.
 
     let end = resolved.len() as PackageID;
 
@@ -392,7 +390,6 @@ where
     if let Some(installed) = this.successfully_installed.as_ref() {
         if log_level.is_verbose() {
             let mut workspaces_to_print: Vec<DependencyID> = Vec::new();
-            // `defer deinit` — Drop handles this.
 
             for dep_id in resolutions_list[0].begin()..resolutions_list[0].end() {
                 let dep = &dependencies_buffer[dep_id as usize];
@@ -565,7 +562,7 @@ where
                     package_name: name,
                     // PORT NOTE: Zig default `bun.invalid_fd.stdDir()` — never read on
                     // the .map/.file/.named_file paths this arm covers.
-                    destination_node_modules: SysDir::from_fd(Fd::INVALID),
+                    destination_node_modules: Fd::INVALID,
                     buf: bun_paths::PathBuffer::uninit(),
                     string_buffer: string_buf,
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),

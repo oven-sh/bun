@@ -3661,7 +3661,6 @@ mod draft {
             0,
         )
         .map_err(bun_core::Error::from)?;
-        let _close_f = bun_sys::CloseOnDrop::file(&f);
 
         let mut line_buf: [u8; 4096] = [0; 4096];
         let mut fbs_len: usize = 0;

@@ -70,9 +70,6 @@ pub fn write_output_files_to_disk(
             return Err(e);
         }
     };
-    let _root_dir_guard = scopeguard::guard(root_dir, |d| d.close());
-    let root_dir = *_root_dir_guard;
-
     // Optimization: when writing to disk, we can re-use the memory
     // PERF(port): MaxHeapAllocator reuses the largest allocation between
     // iterations. Verify bun_alloc::MaxHeapAllocator semantics
@@ -257,7 +254,7 @@ pub fn write_output_files_to_disk(
                 }
 
                 match bun_sys::File::write_file(
-                    bun_sys::Fd::from_std_dir(root_dir),
+                    bun_sys::Fd::from_std_dir(&root_dir),
                     paths::resolve_path::z(&source_map_final_rel_path, &mut pathbuf),
                     &output_source_map,
                 ) {
@@ -375,7 +372,7 @@ pub fn write_output_files_to_disk(
                                 } else {
                                     0o644
                                 },
-                                dirfd: bun_sys::Fd::from_std_dir(root_dir),
+                                dirfd: bun_sys::Fd::from_std_dir(&root_dir),
                                 file: PathOrFileDescriptor::Path(PathString::init(
                                     &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
                                 )),
@@ -448,7 +445,7 @@ pub fn write_output_files_to_disk(
                 } else {
                     0o644
                 },
-                dirfd: bun_sys::Fd::from_std_dir(root_dir),
+                dirfd: bun_sys::Fd::from_std_dir(&root_dir),
                 file: PathOrFileDescriptor::Path(PathString::init(&chunk.final_rel_path)),
             },
         ) {
@@ -596,7 +593,7 @@ pub fn write_output_files_to_disk(
             }
 
             match bun_sys::File::write_file(
-                bun_sys::Fd::from_std_dir(root_dir),
+                bun_sys::Fd::from_std_dir(&root_dir),
                 paths::resolve_path::z(&src.dest_path, &mut pathbuf),
                 &bytes,
             ) {

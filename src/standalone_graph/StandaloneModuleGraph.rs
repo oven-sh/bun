@@ -879,7 +879,7 @@ pub fn to_bytes(
                             let dir_path = path::resolve_path::dirname::<path::platform::Auto>(
                                 dest_z.as_bytes(),
                             );
-                            let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dir_path);
+                            let _ = bun_sys::Dir::cwd().make_path(dir_path);
                             match Syscall::openat(Fd::cwd(), dest_z, flags, 0o664) {
                                 Ok(fd) => bun_sys::File::from_fd(fd),
                                 Err(e) => {
@@ -899,10 +899,8 @@ pub fn to_bytes(
                             bstr::BStr::new(dest_path),
                             e
                         ));
-                        let _ = file.close();
                         break 'dump;
                     }
-                    let _ = file.close();
                 }
             }
         }
@@ -1284,11 +1282,7 @@ pub fn inject(
 
     match target.os {
         CompileTargetOs::Mac => {
-            let input_bytes = match (bun_sys::File {
-                handle: cloned_executable_fd,
-            })
-            .read_to_end()
-            {
+            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
@@ -1359,11 +1353,7 @@ pub fn inject(
             return cloned_executable_fd;
         }
         CompileTargetOs::Windows => {
-            let input_bytes = match (bun_sys::File {
-                handle: cloned_executable_fd,
-            })
-            .read_to_end()
-            {
+            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
@@ -1418,11 +1408,7 @@ pub fn inject(
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
-            let input_bytes = match (bun_sys::File {
-                handle: cloned_executable_fd,
-            })
-            .read_to_end()
-            {
+            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
                     Output::pretty_errorln(format_args!("Error reading executable: {}", err));
@@ -1458,9 +1444,7 @@ pub fn inject(
             }
 
             // Write the modified ELF data back to the file
-            let write_file = bun_sys::File {
-                handle: cloned_executable_fd,
-            };
+            let write_file = bun_sys::File::borrow(&cloned_executable_fd);
             if let Err(err) = write_file.write_all(&elf_file.data) {
                 Output::pretty_errorln(format_args!("Error writing ELF file: {}", err));
                 cleanup(zname, cloned_executable_fd);
@@ -1566,9 +1550,7 @@ pub fn inject(
         #[cfg(windows)]
         if inject_options.hide_console {
             if let Err(e) = bun_sys::windows::edit_win32_binary_subsystem(
-                bun_sys::File {
-                    handle: cloned_executable_fd,
-                },
+                bun_sys::File::borrow(&cloned_executable_fd),
                 bun_sys::windows::Subsystem::WindowsGui,
             ) {
                 Output::err(

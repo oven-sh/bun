@@ -659,6 +659,7 @@ impl Worker {
                         ctx.deinit();
                     }
                 }
+                js_ast::Macro::collect_vm_garbage();
             }
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
             // first, then the arenas it references.

@@ -768,10 +768,14 @@ lexer_impl_header! {
 
                             iter.c = i32::try_from(value).expect("int cast");
                             if is_bad {
+                                // `octal_start` is text-relative like `iter.i`;
+                                // map back to absolute source position the same
+                                // way every sibling error path does (e.g.
+                                // `start + hex_start` in the `\u{}` branch).
                                 self.add_range_error(
                                     Range {
                                         loc: Loc {
-                                            start: i32::try_from(octal_start).expect("int cast"),
+                                            start: i32::try_from(start + octal_start).expect("int cast"),
                                         },
                                         len: i32::try_from(
                                             iter.i as usize - octal_start,

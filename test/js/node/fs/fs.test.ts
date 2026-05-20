@@ -3704,21 +3704,44 @@ it("fs.statfsSync should work", () => {
     expect(stats[k]).toBeNumber();
   });
 
+  // Regression for oven-sh/bun#31133: on darwin-x64, libc::statfs linked
+  // to `statfs$INODE64` was writing a legacy struct layout, so bsize came
+  // back as 0 and the remaining fields were shifted. Any real filesystem
+  // has a positive block size and at least one block — asserting that here
+  // catches the misaligned-struct case without depending on absolute values.
+  if (isPosix) {
+    expect(stats.bsize).toBeGreaterThan(0);
+    expect(stats.blocks).toBeGreaterThan(0);
+  }
+
   const bigIntStats = statfsSync(import.meta.path, { bigint: true });
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
     expect(bigIntStats).toHaveProperty(k);
     expect(bigIntStats[k]).toBeTypeOf("bigint");
   });
+  if (isPosix) {
+    expect(bigIntStats.bsize > 0n).toBe(true);
+    expect(bigIntStats.blocks > 0n).toBe(true);
+  }
 });
 
 it("fs.promises.statfs should work", async () => {
   const stats = await fs.promises.statfs(import.meta.path);
   expect(stats).toBeDefined();
+  // See "fs.statfsSync should work" above — same regression gate for #31133.
+  if (isPosix) {
+    expect(stats.bsize).toBeGreaterThan(0);
+    expect(stats.blocks).toBeGreaterThan(0);
+  }
 });
 
 it("fs.promises.statfs should work with bigint", async () => {
   const stats = await fs.promises.statfs(import.meta.path, { bigint: true });
   expect(stats).toBeDefined();
+  if (isPosix) {
+    expect(stats.bsize > 0n).toBe(true);
+    expect(stats.blocks > 0n).toBe(true);
+  }
 });
 
 it("fs.statfs should work with bigint", async () => {

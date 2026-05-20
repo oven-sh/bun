@@ -3104,6 +3104,10 @@ impl<'a> HTTPClient<'a> {
             ) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
+                    if to_read!().len() > max_http_header_size() {
+                        self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
+                        return;
+                    }
                     self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
                     return;
                 }

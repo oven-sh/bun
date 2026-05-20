@@ -26,14 +26,18 @@
 //! mutex, won't cause an error, but an `ArrayList` used by multiple threads concurrently without
 //! synchronization, assuming at least one thread is modifying the data, will cause an error.
 
+#[cfg(debug_assertions)]
 use core::fmt;
+#[cfg(debug_assertions)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
+#[cfg(debug_assertions)]
 use bun_core::StoredTrace;
 
 // TODO(port): `ThreadId` / `INVALID_THREAD_ID` / `current_thread_id()` come from the sibling
 // `src/safety/thread_id.zig` port + Zig's `std.Thread`. TODO(port): confirm the concrete integer
 // width and atomic type (Zig's `std.Thread.Id` is platform-dependent).
+#[cfg(debug_assertions)]
 use super::thread_id::{
     AtomicThreadId, INVALID as INVALID_THREAD_ID, ThreadId, current as current_thread_id,
 };
@@ -45,16 +49,19 @@ pub struct CriticalSection {
     // When not enabled, this is a zero-sized type (Zig: `void`).
 }
 
+#[cfg(debug_assertions)]
 struct OptionalThreadId {
     inner: ThreadId,
 }
 
+#[cfg(debug_assertions)]
 impl OptionalThreadId {
     pub(crate) fn init(id: ThreadId) -> OptionalThreadId {
         OptionalThreadId { inner: id }
     }
 }
 
+#[cfg(debug_assertions)]
 impl fmt::Display for OptionalThreadId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.inner == INVALID_THREAD_ID {
@@ -67,6 +74,7 @@ impl fmt::Display for OptionalThreadId {
 
 /// A reentrant lock that prevents multiple threads from accessing data at the same time,
 /// except if all threads' use of the data is read-only.
+#[cfg(debug_assertions)]
 struct State {
     /// The ID of the thread that first acquired the lock (the "owner thread").
     thread_id: AtomicThreadId,
@@ -85,6 +93,7 @@ struct State {
     count: AtomicU32,
 }
 
+#[cfg(debug_assertions)]
 impl Default for State {
     fn default() -> Self {
         Self {
@@ -97,6 +106,7 @@ impl Default for State {
     }
 }
 
+#[cfg(debug_assertions)]
 impl State {
     /// If `count` is set to this value, it indicates that a thread has requested exclusive
     /// (read/write) access.

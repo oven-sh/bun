@@ -26,7 +26,9 @@
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
 use core::sync::atomic::AtomicU32;
-use core::sync::atomic::{AtomicU64, Ordering};
+#[cfg(debug_assertions)]
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::Ordering;
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
 use crate::Futex;
@@ -149,12 +151,15 @@ pub type ExternImpl = OsUnfairLock;
 #[cfg(not(any(windows, target_vendor = "apple")))]
 pub type ExternImpl = u32;
 
+#[cfg(debug_assertions)]
 type ThreadId = u64;
+#[cfg(debug_assertions)]
 #[inline]
 fn current_thread_id() -> ThreadId {
     crate::current_thread_id()
 }
 
+#[cfg(debug_assertions)]
 #[derive(Default)]
 pub struct DebugImpl {
     /// 0 means it's not locked.
@@ -162,6 +167,7 @@ pub struct DebugImpl {
     pub(crate) impl_: ReleaseImpl,
 }
 
+#[cfg(debug_assertions)]
 impl DebugImpl {
     pub const fn new() -> Self {
         Self {

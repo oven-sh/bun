@@ -77,6 +77,7 @@ pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
 
 /// `MimallocArena.isInstance` — `bun_alloc` is below us, so call it directly
 /// (no registry needed for this one).
+#[cfg(debug_assertions)]
 #[inline]
 pub(crate) fn is_mimalloc_arena(alloc: bun_alloc::StdAllocator) -> bool {
     bun_alloc::MimallocArena::is_instance(&alloc)

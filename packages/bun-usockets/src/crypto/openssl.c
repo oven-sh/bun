@@ -996,7 +996,13 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
   loop_ssl_data->ssl_read_input_length = length;
 
   if (us_socket_is_closed(s)) return NULL;
-  if (us_internal_ssl_is_shut_down(s)) {
+  /* SENT_SHUTDOWN alone (TLS half-close from `socket.shutdown()` / node:tls
+   * `_final`) must NOT skip the read loop — the peer may still have
+   * application data in flight that has to be delivered before its
+   * close_notify (handled as ZERO_RETURN below) closes us. Only bail when
+   * reading is genuinely impossible. */
+  if (us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN ||
+      !s->ssl || !s_ssl(s) || s->ssl_fatal_error) {
     ssl_close(s, 0, NULL);
     return NULL;
   }

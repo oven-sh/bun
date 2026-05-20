@@ -1,11 +1,17 @@
 // Hardcoded module "node:tls"
-const { isArrayBufferView, isTypedArray } = require("node:util/types");
+const { isArrayBufferView } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
 const { throwOnInvalidTLSArray } = require("internal/tls");
-const { validateString } = require("internal/validators");
+const {
+  validateString,
+  validateNumber,
+  validateInt32,
+  validateBuffer,
+  validateFunction,
+} = require("internal/validators");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -206,6 +212,28 @@ function validateCiphers(ciphers: string, name: string = "options") {
       }
     }
   }
+}
+
+const VALID_TLS_VERSIONS = new Set(["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"]);
+
+// Subset of Node's configSecureContext() validations:
+// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/secure-context.js#L318
+function validateSecureContextOptions(options) {
+  const { ciphers, passphrase, ecdhCurve, minVersion, maxVersion, sessionTimeout, ticketKeys } = options;
+  if (ciphers !== undefined && ciphers !== null) validateString(ciphers, "options.ciphers");
+  if (passphrase !== undefined && passphrase !== null) validateString(passphrase, "options.passphrase");
+  if (ecdhCurve !== undefined && ecdhCurve !== null) validateString(ecdhCurve, "options.ecdhCurve");
+  if (minVersion != null && !VALID_TLS_VERSIONS.has(minVersion))
+    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(minVersion), "minimum");
+  if (maxVersion != null && !VALID_TLS_VERSIONS.has(maxVersion))
+    throw $ERR_TLS_INVALID_PROTOCOL_VERSION(String(maxVersion), "maximum");
+  if (ticketKeys !== undefined && ticketKeys !== null) {
+    validateBuffer(ticketKeys, "options.ticketKeys");
+    if (ticketKeys.byteLength !== 48) {
+      throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeys.byteLength, "must be exactly 48 bytes");
+    }
+  }
+  if (sessionTimeout !== undefined && sessionTimeout !== null) validateInt32(sessionTimeout, "options.sessionTimeout");
 }
 
 const SymbolReplace = Symbol.replace;
@@ -425,11 +453,10 @@ var InternalSecureContext = class SecureContext {
 
   constructor(options) {
     if (options) {
+      validateSecureContextOptions(options);
       if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
       if (options.key) throwOnInvalidTLSArray("options.key", options.key);
       if (options.ca) throwOnInvalidTLSArray("options.ca", options.ca);
-      if (options.passphrase != null && typeof options.passphrase !== "string")
-        throw new TypeError("passphrase argument must be an string");
       if (options.servername != null && typeof options.servername !== "string")
         throw new TypeError("servername argument must be an string");
       if (options.secureOptions != null && typeof options.secureOptions !== "number")
@@ -748,6 +775,7 @@ function Server(options, secureConnectionListener): void {
       options = options.context;
     }
     if (options) {
+      validateSecureContextOptions(options);
       const { ALPNProtocols } = options;
 
       if (ALPNProtocols) {
@@ -843,6 +871,10 @@ function Server(options, secureConnectionListener): void {
   };
 
   this.setSecureContext(options);
+  // Matches Node's tls.Server handshakeTimeout default + validation:
+  // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/wrap.js#L1386
+  const handshakeTimeout = (options && options.handshakeTimeout) || 120 * 1000;
+  validateNumber(handshakeTimeout, "options.handshakeTimeout");
 }
 $toClass(Server, "Server", NetServer);
 
@@ -880,6 +912,10 @@ function connect(...args) {
   const options = normal[0];
   const { ALPNProtocols, servername } = options as { ALPNProtocols?: unknown; servername?: unknown };
 
+  if ("checkServerIdentity" in options) {
+    validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
+  }
+
   if (servername && net.isIP(servername)) {
     throw $ERR_INVALID_ARG_VALUE(
       "options.servername",
@@ -909,9 +945,11 @@ function convertProtocols(protocols) {
       (p, c, i) => {
         const len = Buffer.byteLength(c);
         if (len > 255) {
-          throw new RangeError(
+          const err = new RangeError(
             `The byte length of the protocol at index ${i} exceeds the maximum length. It must be <= 255. Received ${len}`,
           );
+          (err as any).code = "ERR_OUT_OF_RANGE";
+          throw err;
         }
         lens[i] = len;
         return p + 1 + len;
@@ -930,19 +968,17 @@ function convertProtocols(protocols) {
   return buff;
 }
 
+// Matches Node's convertALPNProtocols:
+// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/tls.js#L268
 function convertALPNProtocols(protocols, out) {
   // If protocols is Array - translate it into buffer
   if (Array.isArray(protocols)) {
     out.ALPNProtocols = convertProtocols(protocols);
-  } else if (isTypedArray(protocols)) {
-    // Copy new buffer not to be modified by user.
-    out.ALPNProtocols = Buffer.from(protocols);
   } else if (isArrayBufferView(protocols)) {
+    // Copy new buffer not to be modified by user.
     out.ALPNProtocols = Buffer.from(
       protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),
     );
-  } else if (Buffer.isBuffer(protocols)) {
-    out.ALPNProtocols = protocols;
   }
 }
 

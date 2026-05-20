@@ -81,6 +81,7 @@ const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
 function endNT(socket, callback, err) {
+  // Close the writable side once Writable signals the final write is done.
   socket.$end();
   callback(err);
 }
@@ -275,6 +276,12 @@ const SocketHandlers: SocketHandler = {
     }
     self.emit("secureConnect", verifyError);
     self.removeListener("end", onConnectEnd);
+    // Node fires 'session' from SSL_CTX_sess_set_new_cb. Bun has no native
+    // new-session callback yet, but for TLS 1.2 the NewSessionTicket is part
+    // of the handshake so the session is available now. Emit it here so
+    // `tls.connect(...).once('session', ...)` observes the negotiated ticket.
+    const session = socket.getSession?.();
+    if (session) self.emit("session", session);
   },
   timeout(socket) {
     const self = socket.data;
@@ -332,67 +339,13 @@ const ServerHandlers: SocketHandler<NetSocket> = {
   open(socket) {
     $debug("Bun.Server open");
     const self = socket.data as any as NetServer;
-    socket[kServerSocket] = self._handle;
-    const options = self[bunSocketServerOptions];
-    const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
-    const _socket = new SClass({}) as NetSocket | TLSSocket;
-    _socket.isServer = true;
-    _socket._requestCert = requestCert;
-    _socket._rejectUnauthorized = rejectUnauthorized;
-
-    _socket[kAttach](this.localPort, socket);
-
-    if (self.blockList) {
-      const addressType = isIP(socket.remoteAddress);
-      if (addressType && self.blockList.check(socket.remoteAddress, `ipv${addressType}`)) {
-        const data = {
-          localAddress: _socket.localAddress,
-          localPort: _socket.localPort || this.localPort,
-          localFamily: _socket.localFamily,
-          remoteAddress: _socket.remoteAddress,
-          remotePort: _socket.remotePort,
-          remoteFamily: _socket.remoteFamily || "IPv4",
-        };
-        socket.end();
-        self.emit("drop", data);
-        return;
-      }
-    }
-    if (self.maxConnections != null && self._connections >= self.maxConnections) {
-      const data = {
-        localAddress: _socket.localAddress,
-        localPort: _socket.localPort || this.localPort,
-        localFamily: _socket.localFamily,
-        remoteAddress: _socket.remoteAddress,
-        remotePort: _socket.remotePort,
-        remoteFamily: _socket.remoteFamily || "IPv4",
-      };
-
-      socket.end();
-      self.emit("drop", data);
-      return;
-    }
-
-    const bunTLS = _socket[bunTlsSymbol];
-    const isTLS = typeof bunTLS === "function";
-
-    self._connections++;
-    _socket.server = self;
-
-    if (pauseOnConnect) {
-      _socket.pause();
-    }
-
-    if (typeof connectionListener === "function") {
-      this.pauseOnConnect = pauseOnConnect;
-      if (!isTLS) {
-        self.prependOnceListener("connection", connectionListener);
-      }
-    }
-    self.emit("connection", _socket);
-    // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-    if (!pauseOnConnect && !isTLS) {
-      _socket.resume();
+    if (!self) return;
+    // Dispatch through the listener handle's onconnection hook so user code
+    // (and node:cluster RoundRobinHandle) can intercept accepted sockets the
+    // same way Node.js exposes TCP/Pipe wrap onconnection.
+    const handle = self._handle || socket.listener;
+    if (handle) {
+      handle.onconnection(0, socket);
     }
   },
   handshake(socket, success, verifyError) {
@@ -482,6 +435,100 @@ const ServerHandlers: SocketHandler<NetSocket> = {
   },
   binaryType: "buffer",
 } as const;
+
+// Node.js-compatible onconnection: assigned to server._handle.onconnection in
+// kRealListen and invoked from ServerHandlers.open with `this` bound to the
+// listener handle. Kept as a standalone function so tests/cluster can wrap it.
+function onconnection(err, clientHandle) {
+  const handle = this;
+  const self = handle[owner_symbol] as NetServer;
+  if (err) {
+    self.emit("error", err);
+    return;
+  }
+  clientHandle[kServerSocket] = handle;
+  const options = self[bunSocketServerOptions];
+  const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+  // Propagate the server's half-open/highWaterMark settings to the accepted
+  // socket. The native layer is always half-open, so the Duplex's allowHalfOpen
+  // is what decides whether the writable side auto-ends when the peer FINs;
+  // without this, net.createServer({ allowHalfOpen: true }) would be ignored.
+  // Matches Node's onconnection:
+  // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L2349
+  const _socket = new SClass({
+    allowHalfOpen: self.allowHalfOpen,
+    highWaterMark: self.highWaterMark,
+  }) as NetSocket | TLSSocket;
+  _socket.isServer = true;
+  _socket._requestCert = requestCert;
+  _socket._rejectUnauthorized = rejectUnauthorized;
+
+  _socket[kAttach](clientHandle.localPort, clientHandle);
+
+  if (self.blockList) {
+    const addressType = isIP(clientHandle.remoteAddress);
+    if (addressType && self.blockList.check(clientHandle.remoteAddress, `ipv${addressType}`)) {
+      const data = {
+        localAddress: _socket.localAddress,
+        localPort: _socket.localPort || clientHandle.localPort,
+        localFamily: _socket.localFamily,
+        remoteAddress: _socket.remoteAddress,
+        remotePort: _socket.remotePort,
+        remoteFamily: _socket.remoteFamily || "IPv4",
+      };
+      clientHandle.end();
+      self.emit("drop", data);
+      return;
+    }
+  }
+  if (self.maxConnections != null && self._connections >= self.maxConnections) {
+    const data = {
+      localAddress: _socket.localAddress,
+      localPort: _socket.localPort || clientHandle.localPort,
+      localFamily: _socket.localFamily,
+      remoteAddress: _socket.remoteAddress,
+      remotePort: _socket.remotePort,
+      remoteFamily: _socket.remoteFamily || "IPv4",
+    };
+
+    clientHandle.end();
+    self.emit("drop", data);
+    return;
+  }
+
+  const bunTLS = _socket[bunTlsSymbol];
+  const isTLS = typeof bunTLS === "function";
+
+  if (self.noDelay && clientHandle.setNoDelay) {
+    _socket[kSetNoDelay] = true;
+    clientHandle.setNoDelay(true);
+  }
+  if (self.keepAlive && clientHandle.setKeepAlive) {
+    _socket[kSetKeepAlive] = true;
+    _socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
+    clientHandle.setKeepAlive(true, self.keepAliveInitialDelay);
+  }
+
+  self._connections++;
+  _socket.server = self;
+  _socket._server = self;
+
+  if (pauseOnConnect) {
+    _socket.pause();
+  }
+
+  if (typeof connectionListener === "function") {
+    clientHandle.pauseOnConnect = pauseOnConnect;
+    if (!isTLS) {
+      self.prependOnceListener("connection", connectionListener);
+    }
+  }
+  self.emit("connection", _socket);
+  // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
+  if (!pauseOnConnect && !isTLS) {
+    _socket.resume();
+  }
+}
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
 const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_handle"]>["data"]> = {
@@ -590,6 +637,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     }
     self.emit("secureConnect", verifyError);
     self.removeListener("end", onConnectEnd);
+    // Node fires 'session' from SSL_CTX_sess_set_new_cb. Bun has no native
+    // new-session callback yet, but for TLS 1.2 the NewSessionTicket is part
+    // of the handshake so the session is available now. Emit it here so
+    // `tls.connect(...).once('session', ...)` observes the negotiated ticket.
+    const session = socket.getSession?.();
+    if (session) self.emit("session", session);
   },
   error(socket, error) {
     $debug("Bun.Socket error");
@@ -626,6 +679,10 @@ function kConnectTcp(self, addressType, req, address, port) {
     hostname: address,
     port,
     ipv6Only: addressType === 6,
+    // The native socket is kept half-open so it never auto-closes on peer FIN;
+    // the JS Duplex's allowHalfOpen drives whether the writable side ends and
+    // the socket is destroyed (matches Node, where libuv sockets are half-open
+    // and the stream layer decides).
     allowHalfOpen: self.allowHalfOpen,
     tls: req.tls,
     data: { self, req },
@@ -719,7 +776,7 @@ function Socket(options?) {
   this._pendingEncoding = undefined; // for compatibility
   this._hadError = false;
   this.isServer = false;
-  this._handle = null;
+  this._handle = options?.handle || null;
   this[ksocket] = undefined;
   this.server = undefined;
   this.pauseOnConnect = false;
@@ -904,7 +961,11 @@ Socket.prototype.connect = function connect(...args) {
       this.pause();
     } else {
       process.nextTick(() => {
-        this.resume();
+        // Honor pause()/resume() calls made while connecting — only start
+        // flowing if the user hasn't explicitly paused the stream. Matches
+        // Node's afterConnect, which calls socket.read(0) only when not paused:
+        // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1649
+        if (!this.isPaused()) this.resume();
       });
       this.connecting = true;
     }
@@ -1468,7 +1529,21 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   const success = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
   if (success) {
-    callback();
+    if (this.encrypted) {
+      // TLS batches writes through the SSL engine, so the bytes stay buffered
+      // after $write returns. Defer the callback so writableLength/bufferSize
+      // reflects the queued bytes until they are flushed (test-tls-buffersize.js).
+      // Node's bufferSize getter is just writableLength:
+      // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L752
+      process.nextTick(callback);
+    } else {
+      // A plain TCP write completes synchronously once $write reports success.
+      // Calling the callback synchronously lets writableLength drain so a tight
+      // write() loop backpressures at the kernel rather than the JS
+      // highWaterMark, matching Node's _write (test-net-throttle.js):
+      // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1036
+      callback();
+    }
   } else if (this[kwriteCallback]) {
     callback(new Error("overlapping _write()"));
   } else {
@@ -2087,12 +2162,14 @@ function Server(options?, connectionListener?) {
   this.listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
+  // Server option coercion matches Node's Server constructor:
+  // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1880
   this.allowHalfOpen = allowHalfOpen;
-  this.keepAlive = keepAlive;
-  this.keepAliveInitialDelay = keepAliveInitialDelay;
+  this.keepAlive = Boolean(keepAlive);
+  this.keepAliveInitialDelay = ~~(keepAliveInitialDelay / 1000);
   this.highWaterMark = highWaterMark;
   this.pauseOnConnect = Boolean(pauseOnConnect);
-  this.noDelay = noDelay;
+  this.noDelay = Boolean(noDelay);
 
   options.connectionListener = connectionListener;
   this[bunSocketServerOptions] = options;
@@ -2368,7 +2445,10 @@ Server.prototype[kRealListen] = function (
     this._handle = Bun.listen({
       unix: path,
       tls,
-      allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
+      // Native sockets are kept half-open; the per-connection Duplex's
+      // allowHalfOpen (propagated from the server in onconnection) drives the
+      // auto-end/destroy in JS.
+      allowHalfOpen: this.allowHalfOpen,
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
@@ -2380,7 +2460,7 @@ Server.prototype[kRealListen] = function (
       fd,
       hostname,
       tls,
-      allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
+      allowHalfOpen: this.allowHalfOpen,
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
@@ -2392,7 +2472,7 @@ Server.prototype[kRealListen] = function (
       port,
       hostname,
       tls,
-      allowHalfOpen: allowHalfOpen || this[bunSocketServerOptions]?.allowHalfOpen || false,
+      allowHalfOpen: this.allowHalfOpen,
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
@@ -2400,6 +2480,9 @@ Server.prototype[kRealListen] = function (
       data: this,
     });
   }
+
+  this._handle[owner_symbol] = this;
+  this._handle.onconnection = onconnection;
 
   const addr = this.address();
   if (addr && typeof addr === "object") {

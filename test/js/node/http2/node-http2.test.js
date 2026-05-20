@@ -1419,7 +1419,7 @@ it("http2 session.goaway() validates input types", async done => {
 
           // Test opaqueData argument
           expect(() => session.goaway(0, 0, input)).toThrow(
-            'The "opaqueData" argument must be of type Buffer, ' + `TypedArray, or DataView.${received}`,
+            'The "opaqueData" argument must be an instance of Buffer, ' + `TypedArray, or DataView.${received}`,
           );
         }
 

@@ -2494,6 +2494,7 @@ pub fn parse_into_binary_lockfile(
                             integrity_expr.loc,
                             b"Unsupported or malformed integrity hash; ignoring",
                         );
+                        pkg.meta.integrity = Integrity::default();
                     }
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
@@ -2508,6 +2509,7 @@ pub fn parse_into_binary_lockfile(
                                     integrity_expr.loc,
                                     b"Unsupported or malformed integrity hash; ignoring",
                                 );
+                                pkg.meta.integrity = Integrity::default();
                             }
                         }
                     }
@@ -2550,6 +2552,7 @@ pub fn parse_into_binary_lockfile(
                                     integrity_expr.loc,
                                     b"Unsupported or malformed integrity hash; ignoring",
                                 );
+                                pkg.meta.integrity = Integrity::default();
                             }
                         }
                     }

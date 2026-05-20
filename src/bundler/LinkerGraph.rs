@@ -888,7 +888,7 @@ pub struct File {
     /// a Source.Index to its output path inb reakOutputIntoPieces
     pub entry_point_chunk_index: u32,
 
-    pub line_offset_table: bun_sourcemap::line_offset_table::List,
+    pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,
     pub quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
 }
 
@@ -912,7 +912,7 @@ impl Default for File {
             distance_from_entry_point: u32::MAX,
             entry_point_kind: EntryPoint::Kind::None,
             entry_point_chunk_index: u32::MAX,
-            line_offset_table: bun_sourcemap::line_offset_table::List::default(),
+            line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
             quoted_source_contents: None,
         }
     }
@@ -927,7 +927,7 @@ bun_collections::multi_array_columns! {
         distance_from_entry_point: u32,
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
-        line_offset_table: bun_sourcemap::line_offset_table::List,
+        line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,
         quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
     }
 }

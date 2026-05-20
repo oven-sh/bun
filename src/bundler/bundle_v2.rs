@@ -4428,36 +4428,24 @@ pub mod bv2_impl {
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
                         code.loader;
-                    // Ownership of `code.source_code` diverges on
-                    // `should_copy_for_bundling` (spec bundle_v2.zig:1970):
-                    // copy-for-bundling buffers are owned by the input-file slot
-                    // (Zig: `InputFile.arena` column → `ExternalFreeFunctionAllocator`)
-                    // so they outlive `free_list` teardown for
-                    // `dev.put_or_overwrite_asset`. The Rust port dropped that
-                    // column, so own them in `source.contents` as `Cow::Owned`
-                    // (same lifetime as the Zig per-slot arena). Non-copy
-                    // buffers go to `free_list`.
-                    let source_code: &'static [u8] = if should_copy_for_bundling {
-                        let contents = &mut this.graph.input_files.items_source_mut()
-                            [load.source_index.get() as usize]
-                            .contents;
-                        *contents = std::borrow::Cow::Owned(code.source_code.into());
-                        // SAFETY: `Cow::Owned` heap data is address-stable across
-                        // SoA column moves; `input_files` outlives all ParseTasks.
-                        unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(contents.as_ref()) }
-                    } else {
-                        this.free_list.push(code.source_code);
-                        // SAFETY: `free_list` is append-only until
-                        // `deinit_without_freeing_arena` (after all ParseTasks
-                        // complete); the boxed slice is heap-stable.
-                        let last = this.free_list.last().unwrap();
-                        let s: &'static [u8] =
-                            unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(last) };
-                        this.graph.input_files.items_source_mut()
-                            [load.source_index.get() as usize]
-                            .contents = std::borrow::Cow::Borrowed(s);
-                        s
-                    };
+                    // Park the plugin bytes in `free_list` (drained at the very
+                    // end of `deinit_without_freeing_arena`, after every
+                    // consumer — `process_files_to_copy`,
+                    // `dev.put_or_overwrite_asset` in `on_parse_task_complete`
+                    // — has run) and borrow them into `source.contents`. This
+                    // keeps `input_files.source.contents` always `Cow::Borrowed`
+                    // so the per-file teardown loop is unnecessary. Spec
+                    // bundle_v2.zig:1970 owned them via `InputFile.arena`; the
+                    // Rust port dropped that column.
+                    let _ = should_copy_for_bundling;
+                    this.free_list.push(code.source_code);
+                    // SAFETY: `free_list` is append-only until
+                    // `deinit_without_freeing_arena`; the boxed slice is
+                    // heap-stable.
+                    let source_code: &'static [u8] =
+                        unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(this.free_list.last().unwrap()) };
+                    this.graph.input_files.items_source_mut()[load.source_index.get() as usize]
+                        .contents = std::borrow::Cow::Borrowed(source_code);
                     this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
                         .insert(crate::Graph::InputFileFlags::IS_PLUGIN_FILE);
                     let parse_task = load.parse_task_mut();
@@ -4871,51 +4859,31 @@ pub mod bv2_impl {
 
             // Zig spec (bundle_v2.zig:2229): `defer { this.graph.{ast,input_files,
             // entry_points,entry_point_original_names}.deinit(this.allocator()) }`.
-            // In Zig those `MultiArrayList`s only free their slab — the per-element
-            // payloads (file contents, quoted source-map JSON, …) live in
-            // `this.graph.heap` (a mimalloc thread-local heap), so the caller's
-            // `defer heap.deinit()` bulk-frees them. The Rust port reads file
-            // contents and JSON-quoted source contents into the *global* heap
-            // (`Vec<u8>`/`Box<[u8]>` — see ParseTask.rs `read_file_with_allocator`
-            // TODO and `compute_quoted_source_contents`), and `MultiArrayList::drop`
-            // matches Zig in *not* running element destructors. Result: every
-            // `Bun.build()` leaked the entry source plus its quoted source contents
-            // (~2× input size — test/bundler/bun-build-api.test.ts "does not leak
-            // sourcemap JSON" observed ~100MB/build for a 30MB input). Explicitly
-            // take-and-drop the global-heap-owned columns here so the slab-only
-            // drop that follows (when `bv2` goes out of scope) doesn't strand them.
+            // In Zig those `MultiArrayList`s only free their slab — every per-element
+            // payload (file contents, quoted source-map JSON, line-offset tables, …)
+            // lives in `this.graph.heap` / a per-worker `mi_heap_t`, so the caller's
+            // `defer heap.deinit()` bulk-frees them. The Rust port now matches that:
+            // `InputFile.source.contents` is always `Cow::Borrowed` (file reads land
+            // in the worker arena via `read_file_with_allocator`; plugin `on_load`
+            // bytes are owned by `free_list`), `LinkerGraph.File.line_offset_table`
+            // is `List<AstAlloc>` (slab + `columns_for_non_ascii` payloads in the
+            // worker AST heap, see `compute_line_offsets`), and every
+            // `MultiArrayList<BundledAst>` / `JSMeta` / `InputFile` column —
+            // `quoted_source_contents`, `Part`s, `NamedImport`s, `Scope`s,
+            // `ImportData`/`ExportData`, `ArrayHashMap` buckets — is `AstAlloc`-
+            // backed. The slab-only `MultiArrayList::drop` strands nothing on the
+            // global heap; `mi_heap_destroy` on the AST arenas reclaims all of it.
+            //
+            // Only `css` still needs an explicit pass: `BundlerStyleSheet` is the
+            // CSS crate's tree-of-`Vec`s/`Box`es and is not `AstAlloc`-parameterised
+            // (that refactor would touch every `CssRuleList`/selector/declaration
+            // type). The arena-allocated stylesheet never has `Drop` run by the
+            // slab. For JS-only bundles every `css` slot is `None`, so this loop
+            // is N×branch with no work; only CSS entries pay a real drop. The
+            // macro takes only one side (`linker.graph.ast` is a bitwise SoA
+            // `memcpy` of `graph.ast`), and `CssChunk::asts` `forget()`s its
+            // aliases, so this is the unique drop.
             {
-                use crate::linker_graph::FileColumns as _;
-                for s in self.graph.input_files.items_source_mut() {
-                    // `Source.contents: Cow<'static, [u8]>` — borrowed arms (arena
-                    // slices, FileMap entries) are no-ops; only `Owned(Vec<u8>)`
-                    // from `read_file_with_allocator` actually frees here.
-                    s.contents = std::borrow::Cow::Borrowed(&b""[..]);
-                }
-                // `LineOffsetTable.columns_for_non_ascii: Box<[i32]>` and the
-                // `MultiArrayList` slab are still global-heap; the type is shared
-                // with non-bundler callers (`bun_sourcemap::Chunk`, code coverage)
-                // that run without an AST heap, so it stays on `Global`.
-                for t in self.linker.graph.files.items_line_offset_table_mut() {
-                    t.drop_elements();
-                    *t = Default::default();
-                }
-
-                // `MultiArrayList<BundledAst>` / `JSMeta` / `InputFile` columns
-                // and `quoted_source_contents` are fully `AstAlloc`-backed (column
-                // vecs, key boxes, `ArrayHashMap` index buckets, every `Part` /
-                // `NamedImport` / `Scope` / `ImportData` / `ExportData` field),
-                // so the slab-only `MultiArrayList::drop` strands nothing on the
-                // global heap — every payload is reclaimed by `mi_heap_destroy`
-                // on the AST arenas. `linker.graph.ast` is a bitwise SoA `memcpy`
-                // of `graph.ast` (see `MultiArrayList::clone`, `clone_ast`), so
-                // either side may be left for the slab drop.
-                //
-                // Only `css` still needs an explicit pass: the arena-allocated
-                // `BundlerStyleSheet` never has `Drop` run by the slab and owns
-                // global-heap fields. The macro takes only one side, and
-                // `CssChunk::asts` `forget()`s its aliases, so this is the
-                // unique drop.
                 macro_rules! take_ast_cols {
                     ($ast:expr) => {{
                         let ast = $ast;
@@ -6993,20 +6961,6 @@ pub mod bv2_impl {
                         &mut this.graph.input_files.items_source_mut()[result_source_index],
                         &mut result.source,
                     );
-                    // `on_load` (copy-for-bundling path, ~:4414) parks plugin bytes as
-                    // `Cow::Owned` directly in this slot and gives the ParseTask a borrowed
-                    // alias. The swap just moved that owner into `result.source`; move it
-                    // back so `parse_worker::on_complete`'s `drop(heap::take(result))`
-                    // doesn't free the buffer the slot's `Cow::Borrowed` still points at.
-                    // (Zig's `=` was a shallow overwrite — no field deinit — so it never
-                    // saw this; the Rust swap+drop does.)
-                    if matches!(result.source.contents, std::borrow::Cow::Owned(_)) {
-                        core::mem::swap(
-                            &mut this.graph.input_files.items_source_mut()[result_source_index]
-                                .contents,
-                            &mut result.source.contents,
-                        );
-                    }
                     // PORT NOTE: Zig kept `source` as a stable pointer into the SoA.
                     // Borrowck forbids holding `&input_files.source[i]` while writing
                     // other `input_files` columns through the MultiArrayList accessor

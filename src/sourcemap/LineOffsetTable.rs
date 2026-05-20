@@ -1,4 +1,6 @@
+use core::alloc::Allocator;
 use core::mem;
+use std::alloc::Global;
 
 use bun_alloc::AllocError;
 use bun_ast::Loc;
@@ -16,9 +18,15 @@ use smallvec::SmallVec;
 /// and takes up a lot of memory. Since most JavaScript is ASCII and the
 /// mapping for ASCII is 1:1, we avoid creating a table for ASCII-only lines
 /// as an optimization.
-#[derive(Default)]
-pub struct LineOffsetTable {
-    pub columns_for_non_ascii: Box<[i32]>,
+///
+/// Generic over `A` so the bundler can put both the SoA slab and every
+/// `columns_for_non_ascii` payload into the per-worker AST heap (`AstAlloc`)
+/// and bulk-free them on `mi_heap_destroy` instead of walking
+/// `LinkerGraph.files` in `deinit_without_freeing_arena`. Non-bundler callers
+/// (`CodeCoverage`, the runtime printer's lazy table) keep the `Global`
+/// default and free normally.
+pub struct LineOffsetTable<A: Allocator = Global> {
+    pub columns_for_non_ascii: Box<[i32], A>,
     /// Byte offset of the first non-ASCII byte on this line, or `i32::MAX as u32`
     /// when the line is entirely ASCII (so no `columns_for_non_ascii` table exists).
     /// The sentinel can't be `0` because a line can legitimately start with a
@@ -29,7 +37,7 @@ pub struct LineOffsetTable {
     pub byte_offset_to_start_of_line: u32,
 }
 
-pub type List = MultiArrayList<LineOffsetTable>;
+pub type List<A = Global> = MultiArrayList<LineOffsetTable<A>, A>;
 
 /// Typed SoA column accessors on [`List`] (= `MultiArrayList<LineOffsetTable>`).
 ///
@@ -41,7 +49,7 @@ pub trait LineOffsetTableColumns {
     fn items_byte_offset_to_first_non_ascii(&self) -> &[u32];
 }
 
-impl LineOffsetTableColumns for List {
+impl<A: Allocator + 'static> LineOffsetTableColumns for List<A> {
     #[inline]
     fn items_byte_offset_to_start_of_line(&self) -> &[u32] {
         self.items::<"byte_offset_to_start_of_line", u32>()
@@ -146,13 +154,23 @@ impl LineOffsetTable {
         None
     }
 
-    // PORT NOTE: Zig threaded `std.mem.Allocator` through MultiArrayList/Vec.
-    // The Rust MultiArrayList/Vec own their storage on the global mimalloc
-    // heap (PORTING.md §allocators), so the allocator param is dropped.
-    // TODO(port): callers in Zig pass mixed allocators (printer/bundler arenas vs VM default
-    // allocator in CodeCoverage.zig); revisit if an arena-backed MultiArrayList lands.
+    /// `Global`-allocator convenience wrapper around [`generate_in`].
     pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
-        let mut list = List::default();
+        Self::generate_in::<Global>(contents, approximate_line_count)
+    }
+
+    // PORT NOTE: Zig threaded `std.mem.Allocator` through MultiArrayList/Vec.
+    // Callers in Zig pass mixed allocators (printer/bundler arenas vs VM default
+    // allocator in CodeCoverage.zig); the bundler routes `A = AstAlloc` so the
+    // table bulk-frees with the per-worker AST heap, everyone else uses
+    // [`generate`] (`A = Global`).
+    pub fn generate_in<A: Allocator + Copy + Default + 'static>(
+        contents: &[u8],
+        approximate_line_count: i32,
+    ) -> Result<List<A>, AllocError> {
+        let alloc = A::default();
+        let empty_box = || Vec::new_in(alloc).into_boxed_slice();
+        let mut list = List::<A>::new_in(alloc);
         // Preallocate the top-level table using the approximate line count from the lexer
         list.ensure_unused_capacity(approximate_line_count.max(1) as usize)?;
         let mut column: i32 = 0;
@@ -255,10 +273,13 @@ impl LineOffsetTable {
                     // spilled → `into_boxed_slice()` shrink-reallocs when cap > len. `mem::take`
                     // re-primes a fresh inline scratch with zero allocation. ASCII-only lines
                     // (almost all of them) store `Box::default()` and keep the scratch untouched.
-                    let owned: Box<[i32]> = if columns_for_non_ascii.is_empty() {
-                        Box::default()
+                    let owned: Box<[i32], A> = if columns_for_non_ascii.is_empty() {
+                        empty_box()
                     } else {
-                        mem::take(&mut columns_for_non_ascii).into_vec().into_boxed_slice()
+                        let mut v = Vec::with_capacity_in(columns_for_non_ascii.len(), alloc);
+                        v.extend_from_slice(&columns_for_non_ascii);
+                        columns_for_non_ascii.clear();
+                        v.into_boxed_slice()
                     };
 
                     list.append(LineOffsetTable {
@@ -292,10 +313,12 @@ impl LineOffsetTable {
             columns_for_non_ascii.extend(core::iter::repeat_n(column, need));
         }
         {
-            let owned: Box<[i32]> = if columns_for_non_ascii.is_empty() {
-                Box::default()
+            let owned: Box<[i32], A> = if columns_for_non_ascii.is_empty() {
+                empty_box()
             } else {
-                columns_for_non_ascii.into_vec().into_boxed_slice()
+                let mut v = Vec::with_capacity_in(columns_for_non_ascii.len(), alloc);
+                v.extend_from_slice(&columns_for_non_ascii);
+                v.into_boxed_slice()
             };
             list.append(LineOffsetTable {
                 byte_offset_to_start_of_line: line_byte_offset,

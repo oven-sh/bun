@@ -1499,11 +1499,11 @@ impl SourceMapData {
         // tasks. The write target is the per-source_index slot, addressed by
         // raw pointer — disjoint across concurrent tasks.
         // SAFETY: `add` offset is in-bounds (`source_index < files.len()`).
-        let line_offset_table: *mut SourceMap::line_offset_table::List = unsafe {
+        let line_offset_table: *mut SourceMap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
             this.graph
                 .files
                 .slice()
-                .items_raw::<"line_offset_table", SourceMap::line_offset_table::List>()
+                .items_raw::<"line_offset_table", SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>()
                 .add(source_index as usize)
         };
 
@@ -1515,7 +1515,9 @@ impl SourceMapData {
         if !loader.can_have_source_map() {
             // This is not a file which we support generating source maps for
             // SAFETY: sole writer to this slot (disjoint by source_index).
-            unsafe { *line_offset_table = Default::default() };
+            unsafe {
+                *line_offset_table = SourceMap::line_offset_table::List::new_in(bun_alloc::AstAlloc)
+            };
             return;
         }
 
@@ -1524,9 +1526,13 @@ impl SourceMapData {
             this.graph.ast.items_approximate_newline_count()[source_index as usize];
 
         // SAFETY: sole writer to this slot (disjoint by source_index).
+        // `Worker::get` (the caller) brackets this in `ast_memory_store.push()/
+        // pop()`, so `AST_HEAP` points at this worker's `MimallocArena` and the
+        // `AstAlloc` route lands the SoA slab + every `columns_for_non_ascii`
+        // payload there for bulk-free on `pool.deinit()`.
         let _ = alloc;
         unsafe {
-            *line_offset_table = LineOffsetTable::generate(
+            *line_offset_table = LineOffsetTable::generate_in::<bun_alloc::AstAlloc>(
                 &source.contents,
                 // We don't support sourcemaps for source files with more than 2^31 lines
                 (approximate_line_count as u32 & 0x7FFF_FFFF) as i32, // @intCast(@truncate to u31)
@@ -2217,7 +2223,7 @@ impl<'a> LinkerContext<'a> {
         // the duration of this call; the printer only reads from them.
         let ts_enums: &bun_ast::ast_result::TsEnumsMap =
             unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
-        let line_offset_table: &bun_sourcemap::line_offset_table::List = unsafe {
+        let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
             &*(&raw const self.graph.files.items_line_offset_table()[source_index.get() as usize])
         };
         let mangled_props: &MangledProps =

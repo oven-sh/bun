@@ -2411,12 +2411,12 @@ impl ReactRefresh<'_> {
         if id.is_empty() {
             return false;
         }
-        matches!(id[0], b'A'..=b'Z')
+        id[0].is_ascii_uppercase()
     }
 
     /// https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L408
     pub fn is_hook_name(id: &[u8]) -> bool {
-        id.len() >= 4 && id.starts_with(b"use") && matches!(id[3], b'A'..=b'Z')
+        id.len() >= 4 && id.starts_with(b"use") && id[3].is_ascii_uppercase()
     }
 }
 

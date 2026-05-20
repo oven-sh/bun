@@ -133,7 +133,7 @@ impl PostgresSQLStatement {
                 }
                 ColumnIdentifier::Index(index) => {
                     let index = *index;
-                    if seen_numbers.iter().any(|&n| n == index) {
+                    if seen_numbers.contains(&index) {
                         field.name_or_index = ColumnIdentifier::Duplicate;
                         flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     } else {

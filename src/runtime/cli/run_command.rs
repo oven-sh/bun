@@ -13,7 +13,6 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::MutableString;
 use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
@@ -26,14 +25,11 @@ use bun_options_types::schema::api;
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_resolver::dir_info::DirInfo;
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_threading::Channel;
 use bun_which::which;
 
 use crate::cli;
-use crate::cli::Command;
 use crate::cli::arguments;
 use crate::cli::command::{ContextData, Tag as CommandTag};
 use crate::cli::shell_completions::ShellCompletions;
@@ -2122,15 +2118,18 @@ impl RunCommand {
             BunXFastPath::try_launch(ctx, new_len, env, passthrough);
         }
 
-        Self::run_binary_without_bunx_path(
-            ctx,
-            executable,
-            executable_z.as_ptr().cast::<c_char>(),
-            cwd,
-            env,
-            passthrough,
-            original_script_for_bun_run,
-        )
+        // SAFETY: `executable_z` is a valid NUL-terminated `ZStr`.
+        unsafe {
+            Self::run_binary_without_bunx_path(
+                ctx,
+                executable,
+                executable_z.as_ptr().cast::<c_char>(),
+                cwd,
+                env,
+                passthrough,
+                original_script_for_bun_run,
+            )
+        }
     }
 
     fn run_binary_generic_error(executable: &[u8], silent: bool, err: &sys::Error) -> ! {
@@ -2144,7 +2143,11 @@ impl RunCommand {
         Global::exit(1);
     }
 
-    pub fn run_binary_without_bunx_path(
+    /// # Safety
+    /// `executable_z` must point to a valid NUL-terminated string that lives
+    /// for the duration of the call (it is the NUL-terminated form of
+    /// `executable`).
+    pub unsafe fn run_binary_without_bunx_path(
         ctx: &mut ContextData,
         executable: &[u8],
         executable_z: *const c_char,
@@ -2398,10 +2401,7 @@ impl RunCommand {
 
         let mut try_fast_run = false;
         let mut skip_script_check = false;
-        if !target_name.is_empty() && target_name[0] == b'.' {
-            try_fast_run = true;
-            skip_script_check = true;
-        } else if paths::is_absolute(target_name) {
+        if (!target_name.is_empty() && target_name[0] == b'.') || paths::is_absolute(target_name) {
             try_fast_run = true;
             skip_script_check = true;
         } else if cfg.allow_fast_run_for_extensions {
@@ -2733,15 +2733,19 @@ impl RunCommand {
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;
                     let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                    Self::run_binary_without_bunx_path(
-                        ctx,
-                        stored,
-                        destination.as_ptr().cast::<c_char>(),
-                        top_level_dir,
-                        env_loader,
-                        &passthrough,
-                        Some(target_name),
-                    )?;
+                    // SAFETY: `destination` is the NUL-terminated path returned
+                    // by `which`; it stays alive for the duration of the call.
+                    unsafe {
+                        Self::run_binary_without_bunx_path(
+                            ctx,
+                            stored,
+                            destination.as_ptr().cast::<c_char>(),
+                            top_level_dir,
+                            env_loader,
+                            &passthrough,
+                            Some(target_name),
+                        )?;
+                    }
                 }
             }
         }
@@ -3704,8 +3708,9 @@ impl RunCommand {
                             // SAFETY: `EntryMap` stores non-null `*mut Entry` values owned by
                             // the resolver dir-cache for the process lifetime.
                             let value = unsafe { &**entry.1 };
-                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                            if value.kind(unsafe { &raw mut (*this_transpiler.fs).fs }, true)
+                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
+                            // non-null process-static singleton.
+                            if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                             {
                                 if !has_copied {
@@ -3766,8 +3771,9 @@ impl RunCommand {
                             && !strings::contains(name, b".d.ts")
                             && !strings::contains(name, b".d.mts")
                             && !strings::contains(name, b".d.cts")
-                            // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
-                            && value.kind(unsafe { &raw mut (*this_transpiler.fs).fs }, true)
+                            // SAFETY: entries_mutex held; `Transpiler::fs` is the
+                            // non-null process-static singleton.
+                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
                                 == bun_resolver::fs::EntryKind::File
                         {
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.

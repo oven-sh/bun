@@ -282,7 +282,7 @@ pub unsafe fn rename_symbols_in_chunk(
     let mut r = NumberRenamer::init(make_symbols_view(symbols), &reserved_names)?;
     for stable_ref in &sorted_imports_from_other_chunks {
         // PORT NOTE: `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
-        r.add_top_level_symbol({ stable_ref.r#ref });
+        r.add_top_level_symbol(stable_ref.r#ref);
     }
 
     // PORT NOTE: Zig used `r.temp_arena` for this list; arena param dropped

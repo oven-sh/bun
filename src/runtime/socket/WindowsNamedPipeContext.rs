@@ -1,31 +1,22 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
-use core::ptr::NonNull;
 
 use crate::api::{TCPSocket, TLSSocket};
 use crate::socket::NewSocket;
 use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNamedPipe};
 use bun_boringssl_sys as boringssl;
-use bun_core::Output;
 use bun_core::ZStr;
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, SysErrorJsc};
+use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
 use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
-#[cfg(not(windows))]
-mod uv {
-    //! libuv shim for non-Windows builds. `WindowsNamedPipeContext` is only
-    //! reachable at runtime on Windows; on POSIX `crate::socket::WindowsNamedPipeContext`
-    //! is aliased to `()` in `mod.rs`, but this module still type-checks.
-    pub type Pipe = core::ffi::c_void;
-}
 
 bun_output::declare_scope!(WindowsNamedPipeContext, visible);
 
@@ -121,10 +112,12 @@ macro_rules! match_socket {
         match $scrutinee {
             SocketType::Tls($s) => {
                 const $ssl: bool = true;
+                let _ = $ssl;
                 $body
             }
             SocketType::Tcp($s) => {
                 const $ssl: bool = false;
+                let _ = $ssl;
                 $body
             }
             SocketType::None => {}
@@ -248,6 +241,7 @@ impl WindowsNamedPipeContext {
         unsafe { Self::deref(this) };
     }
 
+    #[cfg(windows)]
     fn run_event(this: *mut Self) {
         // SAFETY: called from AnyTask; `this` is the live ctx pointer registered in create()
         match unsafe { (*this).task_event } {
@@ -328,55 +322,57 @@ impl WindowsNamedPipeContext {
             on_timeout: |p| Self::on_timeout(p.cast::<Self>()),
             on_close: |p| Self::on_close(p.cast::<Self>()),
         };
-        #[cfg(windows)]
-        let named_pipe = {
-            let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
-            WindowsNamedPipe::from(pipe, handlers, vm)
-        };
         #[cfg(not(windows))]
-        let named_pipe: WindowsNamedPipe = {
+        {
             // Zig: `if (Environment.isPosix) @compileError(...)` on `WindowsNamedPipe::from` —
             // on POSIX `crate::socket::WindowsNamedPipeContext` is aliased to `()` (see mod.rs)
             // so no caller can reach `create()`. This arm exists only so the module
             // type-checks; matches the sibling `WindowsNamedPipe::open`/`connect` POSIX arms.
-            let _ = handlers;
+            let _ = (vm, this, handlers, socket);
             unreachable!("WindowsNamedPipeContext::create is windows-only")
-        };
-        // Zig: `jsc.AnyTask.New(WindowsNamedPipeContext, runEvent).init(this)` — the
-        // comptime-callback `New<T>` wrapper is not yet expressible on stable Rust,
-        // so build the erased AnyTask directly.
-        let task = AnyTask {
-            ctx: NonNull::new(this.cast::<c_void>()),
-            callback: |ctx| {
-                Self::run_event(ctx.cast::<WindowsNamedPipeContext>());
-                Ok(())
-            },
-        };
-
-        // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
-        // every field exactly once before any read.
-        unsafe {
-            ptr::write(
-                this,
-                WindowsNamedPipeContext {
-                    ref_count: Cell::new(1),
-                    socket,
-                    named_pipe,
-                    vm,
-                    global_this,
-                    task,
-                    task_event: EventState::None,
-                    is_open: false,
-                },
-            );
         }
+        #[cfg(windows)]
+        {
+            let named_pipe = {
+                let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
+                WindowsNamedPipe::from(pipe, handlers, vm)
+            };
+            // Zig: `jsc.AnyTask.New(WindowsNamedPipeContext, runEvent).init(this)` — the
+            // comptime-callback `New<T>` wrapper is not yet expressible on stable Rust,
+            // so build the erased AnyTask directly.
+            let task = AnyTask {
+                ctx: ptr::NonNull::new(this.cast::<c_void>()),
+                callback: |ctx| {
+                    Self::run_event(ctx.cast::<WindowsNamedPipeContext>());
+                    Ok(())
+                },
+            };
 
-        // Zig: `switch (socket) { .tls => |tls| tls.ref(), .tcp => |tcp| tcp.ref(), ... }`
-        // — take a +1 intrusive ref so the wrapped JS socket outlives this context.
-        // SAFETY: caller passes a live socket pointer; `ref_` only bumps the count.
-        match_socket!(socket, |s: NewSocket<SSL>| unsafe { (*s).ref_() });
+            // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
+            // every field exactly once before any read.
+            unsafe {
+                ptr::write(
+                    this,
+                    WindowsNamedPipeContext {
+                        ref_count: Cell::new(1),
+                        socket,
+                        named_pipe,
+                        vm,
+                        global_this,
+                        task,
+                        task_event: EventState::None,
+                        is_open: false,
+                    },
+                );
+            }
 
-        this
+            // Zig: `switch (socket) { .tls => |tls| tls.ref(), .tcp => |tcp| tcp.ref(), ... }`
+            // — take a +1 intrusive ref so the wrapped JS socket outlives this context.
+            // SAFETY: caller passes a live socket pointer; `ref_` only bumps the count.
+            match_socket!(socket, |s: NewSocket<SSL>| unsafe { (*s).ref_() });
+
+            this
+        }
     }
 
     /// `owned_ctx` is one `SSL_CTX_up_ref` ADOPTED by `named_pipe.open` (kept on

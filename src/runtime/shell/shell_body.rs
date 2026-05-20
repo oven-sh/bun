@@ -1,20 +1,12 @@
 //! Port of src/shell/shell.zig
 //! Shell lexer, parser, AST, and JS-bridge utilities for Bun's shell.
 
-#![allow(
-    non_camel_case_types,
-    non_snake_case,
-    dead_code,
-    clippy::too_many_arguments
-)]
+#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
 
-use core::ffi::{c_char, c_int};
 use core::fmt;
-use core::mem::size_of;
 use std::io::Write as _;
 
-use bun_alloc::{Arena as Bump, ArenaVec};
-use bun_collections::{IntegerBitSet, VecExt};
+use bun_alloc::Arena as Bump;
 use bun_core::{self, Output};
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
@@ -217,24 +209,6 @@ pub enum ShellError {
     GlobalThisThrown,
     #[error("Spawn")]
     Spawn,
-}
-
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    // PRECONDITION: `name`/`value` must be valid NUL-terminated C strings for
-    // the call duration; `setenv` is not thread-safe wrt concurrent
-    // `getenv`/`setenv` (POSIX) — caller must hold the env lock or be on the
-    // single JS thread. Cannot be `safe fn`.
-    fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
-}
-
-fn set_env(name: *const c_char, value: *const c_char) {
-    // TODO: windows
-    // SAFETY: name/value are valid NUL-terminated C strings provided by callers; setenv is
-    // not called concurrently with getenv on this thread (single-threaded JS event loop).
-    unsafe {
-        let _ = setenv(name, value, 1);
-    }
 }
 
 /// `[0]` => read end, `[1]` => write end
@@ -776,9 +750,8 @@ pub fn shell_cmd_from_js(
                     return Err(global.throw(format_args!("Shell script is missing JSValue arg")));
                 }
             };
-            // PORT NOTE: reshaped for borrowck — builder holds &mut out_script/jsstrings;
-            // drop and re-create around the recursive call.
-            drop(builder);
+            // PORT NOTE: builder holds &mut out_script/jsstrings; NLL releases the
+            // borrow here (builder is reassigned below before next use).
             handle_template_value(
                 global,
                 template_value,
@@ -816,7 +789,6 @@ pub fn handle_template_value(
             write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
                 .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
-            drop(builder);
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
         }
@@ -854,7 +826,6 @@ pub fn handle_template_value(
             write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
                 .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
-            drop(builder);
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
         }
@@ -867,7 +838,6 @@ pub fn handle_template_value(
             write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
                 .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
-            drop(builder);
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
         }
@@ -880,7 +850,6 @@ pub fn handle_template_value(
             write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
                 .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
-            drop(builder);
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
         }
@@ -898,7 +867,6 @@ pub fn handle_template_value(
             let mut array = template_value.array_iterator(global)?;
             let last = array.len.saturating_sub(1);
             let mut i: u32 = 0;
-            drop(builder);
             while let Some(arr) = array.next()? {
                 handle_template_value(
                     global,
@@ -1120,7 +1088,6 @@ impl<'a> ShellSrcBuilder<'a> {
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub mod testing_apis {
     use super::*;
-    use crate::test_runner::expect::JSGlobalObjectTestExt as _;
 
     #[bun_jsc::host_fn]
     pub fn disabled_on_this_platform(

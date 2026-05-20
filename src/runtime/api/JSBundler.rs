@@ -1,24 +1,21 @@
 //! `Bun.build()` plugin host + `BuildArtifact` JS wrapper.
 
-use bun_options_types::{LoaderExt as _, TargetExt as _};
+use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
-use bun_ast::Index;
-use bun_ast::{Loader, Target};
+use bun_ast::Target;
 use bun_bundler::BundleV2;
 use bun_bundler::options;
-use bun_collections::{StringArrayHashMap, StringHashMap, StringMap, StringSet};
+use bun_collections::{StringArrayHashMap, StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{String as BunString, ZigString};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
-use bun_paths as resolve_path;
-use bun_resolver::{self as resolver, fs as Fs};
 use bun_standalone_graph::StandaloneModuleGraph;
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
@@ -28,7 +25,7 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 pub mod js_bundler {
     use super::*;
     use bun_core::ZigStringSlice;
-    use bun_jsc::JSObject;
+
     use bun_sys::FdExt;
 
     type OwnedString = MutableString;
@@ -1406,8 +1403,11 @@ pub mod js_bundler {
     }
 
     // TODO(port): move to runtime_sys
+    /// # Safety
+    /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
+    /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
     #[unsafe(no_mangle)]
-    pub extern "C" fn JSBundlerPlugin__onResolveAsync(
+    pub unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
         resolve: *mut Resolve,
         _unused: *mut c_void,
         path_value: JSValue,
@@ -1521,8 +1521,12 @@ pub mod js_bundler {
     }
 
     // TODO(port): move to runtime_sys
+    /// # Safety
+    /// `load` must be the live `*mut Load` previously handed to C++ via
+    /// `Load::dispatch`, and `global` must be the plugin's owning
+    /// `JSGlobalObject`; both valid and exclusively accessed on the JS thread.
     #[unsafe(no_mangle)]
-    pub extern "C" fn JSBundlerPlugin__onDefer(
+    pub unsafe extern "C" fn JSBundlerPlugin__onDefer(
         load: *mut Load,
         global: *mut JSGlobalObject,
     ) -> JSValue {
@@ -1798,8 +1802,13 @@ pub mod js_bundler {
     }
 
     // TODO(port): move to runtime_sys
+    /// # Safety
+    /// `plugin` must be a live `JSBundlerPlugin` opaque handle. `ctx` must be
+    /// the live `*mut Resolve` (when `which == 0`) or `*mut Load` (when
+    /// `which == 1`) previously handed to C++ via `dispatch`; sole owner on
+    /// the JS thread.
     #[unsafe(no_mangle)]
-    pub extern "C" fn JSBundlerPlugin__addError(
+    pub unsafe extern "C" fn JSBundlerPlugin__addError(
         ctx: *mut c_void,
         plugin: *mut Plugin,
         exception: JSValue,

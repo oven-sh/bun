@@ -1,7 +1,8 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
-use core::mem::{MaybeUninit, offset_of};
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+#[cfg(windows)]
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::webcore::Lifetime;
 use crate::webcore::blob::store::{Bytes as ByteStore, Data, File as FileStore};
@@ -18,8 +19,7 @@ use bun_io::{self as io, FileAction};
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{
-    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SysErrorJsc as _,
-    SystemError,
+    self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -34,6 +34,7 @@ bun_output::declare_scope!(ReadFile, hidden);
 macro_rules! bloblog {
     ($($t:tt)*) => { bun_output::scoped_log!(WriteFile, $($t)*) };
 }
+#[cfg(windows)]
 macro_rules! log {
     ($($t:tt)*) => { bun_output::scoped_log!(ReadFile, $($t)*) };
 }
@@ -80,11 +81,17 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
 /// the Zig spec where any code introspecting `onCompleteCtx` sees the original
 /// context pointer.
 pub trait ReadFileCompletion {
-    fn run(ctx: *mut Self, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>;
+    /// # Safety
+    /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to
+    /// this call (it is reclaimed via `bun_core::heap::take`).
+    unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()>;
 }
 
 impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
-    fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> jsc::JsTerminatedResult<()> {
+    unsafe fn run(
+        handler: *mut Self,
+        maybe_bytes: ReadFileResultType,
+    ) -> jsc::JsTerminatedResult<()> {
         // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
         let mut handler = unsafe { bun_core::heap::take(handler) };
         // PORT NOTE: `Strong::swap()` ties the returned `&mut JSPromise` to
@@ -379,7 +386,9 @@ impl ReadFile {
         // Zig layout (no extra heap box, nothing to leak on the `Err` path).
         fn handler_run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
             // TODO(port): properly propagate exception upwards (matches Zig TODO).
-            let _ = C::run(ctx.cast::<C>(), bytes);
+            // SAFETY: `ctx` is the `*mut C` passed unmodified through
+            // `on_complete_ctx`; ownership transfers per `ReadFileCompletion::run`.
+            let _ = unsafe { C::run(ctx.cast::<C>(), bytes) };
         }
         ReadFile::create_with_ctx(
             store,
@@ -391,13 +400,6 @@ impl ReadFile {
     }
 
     pub const IO_TAG: io::Tag = io::Tag::ReadFile;
-
-    pub fn on_readable(request: *mut io::Request) {
-        // SAFETY: request points to ReadFile.io_request (intrusive field).
-        let this: &mut ReadFile =
-            unsafe { &mut *(bun_core::from_field_ptr!(ReadFile, io_request, request)) };
-        this.on_ready();
-    }
 
     pub fn on_ready(&mut self) {
         bloblog!("ReadFile.onReady");
@@ -1433,7 +1435,9 @@ pub trait ReadFileUvHandler {
 /// `Handler.run` is `void`-returning by contract).
 impl<C: ReadFileCompletion> ReadFileUvHandler for C {
     fn run(ctx: *mut c_void, bytes: ReadFileResultType) {
-        let _ = <C as ReadFileCompletion>::run(ctx.cast::<C>(), bytes);
+        // SAFETY: `ctx` is the `*mut C` passed unmodified through
+        // `on_complete_data`; ownership transfers per `ReadFileCompletion::run`.
+        let _ = unsafe { <C as ReadFileCompletion>::run(ctx.cast::<C>(), bytes) };
     }
 }
 

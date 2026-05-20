@@ -4,7 +4,7 @@ use crate::css_parser::{CssResult, Maybe, Parser, PrintErr, Printer, Token};
 use crate::targets::Browsers;
 use crate::values::angle::Angle;
 use crate::values::calc::{Calc, MathFunction};
-use crate::values::number::{CSSNumber, CSSNumberFns};
+use crate::values::number::CSSNumber;
 use crate::values::percentage::DimensionPercentage;
 use crate::values::protocol;
 
@@ -721,7 +721,7 @@ impl Length {
     pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             Self::Value(v) => v.is_compatible(browsers),
-            Self::Calc(c) => c.is_compatible(&browsers),
+            Self::Calc(c) => c.is_compatible(browsers),
         }
     }
 }

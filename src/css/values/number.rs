@@ -44,9 +44,9 @@ impl CSSNumberFns {
 
     pub fn sign(this: CSSNumber) -> f32 {
         if this == 0.0 {
-            // Spec-faithful (number.zig:45): both branches return +0.0 — do NOT
+            // Spec-faithful (number.zig:45): ±0.0 both map to +0.0 — do NOT
             // collapse with `signfns::sign_f32` / `calc::std_math_sign`.
-            return if this.is_sign_positive() { 0.0 } else { 0.0 };
+            return 0.0;
         }
         this.signum()
     }

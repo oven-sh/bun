@@ -1,7 +1,7 @@
 use crate as css;
 use crate::css_values::ident::{CustomIdent, CustomIdentList};
 use crate::css_values::length::LengthPercentage;
-use crate::css_values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
+use crate::css_values::number::{CSSInteger, CSSIntegerFns, CSSNumber};
 use crate::{Parser, PrintErr, Printer, SmallList};
 
 use bun_collections::VecExt;
@@ -34,17 +34,14 @@ impl TrackList {
         let mut items = Vec::<TrackListItem>::default();
 
         loop {
-            let line_name = input
-                .try_parse(parse_line_names)
-                .ok()
-                .unwrap_or_else(CustomIdentList::default);
+            let line_name = input.try_parse(parse_line_names).ok().unwrap_or_default();
             line_names.push(line_name);
 
-            if let Some(track_size) = input.try_parse(TrackSize::parse).ok() {
+            if let Ok(track_size) = input.try_parse(TrackSize::parse) {
                 // TODO: error handling
                 // TODO(port): Zig original omits arena arg here (`items.append(.{...})`); mirroring with input.arena()
                 items.push(TrackListItem::TrackSize(track_size));
-            } else if let Some(repeat) = input.try_parse(TrackRepeat::parse).ok() {
+            } else if let Ok(repeat) = input.try_parse(TrackRepeat::parse) {
                 // TODO: error handling
                 items.push(TrackListItem::TrackRepeat(repeat));
             } else {
@@ -69,7 +66,7 @@ impl TrackList {
             }
 
             if items_index < self.items.len() {
-                let item = self.items.at(items_index as usize);
+                let item = self.items.at(items_index);
                 items_index += 1;
 
                 // Whitespace is required if there are no line names.
@@ -127,7 +124,7 @@ impl Default for TrackSize {
 
 impl TrackSize {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        if let Some(breadth) = input.try_parse(TrackBreadth::parse).ok() {
+        if let Ok(breadth) = input.try_parse(TrackBreadth::parse) {
             return Ok(TrackSize::TrackBreadth(breadth));
         }
 
@@ -178,7 +175,7 @@ pub struct TrackSizeList {
 impl TrackSizeList {
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut res = SmallList::<TrackSize, 1>::default();
-        while let Some(size) = input.try_parse(TrackSize::parse).ok() {
+        while let Ok(size) = input.try_parse(TrackSize::parse) {
             res.append(size);
         }
 
@@ -226,12 +223,12 @@ impl TrackBreadth {
     }
 
     fn parse_internal(input: &mut Parser, allow_flex: bool) -> css::Result<Self> {
-        if let Some(len) = input.try_parse(LengthPercentage::parse).ok() {
+        if let Ok(len) = input.try_parse(LengthPercentage::parse) {
             return Ok(TrackBreadth::Length(len));
         }
 
         if allow_flex {
-            if let Some(flex) = input.try_parse(TrackBreadth::parse_flex).ok() {
+            if let Ok(flex) = input.try_parse(TrackBreadth::parse_flex) {
                 return Ok(TrackBreadth::Flex(flex));
             }
         }
@@ -309,7 +306,7 @@ impl TrackRepeat {
                 line_names.push(line_name);
 
                 // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
-                if let Some(track_size) = i.try_parse(TrackSize::parse).ok() {
+                if let Ok(track_size) = i.try_parse(TrackSize::parse) {
                     // TODO: error handling
                     track_sizes.push(track_size);
                 } else {
@@ -338,7 +335,7 @@ impl TrackRepeat {
             }
 
             if track_sizes_index < self.track_sizes.len() {
-                let size = self.track_sizes.at(track_sizes_index as usize);
+                let size = self.track_sizes.at(track_sizes_index);
                 track_sizes_index += 1;
 
                 if !names.is_empty() {
@@ -395,7 +392,7 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
         let mut values = CustomIdentList::default();
 
         // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
-        while let Some(ident) = i.try_parse(CustomIdent::parse).ok() {
+        while let Ok(ident) = i.try_parse(CustomIdent::parse) {
             values.append(ident);
         }
 
@@ -479,10 +476,7 @@ impl GridTemplateAreas {
         // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse.
-        if let Some(s) = input
-            .try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
-            .ok()
-        {
+        if let Ok(s) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
             // SAFETY: `s` points to a slice returned by `expect_string`, which is backed by the
             // parser's input arena and remains valid for the duration of this parse.
             let s = unsafe { crate::arena_str(s) };
@@ -501,6 +495,7 @@ impl GridTemplateAreas {
             }
 
             row += 1;
+            let _ = row;
         }
 
         Ok(GridTemplateAreas::Areas {
@@ -540,9 +535,9 @@ impl GridTemplateAreas {
                     }
                     rest.len()
                 };
-                string = &rest[idx..];
                 // TODO(port): Zig original falls through here without `continue` — likely a bug (the `.` token
                 // is supposed to push None and continue). Mirroring Zig control flow exactly.
+                let _ = &rest[idx..];
             }
 
             let starts_with_name_codepoint = 'brk: {

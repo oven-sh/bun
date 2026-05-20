@@ -664,8 +664,6 @@ fn error_with_code(global: &JSGlobalObject, code: &ZStr, msg: &ZStr) -> JSValue 
 enum PinError {
     #[error("detached")]
     Detached,
-    #[error("out of memory")]
-    OutOfMemory,
 }
 
 impl Image {
@@ -1083,13 +1081,10 @@ impl Image {
         }
         let input = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
-            Err(e) => {
+            Err(PinError::Detached) => {
                 // `deliver` may own a Strong; the task that would have freed it
                 // in Drop is never created on this branch.
                 drop(deliver);
-                if matches!(e, PinError::OutOfMemory) {
-                    bun_core::out_of_memory();
-                }
                 return Ok(JSPromise::rejected_promise(
                     global,
                     error_with_code(
@@ -1179,10 +1174,7 @@ impl Image {
         }
         let input = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
-            Err(e) => {
-                if matches!(e, PinError::OutOfMemory) {
-                    bun_core::out_of_memory();
-                }
+            Err(PinError::Detached) => {
                 return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
         };
@@ -1292,8 +1284,7 @@ impl<'a> BlobReadChain<'a> {
         let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
-        blob.read_bytes_to_handler(unsafe { &raw mut *raw }, global)
-            .map_err(jsc::JsError::from)?;
+        unsafe { blob.read_bytes_to_handler(&raw mut *raw, global) }.map_err(jsc::JsError::from)?;
         Ok(promise)
     }
 
@@ -1497,7 +1488,7 @@ impl<'a> PipelineTask<'a> {
         // `self.input` was prepared on the JS thread by `pin_for_task`: either a
         // pinned ArrayBuffer slice (pin lives until `then()` unpins), an owned
         // buffer, or a path to read here.
-        let mut owned_file: Option<Vec<u8>> = None;
+        let owned_file: Option<Vec<u8>>;
         let input: &[u8] = if let Some(p) = self.input.path {
             // SAFETY: `p` borrows `image.source.path`, which outlives the task
             // because `this_ref` is held Strong while pending_tasks > 0.
@@ -1535,7 +1526,7 @@ impl<'a> PipelineTask<'a> {
                     return;
                 }
             };
-            if !sys::S::ISREG(u32::try_from(st.st_mode).expect("int cast") as _) {
+            if !sys::S::ISREG(st.st_mode as _) {
                 self.result = TaskResult::IoErr(sys::Error {
                     errno: sys::E::ENODEV as _,
                     syscall: sys::Tag::read,
@@ -1788,7 +1779,7 @@ impl<'a> PipelineTask<'a> {
                         let owned = out_slice.to_vec();
                         // SAFETY: explicit free in lieu of suppressed `Drop`.
                         unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
-                        let mut blob = Blob::init(owned, global);
+                        let blob = Blob::init(owned, global);
                         blob.content_type
                             .set(std::ptr::from_ref::<[u8]>(format.mime().as_bytes()));
                         blob.content_type_was_set.set(true);

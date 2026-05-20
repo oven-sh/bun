@@ -1,13 +1,7 @@
 #![feature(inherent_associated_types)]
 #![feature(adt_const_params, allocator_api, thread_local)]
 #![allow(incomplete_features)] // inherent_associated_types — used only for ThreadPool::Worker path compat with Zig
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
 // Shared value types + crate-name shims for the `Chunk` / `LinkerContext` /
@@ -151,11 +145,7 @@ pub mod linker_context {
     pub use crate::linker_context_mod::{
         ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
     };
-    /// `Output.scoped(.LinkerCtx, .visible)` — re-export the canonical scope
-    /// static + `debug!` macro from `linker_context_mod` so every
-    /// `linker_context/*` submodule logs under one `[linkerctx]` tag without
-    /// redeclaring the scope.
-    pub(crate) use crate::linker_context_mod::{LinkerCtx, debug};
+
     pub use output_file_list_builder::OutputFileList as OutputFileListBuilder;
     pub use static_route_visitor::StaticRouteVisitor;
 }

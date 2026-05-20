@@ -6,7 +6,7 @@ use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use bun_sys as syscall;
 
 use crate::webcore::streams;
@@ -124,7 +124,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         reason: JSValue,
     );
-    safe fn ReadableStream__abort(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
     safe fn ZigGlobalObject__createNativeReadableStream(
         global: &JSGlobalObject,
@@ -360,9 +359,11 @@ impl ReadableStream {
                     context: FileReader {
                         // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
                         // returns a non-null *mut EventLoop. Both outlive this call.
-                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                            global_this.bun_vm().as_mut().event_loop().cast(),
-                        )),
+                        event_loop: core::cell::Cell::new(unsafe {
+                            jsc::EventLoopHandle::init(
+                                global_this.bun_vm().as_mut().event_loop().cast(),
+                            )
+                        }),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
                             Some(blob.size.get() as usize)
@@ -422,9 +423,11 @@ impl ReadableStream {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
                         // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                            global_this.bun_vm().as_mut().event_loop().cast(),
-                        )),
+                        event_loop: core::cell::Cell::new(unsafe {
+                            jsc::EventLoopHandle::init(
+                                global_this.bun_vm().as_mut().event_loop().cast(),
+                            )
+                        }),
                         start_offset: Some(offset),
                         // `store.clone()` is the RAII +1 equivalent of Zig's `store.ref()`.
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
@@ -449,9 +452,9 @@ impl ReadableStream {
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             context: FileReader {
                 // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
-                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    global_this.bun_vm().as_mut().event_loop().cast(),
-                )),
+                event_loop: core::cell::Cell::new(unsafe {
+                    jsc::EventLoopHandle::init(global_this.bun_vm().as_mut().event_loop().cast())
+                }),
                 ..Default::default()
             },
             ..Default::default()
@@ -684,7 +687,7 @@ pub struct NewSource<C: SourceContext> {
     pub close_jsvalue: bun_jsc::strong::Optional,
     /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
     /// (through `ByteStream::parent_const`), so interior-mutable.
-    pub cancel_handler: Cell<Option<fn(Option<*mut c_void>)>>,
+    pub cancel_handler: Cell<Option<unsafe fn(Option<*mut c_void>)>>,
     pub cancel_ctx: Cell<Option<*mut c_void>>,
     // JSC_BORROW: process-lifetime VM global. Heap m_ctx field reassigned in
     // `start()` from a fresh `&JSGlobalObject`; `BackRef` gives a safe `Deref`
@@ -883,7 +886,9 @@ impl<C: SourceContext> NewSource<C> {
         self.cancelled = true;
         self.context.on_cancel();
         if let Some(handler) = self.cancel_handler.take() {
-            handler(self.cancel_ctx.get());
+            // SAFETY: `cancel_ctx` is the live ctx pointer registered alongside
+            // this handler (or `None`).
+            unsafe { handler(self.cancel_ctx.get()) };
         }
     }
 

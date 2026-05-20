@@ -1,14 +1,13 @@
 #![warn(unused_must_use)]
-use crate::lexer::{self as js_lexer, T};
+use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{JSXTag, JSXTagData, options};
+use crate::parser::{JSXTag, options};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
-use bun_ast::{self as js_ast, E, Expr, ExprNodeIndex, ExprNodeList, G};
+use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
 use bun_collections::VecExt;
 use bun_core::err;
-use bun_core::strings;
 
 // Zig: `pub fn ParseJSXElement(comptime ...) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`

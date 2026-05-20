@@ -1,29 +1,22 @@
 //! This is the code for the object returned by Bun.listen().
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_boringssl as boringssl;
 use bun_boringssl_sys as boring_sys;
-use bun_core::{self as strings_mod, strings};
 use bun_io::KeepAlive;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
-use bun_jsc::{
-    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsResult,
-};
-use bun_output::{declare_scope, scoped_log};
-use bun_paths::{self, PathBuffer};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
-use crate::node::path as node_path;
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
@@ -33,7 +26,17 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
+use crate::node::path as node_path;
+#[cfg(windows)]
+use bun_boringssl as boringssl;
+#[cfg(windows)]
+use bun_core::strings;
+#[cfg(windows)]
+use bun_jsc::GlobalRef;
+#[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
+#[cfg(windows)]
+use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
@@ -87,7 +90,7 @@ pub struct Listener {
     pub strong_self: JsCell<Strong>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub enum ListenerType {
     Uws(*mut uws_sys::ListenSocket),
     /// Raw heap pointer (not `Box`) to match .zig:31 `*WindowsNamedPipeListeningContext`.
@@ -97,13 +100,8 @@ pub enum ListenerType {
     /// would invalidate the pointer libuv holds under Stacked Borrows. Ownership
     /// is still unique; freed via `close_pipe_and_deinit` → `on_pipe_closed` → `deinit`.
     NamedPipe(NonNull<WindowsNamedPipeListeningContext>),
+    #[default]
     None,
-}
-
-impl Default for ListenerType {
-    fn default() -> Self {
-        ListenerType::None
-    }
 }
 
 impl Listener {
@@ -194,7 +192,9 @@ impl Listener {
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
 
-        let mut socket_config = SocketConfig::from_js(vm, opts, global, true)?;
+        let socket_config = SocketConfig::from_js(vm, opts, global, true)?;
+        #[cfg(windows)]
+        let mut socket_config = socket_config;
         // PORT NOTE: `defer socket_config.deinitExcludingHandlers()` — handled by Drop on SocketConfig
         // (excluding handlers, which are moved out below). // TODO(port): verify SocketConfig Drop semantics
 
@@ -967,7 +967,7 @@ impl Listener {
 
         vm.event_loop_ref().ensure_waker();
 
-        let mut connection: UnixOrHost = 'blk: {
+        let connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(global, "fd")? {
                 if fd_.is_number() {
                     // TODO(port): `JSValue::as_file_descriptor` — using direct int decode for now.
@@ -1018,6 +1018,8 @@ impl Listener {
             }
         });
 
+        #[cfg(windows)]
+        let mut connection = connection;
         #[cfg(windows)]
         {
             use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
@@ -1566,10 +1568,8 @@ pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     Err(global.throw(format_args!("Expected a Listener instance")))
 }
 
+#[cfg(windows)]
 fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
-    if !cfg!(windows) {
-        return false;
-    }
     // check for valid pipe names
     // at minimum we need to have \\.\pipe\ or \\?\pipe\ + 1 char that is not a separator
     pipe_name.len() > 9
@@ -1582,24 +1582,17 @@ fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
         && !node_path::is_sep_windows_t::<u8>(pipe_name[9])
 }
 
+#[cfg(windows)]
 fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a [u8]> {
-    #[cfg(windows)]
-    {
-        if pipe_name.len() > buffer.len() || !is_valid_pipe_name(pipe_name) {
-            return None;
-        }
-        // normalize pipe name with can have mixed slashes
-        // pipes are simple and this will be faster than using node:path.resolve()
-        // we dont wanna to normalize the pipe name it self only the pipe identifier (//./pipe/, //?/pipe/, etc)
-        buffer[0..9].copy_from_slice(b"\\\\.\\pipe\\");
-        buffer[9..pipe_name.len()].copy_from_slice(&pipe_name[9..]);
-        Some(&buffer[0..pipe_name.len()])
+    if pipe_name.len() > buffer.len() || !is_valid_pipe_name(pipe_name) {
+        return None;
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (pipe_name, buffer);
-        None
-    }
+    // normalize pipe name with can have mixed slashes
+    // pipes are simple and this will be faster than using node:path.resolve()
+    // we dont wanna to normalize the pipe name it self only the pipe identifier (//./pipe/, //?/pipe/, etc)
+    buffer[0..9].copy_from_slice(b"\\\\.\\pipe\\");
+    buffer[9..pipe_name.len()].copy_from_slice(&pipe_name[9..]);
+    Some(&buffer[0..pipe_name.len()])
 }
 
 #[cfg(windows)]

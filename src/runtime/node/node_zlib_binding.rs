@@ -298,12 +298,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
 
-        let mut in_off: u32 = 0;
-        let mut in_len: u32 = 0;
+        let in_off: u32;
+        let in_len: u32;
         let out_off: u32;
         let out_len: u32;
         let flush: u32;
-        let mut in_: Option<&[u8]> = None;
+        let in_: Option<&[u8]>;
         let out: Option<&mut [u8]>;
 
         let this_value = callframe.this();
@@ -554,12 +554,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
 
-        let mut in_off: u32 = 0;
-        let mut in_len: u32 = 0;
+        let in_off: u32;
+        let in_len: u32;
         let out_off: u32;
         let out_len: u32;
         let flush: u32;
-        let mut in_: Option<&[u8]> = None;
+        let in_: Option<&[u8]>;
         let out: Option<&mut [u8]>;
 
         if arguments[0].is_undefined() {

@@ -7,7 +7,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::timer::EventLoopTimerState;
 
 use super::source_map_store::{self, RemoveOrUpgradeMode};
-use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId, RouteBundle};
+use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
 use crate::bake::dev_server_body::HmrTopicBits;
 
 // Local shim for Zig's `res: anytype` — shared with `DevServer::on_web_socket_upgrade`.
@@ -358,9 +358,13 @@ impl HmrSocket {
         }
     }
 
-    pub fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
-        // SAFETY: uws guarantees the socket context pointer is valid for the
-        // duration of the close callback; we consume ownership here.
+    /// # Safety
+    /// `s` must be a valid, uniquely-owned `HmrSocket` heap pointer (allocated
+    /// via `HmrSocket::new`'s caller). uws guarantees the socket context
+    /// pointer is valid for the duration of the close callback; this function
+    /// consumes ownership and frees it.
+    pub unsafe fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
+        // SAFETY: caller contract above.
         let this = unsafe { &mut *s };
 
         let subs = this.subscriptions;

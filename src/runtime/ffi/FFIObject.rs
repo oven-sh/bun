@@ -7,9 +7,6 @@ use bun_jsc::{
     JSValue, JsResult,
 };
 
-// Non-throwing `toInvalidArguments` shim — see ffi_body.rs for rationale.
-use super::ffi_body::GlobalObjectFfiExt as _;
-
 /// Reinterpret a user-supplied raw address (from `bun:ffi` JS land) as a
 /// JSC typed-array bytes deallocator. Centralized so the `usize → fn ptr`
 /// reinterpretation lives in one place.

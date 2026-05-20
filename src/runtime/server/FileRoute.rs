@@ -16,7 +16,6 @@ use crate::server::file_response_stream::StartOptions as FileResponseStreamOptio
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 
 use crate::server::{AnyServer, FileResponseStream, RangeRequest, write_status};
-use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
@@ -166,7 +165,7 @@ impl FileRoute {
                     ));
                 }
 
-                let mut blob = body_value.use_();
+                let blob = body_value.use_();
 
                 blob.global_this.set(std::ptr::from_ref(global));
                 debug_assert!(
@@ -192,7 +191,7 @@ impl FileRoute {
         }
         if let Some(blob) = argument.as_class_ref::<Blob>() {
             if blob.needs_to_read_file() {
-                let mut b = blob.dupe();
+                let b = blob.dupe();
                 b.global_this.set(std::ptr::from_ref(global));
                 debug_assert!(
                     !b.is_heap_allocated(),
@@ -285,16 +284,21 @@ impl FileRoute {
         }
     }
 
-    pub fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
-        // SAFETY: `this` is a live heap FileRoute (intrusive ref held by the route table).
+    /// # Safety
+    /// `this` must point to a live heap `FileRoute` (intrusive ref held by the
+    /// route table) for the duration of the call.
+    pub unsafe fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         debug_assert!(unsafe { (*this).server.get() }.is_some());
 
-        Self::on(this, req, resp, Method::HEAD);
+        // SAFETY: forwarded with the same precondition.
+        unsafe { Self::on(this, req, resp, Method::HEAD) };
     }
 
     pub fn on_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(this, req, resp, method);
+        // SAFETY: `this` is a live heap FileRoute — intrusive ref held by the
+        // route table; only reached from the uWS route callback.
+        unsafe { Self::on(this, req, resp, method) };
     }
 
     // PORT NOTE: takes `*mut FileRoute` (not `&self`) because the
@@ -304,11 +308,18 @@ impl FileRoute {
     // the only per-request mutation (`stat_hash.hash`) goes through `Cell`, so
     // no `&mut Self` is ever materialized and the shared borrow stays valid
     // under Stacked Borrows across that write.
-    pub fn on(this_ptr: *mut FileRoute, mut req: AnyRequest, resp: AnyResponse, method: Method) {
-        // SAFETY: `this_ptr` is a live heap FileRoute for the duration of this
-        // fn body — the `ref_()` taken below keeps it alive until
-        // `on_response_complete`. All mutation through `this` goes via `Cell`,
-        // so the shared borrow is sound.
+    /// # Safety
+    /// `this_ptr` must point to a live heap `FileRoute` for the duration of
+    /// this call. The `ref_()` taken below keeps it alive until
+    /// `on_response_complete`. All mutation through `this` goes via `Cell`, so
+    /// the shared borrow is sound.
+    pub unsafe fn on(
+        this_ptr: *mut FileRoute,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        method: Method,
+    ) {
+        // SAFETY: see fn-level Safety doc.
         let this = unsafe { &*this_ptr };
         debug_assert!(this.server.get().is_some());
         this.ref_();
@@ -403,7 +414,7 @@ impl FileRoute {
             let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
             let _size: u64 = stat_size.min(this.blob.size.get());
 
-            let mode = u32::try_from(stat.st_mode).expect("int cast");
+            let mode = stat.st_mode as bun_sys::Mode;
             if bun_sys::S::ISDIR(mode) {
                 break 'brk (false, 0, FileType::File, false);
             }

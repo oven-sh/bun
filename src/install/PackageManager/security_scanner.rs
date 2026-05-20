@@ -21,13 +21,16 @@ use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
 use bun_io::Loop as AsyncLoop;
+#[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
 use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
+#[cfg(not(windows))]
+use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
-    SpawnResultExt as _, Status, Stdio,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status,
+    Stdio,
 };
 use bun_sys::{self, Fd, FdExt as _};
 
@@ -1015,7 +1018,7 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
 bun_spawn::link_impl_ProcessExit! {
     SecurityScan for SecurityScanSubprocess => |this| {
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, &*rusage),
+            (*this).on_process_exit(&mut *process, status, rusage),
     }
 }
 
@@ -1338,8 +1341,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
-        let mut spawned_owned = std::mem::take(spawned);
-        let process: *mut Process = spawned_owned.to_process(event_loop, false);
+        let process: *mut Process = std::mem::take(spawned).to_process(event_loop, false);
 
         // Derive the raw backref once and use it for all subsequent field
         // access. `start()`/`watch_or_reap()` below may re-enter

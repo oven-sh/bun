@@ -129,9 +129,7 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
         n @ 2..=8 => {
             while index < min_length {
                 if nql_at_index_fn(n, index, input) {
-                    if last_common_separator.is_none() {
-                        return None;
-                    }
+                    last_common_separator?;
                     break;
                 }
                 if is_path_separator(input[0][index]) {
@@ -146,16 +144,12 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
                 while index < min_length {
                     if P::P == Platform::Windows {
                         if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
-                            if last_common_separator.is_none() {
-                                return None;
-                            }
+                            last_common_separator?;
                             break;
                         }
                     } else {
                         if input[0][index] != input[string_index][index] {
-                            if last_common_separator.is_none() {
-                                return None;
-                            }
+                            last_common_separator?;
                             break;
                         }
                     }
@@ -939,7 +933,7 @@ pub fn normalize_string_generic<
         path_,
         buf,
         SEPARATOR,
-        |c| is_separator(c),
+        is_separator,
     )
 }
 
@@ -1095,7 +1089,7 @@ pub fn normalize_string_generic_tz<
     let (path, buf_start) = if is_windows {
         (&path_[path_begin..], buf_i)
     } else {
-        (&path_[..], 0usize)
+        (path_, 0usize)
     };
 
     let n = path.len();

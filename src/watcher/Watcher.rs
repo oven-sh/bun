@@ -230,10 +230,15 @@ impl Watcher {
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
         // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
         // via `running`/`close_descriptors` and the thread frees the Box.
-        self.thread = Some(std::thread::spawn(move || unsafe {
-            // TODO(port): narrow error set
-            let _ = Watcher::thread_main(this as *mut Watcher);
-        }));
+        self.thread = Some(
+            std::thread::Builder::new()
+                .name("FileWatcher".into())
+                .spawn(move || unsafe {
+                    // TODO(port): narrow error set
+                    let _ = Watcher::thread_main(this as *mut Watcher);
+                })
+                .expect("spawn FileWatcher thread"),
+        );
         Ok(())
     }
 
@@ -244,7 +249,10 @@ impl Watcher {
     // watcher thread instead of dropping here).
     // TODO(port): ownership model — Zig allocator.destroy(this); Rust needs
     // heap::take or an Arc to make this sound.
-    pub fn shutdown(this: *mut Self, close_descriptors: bool) {
+    /// # Safety
+    /// `this` must be the unique heap pointer returned from `init()`; ownership
+    /// transfers here on the no-thread path (the Box is reclaimed).
+    pub unsafe fn shutdown(this: *mut Self, close_descriptors: bool) {
         // SAFETY: caller passes the unique heap pointer returned from init()
         let me = unsafe { &mut *this };
         if me.watchloop_handle.load() {
@@ -496,6 +504,7 @@ impl Watcher {
             }
         }
 
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let watchlist_id = self.watchlist.len();
 
         // Zig: `if (clone_file_path) bun.asByteSlice(bun.handleOom(allocator.dupeZ(u8, file_path))) else file_path`.
@@ -511,25 +520,10 @@ impl Watcher {
             Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
         };
 
-        let mut item = WatchItem {
-            file_path: file_path_,
-            fd,
-            hash,
-            count: 0,
-            loader,
-            parent_hash,
-            package_json,
-            kind: WatchItemKind::File,
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            eventlist_index: 0,
-        };
-
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        {
-            self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
-        }
+        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
+        let eventlist_index = {
             // Zig builds the `[:0]const u8` from `file_path_` (the dupeZ'd copy when
             // clone_file_path=true), guaranteeing a trailing NUL for inotify. When
             // CLONE_FILE_PATH is true the caller's `file_path` is NOT NUL-terminated,
@@ -547,11 +541,22 @@ impl Watcher {
                 // Zig's `buf[0..file_path_.len :0]` assumed the same.
                 unsafe { ZStr::from_raw(file_path.as_ptr(), file_path.len()) }
             };
-            item.eventlist_index = self.platform.watch_path(slice)?;
-        }
+            self.platform.watch_path(slice)?
+        };
 
         // PERF(port): was assume_capacity
-        self.watchlist.append_assume_capacity(item);
+        self.watchlist.append_assume_capacity(WatchItem {
+            file_path: file_path_,
+            fd,
+            hash,
+            count: 0,
+            loader,
+            parent_hash,
+            package_json,
+            kind: WatchItemKind::File,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            eventlist_index,
+        });
         Ok(())
     }
 
@@ -595,34 +600,20 @@ impl Watcher {
         let parent_hash =
             Self::get_hash(bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash());
 
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let watchlist_id = self.watchlist.len();
 
-        let mut item = WatchItem {
-            file_path: file_path_,
-            fd,
-            hash,
-            count: 0,
-            loader: Loader::File,
-            parent_hash,
-            kind: WatchItemKind::Directory,
-            package_json: None,
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            eventlist_index: 0,
-        };
-
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        {
-            self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
-        }
+        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
+        let eventlist_index = {
             let mut buf = bun_paths::path_buffer_pool::get();
             let path: &ZStr = if CLONE_FILE_PATH
                 && !file_path.is_empty()
                 && file_path[file_path.len() - 1] == 0
             {
                 // SAFETY: last byte is 0, slice len excludes it
-                ZStr::from_slice_with_nul(&file_path[..])
+                ZStr::from_slice_with_nul(file_path)
             } else {
                 let trailing_slash = if file_path.len() > 1 {
                     strings::trim_right(file_path, &[0, b'/'])
@@ -635,16 +626,24 @@ impl Watcher {
                 ZStr::from_buf(&buf[..], trailing_slash.len())
             };
 
-            item.eventlist_index = self
-                .platform
+            self.platform
                 .watch_dir(path)
-                .map_err(|e| e.with_path(file_path))?;
-        }
-        #[cfg(windows)]
-        let _ = watchlist_id;
+                .map_err(|e| e.with_path(file_path))?
+        };
 
         // PERF(port): was assume_capacity
-        self.watchlist.append_assume_capacity(item);
+        self.watchlist.append_assume_capacity(WatchItem {
+            file_path: file_path_,
+            fd,
+            hash,
+            count: 0,
+            loader: Loader::File,
+            parent_hash,
+            kind: WatchItemKind::Directory,
+            package_json: None,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            eventlist_index,
+        });
         Ok((self.watchlist.len() - 1) as WatchItemIndex)
     }
 
@@ -841,9 +840,8 @@ impl Watcher {
         }
 
         // Only open fd if we might need it
-        let mut fd: Fd = Fd::INVALID;
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        {
+        let fd: Fd = {
             let mut path_z = bun_paths::PathBuffer::uninit();
             if file_path.len() >= path_z.len() {
                 return false;
@@ -854,10 +852,12 @@ impl Watcher {
             // `path_z[..len]` as a `&ZStr` with the NUL debug-asserted in-bounds.
             let z = ZStr::from_buf(&path_z[..], file_path.len());
             match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
-                Ok(opened) => fd = opened,
+                Ok(opened) => opened,
                 Err(_) => return false,
             }
-        }
+        };
+        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+        let fd: Fd = Fd::INVALID;
 
         let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
         match res {

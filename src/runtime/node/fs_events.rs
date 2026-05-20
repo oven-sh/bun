@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::VecExt;
 use bun_core::zstr;
-use bun_threading::{Mutex, UnboundedQueue};
+use bun_threading::{Mutex, Semaphore, UnboundedQueue};
 
 // Zig: `const Event = bun.jsc.Node.fs.Watcher.Event` /
 //      `const EventType = @import("./path_watcher.zig").PathWatcher.EventType`.
@@ -12,30 +12,6 @@ use bun_threading::{Mutex, UnboundedQueue};
 // fine in Rust, so import the real shapes instead of mirroring them.
 use super::node_fs_watcher::Event;
 use super::path_watcher::EventType;
-
-/// Minimal port of `std.Thread.Semaphore` (Zig) — `bun_threading` has no
-/// semaphore yet. Only `post`/`wait` are used (once each, to sync CF thread
-/// startup), so a Mutex+Condvar pair is sufficient.
-#[derive(Default)]
-struct Semaphore {
-    inner: std::sync::Mutex<u32>,
-    cond: std::sync::Condvar,
-}
-
-impl Semaphore {
-    fn post(&self) {
-        let mut n = self.inner.lock().unwrap();
-        *n += 1;
-        self.cond.notify_one();
-    }
-    fn wait(&self) {
-        let mut n = self.inner.lock().unwrap();
-        while *n == 0 {
-            n = self.cond.wait(n).unwrap();
-        }
-        *n -= 1;
-    }
-}
 
 pub type CFAbsoluteTime = f64;
 pub type CFTimeInterval = f64;
@@ -449,7 +425,7 @@ impl FSEventsLoop {
         // SAFETY: arg was set to `this: *mut FSEventsLoop` in init()
         let this = unsafe { bun_ptr::callback_ctx::<FSEventsLoop>(arg) };
 
-        let mut concurrent = this.tasks.pop_batch();
+        let concurrent = this.tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {
             return;
@@ -513,14 +489,19 @@ impl FSEventsLoop {
         // SAFETY: this is a valid freshly-boxed pointer
         unsafe {
             (*this).signal_source = signal_source;
-            // PORT NOTE: Zig std.Thread.spawn → std::thread::spawn. The raw `this`
-            // pointer is moved into the closure; the FSEventsLoop is heap-allocated
-            // and outlives the thread (joined in Drop).
+            // PORT NOTE: Zig std.Thread.spawn. The raw `this` pointer is moved
+            // into the closure; the FSEventsLoop is heap-allocated and outlives
+            // the thread (joined in Drop).
             let this_addr = this as usize;
-            (*this).thread = Some(std::thread::spawn(move || {
-                // SAFETY: see above — `this` is a valid heap allocation for the thread's lifetime.
-                unsafe { (*(this_addr as *mut FSEventsLoop)).cf_thread_loop() }
-            }));
+            (*this).thread = Some(
+                std::thread::Builder::new()
+                    .name("CFThreadLoop".into())
+                    .spawn(move || {
+                        // SAFETY: see above — `this` is a valid heap allocation for the thread's lifetime.
+                        unsafe { (*(this_addr as *mut FSEventsLoop)).cf_thread_loop() }
+                    })
+                    .expect("failed to spawn thread"),
+            );
 
             // sync threads
             (*this).sem.wait();
@@ -917,7 +898,12 @@ pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
 pub type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
-    pub fn init(
+    /// # Safety
+    /// `loop_` must be a valid, live `*mut FSEventsLoop` (the heap-allocated
+    /// global default loop from `FSEventsLoop::init`) for the lifetime of the
+    /// returned watcher; mutable access to its watcher list is serialized by
+    /// `loop_.mutex` inside `register_watcher`.
+    pub unsafe fn init(
         loop_: *mut FSEventsLoop,
         path: &[u8],
         recursive: bool,
@@ -934,9 +920,7 @@ impl FSEventsWatcher {
             ctx,
         });
 
-        // SAFETY: `loop_` is the heap-allocated global default loop (heap::alloc
-        // in FSEventsLoop::init); valid for the program lifetime. Mutable access
-        // to its watcher list is serialized by `self.mutex` inside register_watcher.
+        // SAFETY: caller contract — see `# Safety` above.
         unsafe { (*loop_).register_watcher(&raw mut *this) };
         this
     }
@@ -975,9 +959,11 @@ pub fn watch(
     // TODO(port): narrow error set
     let loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
     if !loop_.is_null() {
-        return Ok(FSEventsWatcher::init(
-            loop_, path, recursive, callback, update_end, ctx,
-        ));
+        // SAFETY: `loop_` is the heap-allocated global default loop published
+        // under `FSEVENTS_DEFAULT_LOOP_MUTEX`; valid for the program lifetime.
+        return Ok(unsafe {
+            FSEventsWatcher::init(loop_, path, recursive, callback, update_end, ctx)
+        });
     }
     let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
     let mut loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
@@ -990,9 +976,9 @@ pub fn watch(
         // the generic atexit list (storage lives in bun_core; forward dep).
         bun_core::Global::add_pre_exit_callback(close_and_wait_on_exit);
     }
-    Ok(FSEventsWatcher::init(
-        loop_, path, recursive, callback, update_end, ctx,
-    ))
+    // SAFETY: `loop_` is the heap-allocated global default loop (just created or
+    // re-read under the mutex); valid for the program lifetime.
+    Ok(unsafe { FSEventsWatcher::init(loop_, path, recursive, callback, update_end, ctx) })
 }
 
 /// `extern "C"` thunk so this fits `bun_core::Global::ExitFn`.

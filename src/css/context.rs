@@ -1,5 +1,4 @@
 use crate::css_parser as css;
-use bun_alloc::ArenaVecExt as _;
 
 // blocked_on: rules/media + media_query::{MediaCondition,MediaFeature,...} +
 // properties/custom — only the gated `get_*_rules` / `add_unparsed_fallbacks`
@@ -123,7 +122,7 @@ impl<'a> PropertyHandlerContext<'a> {
     /// Clone a std-Vec property list into a bump-allocated `DeclarationList`.
     /// (`'static` per crate-wide `'bump`-erasure; see rules/mod.rs decl_block_static.)
     #[inline]
-    fn clone_decls(&self, list: &Vec<css::Property>) -> css::DeclarationList<'static> {
+    fn clone_decls(&self, list: &[css::Property]) -> css::DeclarationList<'static> {
         let bump: &'static Bump = self.bump_static();
         bun_alloc::vec_from_iter_in(list.iter().map(|p| p.deep_clone(bump)), bump)
     }
@@ -140,24 +139,16 @@ impl<'a> PropertyHandlerContext<'a> {
             dest.push(css::CssRule::Supports(css::SupportsRule {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
-                    v: {
-                        let mut v: Vec<css::CssRule<T>> = Vec::with_capacity(1);
-
-                        // PERF(port): was appendAssumeCapacity
-                        v.push(css::CssRule::Style(css::StyleRule {
-                            selectors: style_rule.selectors.deep_clone(),
-                            vendor_prefix: css::VendorPrefix::NONE,
-                            declarations: css::DeclarationBlock {
-                                declarations: self.clone_decls(&entry.declarations),
-                                important_declarations: self
-                                    .clone_decls(&entry.important_declarations),
-                            },
-                            rules: css::CssRuleList::default(),
-                            loc: style_rule.loc,
-                        }));
-
-                        v
-                    },
+                    v: vec![css::CssRule::Style(css::StyleRule {
+                        selectors: style_rule.selectors.deep_clone(),
+                        vendor_prefix: css::VendorPrefix::NONE,
+                        declarations: css::DeclarationBlock {
+                            declarations: self.clone_decls(&entry.declarations),
+                            important_declarations: self.clone_decls(&entry.important_declarations),
+                        },
+                        rules: css::CssRuleList::default(),
+                        loc: style_rule.loc,
+                    })],
                 },
                 loc: style_rule.loc,
             }));
@@ -199,16 +190,19 @@ impl<'a> PropertyHandlerContext<'a> {
                         list.push(MediaQuery {
                             qualifier: None,
                             media_type: css::media_query::MediaType::All,
-                            condition: Some(MediaCondition::Feature(MediaFeature::Plain {
-                                // TODO(port): verify exact MediaFeatureName / MediaFeatureValue
-                                // variant shapes from css::media_query once ported.
-                                name: css::media_query::MediaFeatureName::Standard(
-                                    MediaFeatureId::PrefersColorScheme,
-                                ),
-                                value: css::media_query::MediaFeatureValue::Ident(css::Ident {
-                                    v: b"dark",
-                                }),
-                            })),
+                            condition: Some(MediaCondition::Feature(Box::new_in(
+                                MediaFeature::Plain {
+                                    // TODO(port): verify exact MediaFeatureName / MediaFeatureValue
+                                    // variant shapes from css::media_query once ported.
+                                    name: css::media_query::MediaFeatureName::Standard(
+                                        MediaFeatureId::PrefersColorScheme,
+                                    ),
+                                    value: css::media_query::MediaFeatureValue::Ident(css::Ident {
+                                        v: b"dark",
+                                    }),
+                                },
+                                ArenaPtr::new(self.bump_static()),
+                            ))),
                         });
 
                         list
@@ -245,7 +239,7 @@ impl<'a> PropertyHandlerContext<'a> {
     pub fn get_additional_rules_helper<T>(
         &self,
         dir: css::selector::parser::Direction,
-        decls: &Vec<css::Property>,
+        decls: &[css::Property],
         sty: &css::StyleRule<T>,
         dest: &mut Vec<css::CssRule<T>>,
     ) {

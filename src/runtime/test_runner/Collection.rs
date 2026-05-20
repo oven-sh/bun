@@ -1,7 +1,7 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 use core::ptr::NonNull;
-use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
+use crate::test_runner::expect::make_formatter;
 
 use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
@@ -13,7 +13,6 @@ use crate::test_runner::bun_test::{
 use crate::test_runner::bun_test::debug::group;
 // TODO(port): jsc.Jest.Jest.runner / jsc.ConsoleObject live under bun_jsc::jest / bun_jsc::console_object — verify module paths.
 use crate::test_runner::jest::Jest;
-use bun_jsc::console_object::Formatter as ConsoleFormatter;
 
 pub struct Collection {
     /// set to true after collection phase ends
@@ -47,9 +46,13 @@ pub struct QueuedDescribe {
 // Zig `deinit` only called `callback.deinit()`; `Strong: Drop` covers it — no explicit Drop needed.
 
 impl Collection {
-    pub fn init(bun_test_root: *mut BunTestRoot) -> Collection {
+    /// # Safety
+    /// `bun_test_root` must be a valid, exclusive pointer to a live `BunTestRoot` for the
+    /// duration of this call. The caller (`BunTest::init`) passes a pointer to its own
+    /// `bun_test_root` field.
+    pub unsafe fn init(bun_test_root: *mut BunTestRoot) -> Collection {
         let _g = group::begin();
-        // SAFETY: caller (BunTest::init) passes a live pointer to its own `bun_test_root` field.
+        // SAFETY: see fn-level Safety doc.
         let bun_test_root = unsafe { &mut *bun_test_root };
 
         let only = if let Some(runner) = Jest::runner() {

@@ -20,7 +20,7 @@
 //! - WebSocket Handshake: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#the_websocket_handshake
 
 use core::cell::Cell;
-use core::ffi::{CStr, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr;
 use std::io::Write as _;
 
@@ -105,7 +105,6 @@ pub struct HTTPClient<const SSL: bool> {
     // suffix of `input_body_buf`; stored here as the suffix length so we don't
     // hold a self-referential slice.
     to_send_len: usize,
-    read_length: usize,
     headers_buf: [picohttp::Header; 128],
     body: Vec<u8>,
     /// Owned NUL-terminated hostname for SNI; empty when unset.
@@ -344,7 +343,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             outgoing_websocket: Some(websocket),
             input_body_buf,
             to_send_len: 0,
-            read_length: 0,
             headers_buf: [picohttp::Header::ZERO; 128],
             body: Vec::new(),
             hostname: ZBox::default(),
@@ -584,7 +582,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Clean up proxy state. Null the field and detach the tunnel's
         // back-reference before deinit so that SSLWrapper shutdown callbacks
         // cannot re-enter clear_data() while the proxy is still reachable.
-        if let Some(mut proxy) = self.proxy.take() {
+        if let Some(proxy) = self.proxy.take() {
             if let Some(tunnel) = proxy.get_tunnel() {
                 // SAFETY: `proxy` holds a live ref on `tunnel`.
                 unsafe { (*tunnel.as_ptr()).detach_upgrade_client() };

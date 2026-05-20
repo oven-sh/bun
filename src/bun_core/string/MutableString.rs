@@ -230,7 +230,6 @@ impl MutableString {
             // If it ends with an emoji
             if needs_gap {
                 mutable.append_char(b'_')?;
-                needs_gap = false;
                 has_needed_gap = true;
             }
 
@@ -310,11 +309,19 @@ impl MutableString {
 
     pub fn inflate(&mut self, amount: usize) -> Result<(), AllocError> {
         // Zig MutableString.inflate: `list.resize(amount)` leaves new bytes
-        // uninitialized. Match that — callers always overwrite the inflated
-        // region (it's a printer buffer pre-size).
+        // uninitialized. Callers always overwrite the inflated region (it's a
+        // printer buffer pre-size). Route through `spare_capacity_mut` so
+        // clippy::uninit_vec sees the explicit MaybeUninit handoff; the
+        // compiler still elides the loop.
         self.list.reserve(amount.saturating_sub(self.list.len()));
-        // SAFETY: `u8` has no drop and any bit pattern is valid; capacity ≥
-        // `amount` after `reserve`. Callers MUST write before reading.
+        let len = self.list.len();
+        if amount > len {
+            for slot in &mut self.list.spare_capacity_mut()[..amount - len] {
+                slot.write(0);
+            }
+        }
+        // SAFETY: capacity ≥ `amount` after `reserve`; the spare slots up to
+        // `amount` were just initialized above.
         unsafe { self.list.set_len(amount) };
         Ok(())
     }
@@ -496,11 +503,6 @@ impl<'a> BufferedWriter<'a> {
 
     // Zig: `pub const Writer = std.Io.GenericWriter(*BufferedWriter, Allocator.Error, writeAll)`
     // → `impl std::io::Write for BufferedWriter` below; `writer()` returns `&mut Self`.
-
-    #[inline]
-    fn remain(&mut self) -> &mut [u8] {
-        &mut self.buffer[self.pos..]
-    }
 
     pub fn flush(&mut self) -> Result<(), AllocError> {
         let _ = self.context.write_all(&self.buffer[0..self.pos])?;

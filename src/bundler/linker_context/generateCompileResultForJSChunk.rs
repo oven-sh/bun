@@ -1,15 +1,14 @@
 use crate::mal_prelude::*;
-use core::mem::offset_of;
 use core::sync::atomic::Ordering;
 
 use bun_ast::Scope;
 use bun_js_printer::{self as js_printer, PrintResult};
 use bun_threading::thread_pool as ThreadPoolLib;
 
-use crate::linker_context_mod::{LinkerContext, PendingPartRange};
+use crate::linker_context_mod::LinkerContext;
 use crate::options::OutputFormat;
 use crate::thread_pool::Worker;
-use crate::{BundleV2, Chunk, CompileResult, Index, PartRange};
+use crate::{Chunk, CompileResult, Index, PartRange};
 
 use super::generate_code_for_file_in_chunk_js::{
     DeclCollector, generate_code_for_file_in_chunk_js,

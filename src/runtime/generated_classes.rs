@@ -25,8 +25,7 @@
     improper_ctypes,
     improper_ctypes_definitions,
     clippy::missing_safety_doc,
-    clippy::not_unsafe_ptr_arg_deref,
-    clippy::all
+    clippy::not_unsafe_ptr_arg_deref
 )]
 
 // Bring BodyMixin into scope so codegen UFCS calls like

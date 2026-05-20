@@ -1,4 +1,3 @@
-use core::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_core::{ZBox, ZStr};
@@ -449,8 +448,11 @@ impl ShellMvCheckTargetTask {
         // Bounce-back is posted by `shell_task_trampoline`.
     }
 
-    pub fn run_from_main_thread(this: *mut ShellMvCheckTargetTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live boxed task.
+    /// # Safety
+    /// `this` must point to a live `ShellMvCheckTargetTask` held in
+    /// `MvState::CheckTarget` for the duration of the call.
+    pub unsafe fn run_from_main_thread(this: *mut ShellMvCheckTargetTask, interp: &Interpreter) {
+        // SAFETY: caller contract.
         let cmd = unsafe { (*this).cmd };
         Mv::check_target_task_done(interp, cmd);
     }
@@ -571,13 +573,11 @@ impl ShellMvBatchedTask {
         }
     }
 
-    /// Spec: mv.zig `ShellMvBatchedTask.moveAcrossFilesystems` — `rename(2)`
-    /// fails with EXDEV across mounts; fall back to `cp -pRP` + `rm -rf`.
-    /// TODO(port): unimplemented in Zig too.
-    fn move_across_filesystems(&mut self, _src: &ZStr, _dest: &ZStr) {}
-
-    pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live boxed task held in `MvState::Executing::tasks`.
+    /// # Safety
+    /// `this` must point to a live `ShellMvBatchedTask` held in
+    /// `MvState::Executing::tasks` for the duration of the call.
+    pub unsafe fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &Interpreter) {
+        // SAFETY: caller contract.
         let (cmd, idx) = unsafe { ((*this).cmd, (*this).idx) };
         Mv::batched_move_task_done(interp, cmd, idx);
     }
@@ -596,7 +596,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        Self::run_from_main_thread(this, interp)
+        unsafe { Self::run_from_main_thread(this, interp) }
     }
 }
 
@@ -606,7 +606,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        Self::run_from_main_thread(this, interp)
+        unsafe { Self::run_from_main_thread(this, interp) }
     }
 }
 

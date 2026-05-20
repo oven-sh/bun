@@ -32,8 +32,6 @@ pub use crate::cli::scan_command::ScanCommand;
 struct NodeModulesFolder {
     relative_path: bun_core::ZBox,
     dependencies: Box<[DependencyID]>,
-    tree_id: tree::Id,
-    depth: usize,
 }
 
 // PORT NOTE: transient sort-comparator context; lifetime is fn-local (BORROW_PARAM).
@@ -43,17 +41,8 @@ struct ByName<'a> {
 }
 
 impl<'a> ByName<'a> {
-    pub fn is_less_than(ctx: &ByName<'a>, lhs: DependencyID, rhs: DependencyID) -> bool {
-        strings::cmp_strings_asc(
-            (),
-            ctx.dependencies[lhs as usize].name.slice(ctx.buf),
-            ctx.dependencies[rhs as usize].name.slice(ctx.buf),
-        )
-    }
-
     // PORT NOTE: Zig pdq takes a strict-less-than predicate; Rust
-    // `sort_unstable_by` requires a total `Ordering`. Use this 3-way cmp at
-    // sort callsites instead of mapping `is_less_than` → {Less, Greater}.
+    // `sort_unstable_by` requires a total `Ordering`.
     pub fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> Ordering {
         self.dependencies[lhs as usize]
             .name
@@ -116,7 +105,6 @@ impl PackageManagerCommand {
         };
 
         Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-        drop(load_lockfile);
 
         Output::flush();
         Output::disable_buffering();
@@ -348,7 +336,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            drop(load_lockfile);
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
@@ -365,7 +352,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            drop(load_lockfile);
 
             Output::flush();
             Output::disable_buffering();
@@ -376,7 +362,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            drop(load_lockfile);
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
@@ -489,7 +474,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            drop(load_lockfile);
 
             Output::flush();
             Output::disable_buffering();
@@ -516,8 +500,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     // SAFETY: NUL terminator just appended above.
                     relative_path: bun_core::ZBox::from_vec_with_nul(path),
                     dependencies,
-                    tree_id: node_modules.tree_id,
-                    depth: node_modules.depth,
                 });
             }
 

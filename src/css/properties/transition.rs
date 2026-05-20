@@ -355,18 +355,17 @@ mod transition_handler_body {
                     None
                 };
 
-            if _properties.is_some()
-                && _durations.is_some()
-                && _delays.is_some()
-                && _timing_functions.is_some()
-            {
-                // PORT NOTE: reshaped for borrowck — Zig held simultaneous &mut to all four
-                // Option payloads via `.?`. Rust requires unwrapping each Option mutably.
-                let (properties, property_prefixes) = _properties.as_mut().unwrap();
-                let (durations, duration_prefixes) = _durations.as_mut().unwrap();
-                let (delays, delay_prefixes) = _delays.as_mut().unwrap();
-                let (timing_functions, timing_prefixes) = _timing_functions.as_mut().unwrap();
-
+            if let (
+                Some((properties, property_prefixes)),
+                Some((durations, duration_prefixes)),
+                Some((delays, delay_prefixes)),
+                Some((timing_functions, timing_prefixes)),
+            ) = (
+                &mut _properties,
+                &mut _durations,
+                &mut _delays,
+                &mut _timing_functions,
+            ) {
                 // Find the intersection of prefixes with the same value.
                 // Remove that from the prefixes of each of the properties. The remaining
                 // prefixes will be handled by outputting individual properties below.

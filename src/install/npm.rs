@@ -1,5 +1,4 @@
 use bun_collections::VecExt;
-use core::ffi::c_void;
 use std::io::Write as _;
 
 use crate::bun_json as JSON;
@@ -9,11 +8,10 @@ use bun_collections::{HashMap, StringSet};
 use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
-use bun_http::{self as http, AsyncHTTP, HTTPClient, HeaderBuilder};
+use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
-use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
@@ -21,8 +19,8 @@ use crate::bin::{self, Bin};
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
-    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, IdentityContext, PackageManager,
-    PackageNameHash, VersionSlice, initialize_mini_store as initialize_store,
+    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
+    VersionSlice, initialize_mini_store as initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1074,6 +1072,8 @@ pub mod package_manifest {
             let path_to_use_for_opening_file = tmp_path;
             #[cfg(not(windows))]
             let _ = &mut realpath_buf;
+            #[cfg(windows)]
+            let _ = cache_dir;
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut is_using_o_tmpfile = false;
@@ -1186,15 +1186,15 @@ pub mod package_manifest {
                         // Rust `Errno::EOPNOTSUPP` resolves to 102 on Darwin,
                         // so match `ENOTSUP` as well to keep the macOS
                         // `renameat2(.exchange)` fallback reachable. On
-                        // Linux/FreeBSD the two names alias the same value;
-                        // the redundant arm is intentional.
-                        if matches!(
-                            err.get_errno(),
-                            bun_sys::Errno::EEXIST
-                                | bun_sys::Errno::ENOTEMPTY
-                                | bun_sys::Errno::ENOTSUP
-                                | bun_sys::Errno::EOPNOTSUPP
-                        ) {
+                        // Linux/FreeBSD the two names alias the same value,
+                        // so compare by equality (a `matches!` pattern would
+                        // flag the alias as unreachable).
+                        let errno = err.get_errno();
+                        if errno == bun_sys::Errno::EEXIST
+                            || errno == bun_sys::Errno::ENOTEMPTY
+                            || errno == bun_sys::Errno::ENOTSUP
+                            || errno == bun_sys::Errno::EOPNOTSUPP
+                        {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
                                 tmpdir,
@@ -1217,6 +1217,7 @@ pub mod package_manifest {
                 rc?;
             }
 
+            #[cfg(not(windows))]
             Ok(())
         }
 
@@ -1309,7 +1310,6 @@ pub mod package_manifest {
             file_id: u64,
             scope: &registry::Scope,
         ) -> Result<&'b bun_core::ZStr, Error> {
-            use core::fmt::Write as _;
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
             let mut stream = bun_io::FixedBufferStream::new_mut(buf);
             if scope.url_hash == *registry::DEFAULT_URL_HASH {
@@ -2011,7 +2011,7 @@ impl PackageManifest {
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
 
         let mut bundled_deps_set = StringSet::init();
-        let mut bundle_all_deps = false;
+        let mut bundle_all_deps: bool;
 
         let mut bundled_deps_count: usize = 0;
 
@@ -2811,8 +2811,6 @@ impl PackageManifest {
                             }
                         };
                     if items.len() > 0 || has_meta_only_peers {
-                        let mut count = items.len();
-
                         // PORT NOTE: reshaped for borrowck — index into all_extern_strings / version_extern_strings
                         let names_base = dependency_names_cursor;
                         let values_base = dependency_values_cursor;
@@ -2859,11 +2857,6 @@ impl PackageManifest {
                                                     meta_key,
                                                 ),
                                             );
-
-                                            // Reserve a slot for a meta-only synthesised peer.
-                                            // The slot is unused if `meta_key` also appears in
-                                            // `peerDependencies` below.
-                                            count += 1;
                                         }
                                     }
                                 }
@@ -3032,7 +3025,7 @@ impl PackageManifest {
                             }
                         }
 
-                        count = i;
+                        let count = i;
                         // The peer slice was over-reserved by the
                         // number of `peerDependenciesMeta` entries (so
                         // meta-only synthesised peers had room); trim

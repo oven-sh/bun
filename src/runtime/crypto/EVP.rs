@@ -2,7 +2,7 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::{self as bstr, String as BunString, ZigString, strings};
+use bun_core::{String as BunString, ZigString, strings};
 
 use crate::jsc::JSGlobalObject;
 
@@ -199,7 +199,10 @@ pub fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
 }
 
 impl EVP {
-    pub fn init(
+    /// # Safety
+    /// `md` must be a valid `EVP_MD` pointer (BoringSSL static singleton) and
+    /// `engine` must be either null or a valid `ENGINE` pointer.
+    pub unsafe fn init(
         algorithm: Algorithm,
         md: *const boringssl::EVP_MD,
         engine: *mut boringssl::ENGINE,
@@ -216,7 +219,9 @@ impl EVP {
         EVP { ctx, md, algorithm }
     }
 
-    pub fn reset(&mut self, engine: *mut boringssl::ENGINE) {
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
+    pub unsafe fn reset(&mut self, engine: *mut boringssl::ENGINE) {
         // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx was
         // initialized in init() and remains valid for the lifetime of EVP; self.md is a
         // static singleton.
@@ -226,7 +231,9 @@ impl EVP {
         }
     }
 
-    pub fn hash(
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
+    pub unsafe fn hash(
         &mut self,
         engine: *mut boringssl::ENGINE,
         input: &[u8],
@@ -252,7 +259,9 @@ impl EVP {
         Some(outsize)
     }
 
-    pub fn r#final<'a>(
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
+    pub unsafe fn r#final<'a>(
         &mut self,
         engine: *mut boringssl::ENGINE,
         output: &'a mut [u8],
@@ -267,7 +276,8 @@ impl EVP {
             return &mut output[..0];
         }
 
-        self.reset(engine);
+        // SAFETY: caller upholds the `engine` precondition.
+        unsafe { self.reset(engine) };
 
         &mut output[..outsize as usize]
     }
@@ -288,9 +298,12 @@ impl EVP {
         unsafe { boringssl::EVP_MD_CTX_size(&raw const self.ctx) as u16 }
     }
 
-    pub fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
+    pub unsafe fn copy(&self, engine: *mut boringssl::ENGINE) -> Result<EVP, AllocError> {
         boringssl::ERR_clear_error();
-        let mut new = EVP::init(self.algorithm, self.md, engine);
+        // SAFETY: self.md is a static singleton; caller upholds `engine`.
+        let mut new = unsafe { EVP::init(self.algorithm, self.md, engine) };
         // SAFETY: FFI into BoringSSL; both new.ctx and self.ctx are initialized EVP_MD_CTX
         // values (new.ctx via EVP::init above, self.ctx via the invariant on EVP).
         if unsafe { boringssl::EVP_MD_CTX_copy_ex(&raw mut new.ctx, &raw const self.ctx) } == 0 {
@@ -299,14 +312,19 @@ impl EVP {
         Ok(new)
     }
 
-    pub fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
+    /// # Safety
+    /// `engine` must be either null or a valid `ENGINE` pointer.
+    pub unsafe fn by_name_and_engine(engine: *mut boringssl::ENGINE, name: &[u8]) -> Option<EVP> {
         // Zig used getWithEql(name, eqlCaseInsensitiveASCIIIgnoreLength).
         if let Some(algorithm) = lookup_ignore_case(name) {
             if let Some(md) = algorithm.md() {
                 // `Algorithm::md()` lives in `bun_sha_hmac`
                 // and returns that crate's opaque `EVP_MD`; both name the same C
                 // `struct env_md_st`, so a pointer cast is the correct unification.
-                return Some(EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine));
+                // SAFETY: md is a BoringSSL static singleton; caller upholds `engine`.
+                return Some(unsafe {
+                    EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine)
+                });
             }
 
             // PORT NOTE: Zig's `@tagName(algorithm)` is `[:0]const u8` (NUL-terminated).
@@ -316,7 +334,8 @@ impl EVP {
             // C string, which `tag_cstr()` guarantees.
             let md = unsafe { boringssl::EVP_get_digestbyname(algorithm.tag_cstr().as_ptr()) };
             if !md.is_null() {
-                return Some(EVP::init(algorithm, md, engine));
+                // SAFETY: md is non-null from EVP_get_digestbyname; caller upholds `engine`.
+                return Some(unsafe { EVP::init(algorithm, md, engine) });
             }
         }
 
@@ -336,7 +355,8 @@ impl EVP {
             .rare_data()
             .boring_engine()
             .cast::<boringssl::ENGINE>();
-        Self::by_name_and_engine(engine, name_str.slice())
+        // SAFETY: `boring_engine()` returns the VM's lazily-initialized ENGINE (valid or null).
+        unsafe { Self::by_name_and_engine(engine, name_str.slice()) }
     }
 }
 

@@ -10,11 +10,8 @@ use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
 use crate::ungate_support::generic_path_with_pretty_initialized;
-use crate::{
-    Chunk, DeclInfo, DeclInfoKind, Index, JSAst, JSMeta, LinkerContext, Part, PartRange, WrapKind,
-};
+use crate::{Chunk, DeclInfo, DeclInfoKind, Index, LinkerContext, Part, PartRange, WrapKind};
 
-use bun_ast as js_ast;
 use bun_ast::StoreRef;
 use bun_ast::binding::ToExprWrapper;
 use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
@@ -194,7 +191,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // mutates `.path`, and passes `&source`. `bun_ast::Source` is not `Clone`
             // (its `Cow` fields would deep-copy `Owned` data); instead, build a
             // borrowed-field shadow only when the path needs fixing.
-            let mut source_storage: bun_ast::Source;
+            let source_storage: bun_ast::Source;
             let source: &bun_ast::Source = if core::ptr::eq(
                 source_ref.path.text.as_ptr(),
                 source_ref.path.pretty.as_ptr(),

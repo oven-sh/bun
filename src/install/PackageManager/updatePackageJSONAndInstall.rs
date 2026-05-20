@@ -8,11 +8,10 @@ use bstr::BStr;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as json;
-use bun_core::{Error, Global, Output, err};
+use bun_core::{Error, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_install::PackageNameHash;
 use bun_js_printer as js_printer;
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
 
 use super::{
@@ -23,7 +22,6 @@ use super::{
 // its functions directly on the `package_json_editor` module.
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
-use super::patch_package::{do_patch_commit, prepare_patch};
 use super::update_request::Array as UpdateRequestArray;
 
 pub fn update_package_json_and_install_with_manager(

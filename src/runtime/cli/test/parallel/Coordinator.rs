@@ -4,13 +4,13 @@
 //! the run loop entry live in `runner.rs`; this file is the per-run state
 //! and its methods.
 
-use core::ffi::{c_char, c_void};
+use core::ffi::c_void;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
-use bun_core::{PathString, ZStr, strings};
+use bun_core::{PathString, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::FdExt as _;
 
@@ -110,7 +110,7 @@ impl<'a> Coordinator<'a> {
         let _ = self.spawn_worker();
         while !self.is_done() {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
-                return self.abort_all();
+                self.abort_all();
             }
             self.vm.event_loop_ref().tick();
             self.maybe_scale_up();

@@ -531,22 +531,12 @@ impl DependencyVersion {
 /// `&[bun_install::Dependency]` is reinterpretable as `&[Self]` (asserted in
 /// `bun_install::auto_installer`).
 #[repr(C)]
+#[derive(Default)]
 pub struct Dependency {
     pub name_hash: PackageNameHash,
     pub name: SemverString,
     pub version: DependencyVersion,
     pub behavior: Behavior,
-}
-
-impl Default for Dependency {
-    fn default() -> Self {
-        Self {
-            name_hash: 0,
-            name: SemverString::default(),
-            version: DependencyVersion::default(),
-            behavior: Behavior::default(),
-        }
-    }
 }
 
 impl Clone for Dependency {

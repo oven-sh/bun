@@ -11,18 +11,17 @@ use bun_alloc::AllocError;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
 use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
 use bun_core::ZBox;
-use bun_core::{Error, Global, Once, Output, err};
+use bun_core::{Error, Global, Output, err};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
-use bun_http::AsyncHTTP;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
-use bun_paths::{self as path, DELIMITER, PathBuffer, SEP, SEP_STR};
-use bun_semver::{self as Semver, String as SemverString};
+use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
+use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler::{self as transpiler, Transpiler};
@@ -221,10 +220,9 @@ use crate::package_manager_task as Task;
 use crate::resolvers::folder_resolver::FolderResolution;
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
-    ArrayIdentityContext, Dependency, DependencyID, Features, IdentityContext,
-    LifecycleScriptSubprocess, NetworkTask, PackageID, PackageManifestMap,
-    PackageNameAndVersionHash, PackageNameHash, PatchTask, PostinstallOptimizer, PreinstallState,
-    TaskCallbackContext, initialize_store,
+    Dependency, DependencyID, Features, NetworkTask, PackageID, PackageManifestMap,
+    PackageNameAndVersionHash, PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
+    initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1164,7 +1162,7 @@ fn configure_env_for_scripts_run(
     // (lib.rs) `.write()`s the slot via `Transpiler::init` before returning
     // `Ok` — same contract as the runtime impl (run_command.rs:628) and the
     // Zig spec (run_command.zig:780 `this_transpiler.* = try Transpiler.init(...)`).
-    let mut this_transpiler = unsafe { this_transpiler_slot.assume_init() };
+    let this_transpiler = unsafe { this_transpiler_slot.assume_init() };
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
@@ -1492,8 +1490,10 @@ pub fn init(
         let cwd_ptr = CWD_BUF.get().cast::<u8>();
         #[cfg(windows)]
         {
-            let _ =
-                path::path_to_posix_buf::<u8>(top_level_dir_no_trailing_slash, &mut *CWD_BUF.get());
+            let _ = bun_paths::path_to_posix_buf::<u8>(
+                top_level_dir_no_trailing_slash,
+                &mut *CWD_BUF.get(),
+            );
         }
         #[cfg(not(windows))]
         {
@@ -1717,7 +1717,7 @@ pub fn init(
 
                     use crate::bun_json::ExprData;
                     if let Some(prop) = json.as_property(b"workspaces") {
-                        let mut json_array = match prop.expr.data {
+                        let json_array = match prop.expr.data {
                             ExprData::EArray(arr) => arr,
                             ExprData::EObject(obj) => {
                                 if let Some(packages) = obj.get().get(b"packages") {
@@ -2112,7 +2112,9 @@ pub fn init(
         // parent so uSockets timers / lifecycle subprocess waiters can find the
         // mini event loop on tick.
         let uws_loop = manager.event_loop.r#loop();
-        EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
+        // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
+        // the handle's backref is `manager.event_loop`, owned by the singleton.
+        unsafe { EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop) };
     }
     // PORT NOTE: Zig `manager.lockfile = try ctx.allocator.create(Lockfile)` —
     // folded into the struct literal above (`Box::new(Lockfile::default())`) so
@@ -2147,7 +2149,7 @@ pub fn init(
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let evl = unsafe { &mut (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
-            let mini_ptr: *mut MiniEventLoop<'static> = mini;
+            let mini_ptr: *mut MiniEventLoop<'static> = &mut **mini;
             // Zig spec (PackageManager.zig:893) sets ONLY `MiniEventLoop.global`,
             // NOT `globalInitialized`. The distinction is load-bearing: a later
             // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /

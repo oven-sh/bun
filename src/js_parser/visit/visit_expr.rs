@@ -1,13 +1,5 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    unreachable_code
-)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -21,14 +13,9 @@ use crate::parser::{
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
-use bun_alloc::ArenaVecExt as _;
-use bun_alloc::ArenaVecExt as _;
-use bun_alloc::ArenaVecExt as _;
-use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
-use bun_ast::G::Property;
 use bun_ast::flags as Flags;
-use bun_ast::{B, E, Expr, ExprNodeIndex, ExprNodeList, G, Scope, Stmt, Symbol};
+use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Stmt, Symbol};
 
 // Local short-hands so the visitor bodies read close to the Zig
 // (`expr.data.e_dot`, `Expr.Data.e_binary`, `Op.Code.un_typeof`) without a
@@ -821,7 +808,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
-        let mut e_ = expr.data.e_binary().expect("infallible: variant checked");
+        let e_ = expr.data.e_binary().expect("infallible: variant checked");
 
         // The handling of binary expressions is convoluted because we're using
         // iteration on the heap instead of recursion on the call stack to avoid
@@ -1088,7 +1075,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && number.value % 1.0 == 0.0
                 {
                     // "foo"[2] -> "o"
-                    if let Some(mut str_) = target.data.as_e_string() {
+                    if let Some(str_) = target.data.as_e_string() {
                         if !str_.is_utf16 {
                             let literal = str_.data;
                             let num: usize = index

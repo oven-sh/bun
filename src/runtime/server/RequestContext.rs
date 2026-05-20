@@ -1,6 +1,5 @@
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
-use std::sync::Arc;
 
 use bun_sys::FdExt as _;
 
@@ -241,7 +240,7 @@ where
 // Everything below until the helper structs at the bottom is the request
 // state machine: render(), on_abort(), on_resolve(), do_render_*, sendfile,
 // stream handling, error handling.
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use bun_core::Output;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
@@ -273,7 +272,6 @@ use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
 use bun_jsc::SysErrorJsc as _;
-use bun_jsc::event_loop::EventLoop;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
 ///
@@ -406,10 +404,6 @@ mod shim {
         // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
         // (interior-mutable `JsCell<Pipe>`), so shared deref is sufficient.
         bun_ptr::BackRef::from(s).unpipe_without_deref()
-    }
-    #[inline]
-    pub fn request_ensure_url(r: &Request) -> Result<(), bun_alloc::AllocError> {
-        r.ensure_url()
     }
 }
 // `Api::FallbackMessageContainer`/`JsException`/`Problems`/`Fallback::render_backend`
@@ -653,7 +647,7 @@ where
         if let Some(resp) = self.resp {
             self.flags.set_has_abort_handler(true);
             // SAFETY: FFI handle valid while resp is Some
-            resp.on_aborted(Self::on_abort, self);
+            resp.on_aborted(|this, resp| unsafe { Self::on_abort(this, resp) }, self);
         }
     }
 
@@ -672,7 +666,7 @@ where
         if let Some(resp) = self.resp {
             self.flags.set_has_timeout_handler(true);
             // SAFETY: FFI handle valid while resp is Some
-            resp.on_timeout(Self::on_timeout, self);
+            resp.on_timeout(|this, resp| unsafe { Self::on_timeout(this, resp) }, self);
         }
     }
 
@@ -969,12 +963,13 @@ where
 
     pub fn render_missing(&mut self) {
         if let Some(resp) = self.resp {
-            resp.run_corked_with_type(Self::render_missing_corked, self);
+            resp.run_corked_with_type(|ctx| unsafe { Self::render_missing_corked(ctx) }, self);
         }
     }
 
-    pub fn render_missing_corked(ctx: *mut Self) {
-        // SAFETY: ctx is the live RequestContext threaded through cork user-data.
+    /// # Safety
+    /// `ctx` must point to a live `RequestContext` threaded through cork user-data.
+    pub unsafe fn render_missing_corked(ctx: *mut Self) {
         let ctx = unsafe { &mut *ctx };
         if let Some(resp) = ctx.resp {
             if !DEBUG_MODE {
@@ -1089,14 +1084,22 @@ where
 
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            resp.on_writable(Self::on_writable_complete_response_buffer, self);
+            resp.on_writable(
+                |this, off, resp| unsafe {
+                    Self::on_writable_complete_response_buffer(this, off, resp)
+                },
+                self,
+            );
         }
     }
 
     pub fn render_response_buffer(&mut self) {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            resp.on_writable(Self::on_writable_response_buffer, self);
+            resp.on_writable(
+                |this, off, resp| unsafe { Self::on_writable_response_buffer(this, off, resp) },
+                self,
+            );
         }
     }
 
@@ -1174,13 +1177,14 @@ where
         }
     }
 
-    pub fn on_writable_response_buffer(
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub unsafe fn on_writable_response_buffer(
         this: *mut Self,
         _write_offset: u64,
         _resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableResponseBuffer");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
@@ -1191,13 +1195,14 @@ where
     }
 
     // TODO: should we cork?
-    pub fn on_writable_complete_response_buffer_and_metadata(
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub unsafe fn on_writable_complete_response_buffer_and_metadata(
         this: *mut Self,
         write_offset: u64,
         resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableCompleteResponseBufferAndMetadata");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
 
@@ -1217,30 +1222,20 @@ where
         this.send_writable_bytes_for_complete_response_buffer(write_offset, resp)
     }
 
-    pub fn on_writable_complete_response_buffer(
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub unsafe fn on_writable_complete_response_buffer(
         this: *mut Self,
         write_offset: u64,
         resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableCompleteResponseBuffer");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
             return false;
         }
         this.send_writable_bytes_for_complete_response_buffer(write_offset, resp)
-    }
-
-    #[inline]
-    fn any_response(r: *mut Resp<SSL_ENABLED, HTTP3>) -> uws::AnyResponse {
-        if HTTP3 {
-            uws::AnyResponse::H3(r.cast::<bun_uws_sys::h3::Response>())
-        } else if SSL_ENABLED {
-            uws::AnyResponse::SSL(r.cast::<bun_uws_sys::NewAppResponse<true>>())
-        } else {
-            uws::AnyResponse::TCP(r.cast::<bun_uws_sys::NewAppResponse<false>>())
-        }
     }
 
     #[inline]
@@ -1261,18 +1256,6 @@ where
                 (*r.cast::<bun_uws_sys::h3::Request>()).method()
             } else {
                 (*r.cast::<bun_uws_sys::Request>()).method()
-            }
-        }
-    }
-
-    #[inline]
-    fn req_url(r: *mut Req<SSL_ENABLED, HTTP3>) -> &'static [u8] {
-        // SAFETY: see `req_method`.
-        unsafe {
-            if HTTP3 {
-                (*r.cast::<bun_uws_sys::h3::Request>()).url()
-            } else {
-                (*r.cast::<bun_uws_sys::Request>()).url()
             }
         }
     }
@@ -1324,8 +1307,9 @@ where
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
     }
 
-    pub fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub unsafe fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         debug_assert!(this.server.is_some());
@@ -1354,9 +1338,10 @@ where
         }
     }
 
-    pub fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub unsafe fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         // An HTTP/3 stream is destroyed once both sides FIN, so this also
@@ -1537,7 +1522,7 @@ where
     fn on_file_stream_abort(ctx: *mut c_void, resp: uws::AnyResponse) {
         // Route through the real onAbort so flags.aborted, request.signal,
         // and additional_on_abort fire exactly as they did pre-consolidation.
-        Self::on_abort(ctx.cast::<Self>(), resp);
+        unsafe { Self::on_abort(ctx.cast::<Self>(), resp) };
     }
 
     fn on_file_stream_error(ctx: *mut c_void, resp: uws::AnyResponse, _err: bun_sys::Error) {
@@ -1545,9 +1530,14 @@ where
         Self::on_file_stream_complete(ctx, resp);
     }
 
-    pub fn on_writable_bytes(this: *mut Self, write_offset: u64, resp: uws::AnyResponse) -> bool {
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub unsafe fn on_writable_bytes(
+        this: *mut Self,
+        write_offset: u64,
+        resp: uws::AnyResponse,
+    ) -> bool {
         ctx_log!("onWritableBytes");
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
         if this.is_aborted_or_ended() {
@@ -1585,7 +1575,10 @@ where
         } else {
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
-            resp.on_writable(Self::on_writable_bytes, self);
+            resp.on_writable(
+                |this, off, resp| unsafe { Self::on_writable_bytes(this, off, resp) },
+                self,
+            );
             true
         }
     }
@@ -1616,7 +1609,12 @@ where
         } else {
             self.flags.set_has_marked_pending(true);
             // SAFETY: FFI handle
-            resp.on_writable(Self::on_writable_complete_response_buffer, self);
+            resp.on_writable(
+                |this, off, resp| unsafe {
+                    Self::on_writable_complete_response_buffer(this, off, resp)
+                },
+                self,
+            );
         }
 
         true
@@ -1874,8 +1872,9 @@ where
         });
     }
 
-    pub fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
-        // SAFETY: this is a *RequestContext registered as lock.task
+    /// # Safety
+    /// `this` must be a `*mut RequestContext` previously registered as `lock.task`.
+    pub unsafe fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
         Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
     }
 
@@ -1920,9 +1919,11 @@ where
         // SAFETY: `ptr` was `heap::alloc`'d in do_render_stream and is being
         // consumed exactly once here. `JSSink<T>` is repr(transparent), so the
         // inner `HTTPServerWritable` shares the allocation Layout.
-        ResponseStream::<SSL_ENABLED, HTTP3>::destroy(
-            ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
-        );
+        unsafe {
+            ResponseStream::<SSL_ENABLED, HTTP3>::destroy(
+                ptr.as_ptr().cast::<ResponseStream<SSL_ENABLED, HTTP3>>(),
+            );
+        }
     }
 
     fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
@@ -2300,10 +2301,11 @@ where
             || self.server().terminated()
     }
 
-    pub fn do_render_head_response_after_s3_size_resolved(
+    /// # Safety
+    /// `pair` must point to a live stack-local `HeaderResponseSizePair` threaded through cork user-data.
+    pub unsafe fn do_render_head_response_after_s3_size_resolved(
         pair: *mut HeaderResponseSizePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>,
     ) {
-        // SAFETY: pair is a stack local threaded through cork user-data.
         let pair = unsafe { &mut *pair };
         let this = &mut *pair.this;
         this.render_metadata();
@@ -2335,7 +2337,7 @@ where
             };
             let mut pair = HeaderResponseSizePair { this, size };
             resp.run_corked_with_type(
-                Self::do_render_head_response_after_s3_size_resolved,
+                |p| unsafe { Self::do_render_head_response_after_s3_size_resolved(p) },
                 &raw mut pair,
             );
         }
@@ -3009,7 +3011,8 @@ where
                 }
 
                 // when there's no stream, we need to
-                lock.on_receive_value = Some(Self::do_render_with_body_locked);
+                lock.on_receive_value =
+                    Some(|ctx, value| unsafe { Self::do_render_with_body_locked(ctx, value) });
                 lock.task = Some(std::ptr::from_mut::<Self>(this).cast::<c_void>());
 
                 return;
@@ -3066,7 +3069,10 @@ where
             if is_done {
                 this.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                resp.on_writable(Self::on_writable_response_buffer, this);
+                resp.on_writable(
+                    |this, off, resp| unsafe { Self::on_writable_response_buffer(this, off, resp) },
+                    this,
+                );
             }
         }
     }
@@ -3079,15 +3085,16 @@ where
         // This is an important performance optimization
         if self.flags.has_abort_handler() && self.blob.fast_size() < 16384 - 1024 {
             if let Some(resp) = self.resp {
-                resp.run_corked_with_type(Self::do_render_blob_corked, self);
+                resp.run_corked_with_type(|ctx| unsafe { Self::do_render_blob_corked(ctx) }, self);
             }
         } else {
-            Self::do_render_blob_corked(std::ptr::from_mut::<Self>(self));
+            unsafe { Self::do_render_blob_corked(std::ptr::from_mut::<Self>(self)) };
         }
     }
 
-    pub fn do_render_blob_corked(this: *mut Self) {
-        // SAFETY: this is the live RequestContext threaded through cork user-data.
+    /// # Safety
+    /// `this` must point to a live `RequestContext` threaded through cork user-data.
+    pub unsafe fn do_render_blob_corked(this: *mut Self) {
         let this = unsafe { &mut *this };
         this.render_metadata();
         this.render_bytes();
@@ -3536,7 +3543,10 @@ where
             if !resp.try_end(bytes, bytes.len(), self.should_close_connection()) {
                 self.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
-                resp.on_writable(Self::on_writable_bytes, self);
+                resp.on_writable(
+                    |this, off, resp| unsafe { Self::on_writable_bytes(this, off, resp) },
+                    self,
+                );
                 return;
             }
         }
@@ -3568,9 +3578,10 @@ where
         self.do_render();
     }
 
-    pub fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub unsafe fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
         ctx_log!("onBufferedBodyChunk {} {}", chunk.len(), last);
-        // SAFETY: uWS guarantees the user-data ptr is the live RequestContext.
         let this = unsafe { &mut *this };
         debug_assert!(this.resp.is_some());
 
@@ -3774,25 +3785,30 @@ where
         }
     }
 
-    pub fn on_request_body_readable_stream_available(
+    /// # Safety
+    /// `ptr` must be a `*mut RequestContext` previously registered as the body callback context.
+    pub unsafe fn on_request_body_readable_stream_available(
         ptr: *mut c_void,
         global_this: &JSGlobalObject,
         readable: WebCore::ReadableStream,
     ) {
-        // SAFETY: ptr is a *RequestContext
         let this = unsafe { bun_ptr::callback_ctx::<Self>(ptr) };
         debug_assert!(!this.request_body_readable_stream_ref.has());
         this.request_body_readable_stream_ref =
             readable_stream::Strong::init(readable, global_this);
     }
 
-    pub fn on_start_buffering_callback(this: *mut c_void) {
-        // SAFETY: this is a *RequestContext
+    /// # Safety
+    /// `this` must be a `*mut RequestContext` previously registered as the body callback context.
+    pub unsafe fn on_start_buffering_callback(this: *mut c_void) {
         unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_buffering();
     }
 
-    pub fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult {
-        // SAFETY: this is a *RequestContext
+    /// # Safety
+    /// `this` must be a `*mut RequestContext` previously registered as the body callback context.
+    pub unsafe fn on_start_streaming_request_body_callback(
+        this: *mut c_void,
+    ) -> WebCore::DrainResult {
         unsafe { bun_ptr::callback_ctx::<Self>(this) }.on_start_streaming_request_body()
     }
 
@@ -3834,11 +3850,11 @@ where
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;
 
-/// Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
-/// `RequestContext` monomorphs (plain-HTTP/3) are type-reachable via the
-/// blanket H3 impls but never serve requests at runtime — HTTP/3 always
-/// implies TLS. If a future refactor ever routes a promise reaction through
-/// one, fail loudly here instead of silently mismatching `promiseHandlerID`.
+// Trap host fn for the `(false, _, true)` arms of `exported_host_fns`. Those
+// `RequestContext` monomorphs (plain-HTTP/3) are type-reachable via the
+// blanket H3 impls but never serve requests at runtime — HTTP/3 always
+// implies TLS. If a future refactor ever routes a promise reaction through
+// one, fail loudly here instead of silently mismatching `promiseHandlerID`.
 bun_jsc::jsc_host_abi! {
     #[cold]
     unsafe fn unreachable_host_fn(_g: *mut JSGlobalObject, _f: *mut CallFrame) -> JSValue {

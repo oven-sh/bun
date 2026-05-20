@@ -77,15 +77,6 @@ pub struct FrameworkRouter {
     pub freed_edges: Vec<RouteEdgeIndex>,
 }
 
-/// The above structure is optimized for incremental updates, but
-/// production has a different set of requirements:
-/// - Trivially serializable to a binary file (no pointers)
-/// - As little memory indirection as possible.
-/// - Routes cannot be updated after serialization.
-pub struct Serialized {
-    // TODO:
-}
-
 pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
 // TODO(port): ArrayHashMap with custom context (EffectiveURLContext) — needs custom Hash/Eq adapter
 pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
@@ -1067,30 +1058,11 @@ pub enum InsertError {
 }
 bun_core::oom_from_alloc!(InsertError);
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum InsertKind {
-    Static,
-    Dynamic,
-}
-
 // PERF(port): Zig used `comptime insertion_kind` with dependent type `insertion_kind.Pattern()`.
 // Rust models this as a runtime enum carrying both pattern shapes; profile if hot.
 pub enum InsertPattern {
     Static(StaticPattern),
     Dynamic(EncodedPattern),
-}
-
-impl InsertPattern {
-    fn next_part<'a>(
-        &'a self,
-        static_it: &mut Option<StaticPatternIterator<'a>>,
-        dynamic_it: &mut Option<EncodedPatternIterator<'a>>,
-    ) -> Option<Part<'a>> {
-        match self {
-            InsertPattern::Static(_) => static_it.as_mut().unwrap().next(),
-            InsertPattern::Dynamic(_) => dynamic_it.as_mut().unwrap().next(),
-        }
-    }
 }
 
 impl FrameworkRouter {
@@ -1276,16 +1248,9 @@ impl<'a> Part<'a> {
 }
 
 /// An enforced upper bound of 64 unique patterns allows routing to use no heap allocation
+#[derive(Default)]
 pub struct MatchedParams {
     pub params: BoundedArray<MatchedParamEntry, { MatchedParams::MAX_COUNT }>,
-}
-
-impl Default for MatchedParams {
-    fn default() -> Self {
-        Self {
-            params: BoundedArray::default(),
-        }
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -1367,17 +1332,6 @@ impl FrameworkRouter {
         let i = self.routes.len();
         self.routes.push(route_data);
         Ok(RouteIndex::init(u32::try_from(i).expect("int cast")))
-    }
-
-    fn new_edge(&mut self, edge_data: RouteEdge) -> Result<RouteEdgeIndex, AllocError> {
-        if let Some(i) = self.freed_edges.pop() {
-            self.edges[i.get_usize()] = edge_data;
-            Ok(i)
-        } else {
-            let i = self.edges.len();
-            self.edges.push(edge_data);
-            Ok(RouteEdgeIndex::from_usize(i))
-        }
     }
 }
 
@@ -2125,20 +2079,6 @@ impl JSFrameworkRouter {
         );
         obj.put(global, b"pattern", out.transfer_to_js(global)?);
         Ok(obj)
-    }
-
-    fn encoded_pattern_to_js(
-        global: &JSGlobalObject,
-        pattern: &EncodedPattern,
-    ) -> JsResult<JSValue> {
-        let mut rendered: Vec<u8> = Vec::with_capacity(pattern.data().len());
-        let mut it = pattern.iterate();
-        while let Some(part) = it.next() {
-            part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
-                .expect("ByteFmtWriter is infallible");
-        }
-        let mut str = bun_core::String::clone_utf8(&rendered);
-        str.transfer_to_js(global)
     }
 
     fn part_to_js(global: &JSGlobalObject, part: &Part<'_>) -> JsResult<JSValue> {

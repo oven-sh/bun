@@ -1,6 +1,6 @@
 use std::io::Write as _;
 
-use bun_core::{ZStr, env_var, fmt as bun_fmt, output};
+use bun_core::{env_var, fmt as bun_fmt, output};
 use bun_sys::{Fd, File, O};
 use bun_threading::Guarded;
 
@@ -159,23 +159,21 @@ pub fn write_events(
                 return;
             }
             first = true;
-            for name_opt in names {
-                if let Some(name) = name_opt {
-                    if !first {
-                        if writer.write_all(b",").is_err() {
-                            return;
-                        }
-                    }
-                    first = false;
-                    if write!(
-                        writer,
-                        "{}",
-                        bun_fmt::format_json_string_utf8(name.as_bytes(), Default::default())
-                    )
-                    .is_err()
-                    {
+            for name in names.iter().flatten() {
+                if !first {
+                    if writer.write_all(b",").is_err() {
                         return;
                     }
+                }
+                first = false;
+                if write!(
+                    writer,
+                    "{}",
+                    bun_fmt::format_json_string_utf8(name.as_bytes(), Default::default())
+                )
+                .is_err()
+                {
+                    return;
                 }
             }
             if writer.write_all(b"]").is_err() {

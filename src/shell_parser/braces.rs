@@ -811,7 +811,7 @@ fn expand_flat(
     }
 
     let mut depth = depth_;
-    for (_j, atom) in tokens[start..end].iter().enumerate() {
+    for atom in tokens[start..end].iter() {
         match atom {
             Token::Text(txt) => {
                 out[usize::from(out_key)].extend_from_slice(txt.slice());
@@ -871,37 +871,13 @@ fn expand_flat(
     Ok(())
 }
 
-fn calculate_variants_amount(tokens: &[Token]) -> u32 {
-    let mut brace_count: u32 = 0;
-    let mut count: u32 = 0;
-    for tok in tokens {
-        match tok {
-            Token::Comma => count += 1,
-            Token::Open(_) => brace_count += 1,
-            Token::Close => {
-                if brace_count == 1 {
-                    count += 1;
-                }
-                brace_count -= 1;
-            }
-            _ => {}
-        }
-    }
-    count
-}
-
 // FIXME error location
-pub struct ParserErrorMsg {
-    pub msg: Vec<u8>,
-}
-
 // PORT NOTE: lifetime on transient parser struct; `tokens`/`bump` borrowed from caller
 // for the parse() call only — not an AST node.
 pub struct Parser<'a> {
     current: usize,
     tokens: &'a [Token],
     bump: &'a Bump,
-    errors: Vec<ParserErrorMsg>,
 }
 
 impl<'a> Parser<'a> {
@@ -910,7 +886,6 @@ impl<'a> Parser<'a> {
             current: 0,
             tokens,
             bump,
-            errors: Vec::new(),
         }
     }
 
@@ -1001,10 +976,6 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn has_eq_sign(&self, str_: &[u8]) -> Option<u32> {
-        has_eq_sign(str_)
-    }
-
     fn advance(&mut self) -> Token {
         if !self.is_at_end() {
             self.current += 1;
@@ -1020,14 +991,6 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Token::Eof)
     }
 
-    fn expect(&mut self, toktag: TokenTag) -> Token {
-        debug_assert!(toktag == self.peek().tag());
-        if self.check(toktag) {
-            return self.advance();
-        }
-        unreachable!()
-    }
-
     /// Consumes token if it matches
     fn r#match(&mut self, toktag: TokenTag) -> bool {
         if self.peek().tag() == toktag {
@@ -1035,18 +998,6 @@ impl<'a> Parser<'a> {
             return true;
         }
         false
-    }
-
-    fn match_any2(&mut self, toktags: &[TokenTag]) -> Option<Token> {
-        let peeked = self.peek().clone();
-        // PERF(port): was `inline for` — profile if hot.
-        for &tag in toktags {
-            if peeked.tag() == tag {
-                let _ = self.advance();
-                return Some(peeked);
-            }
-        }
-        None
     }
 
     fn match_any(&mut self, toktags: &[TokenTag]) -> bool {
@@ -1061,31 +1012,12 @@ impl<'a> Parser<'a> {
         false
     }
 
-    fn check(&self, toktag: TokenTag) -> bool {
-        self.peek().tag() == toktag
-    }
-
     fn peek(&self) -> &Token {
         &self.tokens[self.current]
     }
 
-    fn peek_n(&self, n: u32) -> &Token {
-        if self.current + n as usize >= self.tokens.len() {
-            return &self.tokens[self.tokens.len() - 1];
-        }
-        &self.tokens[self.current + n as usize]
-    }
-
     fn prev(&self) -> Token {
         self.tokens[self.current - 1].clone()
-    }
-
-    fn add_error(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), ParserError> {
-        use std::io::Write;
-        let mut error_msg: Vec<u8> = Vec::new();
-        write!(&mut error_msg, "{}", args).map_err(|_| ParserError::OutOfMemory)?;
-        self.errors.push(ParserErrorMsg { msg: error_msg });
-        Ok(())
     }
 }
 
@@ -1437,10 +1369,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
 
     fn eat(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
         self.chars.eat()
-    }
-
-    fn read_char(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
-        self.chars.read_char()
     }
 }
 

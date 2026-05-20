@@ -13,17 +13,10 @@ use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 pub type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
 use bun_core::StackCheck;
 
-use super::blocks as blocks_mod;
-use super::containers as containers_mod;
 use super::helpers;
 use super::html_renderer::HtmlRenderer;
-use super::inlines as inlines_mod;
-use super::line_analysis as line_analysis_mod;
-use super::links as links_mod;
-use super::ref_defs as ref_defs_mod;
-use super::render_blocks as render_blocks_mod;
 use super::types::{
-    self, Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
+    Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
     TABLE_MAXCOLCOUNT, VerbatimLine,
 };
 use crate::RenderOptions; // Zig: `root.RenderOptions` (root.zig → crate lib.rs)
@@ -93,7 +86,7 @@ pub struct Parser<'a> {
 
     // Ref defs
     pub ref_defs: Vec<RefDef>,
-    pub ref_def_labels: std::collections::HashSet<Box<[u8]>>,
+    pub ref_def_labels: bun_collections::StringSet,
 
     // State
     pub last_line_has_list_loosening_effect: bool,
@@ -208,7 +201,7 @@ impl<'a> Parser<'a> {
             table_col_count: 0,
             table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
             ref_defs: Vec::new(),
-            ref_def_labels: std::collections::HashSet::new(),
+            ref_def_labels: bun_collections::StringSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
             max_ref_def_output: (16 * (size as u64)).min(1024 * 1024).min(u32::MAX as u64),
@@ -318,10 +311,6 @@ impl<'a> Parser<'a> {
 
 // Silence unused-import warnings for the sibling modules referenced only in
 // the doc-comment above.
-use {
-    blocks_mod as _, containers_mod as _, inlines_mod as _, line_analysis_mod as _, links_mod as _,
-    ref_defs_mod as _, render_blocks_mod as _, types as _,
-};
 
 // ========================================
 // Public API

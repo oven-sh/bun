@@ -299,6 +299,15 @@ diverging_sub_expression = "allow"
 declare_interior_mutable_const = "allow"
 empty_line_after_doc_comments = "allow"
 empty_docs = "allow"
+excessive_precision = "allow"
+unreadable_literal = "allow"
+approx_constant = "allow"
+result_unit_err = "allow"
+only_used_in_recursion = "allow"
+# `as u32` etc. is identity on some libc targets, required widen on others
+unnecessary_cast = "allow"
+new_ret_no_self = "allow"
+map_identity = "allow"
 
 [workspace.dependencies]
 rust-argon2 = "3.0"

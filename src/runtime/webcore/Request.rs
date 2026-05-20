@@ -1,7 +1,7 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
 
 use core::cell::Cell;
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_uint;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
@@ -11,7 +11,7 @@ use super::response::HeadersRef;
 use crate::api::AnyRequestContext;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::ZigStringBlobExt as _;
-use crate::webcore::body::{self, Body, BodyHiveHandle, BodyMixin, Value as BodyValue};
+use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
     self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
 };
@@ -687,7 +687,7 @@ impl Request {
                     formatter.write_indent(writer)?;
                     let size = self.body_value_mut().size();
                     if size == 0 {
-                        let mut empty = Blob::init_empty(formatter.global_this());
+                        let empty = Blob::init_empty(formatter.global_this());
                         empty.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                     } else {
                         crate::webcore::blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(
@@ -935,7 +935,7 @@ impl Request {
                         #[cfg(debug_assertions)]
                         debug_assert!(self.size_of_url() == url.len());
 
-                        let mut href = bun_url::href_from_string(&BunString::from_bytes(url));
+                        let href = bun_url::href_from_string(&BunString::from_bytes(url));
                         if !href.is_empty() {
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
                                 self.url.set(BunString::clone_latin1(&url[..href.length()]));

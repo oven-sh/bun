@@ -9,7 +9,6 @@
 
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::String as BunString;

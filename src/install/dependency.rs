@@ -7,7 +7,7 @@ use bun_semver::{SlicedString, String};
 
 use crate::hosted_git_info;
 use crate::repository::Repository;
-use crate::{Features, PackageManager, PackageNameHash};
+use crate::{PackageManager, PackageNameHash};
 
 // ──────────────────────────────────────────────────────────────────────────
 // NpmAliasRegistry — exposes only the one `PackageManager` method `parse`

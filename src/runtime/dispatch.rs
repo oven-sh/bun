@@ -28,7 +28,7 @@ pub mod js2native;
 
 use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ManagedTask::ManagedTask;
-use bun_event_loop::{Task, TaskTag, task_tag};
+use bun_event_loop::{Task, task_tag};
 
 // `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
 // `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
@@ -139,7 +139,7 @@ use crate::node::zlib::{
     native_brotli::NativeBrotli, native_zlib::NativeZlib, native_zstd::NativeZstd,
 };
 
-use crate::dns_jsc::{GetAddrInfoRequest, Resolver as DNSResolver, get_addr_info_request};
+use crate::dns_jsc::{Resolver as DNSResolver, get_addr_info_request};
 use crate::server::ServerAllConnectionsClosedTask;
 
 use crate::api::bun_process::Process;
@@ -258,7 +258,9 @@ pub fn run_task(
         }
         task_tag::ManagedTask => {
             // Zig: `any.run() catch |err| reportErrorOrTerminate(global, err)`.
-            if let Err(err) = ManagedTask::run(cast_ptr!(ManagedTask)) {
+            // SAFETY: `task.ptr` was produced by `heap::alloc` in `ManagedTask::new`
+            // and enqueued under `task_tag::ManagedTask`; `run` consumes/frees it.
+            if let Err(err) = unsafe { ManagedTask::run(cast_ptr!(ManagedTask)) } {
                 report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
             }
         }
@@ -270,18 +272,23 @@ pub fn run_task(
         }
 
         // ── archive ──────────────────────────────────────────────────────
-        task_tag::ArchiveExtractTask => {
+        // SAFETY: `cast_ptr!` yields the heap-allocated task registered with this
+        // tag; the JS-thread dispatch is the sole owner at this point.
+        task_tag::ArchiveExtractTask => unsafe {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveExtractTask))?;
-        }
-        task_tag::ArchiveBlobTask => {
+        },
+        // SAFETY: see ArchiveExtractTask arm above.
+        task_tag::ArchiveBlobTask => unsafe {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveBlobTask))?;
-        }
-        task_tag::ArchiveWriteTask => {
+        },
+        // SAFETY: see ArchiveExtractTask arm above.
+        task_tag::ArchiveWriteTask => unsafe {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveWriteTask))?;
-        }
-        task_tag::ArchiveFilesTask => {
+        },
+        // SAFETY: see ArchiveExtractTask arm above.
+        task_tag::ArchiveFilesTask => unsafe {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveFilesTask))?;
-        }
+        },
 
         // ── shell interpreter (cold — hoisted to `run_task_cold`) ────────
         task_tag::ShellAsync
@@ -305,12 +312,15 @@ pub fn run_task(
         task_tag::FetchTasklet => {
             cast!(FetchTasklet).on_progress_update()?;
         }
-        task_tag::S3HttpSimpleTask => {
+        // SAFETY: `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
+        // is the sole owner here.
+        task_tag::S3HttpSimpleTask => unsafe {
             S3HttpSimpleTask::on_response(cast_ptr!(S3HttpSimpleTask))?;
-        }
-        task_tag::S3HttpDownloadStreamingTask => {
+        },
+        // SAFETY: see S3HttpSimpleTask arm above.
+        task_tag::S3HttpDownloadStreamingTask => unsafe {
             S3HttpDownloadStreamingTask::on_response(cast_ptr!(S3HttpDownloadStreamingTask));
-        }
+        },
 
         // ── glob / image / transpiler ────────────────────────────────────
         task_tag::AsyncGlobWalkTask => run_then_destroy!(AsyncGlobWalkTask<'_>),
@@ -430,12 +440,14 @@ pub fn run_task(
         }
 
         // ── server / bundler / streams ───────────────────────────────────
-        task_tag::ServerAllConnectionsClosedTask => {
+        // SAFETY: `cast_ptr!` yields the heap-allocated task; JS-thread dispatch
+        // is the sole owner here.
+        task_tag::ServerAllConnectionsClosedTask => unsafe {
             ServerAllConnectionsClosedTask::run_from_js_thread(
                 cast_ptr!(ServerAllConnectionsClosedTask),
                 vm,
             )?;
-        }
+        },
         task_tag::BundleV2DeferredBatchTask => {
             // Zig: `Plugin.drainDeferred` is wrapped in `fromJSHostCallGeneric`
             // (== `call_check_slow`) and the only caller does `catch return`.
@@ -447,12 +459,14 @@ pub fn run_task(
                 cast!(BundleV2DeferredBatchTask).run_on_js_thread();
             });
         }
-        task_tag::FlushPendingFileSinkTask => {
+        // SAFETY: `cast_ptr!` yields the heap-allocated task; sole owner.
+        task_tag::FlushPendingFileSinkTask => unsafe {
             FlushPendingFileSinkTask::run_from_js_thread(cast_ptr!(FlushPendingFileSinkTask));
-        }
-        task_tag::StreamPending => {
+        },
+        // SAFETY: `cast_ptr!` yields the heap-allocated task; sole owner.
+        task_tag::StreamPending => unsafe {
             StreamPending::run_from_js_thread(cast_ptr!(StreamPending));
-        }
+        },
 
         // ── timer wrappers (declared in the union but never dispatched
         //    here in Zig either — see Task.zig trailing `else`) ───────────
@@ -745,7 +759,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let loader = owner.ptr as *mut GetAddrInfoRequest;
+                let loader = owner.ptr as *mut crate::dns_jsc::GetAddrInfoRequest;
                 get_addr_info_request::BackendLibInfo::on_machport_change(loader);
             }
             #[cfg(not(target_os = "macos"))]
@@ -774,7 +788,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             })
         }
 
-        poll_tag::NULL | _ => {
+        poll_tag::NULL => {
             // Zig: `else => log("onUpdate ... disconnected? (maybe: {s})")`.
             // The low-tier `on_update` already logged before calling the hook
             // when it was null; here we just no-op the unknown tag.
@@ -1143,14 +1157,17 @@ pub unsafe fn __bun_js_timer_epoch(
 /// `bun_jsc::event_loop`. `el` is the queue to drain (Zig
 /// `tickQueueWithCount(this, ...)`); for `SpawnSyncEventLoop.tickTasksOnly`
 /// this is the isolated loop, **not** `vm.event_loop()`.
+///
+/// # Safety
+/// `el` and `vm` must point at live `EventLoop`/`VirtualMachine` instances
+/// with no other `&mut` held across this call.
 #[unsafe(no_mangle)]
-pub fn __bun_tick_queue_with_count(
+pub unsafe fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
 ) -> Result<(), JsTerminated> {
-    // SAFETY: `el`/`vm` are live per caller contract; no other `&mut` to either
-    // is held across this call.
+    // SAFETY: per fn contract.
     let (el, vm_ref) = unsafe { (&mut *el, &mut *vm) };
     tick_queue_with_count(el, vm_ref, counter)
 }
@@ -1178,7 +1195,9 @@ pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
         // parked (`shutdown_for_exit` precedes `destroy`), so the
         // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
         task_tag::FetchTasklet => {
-            FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
+            // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
+            // already parked so we hold the sole reference.
+            unsafe { FetchTasklet::deref(task.ptr.cast::<FetchTasklet>()) };
             true
         }
         // `AsyncFSTask`s are `Box::leak`'d in `create()` and freed by

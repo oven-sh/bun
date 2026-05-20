@@ -3,7 +3,6 @@ use core::fmt;
 
 use bstr::BStr;
 
-use bun_alloc::AllocError;
 use bun_core::fmt::{PathFormatOptions, PathSep, fmt_path_u8 as fmt_path};
 use bun_semver as semver;
 use bun_semver::String;
@@ -12,7 +11,7 @@ use bun_core::strings;
 use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
 
-use crate::dependency::{self, DependencyExt as _, TagExt as _};
+use crate::dependency::{self, TagExt as _};
 use crate::repository::{Repository, RepositoryExt as _};
 use crate::versioned_url::VersionedURLType;
 

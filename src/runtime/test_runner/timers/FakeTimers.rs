@@ -1,6 +1,6 @@
-use core::mem::offset_of;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use bun_threading::RwLock;
 
 use bun_core::Environment;
 use bun_core::Timespec;
@@ -16,6 +16,7 @@ unsafe extern "C" {
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
 }
 
+#[derive(Default)]
 pub struct FakeTimers {
     active: bool,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
@@ -23,12 +24,6 @@ pub struct FakeTimers {
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
     /// - count (cannot be implemented efficiently with TimerHeap)
     pub timers: TimerHeap,
-}
-
-impl Default for FakeTimers {
-    fn default() -> Self {
-        Self { active: false, timers: TimerHeap::default() }
-    }
 }
 
 // PORT NOTE: Zig `pub var current_time: struct { ... } = .{}` — anonymous-typed mutable global.
@@ -49,7 +44,7 @@ pub static CURRENT_TIME: CurrentTime = CurrentTime {
 
 impl CurrentTime {
     pub fn get_timespec_now(&self) -> Option<Timespec> {
-        let value = *self.offset_raw.read().unwrap();
+        let value = *self.offset_raw.read();
         if value.eql(&MIN_TIMESPEC) {
             return None;
         }
@@ -61,7 +56,7 @@ impl CurrentTime {
     pub fn set(&self, global: &JSGlobalObject, offset: &Timespec, js: Option<f64>) {
         let vm = global.bun_vm().as_mut();
         {
-            *self.offset_raw.write().unwrap() = *offset;
+            *self.offset_raw.write() = *offset;
         }
         // Mirror into T0 storage so `Timespec::now(.allow_mocked_time)` sees
         // the fake clock (spec bun.zig:3223 — `getRoughTickCount`).
@@ -85,7 +80,7 @@ impl CurrentTime {
     pub fn clear(&self, global: &JSGlobalObject) {
         let vm = global.bun_vm().as_mut();
         {
-            *self.offset_raw.write().unwrap() = MIN_TIMESPEC;
+            *self.offset_raw.write() = MIN_TIMESPEC;
         }
         bun_core::mock_time::clear();
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
@@ -119,13 +114,6 @@ fn timers_lock_guard() -> bun_threading::MutexGuard {
     // via shared `&Mutex` only (interior mutability), so this forms no aliased
     // `&mut` with the surrounding `fake_timers` writes.
     unsafe { &(*timer_all()).lock }.lock_guard()
-}
-
-/// Convert `bun_core::Timespec` → the low-tier `bun_event_loop` Timespec stub
-/// (same `{sec,nsec}` shape, different nominal type until they are unified).
-#[inline]
-fn to_el_timespec(t: &Timespec) -> ElTimespec {
-    ElTimespec { sec: t.sec, nsec: t.nsec }
 }
 
 #[inline]
@@ -522,7 +510,7 @@ fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 }
 
 #[bun_jsc::host_fn]
-fn is_fake_timers(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+fn is_fake_timers(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
     // SAFETY: per-thread `timer::All`.
     let this = unsafe { &(*timers).fake_timers };

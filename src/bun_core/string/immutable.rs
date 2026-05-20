@@ -52,9 +52,7 @@ pub use unicode_draft::{
     utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
-mod escape_reg_exp {
-    pub(super) use crate::string::escape_reg_exp::*;
-}
+mod escape_reg_exp {}
 
 /// `bun.strings.visible` — terminal-visible-width helpers (East-Asian-width +
 /// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` — see [`ENABLE_SIMD`]).
@@ -71,7 +69,7 @@ pub use visible_impl::{
 pub mod visible_fallback {
     pub mod width {
         pub mod exclude_ansi_colors {
-            use crate::string::immutable::{index_of_char_usize, wtf8_byte_sequence_length};
+            use crate::string::immutable::wtf8_byte_sequence_length;
 
             /// Skip a CSI/OSC escape starting at `input[0] == ESC`; returns
             /// the byte length consumed (at least 1). Mirrors the parser in
@@ -1461,31 +1459,12 @@ pub fn has_suffix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
         && eql_comptime_check_len_with_type::<u8, false>(&self_[self_.len() - alt.len()..], alt)
 }
 
-#[cfg(debug_assertions)]
 fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    eql_comptime_debug_runtime_fallback(a, b, check_len)
-}
-#[cfg(not(debug_assertions))]
-fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    eql_comptime_check_len_u8_impl(a, b, check_len)
-}
-
-fn eql_comptime_debug_runtime_fallback(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    if check_len {
-        a == b
-    } else {
-        &a[0..b.len()] == b
-    }
-}
-
-fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
     // PERF(port): Zig unrolled at comptime over b.len in usize/u32/u16/u8 chunks.
     // Rust cannot iterate a runtime slice at const-eval. Slice equality compiles
     // to memcmp; for short literals LLVM should emit comparable code.
     if check_len {
-        if a.len() != b.len() {
-            return false;
-        }
+        return a == b;
     }
     debug_assert!(a.len() >= b.len());
     // SAFETY: when `check_len`, the early-return above gives `a.len()==b.len()`.
@@ -2292,7 +2271,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     };
 
-    let mut iter = CodepointIterator::init_offset(text, 0);
+    let iter = CodepointIterator::init_offset(text, 0);
     let mut cursor = unicode::Cursor {
         i: first_newline_or_nonascii_i,
         ..Default::default()

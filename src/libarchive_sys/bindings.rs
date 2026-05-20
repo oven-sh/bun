@@ -4,9 +4,7 @@
     clippy::missing_safety_doc
 )]
 
-use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 use bun_core::{Fd, FileKind, Mode, kind_from_mode};
 use bun_core::{WStr, ZStr};
@@ -339,12 +337,12 @@ const ARCHIVE_EXTRACT_SAFE_WRITES: c_int = 0x40000;
 // Archive (opaque FFI handle)
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Opaque libarchive `struct archive` handle. Always used behind `*mut Archive`.
-///
-/// `_p` is wrapped in `UnsafeCell` so the type is `!Freeze`: libarchive mutates
-/// the C-side state through every call, and the Zig spec passes `*Archive`
-/// (mutable) everywhere. Without `UnsafeCell`, deriving a `*mut` from `&Archive`
-/// and letting C write through it is UB.
+// Opaque libarchive `struct archive` handle. Always used behind `*mut Archive`.
+//
+// `_p` is wrapped in `UnsafeCell` so the type is `!Freeze`: libarchive mutates
+// the C-side state through every call, and the Zig spec passes `*Archive`
+// (mutable) everywhere. Without `UnsafeCell`, deriving a `*mut` from `&Archive`
+// and letting C write through it is UB.
 bun_opaque::opaque_ffi! { pub struct Archive; }
 
 #[repr(i32)]
@@ -448,7 +446,6 @@ unsafe extern "C" {
     fn archive_read_next_header(a: *mut Archive, entry: *mut *mut ArchiveEntry) -> ArchiveResult;
     safe fn archive_read_next_header2(a: &Archive, entry: &ArchiveEntry) -> ArchiveResult;
     fn archive_read_data(a: *mut Archive, buf: *mut c_void, len: usize) -> isize;
-    safe fn archive_read_data_into_fd(a: &Archive, fd: c_int) -> ArchiveResult;
     safe fn archive_read_support_filter_all(a: &Archive) -> ArchiveResult;
     safe fn archive_read_support_filter_by_code(a: &Archive, code: c_int) -> ArchiveResult;
     safe fn archive_read_support_filter_compress(a: &Archive) -> ArchiveResult;
@@ -635,13 +632,16 @@ impl Archive {
         archive_write_open_fd(self, fd.uv())
     }
 
-    pub fn write_open_memory(
+    /// # Safety
+    /// `buf` must be writable for `buf_size` bytes for the lifetime of the
+    /// archive write session; libarchive stores the pointer.
+    pub unsafe fn write_open_memory(
         &self,
         buf: *mut c_void,
         buf_size: usize,
         used: &mut usize,
     ) -> ArchiveResult {
-        // SAFETY: FFI call on valid opaque libarchive handle.
+        // SAFETY: FFI call on valid opaque libarchive handle; caller upholds `buf`.
         unsafe { archive_write_open_memory(self.as_mut_ptr(), buf, buf_size, used) }
     }
 
@@ -823,6 +823,8 @@ impl Archive {
         can_use_pwrite: &mut bool,
         can_use_lseek: &mut bool,
     ) -> ArchiveResult {
+        #[cfg(windows)]
+        let _ = can_use_pwrite;
         let mut target_offset: i64 = 0; // Updated by archive.next() - where this block should be written
         let mut actual_offset: i64 = 0; // Where we've actually written to (for write() path)
         let mut final_offset: i64 = 0; // Track the furthest point we need the file to extend to
@@ -971,11 +973,11 @@ pub struct Block {
 // Archive::Entry (opaque FFI handle)
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Opaque libarchive `struct archive_entry` handle.
-///
-/// `_p` is wrapped in `UnsafeCell` so the type is `!Freeze`: libarchive mutates
-/// entry state through setters and `archive_read_next_header2`. The Zig spec
-/// passes `*Entry` (mutable) — without `UnsafeCell`, `&ArchiveEntry → *mut` is UB.
+// Opaque libarchive `struct archive_entry` handle.
+//
+// `_p` is wrapped in `UnsafeCell` so the type is `!Freeze`: libarchive mutates
+// entry state through setters and `archive_read_next_header2`. The Zig spec
+// passes `*Entry` (mutable) — without `UnsafeCell`, `&ArchiveEntry → *mut` is UB.
 bun_opaque::opaque_ffi! { pub struct ArchiveEntry; }
 
 unsafe extern "C" {
@@ -2061,18 +2063,10 @@ pub const OLD_ARCHIVE_ENTRY_ACL_STYLE_EXTRA_ID: c_int = 1024;
 pub const OLD_ARCHIVE_ENTRY_ACL_STYLE_MARK_DEFAULT: c_int = 2048;
 
 /// Growing memory buffer for archive writes with libarchive callbacks
+#[derive(Default)]
 pub struct GrowingBuffer {
     pub list: Vec<u8>,
     pub had_error: bool,
-}
-
-impl Default for GrowingBuffer {
-    fn default() -> Self {
-        Self {
-            list: Vec::new(),
-            had_error: false,
-        }
-    }
 }
 
 impl GrowingBuffer {

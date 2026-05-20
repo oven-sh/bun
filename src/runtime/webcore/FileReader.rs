@@ -1,18 +1,18 @@
 use core::cell::{Cell, UnsafeCell};
 use core::mem;
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use bun_io as aio;
 use bun_io::{BufferedReader, FileType, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 
-use crate::webcore::blob::{self, Blob};
+use crate::webcore::blob;
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
 use crate::webcore::node_types::PathOrFileDescriptor;
-use crate::webcore::readable_stream::{self, ReadableStream};
+use crate::webcore::readable_stream;
 use crate::webcore::streams;
 
 bun_core::declare_scope!(FileReader, visible);
@@ -79,7 +79,8 @@ impl Default for FileReader {
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
             // TODO(port): event_loop has no Zig default; callers must overwrite before use
-            event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
+            // SAFETY: sentinel only; never dispatched (overwritten before use).
+            event_loop: Cell::new(unsafe { EventLoopHandle::init(core::ptr::null_mut()) }),
             lazy: JsCell::new(Lazy::None),
             buffered: JsCell::new(Vec::new()),
             read_inside_on_pull: JsCell::new(ReadDuringJSOnPullResult::None),
@@ -347,9 +348,11 @@ impl FileReader {
         // `bun_vm()` returns a raw `*mut VirtualMachine` (never null for a Bun
         // global); deref to call `event_loop()`.
         let global = self.parent_global();
-        self.event_loop.set(EventLoopHandle::init(
-            global.bun_vm().as_mut().event_loop().cast::<()>(),
-        ));
+        // SAFETY: `bun_vm()` is the live thread-local VM; `event_loop()` is its
+        // per-thread `jsc::EventLoop`.
+        self.event_loop.set(unsafe {
+            EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>())
+        });
     }
 
     pub fn on_start(&self) -> streams::Start {
@@ -418,9 +421,11 @@ impl FileReader {
         // global); deref to call `event_loop()`.
         {
             let global = self.parent_global();
-            self.event_loop.set(EventLoopHandle::init(
-                global.bun_vm().as_mut().event_loop().cast::<()>(),
-            ));
+            // SAFETY: `bun_vm()` is the live thread-local VM; `event_loop()` is its
+            // per-thread `jsc::EventLoop`.
+            self.event_loop.set(unsafe {
+                EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>())
+            });
         }
 
         if was_lazy {
@@ -671,7 +676,7 @@ impl FileReader {
                     }
 
                     // PORT NOTE: nested `defer buffer.clearAndFree` folded into the arms.
-                    let mut buffer = self.buffered.replace(Vec::new());
+                    let buffer = self.buffered.replace(Vec::new());
                     if !buffer.is_empty() {
                         if self.pending_view.get().len() >= buffer.len() {
                             self.pending_view
@@ -801,7 +806,7 @@ impl FileReader {
         // TODO(port): lifetime — `buffer` borrows a JS typed array kept alive by `array`.
         array.ensure_still_alive();
         let _keep = EnsureStillAlive(array);
-        let mut drained = self.drain();
+        let drained = self.drain();
 
         if drained.len() > 0 {
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), drained.len());
@@ -1028,7 +1033,7 @@ impl FileReader {
         }
     }
 
-    pub fn set_raw_mode(&self, flag: bool) -> sys::Result<()> {
+    pub fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {
         #[cfg(not(windows))]
         {
             // TODO(port): comptime string concat with Environment.os.displayString()
@@ -1036,7 +1041,7 @@ impl FileReader {
         }
         #[cfg(windows)]
         {
-            self.reader().set_raw_mode(flag)
+            self.reader().set_raw_mode(_flag)
         }
     }
 

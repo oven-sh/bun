@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use core::ffi::{c_char, c_int, c_void};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use core::ffi::{c_char, c_int};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use const_format::{concatcp, formatcp};
 
@@ -9,8 +9,9 @@ use crate::env; // @import("./env.zig")
 use crate::env::version_string;
 use crate::output as Output; // @import("./output.zig")
 
-use crate::{USE_MIMALLOC, debug_allocator_data};
-use bun_alloc as alloc;
+use crate::USE_MIMALLOC;
+#[cfg(debug_assertions)]
+use crate::debug_allocator_data;
 // MOVE_DOWN: bun_core::ZStr → bun_core (move-in pass).
 use crate::ZStr;
 
@@ -51,7 +52,7 @@ pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
 /// removes it before re-raising so the signal goes to the OS default.
 #[cfg(windows)]
-pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<c_void> =
+pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<core::ffi::c_void> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -544,15 +545,6 @@ pub fn get_start_time() -> i128 {
 // Thread naming
 // ──────────────────────────────────────────────────────────────────────────
 
-#[cfg(windows)]
-// MOVE_DOWN: bun_sys::windows → crate::windows_sys (T0 leaf shim).
-unsafe extern "system" {
-    fn SetThreadDescription(
-        thread: crate::windows_sys::HANDLE,
-        name: *const u16,
-    ) -> crate::windows_sys::HRESULT;
-}
-
 pub fn set_thread_name(name: &ZStr) {
     // Zig `Environment.isLinux` is true on Android (linux OS + android ABI);
     // Rust's `target_os = "linux"` is not, so include android explicitly.
@@ -695,10 +687,8 @@ pub fn exit(code: u32) -> ! {
     {
         if env::ENABLE_ASAN {
             libc_exit(code as i32);
-            libc_abort();
         }
         quick_exit(code as c_int);
-        libc_abort();
     }
 }
 

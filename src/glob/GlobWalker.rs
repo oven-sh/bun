@@ -21,14 +21,12 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use core::ffi::c_int;
-
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, AutoBitSet};
+use bun_collections::AutoBitSet;
 use bun_core::Error;
 use bun_core::define_scoped_log;
 use bun_core::env::IS_WINDOWS;
-use bun_core::strings::{self, UnsignedCodepointIterator as CodepointIterator};
+use bun_core::strings;
 use bun_core::{String as BunString, ZStr};
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_sys::dir_iterator as DirIterator;
@@ -38,78 +36,9 @@ use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as May
 
 define_scoped_log!(log, Glob, visible);
 
-type Cursor = strings::Cursor;
 // PORT NOTE: Zig's `CodepointIterator.Cursor.CodePointType` is `u32` (UnsignedCodepointIterator).
 // The bun_string Cursor stores `c: i32`; cast at the assignment sites.
 type Codepoint = u32;
-
-#[derive(Clone, Copy, Default)]
-struct CursorState {
-    cursor: Cursor,
-    // The index in terms of codepoints
-    // cp_idx: usize,
-}
-
-impl CursorState {
-    fn init(iterator: &CodepointIterator) -> CursorState {
-        let mut this_cursor = Cursor::default();
-        let _ = iterator.next(&mut this_cursor);
-        CursorState {
-            // cp_idx: 0,
-            cursor: this_cursor,
-        }
-    }
-
-    /// Return cursor pos of next codepoint without modifying the current.
-    ///
-    /// NOTE: If there is no next codepoint (cursor is at the last one), then
-    /// the returned cursor will have `c` as zero value and `i` will be >=
-    /// sourceBytes.len
-    fn peek(&self, iterator: &CodepointIterator) -> CursorState {
-        let mut cpy = *self;
-        // If outside of bounds
-        if !iterator.next(&mut cpy.cursor) {
-            // This will make `i >= sourceBytes.len`
-            cpy.cursor.i += u32::from(cpy.cursor.width);
-            cpy.cursor.width = 1;
-            cpy.cursor.c = CodepointIterator::ZERO_VALUE;
-        }
-        // cpy.cp_idx += 1;
-        cpy
-    }
-
-    fn bump(&mut self, iterator: &CodepointIterator) {
-        if !iterator.next(&mut self.cursor) {
-            self.cursor.i += u32::from(self.cursor.width);
-            self.cursor.width = 1;
-            self.cursor.c = CodepointIterator::ZERO_VALUE;
-        }
-        // self.cp_idx += 1;
-    }
-
-    #[inline]
-    fn manual_bump_ascii(&mut self, i: u32, next_cp: Codepoint) {
-        self.cursor.i += i;
-        self.cursor.c = next_cp as _;
-        self.cursor.width = 1;
-    }
-
-    #[inline]
-    fn manual_peek_ascii(&self, i: u32, next_cp: Codepoint) -> CursorState {
-        CursorState {
-            cursor: Cursor {
-                i: self.cursor.i + i,
-                c: next_cp as _, // @truncate
-                width: 1,
-            },
-        }
-    }
-}
-
-fn dummy_filter_true(_val: &[u8]) -> bool {
-    true
-}
-
 fn dummy_filter_false(_val: &[u8]) -> bool {
     false
 }
@@ -169,7 +98,7 @@ pub trait AccessorDirIter {
     type Entry: AccessorDirEntry;
     fn next(&mut self) -> Maybe<Option<Self::Entry>>;
     fn iterate(dir: Self::Handle) -> Self;
-    fn set_name_filter(&mut self, filter: Option<&[u16]>) {
+    fn set_name_filter(&mut self, _filter: Option<&[u16]>) {
         // default: no-op (only SyscallAccessor on Windows uses this)
     }
 }
@@ -833,7 +762,9 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             active.count()
         );
 
-        let mut iterator = A::DirIter::iterate(fd);
+        let iterator = A::DirIter::iterate(fd);
+        #[cfg(windows)]
+        let mut iterator = iterator;
         #[cfg(windows)]
         {
             // computeNtFilter operates on a single pattern component.
@@ -899,11 +830,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
         let wide = strings::convert_utf8_to_utf16_in_buffer(&mut self.nt_filter_buf, slice);
         Some(wide)
-    }
-
-    #[cfg(not(windows))]
-    fn compute_nt_filter(&mut self, _component_idx: u32) -> Option<&[u16]> {
-        None
     }
 
     pub fn next(&mut self) -> Result<Maybe<Option<MatchedPath>>, Error> {
@@ -1199,7 +1125,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let name_z_ref = ZStr::from_slice_with_nul(&name_z[..]);
                             let stat_result = A::lstatat(dir_fd, name_z_ref);
                             let real_kind = match stat_result {
-                                Ok(st) => bun_sys::kind_from_mode(st.st_mode as u32),
+                                Ok(st) => bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode),
                                 Err(_) => continue,
                             };
 
@@ -1573,27 +1499,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Ok(()))
     }
 
-    // NOTE you must check that the pattern at `idx` has `syntax_hint == .Dot` or
-    // `syntax_hint == .DotBack` first
-    //
-    // PORT NOTE: reshaped for borrowck — Zig passed `dir_path: *[:0]u8` (a fat
-    // slice into `path_buf`). Rust passes `dir_path_len: &mut usize` instead.
-    fn collapse_dots(
-        &self,
-        idx: u32,
-        dir_path_len: &mut usize,
-        path_buf: &mut PathBuffer,
-        encountered_dot_dot: &mut bool,
-    ) -> Maybe<u32> {
-        Self::collapse_dots_disjoint(
-            &self.pattern_components,
-            idx,
-            dir_path_len,
-            path_buf,
-            encountered_dot_dot,
-        )
-    }
-
     // PORT NOTE: associated fn taking `pattern_components` so callers can
     // split-borrow it from `&mut self.path_buf` (Zig freely aliased; Rust
     // forbids `&mut self` + `&mut self.path_buf`). Error path builds SysError
@@ -1702,18 +1607,13 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if (component_idx as usize) < pattern_components.len() {
             // Skip `.` and `..` while also appending them to `dir_path`
             component_idx = match pattern_components[component_idx as usize].syntax_hint {
-                SyntaxHint::Dot | SyntaxHint::DotBack => {
-                    match Self::collapse_dots_disjoint(
-                        pattern_components,
-                        component_idx,
-                        dir_path_len,
-                        scratch_path_buf,
-                        encountered_dot_dot,
-                    ) {
-                        Err(e) => return Err(e),
-                        Ok(i) => i,
-                    }
-                }
+                SyntaxHint::Dot | SyntaxHint::DotBack => Self::collapse_dots_disjoint(
+                    pattern_components,
+                    component_idx,
+                    dir_path_len,
+                    scratch_path_buf,
+                    encountered_dot_dot,
+                )?,
                 _ => component_idx,
             };
         }
@@ -1949,15 +1849,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         idx
     }
 
-    #[inline]
-    fn matched_path_to_bun_string(matched_path: &[u8]) -> BunString {
-        // PORT NOTE: in Zig, MatchedPath is `[:0]const u8` (len excludes NUL) and
-        // this fn re-slices `[0..len+1]` to include it. In the port, MatchedPath is
-        // `Box<[u8]>` and join()/dupe_z() already include the trailing NUL when
-        // SENTINEL is true, so callers pass the full slice and no `+1` is needed.
-        BunString::from_bytes(matched_path)
-    }
-
     fn prepare_matched_path_symlink(
         &mut self,
         symlink_full_path: &[u8],
@@ -1999,30 +1890,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // if SENTINEL { return name[0..name.len()-1 :0]; }
         log!("prepared match: {}", bstr::BStr::new(&name_matched_path));
         Ok(Some(name_matched_path))
-    }
-
-    fn append_matched_path(
-        &mut self,
-        entry_name: &[u8],
-        dir_name: &ZStr,
-    ) -> Result<(), AllocError> {
-        let subdir_parts: &[&[u8]] = &[dir_name.as_bytes(), entry_name];
-        let name_matched_path = self.join(subdir_parts)?;
-        // PERF(port): was getOrPut single-probe — two lookups here; profile if hot.
-        if self.matched_paths.contains_key(&name_matched_path) {
-            log!(
-                "(dupe) prepared match: {}",
-                bstr::BStr::new(&name_matched_path)
-            );
-            return Ok(());
-        }
-        self.matched_paths.insert(&name_matched_path, ());
-        Ok(())
-    }
-
-    fn append_matched_path_symlink(&mut self, symlink_full_path: &[u8]) -> Result<(), AllocError> {
-        self.matched_paths.insert(symlink_full_path, ());
-        Ok(())
     }
 
     #[inline]
@@ -2274,44 +2141,6 @@ pub fn is_separator(c: Codepoint) -> bool {
     // only). Separators are ASCII, so the truncating cast is exact when in
     // range; out-of-range codepoints are never separators.
     c <= 0xFF && bun_paths::is_sep_native(c as u8)
-}
-
-#[inline]
-fn unescape(c: &mut u32, glob: &[u32], glob_index: &mut u32) -> bool {
-    if *c == u32::from(b'\\') {
-        *glob_index += 1;
-        if *glob_index as usize >= glob.len() {
-            return false; // Invalid pattern!
-        }
-
-        *c = match glob[*glob_index as usize] {
-            x if x == u32::from(b'a') => 0x61,
-            x if x == u32::from(b'b') => 0x08,
-            x if x == u32::from(b'n') => u32::from(b'\n'),
-            x if x == u32::from(b'r') => u32::from(b'\r'),
-            x if x == u32::from(b't') => u32::from(b'\t'),
-            cc => cc,
-        };
-    }
-
-    true
-}
-
-const GLOB_STAR_MATCH_STR: &[u32] = &[b'/' as u32, b'*' as u32, b'*' as u32];
-
-// src/**/**/foo.ts
-#[inline]
-fn skip_globstars(glob: &[u32], glob_index: &mut u32) {
-    *glob_index += 2;
-
-    // Coalesce multiple ** segments into one.
-    while (*glob_index + 3) as usize <= glob.len()
-        && &glob[*glob_index as usize..(*glob_index + 3) as usize] == GLOB_STAR_MATCH_STR
-    {
-        *glob_index += 3;
-    }
-
-    *glob_index -= 2;
 }
 
 pub fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {

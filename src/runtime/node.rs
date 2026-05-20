@@ -46,7 +46,6 @@ pub use crypto as node_crypto_binding;
 
 #[path = "node/fs_events.rs"]
 pub mod fs_events;
-#[allow(non_snake_case)]
 pub use fs_events as FSEvents;
 
 // Sibling modules node_fs.rs imports by `super::` path. Stat/StatFS/time_like

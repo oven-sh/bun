@@ -1,7 +1,5 @@
 use core::ffi::c_void;
-use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
-use bun_jsc::console_object::Formatter;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
@@ -72,7 +70,7 @@ pub fn to_contain_equal(
             // it immediately spreads the value into an array.
 
             let mut expected_codepoint_cursor = strings::Cursor::default();
-            let mut expected_iter = strings::CodepointIterator::init(expected_string.slice());
+            let expected_iter = strings::CodepointIterator::init(expected_string.slice());
             let _ = expected_iter.next(&mut expected_codepoint_cursor);
 
             pass = if expected_iter.next(&mut expected_codepoint_cursor) {

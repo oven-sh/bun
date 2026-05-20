@@ -6,13 +6,13 @@ use bun_alloc::AllocError;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
+use bun_core::ZStr;
 use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
-use bun_core::{ZStr, strings};
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::lockfile::{self, Format as LockfileFormat, LoadResult, Lockfile};
+use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
-use bun_paths::{self as path, AbsPath, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
 
@@ -431,7 +431,6 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             }
         }
     }
-    unreachable!()
 }
 
 pub struct CacheDir {
@@ -941,6 +940,7 @@ pub fn path_for_cached_npm_path<'a>(
 
     #[cfg(windows)]
     {
+        let _ = cache_dir;
         let mut path_buf = PathBuffer::uninit();
         let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(

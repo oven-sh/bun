@@ -7,8 +7,6 @@
 //! higher-tier type this crate cannot depend on, and the C++ caller only needs
 //! the symbol at link time, not a particular crate.
 
-use core::marker::{PhantomData, PhantomPinned};
-
 use crate::{JSGlobalObject, VM};
 
 use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID};
@@ -177,15 +175,11 @@ pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
                     ),
                 RecordKind::ExportInfoIndirect => {
                     if buffer[i + 1] == StringID::STAR_NAMESPACE {
-                        module_record.add_namespace_export(
-                            identifiers,
-                            buffer[i + 0],
-                            buffer[i + 2],
-                        )
+                        module_record.add_namespace_export(identifiers, buffer[i], buffer[i + 2])
                     } else {
                         module_record.add_indirect_export(
                             identifiers,
-                            buffer[i + 0],
+                            buffer[i],
                             buffer[i + 1],
                             buffer[i + 2],
                         )

@@ -8,8 +8,8 @@ use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, ZigStringSlice, strings};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
-    self as sourcemap, LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap,
-    internal_source_map, line_offset_table,
+    LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap, internal_source_map,
+    line_offset_table,
 };
 
 type LinesHits = Vec<u32>;
@@ -125,7 +125,6 @@ pub mod text {
     // PERF(port): runtime `pretty_fmt` allocates a small Vec per call — if hot,
     // hoist into `const` once the proc-macro lands.
     use bun_core::output::pretty_fmt;
-    use bun_io::Write as _;
 
     pub fn write_format_with_values<const ENABLE_COLORS: bool>(
         filename: &[u8],
@@ -272,9 +271,6 @@ pub mod text {
 
         if prev_line != start_of_line_range {
             if is_first {
-                {
-                    is_first = false;
-                }
             } else {
                 writer.write_all(&comma)?;
             }
@@ -293,7 +289,6 @@ pub mod text {
 
 pub mod lcov {
     use super::*;
-    use bun_io::Write as _;
 
     pub fn write_format(
         report: &Report,
@@ -325,12 +320,12 @@ pub mod lcov {
         // FN: line number,function name
 
         // FNF: functions found
-        write!(writer, "FNF:{}\n", report.functions.len())?;
+        writeln!(writer, "FNF:{}", report.functions.len())?;
 
         // FNH: functions hit
-        write!(
+        writeln!(
             writer,
-            "FNH:{}\n",
+            "FNH:{}",
             report.functions_which_have_executed.count()
         )?;
 
@@ -347,14 +342,14 @@ pub mod lcov {
         let line_hits = report.line_hits.slice();
         while let Some(line) = iter.next() {
             // DA: line number, hit count
-            write!(writer, "DA:{},{}\n", line + 1, line_hits[line])?;
+            writeln!(writer, "DA:{},{}", line + 1, line_hits[line])?;
         }
 
         // LF: lines found
-        write!(writer, "LF:{}\n", report.executable_lines.count())?;
+        writeln!(writer, "LF:{}", report.executable_lines.count())?;
 
         // LH: lines hit
-        write!(writer, "LH:{}\n", report.lines_which_have_executed.count())?;
+        writeln!(writer, "LH:{}", report.lines_which_have_executed.count())?;
 
         writer.write_all(b"end_of_record\n")?;
         Ok(())
@@ -421,23 +416,12 @@ impl<'a> Generator<'a> {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct BasicBlockRange {
     start_offset: c_int,
     end_offset: c_int,
     has_executed: bool,
     execution_count: usize,
-}
-
-impl Default for BasicBlockRange {
-    fn default() -> Self {
-        Self {
-            start_offset: 0,
-            end_offset: 0,
-            has_executed: false,
-            execution_count: 0,
-        }
-    }
 }
 
 pub struct ByteRangeMapping {
@@ -510,8 +494,8 @@ impl ByteRangeMapping {
     ) -> Result<Report, bun_alloc::AllocError> {
         let line_starts = self.line_offset_table.items_byte_offset_to_start_of_line();
 
-        let mut executable_lines: Bitset = Bitset::default();
-        let mut lines_which_have_executed: Bitset = Bitset::default();
+        let mut executable_lines: Bitset;
+        let mut lines_which_have_executed: Bitset;
         // PORT NOTE: Zig's `SavedSourceMap.get` returns a `?*ParsedSourceMap` with a +1
         // intrusive ref (Zig: `defer if (parsed_mappings_) |p| p.deref()`). The Rust port
         // models this as `Option<Arc<ParsedSourceMap>>`, so the +1 is released
@@ -523,7 +507,7 @@ impl ByteRangeMapping {
             bun_jsc::VirtualMachine::VirtualMachine::get().as_mut()
                 .source_mappings()
                 .get(source_url.slice());
-        let mut line_hits = LinesHits::default();
+        let mut line_hits: LinesHits;
 
         let mut functions: Vec<Block> = Vec::new();
         functions.reserve_exact(function_blocks.len());
@@ -533,7 +517,7 @@ impl ByteRangeMapping {
         let mut stmts: Vec<Block> = Vec::new();
         stmts.reserve_exact(function_blocks.len());
 
-        let mut line_count: u32 = 0;
+        let line_count: u32;
 
         if ignore_sourcemap || parsed_mappings_.is_none() {
             line_count = line_starts.len() as u32;

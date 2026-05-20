@@ -1078,7 +1078,7 @@ impl From<bun_ast::ToJSError> for ToJsError {
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
 
-    pub extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
+    extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
         // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
         let (ctx, args) = unsafe { (&mut *ctx, &mut *args) };
         let root = ctx.root;

@@ -1495,7 +1495,7 @@ impl<'a> Putter<'a> {
             }
         }
 
-        Ok(SQLDataCell::construct_object_from_data_cell(
+        SQLDataCell::construct_object_from_data_cell(
             global_object,
             array,
             structure,
@@ -1506,7 +1506,7 @@ impl<'a> Putter<'a> {
             names,
             names_count,
         )
-        .map_err(crate::jsc::js_error_to_postgres)?)
+        .map_err(crate::jsc::js_error_to_postgres)
     }
 
     fn put_impl<const IS_RAW: bool>(

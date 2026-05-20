@@ -12,13 +12,12 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena as ThreadLocalArena; // Zig: bun.allocators.MimallocArena
-use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, MapEntry};
-use bun_core::{self, FeatureFlags, env_var, output as Output};
+use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
 use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 
-use crate::cache::{self as CacheSet, Contents, Entry as CacheEntry, ExternalFreeFunction};
+use crate::cache::{Contents, Entry as CacheEntry, ExternalFreeFunction};
 use crate::linker_context_mod::StmtList;
 // PORT NOTE: `crate::options::Target` is the lower-tier `bun_options_types`
 // enum (re-exported for downstream crates); `BundleOptions.target` is the
@@ -319,13 +318,11 @@ impl ThreadPool {
             return false;
         }
 
+        // 4 was the sweet spot on macOS. Didn't check the sweet spot on Windows.
         #[cfg(any(target_os = "macos", windows))]
-        {
-            // 4 was the sweet spot on macOS. Didn't check the sweet spot on Windows.
-            return bun_core::get_thread_count() > 3;
-        }
-
-        false
+        return bun_core::get_thread_count() > 3;
+        #[cfg(not(any(target_os = "macos", windows)))]
+        return false;
     }
 
     /// Shut down the IO pool, if and only if no `ThreadPool`s exist right now.
@@ -815,8 +812,5 @@ impl Worker {
         }
     }
 }
-
-use bun_ast::Index;
-use bun_ast::Ref;
 
 // ported from: src/bundler/ThreadPool.zig

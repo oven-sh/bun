@@ -432,12 +432,12 @@ impl UpgradedDuplex {
                 .ssl_error
                 .code
                 .as_deref()
-                .map_or(b"\0".as_ptr().cast(), |c| c.as_ptr()),
+                .map_or(c"".as_ptr(), |c| c.as_ptr()),
             reason: self
                 .ssl_error
                 .reason
                 .as_deref()
-                .map_or(b"\0".as_ptr().cast(), |c| c.as_ptr()),
+                .map_or(c"".as_ptr(), |c| c.as_ptr()),
             // TODO(port): us_bun_verify_error_t may have more fields; Zig used implicit defaults.
         }
     }

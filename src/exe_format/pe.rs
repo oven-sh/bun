@@ -187,11 +187,8 @@ const DOS_SIGNATURE: u16 = 0x5A4D; // "MZ"
 const OPTIONAL_HEADER_MAGIC_64: u16 = 0x020B;
 
 // Section characteristics
-const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
 const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x0000_0040;
 const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
-const IMAGE_SCN_MEM_WRITE: u32 = 0x8000_0000;
-const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
 
 // Directory indices and DLL characteristics
 const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
@@ -258,10 +255,6 @@ impl PEFile {
         view_at_const::<DOSHeader>(&self.data, self.dos_header_offset)
     }
 
-    fn get_dos_header_mut(&mut self) -> Result<*mut DOSHeader, Error> {
-        view_at_mut::<DOSHeader>(&mut self.data, self.dos_header_offset)
-    }
-
     fn get_pe_header(&self) -> Result<*const PEHeader, Error> {
         view_at_const::<PEHeader>(&self.data, self.pe_header_offset)
     }
@@ -291,21 +284,6 @@ impl PEFile {
         // bytes are initialized from the input PE image and SectionHeader is repr(C) Copy
         // with no invalid bit patterns.
         Ok(unsafe { slice::from_raw_parts(ptr, self.num_sections as usize) })
-    }
-
-    fn get_section_headers_mut(&mut self) -> Result<&mut [SectionHeader], Error> {
-        let start = self.section_headers_offset;
-        let size = size_of::<SectionHeader>() * self.num_sections as usize;
-        if start + size > self.data.len() {
-            return Err(Error::OutOfBounds);
-        }
-        // SAFETY: bounds-checked above; SectionHeader is #[repr(C)] POD.
-        // TODO(port): potentially unaligned — Zig used []align(1) SectionHeader
-        let ptr = unsafe { self.data.as_mut_ptr().add(start).cast::<SectionHeader>() };
-        // SAFETY: `[start, start + size)` lies within `self.data` per the check above; the
-        // bytes are initialized from the input PE image and SectionHeader is repr(C) Copy
-        // with no invalid bit patterns.
-        Ok(unsafe { slice::from_raw_parts_mut(ptr, self.num_sections as usize) })
     }
 
     pub fn init(pe_data: &[u8]) -> Result<Box<PEFile>, Error> {
@@ -929,10 +907,10 @@ pub mod utils {
 /// This matches the macOS interface but for PE files
 pub const BUN_COMPILED_SECTION_NAME: &str = ".bun";
 
-/// External C interface declarations - these are implemented in C++ bindings
-/// (src/jsc/bindings/c-bindings.cpp). The C++ code uses Windows PE APIs to
-/// directly access the .bun section from the current process memory without
-/// loading the entire executable.
+// External C interface declarations - these are implemented in C++ bindings
+// (src/jsc/bindings/c-bindings.cpp). The C++ code uses Windows PE APIs to
+// directly access the .bun section from the current process memory without
+// loading the entire executable.
 unsafe extern "C" {
     pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;

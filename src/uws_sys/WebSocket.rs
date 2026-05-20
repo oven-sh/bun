@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_uint, c_ushort, c_void};
+use core::ffi::{c_uint, c_ushort, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate as uws;

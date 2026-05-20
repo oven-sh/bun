@@ -8,8 +8,6 @@
 //!
 //! Spec: src/runtime/bake/DevServer/SourceMapStore.zig
 
-use core::mem::offset_of;
-
 use bun_collections::{ArrayHashMap, LinearFifo, linear_fifo::StaticBuffer};
 use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
@@ -78,6 +76,7 @@ pub const WEAK_REF_ENTRY_MAX: usize = 16;
 // PORT NOTE: Zig's `dev_arena` allocator-handle field is dropped — its sole
 // reader was `Entry.arena()` which fed `paths`/`files` frees in `deinit`.
 // In Rust those are `Box`/`Vec` backed by the global mimalloc.
+#[derive(Default)]
 pub struct Entry {
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
@@ -97,17 +96,6 @@ pub struct Entry {
     /// so this is only used for eviction logic, to pretend this was the only
     /// entry. To compute the memory cost of DevServer, this cannot be used.
     pub overlapping_memory_cost: u32,
-}
-
-impl Default for Entry {
-    fn default() -> Self {
-        Self {
-            ref_count: 0,
-            paths: Box::default(),
-            files: Vec::new(),
-            overlapping_memory_cost: 0,
-        }
-    }
 }
 
 impl Entry {
@@ -623,7 +611,11 @@ impl SourceMapStore {
 
         if self.weak_ref_sweep_timer.state != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            Self::timer_all().update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
+            // SAFETY: `self.weak_ref_sweep_timer` is the live inline timer field.
+            unsafe {
+                Self::timer_all()
+                    .update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
+            }
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
@@ -679,7 +671,12 @@ impl SourceMapStore {
     /// reschedule. Called from the high-tier `EventLoopTimer` dispatch with
     /// the raw `*EventLoopTimer` (Zig recovers the store via
     /// `@fieldParentPtr("weak_ref_sweep_timer", t)`).
-    pub fn sweep_weak_refs(
+    ///
+    /// # Safety
+    /// `timer` must point to the `weak_ref_sweep_timer` field of a live
+    /// `SourceMapStore` that is itself the `source_maps` field of a live
+    /// heap-allocated `DevServer`.
+    pub unsafe fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,
     ) {

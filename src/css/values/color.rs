@@ -676,7 +676,7 @@ impl CssColor {
                 fallbacks = fallbacks.difference(ColorFallbackKind::P3.and_below());
             } else if targets
                 .browsers
-                .map_or(false, |b| Feature::LabColors.is_partially_compatible(&b))
+                .is_some_and(|b| Feature::LabColors.is_partially_compatible(&b))
             {
                 // We don't need P3 if Lab is supported by some of our targets.
                 // No browser implements Lab but not P3.
@@ -690,7 +690,7 @@ impl CssColor {
             } else if fallbacks.highest() != ColorFallbackKind::P3
                 && targets
                     .browsers
-                    .map_or(true, |b| !Feature::P3Colors.is_partially_compatible(&b))
+                    .is_none_or(|b| !Feature::P3Colors.is_partially_compatible(&b))
             {
                 // Remove P3 if it isn't supported by any targets, and wasn't the
                 // original authored color.
@@ -877,8 +877,8 @@ impl CssColor {
         // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
         let mut alpha_multiplier = p1 + p2;
         if alpha_multiplier != 1.0 {
-            p1 = p1 / alpha_multiplier;
-            p2 = p2 / alpha_multiplier;
+            p1 /= alpha_multiplier;
+            p2 /= alpha_multiplier;
             if alpha_multiplier > 1.0 {
                 alpha_multiplier = 1.0;
             }
@@ -1006,8 +1006,6 @@ impl ColorFallbackKind {
         })
     }
 }
-
-use super::color_generated::generated_color_conversions as _;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Colorspace traits (replaces Zig comptime mixins: DefineColorspace,
@@ -1185,7 +1183,7 @@ pub fn parse_color_function(
             }
         }),
         b"rgb" | b"rgba" => parse_rgb(input, &mut parser),
-        b"color-mix" => input.parse_nested_block(|i| parse_color_mix(i)),
+        b"color-mix" => input.parse_nested_block(parse_color_mix),
         b"light-dark" => input.parse_nested_block(|i| {
             let light = match CssColor::parse(i)? {
                 CssColor::LightDark { light, dark } => take_light_free_dark(light, dark),
@@ -1217,9 +1215,7 @@ pub fn parse_rgb_components(
             NumberOrPercentage::Number { value } => {
                 let r = value.round().clamp(0.0, 255.0);
                 let g = parser.parse_number(input)?.round().clamp(0.0, 255.0);
-                if let Err(e) = input.expect_comma() {
-                    return Err(e);
-                }
+                input.expect_comma()?;
                 let b = parser.parse_number(input)?.round().clamp(0.0, 255.0);
                 (r, g, b)
             }
@@ -1228,9 +1224,7 @@ pub fn parse_rgb_components(
                 let g = (parser.parse_percentage(input)? * 255.0)
                     .round()
                     .clamp(0.0, 255.0);
-                if let Err(e) = input.expect_comma() {
-                    return Err(e);
-                }
+                input.expect_comma()?;
                 let b = (parser.parse_percentage(input)? * 255.0)
                     .round()
                     .clamp(0.0, 255.0);
@@ -1277,9 +1271,7 @@ pub fn parse_hslhwb_components<T>(
         && input.try_parse(|i| i.expect_comma()).is_ok();
     let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
     if is_legacy_syntax {
-        if let Err(e) = input.expect_colon() {
-            return Err(e);
-        }
+        input.expect_colon()?;
     }
     let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
@@ -1443,9 +1435,7 @@ pub fn parse_hsl_hwb_components<T>(
     let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
 
     if is_legacy_syntax {
-        if let Err(e) = input.expect_comma() {
-            return Err(e);
-        }
+        input.expect_comma()?;
     }
 
     let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
@@ -1496,9 +1486,7 @@ fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult
 
 fn parse_legacy_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
     if !input.is_exhausted() {
-        if let Err(e) = input.expect_comma() {
-            return Err(e);
-        }
+        input.expect_comma()?;
         return Ok(parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0));
     }
     Ok(1.0)
@@ -1523,10 +1511,6 @@ pub fn parse_number_or_percentage(
         NumberOrPercentage::Number { value } => value,
         NumberOrPercentage::Percentage { unit_value } => unit_value,
     })
-}
-
-fn clamp_floor_256_f32(val: f32) -> u8 {
-    val.round().max(0.0).min(255.0) as u8
 }
 
 impl LABColor {
@@ -2022,9 +2006,7 @@ impl ComponentParser {
                 unit_value: value.v,
             })
         } else if self.allow_none {
-            if let Err(e) = input.expect_ident_matching(b"none") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"none")?;
             Ok(NumberOrPercentage::Number { value: f32::NAN })
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2050,9 +2032,7 @@ impl ComponentParser {
         } else if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
             Ok(css::color::AngleOrNumber::Number { value })
         } else if self.allow_none {
-            if let Err(e) = input.expect_ident_matching(b"none") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"none")?;
             Ok(css::color::AngleOrNumber::Number { value: f32::NAN })
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2070,9 +2050,7 @@ impl ComponentParser {
         if let Ok(val) = input.try_parse(Percentage::parse) {
             Ok(val.v)
         } else if self.allow_none {
-            if let Err(e) = input.expect_ident_matching(b"none") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2089,9 +2067,7 @@ impl ComponentParser {
         if let Ok(val) = input.try_parse(CSSNumberFns::parse) {
             Ok(val)
         } else if self.allow_none {
-            if let Err(e) = input.expect_ident_matching(b"none") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2473,20 +2449,16 @@ pub enum ColorSpaceName {
 }
 
 pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
-    if let Err(e) = input.expect_ident_matching(b"in") {
-        return Err(e);
-    }
+    input.expect_ident_matching(b"in")?;
     let method = ColorSpaceName::parse(input)?;
 
     let hue_method_: CssResult<HueInterpolationMethod> = if matches!(
         method,
         ColorSpaceName::Hsl | ColorSpaceName::Hwb | ColorSpaceName::Lch | ColorSpaceName::Oklch
     ) {
-        let hue_method = input.try_parse(|i| HueInterpolationMethod::parse(i));
+        let hue_method = input.try_parse(HueInterpolationMethod::parse);
         if hue_method.is_ok() {
-            if let Err(e) = input.expect_ident_matching(b"hue") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"hue")?;
         }
         hue_method
     } else {
@@ -2494,9 +2466,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     };
 
     let hue_method = hue_method_.unwrap_or(HueInterpolationMethod::Shorter);
-    if let Err(e) = input.expect_comma() {
-        return Err(e);
-    }
+    input.expect_comma()?;
 
     let first_percent_ = input.try_parse(|i| i.expect_percentage());
     let first_color = CssColor::parse(input)?;
@@ -2504,9 +2474,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
         Ok(v) => Some(v),
         Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),
     };
-    if let Err(e) = input.expect_comma() {
-        return Err(e);
-    }
+    input.expect_comma()?;
 
     let second_percent_ = input.try_parse(|i| i.expect_percentage());
     let second_color = CssColor::parse(input)?;

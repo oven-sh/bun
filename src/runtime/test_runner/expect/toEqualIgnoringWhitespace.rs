@@ -1,6 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::Expect;
 
 // PORT NOTE: std.ascii.isWhitespace includes VT (0x0B); Rust's u8::is_ascii_whitespace does not.

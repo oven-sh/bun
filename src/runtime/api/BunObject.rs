@@ -83,34 +83,29 @@ pub fn get_public_path<W: core::fmt::Write>(to: &[u8], origin: &bun_url::URL, wr
     )
 }
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::c_void;
 use std::io::Write as _;
 
-use bun_core::{Environment, Output};
+use bun_core::Output;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, ConsoleObject, ErrorableString, JSFunction,
-    JSGlobalObject, JSObject, JSPromise, JSValue, JsRef, JsResult, WebCore, host_fn,
+    JSGlobalObject, JSObject, JSPromise, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
 use bun_core::{String as BunString, ZigString, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer, WPathBuffer};
+#[cfg(windows)]
+use bun_paths::WPathBuffer;
+use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_url::URL;
 use bun_zlib as zlib;
 
-use crate::api::JSBundler;
-use crate::api::cron;
 use crate::api::csrf_jsc;
-use crate::api::{
-    self, FFIObject, HashObject, JSON5Object, JSONCObject, MarkdownObject, TOMLObject,
-    UnsafeObject, YAMLObject,
-};
+use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, YAMLObject};
 use crate::crypto as Crypto;
 use crate::node;
-use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
 use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use bun_core::zig_string::Slice as ZigStringSlice;
@@ -583,16 +578,11 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         return Err(global_this.throw(format_args!("which: expected 1 argument, got 0")));
     };
 
-    let mut path_str = ZigStringSlice::EMPTY;
-    let mut bin_str = ZigStringSlice::EMPTY;
-    let mut cwd_str = ZigStringSlice::EMPTY;
-    // path_str / bin_str / cwd_str deinit on Drop
-
     if path_arg.is_empty_or_undefined_or_null() {
         return Ok(JSValue::NULL);
     }
 
-    bin_str = path_arg.to_slice(global_this)?;
+    let bin_str = path_arg.to_slice(global_this)?;
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
     }
@@ -606,8 +596,9 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     }
 
     // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
-    path_str = ZigStringSlice::from_utf8_never_free(vm.env_loader().get(b"PATH").unwrap_or(b""));
-    cwd_str = ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
+    let mut path_str =
+        ZigStringSlice::from_utf8_never_free(vm.env_loader().get(b"PATH").unwrap_or(b""));
+    let mut cwd_str = ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
 
     if let Some(arg) = arguments.next_eat() {
         if !arg.is_empty_or_undefined_or_null() && arg.is_object() {
@@ -1367,7 +1358,10 @@ pub fn bun_resolve_sync(
 }
 
 // HOST_EXPORT(Bun__resolveSyncWithPaths, c)
-pub fn bun_resolve_sync_with_paths(
+/// # Safety
+/// `paths_ptr` must be null or point to `paths_len` initialized `BunString`s
+/// that remain valid for the duration of this call.
+pub unsafe fn bun_resolve_sync_with_paths(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
@@ -1615,7 +1609,8 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
             }
             // SAFETY: `init` returned a live heap-allocated server pointer.
             let server_ref: &mut $ServerType = unsafe { &mut *server };
-            let route_list_object = <$ServerType>::listen(server);
+            // SAFETY: `server` is the live heap-allocated server returned by `init`.
+            let route_list_object = unsafe { <$ServerType>::listen(server) };
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
@@ -1673,8 +1668,11 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     }
 }
 
+/// # Safety
+/// `ptr` must point to `len` initialized `u16` values valid for the duration
+/// of this call.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__escapeHTML16(
+pub unsafe extern "C" fn Bun__escapeHTML16(
     global_object: &JSGlobalObject,
     input_value: JSValue,
     ptr: *const u16,
@@ -1708,8 +1706,11 @@ pub extern "C" fn Bun__escapeHTML16(
     }
 }
 
+/// # Safety
+/// `ptr` must point to `len` initialized bytes valid for the duration of this
+/// call.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__escapeHTML8(
+pub unsafe extern "C" fn Bun__escapeHTML8(
     global_object: &JSGlobalObject,
     input_value: JSValue,
     ptr: *const u8,
@@ -2136,7 +2137,7 @@ fn standalone_file_blob(
         return cached.as_ptr().cast::<Blob>();
     }
     let store: StoreRef = Store::init(file.contents.as_bytes().to_vec());
-    let mut blob_body = Blob::init_with_store(store, global);
+    let blob_body = Blob::init_with_store(store, global);
     // PORT NOTE (cyclebreak): `MimeType::by_loader` takes the `#[repr(u8)]`
     // discriminant and an extension; matches Zig spec
     // `MimeType.byLoader(file.loader, std.fs.path.extension(file.name))`.
@@ -2256,8 +2257,12 @@ pub mod environment_variables {
         keys.len()
     }
 
+    /// # Safety
+    /// `ptr` must be the value written by `Bun__getEnvCount` and `i` must be
+    /// less than the count it returned; the backing storage must not have been
+    /// reallocated in between.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__getEnvKey(
+    pub unsafe extern "C" fn Bun__getEnvKey(
         ptr: *const Box<[u8]>,
         i: usize,
         data_ptr: &mut core::mem::MaybeUninit<*const u8>,
@@ -2434,7 +2439,7 @@ pub(crate) fn parse_compress_buffer_and_options(
 #[allow(non_snake_case)]
 pub mod JSZlib {
     use super::*;
-    use bun_jsc::{ComptimeStringMapExt as _, ZigStringJsc as _};
+    use bun_jsc::ComptimeStringMapExt as _;
     use bun_libdeflate_sys::libdeflate as bun_libdeflate;
 
     /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
@@ -2827,7 +2832,6 @@ pub mod JSZlib {
 #[allow(non_snake_case)]
 pub mod JSZstd {
     use super::*;
-    use bun_jsc::virtual_machine::VirtualMachine;
 
     // `no_mangle` dropped: 0 C++ refs, 0 Rust refs (kept for parity with Zig export).
     pub use bun_alloc::c_thunks::mi_free_ctx as deallocator;
@@ -3108,7 +3112,6 @@ mod stdio_stores {
     use crate::node::types::PathOrFileDescriptor;
     use crate::webcore::blob::store::{Data, File as FileStore};
     use crate::webcore::blob::{Blob, BlobExt as _, Store, StoreRef};
-    use core::sync::atomic::AtomicU32;
 
     thread_local! {
         static STDIN: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };

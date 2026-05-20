@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
 
@@ -11,8 +10,8 @@ pub fn to_be_empty(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let (this, value, not) = this.matcher_prelude(global, frame.this(), "toBeEmpty", "")?;
-    let mut pass = false;
+    let (_this, value, not) = this.matcher_prelude(global, frame.this(), "toBeEmpty", "")?;
+    let mut pass;
     let mut formatter = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
 

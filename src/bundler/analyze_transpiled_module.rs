@@ -1,4 +1,4 @@
-use core::ffi::{CStr, c_char};
+use core::ffi::c_char;
 use core::mem::size_of;
 
 use bun_core::{self, err, slice_as_bytes};

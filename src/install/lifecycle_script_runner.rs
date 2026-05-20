@@ -10,16 +10,17 @@ use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;
 use bun_core::{Global, Output};
 use bun_event_loop::AnyEventLoop;
+use bun_io::BufferedReader;
 use bun_io::heap as io_heap;
-use bun_io::{BufferedReader, EventLoopHandle};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_core::ZStr;
-use bun_spawn::{
-    Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status,
-};
-use bun_sys::{Fd, FdExt as _};
+#[cfg(unix)]
+use bun_spawn::SpawnResultExt as _;
+use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
+#[cfg(unix)]
+use bun_sys::Fd;
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects through the uws wrapper
@@ -639,8 +640,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // passed to libuv) and take SOLE ownership from
             // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
             // block below and `filter_run.rs` for the canonical pattern.
-            // `mut` only for the Windows error-path `.deinit()` below.
-            let mut spawn_options = SpawnOptions {
+            let spawn_options = SpawnOptions {
                 stdin: if (*this).foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
@@ -705,7 +705,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            let mut spawned = match bun_spawn::spawn_process(
+            let spawned = match bun_spawn::spawn_process(
                 &spawn_options,
                 // argv is `[*const c_char; 4]` with trailing null — exactly the
                 // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
@@ -729,6 +729,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         // BEFORE building `SpawnOptions` (lifecycle_script_runner.zig:190);
                         // the Rust ordering moved allocation inline (see PORT NOTE above)
                         // and must therefore handle the error path explicitly.
+                        let mut spawn_options = spawn_options;
                         spawn_options.stdout.deinit();
                         spawn_options.stderr.deinit();
                     }
@@ -736,6 +737,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     unreachable!();
                 }
             };
+            #[cfg(windows)]
+            let mut spawned = spawned;
 
             #[cfg(unix)]
             {
@@ -1248,7 +1251,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 bun_spawn::link_impl_ProcessExit! {
     LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, status, &*rusage),
+            (*this).on_process_exit(process, status, rusage),
     }
 }
 

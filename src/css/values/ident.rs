@@ -1,7 +1,6 @@
 use crate::SmallList;
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
-use bun_collections::VecExt;
 
 use bun_ast::Ref;
 use bun_core::strings;
@@ -246,14 +245,8 @@ impl Ident {
 /// In debug mode, if it is a `Ref` we will also set the `__ptrbits` to point to the original
 /// []const u8 so we can debug the string. This should be fine since we use arena
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct IdentOrRef(u128);
-
-impl Default for IdentOrRef {
-    fn default() -> Self {
-        IdentOrRef(0)
-    }
-}
 
 // Zig packed struct(u128) field layout, LSB-first:
 //   __ptrbits: u63  -> bits  0..63
@@ -261,11 +254,6 @@ impl Default for IdentOrRef {
 //   __len:     u64  -> bits 64..128
 const PTRBITS_MASK: u128 = (1u128 << 63) - 1;
 const REF_BIT: u128 = 1u128 << 63;
-
-enum Tag {
-    Ident,
-    Ref,
-}
 
 #[cfg(debug_assertions)]
 pub type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
@@ -342,17 +330,18 @@ impl IdentOrRef {
 
     pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
         let len: u64 = r.to_raw_bits();
-        let mut this = Self::pack(0, true, len);
+        #[cfg(not(debug_assertions))]
+        let this = Self::pack(0, true, len);
 
         #[cfg(debug_assertions)]
-        {
+        let this = {
             let (slice, bump) = debug_ident;
             // bun.handleOom(arena.create(...)) → arena alloc; OOM aborts
             let heap_ptr: &mut *const [u8] = bump.alloc(std::ptr::from_ref::<[u8]>(slice));
             let addr = std::ptr::from_mut::<*const [u8]>(heap_ptr) as usize as u64;
             debug_assert!(addr & (1u64 << 63) == 0);
-            this = Self::pack(addr, true, len);
-        }
+            Self::pack(addr, true, len)
+        };
         #[cfg(not(debug_assertions))]
         {
             let _ = debug_ident;

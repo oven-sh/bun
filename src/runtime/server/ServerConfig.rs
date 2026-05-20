@@ -2,7 +2,7 @@ use std::io::Write as _;
 
 use bun_core::ZBox;
 
-use bun_collections::{StringHashMap, VecExt};
+use bun_collections::StringHashMap;
 use bun_core::strings;
 use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
@@ -341,7 +341,11 @@ impl ServerConfig {
 // `extern "C"` fns per `<SSL, T>` and registers them via the raw
 // `c::uws_method_handler` overload — equivalent to the Zig `handler_wrap` struct.
 
-pub fn apply_static_route<const SSL: bool, T>(
+/// # Safety
+/// `entry` must be a live route pointer that outlives `app` — it is registered
+/// as the uWS userdata and dereferenced from request callbacks for the lifetime
+/// of the app.
+pub unsafe fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
     entry: *mut T,
@@ -412,7 +416,11 @@ pub fn apply_static_route<const SSL: bool, T>(
     }
 }
 
-pub fn apply_static_route_h3<T>(
+/// # Safety
+/// `entry` must be a live route pointer that outlives `app` — it is registered
+/// as the uWS userdata and dereferenced from request callbacks for the lifetime
+/// of the app.
+pub unsafe fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
     entry: *mut T,

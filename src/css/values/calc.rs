@@ -8,39 +8,9 @@ use crate::values::protocol;
 use crate::values::time::Time;
 // Bring the numeric-protocol traits into scope so their methods resolve via the
 // `CalcValue` supertrait bounds inside `impl<V: CalcValue> Calc<V>`.
-use crate::values::protocol::{
-    IsCompatible, MulF32, Parse, ToCss, TryFromAngle, TryMap, TryOp, TryOpTo, TrySign,
-};
+use crate::values::protocol::{IsCompatible, ToCss};
 
 use core::cmp::Ordering;
-
-// TODO(port): `needsDeinit` / `needsDeepclone` were comptime type predicates used to gate
-// per-variant cleanup/clone in Zig. In Rust, `Drop` on `Box<V>` and `V: Clone` subsume
-// these. Kept as unused stubs for parity; safe to delete.
-pub const fn needs_deinit<V>() -> bool {
-    // TODO(port): comptime type switch — not expressible in Rust; subsumed by Drop.
-    true
-}
-
-pub const fn needs_deepclone<V>() -> bool {
-    // TODO(port): comptime type switch — not expressible in Rust; subsumed by Clone.
-    true
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Tag {
-    /// A literal value.
-    Value = 1,
-    /// A literal number.
-    Number = 2,
-    /// A sum of two calc expressions.
-    Sum = 4,
-    /// A product of a number and another calc expression.
-    Product = 8,
-    /// A math function, such as `calc()`, `min()`, or `max()`.
-    Function = 16,
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
@@ -887,7 +857,7 @@ impl<V: CalcValue> Calc<V> {
     }
 
     // PERF(port): `args` was arena bulk-free (ArrayList fed input.arena()) — profile if hot
-    pub fn parse_hypot(args: &mut Vec<Self>) -> CssResult<Option<Self>> {
+    pub fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
             return Ok(Some(v));

@@ -20,7 +20,7 @@ pub enum Value {
 }
 
 impl Value {
-    /// Zig: `entry.value_ptr.manifest` field projection on the `.manifest` arm.
+    // Zig: `entry.value_ptr.manifest` field projection on the `.manifest` arm.
     bun_core::enum_unwrap!(pub Value, Manifest => fn manifest / manifest_mut -> npm::PackageManifest);
 }
 

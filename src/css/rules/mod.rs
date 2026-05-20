@@ -1,5 +1,4 @@
 use crate as css;
-use bun_alloc::ArenaVecExt as _;
 
 use css::PrintErr;
 use css::Printer;
@@ -186,7 +185,6 @@ impl<R> Default for CssRuleList<R> {
 // dispatches straight through. (Shim macro deleted — last entry was
 // `StyleRule`, dropped once DeclarationBlock::to_css + selector serialize
 // landed.)
-use style::StyleRule;
 
 // ─── leaf-rule deep_clone ──────────────────────────────────────────────────
 // Every leaf module now owns a real inherent `deep_clone` body — the field-
@@ -419,14 +417,11 @@ pub(super) fn custom_ident_to_css(
     // blocked_on: Printer::write_ident — css-module custom-ident scoping path
     // is gated; fall through to its unscoped tail.
 
-    {
-        let enabled = dest
-            .css_module
-            .as_ref()
-            .is_some_and(|m| m.config.custom_idents);
-        return dest.write_ident(v, enabled);
-    }
-    dest.serialize_identifier(v)
+    let enabled = dest
+        .css_module
+        .as_ref()
+        .is_some_and(|m| m.config.custom_idents);
+    dest.write_ident(v, enabled)
 }
 
 /// Port of `DashedIdentFns.toCss` → `Printer.writeDashedIdent`. The real
@@ -897,7 +892,7 @@ impl StyleRuleKey {
 /// raw pointer across `&mut rules` writes (see PORT NOTE on `StyleRuleKey`).
 #[derive(Default)]
 pub struct StyleRuleKeyMap {
-    buckets: std::collections::HashMap<u64, Vec<usize>>,
+    buckets: bun_collections::HashMap<u64, Vec<usize>>,
 }
 
 impl StyleRuleKeyMap {

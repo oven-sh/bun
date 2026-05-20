@@ -406,8 +406,7 @@ impl SupportsCondition {
                 }
             }
             css::Token::OpenParen => {
-                let res =
-                    input.try_parse(|i| i.parse_nested_block(|i2| SupportsCondition::parse(i2)));
+                let res = input.try_parse(|i| i.parse_nested_block(SupportsCondition::parse));
                 if res.is_ok() {
                     return res;
                 }

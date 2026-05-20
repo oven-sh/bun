@@ -101,8 +101,8 @@ use bun_core::{MutableString, strings};
 use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
+use bun_jsc::GlobalRef;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject};
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
@@ -177,23 +177,20 @@ pub enum State {
 }
 
 impl MultiPartUpload {
-    const ONE_MIB: usize = MultiPartUploadOptions::ONE_MIB;
-    const MAX_SINGLE_UPLOAD_SIZE: usize = MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE; // we limit to 5 GiB
-    const MIN_SINGLE_UPLOAD_SIZE: usize = MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE;
-    const DEFAULT_PART_SIZE: usize = MultiPartUploadOptions::DEFAULT_PART_SIZE;
     const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE as usize;
     const MAX_UPLOAD_ID_LEN: usize = 2000;
     // `const AWS = S3Credentials;` — type alias unused in this file; dropped.
 
     // bun.ptr.RefCount(Self, "ref_count", deinit, .{}) — intrusive refcount.
-    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; `deref_`
-    // is kept as a safe-signature alias so existing call sites keep working.
+    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`.
     // PORT NOTE: inherent associated types (`pub type Ref = ...` inside `impl`)
     // are unstable; the alias lives at module scope as `MultiPartUploadRef`.
+    /// # Safety
+    /// `this` must be a live heap-allocated `MultiPartUpload` created via
+    /// `heap::alloc` with a non-zero intrusive refcount.
     #[inline]
-    pub fn deref_(this: *mut Self) {
-        // SAFETY: `this` is a live heap-allocated MultiPartUpload created via
-        // heap::alloc; forwarded to the derived intrusive-rc decrement.
+    pub unsafe fn deref_(this: *mut Self) {
+        // SAFETY: per fn contract — forwarded to the derived intrusive-rc decrement.
         unsafe { <Self as bun_ptr::CellRefCounted>::deref(this) }
     }
 }
@@ -229,10 +226,6 @@ pub struct UploadPartResult {
 }
 
 impl UploadPart {
-    fn sort_etags(_: &MultiPartUpload, a: &UploadPartResult, b: &UploadPartResult) -> bool {
-        a.number < b.number
-    }
-
     fn free_allocated_slice(&mut self) {
         if self.allocated_size > 0 {
             // SAFETY: `data.ptr` was allocated by the global allocator with capacity == allocated_size
@@ -258,8 +251,9 @@ impl UploadPart {
     }
 
     pub fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
+        let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
-        let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
+        let this = unsafe { &mut *this };
         // Copy the BackRef out so the `&mut MultiPartUpload` borrow is detached
         // from `this` (Zig held both `*UploadPart` and `*MultiPartUpload` freely).
         let mut ctx_ref = this.ctx;
@@ -273,7 +267,8 @@ impl UploadPart {
                 this.part_number
             );
             this.free_allocated_slice();
-            MultiPartUpload::deref_(this.ctx.as_ptr());
+            // SAFETY: ctx is a live BACKREF; part still holds a ref on ctx
+            unsafe { MultiPartUpload::deref_(this.ctx.as_ptr()) };
             return Ok(());
         }
 
@@ -303,7 +298,8 @@ impl UploadPart {
                     let ctx_ptr = this.ctx.as_ptr();
                     // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
                     let r = unsafe { (*ctx_ptr).fail(err) };
-                    MultiPartUpload::deref_(ctx_ptr);
+                    // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx
+                    unsafe { MultiPartUpload::deref_(ctx_ptr) };
                     r
                 }
             }
@@ -328,7 +324,8 @@ impl UploadPart {
                 // drain more
                 // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
                 let r = unsafe { (*ctx_ptr).drain_enqueued_parts(sent as u64) };
-                MultiPartUpload::deref_(ctx_ptr);
+                // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx
+                unsafe { MultiPartUpload::deref_(ctx_ptr) };
                 r
             }
         }
@@ -422,8 +419,9 @@ impl MultiPartUpload {
         result: S3UploadResult,
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
+        let this = this.cast::<Self>();
         // SAFETY: callback context — `this` was passed as opaque ctx and is live (holds final ref)
-        let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
+        let this = unsafe { &mut *this };
         if this.state == State::Finished {
             return Ok(());
         }
@@ -615,7 +613,8 @@ impl MultiPartUpload {
                 unsafe { (*this).rollback_multi_part_request()? };
             } else {
                 // single file upload no need to rollback
-                MultiPartUpload::deref_(this);
+                // SAFETY: `this` is the live heap `MultiPartUpload` (refcounted).
+                unsafe { MultiPartUpload::deref_(this) };
             }
         }
         Ok(())
@@ -652,7 +651,8 @@ impl MultiPartUpload {
             // single file upload no need to commit
             // PORT NOTE: `defer this.deref()` reordered after callback
             let r = (self.callback)(S3UploadResult::Success, self.callback_context);
-            MultiPartUpload::deref_(self);
+            // SAFETY: `self` is a live heap-allocated `MultiPartUpload` (intrusive RC).
+            unsafe { MultiPartUpload::deref_(self) };
             r
         } else {
             Ok(())
@@ -751,14 +751,16 @@ impl MultiPartUpload {
                 // PORT NOTE: `defer this.deref()` reordered after callback
                 let r =
                     (this_ref.callback)(S3UploadResult::Failure(err), this_ref.callback_context);
-                MultiPartUpload::deref_(this);
+                // SAFETY: `this` is live (final-step ref held until this deref).
+                unsafe { MultiPartUpload::deref_(this) };
                 r
             }
             S3CommitResult::Success => {
                 this_ref.state = State::Finished;
                 // PORT NOTE: `defer this.deref()` reordered after callback
                 let r = (this_ref.callback)(S3UploadResult::Success, this_ref.callback_context);
-                MultiPartUpload::deref_(this);
+                // SAFETY: `this` is live (final-step ref held until this deref).
+                unsafe { MultiPartUpload::deref_(this) };
                 r
             }
         }
@@ -785,11 +787,13 @@ impl MultiPartUpload {
                     this_ref.rollback_multi_part_request()?;
                     return Ok(());
                 }
-                MultiPartUpload::deref_(this);
+                // SAFETY: `this` is live (final-step ref held until this deref).
+                unsafe { MultiPartUpload::deref_(this) };
                 Ok(())
             }
             S3UploadResult::Success => {
-                MultiPartUpload::deref_(this);
+                // SAFETY: `this` is live (final-step ref held until this deref).
+                unsafe { MultiPartUpload::deref_(this) };
                 Ok(())
             }
         }

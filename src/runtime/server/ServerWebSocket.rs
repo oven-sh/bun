@@ -8,8 +8,6 @@ use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
 
-use bun_jsc::event_loop::EventLoop;
-
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
@@ -44,15 +42,8 @@ pub struct ServerWebSocket {
 // We pack the per-socket data into this struct below
 // Zig: packed struct(u64) { ssl:1, closed:1, opened:1, binary_type:4, packed_websocket_ptr:57 }
 #[repr(transparent)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Flags(u64);
-
-impl Default for Flags {
-    fn default() -> Self {
-        // ssl=false, closed=false, opened=false, binary_type=.Buffer (discriminant 0), packed_websocket_ptr=0
-        Flags(0)
-    }
-}
 
 impl Flags {
     const SSL_BIT: u64 = 1 << 0;

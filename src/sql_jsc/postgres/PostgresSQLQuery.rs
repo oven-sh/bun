@@ -609,7 +609,11 @@ impl PostgresSQLQuery {
             } else {
                 this.status.set(Status::Pending);
             }
-            if let Err(_) = connection.requests.with_mut(|q| q.write_item(this_ptr)) {
+            if connection
+                .requests
+                .with_mut(|q| q.write_item(this_ptr))
+                .is_err()
+            {
                 // fail to run do cleanup — sole owner just created above
                 // (rc=1); `release_statement` decrements → 0 frees.
                 this.release_statement();
@@ -907,7 +911,11 @@ impl PostgresSQLQuery {
             }
         }
 
-        if let Err(_) = connection.requests.with_mut(|q| q.write_item(this_ptr)) {
+        if connection
+            .requests
+            .with_mut(|q| q.write_item(this_ptr))
+            .is_err()
+        {
             return Err(global_object.throw_out_of_memory());
         }
         this.this_value.with_mut(|r| r.upgrade(global_object));

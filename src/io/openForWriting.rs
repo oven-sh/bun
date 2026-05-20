@@ -130,10 +130,7 @@ where
     let mut is_nonblocking = false;
     let result =
         input_path.open_for_writing_result(dir, input_flags, mode, &mut is_nonblocking, &openat);
-    let fd = match result {
-        Err(err) => return Err(err),
-        Ok(fd) => fd,
-    };
+    let fd = result?;
 
     #[cfg(unix)]
     {
@@ -153,7 +150,7 @@ where
                     *pollable = true;
                 }
 
-                *is_socket = bun_sys::S::ISSOCK(stat.st_mode as u32);
+                *is_socket = bun_sys::S::ISSOCK(stat.st_mode as Mode);
 
                 if force_sync || isatty {
                     // Prevents interleaved or dropped stdout/stderr output for terminals.

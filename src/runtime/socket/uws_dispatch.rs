@@ -135,9 +135,12 @@ macro_rules! us_dispatch_shims {
         fn $name:ident($recv:ident: *mut $Recv:ty $(, $a:ident: $t:ty)* $(,)?) -> $ret:ty
             = $lookup:ident.$field:ident($($call:expr),* $(,)?) or $default:expr;
     )*) => {$(
+        /// # Safety
+        /// `loop.c` must pass a live, non-null socket pointer (and any data/len
+        /// buffer must be valid for the duration of the call).
         #[unsafe(no_mangle)]
         #[allow(clippy::unused_unit)]
-        pub extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
+        pub unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
             match $lookup($recv).$field {
                 Some(f) => {
                     // SAFETY: `f` is the vtable callback for this socket kind; loop.c
@@ -179,8 +182,12 @@ us_dispatch_shims! {
 /// Ciphertext tap for `socket.upgradeTLS()` — fires on the `[raw, _]` half of
 /// the returned pair before decryption. Only `bun_socket_tls` ever sets the
 /// `ssl_raw_tap` bit, so this isn't part of the per-kind vtable.
+///
+/// # Safety
+/// `loop.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_ssl_raw_tap(
+pub unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s: *mut us_socket_t,
     data: *mut u8,
     len: c_int,

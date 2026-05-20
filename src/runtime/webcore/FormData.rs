@@ -1,7 +1,7 @@
 //! HTML `FormData` parsing + JS bridge. Moved from `url/url.zig` because the
 //! struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
 
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::ArrayHashMap;
 use bun_core::{self, declare_scope, err, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
@@ -147,7 +147,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     let args = frame.arguments_old::<2>();
     let input_value = args.ptr[0];
     let boundary_value = args.ptr[1];
-    let mut boundary_slice = ZigStringSlice::default();
+    let boundary_slice: ZigStringSlice;
     // PORT NOTE: `defer boundary_slice.deinit()` — handled by `Drop`.
 
     let mut encoding = Encoding::URLEncoded;
@@ -172,7 +172,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             )));
         }
     }
-    let mut input_slice = ZigStringSlice::default();
+    let input_slice: ZigStringSlice;
     // PORT NOTE: `defer input_slice.deinit()` — handled by `Drop`.
     // Keep the `ArrayBuffer` view alive for the duration of `input`'s borrow.
     let input_array_buffer;

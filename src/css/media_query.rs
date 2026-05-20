@@ -199,7 +199,7 @@ impl PartialEq for MediaType {
     }
 }
 
-/// Flags for `parse_query_condition`.
+// Flags for `parse_query_condition`.
 // PORT NOTE: Zig `packed struct(u8)` with two bool fields → bitflags!
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +227,7 @@ impl QueryConditionFlags {
 /// Represents a media condition. Implements `QueryCondition`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MediaCondition {
-    Feature(MediaFeature),
+    Feature(Box<MediaFeature, ArenaPtr>),
     Not(Box<MediaCondition, ArenaPtr>),
     Operation {
         operator: Operator,
@@ -811,7 +811,7 @@ impl QueryCondition for MediaCondition {
 
     fn as_feature(&self) -> Option<&MediaFeature> {
         if let Self::Feature(f) = self {
-            Some(f)
+            Some(&**f)
         } else {
             None
         }
@@ -840,14 +840,20 @@ impl QueryCondition for MediaCondition {
 
     fn parse_feature(input: &mut Parser) -> Result<Self> {
         let feature = MediaFeature::parse(input)?;
-        Ok(MediaCondition::Feature(feature))
+        Ok(MediaCondition::Feature(Box::new_in(
+            feature,
+            ArenaPtr::new(input.arena()),
+        )))
     }
     fn parse_feature_with_options(
         input: &mut Parser,
         options: &css::ParserOptions,
     ) -> Result<Self> {
         let feature = MediaFeature::parse_with_options(input, options)?;
-        Ok(MediaCondition::Feature(feature))
+        Ok(MediaCondition::Feature(Box::new_in(
+            feature,
+            ArenaPtr::new(input.arena()),
+        )))
     }
     fn create_negation_in(condition: Self, alloc: ArenaPtr) -> Self {
         MediaCondition::Not(Box::new_in(condition, alloc))
@@ -1318,7 +1324,7 @@ impl MediaType {
     /// slice (identity copy under the generics.zig "const strings" rule).
     #[inline]
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        self.clone()
+        *self
     }
 }
 
@@ -1327,7 +1333,9 @@ impl MediaCondition {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         let alloc = ArenaPtr::new(bump);
         match self {
-            MediaCondition::Feature(f) => MediaCondition::Feature(f.deep_clone(bump)),
+            MediaCondition::Feature(f) => {
+                MediaCondition::Feature(Box::new_in(f.deep_clone(bump), alloc))
+            }
             // Zig: `bun.create(arena, MediaCondition, c.deepClone(arena))`
             MediaCondition::Not(c) => MediaCondition::Not(Box::new_in(c.deep_clone(bump), alloc)),
             MediaCondition::Operation {

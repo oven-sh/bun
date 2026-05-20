@@ -339,10 +339,7 @@ impl PosixBufferedReader {
                 if let Err(err) = result {
                     // TODO(port): bun_core::debug_warn — macro form is
                     // broken (concat! into $fmt:literal); use the fn for now.
-                    bun_core::output::debug_warn(&format_args!(
-                        "error reading from memfd\n{}",
-                        err
-                    ));
+                    bun_core::output::debug_warn(format_args!("error reading from memfd\n{}", err));
                     return self.buffer();
                 }
             }

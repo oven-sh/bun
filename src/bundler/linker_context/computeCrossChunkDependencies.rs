@@ -1,17 +1,14 @@
 use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::ImportRecord;
-use bun_ast::{Part, Symbol};
 use bun_collections::{ArrayHashMap, VecExt};
-use bun_js_parser as js_ast;
 
 use crate::LinkerContext;
 use crate::js_meta;
 use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
 use crate::{
-    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt,
-    JSMeta, Ref, RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
+    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt, Ref,
+    RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
 pub fn compute_cross_chunk_dependencies(

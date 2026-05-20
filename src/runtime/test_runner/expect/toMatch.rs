@@ -1,6 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::ConsoleObject;
+use super::JSValueTestExt;
 
 use super::Expect;
 
@@ -62,8 +61,6 @@ pub fn to_match(
     let value_fmt = value.to_fmt(&mut formatter2);
 
     if not {
-        const EXPECTED_LINE: &str = "Expected substring or pattern: not <green>{}<r>\n";
-        const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
         // TODO(port): `comptime getSignature(...)` — ensure `get_signature` is `const fn` (or macro) returning &'static str.
         let signature = Expect::get_signature("toMatch", "<green>expected<r>", true);
         return this.throw(
@@ -81,8 +78,6 @@ pub fn to_match(
         );
     }
 
-    const EXPECTED_LINE: &str = "Expected substring or pattern: <green>{}<r>\n";
-    const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
     let signature = Expect::get_signature("toMatch", "<green>expected<r>", false);
     this.throw(
         global,

@@ -74,7 +74,6 @@ crate::assert_ffi_layout!(String, 24, 8);
 unsafe extern "C" {
     fn BunString__fromBytes(bytes: *const u8, len: usize) -> String;
     fn BunString__fromLatin1(bytes: *const u8, len: usize) -> String;
-    fn BunString__fromUTF8(bytes: *const u8, len: usize) -> String;
     fn BunString__fromUTF16(bytes: *const u16, len: usize) -> String;
     fn BunString__fromUTF16ToLatin1(bytes: *const u16, len: usize) -> String;
     safe fn BunString__fromLatin1Unitialized(len: usize) -> String;
@@ -2004,7 +2003,7 @@ impl ZigString {
     pub fn to_slice_z(&self) -> ZigStringSlice {
         if self.len == 0 {
             // Static "" already points at a NUL byte.
-            return ZigStringSlice::Static(b"\0".as_ptr(), 0);
+            return ZigStringSlice::Static(c"".as_ptr().cast::<u8>(), 0);
         }
         let mut v = self.to_owned_slice();
         v.reserve_exact(1);

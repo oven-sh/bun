@@ -4,6 +4,7 @@ bun_core::declare_scope!(SocketMonitor, visible);
 /// variants were byte-identical modulo the env var checked and the log message;
 /// Zig kept two files because file-scope structs can't be cheaply parameterized,
 /// but `macro_rules!` collapses them in the Rust port.
+#[cfg(debug_assertions)]
 macro_rules! debug_socket_monitor {
     ($env:path, $msg:literal) => {
         use core::sync::atomic::{AtomicBool, Ordering};

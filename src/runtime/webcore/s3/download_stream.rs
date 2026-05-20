@@ -93,20 +93,15 @@ impl S3HttpDownloadStreamingTask {
     fn report_progress(&mut self, state: State) {
         let has_more = state.has_more();
         let mut err: Option<S3Error> = None;
-        let mut failed = false;
+        let failed = match state.status_code() {
+            200 | 204 | 206 => state.request_error() != 0,
+            _ => true,
+        };
 
         // PORT NOTE: reshaped for borrowck — `code`/`message` borrow from
         // `self.reported_response_buffer`, so we compute the chunk after the
         // borrow scope ends rather than inside the labeled block.
         let chunk: MutableString = 'brk: {
-            match state.status_code() {
-                200 | 204 | 206 => {
-                    failed = state.request_error() != 0;
-                }
-                _ => {
-                    failed = true;
-                }
-            }
             if failed {
                 if !has_more {
                     let mut _has_body_code = false;
@@ -185,7 +180,12 @@ impl S3HttpDownloadStreamingTask {
     }
 
     /// this is the task callback from the last task result and is always in the main thread
-    pub fn on_response(this: *mut Self) {
+    ///
+    /// # Safety
+    /// `this` must be a live heap pointer produced by `Self::new`; the event loop guarantees
+    /// exclusive main-thread access for the duration of this call. When the loaded state's
+    /// `has_more` is false this call reclaims and drops the allocation exactly once.
+    pub unsafe fn on_response(this: *mut Self) {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
         let self_ = unsafe { &mut *this };
@@ -228,7 +228,7 @@ impl S3HttpDownloadStreamingTask {
     ) -> bool {
         let is_done = !result.has_more;
         // if we got a error or fail wait until we are done buffering the response body to report
-        let mut wait_until_done = false;
+        let wait_until_done;
         {
             state.set_has_more(!is_done);
 
@@ -331,7 +331,12 @@ impl S3HttpDownloadStreamingTask {
     }
 
     /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
-    pub fn http_callback(
+    ///
+    /// # Safety
+    /// `this` must be a live heap pointer produced by `Self::new`, valid for the duration of the
+    /// HTTP request; `mutex` serializes against `on_response`. `async_http` must be a valid
+    /// pointer to an initialised `AsyncHTTP` for the duration of this call.
+    pub unsafe fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult,

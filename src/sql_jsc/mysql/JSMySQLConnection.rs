@@ -10,10 +10,10 @@ use crate::jsc::{
 use crate::shared::CachedStructure;
 use bun_boringssl_sys as boringssl;
 use bun_core::strings;
-use bun_core::{TimespecMockMode, err, fmt as bun_fmt, timespec};
+use bun_core::{TimespecMockMode, timespec};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
-use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError, Error as AnyMySQLErrorT};
+use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::mysql::protocol::new_reader::NewReader;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
@@ -32,8 +32,6 @@ use super::my_sql_statement::MySQLStatement;
 use super::protocol::result_set::{self as ResultSet};
 
 bun_core::declare_scope!(MySQLConnection, visible);
-
-use bun_core::time::NS_PER_MS;
 
 // PORT NOTE: #[bun_jsc::JsClass] proc-macro is not applied because this type
 // already has its `to_js`/`from_js` wired through `crate::jsc::codegen::
@@ -126,10 +124,6 @@ impl JSMySQLConnection {
     #[inline]
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
-    }
-    #[inline]
-    fn vm_ptr(&self) -> *mut VirtualMachine {
-        self.vm.as_ptr()
     }
     /// Short-lived `&mut VirtualMachine` for the few `vm.timer()` callers
     /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
@@ -541,7 +535,7 @@ impl JSMySQLConnection {
         // below. Ownership passes to `MySQLConnection.init` once `Box::new`
         // succeeds — we null the locals at that point so the connect-fail path
         // (which `deref()`s the connection) doesn't double-free.
-        let mut tls_guard = scopeguard::guard((secure, tls_config), |(s, cfg)| {
+        let tls_guard = scopeguard::guard((secure, tls_config), |(s, cfg)| {
             if let Some(s) = s {
                 // SAFETY: secure was created by ssl_ctx_cache; we own one ref until transferred.
                 unsafe { boringssl::SSL_CTX_free(s) };

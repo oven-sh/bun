@@ -1,6 +1,5 @@
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use core::mem::offset_of;
 use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export

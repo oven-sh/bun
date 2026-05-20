@@ -1,9 +1,7 @@
 use bun_collections::VecExt;
-use core::ffi::c_void;
-use std::io::Write as _;
 
 use bun_ast as js_ast;
-use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap};
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::Output;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
@@ -361,9 +359,11 @@ impl PackageJSON {
     }
 }
 
+#[derive(Default)]
 pub enum SideEffects {
     /// either `package.json` is missing "sideEffects", it is true, or some
     /// other unsupported value. Treat all files as side effects
+    #[default]
     Unspecified,
     /// "sideEffects": false
     False,
@@ -373,12 +373,6 @@ pub enum SideEffects {
     Glob(GlobList),
     /// "sideEffects": ["file.js", "side_effects/*.js"] - mixed patterns
     Mixed(MixedPatterns),
-}
-
-impl Default for SideEffects {
-    fn default() -> Self {
-        SideEffects::Unspecified
-    }
 }
 
 // TODO(port): std.HashMapUnmanaged with StringHashMapUnowned.Key/Adapter and 80% load factor
@@ -561,7 +555,7 @@ impl PackageJSON {
             valid_count += 1;
         }
 
-        let mut buffer: Vec<Box<[u8]>> = vec![Box::default(); valid_count * 2];
+        let buffer: Vec<Box<[u8]>> = vec![Box::default(); valid_count * 2];
         // TODO(port): Zig used a single allocation split into keys/values; Rust uses two Vecs
         let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
         let mut values: Vec<Box<[u8]>> = Vec::with_capacity(valid_count);
@@ -782,7 +776,7 @@ impl PackageJSON {
 
         if let Some(asset_prefix) = framework_object.expr.as_property(b"assetPrefix") {
             if let Some(_str) = asset_prefix.expr.as_string(bump) {
-                let str = bun_core::trim(&_str, b" ");
+                let str = bun_core::trim(_str, b" ");
                 if !str.is_empty() {
                     pair.router.asset_prefix_path = Box::from(str);
                 }
@@ -1147,7 +1141,7 @@ impl PackageJSON {
             Ok(None) => return None,
             Err(err) => {
                 if cfg!(debug_assertions) {
-                    Output::print_error(&format_args!(
+                    Output::print_error(format_args!(
                         "{}: JSON parse error: {}",
                         bstr::BStr::new(package_json_path),
                         bstr::BStr::new(err.name())
@@ -1709,7 +1703,7 @@ impl PackageJSON {
         // PORT NOTE: reshaped for borrowck — assign source last (see struct init above).
         // `bun_ast::Source` isn't `Clone`; reconstruct from its (all-Copy/Clone) fields.
         package_json.source = bun_ast::Source {
-            path: json_source.path.clone(),
+            path: json_source.path,
             contents: std::borrow::Cow::Borrowed(contents_static),
             contents_is_recycled: json_source.contents_is_recycled,
             identifier_name: json_source.identifier_name.clone(),
@@ -2262,20 +2256,9 @@ impl<'a> Package<'a> {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime kind: ReverseKind`) — demoted to
-// runtime arg per PORTING.md §Idiom map (only used in a `match` body, never in a type
-// position; stable Rust rejects enum const-generics without `adt_const_params`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ReverseKind {
-    Exact,
-    Pattern,
-    Prefix,
-}
-
 // ── Local string helpers (TODO(port): bun_core::{replacement_size, replace}) ──
 // Minimal local impls so the ESModule resolution algorithm compiles; replace with the
 // canonical bun_core versions once they land. Recorded in blocked_on.
-use bun_core::trim_right;
 
 /// Port of `std.mem.replacementSize` — total bytes after replacing every `needle` in
 /// `input` with `replacement`.
@@ -2339,8 +2322,6 @@ struct ModuleBufs {
     resolved_path_buf_percent: PathBuffer,
     resolve_target_buf: PathBuffer,
     resolve_target_buf2: PathBuffer,
-    resolve_target_reverse_prefix_buf: PathBuffer,
-    resolve_target_reverse_prefix_buf2: PathBuffer,
 }
 
 thread_local! {
@@ -2364,8 +2345,6 @@ fn module_bufs() -> *mut ModuleBufs {
                 resolved_path_buf_percent: PathBuffer::ZEROED,
                 resolve_target_buf: PathBuffer::ZEROED,
                 resolve_target_buf2: PathBuffer::ZEROED,
-                resolve_target_reverse_prefix_buf: PathBuffer::ZEROED,
-                resolve_target_reverse_prefix_buf2: PathBuffer::ZEROED,
             }));
             c.set(p);
         }
@@ -3111,184 +3090,6 @@ impl<'a> ESModule<'a> {
             },
             ..Default::default()
         }
-    }
-
-    fn resolve_exports_reverse(&mut self, query: &[u8], root: &Entry) -> Option<ReverseResolution> {
-        if matches!(root.data, EntryData::Map(_)) && root.keys_start_with_dot() {
-            if let Some(res) = self.resolve_imports_exports_reverse(query, root) {
-                return Some(res);
-            }
-        }
-
-        None
-    }
-
-    fn resolve_imports_exports_reverse(
-        &mut self,
-        query: &[u8],
-        match_obj: &Entry,
-    ) -> Option<ReverseResolution> {
-        let EntryData::Map(map) = &match_obj.data else {
-            return None;
-        };
-
-        if !strings::ends_with_char_or_is_zero_length(query, b'*') {
-            // PORT NOTE: Zig used MultiArrayList column slices; iterate Vec<MapEntry> directly.
-            for entry in map.list.iter() {
-                if let Some(result) =
-                    self.resolve_target_reverse(query, &entry.key, &entry.value, ReverseKind::Exact)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        for expansion in map.expansion_keys.iter() {
-            if strings::ends_with_char_or_is_zero_length(&expansion.key, b'*') {
-                if let Some(result) = self.resolve_target_reverse(
-                    query,
-                    &expansion.key,
-                    &expansion.value,
-                    ReverseKind::Pattern,
-                ) {
-                    return Some(result);
-                }
-            }
-
-            // TODO(port): Zig used `.reverse` here but ReverseKind has no `.reverse` variant — preserved as Prefix? Actually Zig defines {exact, pattern, prefix}; `.reverse` is a typo in Zig source
-            if let Some(result) = self.resolve_target_reverse(
-                query,
-                &expansion.key,
-                &expansion.value,
-                ReverseKind::Prefix,
-            ) {
-                return Some(result);
-            }
-        }
-
-        // TODO(port): Zig fn falls through with no return (implicit unreachable); returning None
-        None
-    }
-
-    fn resolve_target_reverse(
-        &mut self,
-        query: &[u8],
-        key: &[u8],
-        target: &Entry,
-        kind: ReverseKind,
-    ) -> Option<ReverseResolution> {
-        match &target.data {
-            EntryData::String(str) => {
-                let mb = module_bufs();
-                // SAFETY: threadlocal UnsafeCell; the `String` arm does NOT recurse into
-                // resolve_target_reverse, so these are the unique live `&mut`s on this thread.
-                // Map/Array arms below recurse and must not hold these — see MODULE_BUFS note.
-                let resolve_target_reverse_prefix_buf: &mut PathBuffer =
-                    unsafe { &mut (*mb).resolve_target_reverse_prefix_buf };
-                // SAFETY: see above — disjoint field of the same threadlocal struct.
-                let resolve_target_reverse_prefix_buf2: &mut PathBuffer =
-                    unsafe { &mut (*mb).resolve_target_reverse_prefix_buf2 };
-                let str: &[u8] = str;
-                match kind {
-                    ReverseKind::Exact => {
-                        if strings::eql(query, str) {
-                            return Some(ReverseResolution {
-                                subpath: Box::<[u8]>::from(str),
-                                token: target.first_token,
-                            });
-                        }
-                    }
-                    ReverseKind::Prefix => {
-                        if strings::starts_with(query, str) {
-                            let buf = &mut resolve_target_reverse_prefix_buf.0;
-                            let buf_len = buf.len();
-                            let n = {
-                                let mut w = &mut buf[..];
-                                let _ = w.write_all(key);
-                                let _ = w.write_all(&query[str.len()..]);
-                                buf_len - w.len()
-                            };
-                            return Some(ReverseResolution {
-                                subpath: Box::<[u8]>::from(&buf[..n]),
-                                token: target.first_token,
-                            });
-                        }
-                    }
-                    ReverseKind::Pattern => {
-                        let key_without_trailing_star = trim_right(key, b"*");
-
-                        let Some(star) = strings::index_of_char(str, b'*') else {
-                            // Handle the case of no "*"
-                            if strings::eql(query, str) {
-                                return Some(ReverseResolution {
-                                    subpath: Box::<[u8]>::from(key_without_trailing_star),
-                                    token: target.first_token,
-                                });
-                            }
-                            return None;
-                        };
-                        let star = star as usize;
-
-                        // Only support tracing through a single "*"
-                        let prefix = &str[0..star];
-                        let suffix = &str[star + 1..];
-                        if strings::starts_with(query, prefix)
-                            && !strings::contains_char(suffix, b'*')
-                        {
-                            let after_prefix = &query[prefix.len()..];
-                            if strings::ends_with(after_prefix, suffix) {
-                                let star_data = &after_prefix[0..after_prefix.len() - suffix.len()];
-                                let buf = &mut resolve_target_reverse_prefix_buf2.0;
-                                let buf_len = buf.len();
-                                let n = {
-                                    let mut w = &mut buf[..];
-                                    let _ = w.write_all(key_without_trailing_star);
-                                    let _ = w.write_all(star_data);
-                                    buf_len - w.len()
-                                };
-                                return Some(ReverseResolution {
-                                    subpath: Box::<[u8]>::from(&buf[..n]),
-                                    token: target.first_token,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            EntryData::Map(map) => {
-                // PORT NOTE: Zig used MultiArrayList column slices; iterate Vec<MapEntry> directly.
-                for entry in map.list.iter() {
-                    let map_key: &[u8] = &entry.key;
-                    if self.conditions.contains_key(map_key) {
-                        if let Some(result) =
-                            self.resolve_target_reverse(query, key, &entry.value, kind)
-                        {
-                            if map_key == b"import" {
-                                *self.module_type = ModuleType::Esm;
-                            } else if map_key == b"require" {
-                                *self.module_type = ModuleType::Cjs;
-                            }
-
-                            return Some(result);
-                        }
-                    }
-                }
-            }
-
-            EntryData::Array(array) => {
-                for target_value in array.iter() {
-                    if let Some(result) =
-                        self.resolve_target_reverse(query, key, target_value, kind)
-                    {
-                        return Some(result);
-                    }
-                }
-            }
-
-            _ => {}
-        }
-
-        None
     }
 }
 

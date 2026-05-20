@@ -5,9 +5,9 @@ use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath, Path, PathBuffer, RelPath};
+use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{Mutex, ThreadPool, UnboundedQueue, thread_pool};
+use bun_threading::{Mutex, UnboundedQueue, thread_pool};
 
 use bun_semver::String as SemverString;
 use bun_sys::{FdDirExt as _, FdExt as _};
@@ -15,17 +15,18 @@ use bun_sys::{FdDirExt as _, FdExt as _};
 use crate::bin_real;
 use crate::lockfile::package;
 use crate::lockfile_real::PackageIDSlice;
-use crate::package_install::{self, Method as InstallMethod, Summary as InstallSummary};
+use crate::package_install::{Method as InstallMethod, Summary as InstallSummary};
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::resolution;
 use crate::{
-    self as install, Bin, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
+    self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
     Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
 };
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>` (Zig: `.items(.field)`).
+#[cfg(target_os = "macos")]
 use super::file_cloner::FileCloner;
 use super::file_copier::FileCopier;
 use super::hardlinker::Hardlinker;
@@ -42,7 +43,6 @@ use crate::package_manager_real::package_manager_options::Do;
 type ResolutionTag = resolution::Tag;
 
 type Bitset = DynamicBitSet;
-type Progress = crate::bun_progress::Progress;
 type ProgressNode = crate::bun_progress::Node;
 
 // ── Store id aliases (Zig: `Store.Entry.Id` / `Store.Node.Id`) ────────────
@@ -958,7 +958,10 @@ impl Task {
                                     }
 
                                     InstallMethod::Copyfile => {
+                                        #[cfg(windows)]
                                         let mut src_path = OsAutoAbsPath::init();
+                                        #[cfg(not(windows))]
+                                        let src_path = OsAutoAbsPath::init();
 
                                         #[cfg(windows)]
                                         {
@@ -1104,7 +1107,11 @@ impl Task {
                             }
                         }
                     };
+                    #[cfg(target_os = "macos")]
                     let mut pkg_cache_dir_subpath =
+                        AutoRelPath::from(pkg_cache_dir_subpath_init).assume_ok();
+                    #[cfg(not(target_os = "macos"))]
+                    let pkg_cache_dir_subpath =
                         AutoRelPath::from(pkg_cache_dir_subpath_init).assume_ok();
 
                     // SAFETY: idempotent cache-dir initialization (once-init internally).
@@ -1843,8 +1850,6 @@ impl Task {
                     if target_node_modules_path.is_some()
                         && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
                     {
-                        target_node_modules_path = None;
-
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
                             strings::StringOrTinyString::init(dep_name);
@@ -2351,8 +2356,6 @@ impl<'a> Installer<'a> {
             if target_node_modules_path.is_some()
                 && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
             {
-                target_node_modules_path = None;
-
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
 

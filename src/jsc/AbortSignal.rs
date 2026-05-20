@@ -1,6 +1,4 @@
-use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 

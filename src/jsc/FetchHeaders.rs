@@ -81,12 +81,6 @@ unsafe extern "C" {
         arg2: &JSGlobalObject,
     ) -> bool;
     safe fn WebCore__FetchHeaders__isEmpty(arg0: &FetchHeaders) -> bool;
-    safe fn WebCore__FetchHeaders__put_(
-        arg0: &FetchHeaders,
-        arg1: &ZigString,
-        arg2: &ZigString,
-        arg3: &JSGlobalObject,
-    );
     safe fn WebCore__FetchHeaders__remove(
         arg0: &FetchHeaders,
         arg1: &ZigString,

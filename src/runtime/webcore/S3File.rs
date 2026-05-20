@@ -1,11 +1,8 @@
-use core::fmt::Write as _;
-
 use crate::node::types::PathLikeExt as _;
 use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, StoreExt as _, StoreRef};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
-use crate::webcore::s3::client::error_jsc::S3ErrorJsc as _;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::output;
@@ -236,7 +233,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             }
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            let mut blob_internal = PathOrBlob::Blob(blob);
+            let mut blob_internal = PathOrBlob::Blob(Box::new(blob));
             blob::write_file_internal(
                 global,
                 &mut blob_internal,
@@ -399,7 +396,7 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
     store.data.as_s3_mut().storage_class = aws_options.storage_class;
     store.data.as_s3_mut().request_payer = aws_options.request_payer;
 
-    let mut blob = Blob::init_with_store(store, global);
+    let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
         if opts.is_object() {
             if let Some(file_type) = opts.get_truthy(global, "type")? {
@@ -466,7 +463,7 @@ pub fn construct_s3_file_with_s3_credentials(
     store.data.as_s3_mut().storage_class = aws_options.storage_class;
     store.data.as_s3_mut().request_payer = aws_options.request_payer;
 
-    let mut blob = Blob::init_with_store(store, global);
+    let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
         if opts.is_object() {
             if let Some(file_type) = opts.get_truthy(global, "type")? {

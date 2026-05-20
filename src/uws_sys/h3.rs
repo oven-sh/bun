@@ -3,7 +3,6 @@
 //! see the same surface regardless of transport.
 
 use core::ffi::{c_char, c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr;
 
 use crate::SocketAddress;

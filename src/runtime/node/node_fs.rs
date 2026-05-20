@@ -10,22 +10,18 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
-use bun_core::{self as bstr, PathString, String as BunString, ZStr, ZigString};
+use bun_core::{PathString, String as BunString, ZStr, ZigString};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::EventLoopTaskPtr;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, EventLoopHandle, JSGlobalObject, JSPromise, JSValue, JsError, JsResult, Task,
-    ThreadSafe, Unprotect,
-};
+use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe, Unprotect};
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
-use bun_sys::{self as sys, E, Fd as FD, FdExt as _, Maybe, Mode, SystemErrno};
+use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
 use bun_threading::UnboundedQueue;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
@@ -210,9 +206,8 @@ use bun_jsc::AbortSignalRef;
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
-    ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FdJsc as _, FileSystemFlags,
-    FileSystemFlagsKind, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer,
-    VectorArrayBuffer,
+    ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
+    PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al. (mirrors Zig's
@@ -224,7 +219,7 @@ pub use super::types::PathOrFileDescriptor;
 mod node {
     pub use super::super::statfs::StatFS;
     pub use super::super::time_like::from_js as time_like_from_js;
-    pub use super::super::types::{Buffer, SliceWithUnderlyingString};
+    pub use super::super::types::SliceWithUnderlyingString;
     pub use super::super::{gid_t, uid_t};
 
     /// `node::mode_from_js` — forwards to the real impl in
@@ -248,11 +243,7 @@ use super::util::validators;
 
 // Trait imports for inherent-looking method calls on upstream types:
 //   - `bun_sys::FdExt`       → `Fd::close()`
-//   - `super::types::FdJsc`  → `Fd::from_js_validated()`
-//   - `bun_jsc::SysErrorJsc` → `bun_sys::Error::to_js()`
 //   - `bun_sys_jsc::ErrorJsc`→ `bun_sys::Error::to_js_with_async_stack()`
-use super::types::FdJsc as _;
-use bun_jsc::SysErrorJsc as _;
 use bun_sys_jsc::ErrorJsc as _;
 
 /// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
@@ -273,9 +264,7 @@ pub use super::node_fs_constant as constants;
 // "./node_fs_stat_watcher.zig");`. The sibling modules are declared in
 // `node.rs`; re-export them under the names the `args::Watch` / `watch()`
 // bodies below expect.
-#[allow(non_snake_case)]
 pub use super::node_fs_stat_watcher as StatWatcher;
-#[allow(non_snake_case)]
 pub use super::node_fs_watcher as Watcher;
 
 /// `Binding` is the JSC-class instance that owns the per-thread `NodeFS`
@@ -399,18 +388,6 @@ fn abort_err() -> sys::Error {
         syscall: sys::Tag::access,
         ..Default::default()
     }
-}
-
-/// Local shim for `Maybe(R).errnoSysP` (node.rs `MaybeSysExt`). Kept as a free
-/// function with return shape `Option<Maybe<()>>` so `.unwrap_or(Ok(()))`
-/// chaining keeps working without a turbofish at every call site.
-#[inline]
-fn errno_sys_p_maybe(rc: c_int, syscall: sys::Tag, file_path: &[u8]) -> Option<Maybe<()>> {
-    let e = sys::get_errno(rc);
-    if e == sys::posix::E::SUCCESS {
-        return None;
-    }
-    Some(Err(sys::Error::from_code(e, syscall).with_path(file_path)))
 }
 
 /// `bun.sys.Error.withPathLike` — `with_path()` for a `PathOrFileDescriptor`.
@@ -640,7 +617,9 @@ mod _async_tasks {
                 Box::new(init)
             }
 
-            pub fn work_pool_callback(task: *mut WorkPoolTask) {
+            /// # Safety
+            /// `task` must point to the `task` field of a live `AsyncMkdirp`.
+            pub unsafe fn work_pool_callback(task: *mut WorkPoolTask) {
                 // SAFETY: task points to AsyncMkdirp.task
                 let this = unsafe { &mut *AsyncMkdirp::from_task_ptr(task) };
 
@@ -1669,7 +1648,8 @@ mod _async_tasks {
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
-                evtloop: EventLoopHandle::init(vm.event_loop.cast()),
+                // SAFETY: `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
+                evtloop: unsafe { EventLoopHandle::init(vm.event_loop.cast()) },
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2096,6 +2076,7 @@ mod _async_tasks {
             };
             let _close = scopeguard::guard(fd, |fd| fd.close());
 
+            #[cfg(windows)]
             let mut buf = OSPathBuffer::uninit();
             #[cfg(windows)]
             let normdest: &OSPathSliceZ = match sys::normalize_path_windows_opts(
@@ -2116,10 +2097,7 @@ mod _async_tasks {
                 Ok(n) => n,
             };
             #[cfg(not(windows))]
-            let normdest: &OSPathSliceZ = {
-                let _ = &buf;
-                dest
-            };
+            let normdest: &OSPathSliceZ = dest;
 
             let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
             match mkdir_ {
@@ -2612,7 +2590,7 @@ mod _async_tasks {
             }
 
             {
-                let mut list = self.result_list_queue.pop_batch();
+                let list = self.result_list_queue.pop_batch();
                 let mut iter = list.iterator();
                 // we have to free only the previous one because the next value will
                 // be read by the iterator.
@@ -2659,7 +2637,7 @@ mod _async_tasks {
 
         fn clear_result_list(&mut self) {
             self.result_list.deinit();
-            let mut batch = self.result_list_queue.pop_batch();
+            let batch = self.result_list_queue.pop_batch();
             let mut iter = batch.iterator();
             let mut to_destroy: Option<*mut ResultListEntry> = None;
             loop {
@@ -2875,20 +2853,12 @@ pub mod args {
         }
     }
 
+    #[derive(Default)]
     pub struct Truncate {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         pub path: PathOrFileDescriptor,
         pub len: u64, // u63
         pub flags: i32,
-    }
-    impl Default for Truncate {
-        fn default() -> Self {
-            Self {
-                path: PathOrFileDescriptor::default(),
-                len: 0,
-                flags: 0,
-            }
-        }
     }
     fs_args_path_forwarders!(Truncate; path);
     impl Truncate {
@@ -4616,7 +4586,7 @@ pub use args as Arguments;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub enum StatOrNotFound {
-    Stats(Stats),
+    Stats(Box<Stats>),
     NotFound,
 }
 impl StatOrNotFound {
@@ -4939,20 +4909,14 @@ impl NodeFS {
 
     pub fn uv_close(&mut self, args: &args::Close, rc: i64) -> Maybe<ret::Close> {
         if rc < 0 {
-            // `from_libuv` is `#[cfg(windows)]`-only on `bun_sys::Error`; build the
-            // base value first and set it conditionally so this body compiles on all
-            // targets (`uv_close` is reached via the cross-platform UVFSRequest path).
-            let mut e = sys::Error {
+            return Err(sys::Error {
                 errno: (-rc) as _,
                 syscall: sys::Tag::close,
                 fd: args.fd,
+                #[cfg(windows)]
+                from_libuv: true,
                 ..Default::default()
-            };
-            #[cfg(windows)]
-            {
-                e.from_libuv = true;
-            }
-            return Err(e);
+            });
         }
         Ok(())
     }
@@ -5548,7 +5512,14 @@ impl NodeFS {
             return Ok(());
         }
 
-        { unreachable!() }
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "android",
+            windows
+        )))]
+        unreachable!()
     }
 
     pub fn exists(&mut self, args: &args::Exists, _: Flavor) -> Maybe<ret::Exists> {
@@ -5777,7 +5748,10 @@ impl NodeFS {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::lstatx(path, sys::STATX_MASK_FOR_STATS) {
-                Ok(result) => Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),
+                Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                    &result,
+                    args.big_int,
+                )))),
                 Err(err) => {
                     if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                         return Ok(StatOrNotFound::NotFound);
@@ -5787,10 +5761,10 @@ impl NodeFS {
             };
         }
         match Syscall::lstat(path) {
-            Ok(result) => Ok(StatOrNotFound::Stats(Stats::init(
+            Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                 &PosixStat::init(&result),
                 args.big_int,
-            ))),
+            )))),
             Err(err) => {
                 if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                     return Ok(StatOrNotFound::NotFound);
@@ -5878,7 +5852,7 @@ impl NodeFS {
                             errno: err.errno,
                             syscall: sys::Tag::mkdir,
                             path: self
-                                .os_path_into_sync_error_buf(without_nt_prefix((&path[..])))
+                                .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
                                 .into(),
                             ..Default::default()
                         }),
@@ -5891,7 +5865,7 @@ impl NodeFS {
                                     errno: err.errno,
                                     syscall: sys::Tag::mkdir,
                                     path: self
-                                        .os_path_into_sync_error_buf(without_nt_prefix((&path[..])))
+                                        .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
                                         .into(),
                                     ..Default::default()
                                 })
@@ -6014,7 +5988,7 @@ impl NodeFS {
                                     )
                                 };
                                 #[cfg(not(windows))]
-                                let p = without_nt_prefix((&parent[..]));
+                                let p = without_nt_prefix(&parent[..]);
                                 return Err(err.with_path(p));
                             }
                         }
@@ -6050,7 +6024,7 @@ impl NodeFS {
                                 let buf = unsafe { &mut *sync_error_buf_ptr };
                                 return Err(err.with_path(Self::os_path_into_buf(
                                     buf,
-                                    without_nt_prefix((&path[..])),
+                                    without_nt_prefix(&path[..]),
                                 )));
                             }
                         }
@@ -6078,7 +6052,7 @@ impl NodeFS {
                     // SAFETY: `working_mem` is not used after this return.
                     let buf = unsafe { &mut *sync_error_buf_ptr };
                     return Err(
-                        err.with_path(Self::os_path_into_buf(buf, without_nt_prefix((&path[..]))))
+                        err.with_path(Self::os_path_into_buf(buf, without_nt_prefix(&path[..])))
                     );
                 }
             },
@@ -7904,16 +7878,19 @@ impl NodeFS {
         if let Some(graph) = standalone_module_graph_get() {
             // SAFETY: see `standalone_module_graph_get`.
             if let Some(result) = unsafe { &mut *graph }.stat(path.as_bytes()) {
-                return Ok(StatOrNotFound::Stats(Stats::init(
+                return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                     &PosixStat::init(&result),
                     args.big_int,
-                )));
+                ))));
             }
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::statx(path, sys::STATX_MASK_FOR_STATS) {
-                Ok(result) => Ok(StatOrNotFound::Stats(Stats::init(&result, args.big_int))),
+                Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
+                    &result,
+                    args.big_int,
+                )))),
                 Err(err) => {
                     if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                         return Ok(StatOrNotFound::NotFound);
@@ -7923,10 +7900,10 @@ impl NodeFS {
             };
         }
         match Syscall::stat(path) {
-            Ok(result) => Ok(StatOrNotFound::Stats(Stats::init(
+            Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                 &PosixStat::init(&result),
                 args.big_int,
-            ))),
+            )))),
             Err(err) => {
                 if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                     return Ok(StatOrNotFound::NotFound);
@@ -8521,36 +8498,27 @@ impl NodeFS {
     /// for Windows:
     ///
     /// https://github.com/libuv/libuv/blob/497f3168d13ea9a92ad18c28e8282777ec2acf73/src/win/fs.c#L2069
-    ///
-    /// **This function does nothing on non-Windows platforms**.
+    #[cfg(windows)]
     fn should_ignore_ebusy(
         src: &PathLike,
         dest: &PathLike,
         result: Maybe<ret::CopyFile>,
     ) -> Maybe<ret::CopyFile> {
-        #[cfg(not(windows))]
-        {
-            let _ = (src, dest);
+        let Err(ref e) = result else { return result };
+        if e.get_errno() != E::BUSY {
             return result;
         }
-        #[cfg(windows)]
-        {
-            let Err(ref e) = result else { return result };
-            if e.get_errno() != E::BUSY {
-                return result;
-            }
-            let mut buf = PathBuffer::uninit();
-            let Ok(statbuf) = Syscall::stat(src.slice_z(&mut buf)) else {
-                return result;
-            };
-            let Ok(new_statbuf) = Syscall::stat(dest.slice_z(&mut buf)) else {
-                return result;
-            };
-            if statbuf.st_dev == new_statbuf.st_dev && statbuf.st_ino == new_statbuf.st_ino {
-                return Ok(());
-            }
-            result
+        let mut buf = PathBuffer::uninit();
+        let Ok(statbuf) = Syscall::stat(src.slice_z(&mut buf)) else {
+            return result;
+        };
+        let Ok(new_statbuf) = Syscall::stat(dest.slice_z(&mut buf)) else {
+            return result;
+        };
+        if statbuf.st_dev == new_statbuf.st_dev && statbuf.st_ino == new_statbuf.st_ino {
+            return Ok(());
         }
+        result
     }
 
     fn _cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
@@ -9693,8 +9661,10 @@ fn map_rm_errno_narrow(e: E) -> E {
     }
 }
 
+/// # Safety
+/// `path` must point to a valid NUL-terminated C string.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char) -> bool {
+pub unsafe extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const c_char) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
     // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached
@@ -10324,7 +10294,6 @@ impl NodeFSFunctionEnum {
 struct i52;
 impl i52 {
     const MIN: i64 = -(1i64 << 51);
-    const MAX: i64 = (1i64 << 51) - 1;
     /// `JSValue.to(i52)` — `@truncate(@intCast(toInt64()))`. Truncate to the low
     /// 52 bits and sign-extend bit 51 (matches Zig `@truncate` semantics).
     #[inline]

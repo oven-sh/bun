@@ -85,9 +85,9 @@ impl<'a> ProcessHandle<'a> {
         let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr().cast(),
             if cfg!(unix) {
-                b"-c\0".as_ptr().cast()
+                c"-c".as_ptr()
             } else {
-                b"exec\0".as_ptr().cast()
+                c"exec".as_ptr()
             },
             handle.config.combined.as_ptr().cast(),
             core::ptr::null(),
@@ -95,7 +95,7 @@ impl<'a> ProcessHandle<'a> {
         // TODO(port): Zig uses `[_:null]?[*:0]const u8` (null-terminated array of nullable C strings).
 
         handle.start_time = Some(Instant::now());
-        let mut spawned: spawn::SpawnProcessResult = 'brk: {
+        let spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
@@ -135,6 +135,8 @@ impl<'a> ProcessHandle<'a> {
         // `options` is dangling-by-design — re-`heap::take`ing it here would be a
         // double `Box::from_raw` (UAF + double-free). Take the Box from the
         // *result* instead, before `to_process` consumes `spawned`.
+        #[cfg(windows)]
+        let mut spawned = spawned;
         #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
@@ -897,9 +899,11 @@ pub fn run_scripts_with_filter(
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(
-        event_loop,
-    ));
+    // SAFETY: `event_loop` is the live per-thread `MiniEventLoop` (init'd above);
+    // `as_event_loop_ctx` only stores it as a tagged backref.
+    bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe {
+        MiniEventLoop::as_event_loop_ctx(event_loop)
+    });
     let shell_bin: &'static ZStr = {
         #[cfg(unix)]
         {

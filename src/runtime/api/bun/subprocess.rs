@@ -6,30 +6,31 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::sync::atomic::AtomicU32;
 
-use bun_ptr::{RefCount, RefCounted, RefPtr};
+use bun_ptr::{RefCount, RefPtr};
 
-use bun_core::Output;
 use bun_io::{FilePoll, KeepAlive};
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef,
-    JsResult, VirtualMachine,
+    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
+    VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
-use bun_sys::{self, Fd, FdExt, SignalCode};
+use bun_sys::{self, FdExt, SignalCode};
 use enumset::{EnumSet, EnumSetType};
 
 // Process / spawn machinery lives in this crate (api/bun/process.rs), not in an
 // external `bun_spawn` crate. The `bun_spawn` workspace crate only carries the
 // platform-thin `Stdio`/`Status` shims used by `bun.spawnSync` callers.
 use crate::api::bun::Terminal;
+#[cfg(windows)]
+use crate::api::bun_process as spawn_process;
 #[cfg(not(windows))]
 use crate::api::bun_process::ExtraPipe;
-use crate::api::bun_process::{self as spawn_process, Process, Rusage, Status};
+use crate::api::bun_process::{Process, Rusage, Status};
 use crate::api::js_bun_spawn_bindings;
 use crate::jsc::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
-use crate::webcore::{self, AbortSignal, Blob, FileSink};
+use crate::webcore::{self, AbortSignal, FileSink};
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 
@@ -347,13 +348,13 @@ impl Subprocess<'_> {
 
 /// Module-level wrapper so callers in `js_bun_spawn_bindings` (which alias the
 /// module as `Subprocess`) keep their existing `Subprocess::on_abort_signal`
-/// path *and* the original safe-`extern "C" fn` item kind. The macro-emitted
-/// thunk is `unsafe extern "C" fn`; this thin shim re-asserts the invariant
-/// (`ctx` is the `*mut Subprocess` registered with the abort listener) so the
-/// public symbol stays a safe fn-item rather than an `unsafe` fn-pointer const.
-pub extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
-    // SAFETY: ctx was registered as `*mut Subprocess` when the listener was
-    // attached; AbortSignal guarantees it is live for the callback.
+/// path. Forwards to the macro-emitted `unsafe extern "C" fn` thunk.
+///
+/// # Safety
+/// `ctx` must be the `*mut Subprocess` that was registered with
+/// `AbortSignal::add_listener`; the AbortSignal guarantees it is live for the
+/// duration of the callback.
+pub unsafe extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
     unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
 }
 
@@ -671,7 +672,8 @@ impl Subprocess<'_> {
         self.event_loop_timer_refd.set(refd);
         let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
-        Self::timer_all().increment_timer_ref(delta, uws_loop);
+        // SAFETY: `uws_loop` is the live per-thread uws loop.
+        unsafe { Self::timer_all().increment_timer_ref(delta, uws_loop) };
     }
 
     #[inline]
@@ -837,7 +839,7 @@ impl Subprocess<'_> {
     }
 
     pub fn pid(&self) -> i32 {
-        i32::try_from(self.process().pid).expect("int cast")
+        self.process().pid
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -893,7 +895,11 @@ impl Subprocess<'_> {
             + self.stderr.get().memory_cost()
     }
 
-    pub fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
+    /// # Safety
+    /// `process` must be the live `*mut Process` threaded from the
+    /// `link_impl_ProcessExit!` vtable thunk (mutable provenance, valid for the
+    /// duration of the call).
+    pub unsafe fn on_process_exit(&self, process: *mut Process, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
         let this_jsvalue = self.this_value.get().try_get().unwrap_or(JSValue::ZERO);
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`

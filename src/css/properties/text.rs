@@ -178,14 +178,8 @@ impl TextShadow {
         loop {
             if lengths.is_none() {
                 let value = input.try_parse(|i: &mut css::Parser| -> css::Result<Lengths> {
-                    let horizontal = match Length::parse(i) {
-                        Ok(v) => v,
-                        Err(e) => return Err(e),
-                    };
-                    let vertical = match Length::parse(i) {
-                        Ok(v) => v,
-                        Err(e) => return Err(e),
-                    };
+                    let horizontal = Length::parse(i)?;
+                    let vertical = Length::parse(i)?;
                     let blur = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
                     let spread = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
                     Ok((horizontal, vertical, blur, spread))
@@ -268,7 +262,7 @@ impl TextShadow {
 impl css::generics::IsCompatible for TextShadow {
     #[inline]
     fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
-        self.is_compatible(&browsers)
+        self.is_compatible(browsers)
     }
 }
 

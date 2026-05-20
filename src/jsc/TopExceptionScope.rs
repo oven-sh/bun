@@ -261,6 +261,7 @@ impl TopExceptionScope {
 
     /// Generate a useful message including where the exception was thrown.
     /// Only intended to be called when there is a pending exception.
+    #[cfg(any(debug_assertions, bun_asan))]
     #[cold]
     fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
         let _ = proof;
@@ -435,7 +436,7 @@ pub struct ExceptionValidationScope {
     #[cfg(any(debug_assertions, bun_asan))]
     scope: TopExceptionScope,
     #[cfg(not(any(debug_assertions, bun_asan)))]
-    scope: (),
+    _scope: (),
 }
 
 /// RAII guard for an [`ExceptionValidationScope`]. See [`TopExceptionScopeGuard`].
@@ -515,7 +516,7 @@ impl ExceptionValidationScope {
         #[cfg(not(any(debug_assertions, bun_asan)))]
         {
             let _ = (global, src);
-            storage.write(Self { scope: () })
+            storage.write(Self { _scope: () })
         }
     }
 
@@ -786,6 +787,7 @@ unsafe extern "C" {
     /// returns if an exception was already thrown, or if a trap (like another thread requesting
     /// termination) causes an exception to be thrown
     safe fn TopExceptionScope__exceptionIncludingTraps(ptr: &mut [u8; SIZE]) -> *mut Exception;
+    #[cfg(any(debug_assertions, bun_asan))]
     safe fn TopExceptionScope__assertNoException(ptr: &mut [u8; SIZE]);
     fn TopExceptionScope__destruct(ptr: *mut [u8; SIZE]);
 }

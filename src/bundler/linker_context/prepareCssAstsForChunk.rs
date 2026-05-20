@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-use core::mem::offset_of;
 
 use bun_alloc::{Arena as Bump, ArenaVec, ArenaVecExt};
 use bun_threading::thread_pool as ThreadPoolLib;

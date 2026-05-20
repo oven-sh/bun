@@ -29,8 +29,7 @@ use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsClass, JsResult, LogJsc,
-    StringJsc,
+    self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
 use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::BackRef;
@@ -183,7 +182,7 @@ impl FileSystemRouter {
             );
         }
         // PERF(port): was arena bulk-free — extensions/asset_prefix/log all allocated from this.
-        let mut arena = Box::new(ArenaAllocator::new());
+        let arena = Box::new(ArenaAllocator::new());
         let mut extensions: Vec<&[u8]> = Vec::new();
         if let Some(file_extensions) = argument.get(global_this, "fileExtensions")? {
             if !file_extensions.js_type().is_array() {
@@ -372,6 +371,9 @@ impl FileSystemRouter {
         // `&mut` per use site so the recursive call (which does the same) doesn't pop our
         // SB tag mid-loop.
         let vm = global_this.bun_vm();
+        #[cfg(not(windows))]
+        let path = input_path;
+        #[cfg(windows)]
         let mut path = input_path;
         #[cfg(windows)]
         let normalized: Vec<u8>;
@@ -409,8 +411,9 @@ impl FileSystemRouter {
                     let kind = {
                         let fs_impl = &mut vm.transpiler.fs_mut().fs;
                         // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
-                        // EntryStore (checked non-null above); no shared `&Entry` is live here.
-                        unsafe { &mut *entry_ptr }.kind(fs_impl, false)
+                        // EntryStore (checked non-null above); no shared `&Entry` is live
+                        // here. entries_mutex held; fs_impl is the process-global RealFS.
+                        unsafe { (&mut *entry_ptr).kind(fs_impl, false) }
                     };
                     if kind == Fs::EntryKind::Dir {
                         for banned_dir in Router::BANNED_DIRS.iter() {

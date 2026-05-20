@@ -3086,10 +3086,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // popAndDiscardScope) into a dense bump-slice for the visit pass.
             let mut buf =
                 BumpVec::<ScopeOrder<'a>>::with_capacity_in(self.scopes_in_order.len(), self.arena);
-            for item in self.scopes_in_order.iter() {
-                if let Some(item_) = item {
-                    buf.push(*item_);
-                }
+            for item_ in self.scopes_in_order.iter().flatten() {
+                buf.push(*item_);
             }
             // `into_bump_slice()` leaks the BumpVec into the arena and returns
             // a `&'a [T]` for that allocation (Zig: `p.arena.alloc(ScopeOrder, n)`).
@@ -3915,11 +3913,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     pub fn forbid_lexical_decl(&mut self, loc: bun_ast::Loc) -> Result<(), bun_core::Error> {
-        Ok(self.log().add_error(
+        self.log().add_error(
             Some(self.source),
             loc,
             b"Cannot use a declaration in a single-statement context",
-        ))
+        );
+        Ok(())
     }
 
     /// If we attempt to parse TypeScript syntax outside of a TypeScript file
@@ -6975,14 +6974,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         let class_name = s_class.class.class_name.unwrap();
                         let class_ref = class_name.ref_.expect("infallible: ref bound");
-                        let target: Expr;
-                        if prop.flags.contains(Flags::Property::IsStatic) {
+                        let target: Expr = if prop.flags.contains(Flags::Property::IsStatic) {
                             self.record_usage(class_ref);
-                            target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
+                            self.new_expr(E::Identifier::init(class_ref), class_name.loc)
                         } else {
                             let inner =
                                 self.new_expr(E::Identifier::init(class_ref), class_name.loc);
-                            target = self.new_expr(
+                            self.new_expr(
                                 E::Dot {
                                     target: inner,
                                     name: b"prototype".into(),
@@ -6990,8 +6988,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ..Default::default()
                                 },
                                 loc,
-                            );
-                        }
+                            )
+                        };
 
                         let mut array = BumpVec::<Expr>::new_in(self.arena);
 
@@ -8776,7 +8774,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     part_index: part_index as u32,
                 };
                 DeclaredSymbol::for_each_top_level_symbol(
-                    &mut part.declared_symbols,
+                    &part.declared_symbols,
                     &mut ctx,
                     |ctx: &mut Ctx<'_>, input: Ref| {
                         // If this symbol was merged, use the symbol at the end of the

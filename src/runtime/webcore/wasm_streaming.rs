@@ -108,7 +108,7 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
     }
 
     let body = response.get_body_value();
-    let mut any_blob: AnyBlob = match body {
+    let any_blob: AnyBlob = match body {
         BodyValue::Locked(_) => match body.try_use_as_any_blob() {
             Some(b) => b,
             None => return body.to_readable_stream(this),
@@ -131,7 +131,7 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
             unreachable!("Any::store() returned Some, so this is the Blob variant");
         };
         // `defer blob.detach()` — RAII via scopeguard.
-        let mut blob = scopeguard::guard(blob, |mut b: Blob| b.detach());
+        let blob = scopeguard::guard(blob, |b: Blob| b.detach());
         blob.resolve_size();
         let size = blob.size.get();
         return ReadableStream::from_blob_copy_ref(this, &blob, size);
@@ -153,8 +153,12 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
 /// `jsc.host_fn.wrap3(getBodyStreamOrBytesForWasmStreaming)` — plain C ABI
 /// shim: returns `.zero` on thrown exception (matches `wrapN` semantics in
 /// `src/jsc/host_fn.zig`).
+///
+/// # Safety
+/// `this` must be a valid, live `JSGlobalObject` pointer for the duration of
+/// the call (guaranteed by the C++ host caller).
 #[unsafe(no_mangle)]
-pub extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+pub unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
     this: *mut JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,

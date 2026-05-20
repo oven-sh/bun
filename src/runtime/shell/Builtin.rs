@@ -3,8 +3,7 @@
 //! builtin stores the `NodeId` of its owning Cmd and every method takes
 //! `&Interpreter`.
 
-use bun_collections::{ByteVecExt, VecExt};
-use bun_ptr::AsCtxPtr;
+use bun_collections::VecExt;
 use core::ffi::c_char;
 use std::sync::Arc;
 
@@ -666,7 +665,8 @@ impl Builtin {
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if redirect.stdin() {
                     let r = IOReader::init(redirfd, evtloop);
-                    r.set_interp(interp_ptr);
+                    // SAFETY: `interp_ptr` is the live `Interpreter` this builtin runs under.
+                    unsafe { r.set_interp(interp_ptr) };
                     Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
                 }
 
@@ -690,7 +690,8 @@ impl Builtin {
                     },
                     evtloop,
                 );
-                redirect_writer.set_interp(interp_ptr);
+                // SAFETY: `interp_ptr` is the live `Interpreter` this builtin runs under.
+                unsafe { redirect_writer.set_interp(interp_ptr) };
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);

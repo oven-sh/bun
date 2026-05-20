@@ -3,7 +3,6 @@
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
 use bun_collections::VecExt;
-use core::ffi::{c_char, c_int};
 use core::mem::size_of;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -12,12 +11,16 @@ use std::sync::Arc;
 use bun_ast::Loader;
 use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
-use bun_core::{self as bun, Environment, Error as BunError, Output, err};
+use bun_core::{Environment, Error as BunError, Output, err};
 use bun_core::{String as BunString, StringPointer, ZStr};
 use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
+#[cfg(not(windows))]
+use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
-use bun_paths::{self as path, OSPathBuffer, PathBuffer, SEP_STR, WPathBuffer, strings};
+use bun_paths::{self as path, PathBuffer, strings};
+#[cfg(windows)]
+use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 
@@ -273,6 +276,7 @@ pub enum ModuleFormat {
     Cjs = 2,
 }
 
+#[cfg(target_os = "macos")]
 mod macho {
     // TODO(port): move to standalone_graph_sys
     unsafe extern "C" {
@@ -302,6 +306,7 @@ mod macho {
     }
 }
 
+#[cfg(windows)]
 mod pe {
     use bun_exe_format::pe::{
         Bun__getStandaloneModuleGraphPEData, Bun__getStandaloneModuleGraphPELength,
@@ -327,6 +332,7 @@ mod pe {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 mod elf {
     // TODO(port): move to standalone_graph_sys
     unsafe extern "C" {
@@ -465,7 +471,7 @@ impl LazySourceMap {
                 // copy the section bytes; Zig held a borrowed slice. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
                 let mut file_names: Vec<Box<[u8]>> = Vec::with_capacity(source_files_count);
-                let mut decompressed_contents_slice: Vec<Option<Vec<u8>>> =
+                let decompressed_contents_slice: Vec<Option<Vec<u8>>> =
                     vec![None; source_files_count];
                 for i in 0..source_files_count {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
@@ -732,7 +738,7 @@ pub fn to_bytes(
                 string_builder.cap += bytes.len() * 2;
             } else if output_file.output_kind == options::OutputKind::Bytecode {
                 // Allocate up to 256 byte alignment for bytecode
-                string_builder.cap += (bytes.len() + 255) / 256 * 256 + 256;
+                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256;
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
                 string_builder.cap += bytes.len();
             } else {
@@ -875,7 +881,7 @@ pub fn to_bytes(
                     // Inline of `bun.sys.File.makeOpen(dest_z, flags, 0o664)`:
                     let file = match Syscall::openat(Fd::cwd(), dest_z, flags, 0o664) {
                         Ok(fd) => bun_sys::File::from_fd(fd),
-                        Err(first_err) => {
+                        Err(_first_err) => {
                             let dir_path = path::resolve_path::dirname::<path::platform::Auto>(
                                 dest_z.as_bytes(),
                             );
@@ -1004,9 +1010,6 @@ pub fn to_bytes(
     Ok(output_bytes.to_vec())
 }
 
-// TODO(port): std.heap.page_size_max — platform constant
-const PAGE_SIZE: usize = 16384;
-
 pub type InjectOptions = WindowsOptions;
 
 pub enum CompileResult {
@@ -1061,6 +1064,7 @@ pub fn inject(
     inject_options: &InjectOptions,
     target: &CompileTarget,
 ) -> Fd {
+    let _ = inject_options;
     let mut buf = PathBuffer::uninit();
     // PORT NOTE: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
@@ -1214,15 +1218,6 @@ pub fn inject(
                                     continue;
                                 }
                                 _ => break,
-                            }
-
-                            {
-                                Output::pretty_errorln(format_args!(
-                                    "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
-                                    err
-                                ));
-                                // No fd to cleanup yet, just return error
-                                return Fd::INVALID;
                             }
                         }
                         // PORT NOTE: Zig falls through to `unreachable` on retry == 2; the
@@ -1541,61 +1536,6 @@ pub fn inject(
             return cloned_executable_fd;
         }
     }
-
-    // TODO(port): the code below is unreachable in Zig too (every match arm returns).
-    // Keeping for parity with Zig source.
-    {
-        #[cfg(windows)]
-        if inject_options.hide_console {
-            if let Err(e) = bun_sys::windows::edit_win32_binary_subsystem(
-                bun_sys::File::borrow(&cloned_executable_fd),
-                bun_sys::windows::Subsystem::WindowsGui,
-            ) {
-                Output::err(
-                    e,
-                    "failed to disable console on executable",
-                    format_args!(""),
-                );
-                cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
-            }
-        }
-
-        // Set Windows icon and/or metadata if any options are provided (single operation)
-        #[cfg(windows)]
-        if inject_options.icon.is_some()
-            || inject_options.title.is_some()
-            || inject_options.publisher.is_some()
-            || inject_options.version.is_some()
-            || inject_options.description.is_some()
-            || inject_options.copyright.is_some()
-        {
-            let mut zname_buf = OSPathBuffer::uninit();
-            let zname_w = strings::paths::to_w_path_normalized(&mut zname_buf, zname.as_bytes());
-
-            // Single call to set all Windows metadata at once
-            if let Err(e) = bun_sys::windows::rescle::set_windows_metadata(
-                zname_w.as_ptr(),
-                inject_options.icon.as_deref(),
-                inject_options.title.as_deref(),
-                inject_options.publisher.as_deref(),
-                inject_options.version.as_deref(),
-                inject_options.description.as_deref(),
-                inject_options.copyright.as_deref(),
-            ) {
-                Output::err(
-                    e,
-                    "failed to set Windows metadata on executable",
-                    format_args!(""),
-                );
-                cleanup(zname, cloned_executable_fd);
-                return Fd::invalid();
-            }
-        }
-
-        let _ = inject_options;
-        cloned_executable_fd
-    }
 }
 
 use bun_core::Environment::OperatingSystem as CompileTargetOs;
@@ -1696,10 +1636,7 @@ pub fn download_to_path(
                     Ok(())
                 })();
                 refresher.root.end();
-                if let Err(e) = gunzip_result {
-                    // Return error without printing - let caller handle the messaging
-                    return Err(e);
-                }
+                gunzip_result?;
             }
             refresher.refresh();
 
@@ -1835,6 +1772,8 @@ pub fn to_executable(
     self_exe_path: Option<&[u8]>,
     flags: Flags,
 ) -> Result<CompileResult, BunError> {
+    #[cfg(windows)]
+    let _ = root_dir;
     // TODO(port): narrow error set
     let bytes = match to_bytes(
         module_prefix,
@@ -1920,7 +1859,7 @@ pub fn to_executable(
         bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     };
 
-    let mut fd = inject(&bytes, &self_exe, windows_options, target);
+    let fd = inject(&bytes, &self_exe, windows_options, target);
     // PORT NOTE: Zig's `defer if (fd != invalid) fd.close()` reads `fd` at scope exit
     // after later reassignments. A scopeguard closure capturing `fd` by value would not
     // observe those writes; capturing by `&mut` conflicts with later uses. Explicit
@@ -1988,7 +1927,6 @@ pub fn to_executable(
 
         // Close the file handle before moving (Windows requires this)
         fd.close();
-        fd = Fd::invalid();
 
         use bun_sys::windows::{self, Win32ErrorExt as _};
         // Move the file using MoveFileExW
@@ -2087,7 +2025,6 @@ pub fn to_executable(
             bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, outfile_posix)
         {
             fd.close();
-            fd = Fd::INVALID;
 
             let _ = Syscall::unlink(temp_posix);
 
@@ -2255,36 +2192,39 @@ impl StandaloneModuleGraph {
                 }
             };
 
-            if len == 0 {
-                return;
-            }
+            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+            {
+                if len == 0 {
+                    return;
+                }
 
-            let page: usize = bun_alloc::page_size();
-            let start = (base as usize) & !(page - 1);
-            let end_unaligned = base as usize + len;
-            let end = (end_unaligned + page - 1) & !(page - 1);
+                let page: usize = bun_alloc::page_size();
+                let start = (base as usize) & !(page - 1);
+                let end_unaligned = base as usize + len;
+                let end = (end_unaligned + page - 1) & !(page - 1);
 
-            // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
-            // best-effort hint, so call libc directly and just log on failure.
-            // SAFETY: start..end covers a mapped range of the executable image.
-            let rc = unsafe {
-                libc::madvise(
-                    start as *mut core::ffi::c_void,
-                    end - start,
-                    libc::MADV_DONTNEED,
-                )
-            };
-            if rc != 0 {
+                // std.posix.madvise hits `unreachable` on unexpected errnos; this is a
+                // best-effort hint, so call libc directly and just log on failure.
+                // SAFETY: start..end covers a mapped range of the executable image.
+                let rc = unsafe {
+                    libc::madvise(
+                        start as *mut core::ffi::c_void,
+                        end - start,
+                        libc::MADV_DONTNEED,
+                    )
+                };
+                if rc != 0 {
+                    Output::debug_warn(format_args!(
+                        "hintSourcePagesDontNeed: madvise failed errno={}",
+                        bun_sys::last_errno()
+                    ));
+                    return;
+                }
                 Output::debug_warn(format_args!(
-                    "hintSourcePagesDontNeed: madvise failed errno={}",
-                    bun_sys::last_errno()
+                    "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
+                    end - start
                 ));
-                return;
             }
-            Output::debug_warn(format_args!(
-                "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
-                end - start
-            ));
         }
     }
 }

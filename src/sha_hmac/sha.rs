@@ -136,7 +136,13 @@ macro_rules! new_evp {
                 this
             }
 
-            pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size], engine: *mut ffi::ENGINE) {
+            /// # Safety
+            /// `engine` must be null (default engine) or a live `ENGINE*`.
+            pub unsafe fn hash(
+                bytes: &[u8],
+                out: &mut [u8; $digest_size],
+                engine: *mut ffi::ENGINE,
+            ) {
                 let md = ffi::$md_fn();
 
                 // SAFETY: `out` is DIGEST bytes; `size` out-param is nullable.
@@ -350,17 +356,6 @@ pub mod hashers {
 // TODO(port): `boring`, `zig`, `evp` below were Zig `[_]type{...}` comptime type
 // lists (with `void` sentinels) used for ad-hoc benchmarking against Zig's
 // `std.crypto.hash`. Rust has no type-list value equivalent and no `std.crypto`
-// counterpart; they are private and unreferenced in the Zig source, so only
-// `labels` is kept.
-
-const LABELS: [&[u8]; 7] = [
-    b"SHA1",
-    b"SHA512",
-    b"SHA384",
-    b"SHA256",
-    b"SHA512_256",
-    b"Blake2",
-    b"Blake3",
-];
+// counterpart; they are private and unreferenced in the Zig source.
 
 // ported from: src/sha_hmac/sha.zig

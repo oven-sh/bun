@@ -210,9 +210,9 @@ pub fn run_as_coordinator(
         // SAFETY: see vm_ptr note above.
         vm: unsafe { &*vm_ptr },
         // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
-        event_loop_handle: bun_jsc::EventLoopHandle::init(
-            unsafe { (*vm_ptr).event_loop() }.cast::<()>(),
-        ),
+        event_loop_handle: unsafe {
+            bun_jsc::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
+        },
         reporter,
         files: sorted,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
@@ -653,7 +653,12 @@ impl<'a> WorkerLoop<'a> {
 
 /// Worker side: read framed commands from the IPC channel via the event loop,
 /// run each file with isolation, stream per-test events back. Never returns.
-pub fn run_as_worker(
+///
+/// # Safety
+/// `vm` must be a valid, exclusively-accessed pointer to a live `VirtualMachine`
+/// for the entire duration of the call (i.e. for the rest of the process, since
+/// this never returns).
+pub unsafe fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
     ctx: Command::Context,

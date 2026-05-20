@@ -6,7 +6,7 @@ pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 
 // Ensure that checking for the prefix should be a cheap lookup (bun_core::has_prefix)
 // because 24 bytes == 8 * 3 --> read and compare three u64s
-const _: () = assert!(IMPORT_PATH.len() % 8 == 0);
+const _: () = assert!(IMPORT_PATH.len().is_multiple_of(8));
 
 pub struct FallbackModule {
     pub path: fs::Path<'static>,
@@ -126,7 +126,7 @@ fn init_modules() {
             m.put_assume_capacity(
                 name,
                 FallbackModule {
-                    path: path.clone(),
+                    path: *path,
                     package_json: pkg,
                     code: *code,
                 },

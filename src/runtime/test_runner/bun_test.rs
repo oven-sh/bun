@@ -1,6 +1,6 @@
 use core::fmt;
 use core::ptr::NonNull;
-use std::cell::{Cell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::rc::{Rc, Weak};
 
 use bun_collections::LinearFifo;
@@ -8,9 +8,9 @@ use bun_core::{Output, Timespec};
 use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use super::jest::{Jest, TestRunner, FileId, FileColumns as _};
+use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
-use crate::cli::test_command::{self, CommandLineReporter};
+use crate::cli::test_command::CommandLineReporter;
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
@@ -177,7 +177,7 @@ pub mod js_fns {
             let tag_name: &'static str = tag.into();
             let sig_bytes: &'static [u8] = tag.sig();
 
-            let mut args = ScopeFunctions::parse_arguments(
+            let args = ScopeFunctions::parse_arguments(
                 global_this,
                 call_frame,
                 Signature::Str(sig_bytes),
@@ -202,7 +202,8 @@ pub mod js_fns {
                 ..Default::default()
             };
 
-            let Some(bun_test) = bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm_ptr()) else {
+            // SAFETY: `bun_vm_ptr()` returns the live per-thread VM.
+            let Some(bun_test) = (unsafe { bun_test_root.get_active_file_unless_in_preload(global_this.bun_vm_ptr()) }) else {
                 if tag == GenericHookTag::OnTestFinished {
                     return Err(global_this.throw(format_args!(
                         "Cannot call {}() in preload. It can only be called inside a test.",
@@ -424,6 +425,7 @@ impl core::ops::Deref for BunTestCell {
 /// # Safety
 /// Caller must uphold the aliasing contract documented on [`BunTestCell::get`].
 #[inline]
+#[allow(clippy::mut_from_ref)] // interior mutability: routes through UnsafeCell::get()
 pub unsafe fn buntest_as_mut(ptr: &BunTestPtr) -> &mut BunTest {
     ptr.get()
 }
@@ -534,13 +536,11 @@ impl BunTestRoot {
         // `test_command::exec` which outlives every `BunTest`. `exit_file()`
         // nulls this before the file is dropped.
         let reporter_ptr = NonNull::from(&mut *reporter);
-        let bun_test = BunTestCell::new(BunTest::init(
-            stable_root,
-            file_id,
-            Some(reporter_ptr),
-            default_concurrent,
-            first_last,
-        ));
+        // SAFETY: `stable_root` points at the global runner's `BunTestRoot`,
+        // which outlives every `BunTest` it spawns.
+        let bun_test = BunTestCell::new(unsafe {
+            BunTest::init(stable_root, file_id, Some(reporter_ptr), default_concurrent, first_last)
+        });
         self.active_file = Some(bun_test);
     }
 
@@ -556,8 +556,10 @@ impl BunTestRoot {
         self.active_file = None; // drops the Rc (deinit)
     }
 
-    pub fn get_active_file_unless_in_preload(&mut self, vm: *mut VirtualMachine) -> Option<&mut BunTest> {
-        // SAFETY: vm is the live per-thread VM (from `JSGlobalObject::bun_vm()`).
+    /// # Safety
+    /// `vm` must point to the live per-thread `VirtualMachine` (from
+    /// `JSGlobalObject::bun_vm()`); it is dereferenced to read `is_in_preload`.
+    pub unsafe fn get_active_file_unless_in_preload(&mut self, vm: *mut VirtualMachine) -> Option<&mut BunTest> {
         if unsafe { (*vm).is_in_preload } {
             return None;
         }
@@ -662,7 +664,10 @@ pub struct BunTest {
 bun_event_loop::impl_timer_owner!(BunTest; from_timer_ptr => timer);
 
 impl BunTest {
-    pub fn init(
+    /// # Safety
+    /// `bun_test_root` must be a non-null pointer to the stable global
+    /// `BunTestRoot` storage that outlives the returned `BunTest`.
+    pub unsafe fn init(
         bun_test_root: *mut BunTestRoot,
         file_id: FileId,
         reporter: Option<NonNull<CommandLineReporter>>,
@@ -672,9 +677,6 @@ impl BunTest {
         let _g = group_begin!();
 
         BunTest {
-            // SAFETY: BACKREF — caller passes a non-null `*mut BunTestRoot`
-            // derived from the stable global runner storage; the root outlives
-            // every `BunTest` it spawns.
             bun_test_root: unsafe { bun_ptr::BackRef::from_raw(bun_test_root) },
             in_run_loop: false,
             phase: Phase::Collection,
@@ -919,7 +921,9 @@ impl BunTest {
             phase,
         }));
         fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
-            RunTestsTask::call(this).map_err(Into::into)
+            // SAFETY: `this` was `heap::into_raw`'d above and is invoked exactly
+            // once by `ManagedTask`.
+            unsafe { RunTestsTask::call(this) }.map_err(Into::into)
         }
         // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
         let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
@@ -1543,8 +1547,11 @@ pub struct RunTestsTask {
 impl RunTestsTask {
     /// `ManagedTask` callback ABI: `fn(*mut T) -> JsResult<()>`. The pointer
     /// was `heap::alloc`'d in `run_next_tick`; reconstitute and drop here.
-    pub fn call(this: *mut RunTestsTask) -> JsResult<()> {
-        // SAFETY: `this` was produced by `heap::alloc` in `run_next_tick`.
+    ///
+    /// # Safety
+    /// `this` must be a pointer produced by `heap::into_raw` in
+    /// `run_next_tick`; ownership is consumed (the box is dropped on return).
+    pub unsafe fn call(this: *mut RunTestsTask) -> JsResult<()> {
         let this = unsafe { bun_core::heap::take(this) };
         // defer bun.destroy(this) → Box drops at end of scope
         // defer this.weak.deinit() → Weak drops with Box

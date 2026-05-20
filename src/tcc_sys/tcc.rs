@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::ZStr;
@@ -121,9 +120,10 @@ pub enum Error {
 bun_core::named_error_set!(Error);
 
 #[repr(i32)] // Zig: enum(c_int) — c_int == i32 on all Bun targets
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
     /// Output will be run in memory
+    #[default]
     Memory = TCC_OUTPUT_MEMORY as _,
     /// Executable file
     Exe = TCC_OUTPUT_EXE as _,
@@ -135,14 +135,8 @@ pub enum OutputFormat {
     Preprocess = TCC_OUTPUT_PREPROCESS as _,
 }
 
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Memory
-    }
-}
-
-/// Nominal type for some registered symbol. Used to force pointer-cast usage without
-/// allowing for interop with other APIs taking `*mut c_void` pointers.
+// Nominal type for some registered symbol. Used to force pointer-cast usage without
+// allowing for interop with other APIs taking `*mut c_void` pointers.
 bun_opaque::opaque_ffi! { pub struct Symbol; }
 
 /// Zig: `Symbol.Callback = fn (?*anyopaque, [*:0]const u8, ?*const Symbol) void`
@@ -430,7 +424,11 @@ impl State {
     }
 
     /// Add a symbol to the compiled program
-    pub fn add_symbol(&mut self, name: &ZStr, val: *const c_void) -> Result<(), Error> {
+    ///
+    /// # Safety
+    /// `val` is stored as the symbol's address; it must remain valid for any
+    /// JIT'd code that calls it.
+    pub unsafe fn add_symbol(&mut self, name: &ZStr, val: *const c_void) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; name is NUL-terminated; val is an opaque address.
         if unsafe { tcc_add_symbol(self, name.as_ptr(), val) } != 0 {
             // PERF(port): @branchHint(.unlikely)
@@ -515,7 +513,11 @@ impl State {
     }
 
     /// Return symbol value or NULL if not found
-    pub fn list_symbols(&mut self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
+    ///
+    /// # Safety
+    /// `ctx` is forwarded to `symbol_cb`; it must be valid for every callback
+    /// invocation (or null if `symbol_cb` ignores it).
+    pub unsafe fn list_symbols(&mut self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param); mirrors Zig's implicit ptrcast.
         let erased = symbol_cb.map(|f| unsafe {

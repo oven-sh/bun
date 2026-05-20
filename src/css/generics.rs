@@ -28,7 +28,6 @@ use crate::css_parser as css;
 use crate::css_parser::CssResult;
 use crate::css_parser::{Parser, ParserOptions};
 use crate::printer::Printer;
-use crate::values as css_values;
 use crate::values::angle::Angle;
 use crate::values::ident::{
     CustomIdent, CustomIdentFns, DashedIdent, DashedIdentFns, Ident, IdentFns,
@@ -78,22 +77,12 @@ pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump A
 // hand-written callers can use either name.
 pub use implement_deep_clone as deep_clone;
 
-pub fn can_transitively_implement_deep_clone<T>() -> bool {
-    // TODO(port): Zig checks `@typeInfo(T) == .struct | .union`. In Rust this
-    // gate becomes "does T impl DeepClone" — i.e. a trait bound at the call
-    // site, not a runtime check. Kept as a stub for diff parity.
-    true
-}
-
 // Blanket impls covering the structural cases the Zig switch handled inline.
 
 impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Option<T> {
     #[inline]
     fn deep_clone(&self, bump: &'bump Arena) -> Self {
-        match self {
-            Some(v) => Some(v.deep_clone(bump)),
-            None => None,
-        }
+        self.as_ref().map(|v| v.deep_clone(bump))
     }
 }
 
@@ -233,11 +222,6 @@ pub fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bo
             return false;
         }
     }
-    true
-}
-
-pub fn can_transitively_implement_eql<T>() -> bool {
-    // TODO(port): see can_transitively_implement_deep_clone — becomes a trait bound.
     true
 }
 
@@ -622,13 +606,13 @@ mod inherent_bridge {
     impl super::IsCompatible for BorderSideWidth {
         #[inline]
         fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-            BorderSideWidth::is_compatible(self, &browsers)
+            BorderSideWidth::is_compatible(self, browsers)
         }
     }
     impl super::IsCompatible for LineStyle {
         #[inline]
         fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-            LineStyle::is_compatible(*self, &browsers)
+            LineStyle::is_compatible(*self, browsers)
         }
     }
     bridge_clone_partialeq!(
@@ -745,25 +729,25 @@ mod inherent_bridge {
     impl super::IsCompatible for FontWeight {
         #[inline]
         fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-            FontWeight::is_compatible(self, &browsers)
+            FontWeight::is_compatible(self, browsers)
         }
     }
     impl super::IsCompatible for FontSize {
         #[inline]
         fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-            FontSize::is_compatible(self, &browsers)
+            FontSize::is_compatible(self, browsers)
         }
     }
     impl super::IsCompatible for FontStretch {
         #[inline]
         fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-            FontStretch::is_compatible(*self, &browsers)
+            FontStretch::is_compatible(*self, browsers)
         }
     }
     impl super::IsCompatible for FontStyle {
         #[inline]
         fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-            FontStyle::is_compatible(*self, &browsers)
+            FontStyle::is_compatible(*self, browsers)
         }
     }
     impl super::IsCompatible for FontVariantCaps {
@@ -775,13 +759,13 @@ mod inherent_bridge {
     impl super::IsCompatible for LineHeight {
         #[inline]
         fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-            LineHeight::is_compatible(self, &browsers)
+            LineHeight::is_compatible(self, browsers)
         }
     }
     impl super::IsCompatible for FontFamily {
         #[inline]
         fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
-            FontFamily::is_compatible(self, &browsers)
+            FontFamily::is_compatible(self, browsers)
         }
     }
     bridge_clone_partialeq!(FontFamily);
@@ -929,11 +913,6 @@ pub fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
     for item in this.slice_const() {
         item.hash(hasher);
     }
-}
-
-pub fn has_hash<T>() -> bool {
-    // TODO(port): becomes `T: CssHash` bound at call site; stub for diff parity.
-    true
 }
 
 impl CssHash for () {
@@ -1374,11 +1353,6 @@ pub trait ToCss {
 #[inline]
 pub fn to_css<T: ToCss>(this: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
     this.to_css(dest)
-}
-
-pub fn has_to_css<T>() -> bool {
-    // TODO(port): becomes `T: ToCss` bound; stub for diff parity.
-    true
 }
 
 impl<T: ToCss + ?Sized> ToCss for &T {

@@ -3,7 +3,6 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, Output, zstr};
 use bun_io as Async;
-use bun_js_parser as js_ast;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
@@ -440,9 +439,6 @@ pub mod singleton {
         unsafe { BundleThread::enqueue(get::<C>(), completion) };
     }
 }
-
-use bun_ast::Index;
-use bun_ast::Ref;
 
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;

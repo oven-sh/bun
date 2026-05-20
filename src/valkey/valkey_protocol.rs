@@ -491,7 +491,7 @@ impl<'a> ValkeyReader<'a> {
                     return Err(RedisError::NestingDepthExceeded);
                 }
                 let len = self.read_integer()?;
-                if len < 0 || len == 0 {
+                if len <= 0 {
                     return Err(RedisError::InvalidPush);
                 }
 

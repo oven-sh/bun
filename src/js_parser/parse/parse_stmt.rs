@@ -1,14 +1,6 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    clippy::single_match
-)]
+#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
-use bun_core::strings;
 use bun_core::{self, err};
 
 use crate::lexer as js_lexer;
@@ -16,7 +8,7 @@ use crate::p::P;
 use bun_ast as js_ast;
 
 use js_ast::op::Level;
-use js_ast::{Binding, Expr, G, LocRef, S, Stmt, Symbol};
+use js_ast::{Expr, G, LocRef, S, Stmt};
 use js_lexer::T;
 
 use crate::parser::fs;
@@ -454,7 +446,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_ast::b::B::BIdentifier(_) => js_ast::symbol::Kind::CatchIdentifier,
                     _ => js_ast::symbol::Kind::Other,
                 };
-                p.declare_binding(kind, &mut value, &mut stmt_opts)?;
+                p.declare_binding(kind, &mut value, &stmt_opts)?;
                 binding = Some(value);
             }
 

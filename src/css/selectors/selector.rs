@@ -1,13 +1,12 @@
 use crate::css_parser as css;
 use crate::css_parser::compat::Feature;
 use crate::css_parser::targets::Targets;
-use crate::css_parser::{CSSString, PrintErr, Printer, StyleContext, VendorPrefix};
+use crate::css_parser::{PrintErr, Printer, StyleContext, VendorPrefix};
 use crate::{CSSStringFns, IdentFns};
 type SymbolList = Vec<bun_ast::Symbol>;
 
 use bun_alloc::Arena as Bump;
 use bun_collections::ArrayHashMap;
-use bun_core::Output;
 
 bun_core::declare_scope!(CSS_SELECTORS, visible);
 
@@ -1179,11 +1178,7 @@ pub mod serialize {
 
             PseudoClass::Local { selector } => serialize_selector(selector, dest, context, false)?,
             PseudoClass::Global { selector } => {
-                let css_module = if let Some(module) = dest.css_module.take() {
-                    Some(module)
-                } else {
-                    None
-                };
+                let css_module = dest.css_module.take();
                 serialize_selector(selector, dest, context, false)?;
                 dest.css_module = css_module;
             }
@@ -1465,7 +1460,7 @@ pub mod tocss_servo {
             //
             // If we are in this case, after we have serialized the universal
             // selector, we skip Step 2 and continue with the algorithm.
-            let (can_elide_namespace, first_non_namespace): (bool, usize) = if 0 >= compound.len() {
+            let (can_elide_namespace, first_non_namespace): (bool, usize) = if compound.is_empty() {
                 (true, 0)
             } else {
                 match compound[0] {
@@ -1869,7 +1864,7 @@ impl<'a> CompoundSelectorIter<'a> {
     pub fn next(&mut self) -> Option<&'a [parser::Component]> {
         // Since we iterating backwards, we convert all indices into "backwards form" by doing `self.sel.components.len() - 1 - i`
         let items = self.sel.components.as_slice();
-        while self.i < items.len() {
+        if self.i < items.len() {
             let next_index: Option<usize> = 'next_index: {
                 for j in self.i..items.len() {
                     if items[items.len() - 1 - j].is_combinator() {

@@ -173,10 +173,9 @@ impl Parser<'_> {
 
         // Parse optional title
         let mut title: &[u8] = b"";
-        let mut had_whitespace_before_title = false;
         if p < text.len() && (text[p] == b'"' || text[p] == b'\'' || text[p] == b'(') {
             // Check that there was actual whitespace between dest and title
-            had_whitespace_before_title = p > pos_after_dest;
+            let had_whitespace_before_title = p > pos_after_dest;
             if had_whitespace_before_title {
                 if let Some(title_result) = self.parse_ref_def_title(text, p) {
                     // Title must be followed by optional whitespace then end of line or end of text
@@ -418,7 +417,8 @@ impl Parser<'_> {
                     break; // whitespace-only labels are invalid
                 }
                 let label = norm_label.into_boxed_slice();
-                if self.ref_def_labels.insert(label.clone()) {
+                if !self.ref_def_labels.contains(&label) {
+                    let _ = self.ref_def_labels.insert(&label);
                     // Dupe dest and title since they point into self.buffer which gets reused
                     let dest_dupe: Box<[u8]> = Box::from(result.dest);
                     let title_dupe: Box<[u8]> = Box::from(result.title);

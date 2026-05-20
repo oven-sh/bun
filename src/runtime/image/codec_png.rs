@@ -60,6 +60,7 @@ struct Iccp {
 }
 
 #[repr(C)]
+#[derive(Default)]
 struct Ihdr {
     width: u32,
     height: u32,
@@ -68,20 +69,6 @@ struct Ihdr {
     compression_method: u8,
     filter_method: u8,
     interlace_method: u8,
-}
-
-impl Default for Ihdr {
-    fn default() -> Self {
-        Self {
-            width: 0,
-            height: 0,
-            bit_depth: 0,
-            color_type: 0,
-            compression_method: 0,
-            filter_method: 0,
-            interlace_method: 0,
-        }
-    }
 }
 
 const SPNG_CTX_ENCODER: c_int = 2;

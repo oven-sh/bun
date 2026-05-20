@@ -60,18 +60,22 @@ enum Mode {
 }
 
 struct Sendfile {
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     socket_fd: Fd,
     remain: u64,
     offset: u64,
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     has_set_on_writable: bool,
 }
 
 impl Default for Sendfile {
     fn default() -> Self {
         Self {
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             socket_fd: Fd::INVALID,
             remain: 0,
             offset: 0,
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             has_set_on_writable: false,
         }
     }
@@ -120,7 +124,10 @@ impl FileResponseStream {
                 ref_count: Cell::new(1),
                 resp: opts.resp,
                 vm: opts.vm,
-                event_loop_handle: EventLoopHandle::init(opts.vm.event_loop().cast::<()>()),
+                // SAFETY: `opts.vm.event_loop()` returns the live per-thread `jsc::EventLoop`.
+                event_loop_handle: unsafe {
+                    EventLoopHandle::init(opts.vm.event_loop().cast::<()>())
+                },
                 fd: opts.fd,
                 auto_close: opts.auto_close,
                 idle_timeout: opts.idle_timeout,
@@ -160,9 +167,11 @@ impl FileResponseStream {
 
         if use_sendfile {
             this.sendfile = Sendfile {
+                #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
                 socket_fd: opts.resp.get_native_handle(),
                 offset: opts.offset,
                 remain: opts.length.expect("can_sendfile gates None"),
+                #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
                 has_set_on_writable: false,
             };
             this.resp.prepare_for_sendfile();
@@ -429,6 +438,7 @@ impl FileResponseStream {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     fn arm_sendfile_writable(&mut self) -> bool {
         bun_output::scoped_log!(FileResponseStream, "armSendfileWritable");
         if !self.sendfile.has_set_on_writable {
@@ -445,6 +455,7 @@ impl FileResponseStream {
         true
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     fn end_sendfile(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "endSendfile");
         if self.state.contains(State::RESPONSE_DONE) {
@@ -521,7 +532,8 @@ impl FileResponseStream {
     }
 
     pub fn event_loop(&self) -> EventLoopHandle {
-        EventLoopHandle::init(self.vm.event_loop().cast::<()>())
+        // SAFETY: `self.vm.event_loop()` returns the live per-thread `jsc::EventLoop`.
+        unsafe { EventLoopHandle::init(self.vm.event_loop().cast::<()>()) }
     }
 
     pub fn r#loop(&self) -> *mut bun_io::Loop {

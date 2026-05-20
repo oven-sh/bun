@@ -1,6 +1,5 @@
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::mem::offset_of;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(windows)]
@@ -9,11 +8,9 @@ use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
-use crate::webcore::jsc::{
-    CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult, Strong, Task,
-};
+use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
-use crate::webcore::{self, AutoFlusher, Blob, PathOrFileDescriptor, streams};
+use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
 // TODO(port): verify module path for `bun.spawn.Status`
 use crate::api::bun::process::Status as SpawnStatus;
 #[cfg(windows)]
@@ -840,6 +837,7 @@ impl FileSink {
     /// `EventLoopHandle::bun_vm()` returns an erased `*mut ()`; recover the
     /// typed `&mut VirtualMachine` (None for the mini loop or null).
     #[inline]
+    #[allow(clippy::mut_from_ref)] // recovers `&mut` from a type-erased raw ptr (per-thread VM, not aliased)
     fn js_vm(&self) -> Option<&mut bun_jsc::VirtualMachineRef> {
         let p = self.event_loop_handle.bun_vm();
         if p.is_null() {
@@ -1192,10 +1190,15 @@ impl FileSink {
         let this = FileSink {
             ref_count: Cell::new(1),
             // SAFETY: `construct` is only called from JSSink codegen on a thread
-            // that already has a Bun VM; `get()` panics otherwise.
-            event_loop_handle: EventLoopHandle::init(
-                unsafe { (*bun_jsc::VirtualMachineRef::get()).event_loop() }.cast::<()>(),
-            ),
+            // that already has a Bun VM (`get()` panics otherwise); `event_loop()`
+            // is the live per-thread `jsc::EventLoop`.
+            event_loop_handle: unsafe {
+                EventLoopHandle::init(
+                    (*bun_jsc::VirtualMachineRef::get())
+                        .event_loop()
+                        .cast::<()>(),
+                )
+            },
             ..FileSink::default_fields()
         };
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -1540,7 +1543,8 @@ impl FileSink {
             writer: JsCell::new(IOWriter::default()),
             // PORT NOTE: `EventLoopHandle` has no `Default`; null Js variant is the
             // closest sentinel — every constructor overwrites this field.
-            event_loop_handle: EventLoopHandle::init(core::ptr::null_mut()),
+            // SAFETY: sentinel only; never dispatched (overwritten before use).
+            event_loop_handle: unsafe { EventLoopHandle::init(core::ptr::null_mut()) },
             written: Cell::new(0),
             pending: JsCell::new(streams::WritablePending {
                 result: streams::Writable::Done,
@@ -1569,11 +1573,15 @@ pub struct FlushPendingTask {
 }
 
 impl FlushPendingTask {
-    pub fn run_from_js_thread(flush_pending: *mut FlushPendingTask) {
-        // SAFETY: `flush_pending` points to `FileSink.run_pending_later` of a
-        // live FileSink (the task was enqueued from `run_pending_later()` which
-        // took a ref on the parent). `Cell::replace` reads-then-clears in one
-        // step so only a single raw deref is needed.
+    /// # Safety
+    /// `flush_pending` must point to the `run_pending_later` field of a live
+    /// `FileSink` that holds at least the ref taken in `run_pending_later()`
+    /// when this task was enqueued (i.e. the canonical heap-allocation pointer
+    /// with write+dealloc provenance is recoverable via `from_field_ptr!`).
+    pub unsafe fn run_from_js_thread(flush_pending: *mut FlushPendingTask) {
+        // SAFETY: caller contract — `flush_pending` points to
+        // `FileSink.run_pending_later` of a live FileSink. `Cell::replace`
+        // reads-then-clears in one step so only a single raw deref is needed.
         let had = unsafe { (*flush_pending).has.replace(false) };
         // SAFETY: `flush_pending` is the `run_pending_later` field of a `FileSink`.
         let this: *mut FileSink =

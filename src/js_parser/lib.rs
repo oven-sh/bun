@@ -13,7 +13,7 @@
 // ("overly complex generic constant"); assoc-const projection on a *type*
 // param works under `generic_const_exprs`. `adt_const_params` keeps
 // `JSONOptions: ConstParamTy` for value-level reification.
-#![feature(adt_const_params, generic_const_exprs, allocator_api)]
+#![feature(adt_const_params, generic_const_exprs)]
 #![allow(incomplete_features)]
 
 pub use bun_collections::VecExt as _VecExtReexport;

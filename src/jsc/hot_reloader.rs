@@ -2,11 +2,15 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_collections::{StringHashMap, StringSet};
+use bun_core::Output;
 use bun_core::ZStr;
-use bun_core::{self as core_, Output};
+#[cfg(not(windows))]
+use bun_paths::SEP;
 use bun_paths::strings;
-use bun_paths::{self, PathBuffer, SEP};
-use bun_resolver::fs::{self as Fs, FileSystem, PathName};
+use bun_paths::{self, PathBuffer};
+#[cfg(not(windows))]
+use bun_resolver::fs::PathName;
+use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_sys::{self, Fd};
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
@@ -861,15 +865,17 @@ where
         );
 
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
-        if let Err(_) = unsafe { (*watcher_ptr).start() } {
+        if unsafe { (*watcher_ptr).start() }.is_err() {
             panic!("Failed to start File Watcher");
         }
     }
 
+    #[cfg(not(windows))]
     fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::EntriesOption) {
         self.tombstones.put(key, value).expect("unreachable");
     }
 
+    #[cfg(not(windows))]
     fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::EntriesOption> {
         self.tombstones.get(key).copied()
     }
@@ -959,6 +965,8 @@ where
 
         let fs: &mut FileSystem = FileSystem::instance();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
+        #[cfg(windows)]
+        let _ = (changed_files, parents, file_descriptors, rfs);
         let mut _on_file_update_path_buf = PathBuffer::uninit();
 
         for event in events.iter() {

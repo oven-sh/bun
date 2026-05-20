@@ -9,8 +9,8 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
+use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::lockfile::{self, Lockfile};
 use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
 use bun_semver as semver;
 
@@ -266,16 +266,6 @@ impl<'a> GlobPattern<'a> {
 
         version.starts_with(self.version_pattern)
     }
-
-    fn matches(&self, name: &[u8], version: &[u8], pattern: &[u8]) -> bool {
-        if !self.matches_name(name, pattern) {
-            return false;
-        }
-        if !self.version_pattern.is_empty() && !self.matches_version(version) {
-            return false;
-        }
-        true
-    }
 }
 
 impl WhyCommand {
@@ -364,10 +354,6 @@ impl WhyCommand {
         let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
         let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
-        // After error handling, `load_lockfile` is `Ok` and only borrows
-        // `lockfile_box` (the `pm`/`log` borrows ended at the call boundary).
-        // Drop the result and work against `lockfile_box` directly.
-        drop(load_lockfile);
 
         if top_only {
             MAX_DEPTH.store(1, AtomicOrdering::Relaxed);
@@ -383,10 +369,10 @@ impl WhyCommand {
         let dependencies_items = lockfile.buffers.dependencies.as_slice();
         let resolutions_items = lockfile.buffers.resolutions.as_slice();
 
-        let pkg_names = packages.items_name();
+        let _pkg_names = packages.items_name();
         let pkg_dep_slices = packages.items_dependencies();
         let pkg_res_slices = packages.items_resolutions();
-        let pkg_resolution = packages.items_resolution();
+        let _pkg_resolution = packages.items_resolution();
 
         // PERF(port): was arena bulk-free — Zig used ArenaAllocator for all_dependents
         // and per-dep string dupes. Now using global allocator + Drop.
@@ -403,8 +389,8 @@ impl WhyCommand {
         // `items_name()` / `items_dependencies()` / … directly, so we read
         // columns by index instead of materialising a `Package` row.
         let pkg_names = packages.items_name();
-        let pkg_dependencies = packages.items_dependencies();
-        let pkg_resolutions = packages.items_resolutions();
+        let _pkg_dependencies = packages.items_dependencies();
+        let _pkg_resolutions = packages.items_resolutions();
         let pkg_resolution = packages.items_resolution();
 
         for pkg_idx in 0..packages.len() {
@@ -509,14 +495,14 @@ impl WhyCommand {
                 } else if MAX_DEPTH.load(AtomicOrdering::Relaxed) == 0 {
                     Output::prettyln(format_args!("<d>  └─ (deeper dependencies hidden)<r>"));
                 } else {
-                    let mut ctx_data = TreeContext::init(string_bytes, top_only, &all_dependents);
+                    let _ctx_data = TreeContext::init(&all_dependents);
                     // PORT NOTE: reshaped for borrowck — Zig sorted via mutable
                     // `dependents.items` while also holding `&all_dependents` in
                     // ctx_data. Clone the slice to sort independently.
                     let mut sorted: Vec<DependentInfo> = dependents.clone();
                     sorted.sort_by(cmp_dependents);
 
-                    let mut ctx_data = TreeContext::init(string_bytes, top_only, &all_dependents);
+                    let mut ctx_data = TreeContext::init(&all_dependents);
 
                     let len = sorted.len();
                     for (dep_idx, dep) in sorted.iter().enumerate() {
@@ -591,22 +577,13 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
 }
 
 struct TreeContext<'a> {
-    // allocator field deleted — global mimalloc
-    string_bytes: &'a [u8],
-    top_only: bool,
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
     path_tracker: HashMap<PackageID, usize>,
 }
 
 impl<'a> TreeContext<'a> {
-    fn init(
-        string_bytes: &'a [u8],
-        top_only: bool,
-        all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
-    ) -> TreeContext<'a> {
+    fn init(all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>) -> TreeContext<'a> {
         TreeContext {
-            string_bytes,
-            top_only,
             all_dependents,
             path_tracker: HashMap::default(),
         }

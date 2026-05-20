@@ -11,10 +11,9 @@ use crate::bundled_ast as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_ast::{ImportKind, import_record};
-use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 
-use crate::Graph::{InputFileColumns as _, InputFileFlags};
+use crate::Graph::InputFileFlags;
 use crate::Index;
 use crate::bundle_v2::BundleV2;
 use crate::bundle_v2::bv2_impl::{PatchImportRecordsCtx, ResolveImportRecordCtx};

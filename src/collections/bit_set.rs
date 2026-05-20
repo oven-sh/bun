@@ -144,7 +144,7 @@ pub struct IntegerBitSet<const SIZE: usize> {
 
 impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// The number of items in this bit set
-    pub const BIT_LENGTH: usize = SIZE as usize;
+    pub const BIT_LENGTH: usize = SIZE;
 
     /// The integer type used to represent a mask in this bit set
     // TODO(port): Zig: `pub const MaskInt = std.meta.Int(.unsigned, size);`
@@ -445,7 +445,7 @@ impl<const SIZE: usize, const DIR_FWD: bool> SingleWordIterator<SIZE, DIR_FWD> {
 /// Number of `usize` masks needed to hold `bit_length` bits.
 #[inline(always)]
 pub const fn num_masks_for(bit_length: usize) -> usize {
-    (bit_length + (usize::BITS as usize - 1)) / (usize::BITS as usize)
+    bit_length.div_ceil(usize::BITS as usize)
 }
 
 /// A bit set with static size, which is backed by an array of usize.

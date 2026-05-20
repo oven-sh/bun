@@ -4,12 +4,10 @@ use std::io::Write as _;
 
 use bun_alloc::AllocError;
 use bun_alloc::Arena;
-use bun_ast::ImportRecord;
 use bun_ast::Ref;
-use bun_ast::Symbol;
-use bun_ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
+use bun_ast::{B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
 use bun_ast::{Loc, Log, Source};
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::ArrayHashMap;
 use bun_core::fmt as bun_fmt;
 use bun_js_parser::js_lexer;
 

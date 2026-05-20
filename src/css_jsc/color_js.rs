@@ -1,4 +1,3 @@
-use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_alloc::Arena;
@@ -205,7 +204,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         ));
     }
 
-    let mut log = Log::init();
+    let log = Log::init();
 
     let unresolved_format: OutputColorFormat = 'brk: {
         if !args[1].is_empty_or_undefined_or_null() {
@@ -218,7 +217,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
         break 'brk OutputColorFormat::Css;
     };
-    let mut input = ZigStringSlice::EMPTY;
+    let input: ZigStringSlice;
 
     let parsed_color: css::CssColorParseResult = 'brk: {
         if args[0].is_number() {

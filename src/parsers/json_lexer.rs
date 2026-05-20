@@ -326,6 +326,7 @@ where
     /// Single provenance chain to the `Log` — the parser routes its own log
     /// writes through here too (see struct doc).
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub fn log_mut(&self) -> &mut bun_ast::Log {
         // SAFETY: see struct doc — `log` is the only handle to the `Log` for
         // the lifetime of the parse; no `&mut Log` is held elsewhere, so this
@@ -651,7 +652,7 @@ where
                                 }
                                 let c3 = iter.c;
                                 value = match hex_digit_value_u32(c3 as u32) {
-                                    Some(d) => value * 16 | d as CodePoint,
+                                    Some(d) => (value * 16) | d as CodePoint,
                                     None => return self.syntax_error(),
                                 };
                             }

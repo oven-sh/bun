@@ -17,6 +17,7 @@
 //!
 //! CowSlice does not support slices longer than `2^(usize::BITS - 1)`.
 
+#[cfg(debug_assertions)]
 use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
@@ -40,8 +41,6 @@ pub struct CowSliceZ<T: 'static, const Z: bool> {
     flags: Flags,
     #[cfg(debug_assertions)]
     debug: Option<NonNull<DebugData>>,
-    #[cfg(not(debug_assertions))]
-    debug: (),
 }
 
 /// `packed struct(usize) { len: u(BITS-1), is_owned: bool }`
@@ -126,8 +125,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
             flags: Flags::new(len, true),
             #[cfg(debug_assertions)]
             debug: Some(DebugData::new_boxed()),
-            #[cfg(not(debug_assertions))]
-            debug: (),
         }
     }
 
@@ -156,8 +153,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
             flags: Flags::new(data.len(), false),
             #[cfg(debug_assertions)]
             debug: None,
-            #[cfg(not(debug_assertions))]
-            debug: (),
         }
     }
 
@@ -250,8 +245,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
             flags: Flags::new(self.flags.len(), false),
             #[cfg(debug_assertions)]
             debug: self.debug,
-            #[cfg(not(debug_assertions))]
-            debug: (),
         }
     }
 
@@ -325,8 +318,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
             flags: Flags::new(data.len(), is_owned),
             #[cfg(debug_assertions)]
             debug: None,
-            #[cfg(not(debug_assertions))]
-            debug: (),
         }
     }
 }

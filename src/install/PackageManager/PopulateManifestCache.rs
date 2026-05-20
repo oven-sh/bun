@@ -15,7 +15,6 @@ use crate::invalid_package_id;
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
 use super::PackageManager;
 use super::enqueue;
-use super::package_manager_options as Options;
 use super::run_tasks::{self, RunTasksCallbacks};
 use crate::package_manager_task as Task;
 use crate::resolution::Tag as ResolutionTag;
@@ -342,7 +341,5 @@ pub fn populate_manifest_cache(
 
     Ok(())
 }
-
-use Options::LogLevel;
 
 // ported from: src/install/PackageManager/PopulateManifestCache.zig

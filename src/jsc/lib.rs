@@ -14,13 +14,7 @@
 //! have been moved up into `bun_runtime`, and the few that only need an opaque
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
-#![allow(
-    dead_code,
-    unused_imports,
-    unused_variables,
-    deprecated,
-    non_snake_case
-)]
+#![allow(deprecated, non_snake_case)]
 #![allow(unexpected_cfgs)]
 // `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag` to
 // preserve Zig's comptime monomorphization (zig:2210). `Tag` is a fieldless
@@ -42,7 +36,6 @@ extern crate alloc;
 extern crate self as bun_jsc;
 
 use core::ffi::{c_char, c_void};
-use core::marker::PhantomData;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Proc-macro re-exports. `#[bun_jsc::host_fn]` / `#[bun_jsc::JsClass]` /
@@ -2316,8 +2309,6 @@ unsafe extern "C" {
         one_shot_startup: bool,
     );
 }
-
-pub(crate) use bun_ast::math;
 
 // TODO(port): generated module — re-run bindgen with .rs output. Hand-stubbed
 // in `generated.rs` until `src/codegen/generate-classes.ts` grows a `.rs`

@@ -1841,7 +1841,7 @@ impl Archiver {
                     #[cfg(unix)]
                     if path_traverses_created_symlink(path_slice, &created_symlinks) {
                         if options.log {
-                            Output::warn(&format_args!(
+                            Output::warn(format_args!(
                                 "Skipping entry that traverses a previously extracted symlink: {}\n",
                                 bun_core::fmt::fmt_os_path(path_slice, Default::default()),
                             ));
@@ -1929,7 +1929,7 @@ impl Archiver {
                                 ) {
                                     // Skip symlinks that would escape the extraction directory
                                     if options.log {
-                                        Output::warn(&format_args!(
+                                        Output::warn(format_args!(
                                             "Skipping symlink with unsafe target: {} -> {}\n",
                                             bun_core::fmt::fmt_os_path(
                                                 path_slice,

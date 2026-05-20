@@ -1,6 +1,5 @@
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
-use core::ptr::NonNull;
 
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;

@@ -1,30 +1,26 @@
 //! Port of src/bundler/LinkerContext.zig
 
 use crate::mal_prelude::*;
-use core::mem::offset_of;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt};
-use bun_core::{self as bun, Environment, Error as BunError, FeatureFlags, Output};
+use bun_core::{self as bun, Error as BunError, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
-    self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapShifts,
-    SourceMapState,
+    self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,
 };
 // PORT NOTE: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
 use bun_ast::{ImportKind, ImportRecord};
-use bun_threading::{self as sync, WaitGroup, thread_pool as ThreadPoolLib};
+use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
 // TODO(port): bake_types arrives from move-in (TYPE_ONLY → bundler)
 use crate::bake_types as bake;
-use crate::bun_css as css;
 
 use crate::BundledAst as JSAst;
 use bun_ast::{
-    self as js_ast, Binding, DeclaredSymbol, Dependency, ExportsKind, Expr, NamedImport, Part, Ref,
-    Stmt, Symbol, TlaCheck,
+    Binding, DeclaredSymbol, Dependency, ExportsKind, Expr, NamedImport, Part, Ref, Stmt, TlaCheck,
 };
 // PORT NOTE: `crate::Index` (= `bun_ast::Index`) — the
 // bundler's source-index newtype. `bun_ast::Index` is layout-identical
@@ -35,18 +31,15 @@ use bun_ast::{E, G, S};
 use bun_js_parser::lexer as lex;
 use bun_js_printer::{self as js_printer, renamer};
 
-use crate::bun_fs as Fs;
 use crate::bun_node_fallbacks as NodeFallbackModules;
-use crate::ungate_support::perf;
 use bun_ast::SideEffects;
-use bun_resolver::{self as _resolver, Resolver};
+use bun_resolver::Resolver;
 
 use crate::Graph::Graph;
-use crate::options::{self, Format, Loader, SourceMapOption, Target};
+use crate::options::{Format, Loader, SourceMapOption, Target};
 use crate::{
-    AdditionalFile, BundleV2, Chunk, CompileResult, CompileResultForSourceMap, ContentHasher,
-    ImportTracker, LinkerGraph, MangledProps, PartRange, ServerComponentBoundary, StableRef,
-    ThreadPool, WrapKind,
+    AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
+    LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
 };
 
 /// `bun.jsc.AnyEventLoop` (LinkerContext.zig:28). `bun_event_loop` is a
@@ -131,7 +124,6 @@ pub fn bundle_generate_chunk_action(
 bun_core::define_scoped_log!(debug, crate::linker_context_mod::LinkerCtx);
 pub(crate) use debug;
 bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
-pub(crate) use debug_tree_shake;
 
 // Re-exports from sibling modules in `linker_context/`.
 // `LinkerGraph` SoA accessors are real now (`` on
@@ -454,11 +446,8 @@ impl<'a> LinkerContext<'a> {
 pub mod EntryPoint {
     pub use crate::ungate_support::entry_point::Kind;
 }
-use crate::Graph::InputFileColumns as _;
 use crate::bundled_ast::Flags as AstFlags;
 use crate::ungate_support::generic_path_with_pretty_initialized;
-use crate::ungate_support::{CompileResultForSourceMapColumns as _, EntryPointColumns as _};
-use bun_ast::SideEffects as _GraphSideEffects;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
 // TODO(port): method bodies depend on `LinkerGraph` SoA accessors
@@ -1790,11 +1779,6 @@ pub(crate) fn crash_guard_for_part_range(
     part_range: &PartRange,
 ) -> bun_crash_handler::ActionGuard {
     bun_crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
-}
-
-struct SubstituteChunkFinalPathResult {
-    j: StringJoiner,
-    shifts: Box<[SourceMapShifts]>,
 }
 
 // TODO(port): scan/tree-shake/link method bodies. These reach into

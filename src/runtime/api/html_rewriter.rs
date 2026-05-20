@@ -7,12 +7,12 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 use std::rc::Rc;
 
+use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_collections::{ByteVecExt, LinearFifo, VecExt};
 use bun_core::MutableString;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
-    StringJsc as _, StrongOptional, SystemError, bun_string_jsc,
+    StrongOptional, SystemError, bun_string_jsc,
 };
 // PORT NOTE: `bun_jsc::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
@@ -30,7 +30,7 @@ use bun_jsc::zig_string::ZigString;
 // handles); they resolve to the same module, so alias both names.
 use crate::webcore::response::HeadersRef;
 use crate::webcore::streams::{self, Signal, StreamResult, Writable};
-use crate::webcore::{self, Blob, Body, Response};
+use crate::webcore::{self, Response};
 use bun_core::String as BunString;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_lolhtml_sys::lol_html as lolhtml;
@@ -203,20 +203,11 @@ macro_rules! lol_content_ops {
 
 // ───────────────────────────── LOLHTMLContext ─────────────────────────────
 
+#[derive(Default)]
 pub struct LOLHTMLContext {
     pub selectors: SelectorMap,
     pub element_handlers: Vec<Box<ElementHandler>>,
     pub document_handlers: Vec<Box<DocumentHandler>>,
-}
-
-impl Default for LOLHTMLContext {
-    fn default() -> Self {
-        Self {
-            selectors: Vec::new(),
-            element_handlers: Vec::new(),
-            document_handlers: Vec::new(),
-        }
-    }
 }
 
 impl Drop for LOLHTMLContext {
@@ -360,7 +351,10 @@ impl HTMLRewriter {
         response: *mut Response,
     ) -> JsResult<JSValue> {
         let new_context = Rc::clone(&self.context);
-        BufferOutputSink::init(new_context, global, response, self.builder)
+        // SAFETY: `response` is a live `*mut Response` whose JS wrapper is on
+        // the caller's stack (see `transform_`); `self.builder` was created by
+        // `HTMLRewriterBuilder::init` and is live until `finalize`.
+        unsafe { BufferOutputSink::init(new_context, global, response, self.builder) }
     }
 
     pub fn transform_(
@@ -602,7 +596,10 @@ impl HTMLRewriterLoader {
         self.finalize();
     }
 
-    pub fn setup(
+    /// # Safety
+    /// `builder` must be a live `HTMLRewriterBuilder` (from
+    /// `HTMLRewriterBuilder::init`) not yet destroyed.
+    pub unsafe fn setup(
         &mut self,
         builder: *mut lolhtml_sys::HTMLRewriterBuilder,
         context: Rc<RefCell<LOLHTMLContext>>,
@@ -750,7 +747,11 @@ impl BufferOutputSink {
         unsafe { *(*sink).tmp_sync_error.unwrap().as_ptr() = err };
     }
 
-    pub fn init(
+    /// # Safety
+    /// `original` must point to a live `Response` whose JS wrapper is kept
+    /// alive for the duration of this call. `builder` must be a live
+    /// `HTMLRewriterBuilder` not yet destroyed.
+    pub unsafe fn init(
         context: Rc<RefCell<LOLHTMLContext>>,
         global: &JSGlobalObject,
         original: *mut Response,
@@ -960,10 +961,17 @@ impl BufferOutputSink {
         js_err: Option<webcore::body::ValueError>,
         is_async: bool,
     ) {
-        Self::on_finished_buffering(ctx.cast::<BufferOutputSink>(), bytes, js_err, is_async)
+        // SAFETY: `ctx` is the `sink` heap allocation registered with the
+        // bufferer in `init()`; it was `ref_()`'d there so refcount > 0.
+        unsafe {
+            Self::on_finished_buffering(ctx.cast::<BufferOutputSink>(), bytes, js_err, is_async)
+        }
     }
 
-    pub fn on_finished_buffering(
+    /// # Safety
+    /// `sink` must be a live `BufferOutputSink` heap allocation with
+    /// refcount > 0 (the +1 taken in `init()` is consumed here).
+    pub unsafe fn on_finished_buffering(
         sink: *mut BufferOutputSink,
         bytes: &[u8],
         js_err: Option<webcore::body::ValueError>,
@@ -1023,7 +1031,8 @@ impl BufferOutputSink {
             return;
         }
 
-        if let Some(ret_err) = Self::run_output_sink(sink, bytes, is_async) {
+        // SAFETY: `sink` is live (refcount > 0, see fn safety contract).
+        if let Some(ret_err) = unsafe { Self::run_output_sink(sink, bytes, is_async) } {
             ret_err.ensure_still_alive();
             ret_err.protect();
             Self::write_tmp_sync_error(sink, ret_err);
@@ -1035,7 +1044,15 @@ impl BufferOutputSink {
     /// `<BufferOutputSink as OutputSink>::write/done(&mut self)` through the
     /// userdata pointer registered at build time. A `&mut self` receiver here
     /// would alias that inner `&mut` (Stacked Borrows UB).
-    pub fn run_output_sink(sink: *mut Self, bytes: &[u8], is_async: bool) -> Option<JSValue> {
+    ///
+    /// # Safety
+    /// `sink` must be a live `BufferOutputSink` heap allocation with
+    /// refcount > 0; `(*sink).rewriter` and `(*sink).response` must be set.
+    pub unsafe fn run_output_sink(
+        sink: *mut Self,
+        bytes: &[u8],
+        is_async: bool,
+    ) -> Option<JSValue> {
         // SAFETY: sink is a live heap allocation (refcount > 0, caller
         // invariant). Read fields into locals before the FFI calls so no
         // borrow of `*sink` is live across the re-entrant callback.
@@ -1288,13 +1305,18 @@ pub trait WrapperLike {
     type Raw;
     fn init(value: *mut Self::Raw) -> *mut Self;
     fn ref_(&self);
-    fn deref(this: *mut Self);
+    /// # Safety
+    /// `this` must be a live `heap::alloc` allocation with refcount >= 1.
+    unsafe fn deref(this: *mut Self);
     /// `jsc.Codegen.JS${T}.toJS` — wraps the *existing* heap allocation `this`
     /// in a JS wrapper (the codegen `${T}__create`). Takes `*mut Self` (not
     /// `&self`) because the C++ side stores the raw heap pointer in `m_ctx`;
     /// deriving it from a `&self` would launder shared-borrow provenance into
     /// the GC's exclusive-owner pointer.
-    fn to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue;
+    ///
+    /// # Safety
+    /// `this` must be a live `heap::alloc` allocation with refcount >= 1.
+    unsafe fn to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue;
     /// Some wrapper types (Element) hand out sub-objects that borrow from the
     /// underlying lol-html value and must be detached along with the wrapper
     /// itself. Default: no-op (caller passes a `clear_field` closure instead).
@@ -1314,12 +1336,12 @@ macro_rules! impl_wrapper_like {
             type Raw = $raw;
             fn init(v: *mut Self::Raw) -> *mut Self { Self::init(v) }
             fn ref_(&self) { self.ref_() }
-            fn deref(this: *mut Self) {
+            unsafe fn deref(this: *mut Self) {
                 // SAFETY: `WrapperLike::deref` contract — `this` is a live
                 // `heap::alloc` allocation with refcount >= 1.
                 unsafe { Self::deref(this) }
             }
-            fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
+            unsafe fn to_js(this: *mut Self, g: &JSGlobalObject) -> JSValue {
                 // SAFETY: `this` is a live `heap::alloc` allocation
                 // (refcount >= 1); ownership is shared with the GC wrapper via
                 // the intrusive refcount (`${T}Class__finalize` →
@@ -1399,9 +1421,10 @@ where
     let result = match cb.call(
         global,
         this.this_object(),
-        // `wrapper` is a live heap allocation (ref'd above; guard deref runs
-        // after this call). `to_js` hands the raw pointer to the C++ wrapper.
-        &[Z::to_js(wrapper, global)],
+        // SAFETY: `wrapper` is a live heap allocation (ref'd above; guard deref
+        // runs after this call). `to_js` hands the raw pointer to the C++
+        // wrapper.
+        &[unsafe { Z::to_js(wrapper, global) }],
     ) {
         Ok(v) => v,
         Err(_) => {

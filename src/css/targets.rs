@@ -19,7 +19,7 @@ impl Targets {
     /// Set a sane default for bundler
     pub fn browser_default() -> Targets {
         Targets {
-            browsers: Some(*Browsers::BROWSER_DEFAULT),
+            browsers: Some(*BROWSER_DEFAULT),
             ..Default::default()
         }
     }
@@ -32,6 +32,7 @@ impl Targets {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn parse_debug_target(val_: &[u8]) -> Option<u32> {
         let val = strings::trim(val_, b" \n\r\t");
         if val.is_empty() {
@@ -42,7 +43,6 @@ impl Targets {
         }
 
         let mut lhs: u32 = 0;
-        let rhs: u32;
 
         let mut i: usize = 0;
         for (j, &c) in val.iter().enumerate() {
@@ -68,7 +68,7 @@ impl Targets {
             panic!("bad string");
         }
         i += 1;
-        rhs = strings::parse_int::<u32>(&val[i..], 10).expect("invalid bytes");
+        let rhs: u32 = strings::parse_int::<u32>(&val[i..], 10).expect("invalid bytes");
         Some(lhs << rhs)
     }
 
@@ -185,20 +185,20 @@ pub struct Browsers {
     pub samsung: Option<u32>,
 }
 
-impl Browsers {
-    // Zig: `pub const browserDefault = convertFromString(&.{...}) catch unreachable;`
-    // convert_from_string is not const-evaluable in Rust; compute once lazily.
-    pub const BROWSER_DEFAULT: std::sync::LazyLock<Browsers> = std::sync::LazyLock::new(|| {
-        Browsers::convert_from_string(&[
-            b"es2020", // support import.meta.url
-            b"edge88",
-            b"firefox78",
-            b"chrome87",
-            b"safari14",
-        ])
-        .expect("unreachable")
-    });
+// Zig: `pub const browserDefault = convertFromString(&.{...}) catch unreachable;`
+// convert_from_string is not const-evaluable in Rust; compute once lazily.
+static BROWSER_DEFAULT: std::sync::LazyLock<Browsers> = std::sync::LazyLock::new(|| {
+    Browsers::convert_from_string(&[
+        b"es2020", // support import.meta.url
+        b"edge88",
+        b"firefox78",
+        b"chrome87",
+        b"safari14",
+    ])
+    .expect("unreachable")
+});
 
+impl Browsers {
     /// Ported from here:
     /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
     pub fn convert_from_string(esbuild_target: &[&[u8]]) -> Result<Browsers, bun_core::Error> {

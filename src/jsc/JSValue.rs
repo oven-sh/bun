@@ -1955,7 +1955,6 @@ pub type PropertyIteratorFn = unsafe extern "C" fn(
 // ──────────────────────────────────────────────────────────────────────────
 unsafe extern "C" {
     safe fn JSC__JSValue__isAnyInt(this: JSValue) -> bool;
-    safe fn JSC__JSValue__jsType(this: JSValue) -> JSType;
     safe fn JSC__JSValue__jsNumberFromDouble(n: f64) -> JSValue;
     safe fn JSC__JSValue__jsEmptyString(global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__createEmptyObject(global: &JSGlobalObject, len: usize) -> JSValue;
@@ -2113,12 +2112,6 @@ unsafe extern "C" {
         out: &mut bun_core::ZigString,
         global: &JSGlobalObject,
     );
-    fn JSC__JSValue__getIfPropertyExistsImpl(
-        target: JSValue,
-        global: *const JSGlobalObject,
-        ptr: *const u8,
-        len: usize,
-    ) -> JSValue;
     safe fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;
     safe fn JSC__JSValue__isException(this: JSValue, vm: &crate::VM) -> bool;
     fn Bun__JSValue__call(

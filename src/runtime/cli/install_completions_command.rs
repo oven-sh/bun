@@ -1,13 +1,12 @@
-use core::fmt::Write as _;
-use std::io::Write as _;
-
+use bun_core::strings;
 use bun_core::{Global, Output, env_var};
-use bun_core::{ZStr, strings};
 use bun_core::{note, pretty_errorln, print_errorln};
-use bun_paths::{PathBuffer, WPathBuffer, platform, resolve_path};
+#[cfg(windows)]
+use bun_paths::WPathBuffer;
+use bun_paths::{PathBuffer, platform, resolve_path};
 use bun_sys::{self, Dir, E, File};
 
-use crate::shell_completions::{self as ShellCompletions, Shell, ShellCompletionsExt as _};
+use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
 pub struct InstallCompletionsCommand;
 
@@ -300,7 +299,7 @@ impl InstallCompletionsCommand {
             }
         }
 
-        let mut completions_dir: &[u8] = b"";
+        let mut completions_dir: &[u8];
         let output_dir: bun_sys::Fd = 'found: {
             let argv = bun_core::argv();
             for (i, arg) in argv.iter().enumerate() {

@@ -433,7 +433,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         // `self.close()` without reload. Launder so post-call accesses see
         // fresh state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        let was_done = Self::r(this).is_done == true;
+        let was_done = Self::r(this).is_done;
         let parent = Self::r(this).parent();
 
         if status == WriteStatus::EndOfFile && !was_done {

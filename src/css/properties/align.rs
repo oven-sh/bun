@@ -3,13 +3,13 @@ use crate as css;
 use crate::compat;
 use crate::css_values::length::LengthPercentage;
 use crate::prefixes::Feature;
-use crate::properties::{Property, PropertyId, PropertyIdTag};
+use crate::properties::{Property, PropertyId};
 use crate::{DeclarationList, PropertyHandlerContext, VendorPrefix};
 use crate::{Parser, PrintErr, Printer, Result as CssResult, Token};
 use bun_alloc::ArenaVecExt as _;
 
 use crate::css_properties::flex::{
-    BoxAlign, BoxOrdinalGroup, BoxPack, FlexAlign, FlexItemAlign, FlexLinePack, FlexPack,
+    BoxAlign, BoxPack, FlexAlign, FlexItemAlign, FlexLinePack, FlexPack,
 };
 
 // ──────────────────────────────────────────────────────────────────────────────

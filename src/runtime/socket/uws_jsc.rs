@@ -2,17 +2,12 @@
 //! Exports here are referenced via aliases on the original structs so call
 //! sites do not change.
 
-use core::ffi::CStr;
-
-use bun_core::String as BunString;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, SystemError};
+use bun_jsc::{JSGlobalObject, JSValue};
 use bun_uws::{
-    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_bun_verify_error_t,
-    us_socket_stream_buffer_t, us_socket_t,
+    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
 };
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
-use crate::webcore::BlobExt as _;
 
 // ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
 // is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──
@@ -114,8 +109,11 @@ pub fn any_web_socket_get_topics_as_js_array(
 }
 
 // ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocket.cpp) ──
+/// # Safety
+/// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
+/// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
 #[unsafe(no_mangle)]
-pub extern "C" fn us_socket_buffered_js_write(
+pub unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     // kept for ABI parity with the C++ caller; TLS is now per-socket
     _ssl: bool,

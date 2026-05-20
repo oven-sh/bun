@@ -12,7 +12,6 @@
 
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
-#![feature(allocator_api)]
 
 use bun_collections::VecExt;
 
@@ -3006,7 +3005,7 @@ pub mod __gated_printer {
                             .flags
                             .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                     {
-                        self.print_require_error(&record.path.text);
+                        self.print_require_error(record.path.text);
                         if wrap {
                             self.print(b")");
                         }
@@ -3033,7 +3032,7 @@ pub mod __gated_printer {
                         self.print(b".require(");
                     }
                     let path = &record.path;
-                    self.print_string_literal_utf8(&path.pretty, false);
+                    self.print_string_literal_utf8(path.pretty, false);
                     self.print(b")");
                     if wrap {
                         self.print(b")");
@@ -3080,7 +3079,7 @@ pub mod __gated_printer {
                 self.print_symbol(self.options.hmr_ref);
                 self.print(b".dynamicImport(");
                 let path = &record.path;
-                self.print_string_literal_utf8(&path.pretty, false);
+                self.print_string_literal_utf8(path.pretty, false);
             }
 
             if !import_options.is_missing() {
@@ -3676,7 +3675,7 @@ pub mod __gated_printer {
 
                     self.print(b"(");
                     self.print_string_literal_utf8(
-                        &self.import_record(e.import_record_index as usize).path.text,
+                        self.import_record(e.import_record_index as usize).path.text,
                         true,
                     );
                     self.print(b")");
@@ -3948,7 +3947,7 @@ pub mod __gated_printer {
                             ))
                         }));
                     }
-                    self.print_class(&e);
+                    self.print_class(e);
                     if wrap {
                         self.print(b")");
                     }
@@ -4163,7 +4162,7 @@ pub mod __gated_printer {
                         // Convert no-substitution template literals into strings if it's smaller
                         if e.parts().is_empty() {
                             self.add_source_mapping(expr.loc);
-                            self.print_string_characters_e_string(&e.head.cooked(), b'`');
+                            self.print_string_characters_e_string(e.head.cooked(), b'`');
                             return;
                         }
                     }
@@ -4304,7 +4303,7 @@ pub mod __gated_printer {
                                     .flags
                                     .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                                 {
-                                    self.print_require_error(&import_record.path.text);
+                                    self.print_require_error(import_record.path.text);
                                 } else {
                                     self.print_disabled_import();
                                 }
@@ -5979,7 +5978,7 @@ pub mod __gated_printer {
 
                     if IS_BUN_PLATFORM {
                         if record.tag == ImportRecordTag::Bun {
-                            self.print_global_bun_import_statement(&s);
+                            self.print_global_bun_import_statement(s);
                             self.prev_stmt_tag = new_tag;
                             return Ok(());
                         }
@@ -6404,20 +6403,20 @@ pub mod __gated_printer {
                 unreachable!();
             }
 
-            let quote = best_quote_char_for_string(&import_record.path.text, false);
+            let quote = best_quote_char_for_string(import_record.path.text, false);
             if import_record
                 .flags
                 .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
                 && !import_record.path.is_file()
             {
                 self.print(quote);
-                self.print_string_characters_utf8(&import_record.path.namespace, quote);
+                self.print_string_characters_utf8(import_record.path.namespace, quote);
                 self.print(b":");
-                self.print_string_characters_utf8(&import_record.path.text, quote);
+                self.print_string_characters_utf8(import_record.path.text, quote);
                 self.print(quote);
             } else {
                 self.print(quote);
-                self.print_string_characters_utf8(&import_record.path.text, quote);
+                self.print_string_characters_utf8(import_record.path.text, quote);
                 self.print(quote);
             }
         }
@@ -7158,7 +7157,7 @@ pub mod __gated_printer {
                         self.print_indent();
                         let import = stmt.data.s_import().unwrap();
                         let record = self.import_record(import.import_record_index as usize);
-                        self.print_string_literal_utf8(&record.path.pretty, false);
+                        self.print_string_literal_utf8(record.path.pretty, false);
 
                         let item_count = u32::from(import.default_name.is_some())
                             + u32::try_from(slice_of(import.items).len()).expect("int cast");
@@ -7220,7 +7219,7 @@ pub mod __gated_printer {
                     had_any_stars = true;
                     self.print_newline();
                     self.print_indent();
-                    self.print_string_literal_utf8(&record.path.pretty, false);
+                    self.print_string_literal_utf8(record.path.pretty, false);
                     self.print(b",");
                 }
                 self.unindent();
@@ -8065,8 +8064,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         top_level_symbols.sort_unstable_by(rename::StableSymbolCount::less_than);
 
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols)?;
-        let mut minifier = tree.char_freq.as_ref().unwrap().compile();
-        minify_renamer.assign_names_by_frequency(&mut minifier)?;
+        let minifier = tree.char_freq.as_ref().unwrap().compile();
+        minify_renamer.assign_names_by_frequency(&minifier)?;
 
         renamer = rename::Renamer::MinifyRenamer(&mut *minify_renamer);
     } else {

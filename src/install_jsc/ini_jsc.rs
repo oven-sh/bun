@@ -46,8 +46,8 @@ impl IniTestingAPIs {
         // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
         // `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at fn
         // return — same lifetime as the original arena.
-        let mut map_storage: Option<Box<dotenv::Map>> = None;
-        let mut env_storage: Option<dotenv::Loader<'_>> = None;
+        let mut map_storage: Option<Box<dotenv::Map>>;
+        let mut env_storage: Option<dotenv::Loader<'_>>;
         let env: *mut dotenv::Loader<'static> = if envjs.is_empty_or_undefined_or_null() {
             // SAFETY: `bun_vm()` is non-null on a constructed `JSGlobalObject`;
             // `transpiler.env` is set during VM init (transpiler.rs).

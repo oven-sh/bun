@@ -263,24 +263,18 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     ) -> Result<DiffList<Unit>, DiffError> {
         if before.is_empty() {
             // Just add some text (speedup).
-            let mut diffs: DiffList<Unit> = Vec::with_capacity(1);
-            // PERF(port): was assume_capacity
-            diffs.push(Diff {
+            return Ok(vec![Diff {
                 operation: Operation::Insert,
                 text: dupe(after),
-            });
-            return Ok(diffs);
+            }]);
         }
 
         if after.is_empty() {
             // Just delete some text (speedup).
-            let mut diffs: DiffList<Unit> = Vec::with_capacity(1);
-            // PERF(port): was assume_capacity
-            diffs.push(Diff {
+            return Ok(vec![Diff {
                 operation: Operation::Delete,
                 text: dupe(before),
-            });
-            return Ok(diffs);
+            }]);
         }
 
         let long_text = if before.len() > after.len() {
@@ -321,17 +315,16 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         if short_text.len() == 1 {
             // Single character string.
             // After the previous speedup, the character can't be an equality.
-            let mut diffs: DiffList<Unit> = Vec::with_capacity(2);
-            // PERF(port): was assume_capacity
-            diffs.push(Diff {
-                operation: Operation::Delete,
-                text: dupe(before),
-            });
-            diffs.push(Diff {
-                operation: Operation::Insert,
-                text: dupe(after),
-            });
-            return Ok(diffs);
+            return Ok(vec![
+                Diff {
+                    operation: Operation::Delete,
+                    text: dupe(before),
+                },
+                Diff {
+                    operation: Operation::Insert,
+                    text: dupe(after),
+                },
+            ]);
         }
 
         // Check to see if the problem can be split in two.
@@ -410,23 +403,19 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         let half_match_2 =
             self.diff_half_match_internal(long_text, short_text, (long_text.len() + 1) / 2)?;
 
-        let half_match: HalfMatchResult<Unit>;
-        if half_match_1.is_none() && half_match_2.is_none() {
-            return Ok(None);
-        } else if half_match_2.is_none() {
-            half_match = half_match_1.unwrap();
-        } else if half_match_1.is_none() {
-            half_match = half_match_2.unwrap();
-        } else {
-            // Both matched. Select the longest.
-            let hm1 = half_match_1.unwrap();
-            let hm2 = half_match_2.unwrap();
-            half_match = if hm1.common_middle.len() > hm2.common_middle.len() {
-                hm1
-            } else {
-                hm2
-            };
-        }
+        let half_match: HalfMatchResult<Unit> = match (half_match_1, half_match_2) {
+            (None, None) => return Ok(None),
+            (Some(hm1), None) => hm1,
+            (None, Some(hm2)) => hm2,
+            (Some(hm1), Some(hm2)) => {
+                // Both matched. Select the longest.
+                if hm1.common_middle.len() > hm2.common_middle.len() {
+                    hm1
+                } else {
+                    hm2
+                }
+            }
+        };
 
         // A half-match was found, sort out the return data.
         if before.len() > after.len() {
@@ -639,17 +628,16 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         }
         // Diff took too long and hit the deadline or
         // number of diffs equals number of characters, no commonality at all.
-        let mut diffs: DiffList<Unit> = Vec::with_capacity(2);
-        // PERF(port): was assume_capacity
-        diffs.push(Diff {
-            operation: Operation::Delete,
-            text: dupe(before),
-        });
-        diffs.push(Diff {
-            operation: Operation::Insert,
-            text: dupe(after),
-        });
-        Ok(diffs)
+        Ok(vec![
+            Diff {
+                operation: Operation::Delete,
+                text: dupe(before),
+            },
+            Diff {
+                operation: Operation::Insert,
+                text: dupe(after),
+            },
+        ])
     }
 
     /// Given the location of the 'middle snake', split the diff in two parts

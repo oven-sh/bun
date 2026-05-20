@@ -107,10 +107,7 @@ impl KeyframesName {
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
         use bun_core::strings;
-        let tok = match input.next() {
-            Ok(v) => v.clone(),
-            Err(e) => return Err(e),
-        };
+        let tok = input.next()?.clone();
         match tok {
             css::Token::Ident(s) => {
                 // CSS-wide keywords without quotes throws an error.
@@ -442,10 +439,7 @@ const _: () = {
         ) -> Result<Self::QualifiedRule> {
             // For now there are no options that apply within @keyframes
             let options = ParserOptions::default(None);
-            let declarations = match DeclarationBlock::parse(input, &options) {
-                Ok(vv) => vv,
-                Err(e) => return Err(e),
-            };
+            let declarations = DeclarationBlock::parse(input, &options)?;
             Ok(Keyframe {
                 selectors: prelude,
                 declarations,

@@ -11,6 +11,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_ulong, c_void};
+#[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
@@ -121,15 +122,14 @@ pub struct Terminal {
     /// uv_process_options_t.pseudoconsole.
     #[cfg(windows)]
     hpcon: Cell<Option<windows::HPCON>>,
-    #[cfg(not(windows))]
-    hpcon: (),
 
     /// Current terminal size
     cols: Cell<u16>,
     rows: Cell<u16>,
 
     /// Terminal name (e.g., "xterm-256color"). Read-only after construction.
-    term_name: ZigStringSlice,
+    /// Held for Drop (owns the slice allocation); no getter currently exposes it.
+    _term_name: ZigStringSlice,
 
     /// Event loop handle for callbacks. Read-only after construction.
     event_loop_handle: EventLoopHandle,
@@ -213,27 +213,12 @@ impl Default for Options {
 // resolve to that directly, no shim here.
 trait JSValueTerminalExt {
     fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>>;
-    fn get_optional_slice(
-        self,
-        global: &JSGlobalObject,
-        name: &[u8],
-    ) -> JsResult<Option<ZigStringSlice>>;
     fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>>;
 }
 impl JSValueTerminalExt for JSValue {
     fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>> {
         match self.get(global, name)? {
             Some(v) if !v.is_undefined_or_null() => Ok(Some(v.coerce::<i32>(global)?)),
-            _ => Ok(None),
-        }
-    }
-    fn get_optional_slice(
-        self,
-        global: &JSGlobalObject,
-        name: &[u8],
-    ) -> JsResult<Option<ZigStringSlice>> {
-        match self.get(global, name)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
             _ => Ok(None),
         }
     }
@@ -447,8 +432,6 @@ impl Terminal {
             slave_fd: Cell::new(pty_result.slave),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
-            #[cfg(not(windows))]
-            hpcon: (),
             cols: Cell::new(if cfg!(windows) {
                 u16::try_from(clamp_to_coord(options.cols)).expect("int cast")
             } else {
@@ -459,11 +442,12 @@ impl Terminal {
             } else {
                 options.rows
             }),
-            term_name,
-            // SAFETY: bun_vm() returns the live VM raw pointer for this global.
-            event_loop_handle: EventLoopHandle::init(
-                global_object.bun_vm().as_mut().event_loop().cast(),
-            ),
+            _term_name: term_name,
+            // SAFETY: bun_vm() returns the live VM raw pointer for this global;
+            // `event_loop()` is the live per-thread `jsc::EventLoop`.
+            event_loop_handle: unsafe {
+                EventLoopHandle::init(global_object.bun_vm().as_mut().event_loop().cast())
+            },
             global_this: bun_ptr::BackRef::new(global_object),
             writer: JsCell::new(IOWriter::default()),
             reader: JsCell::new(IOReader::init::<Terminal>()),
@@ -734,8 +718,6 @@ impl Terminal {
             }
         }
     }
-    #[cfg(not(windows))]
-    fn close_pseudoconsole_off_thread(&self, _hpcon: *mut c_void) {}
 }
 
 pub struct PtyResult {
@@ -774,6 +756,7 @@ fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     {
         return create_pty_windows(cols, rows);
     }
+    #[cfg(not(any(unix, windows)))]
     Err(CreatePtyError::NotSupported)
 }
 
@@ -869,6 +852,7 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
         return lib_util::get_open_pty();
     }
 
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     None
 }
 
@@ -1107,6 +1091,7 @@ fn create_overlapped_pipe_pair(
     Ok(PipePair { server, client })
 }
 
+#[cfg(windows)]
 static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(windows)]

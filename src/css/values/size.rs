@@ -1,8 +1,5 @@
-use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, Parser, PrintErr, Printer};
 use crate::targets::Browsers;
-use crate::values::length::LengthPercentage;
-use crate::values::number::CSSNumberFns;
 use crate::values::protocol::{IsCompatible, Parse, ToCss};
 use bun_alloc::Arena;
 
@@ -101,6 +98,5 @@ where
 
 // Keep references to the f32/LengthPercentage special-case helpers so trait
 // impls can be wired up later if they don't already exist.
-use {CSSNumberFns as _, LengthPercentage as _};
 
 // ported from: src/css/values/size.zig

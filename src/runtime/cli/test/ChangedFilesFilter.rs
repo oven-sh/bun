@@ -11,20 +11,21 @@
 //! Only those test entry points are returned.
 
 use bun_bundler::mal_prelude::*;
-use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::{c_char, c_int};
 
 use bstr::BStr;
 
-use bun_alloc::{AllocError, Arena};
+use bun_alloc::Arena;
 use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
 use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt, getenv_z};
 use bun_core::{PathString, ZStr, strings};
+use bun_jsc as jsc;
+#[cfg(windows)]
+use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, EventLoopHandle};
 use bun_paths::{self, PathBuffer, SEP, platform, resolve_path};
 use bun_resolver::fs::RealFS;
 use bun_sys as sys;
@@ -596,6 +597,7 @@ fn get_changed_files(
     Ok(set)
 }
 
+#[derive(Default)]
 pub struct GitResult {
     pub ok: bool,
     /// Set when the git process could not be spawned at all. The failure
@@ -604,17 +606,6 @@ pub struct GitResult {
     pub spawn_failed: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
-}
-
-impl Default for GitResult {
-    fn default() -> Self {
-        Self {
-            ok: false,
-            spawn_failed: false,
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }
-    }
 }
 
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
@@ -643,7 +634,8 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
             // `*VirtualMachine` and called `vm.eventLoop()` internally; the
             // Rust split keeps `init` taking the erased `*mut ()` event-loop
             // pointer directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
+            // SAFETY: `VirtualMachine::get().event_loop()` is the live per-thread `jsc::EventLoop`.
+            loop_: unsafe { EventLoopHandle::init(VirtualMachine::get().event_loop().cast()) },
             ..Default::default()
         },
         ..Default::default()

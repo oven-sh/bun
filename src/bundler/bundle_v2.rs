@@ -4,10 +4,9 @@
 // bodies live in the `bv2_impl` module below.
 // ══════════════════════════════════════════════════════════════════════════
 
-use crate::mal_prelude::*;
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, StringHashMap, VecExt};
+use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::ThreadLock;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
@@ -39,23 +38,20 @@ pub use bv2_impl::{
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
-use crate::Graph::{Graph, InputFileColumns};
+use crate::Graph::Graph;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
-use crate::barrel_imports::{self, RequestedExports};
+use crate::barrel_imports::RequestedExports;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Target};
-use crate::parse_task::{self, ResultValue as ParseResultValue};
 use crate::transpiler::Transpiler;
-use crate::ungate_support::{EventLoop, UseDirective};
+use crate::ungate_support::EventLoop;
 use crate::{Index, IndexInt, LinkerContext};
-use bun_ast::SideEffects;
 
 // ── re-exports so callers can reference these via `bundle_v2::…` ──
 /// `BundleThread` (BundleThread.zig) — owns the worker pool + completion
 /// queue for `BundleV2`. Re-exported so callers reference `bundle_v2::BundleThread`.
 pub use crate::BundleThread::BundleThread;
 pub use crate::ParseTask;
-pub(crate) use bun_ast::Loader;
 
 /// `jsc::api::JSBundler::Plugin` — re-exported from the canonical def below.
 pub use api::JSBundler::Plugin as JSBundlerPlugin;
@@ -349,28 +345,23 @@ pub mod bv2_impl {
 
     use crate::Graph::InputFileColumns;
     use crate::Index;
-    use crate::options_impl::{LoaderExt, TargetExt};
+    use crate::options_impl::TargetExt;
     use crate::transpiler::Transpiler;
     use crate::ungate_support::JSAst;
     use crate::ungate_support::bun_fs as Fs;
-    use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
-    use crate::ungate_support::{bun_css, bun_fs, import_record};
+
+    use crate::ungate_support::{bun_css, import_record};
     use bun_alloc::{AllocError, Arena as ThreadLocalArena};
-    use bun_ast::ServerComponentBoundary;
+
     use bun_ast::server_component_boundary;
-    use bun_ast::{
-        self as js_ast, B, Binding, Dependency, E, Expr, G, Part, Ref, S, Scope, Stmt, Symbol,
-    };
+    use bun_ast::{Binding, E, Expr, G, S};
     use bun_ast::{ImportKind, ImportRecord};
-    use bun_collections::{
-        ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, MultiArrayList, StringArrayHashMap,
-        StringHashMap, VecExt,
-    };
+    use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
     use bun_core::strings;
-    use bun_core::{self as bun, Environment, Error, FeatureFlags, Output};
+    use bun_core::{Error, FeatureFlags, Output};
     use bun_resolver::DataURL;
     use bun_resolver::fs::PathResolverExt as _;
-    use bun_resolver::{self as _resolver, Resolver, is_package_path};
+    use bun_resolver::{self as _resolver, is_package_path};
     use bun_threading::ThreadPool as ThreadPoolLib;
     // TODO(b0): bake_types arrives from move-in (TYPE_ONLY Side/Graph/BuiltInModule/Framework → bundler)
     use self::bake_types as bake;
@@ -771,12 +762,12 @@ pub mod bv2_impl {
             use bun_core::String as BunString;
             use bun_resolver::fs::PathResolverExt as _;
 
-            /// `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler calls
-            /// `has_any_matches` / `match_on_load` / `match_on_resolve` directly
-            /// (no JSC types needed — only `BunString` / raw context ptrs). The
-            /// JSC-aware methods (`create`, `add_plugin`, `global_object`, …) are
-            /// added by `bun_runtime` via the `PluginJscExt` extension trait so
-            /// this crate stays free of `JSValue` / `JSGlobalObject`.
+            // `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler calls
+            // `has_any_matches` / `match_on_load` / `match_on_resolve` directly
+            // (no JSC types needed — only `BunString` / raw context ptrs). The
+            // JSC-aware methods (`create`, `add_plugin`, `global_object`, …) are
+            // added by `bun_runtime` via the `PluginJscExt` extension trait so
+            // this crate stays free of `JSValue` / `JSGlobalObject`.
             bun_opaque::opaque_ffi! { pub struct Plugin; }
             unsafe extern "C" {
                 // The three `safe fn`s below take only Rust references / by-value
@@ -1399,12 +1390,11 @@ pub mod bv2_impl {
 
     // ── crate-root re-exports for forward-refs left by move-out ───────────────
     pub use self::bake_types::{HmrRuntimeSide, get_hmr_runtime};
-    pub(crate) use bun_ast::RuntimeTranspilerCache;
+
     /// `crate::bundle_v2::JSBundlerPlugin` — see BundleThread.rs.
     pub type JSBundlerPlugin = self::api::JSBundler::Plugin;
     pub type FileMap = self::api::JSBundler::FileMap;
 
-    use bun_paths as resolve_path;
     use bun_sourcemap as SourceMap;
 
     use crate::AstBuilder::AstBuilder;
@@ -1414,13 +1404,12 @@ pub mod bv2_impl {
     use crate::PathToSourceIndexMap::PathToSourceIndexMap;
     use crate::ServerComponentParseTask::ServerComponentParseTask;
     use crate::barrel_imports;
-    use crate::cache::Entry as CacheEntry;
-    use crate::chunk::{self, Chunk, ChunkImport};
+
+    use crate::chunk::{self, Chunk};
     use crate::linker_graph::LinkerGraph;
     use crate::options::{self, Loader, Target};
     use crate::parse_task::{self, ParseTask};
     use crate::thread_pool::ThreadPool;
-    use crate::ungate_support::entry_point;
 
     pub use crate::BundleThread::BundleThread;
 
@@ -1566,13 +1555,13 @@ pub mod bv2_impl {
     /// (`Option<NonNull<bun_event_loop::AnyEventLoop>>`).
     pub use crate::ungate_support::EventLoop;
 
-    /// `JSBundleCompletionTask` (JSBundler.zig) — typed-ptr marker for
-    /// `BundleV2.completion`. The concrete struct lives in `bun_runtime` (its
-    /// fields name `Config`/`Plugin`/`HTMLBundle::Route`); the bundler only ever
-    /// holds a `NonNull<JSBundleCompletionTask>` inside [`dispatch::CompletionHandle`]
-    /// and never dereferences it. Nomicon opaque-FFI pattern: ZST with
-    /// `PhantomData<(*mut u8, PhantomPinned)>` so it is `!Send + !Sync + !Unpin`
-    /// and has no usable size/layout in this crate.
+    // `JSBundleCompletionTask` (JSBundler.zig) — typed-ptr marker for
+    // `BundleV2.completion`. The concrete struct lives in `bun_runtime` (its
+    // fields name `Config`/`Plugin`/`HTMLBundle::Route`); the bundler only ever
+    // holds a `NonNull<JSBundleCompletionTask>` inside [`dispatch::CompletionHandle`]
+    // and never dereferences it. Nomicon opaque-FFI pattern: ZST with
+    // `PhantomData<(*mut u8, PhantomPinned)>` so it is `!Send + !Sync + !Unpin`
+    // and has no usable size/layout in this crate.
     bun_opaque::opaque_ffi! { pub struct JSBundleCompletionTask; }
 
     // DEDUP(D059): `generic_path_with_pretty_initialized` is canonically defined in
@@ -1960,7 +1949,7 @@ pub mod bv2_impl {
             // Create a quick index for server-component boundaries.
             // We need to mark the generated files as reachable, or else many files will appear missing.
             // PERF(port): was stack-fallback
-            let mut scb_bitset = if self.graph.server_component_boundaries.list.len() > 0 {
+            let scb_bitset = if self.graph.server_component_boundaries.list.len() > 0 {
                 Some(
                     self.graph
                         .server_component_boundaries
@@ -2222,7 +2211,7 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
-                    let mut file_map_result = _file_map_result;
+                    let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary.clone();
                     // PORT NOTE: reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
@@ -2430,7 +2419,7 @@ pub mod bv2_impl {
             };
             let mut resolve_result = resolve_result;
 
-            let mut out_source_index: Option<Index> = None;
+            let out_source_index: Option<Index>;
 
             // PORT NOTE(borrowck): Zig held a `*Fs.Path` into `resolve_result` while
             // also reading other fields and re-borrowing `self`. Rust borrowck rejects
@@ -2781,7 +2770,7 @@ pub mod bv2_impl {
         pub fn init(
             transpiler: &'a mut Transpiler<'a>,
             bake_options: Option<BakeOptions<'a>>,
-            alloc: &bun_alloc::Arena,
+            _alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
             cli_watch_flag: bool,
             // Raw `NonNull` (not `&mut`): the JS-API path threads `WorkPool::get()`
@@ -4304,11 +4293,15 @@ pub mod bv2_impl {
                     );
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
-                    std::ptr::from_mut(load),
-                    on_load_mini,
-                    core::mem::offset_of!(jsc_api::JSBundler::Load, task),
-                );
+                    // SAFETY: `load` is a valid &mut for the duration of the enqueue;
+                    // the mini loop dispatches `on_load_mini` on the bundler thread.
+                    unsafe {
+                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
+                            std::ptr::from_mut(load),
+                            on_load_mini,
+                            core::mem::offset_of!(jsc_api::JSBundler::Load, task),
+                        );
+                    }
                 }
             }
         }
@@ -4325,11 +4318,15 @@ pub mod bv2_impl {
                     );
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
-                    std::ptr::from_mut(resolve),
-                    on_resolve_mini,
-                    core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
-                );
+                    // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
+                    // the mini loop dispatches `on_resolve_mini` on the bundler thread.
+                    unsafe {
+                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
+                            std::ptr::from_mut(resolve),
+                            on_resolve_mini,
+                            core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
+                        );
+                    }
                 }
             }
         }
@@ -6318,6 +6315,7 @@ pub mod bv2_impl {
                                             );
                                         }
                                     } else {
+                                        #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
                                             && import_record.path.text.starts_with(
@@ -7578,27 +7576,6 @@ pub mod bv2_impl {
 
     impl ExternalFreeFunctionAllocator {
         // TODO(refactor): could implement `bun_alloc::Allocator` instead of the manual vtable.
-
-        pub fn create(
-            free_callback: unsafe extern "C" fn(*mut c_void),
-            context: *mut c_void,
-        ) -> bun_alloc::StdAllocator {
-            // PORT NOTE: Zig built a `std.mem.Allocator` whose `.ptr` was the boxed
-            // `ExternalFreeFunctionAllocator` and whose vtable's `free` invoked the
-            // plugin callback. `bun_alloc::StdAllocator` is the Rust equivalent.
-            let boxed = bun_core::heap::into_raw(Box::new(ExternalFreeFunctionAllocator {
-                free_callback,
-                context,
-            }));
-            bun_alloc::StdAllocator {
-                ptr: boxed.cast(),
-                vtable: &EXTERNAL_FREE_VTABLE,
-            }
-        }
-
-        fn alloc(_: *mut c_void, _: usize, _: bun_alloc::Alignment, _: usize) -> Option<*mut u8> {
-            None
-        }
 
         fn free(ext_free_function: *mut c_void, _: &mut [u8], _: bun_alloc::Alignment, _: usize) {
             // SAFETY: ptr was created by ExternalFreeFunctionAllocator::create

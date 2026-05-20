@@ -1,17 +1,15 @@
 use crate::bundled_ast;
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
+use bun_ast::ImportKind;
 use bun_ast::base::RefTag;
 use bun_ast::server_component_boundary;
 use bun_ast::symbol;
 use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
-use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayList, VecExt};
 use bun_core::PathString;
-use bun_js_parser as js_ast;
 
 use crate::IndexStringMap::IndexStringMap;
-use crate::entry_point::EntryPointColumns as _;
 use crate::{
     EntryPoint, ImportTracker, Index, JSAst, JSMeta, Part, Ref, ResolvedExports,
     TopLevelSymbolToParts, UseDirective, entry_point, import_record, index, js_meta, part,

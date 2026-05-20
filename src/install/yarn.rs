@@ -715,7 +715,7 @@ pub fn migrate_yarn_lockfile<'a>(
     }
 
     let mut num_deps: u32 = 0;
-    let mut root_dep_count: u32;
+    let root_dep_count: u32;
     let mut root_dep_count_from_package_json: u32 = 0;
 
     let mut root_dependencies: Vec<RootDep> = Vec::new();
@@ -1017,7 +1017,7 @@ pub fn migrate_yarn_lockfile<'a>(
 
     let mut package_id_to_yarn_idx: Vec<usize> = vec![usize::MAX; next_package_id as usize];
 
-    let mut created_packages: StringHashMap<bool> = StringHashMap::new();
+    let created_packages: StringHashMap<bool> = StringHashMap::new();
     let _ = &created_packages; // unused in Zig too (only init/deinit)
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {

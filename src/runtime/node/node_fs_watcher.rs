@@ -91,13 +91,15 @@ impl FSWatcher {
         self.vm().event_loop()
     }
 
-    pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
+    /// # Safety
+    /// `task` must point to a live heap-allocated `ConcurrentTask` node that
+    /// the caller releases ownership of; the concurrent queue takes ownership
+    /// and frees it on the JS thread after dispatch.
+    pub unsafe fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
         // `vm()` is the BACKREF accessor; `event_loop_shared()` is the audited
         // safe `&EventLoop` accessor. `enqueue_task_concurrent` is the
         // documented cross-thread entry point and only touches the lock-free
         // queue.
-        // SAFETY: `task` is a fresh heap-allocated `ConcurrentTaskItem`; the
-        // queue takes ownership of it.
         unsafe { self.vm().event_loop_shared().enqueue_task_concurrent(task) }
     }
 
@@ -328,9 +330,6 @@ unsafe extern "C" {
 pub struct FSWatchTaskWindows {
     event: Event,
     ctx: Option<bun_ptr::ParentRef<FSWatcher>>,
-
-    /// Unused: To match the API of the posix version
-    count: u8, // u0 in Zig
 }
 
 impl Taskable for FSWatchTaskWindows {
@@ -346,7 +345,6 @@ impl Default for FSWatchTaskWindows {
                 ..Default::default()
             }),
             ctx: None,
-            count: 0,
         }
     }
 }
@@ -394,13 +392,6 @@ impl core::fmt::Display for StringOrBytesToDecode {
 }
 
 impl FSWatchTaskWindows {
-    /// Raw owner pointer (write provenance) for re-entrant helpers that take
-    /// `*mut FSWatcher` and for `addr_of!` projections.
-    #[inline]
-    fn ctx_ptr(&self) -> *mut FSWatcher {
-        self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()
-    }
-
     pub fn append_abort(&mut self) {
         let ctx = self.ctx;
         // Balance the `ctx.unrefTask()` at the end of `run()` (matches
@@ -414,7 +405,6 @@ impl FSWatchTaskWindows {
         let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
             ctx,
             event: Event::Abort,
-            count: 0,
         }));
 
         // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF); `vm()` →
@@ -567,7 +557,6 @@ impl FSWatcher {
             // from the registered userdata; outlives every task it enqueues.
             ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(this.as_ctx_ptr()) }),
             event,
-            count: 0,
         }));
         // `vm()` is the BACKREF accessor; `event_loop_mut()` is the audited
         // safe `&mut EventLoop` accessor. Ownership of `task` transfers to the
@@ -1004,7 +993,7 @@ impl FSWatcher {
             // (it self-destroys via `heap::take` on the last handler, so it cannot
             // soundly take `&mut self`). `watcher` is the live pointer returned by
             // `path_watcher::watch`.
-            path_watcher::PathWatcher::detach(watcher, ctx_ptr);
+            unsafe { path_watcher::PathWatcher::detach(watcher, ctx_ptr) };
         }
 
         if self.persistent.get() {
@@ -1053,7 +1042,6 @@ impl FSWatcher {
             ctx: vm,
             current_task: JsCell::new(FSWatchTask {
                 ctx: None,
-                count: 0,
                 ..Default::default()
             }),
             mutex: Mutex::default(),

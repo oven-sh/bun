@@ -40,12 +40,6 @@ pub struct MachoFile {
     pub section: macho::section_64,
 }
 
-struct LoadCommand {
-    cmd: u32,
-    cmdsize: u32,
-    offset: usize,
-}
-
 /// Port of Zig `Shifter.shift(value, comptime fields)` — `inline for` + `@field` over a
 /// comptime field-name list. Expands to one `shift_one` call per named field.
 macro_rules! shift_fields {
@@ -91,7 +85,6 @@ impl MachoFile {
         // Look for existing __BUN,__BUN section
 
         let mut original_fileoff: u64 = 0;
-        let mut original_vmaddr: u64 = 0;
         let mut original_data_end: u64 = 0;
         let mut original_segsize: u64 = blob_alignment;
 
@@ -126,7 +119,7 @@ impl MachoFile {
                                 if sect.sect_name() == b"__bun" {
                                     found_bun = true;
                                     original_fileoff = sect.offset as u64;
-                                    original_vmaddr = sect.addr;
+                                    let original_vmaddr = sect.addr;
                                     original_data_end = command.fileoff + command.filesize;
                                     original_segsize = command.filesize;
                                     self.segment = command;
@@ -528,9 +521,6 @@ impl Shifter {
 pub struct MachoSigner {
     data: Vec<u8>,
     sig_off: usize,
-    sig_sz: usize,
-    cs_cmd_off: usize,
-    linkedit_off: usize,
     linkedit_seg: macho::segment_command_64,
     text_seg: macho::segment_command_64,
 }
@@ -606,12 +596,10 @@ impl MachoSigner {
         let mut data: Vec<u8> = Vec::with_capacity(obj.len());
         data.extend_from_slice(obj);
 
+        let _ = (sig_sz, cs_cmd_off);
         Ok(Box::new(MachoSigner {
             data,
             sig_off,
-            sig_sz,
-            cs_cmd_off,
-            linkedit_off,
             linkedit_seg,
             text_seg,
         }))
@@ -629,10 +617,8 @@ impl MachoSigner {
     /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
     /// inside __LINKEDIT.
     pub fn compute_signature_size(sig_off: u64) -> usize {
-        let total_pages: usize = usize::try_from(
-            (sig_off + Self::SIGNATURE_PAGE_SIZE as u64 - 1) / Self::SIGNATURE_PAGE_SIZE as u64,
-        )
-        .unwrap();
+        let total_pages: usize =
+            usize::try_from(sig_off.div_ceil(Self::SIGNATURE_PAGE_SIZE as u64)).unwrap();
         let super_blob_header_size = size_of::<SuperBlob>();
         let blob_index_size = size_of::<BlobIndex>();
         let code_dir_header_size = size_of::<CodeDirectory>();
@@ -648,7 +634,7 @@ impl MachoSigner {
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 
         // Calculate total binary pages before signature
-        let total_pages = (self.sig_off + PAGE_SIZE - 1) / PAGE_SIZE;
+        let total_pages = self.sig_off.div_ceil(PAGE_SIZE);
         let aligned_sig_off = total_pages * PAGE_SIZE;
 
         // Calculate base signature structure sizes
@@ -813,7 +799,8 @@ const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 /// `bun.sha.SHA256.hash(bytes, out, null)`.
 #[inline]
 fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
-    bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut());
+    // SAFETY: engine is null (default).
+    unsafe { bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut()) };
 }
 
 // ported from: src/exe_format/macho.zig

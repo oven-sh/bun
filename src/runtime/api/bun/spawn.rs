@@ -21,4 +21,3 @@ pub use ::bun_spawn::posix_spawn::{BunSpawn, PosixSpawn, bun_spawn, posix_spawn}
 
 // sibling module: src/runtime/api/bun/process.zig — now re-exported from the
 // `bun_spawn` workspace crate.
-use super::bun_process as process;

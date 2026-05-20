@@ -182,7 +182,7 @@ impl RusageFields for libc::rusage {
     // the `as i64` is required for the latter and a no-op on the former.
     #[inline]
     fn utime_sec(&self) -> i64 {
-        self.ru_utime.tv_sec as i64
+        self.ru_utime.tv_sec
     }
     #[inline]
     fn utime_usec(&self) -> i64 {
@@ -190,7 +190,7 @@ impl RusageFields for libc::rusage {
     }
     #[inline]
     fn stime_sec(&self) -> i64 {
-        self.ru_stime.tv_sec as i64
+        self.ru_stime.tv_sec
     }
     #[inline]
     fn stime_usec(&self) -> i64 {

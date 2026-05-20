@@ -3,7 +3,7 @@ use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_core::StackCheck;
 use bun_core::{String as BunString, ZigString};
-use bun_js_parser::{self as ast, lexer};
+use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
 use bun_parsers::json5;
 

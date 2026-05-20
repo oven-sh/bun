@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
@@ -251,12 +249,13 @@ impl YesTask {
 
     /// Spec: yes.zig `YesTask.runFromMainThread`.
     ///
-    /// Reached only via the concurrent-task dispatch installed in
-    /// [`enqueue`](Self::enqueue), which always passes the live task whose
-    /// storage is stable inside `Box<Yes>` in the interpreter arena.
-    pub fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: dispatch contract — `this` is the live task previously passed
-        // to `enqueue`; `interp` set in `Yes::start`, outlives the builtin.
+    /// # Safety
+    /// `this` must point to a live `YesTask` whose storage is stable inside
+    /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
+    /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
+    /// in [`enqueue`](Self::enqueue).
+    pub unsafe fn run_from_main_thread(this: *mut Self) {
+        // SAFETY: caller contract above.
         let (interp, cmd) = unsafe { (&*(*this).interp, (*this).cmd) };
         Yes::write_no_io_loop(interp, cmd).run(interp);
     }
@@ -265,7 +264,9 @@ impl YesTask {
     /// [`AnyTaskWithExtraContext::from`](bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from)'s
     /// callback shape (`fn(*mut T, *mut ())`).
     fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
-        Self::run_from_main_thread(this)
+        // SAFETY: dispatch contract — `this` is the live task previously passed
+        // to `enqueue`; see `run_from_main_thread`.
+        unsafe { Self::run_from_main_thread(this) }
     }
 }
 

@@ -340,7 +340,7 @@ pub unsafe fn resolve_maybe_needs_trailing_slash(
         return Ok(());
     };
     let qs = query_string
-        .map(|q| std::ptr::from_mut::<bun_core::String>(q))
+        .map(std::ptr::from_mut::<bun_core::String>)
         .unwrap_or(core::ptr::null_mut());
     // SAFETY: hook contract — `global` is the live JS-thread global (Zig
     // `*JSGlobalObject`, mutable: hook may throw on it); `res`/`qs` are valid

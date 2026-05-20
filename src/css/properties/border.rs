@@ -6,8 +6,8 @@ use crate::css_values::length::Length;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::targets::Browsers;
 use crate::{
-    DeclarationList, Feature, Parser, ParserError, PrintErr, Printer, PropertyCategory,
-    PropertyHandlerContext, Result as CssResult, SmallList, Targets,
+    DeclarationList, Feature, Parser, PrintErr, Printer, PropertyCategory, PropertyHandlerContext,
+    Result as CssResult, SmallList, Targets,
 };
 use bun_alloc::ArenaVecExt as _;
 
@@ -132,9 +132,6 @@ where
                 dest.write_str(b" ")?;
             }
             self.color.to_css(dest)?;
-            {
-                needs_space = true;
-            }
         }
         Ok(())
     }
@@ -150,7 +147,6 @@ where
         + css::generics::CssEql,
 {
     fn get_fallbacks(&mut self, arena: &Bump, targets: &Targets) -> SmallList<Self, 2> {
-        use css::generics::DeepClone as _;
         let fallbacks = self.color.get_fallbacks(arena, targets);
         // PERF(port): was arena bulk-free (fallbacks.deinit) — profile if it shows up on a hot path
         let mut out: SmallList<Self, 2> = SmallList::init_capacity(fallbacks.len());
@@ -203,9 +199,10 @@ where
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A [`<line-style>`](https://drafts.csswg.org/css-backgrounds/#typedef-line-style) value, used in the `border-style` property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)] // TODO(port): provides eql/hash/parse/to_css/deep_clone
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)] // TODO(port): provides eql/hash/parse/to_css/deep_clone
 pub enum LineStyle {
     /// No border.
+    #[default]
     None,
     /// Similar to `none` but with different rules for tables.
     Hidden,
@@ -233,22 +230,17 @@ impl LineStyle {
     }
 }
 
-impl Default for LineStyle {
-    fn default() -> Self {
-        LineStyle::None
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // BorderSideWidth
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
-#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
+#[derive(Clone, Default, PartialEq, css::Parse, css::ToCss)]
 pub enum BorderSideWidth {
     /// A UA defined `thin` value.
     Thin,
     /// A UA defined `medium` value.
+    #[default]
     Medium,
     /// A UA defined `thick` value.
     Thick,
@@ -271,12 +263,6 @@ impl BorderSideWidth {
     }
 }
 crate::css_eql_partialeq!(BorderSideWidth);
-
-impl Default for BorderSideWidth {
-    fn default() -> Self {
-        BorderSideWidth::Medium
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // ImplFallbacks (Zig: `pub fn ImplFallbacks(comptime T: type) type`)
@@ -465,12 +451,9 @@ impl BorderShorthand {
     }
 
     // `border: anytype` — any GenericBorder<S, P>
-    pub fn set_border<S: for<'a> css::DeepClone<'a>, const P: u8>(
-        &mut self,
-        arena: &Bump,
-        border: &GenericBorder<S, P>,
-    ) where
-        S: Into<LineStyle>,
+    pub fn set_border<S, const P: u8>(&mut self, arena: &Bump, border: &GenericBorder<S, P>)
+    where
+        S: for<'a> css::DeepClone<'a> + Into<LineStyle>,
     {
         // TODO(port): Zig accepted `anytype`; all callers pass GenericBorder<LineStyle, _>.
         self.width = Some(border.width.deep_clone(arena));
@@ -1257,7 +1240,6 @@ mod border_handler_body {
         }
     }};
 }
-    use flush_category;
 
     impl BorderHandler {
         pub fn handle_property(

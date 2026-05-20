@@ -5,9 +5,9 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
-use bun_paths::{self as Path, AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
-use bun_sys::{self as Syscall, Dir, Fd, FdExt};
+use bun_sys::{self as Syscall, Dir, Fd};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
@@ -238,9 +238,9 @@ impl NodeModulesFolder {
             // PORT NOTE: std.posix.toPosixPath — copies into a NUL-terminated PathBuffer
             let mut path_buf = PathBuffer::uninit();
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
-            return Ok(root
+            return root
                 .open_at_with(path_z.as_bytes(), 0)
-                .map_err(|e| e.to_zig_err())?);
+                .map_err(|e| e.to_zig_err());
         }
 
         #[cfg(not(unix))]
@@ -521,7 +521,7 @@ impl<'a> PackageInstaller<'a> {
             let package_name_ = strings::StringOrTinyString::init(alias);
             let mut target_package_name = package_name_;
             let mut can_retry_without_native_binlink_optimization = false;
-            let mut target_node_modules_path_opt: Option<AbsPath> = None;
+            let target_node_modules_path_opt: Option<AbsPath> = None;
             // PORT NOTE: `defer if (target_node_modules_path_opt) |*path| path.deinit()` — Option<AbsPath> drops.
 
             'native_binlink_optimization: {
@@ -1135,12 +1135,6 @@ impl<'a> PackageInstaller<'a> {
         count
     }
 
-    fn get_patchfile_hash(patchfile_path: &[u8]) -> Option<u64> {
-        let _ = patchfile_path; // autofix
-        // TODO(port): zig body has no return statement (relies on lazy compilation / dead code).
-        None
-    }
-
     pub fn install_package_with_name_and_resolution<
         // false when coming from download. if the package was downloaded
         // it was already determined to need an install
@@ -1635,6 +1629,7 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
+            #[cfg(not(windows))]
             let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir.fd());
 
             let install_result: package_install::InstallResult = match resolution.tag {
@@ -2000,7 +1995,7 @@ impl<'a> PackageInstaller<'a> {
                         );
                         #[cfg(debug_assertions)]
                         {
-                            let mut t = cause.debug_trace;
+                            let t = cause.debug_trace;
                             bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());
                         }
                         self.summary.fail += 1;

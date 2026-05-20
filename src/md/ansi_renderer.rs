@@ -2,11 +2,9 @@
 //! markdown documents to the terminal with colors, hyperlinks, syntax
 //! highlighting, and Unicode box drawing.
 
-use core::ffi::c_void;
 use std::io::Write as _;
 
 use bun_collections::StringHashMap;
-use bun_core::env_var;
 use bun_core::output::ansi_b;
 
 use bun_core::strings;
@@ -1845,7 +1843,7 @@ impl<'a> AnsiRenderer<'a> {
         let saved_depth = self.image_depth;
         self.image_depth = 0;
 
-        let has_src = src.as_deref().map_or(false, |s| !s.is_empty());
+        let has_src = src.as_deref().is_some_and(|s| !s.is_empty());
 
         // Kitty Graphics Protocol path: for local files, emit an APC
         // sequence that tells the terminal to read the file directly
@@ -2591,9 +2589,7 @@ fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
         return None;
     }
     // Only PNG is losslessly transmittable via t=d,f=100.
-    if strings::index_of(header, b"image/png").is_none() {
-        return None;
-    }
+    strings::index_of(header, b"image/png")?;
     Some(payload)
 }
 

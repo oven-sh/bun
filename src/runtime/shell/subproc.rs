@@ -1,7 +1,6 @@
 // const IPC = @import("../jsc/ipc.zig");
 
 use core::ffi::{c_char, c_void};
-use core::mem::offset_of;
 use std::sync::Arc;
 
 use crate::api::bun::process::{
@@ -15,25 +14,23 @@ use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::Cmd as ShellCmd;
-use crate::shell::{self as sh, EnvMap, Yield};
-use crate::webcore::{self, Blob, FileSink, ReadableStream, blob};
+use crate::shell::{self as sh, Yield};
+use crate::webcore::{self, FileSink, ReadableStream, blob};
 use bun_alloc::Arena;
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
+#[cfg(not(unix))]
 use bun_core::Output;
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{BufferedReader, ReadState};
-use bun_jsc::{
-    self as jsc, ArrayBuffer, Codegen, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer,
-};
+use bun_jsc::{self as jsc, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt, SystemError};
-use enumset::{EnumSet, EnumSetType};
-use strum::IntoStaticStr;
+use enumset::EnumSet;
 
 use crate::api::bun_spawn::stdio::{self, Stdio};
-use crate::shell::util::{self, OutKind};
+use crate::shell::util::OutKind;
 
 /// Local helper: `OutKind` → tag-name string for logs (Zig `@tagName`).
 #[inline]
@@ -80,18 +77,18 @@ fn arc_as_mut_ptr<T>(a: &Arc<T>) -> *mut T {
 // and `_NOT_SEND`/`_NOT_SYNC` fail to compile with "conflicting impls".
 mod __pipe_reader_thread_confined {
     use super::{Arc, PipeReader};
-    trait NotSendCheck<A> {
+    trait _NotSendCheck<A> {
         const OK: () = ();
     }
-    impl<T: ?Sized> NotSendCheck<()> for T {}
-    impl<T: ?Sized + Send> NotSendCheck<u8> for T {}
-    trait NotSyncCheck<A> {
+    impl<T: ?Sized> _NotSendCheck<()> for T {}
+    impl<T: ?Sized + Send> _NotSendCheck<u8> for T {}
+    trait _NotSyncCheck<A> {
         const OK: () = ();
     }
-    impl<T: ?Sized> NotSyncCheck<()> for T {}
-    impl<T: ?Sized + Sync> NotSyncCheck<u8> for T {}
-    const _NOT_SEND: () = <Arc<PipeReader> as NotSendCheck<_>>::OK;
-    const _NOT_SYNC: () = <Arc<PipeReader> as NotSyncCheck<_>>::OK;
+    impl<T: ?Sized> _NotSyncCheck<()> for T {}
+    impl<T: ?Sized + Sync> _NotSyncCheck<u8> for T {}
+    const _NOT_SEND: () = <Arc<PipeReader> as _NotSendCheck<_>>::OK;
+    const _NOT_SYNC: () = <Arc<PipeReader> as _NotSyncCheck<_>>::OK;
 }
 
 /// Mutably borrow a `RefPtr<StaticPipeWriter>` payload.
@@ -106,6 +103,7 @@ mod __pipe_reader_thread_confined {
 /// payload is live for the returned borrow. The `(&RefPtr<T>) -> &mut T`
 /// shape cannot encode this; `unsafe fn` keeps the obligation at the callsite.
 #[inline]
+#[allow(clippy::mut_from_ref)]
 unsafe fn buffer_mut(buf: &RefPtr<StaticPipeWriter>) -> &mut StaticPipeWriter {
     // SAFETY: caller contract — single-threaded shell; `RefPtr` data is live
     // while the handle exists.
@@ -148,6 +146,7 @@ impl FileSinkPtr {
     /// `ptr` is non-null, points to a live `FileSink` from
     /// `FileSink::create*`, and the caller transfers its single owned ref to
     /// this handle.
+    #[cfg(windows)]
     #[inline]
     unsafe fn adopt(ptr: *mut FileSink) -> Self {
         // SAFETY: caller contract — `ptr` is non-null.
@@ -165,6 +164,7 @@ impl FileSinkPtr {
     /// # Safety
     /// Caller must ensure no overlapping `&`/`&mut` to the `FileSink` is live.
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn as_mut(&self) -> &mut FileSink {
         // SAFETY: caller contract.
         unsafe { &mut *self.0.as_ptr() }
@@ -341,6 +341,7 @@ impl ShellSubprocess {
     /// SAFETY-internal: shell is single-threaded; `self.process` is non-null
     /// for the lifetime of `ShellSubprocess` (set in `spawn_maybe_sync_impl`).
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub fn proc(&self) -> &mut Process {
         // SAFETY: see doc comment.
         unsafe { &mut *self.process }
@@ -1643,7 +1644,7 @@ pub type Poll = IOReader;
 pub enum PipeReaderState {
     Pending,
     Done(Box<[u8]>),
-    Err(Option<SystemError>),
+    Err(Option<Box<SystemError>>),
 }
 
 pub struct PipeReader {
@@ -2053,8 +2054,11 @@ impl PipeReader {
     pub const TO_JS: fn(Arc<Self>, &JSGlobalObject) -> jsc::JsResult<JSValue> =
         Self::to_readable_stream;
 
-    pub fn on_read_chunk(ptr: *mut c_void, chunk: &[u8], has_more: ReadState) -> bool {
-        // SAFETY: ptr was registered via reader.set_parent(self).
+    /// # Safety
+    /// `ptr` must be the `*mut PipeReader` registered via
+    /// `reader.set_parent(self)` and must point to a live `PipeReader`.
+    pub unsafe fn on_read_chunk(ptr: *mut c_void, chunk: &[u8], has_more: ReadState) -> bool {
+        // SAFETY: caller contract.
         let this: &mut PipeReader = unsafe { bun_ptr::callback_ctx::<PipeReader>(ptr) };
         this.buffered_output.append(chunk);
         log!(
@@ -2218,16 +2222,14 @@ impl PipeReader {
                     match core::mem::replace(&mut me.state, PipeReaderState::Pending) {
                         PipeReaderState::Done(buf) => {
                             drop(buf);
-                            me.state = PipeReaderState::Err(Some(e));
+                            me.state = PipeReaderState::Err(Some(Box::new(e)));
                         }
                         old @ PipeReaderState::Err(_) => {
                             me.state = old;
-                            // PORT NOTE: Zig `e.deref()`; Rust drops the duplicate.
-                            drop(e);
                         }
                         PipeReaderState::Pending => {
                             // unreachable after is_done() guard; mirror Zig.
-                            me.state = PipeReaderState::Err(Some(e));
+                            me.state = PipeReaderState::Err(Some(Box::new(e)));
                         }
                     }
                 }
@@ -2235,7 +2237,7 @@ impl PipeReader {
                 // isn't ref-counted nor `Clone`. Move it out (the only reader of
                 // `state.Err` after this point is `Drop`, which tolerates `None`).
                 if let PipeReaderState::Err(slot) = &mut me.state {
-                    slot.take()
+                    slot.take().map(|b| *b)
                 } else {
                     None
                 }
@@ -2376,7 +2378,7 @@ impl PipeReader {
             {
                 drop(buf);
             }
-            me.state = PipeReaderState::Err(Some(err.to_system_error()));
+            me.state = PipeReaderState::Err(Some(Box::new(err.to_system_error())));
         }
         Self::finish_after_state_set(&guard);
         // Dropping `guard` is the matching `deref()`; may free `this`.

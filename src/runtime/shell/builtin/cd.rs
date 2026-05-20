@@ -2,8 +2,6 @@
 //! - `cd` by itself or `cd ~` will always put the user in their home directory.
 //! - `cd -` will put the user in the previous directory
 
-use core::ffi::CStr;
-
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};

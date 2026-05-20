@@ -6,12 +6,10 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
-use bun_core::ZigString;
-use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
+use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
-use bun_js_parser as js_ast;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
 use bun_paths::{self, PathBuffer, SEP_STR};
@@ -901,13 +899,15 @@ impl UpgradeCommand {
                     let mut buf2 = PathBuffer::uninit();
                     let powershell_path: &ZStr = match which(
                         &mut buf,
-                        env_var::PATH.get().unwrap_or(b""),
+                        bun_core::env_var::PATH.get().unwrap_or(b""),
                         b"",
                         b"powershell",
                     ) {
                         Some(p) => p,
                         None => {
-                            let system_root = env_var::SYSTEMROOT.get().unwrap_or(b"C:\\Windows");
+                            let system_root = bun_core::env_var::SYSTEMROOT
+                                .get()
+                                .unwrap_or(b"C:\\Windows");
                             let hardcoded_system_powershell =
                                 bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
                                     system_root,
@@ -1393,6 +1393,7 @@ pub mod upgrade_js_bindings {
     // worker VM) a `thread_local!` would make the close see `None` and leak the
     // HANDLE. Match the Zig global with a `RacyCell`; access is test-only and
     // effectively single-threaded.
+    #[cfg(windows)]
     static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {

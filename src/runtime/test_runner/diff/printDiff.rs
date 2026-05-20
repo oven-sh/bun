@@ -12,10 +12,8 @@ type DmpUsize = diff_match_patch::DiffMatchPatch<usize>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    BgAlways,
     BgDiffOnly,
     Fg,
-    FgDiff,
 }
 const MODE: Mode = Mode::BgDiffOnly;
 
@@ -283,14 +281,6 @@ mod base_styles {
     pub const GREEN_FG_REMOVED: Style = Style {
         prefix: prefix_styles::REMOVED,
         text_color: colors::GREEN,
-    };
-    pub const DIM_INSERTED: Style = Style {
-        prefix: prefix_styles::INSERTED,
-        text_color: colors::DIM,
-    };
-    pub const DIM_REMOVED: Style = Style {
-        prefix: prefix_styles::REMOVED,
-        text_color: colors::DIM,
     };
 }
 

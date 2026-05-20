@@ -430,12 +430,15 @@ pub extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// WebSocket.cpp can release ownership without leaking the heap allocation
 /// (and all duped cert/key/CA strings inside it) when `connect()` never
 /// hands the pointer off to a Zig upgrade client.
+///
+/// # Safety
+/// `config` must be null or a pointer previously returned by
+/// `Bun__WebSocket__parseSSLConfig` whose ownership the caller is transferring
+/// back (i.e. not already freed or handed to an upgrade client).
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_config::SSLConfig) {
-    // SAFETY: C++-only entry point; `config` was produced by `heap::alloc`
-    // (via `Option<Box<_>>` FFI niche) in `Bun__WebSocket__parseSSLConfig` and
-    // the caller transfers ownership back. `bun_http::SSLConfig::drop` runs
-    // `deinit()`.
+pub unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(
+    config: *mut bun_http::ssl_config::SSLConfig,
+) {
     drop(unsafe { bun_core::heap::take(config) });
 }
 

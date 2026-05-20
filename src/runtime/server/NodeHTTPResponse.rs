@@ -157,17 +157,12 @@ impl UpgradeCTX {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum BodyReadState {
+    #[default]
     None = 0,
     Pending = 1,
     Done = 2,
-}
-
-impl Default for BodyReadState {
-    fn default() -> Self {
-        BodyReadState::None
-    }
 }
 
 unsafe extern "C" {
@@ -2022,8 +2017,12 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
     }
 }
 
+/// # Safety
+/// `has_body`, `request`, `response_ptr`, `upgrade_ctx`, and `node_response_ptr`
+/// are provided by C++ NodeHTTPServer and must be valid for the duration of the
+/// call; `has_body` and `node_response_ptr` must be writable.
 #[unsafe(no_mangle)]
-pub extern "C" fn NodeHTTPResponse__createForJS(
+pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
     any_server_tag: u64,
     global_object: &JSGlobalObject,
     has_body: *mut bool,

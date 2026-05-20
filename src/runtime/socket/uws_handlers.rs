@@ -198,8 +198,10 @@ where
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
-        // SAFETY: `c` is a live connecting socket; ext slot holds the unique heap owner.
-        let Some(this) = (unsafe { thunk::connecting_ext_owner::<T>(c) }) else {
+        let Some(this) = ConnectingSocket::opaque_mut(c)
+            .ext::<ExtSlot<T>>()
+            .owner_mut()
+        else {
             return;
         };
         swallow(this.on_connect_error(NewSocketHandler::<SSL>::from_connecting(c), code));
@@ -326,8 +328,7 @@ where
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
-        // SAFETY: `c` is a live connecting socket passed by the trampoline.
-        let Some(this) = (unsafe { thunk::connecting_ext_ptr::<T>(c) }) else {
+        let Some(this) = *ConnectingSocket::opaque_mut(c).ext::<Option<NonNull<T>>>() else {
             return;
         };
         // SAFETY: see `on_open`.
@@ -593,56 +594,50 @@ where
     // on_create has restamped them; if anything fires before that, route to
     // the freshly stashed NewSocket.
     fn on_close_no_ext(s: *mut us_socket_t, code: i32, reason: Option<*mut c_void>) {
-        // SAFETY: `s` is live; the ext slot holds the unique heap `NewSocket`
-        // stashed by `on_create`; dispatch is single-threaded so no aliasing
-        // `&mut`. The `&mut` from `socket_ext_owner` is immediately converted
-        // to `*mut` so no `&mut NewSocket` is held across the re-entrant
-        // `on_*` body. Applies to every `thunk::socket_ext_owner` in this impl.
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            let ns: *mut api::NewSocket<SSL> = ns;
-            // SAFETY: `ns` is the live heap `NewSocket` from the ext slot; the
-            // raw-pointer `on_*` may free it, so dispatch via `*mut` only.
-            swallow(unsafe { api::NewSocket::on_close(ns, wrap::<SSL>(s), code, reason) });
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        {
+            // SAFETY: `ns` is the live heap `NewSocket` stashed by `on_create`;
+            // dispatch is single-threaded. The raw-pointer `on_*` may free it,
+            // so dispatch via `*mut` only — never form `&mut NewSocket`.
+            // Applies to every ext-slot read in this impl.
+            swallow(unsafe { api::NewSocket::on_close(ns.as_ptr(), wrap::<SSL>(s), code, reason) });
         }
     }
     fn on_data_no_ext(s: *mut us_socket_t, data: &[u8]) {
-        // SAFETY: see `on_close_no_ext`.
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            let ns: *mut api::NewSocket<SSL> = ns;
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        {
             // SAFETY: see `on_close_no_ext`.
-            swallow(unsafe { api::NewSocket::on_data(ns, wrap::<SSL>(s), data) });
+            swallow(unsafe { api::NewSocket::on_data(ns.as_ptr(), wrap::<SSL>(s), data) });
         }
     }
     fn on_writable_no_ext(s: *mut us_socket_t) {
-        // SAFETY: see `on_close_no_ext`.
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            let ns: *mut api::NewSocket<SSL> = ns;
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        {
             // SAFETY: see `on_close_no_ext`.
-            swallow(unsafe { api::NewSocket::on_writable(ns, wrap::<SSL>(s)) });
+            swallow(unsafe { api::NewSocket::on_writable(ns.as_ptr(), wrap::<SSL>(s)) });
         }
     }
     fn on_end_no_ext(s: *mut us_socket_t) {
-        // SAFETY: see `on_close_no_ext`.
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            let ns: *mut api::NewSocket<SSL> = ns;
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        {
             // SAFETY: see `on_close_no_ext`.
-            swallow(unsafe { api::NewSocket::on_end(ns, wrap::<SSL>(s)) });
+            swallow(unsafe { api::NewSocket::on_end(ns.as_ptr(), wrap::<SSL>(s)) });
         }
     }
     fn on_timeout_no_ext(s: *mut us_socket_t) {
-        // SAFETY: see `on_close_no_ext`.
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            let ns: *mut api::NewSocket<SSL> = ns;
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        {
             // SAFETY: see `on_close_no_ext`.
-            swallow(unsafe { api::NewSocket::on_timeout(ns, wrap::<SSL>(s)) });
+            swallow(unsafe { api::NewSocket::on_timeout(ns.as_ptr(), wrap::<SSL>(s)) });
         }
     }
     fn on_handshake_no_ext(s: *mut us_socket_t, ok: bool, err: us_bun_verify_error_t) {
-        // SAFETY: see `on_close_no_ext`.
-        if let Some(ns) = unsafe { thunk::socket_ext_owner::<api::NewSocket<SSL>>(s) } {
-            let ns: *mut api::NewSocket<SSL> = ns;
+        if let Some(ns) = *us_socket_t::opaque_mut(s).ext::<Option<NonNull<api::NewSocket<SSL>>>>()
+        {
             // SAFETY: see `on_close_no_ext`.
-            swallow(unsafe { api::NewSocket::on_handshake(ns, wrap::<SSL>(s), ok as i32, err) });
+            swallow(unsafe {
+                api::NewSocket::on_handshake(ns.as_ptr(), wrap::<SSL>(s), ok as i32, err)
+            });
         }
     }
 }
@@ -767,8 +762,10 @@ where
         }
     }
     fn on_connecting_error(c: *mut ConnectingSocket, code: i32) {
-        // SAFETY: `c` is a live connecting socket; ext slot holds the unique heap owner.
-        let Some(this) = (unsafe { thunk::connecting_ext_owner::<Owner>(c) }) else {
+        let Some(this) = ConnectingSocket::opaque_mut(c)
+            .ext::<ExtSlot<Owner>>()
+            .owner_mut()
+        else {
             return;
         };
         swallow(H::on_connect_error(
@@ -872,8 +869,7 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
         ));
     }
     fn on_connecting_error(cs: *mut ConnectingSocket, code: i32) {
-        // SAFETY: `cs` is a live connecting socket passed by the trampoline.
-        let Some(owner) = (unsafe { thunk::connecting_ext_ptr::<c_void>(cs) }) else {
+        let Some(owner) = *ConnectingSocket::opaque_mut(cs).ext::<Option<NonNull<c_void>>>() else {
             return;
         };
         swallow(HttpH::<SSL>::on_connect_error(

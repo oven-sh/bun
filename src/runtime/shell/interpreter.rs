@@ -30,10 +30,9 @@
 //! `self.parent` now take `(&mut Interpreter, this: NodeId)` and look their
 //! own data up via `interp.node_mut(this)` / `interp.nodes[this]`.
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use bun_core::WTFStringImplExt as _;
 use bun_jsc::JsCell;
-use bun_ptr::AsCtxPtr;
 use core::cell::Cell;
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -632,7 +631,8 @@ impl Interpreter {
         // callbacks can drive `Yield::run`.
         let interp_ptr: *mut Interpreter = Interpreter::as_ctx_ptr(&interpreter);
         if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.get().stdin {
-            r.set_interp(interp_ptr);
+            // SAFETY: `interp_ptr` is the live `Interpreter` just constructed.
+            unsafe { r.set_interp(interp_ptr) };
         }
 
         // ── optional cwd override (Zig `init` tail) ────────────────────────
@@ -1038,7 +1038,9 @@ impl Interpreter {
                 // the env here so `Subshell::start`/`next` can use `base.shell`
                 // as-is. (Pipeline dupes itself and calls `Subshell::init`
                 // directly, so it does NOT go through this path.)
-                match Subshell::init_dupe_shell_state(self, shell, *s, parent, io) {
+                // SAFETY: `shell` is the live parent `ShellExecEnv` borrowed for the
+                // dupe; `self` is the live interpreter.
+                match unsafe { Subshell::init_dupe_shell_state(self, shell, *s, parent, io) } {
                     Ok(id) => id,
                     Err(e) => {
                         self.throw(ShellErr::new_sys(&e));
@@ -1243,7 +1245,8 @@ impl Interpreter {
             },
             event_loop,
         );
-        stdout_writer.set_interp(interp_ptr);
+        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
+        unsafe { stdout_writer.set_interp(interp_ptr) };
         let stderr_writer = IOWriter::init(
             stderr_fd,
             crate::shell::io_writer::Flags {
@@ -1252,7 +1255,8 @@ impl Interpreter {
             },
             event_loop,
         );
-        stderr_writer.set_interp(interp_ptr);
+        // SAFETY: `interp_ptr` is the live `Interpreter` being initialized.
+        unsafe { stderr_writer.set_interp(interp_ptr) };
 
         // Spec: `if (event_loop == .js)` — hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
@@ -1496,7 +1500,9 @@ impl Interpreter {
                         })
                         .collect();
                     for env in owned_envs {
-                        ShellExecEnv::deinit_impl(env);
+                        // SAFETY: each `env` was returned by `dupe_for_subshell`
+                        // and is owned by exactly one node (filtered above).
+                        unsafe { ShellExecEnv::deinit_impl(env) };
                     }
                 }
                 this.root_io.set(IO::default());
@@ -1693,7 +1699,11 @@ impl Interpreter {
     /// Spec: Expansion.zig `expandVarArgv`. Appends the value of `$N` to
     /// `out`. Takes the relevant interpreter fields by-part so callers can
     /// split-borrow alongside the node arena.
-    pub fn append_var_argv(
+    ///
+    /// # Safety
+    /// `command_ctx` must be null or point to a live `ContextData` that
+    /// outlives this call.
+    pub unsafe fn append_var_argv(
         out: &mut Vec<u8>,
         original_int: u8,
         event_loop: EventLoopHandle,
@@ -2012,9 +2022,10 @@ impl ShellExecEnv {
     /// Spec: interpreter.zig `ShellExecEnv.deinit` — wraps `deinitImpl(true,
     /// true)` for the heap-allocated subshell/pipeline-child case.
     ///
-    /// SAFETY: `this` was returned by `dupe_for_subshell` (or otherwise
+    /// # Safety
+    /// `this` must have been returned by `dupe_for_subshell` (or otherwise
     /// `heap::alloc`'d) and not yet freed.
-    pub fn deinit_impl(this: *mut ShellExecEnv) {
+    pub unsafe fn deinit_impl(this: *mut ShellExecEnv) {
         log!("[ShellExecEnv] deinit 0x{:x}", this as usize);
         // SAFETY: precondition above. Reclaim the Box; `Drop` for the env
         // maps / vecs / owned `Bufio` runs on drop. Only `cwd_fd` needs an
@@ -2281,8 +2292,10 @@ impl CowFd {
     /// Spec: `CowFd.use` — copy-on-write borrow. If nobody is currently
     /// writing through this fd, mark it in-use and return it (refcount +1);
     /// otherwise hand out a fresh `dup()`.
-    pub fn use_(this: *mut CowFd) -> bun_sys::Result<*mut CowFd> {
-        // SAFETY: caller holds a live `CowFd` (refcount ≥ 1).
+    ///
+    /// # Safety
+    /// `this` must point to a live `CowFd` (refcount ≥ 1).
+    pub unsafe fn use_(this: *mut CowFd) -> bun_sys::Result<*mut CowFd> {
         unsafe {
             if !(*this).being_used {
                 (*this).being_used = true;
@@ -2303,14 +2316,18 @@ impl CowFd {
     }
 
     /// Spec: `CowFd.dupeRef` — bump refcount and return the same pointer.
-    pub fn dupe_ref(this: *mut CowFd) -> *mut CowFd {
-        // SAFETY: caller holds a live `CowFd`.
+    ///
+    /// # Safety
+    /// `this` must point to a live `CowFd`.
+    pub unsafe fn dupe_ref(this: *mut CowFd) -> *mut CowFd {
         unsafe { (*this).ref_() };
         this
     }
 
-    pub fn deref(this: *mut CowFd) {
-        // SAFETY: caller holds a valid CowFd
+    /// # Safety
+    /// `this` must point to a live `CowFd` (refcount ≥ 1). If this drops the
+    /// refcount to 0, `this` is freed and must not be used again.
+    pub unsafe fn deref(this: *mut CowFd) {
         unsafe {
             (*this).refcount -= 1;
             if (*this).refcount == 0 {
@@ -2918,53 +2935,6 @@ pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     }
 }
 
-/// Stamps the boilerplate `impl ShellTaskCtx for $ty` that every per-builtin
-/// task struct repeats verbatim: `TASK_OFFSET = offset_of!(Self, task)` and
-/// the two trait fns forwarding to the inherent `Self::run_from_thread_pool`
-/// / `Self::run_from_main_thread`. The `; no_thread_pool` arm is for the two
-/// opt-out builtins (`cp`/`rm`) that install a custom `work_pool_callback`
-/// and so must NOT be scheduled via the generic [`ShellTask::schedule`] —
-/// the trait fn becomes a `debug_assert!(false)` trap.
-macro_rules! shell_task_ctx {
-    ($ty:ty) => {
-        impl $crate::shell::interpreter::ShellTaskCtx for $ty {
-            const TASK_OFFSET: usize = ::core::mem::offset_of!(Self, task);
-            fn run_from_thread_pool(this: &mut Self) {
-                Self::run_from_thread_pool(this)
-            }
-            fn run_from_main_thread(
-                this: *mut Self,
-                interp: &$crate::shell::interpreter::Interpreter,
-            ) {
-                Self::run_from_main_thread(this, interp)
-            }
-        }
-    };
-    ($ty:ty; no_thread_pool) => {
-        impl $crate::shell::interpreter::ShellTaskCtx for $ty {
-            const TASK_OFFSET: usize = ::core::mem::offset_of!(Self, task);
-            fn run_from_thread_pool(_this: &mut Self) {
-                debug_assert!(
-                    false,
-                    concat!(
-                        stringify!($ty),
-                        " scheduled via ShellTask::schedule; use ",
-                        stringify!($ty),
-                        "::schedule"
-                    )
-                );
-            }
-            fn run_from_main_thread(
-                this: *mut Self,
-                interp: &$crate::shell::interpreter::Interpreter,
-            ) {
-                Self::run_from_main_thread(this, interp)
-            }
-        }
-    };
-}
-pub(crate) use shell_task_ctx;
-
 pub type WorkPoolTask = bun_threading::work_pool::Task;
 
 #[repr(C)]
@@ -3212,8 +3182,10 @@ pub fn create_shell_interpreter(
     let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
 
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global;
-    // dereferencing for `event_loop()` is sound on the mutator thread.
-    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+    // dereferencing for `event_loop()` is sound on the mutator thread, and that
+    // pointer is the live `jsc::EventLoop` `EventLoopHandle::init` expects.
+    let event_loop =
+        unsafe { EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>()) };
     let interpreter: Box<Interpreter> = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),

@@ -122,11 +122,13 @@ impl<'a> BrotliReaderArrayList<'a> {
 
         // SAFETY: brotli FFI constructor; alloc/free are valid extern "C"
         // fns and opaque is null (unused by our allocator).
-        let brotli = BrotliDecoder::create_instance(
-            Some(BrotliAllocator::alloc),
-            Some(BrotliAllocator::free),
-            ptr::null_mut(),
-        )
+        let brotli = unsafe {
+            BrotliDecoder::create_instance(
+                Some(BrotliAllocator::alloc),
+                Some(BrotliAllocator::free),
+                ptr::null_mut(),
+            )
+        }
         .ok_or_else(|| err!("BrotliFailedToCreateInstance"))?;
 
         if options.params.large_window {
@@ -286,11 +288,15 @@ impl BrotliCompressionStream {
         full_flush_op: c::BrotliEncoderOperation,
     ) -> Result<Self, Error> {
         // TODO(port): narrow error set
-        let instance = BrotliEncoder::create_instance(
-            Some(BrotliAllocator::alloc),
-            Some(BrotliAllocator::free),
-            ptr::null_mut(),
-        )
+        // SAFETY: brotli FFI constructor; alloc/free are valid extern "C"
+        // fns and opaque is null (unused by our allocator).
+        let instance = unsafe {
+            BrotliEncoder::create_instance(
+                Some(BrotliAllocator::alloc),
+                Some(BrotliAllocator::free),
+                ptr::null_mut(),
+            )
+        }
         .ok_or_else(|| err!("BrotliFailedToCreateInstance"))?;
 
         Ok(Self {

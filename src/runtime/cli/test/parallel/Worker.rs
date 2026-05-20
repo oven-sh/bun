@@ -160,7 +160,8 @@ impl Worker {
             // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
             this.process = Some(spawned.to_process(
-                bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()),
+                // SAFETY: `coord.vm.event_loop()` is the live per-thread `jsc::EventLoop`.
+                unsafe { bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()) },
                 false,
             ));
             if let Some(fd) = stdout {
@@ -223,7 +224,8 @@ impl Worker {
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
-                    loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
+                    // SAFETY: `coord.vm.event_loop()` is the live per-thread `jsc::EventLoop`.
+                    loop_: unsafe { jsc::EventLoopHandle::init(coord.vm.event_loop().cast()) },
                     ..Default::default()
                 },
                 stream: true,

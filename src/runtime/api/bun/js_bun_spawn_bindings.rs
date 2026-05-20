@@ -3,25 +3,22 @@ use core::ffi::{CStr, c_char};
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_collections::VecExt;
-use bun_core::{self as strings_mod, String as BunString, ZStr, ZigString, strings};
 use bun_core::{Output, StackCheck, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
+use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
 use bun_jsc::ipc as IPC;
 use bun_jsc::{
-    self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsError, JsResult, SystemError,
+    self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
+    JsResult, SystemError,
 };
-use bun_jsc::{JsCell, JsClass as _, SysErrorJsc as _};
-use bun_paths::PathBuffer;
+use bun_jsc::{JsCell, SysErrorJsc as _};
 use bun_sys::UV_E;
 use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 use crate::api::bun_process::{
-    self as spawn, CStrPtr, ExtraPipe, Process, Rusage, SpawnOptions, SpawnProcessResult,
-    SpawnResultExt as _,
+    self as spawn, CStrPtr, ExtraPipe, Process, Rusage, SpawnOptions, SpawnResultExt as _,
 };
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
@@ -34,48 +31,13 @@ use crate::api::bun_terminal_body::{
 use crate::webcore as WebCore;
 
 // ── local extension shims (real-body wrappers, not stubs) ───────────────────
-// `JSValue::withAsyncContextIfNeeded` (Zig) — wraps a callback so its
-// AsyncLocalStorage context is restored at fire-time. The C-ABI symbol lives in
-// `src/jsc/bindings/AsyncContextFrame.cpp`; matches the per-callsite FFI used
-// by Timer.rs / udp_socket.rs / node_crypto_binding.rs.
-unsafe extern "C" {
-    safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: &JSGlobalObject,
-        callback: JSValue,
-    ) -> JSValue;
-}
 trait JSValueSpawnExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
     fn is_finite(self) -> bool;
 }
 impl JSValueSpawnExt for JSValue {
     #[inline]
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
-    }
-    #[inline]
     fn is_finite(self) -> bool {
         self.is_number() && self.as_number().is_finite()
-    }
-}
-
-/// `bun.String.indexOfAsciiChar` — encoding-aware ASCII-char search over the
-/// string's storage code units (Latin-1 bytes or UTF-16 u16s). Matches Zig
-/// `bun.String.indexOfAsciiChar` exactly; `bun_core::String` does not expose it
-/// inherently yet.
-trait BunStringSpawnExt {
-    fn index_of_ascii_char(&self, chr: u8) -> Option<usize>;
-}
-impl BunStringSpawnExt for BunString {
-    #[inline]
-    fn index_of_ascii_char(&self, chr: u8) -> Option<usize> {
-        debug_assert!(chr < 128);
-        if self.is_utf16() {
-            self.utf16().iter().position(|&c| c == u16::from(chr))
-        } else {
-            // Latin-1 / ASCII: 1 byte == 1 code unit.
-            strings::index_of_char(self.latin1(), chr).map(|i| i as usize)
-        }
     }
 }
 
@@ -392,7 +354,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // (process-lifetime; centralised non-null deref in `VirtualMachine`).
     let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
     let mut argv: Vec<CStrPtr> = Vec::new();
-    let mut cmd_value = JSValue::ZERO;
+    let cmd_value: JSValue;
     let mut detached = false;
     let mut args = args_;
     // TODO(port): Zig used `if (is_sync) void else ?IPC.Mode`; Rust const-generic bool
@@ -406,7 +368,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
 
+    #[cfg(windows)]
     let mut windows_hide: bool = false;
+    #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
     let mut terminal_info: Option<TerminalCreateResult> = None;
@@ -443,7 +407,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
     // `spawn_process` returns (Zig used the bump arena).
-    let mut cwd_owned: Option<ZBox> = None;
+    let cwd_owned: ZBox;
     {
         if args.is_empty_or_undefined_or_null() {
             return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
@@ -475,10 +439,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(cwd_) = args.get_truthy(global_this, "cwd")? {
                 let cwd_str = cwd_.get_zig_string(global_this)?;
                 if cwd_str.len > 0 {
-                    cwd_owned = Some(cwd_str.to_owned_slice_z());
+                    cwd_owned = cwd_str.to_owned_slice_z();
                     // `cwd_owned` is never mutated again, so this borrow is valid
                     // for every read of `cwd` below.
-                    cwd = cwd_owned.as_ref().unwrap().as_bytes();
+                    cwd = cwd_owned.as_bytes();
                 }
             }
         }
@@ -698,11 +662,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             break 'brk;
                         }
 
-                        // TODO(port): `JSGlobalObject::validate_integer_range` lives in
-                        // a sibling impl block currently behind a different `mod` re-export;
-                        // route through the `bun_sql_jsc` extension trait until the
-                        // inherent method is re-exported from `bun_jsc::JSGlobalObject`.
-                        use bun_sql_jsc::jsc::JSGlobalObjectSqlExt as _;
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
@@ -973,12 +932,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // PERF(port): was assume_capacity
             env_array.push(match ipc_mode {
                 // PORT NOTE: Zig `inline else => |t| "..." ++ @tagName(t)` — written out per variant.
-                IPC::Mode::Json => b"NODE_CHANNEL_SERIALIZATION_MODE=json\0"
-                    .as_ptr()
-                    .cast::<c_char>(),
-                IPC::Mode::Advanced => b"NODE_CHANNEL_SERIALIZATION_MODE=advanced\0"
-                    .as_ptr()
-                    .cast::<c_char>(),
+                IPC::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json".as_ptr(),
+                IPC::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced".as_ptr(),
             });
         }
     }
@@ -1072,7 +1027,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
+    // SAFETY: `event_loop` is the live per-thread `jsc::EventLoop` (caller-provided).
+    let loop_handle = unsafe { EventLoopHandle::init(event_loop.cast::<()>()) };
 
     let mut spawn_options = SpawnOptions {
         cwd: cwd.to_vec().into_boxed_slice(),
@@ -1858,9 +1814,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 None
             }) {
-                TickState::Completed => {
-                    now = Timespec::now(TimespecMockMode::AllowMockedTime);
-                }
+                TickState::Completed => {}
                 TickState::Timeout => {
                     now = Timespec::now(TimespecMockMode::AllowMockedTime);
                     let did_user_timeout = has_user_timespec

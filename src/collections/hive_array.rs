@@ -36,7 +36,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     const NUM_WORDS: usize = if CAPACITY == 0 {
         0
     } else {
-        (CAPACITY + WORD_BITS - 1) / WORD_BITS
+        CAPACITY.div_ceil(WORD_BITS)
     };
     const _FITS: () = assert!(
         CAPACITY <= HIVE_BITSET_WORDS * WORD_BITS,

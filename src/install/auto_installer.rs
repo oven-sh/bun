@@ -25,7 +25,7 @@ use core::mem::{align_of, size_of};
 use bun_install_types::resolver_hooks as hooks;
 use bun_semver::{SlicedString, String as SemverString};
 
-use crate::dependency::{self, DependencyExt as _, VersionExt as _};
+use crate::dependency::{self, DependencyExt as _};
 use crate::lockfile::{self, Package};
 use crate::package_manager::package_manager_directories as directories;
 use crate::package_manager::package_manager_enqueue as enqueue;

@@ -1,17 +1,15 @@
 #![warn(unused_must_use)]
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::strings;
 
-use crate::css_properties::{Property, PropertyId, PropertyIdTag};
+use crate::css_properties::{Property, PropertyIdTag};
 use crate::css_values::angle::Angle;
 use crate::css_values::length::{LengthPercentage, LengthValue as Length};
 use crate::css_values::number::CSSNumberFns;
 use crate::css_values::percentage::NumberOrPercentage;
 use crate::prefixes;
 use crate::{
-    DeclarationList, Parser, PrintErr, Printer, PrinterOptions, PropertyHandlerContext, Result,
-    Token, VendorPrefix,
+    DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, Result, Token, VendorPrefix,
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
@@ -881,7 +879,7 @@ impl Rotate {
     }
 
     pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        self.clone()
+        *self
     }
 }
 

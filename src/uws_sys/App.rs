@@ -5,9 +5,7 @@ use core::ptr;
 use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
-use crate::response::Response;
 use crate::socket_context::BunSocketContextOptions;
-use crate::web_socket::NewWebSocket as WebSocket;
 use crate::web_socket::c::uws_ws;
 use crate::{
     ListenSocket as UwsListenSocket, Opcode, Request, WebSocketBehavior, us_socket_t, uws_res,
@@ -424,7 +422,7 @@ impl<const SSL: bool> App<SSL> {
         id: usize,
         behavior_: WebSocketBehavior,
     ) {
-        let mut behavior = behavior_;
+        let behavior = behavior_;
         // SAFETY: self is a valid app; pattern valid for the call; behavior is stack-local.
         unsafe {
             uws_ws(

@@ -746,36 +746,6 @@ pub fn from_js_host_call_generic<R>(
 
 // ───────────────────────── error-set parsing (comptime) ─────────────────────────
 
-#[derive(Default, Clone, Copy)]
-struct ParsedHostFunctionErrorSet {
-    out_of_memory: bool,
-    js_error: bool,
-}
-
-// Zig: `inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ...`
-//
-// Zig iterated `@typeInfo(ErrorSet)` at comptime; Rust has no error-set reflection, so the
-// `#[bun_jsc::host_fn]` proc-macro supplies the variant names as string literals and this
-// helper validates them at const-eval time. An unknown name `panic!`s — the const-context
-// analogue of Zig's `@compileError`. The `T: type` parameter (used only for the diagnostic
-// string in Zig) is dropped; the macro embeds the function name in its own error message.
-const fn parse_error_set(errors: &[&str]) -> ParsedHostFunctionErrorSet {
-    let mut errs = ParsedHostFunctionErrorSet { out_of_memory: false, js_error: false };
-    let mut i = 0;
-    while i < errors.len() {
-        if bun_collections::const_str_eq(errors[i], "OutOfMemory") {
-            errs.out_of_memory = true;
-        } else if bun_collections::const_str_eq(errors[i], "JSError") {
-            errs.js_error = true;
-        } else {
-            // Zig: @compileError("Return value from host function '...' can not contain error '...'")
-            panic!("Return value from host function can not contain this error");
-        }
-        i += 1;
-    }
-    errs
-}
-
 // For when bubbling up errors to functions that require a C ABI boundary
 // TODO: make this not need a 'global_this'
 pub fn void_from_js_error(err: JsError, global_this: &JSGlobalObject) {

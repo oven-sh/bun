@@ -8,6 +8,7 @@ use bun_alloc::AllocError;
 
 // PORT NOTE: Zig's `std.mem.Allocator` param field dropped — global mimalloc is used for
 // node and duplicated-string allocations.
+#[derive(Default)]
 pub struct StringJoiner {
     /// Total length of all nodes
     pub len: usize,
@@ -31,16 +32,6 @@ unsafe impl Send for StringJoiner {}
 // mutability; concurrent shared reads of the owned/borrowed-until-`done()`
 // byte buffers are data-race-free.
 unsafe impl Sync for StringJoiner {}
-
-impl Default for StringJoiner {
-    fn default() -> Self {
-        Self {
-            len: 0,
-            nodes: Vec::new(),
-            watcher: Watcher::default(),
-        }
-    }
-}
 
 struct Node {
     /// Replaces Zig's `NullableAllocator`: when `true`, `slice` was heap-allocated by

@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ulonglong, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_void};
 
 // TODO(port): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
 use crate::jsc::{JSGlobalObject, JSValue, JsResult};
@@ -38,9 +38,12 @@ pub fn freemem() -> u64 {
 mod _impl {
     use super::*;
     use crate::node::ErrorCode;
-    use bun_core::{ZStr, ZigString, strings};
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use bun_core::ZStr;
+    use bun_core::{ZigString, strings};
     use bun_core::{env_var, fmt as bun_fmt};
-    use bun_jsc::{CallFrame, JSArray, JSObject, StringJsc as _, SysErrorJsc as _, SystemError};
+    use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
+    #[cfg(windows)]
     use bun_paths::PathBuffer;
     #[cfg(windows)]
     use bun_sys::ReturnCodeExt as _;
@@ -55,12 +58,12 @@ mod _impl {
     /// `bun_core::Error`/`bun_sys::Error`. The variant payload is discarded by
     /// `cpus()` (matches Zig's `catch` → throw `SystemError`).
     pub(crate) enum OsError {
-        Js(bun_jsc::JsError),
+        Js,
         Any,
     }
     impl From<bun_jsc::JsError> for OsError {
-        fn from(e: bun_jsc::JsError) -> Self {
-            Self::Js(e)
+        fn from(_: bun_jsc::JsError) -> Self {
+            Self::Js
         }
     }
     impl From<bun_core::Error> for OsError {
@@ -87,20 +90,6 @@ mod _impl {
             hostname: BunString::empty(),
             fd: c_int::MIN,
             dest: BunString::empty(),
-        }
-    }
-
-    /// `bun_jsc::SystemError` lacks `to_error_instance_with_info_object`; the
-    /// full impl lives in `bun_jsc::system_error::SystemError` (not the exported
-    /// type). Shim to the available method until upstream unifies.
-    trait SystemErrorExt {
-        fn to_error_instance_with_info_object(&self, global: &JSGlobalObject) -> JSValue;
-    }
-    impl SystemErrorExt for SystemError {
-        #[inline]
-        fn to_error_instance_with_info_object(&self, global: &JSGlobalObject) -> JSValue {
-            // TODO(port): blocked_on: bun_jsc::SystemError::to_error_instance_with_info_object
-            self.to_error_instance(global)
         }
     }
 
@@ -538,7 +527,7 @@ mod _impl {
         let _ = bun_sys::posix::sysctl_read(c"hw.clockrate", &mut speed_mhz);
 
         const CPU_STATES: usize = 5; // user, nice, sys, intr, idle
-        let mut times_buf: Vec<c_long> = vec![0; ncpu as usize * CPU_STATES];
+        let mut times_buf: Vec<core::ffi::c_long> = vec![0; ncpu as usize * CPU_STATES];
         bun_sys::posix::sysctl_read_slice(c"kern.cp_times", &mut times_buf[..])
             .map_err(|_| OsError::Any)?;
 
@@ -572,6 +561,7 @@ mod _impl {
     }
 
     // TODO(port): move to <area>_sys
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     unsafe extern "C" {
         safe fn bun_sysconf__SC_CLK_TCK() -> isize;
     }
@@ -774,7 +764,7 @@ mod _impl {
             // of 4096, then fallback to heap.
             let mut stack_string_bytes = [0u8; 4096];
             // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
-            let mut heap_bytes: Vec<u8> = Vec::new();
+            let mut heap_bytes: Vec<u8>;
             let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
             let mut using_heap = false;
 
@@ -1539,7 +1529,7 @@ mod _impl {
     pub fn totalmem() -> u64 {
         #[cfg(target_os = "macos")]
         {
-            let mut memory_: [c_ulonglong; 32] = [0; 32];
+            let mut memory_: [core::ffi::c_ulonglong; 32] = [0; 32];
             if bun_sys::posix::sysctl_read_slice(c"hw.memsize", &mut memory_[..]).is_err() {
                 return 0;
             }
@@ -1548,7 +1538,8 @@ mod _impl {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             if let Ok(info) = bun_sys::posix::sysinfo() {
-                return (info.totalram as u64).wrapping_mul(info.mem_unit as c_ulong as u64);
+                return (info.totalram as u64)
+                    .wrapping_mul(info.mem_unit as core::ffi::c_ulong as u64);
             }
             return 0;
         }
@@ -1587,6 +1578,7 @@ mod _impl {
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
+            let _ = global;
             let mut boot_time: bun_sys::posix::timeval = bun_core::ffi::zeroed();
             if bun_sys::posix::sysctl_read(c"kern.boottime", &mut boot_time).is_err() {
                 return Ok(0.0);
@@ -1740,10 +1732,12 @@ impl NetmaskInt for u128 {
 
 // ───────────────────────── local helpers ─────────────────────────
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
 fn parse_u64(s: &[u8]) -> Result<u64, bun_core::Error> {
     bun_core::fmt::parse_int(s, 10).map_err(|_| bun_core::err!("InvalidCharacter"))
 }
+#[cfg(any(target_os = "linux", target_os = "android"))]
 #[inline]
 fn parse_u32(s: &[u8]) -> Result<u32, bun_core::Error> {
     bun_core::fmt::parse_int(s, 10).map_err(|_| bun_core::err!("InvalidCharacter"))

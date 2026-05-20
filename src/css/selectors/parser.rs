@@ -16,7 +16,6 @@ use bun_wyhash::Wyhash;
 
 use super::impl_;
 
-use super::builder as selector_builder;
 use super::builder::SelectorBuilder;
 
 pub use bun_css::Printer as PrinterRe; // re-export parity (Printer/PrintErr were `pub const` aliases)
@@ -260,7 +259,7 @@ pub mod attrs {
                 (Some(a), Some(b)) => a.eql(b),
                 _ => return false,
             }
-            .then(|| ())
+            .then_some(())
             .is_some()
                 && self.local_name.eql(&rhs.local_name)
                 && self.local_name_lower.eql(&rhs.local_name_lower)
@@ -736,7 +735,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
         empty = false;
     }
 
-    if let Ok(_) = parse_type_selector::<Impl>(parser, input, *state, builder) {
+    if parse_type_selector::<Impl>(parser, input, *state, builder).is_ok() {
         // Note: Zig `.asValue()` here means "if Ok"; the bool result is unused.
         // TODO(port): the Zig only sets `empty = false` on Ok(true|false) — but
         // `asValue()` returns Some on .result regardless of bool value, so this matches.
@@ -1331,19 +1330,6 @@ impl<'a> SelectorParser<'a> {
                 arguments: TokenList { v: args },
             });
         }
-        {
-            // Spec (parser.zig:1088-1094) calls `TokenList.parseRaw(input, ...)`
-            // which consumes the function-argument tokens. Until
-            // `TokenList::parse_raw` un-gates, drain the nested block so the
-            // caller's `parse_nested_block` → `expect_exhausted` passes and the
-            // selector grammar accepts the same inputs as the spec.
-            // TODO(port): un-gate `TokenList::parse_raw` and store the args.
-            while input.next().is_ok() {}
-            Ok(PseudoElement::CustomFunction {
-                name,
-                arguments: TokenList::default(),
-            })
-        }
     }
 
     fn parse_is_and_where(&self) -> bool {
@@ -1670,16 +1656,16 @@ impl<'a, Impl: BunSelectorImpl> fmt::Display for SelectorListDebugFmt<'a, Impl> 
         if !cfg!(debug_assertions) {
             return Ok(());
         }
-        write!(f, "SelectorList[\n")?;
+        writeln!(f, "SelectorList[")?;
         let last = (self.0.v.len() as usize).saturating_sub(1);
         for (i, sel) in self.0.v.slice().iter().enumerate() {
             if i != last {
-                write!(f, " {}\n", sel.debug())?;
+                writeln!(f, " {}", sel.debug())?;
             } else {
-                write!(f, " {},\n", sel.debug())?;
+                writeln!(f, " {},", sel.debug())?;
             }
         }
-        write!(f, "]\n")
+        writeln!(f, "]")
     }
 }
 
@@ -1811,16 +1797,14 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
                 },
             }
 
-            loop {
-                if let Ok(tok) = input.next() {
-                    if matches!(tok, Token::Comma) {
-                        break;
-                    }
-                    // Shouldn't have got a selector if getting here.
-                    debug_assert!(!was_ok);
+            if let Ok(tok) = input.next() {
+                if matches!(tok, Token::Comma) {
+                    continue;
                 }
-                return Ok(Self { v: values });
+                // Shouldn't have got a selector if getting here.
+                debug_assert!(!was_ok);
             }
+            return Ok(Self { v: values });
         }
     }
 
@@ -1870,16 +1854,14 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
                 },
             }
 
-            loop {
-                if let Ok(tok) = input.next() {
-                    if matches!(tok, Token::Comma) {
-                        break;
-                    }
-                    // Shouldn't have got a selector if getting here.
-                    debug_assert!(!was_ok);
+            if let Ok(tok) = input.next() {
+                if matches!(tok, Token::Comma) {
+                    continue;
                 }
-                return Ok(Self { v: values });
+                // Shouldn't have got a selector if getting here.
+                debug_assert!(!was_ok);
             }
+            return Ok(Self { v: values });
         }
     }
 
@@ -4093,14 +4075,10 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                 let result_cloned = result.cloned();
                 input.reset(&after_star);
                 if in_attr_selector {
-                    match result_cloned {
-                        Ok(t) => {
-                            return Err(after_star
-                                .source_location()
-                                .new_custom_error(SelectorParseErrorKind::ExpectedBarInAttr(t)));
-                        }
-                        Err(e) => return Err(e),
-                    }
+                    let t = result_cloned?;
+                    return Err(after_star
+                        .source_location()
+                        .new_custom_error(SelectorParseErrorKind::ExpectedBarInAttr(t)));
                 } else {
                     return Ok(parse_qualified_name_default_namespace_helper::<Impl>(
                         parser, None,

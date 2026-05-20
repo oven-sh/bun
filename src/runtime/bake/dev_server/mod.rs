@@ -14,15 +14,11 @@
 
 use core::sync::atomic::Ordering;
 
-use core::ptr::NonNull;
-
 use bun_collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_sys::FdExt as _;
 
-use super::framework_router::{self, OpaqueFileId};
 use super::jsc;
 use super::{Graph, Side};
-use crate::server::StaticRoute;
 
 // ─── submodule bodies ────────────────────────────────────────────────────────
 // Each is a faithful port of the `.zig` sibling. Assets body dissolved into
@@ -789,12 +785,16 @@ impl WatcherAtomics {
     /// so on, until this function returns `None`.
     ///
     /// Runs on dev server thread.
-    pub fn recycle_event_from_dev_server(
+    ///
+    /// # Safety
+    /// `old_event` must be a live `HotReloadEvent` previously submitted to the
+    /// dev server thread (a slot in `self.events`) and now exclusively owned by
+    /// the caller for reset.
+    pub unsafe fn recycle_event_from_dev_server(
         &mut self,
         old_event: *mut HotReloadEvent,
     ) -> Option<*mut HotReloadEvent> {
-        // SAFETY: `old_event` was previously submitted to the dev server thread and is now
-        // exclusively owned by it for reset.
+        // SAFETY: per this function's contract.
         unsafe { (*old_event).reset() };
 
         #[cfg(debug_assertions)]
@@ -900,9 +900,13 @@ impl WatcherAtomics {
     /// if it contains new files.
     ///
     /// Called from watcher thread.
-    pub fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
-        // SAFETY: `ev` was returned by `watcher_acquire_event` and points into `self.events`;
-        // the watcher thread has exclusive access until it is submitted below.
+    ///
+    /// # Safety
+    /// `ev` must be the pointer returned by the matching
+    /// `watcher_acquire_event` call (a slot in `self.events`), and the watcher
+    /// thread must still hold exclusive access to it.
+    pub unsafe fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
+        // SAFETY: per this function's contract.
         let ev_ref = unsafe { &mut *ev };
 
         ev_ref.assert_watcher_thread_locked();

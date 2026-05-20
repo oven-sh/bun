@@ -133,14 +133,20 @@ impl Heap {
         unsafe { mi_heap_calloc(self, count, size) }
     }
 
+    /// # Safety
+    /// `p` must be null or a pointer previously allocated by this heap.
     #[inline]
-    pub fn realloc(&mut self, p: *mut c_void, newsize: usize) -> *mut c_void {
-        // SAFETY: `self` is a live `*mut Heap`; `p` is null or was allocated by this heap.
+    pub unsafe fn realloc(&mut self, p: *mut c_void, newsize: usize) -> *mut c_void {
+        // SAFETY: `self` is a live `*mut Heap`; caller upholds `p` contract.
         unsafe { mi_heap_realloc(self, p, newsize) }
     }
 
+    /// # Safety
+    /// `p` is only address-range-tested (never dereferenced), so any pointer
+    /// value is sound; `unsafe` is required because the body forwards `p`
+    /// into the `mi_heap_contains` extern.
     #[inline]
-    pub fn is_owned(&self, p: *const c_void) -> bool {
+    pub unsafe fn is_owned(&self, p: *const c_void) -> bool {
         // SAFETY: `self` is a live `*const Heap` obtained from mimalloc.
         unsafe { mi_heap_contains(self, p) }
     }

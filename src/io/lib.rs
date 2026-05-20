@@ -702,7 +702,7 @@ impl IoRequestLoop {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC | 0);
+            let raw = safe_c::epoll_create1(libc::EPOLL_CLOEXEC);
             if raw < 0 {
                 panic!("Failed to create epoll file descriptor");
             }

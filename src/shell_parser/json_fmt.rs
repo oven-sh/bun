@@ -18,8 +18,8 @@ use core::fmt::{self, Write};
 
 use super::parse::SmolList;
 use super::parse::ast::{
-    Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, CondExprOp, Expr, If,
-    JSBuf, Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
+    Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, Expr, If, JSBuf,
+    Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
 };
 
 // ───────────────────────────── primitives ─────────────────────────────

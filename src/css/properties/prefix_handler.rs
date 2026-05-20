@@ -1,9 +1,7 @@
 use crate as css;
-use crate::VendorPrefix;
 use crate::css_properties::custom::UnparsedProperty;
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::generics::{DeepClone as _, IsCompatible as _};
-use crate::prefixes::Feature;
 use bun_alloc::ArenaVecExt as _;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
@@ -21,9 +19,6 @@ pub struct FallbackHandler {
 }
 
 impl FallbackHandler {
-    // TODO(port): Zig computed this via @typeInfo(FallbackHandler).Struct.fields.len.
-    const FIELD_COUNT: usize = 2;
-
     pub fn handle_property(
         &mut self,
         property: &Property,
@@ -130,21 +125,6 @@ impl FallbackHandler {
                     ($self_field:ident, $Variant:ident) => {
                         if val.property_id.tag() == PropertyIdTag::$Variant {
                             let newval = val.deep_clone(arena);
-                            break 'unparsed_and_index (newval, $self_field);
-                        }
-                    };
-                }
-                macro_rules! match_unparsed_prefixed {
-                    ($self_field:ident, $Variant:ident, $FeatureVariant:ident) => {
-                        if val.property_id.tag() == PropertyIdTag::$Variant {
-                            // PORT NOTE: Zig accessed `@field(val.property_id, field.name)[1]`
-                            // to get the VendorPrefix from the PropertyId payload. Mapped to
-                            // the generated `PropertyId::prefix()` accessor.
-                            let newval = if val.property_id.prefix().contains(VendorPrefix::NONE) {
-                                val.get_prefixed(arena, &context.targets, Feature::$FeatureVariant)
-                            } else {
-                                val.deep_clone(arena)
-                            };
                             break 'unparsed_and_index (newval, $self_field);
                         }
                     };

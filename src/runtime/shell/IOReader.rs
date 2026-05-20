@@ -47,7 +47,6 @@ struct State {
     fd: Fd,
     buf: Vec<u8>,
     readers: Readers,
-    read: usize,
     err: Option<sys::SystemError>,
     /// The raw `sys::Error` that produced `err`. `SystemError` is not `Clone`
     /// in the Rust port yet, so we keep the source error to re-derive a fresh
@@ -85,21 +84,26 @@ impl IOReader {
     /// Spec: IOReader.zig `__deinit` (body `AsyncDeinitReader` posts back to
     /// main). Drops the last strong ref so the underlying `BufferedReader`
     /// closes on the JS thread.
-    pub fn deinit_on_main_thread(this: *mut IOReader) {
-        // SAFETY: `this` is the `Arc::as_ptr` whose strong count was held by
-        // the async-deinit task.
+    ///
+    /// # Safety
+    /// `this` must be the `Arc::as_ptr` of a live `Arc<IOReader>` whose
+    /// strong count was held by the async-deinit task.
+    pub unsafe fn deinit_on_main_thread(this: *mut IOReader) {
+        // SAFETY: precondition above.
         unsafe { std::sync::Arc::decrement_strong_count(this) };
     }
 }
 
 impl IOReader {
     #[inline]
+    #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded
     fn state(&self) -> &mut State {
         // SAFETY: single-threaded; matches Zig `*IOReader` model.
         unsafe { &mut *self.state.get() }
     }
 
     #[inline]
+    #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded
     fn reader(&self) -> &mut ReaderImpl {
         // SAFETY: single-threaded. Split into its own cell so a `&mut ReaderImpl`
         // held by the bun_io read loop never overlaps a `&mut State` derived in a
@@ -144,7 +148,6 @@ impl IOReader {
                 fd,
                 buf: Vec::new(),
                 readers: Readers::new(),
-                read: 0,
                 err: None,
                 raw_err: None,
                 evtloop,
@@ -169,10 +172,13 @@ impl IOReader {
         this
     }
 
+    /// # Safety
+    /// `interp` must be null or point to the live owning `Interpreter` (it
+    /// owns the IO struct that holds this `Arc`) for the lifetime of this
+    /// reader; single-threaded.
     #[inline]
-    pub fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: `interp` is the live owning Interpreter (it owns the IO
-        // struct that holds this Arc); single-threaded.
+    pub unsafe fn set_interp(&self, interp: *mut Interpreter) {
+        // SAFETY: precondition above.
         self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
 

@@ -1,6 +1,5 @@
 use alloc::borrow::Cow;
 use core::ffi::{c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, VM};

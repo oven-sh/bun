@@ -2,7 +2,9 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
+use bun_core::{Error, err};
+#[cfg(not(windows))]
+use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
@@ -76,7 +78,7 @@ impl FileCopier {
             Ok(d) => d,
             Err(e) => {
                 // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
-                let mut errno: E = {
+                let errno: E = {
                     // `@as(anyerror, err)` → match against interned bun_core::Error tags.
                     let e: Error = e;
                     if e == err!("AccessDenied") {
@@ -122,14 +124,17 @@ impl FileCopier {
                     }
                 };
                 #[cfg(windows)]
-                if errno == E::ENOTDIR {
-                    errno = E::ENOENT;
-                }
+                let errno = if errno == E::ENOTDIR {
+                    E::ENOENT
+                } else {
+                    errno
+                };
 
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
             }
         };
 
+        #[cfg(not(windows))]
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 
         loop {

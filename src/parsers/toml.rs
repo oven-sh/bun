@@ -129,6 +129,7 @@ impl<'a> TOML<'a> {
         }
     }
 
+    #[allow(clippy::mut_from_ref)]
     pub fn parse_key(&mut self, bump: &'a Bump) -> Result<&'a mut Rope, bun_core::Error> {
         // TODO(port): lifetime — Zig returns `*Rope` allocated from `allocator`
         // (a stack-fallback arena reset per-iteration). Here we allocate from the

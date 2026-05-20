@@ -4,7 +4,7 @@
 //! sense. If that changes, this should be renamed `ScriptExecutionContext`.
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
@@ -19,8 +19,8 @@ use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
     self as jsc, ErrorableResolvedSource, ErrorableString, Exception, JSGlobalObject,
-    JSInternalPromise, JSValue, JsError, JsResult, OpaqueCallback, PlatformEventLoop,
-    ResolvedSource, Strong, VM, ZigException,
+    JSInternalPromise, JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM,
+    ZigException,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -2699,11 +2699,6 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// printer is mid-write would alias. Callers must only dereference this
     /// pointer once the writer's last byte has been emitted (i.e. inside
     /// `on_source_map_chunk`, which the printer invokes from its tail).
-    #[inline]
-    pub(crate) fn printer_ptr(&self) -> *mut bun_js_printer::BufferPrinter {
-        self.printer
-    }
-
     pub fn get(&mut self) -> bun_js_printer::SourceMapHandler<'_> {
         // VirtualMachine.zig:408: take the inline-sourcemap path only when a
         // debugger is present AND it is *not* in `.connect` mode — `.connect`
@@ -2992,7 +2987,7 @@ fn normalize_specifier_for_resolution<'a>(
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
     if let Some(i) = bun_core::index_of_char(specifier_, b'?') {
-        let i = i as usize;
+        let i = i;
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
@@ -4912,7 +4907,7 @@ impl VirtualMachine {
                 formatter: std::ptr::from_mut(formatter),
                 writer: std::ptr::from_mut(writer),
                 exception_list: exception_list
-                    .map(|l| std::ptr::from_mut::<ExceptionList>(l))
+                    .map(std::ptr::from_mut::<ExceptionList>)
                     .unwrap_or(core::ptr::null_mut()),
                 allow_ansi_color,
                 allow_side_effects,
@@ -5695,7 +5690,7 @@ impl VirtualMachine {
     ) -> Result<(), bun_core::Error> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
-        use crate::console_object::{self, Colon, Tag, TagPayload};
+        use crate::console_object::{self, Tag, TagPayload};
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
@@ -5795,7 +5790,7 @@ impl VirtualMachine {
             splat_space(writer, pad)?;
 
             let text = source.text.slice();
-            let trimmed = text
+            let _trimmed = text
                 .trim_ascii_start()
                 .strip_prefix(b"\n")
                 .unwrap_or(text)
@@ -6291,9 +6286,9 @@ impl VirtualMachine {
                 display_message,
             )?;
         } else if !name.is_empty() {
-            write!(
+            writeln!(
                 writer,
-                "{}\n",
+                "{}",
                 error_display_level.formatter(name, allow_ansi_color, Colon::IncludeColon)
             )?;
         } else if !message.is_empty() {
@@ -6508,6 +6503,7 @@ impl VirtualMachine {
         // `spawn_ipc_group` then needs `&mut VirtualMachine`. Split via raw
         // pointers (disjoint fields) per the existing `Bun__RareData__*`
         // accessors in virtual_machine_exports.rs.
+        #[cfg(not(windows))]
         let this: *mut VirtualMachine = self;
 
         #[cfg(not(windows))]
@@ -6516,7 +6512,7 @@ impl VirtualMachine {
             // embedded `SocketGroup` field + `vm.uws_loop()`.
             let group: *mut uws::SocketGroup = unsafe {
                 let rare = std::ptr::from_mut::<RareData>((*this).rare_data());
-                (*rare).spawn_ipc_group(&mut *this)
+                (*rare).spawn_ipc_group(&*this)
             };
 
             // Box the instance first so `data.owner` can name its final
@@ -6634,8 +6630,6 @@ impl VirtualMachine {
         self.transpiler.resolver.bust_dir_cache(path)
     }
 }
-
-use core::fmt::Write as _;
 
 fn is_error_like(global_object: &JSGlobalObject, reason: JSValue) -> JsResult<bool> {
     jsc::from_js_host_call_generic(global_object, || {

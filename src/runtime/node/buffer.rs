@@ -10,8 +10,11 @@ mod _impl {
     use bun_core::ZigString;
 
     impl BufferVectorized {
+        /// # Safety
+        /// `str` must point to a valid `ZigString` and `buf_ptr` must point to a writable
+        /// buffer of at least `fill_length` bytes.
         #[unsafe(export_name = "Bun__Buffer_fill")]
-        pub extern "C" fn fill(
+        pub unsafe extern "C" fn fill(
             str: *const ZigString,
             buf_ptr: *mut u8,
             fill_length: usize,

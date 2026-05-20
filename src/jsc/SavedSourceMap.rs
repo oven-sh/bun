@@ -6,8 +6,7 @@ use std::sync::Arc;
 
 use bun_collections::{HashMap, TaggedPtrUnion};
 use bun_core::MutableString;
-use bun_core::{Ordinal, Output};
-use bun_paths::PathBuffer;
+use bun_core::Ordinal;
 use bun_sourcemap::internal_source_map::FindCache;
 use bun_sourcemap::{
     self as SourceMap, BakeSourceProvider, DevServerSourceProvider, InternalSourceMap,

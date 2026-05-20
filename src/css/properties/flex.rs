@@ -2,9 +2,8 @@
 use crate as css;
 use bun_alloc::ArenaVecExt as _;
 
-use crate::properties::{Property, PropertyId, PropertyIdTag};
+use crate::properties::{Property, PropertyId};
 use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyContent};
-use css::css_values::length::LengthValue as Length;
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
 use css::prefixes::Feature as PrefixFeature;
@@ -14,10 +13,11 @@ use css::prefixes::is_flex_2009;
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 // TODO(port): css::DefineEnumProperty derive provides parse/to_css/eql/hash/deep_clone over kebab-case variant names
 pub enum FlexDirection {
     /// Flex items are laid out in a row.
+    #[default]
     Row,
     /// Flex items are laid out in a row, and reversed.
     RowReverse,
@@ -25,12 +25,6 @@ pub enum FlexDirection {
     Column,
     /// Flex items are laid out in a column, and reversed.
     ColumnReverse,
-}
-
-impl Default for FlexDirection {
-    fn default() -> FlexDirection {
-        FlexDirection::Row
-    }
 }
 
 impl FlexDirection {
@@ -46,20 +40,15 @@ impl FlexDirection {
 
 /// A value for the [flex-wrap](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-wrap-property) property.
 /// A value for the [flex-wrap](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-wrap-property) property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum FlexWrap {
     /// The flex items do not wrap.
+    #[default]
     Nowrap,
     /// The flex items wrap.
     Wrap,
     /// The flex items wrap, in reverse.
     WrapReverse,
-}
-
-impl Default for FlexWrap {
-    fn default() -> FlexWrap {
-        FlexWrap::Nowrap
-    }
 }
 
 impl FlexWrap {
@@ -761,10 +750,8 @@ impl FlexHandler {
             }
         }
 
-        if direction.is_some() && wrap.is_some() {
+        if let (Some(dir_val), Some(wrap_val)) = (&mut direction, &mut wrap) {
             // PORT NOTE: reshaped for borrowck — Zig took simultaneous &mut into both Options.
-            let dir_val = direction.as_mut().unwrap();
-            let wrap_val = wrap.as_mut().unwrap();
             let dir: &FlexDirection = &dir_val.0;
             let dir_prefix: &mut VendorPrefix = &mut dir_val.1;
             let wrapinner: &FlexWrap = &wrap_val.0;
@@ -792,7 +779,7 @@ impl FlexHandler {
         macro_rules! single_property {
             // prop_2009 = None
             ($variant:ident, $key:expr, prop_2012 = None, prop_2009 = None, feature = $feature:ident) => {{
-                single_property!(@inner $variant, $key, $feature, |_val, _prefix, _prefixes_2009| {}, |_val, prefix: &mut VendorPrefix| {});
+                single_property!(@inner $variant, $key, $feature, |_val, _prefix, _prefixes_2009| {}, |_val, _prefix: &mut VendorPrefix| {});
             }};
             // prop_2012 = Some, prop_2009 = None
             ($variant:ident, $key:expr, prop_2012 = $p2012:ident, prop_2009 = None, feature = $feature:ident) => {{
@@ -814,7 +801,7 @@ impl FlexHandler {
                     if let Some(v) = s {
                         dest.push(Property::$v2009((v, prefixes_2009)));
                     }
-                }, |_val, prefix: &mut VendorPrefix| {});
+                }, |_val, _prefix: &mut VendorPrefix| {});
             }};
             // prop_2012 = Some, prop_2009 = BoxOrdinalGroup special case
             ($variant:ident, $key:expr, prop_2012 = $p2012:ident, prop_2009 = (BoxOrdinalGroup, $v2009:ident), feature = $feature:ident) => {{
@@ -909,11 +896,8 @@ impl FlexHandler {
             }
         }
 
-        if grow.is_some() && shrink.is_some() && basis.is_some() {
+        if let (Some(g_val), Some(s_val), Some(b_val)) = (&mut grow, &mut shrink, &mut basis) {
             // PORT NOTE: reshaped for borrowck
-            let g_val = grow.as_mut().unwrap();
-            let s_val = shrink.as_mut().unwrap();
-            let b_val = basis.as_mut().unwrap();
             let g = g_val.0;
             let g_prefix: &mut VendorPrefix = &mut g_val.1;
             let s = s_val.0;

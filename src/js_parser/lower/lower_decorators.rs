@@ -1,23 +1,15 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    clippy::too_many_arguments,
-    clippy::needless_late_init
-)]
+#![allow(clippy::too_many_arguments, clippy::needless_late_init)]
 //! Lowering for TC39 standard ES decorators.
 //! Extracted from P.zig to reduce duplication via shared helpers.
 
 use bun_alloc::ArenaVecExt as _;
-use core::ptr::NonNull;
 
 use bun_collections::{HashMap, VecExt};
 
 use crate::p::P;
 use crate::parser::{ARGUMENTS_STR as arguments_str, Ref};
-use bun_ast::g::{Arg, Decl, DeclList, Property, PropertyKind};
-use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt, StmtNodeList, Symbol};
+use bun_ast::g::{DeclList, Property, PropertyKind};
+use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
@@ -1858,7 +1850,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     has_instance_private_methods = true;
                 }
             } else {
-                let mut new_prop = prop_copy(prop);
+                let new_prop = prop_copy(prop);
                 new_properties.push(new_prop);
                 if prop.flags.contains(Flags::Property::IsStatic) {
                     static_non_field_elements.push(element);

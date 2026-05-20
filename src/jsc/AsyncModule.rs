@@ -1,11 +1,9 @@
 //! Port of `src/jsc/AsyncModule.zig`.
 
-use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_void;
 use core::sync::atomic::AtomicU32;
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_bundler::options;
 use bun_bundler::transpiler::ParseResult;
 use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
@@ -272,7 +270,7 @@ use std::io::Write as _;
 
 use bun_core::strings;
 use bun_install::package_manager::run_tasks;
-use bun_install::{self as install, LogLevel, PackageID, PackageManager};
+use bun_install::{self as install, LogLevel, PackageID};
 
 use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
 
@@ -349,7 +347,7 @@ impl Queue {
         this.map.retain_mut(|module| {
             // PORT NOTE: Zig `MultiArrayList.items(.root_dependency_id)` →
             // `Vec<PendingResolution>` field walk.
-            for (dep_i, pending) in module.parse_result.pending_imports.iter().enumerate() {
+            for pending in module.parse_result.pending_imports.iter() {
                 if pending.root_dependency_id != root_dependency_id {
                     continue;
                 }
@@ -444,7 +442,7 @@ impl Queue {
         self.map.retain_mut(|module| {
             // PORT NOTE: Zig `MultiArrayList.items(.tag)` etc. →
             // `Vec<PendingResolution>` field walk.
-            for (tag_i, pending) in module.parse_result.pending_imports.iter().enumerate() {
+            for pending in module.parse_result.pending_imports.iter() {
                 if pending.tag == bun_resolver::PendingResolutionTag::Resolve {
                     if pending.esm.name.slice(&pending.string_buf) != name {
                         continue;

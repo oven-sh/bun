@@ -11,8 +11,10 @@ fn create_uninitialized_uint8_array(global: &JSGlobalObject, len: usize) -> JsRe
     JSValue::create_uninitialized_uint8_array(global, len)
 }
 
+/// # Safety
+/// `ptr` must be valid for reading `len` bytes of Latin-1 data.
 #[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encode8(
+pub unsafe extern "C" fn TextEncoder__encode8(
     global_this: &JSGlobalObject,
     ptr: *const u8,
     len: usize,
@@ -56,8 +58,10 @@ pub extern "C" fn TextEncoder__encode8(
     }
 }
 
+/// # Safety
+/// `ptr` must be valid for reading `len` UTF-16 code units.
 #[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encode16(
+pub unsafe extern "C" fn TextEncoder__encode16(
     global_this: &JSGlobalObject,
     ptr: *const u16,
     len: usize,
@@ -107,8 +111,10 @@ pub extern "C" fn TextEncoder__encode16(
     }
 }
 
+/// # Safety
+/// `ptr` must be valid for reading `len` UTF-16 code units.
 #[unsafe(no_mangle)]
-pub extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
+pub unsafe extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
     // as much as possible, rely on jsc to own the memory
     // their code is more battle-tested than bun's code
     // so we do a stack allocation here
@@ -157,7 +163,6 @@ pub extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -
 // This is a fast path for copying a Rope string into a Uint8Array.
 // This keeps us from an extra string temporary allocation
 struct RopeStringEncoder<'a> {
-    global_this: &'a JSGlobalObject,
     buf: &'a mut [u8],
     tail: usize,
     any_non_ascii: bool,
@@ -273,7 +278,6 @@ pub extern "C" fn TextEncoder__encodeRopeString(
         buf_to_use = heap_ab.slice_mut();
     }
     let mut encoder = RopeStringEncoder {
-        global_this,
         buf: buf_to_use,
         tail: 0,
         any_non_ascii: false,
@@ -304,8 +308,11 @@ pub extern "C" fn TextEncoder__encodeRopeString(
     array
 }
 
+/// # Safety
+/// `input_ptr` must be valid for reading `input_len` UTF-16 code units and
+/// `buf_ptr` must be valid for writing `buf_len` bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encodeInto16(
+pub unsafe extern "C" fn TextEncoder__encodeInto16(
     input_ptr: *const u16,
     input_len: usize,
     buf_ptr: *mut u8,
@@ -330,8 +337,11 @@ pub extern "C" fn TextEncoder__encodeInto16(
     u64::from_ne_bytes(b)
 }
 
+/// # Safety
+/// `input_ptr` must be valid for reading `input_len` bytes of Latin-1 data and
+/// `buf_ptr` must be valid for writing `buf_len` bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encodeInto8(
+pub unsafe extern "C" fn TextEncoder__encodeInto8(
     input_ptr: *const u8,
     input_len: usize,
     buf_ptr: *mut u8,

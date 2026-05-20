@@ -57,10 +57,7 @@ impl PageSelector {
         loop {
             // Whitespace is not allowed between pseudo classes
             let state = input.state();
-            let is_colon = match input.next_including_whitespace() {
-                Ok(tok) => matches!(*tok, css::Token::Colon),
-                Err(e) => return Err(e),
-            };
+            let is_colon = matches!(*input.next_including_whitespace()?, css::Token::Colon);
             if is_colon {
                 let vv = PagePseudoClass::parse(input)?;
                 pseudo_classes.push(vv);

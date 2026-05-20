@@ -61,10 +61,11 @@ impl Drop for Entry {
 }
 
 impl ObjectURLRegistry {
-    pub fn register(&self, vm: *mut VirtualMachine, blob: &Blob) -> UUID {
-        // SAFETY: `vm` comes from `JSGlobalObject::bun_vm()` which returns a
-        // live, non-null `*mut VirtualMachine` for the duration of the call
-        // (Zig spec passes `*jsc.VirtualMachine`).
+    /// # Safety
+    /// `vm` must be a live, non-null `*mut VirtualMachine` for the duration of
+    /// the call (as returned by `JSGlobalObject::bun_vm()`; Zig spec passes
+    /// `*jsc.VirtualMachine`).
+    pub unsafe fn register(&self, vm: *mut VirtualMachine, blob: &Blob) -> UUID {
         let uuid = unsafe { &mut *vm }.rare_data().next_uuid();
         let entry = Entry::init(blob);
 
@@ -75,12 +76,6 @@ impl ObjectURLRegistry {
     pub fn singleton() -> &'static ObjectURLRegistry {
         static REGISTRY: OnceLock<ObjectURLRegistry> = OnceLock::new();
         REGISTRY.get_or_init(ObjectURLRegistry::default)
-    }
-
-    fn get_duped_blob(&self, uuid: &UUID) -> Option<Blob> {
-        let map = self.map.lock();
-        map.get(&uuid.bytes)
-            .map(|e| e.blob.dupe_with_content_type(true))
     }
 
     pub fn resolve_and_dupe(&self, pathname: &[u8]) -> Option<Blob> {
@@ -134,7 +129,8 @@ pub fn bun_create_object_url(
             .throw_invalid_arguments(format_args!("createObjectURL expects a Blob object")));
     };
     let registry = ObjectURLRegistry::singleton();
-    let uuid = registry.register(global_object.bun_vm_ptr(), blob);
+    // SAFETY: `bun_vm_ptr()` returns the live VM pointer for `global_object`.
+    let uuid = unsafe { registry.register(global_object.bun_vm_ptr(), blob) };
     let mut str = bun_core::String::create_format(format_args!("blob:{}", uuid));
     str.transfer_to_js(global_object)
 }

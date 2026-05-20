@@ -2,7 +2,7 @@ use bun_collections::VecExt;
 use core::mem::size_of;
 
 use bun_ast::Loc;
-use bun_collections::{ByteVecExt, MultiArrayList};
+use bun_collections::MultiArrayList;
 use bun_core::{self, ZigStringSlice};
 use bun_core::{declare_scope, err, scoped_log};
 use bun_semver::String as SemverString;
@@ -389,9 +389,7 @@ impl Lookup {
             let source_map = self.source_map.as_deref()?;
             debug_assert!(source_map.is_external());
 
-            let Some(provider) = source_map.underlying_provider.provider() else {
-                return None;
-            };
+            let provider = source_map.underlying_provider.provider()?;
 
             let index = usize::try_from(self.mapping.source_index).ok()?;
 

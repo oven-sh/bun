@@ -1,4 +1,3 @@
-use core::fmt::Display;
 use core::marker::ConstParamTy;
 
 use bun_alloc::AllocError;
@@ -6,7 +5,6 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
 use bun_core::ZStr;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_semver::String as SemverString;
 
 use crate::external_slice::ExternalSlice;
 use crate::lockfile::package::PackageColumns as _;

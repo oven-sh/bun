@@ -347,9 +347,7 @@ pub type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if let Ok(value) =
-            input.try_parse(|p| p.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
-        {
+        if let Ok(value) = input.try_parse(|p| p.expect_string().map(std::ptr::from_ref::<[u8]>)) {
             // arena-owned: parser slice lives for 'bump
             return Ok(FontFamily::FamilyName(value));
         }
@@ -364,8 +362,7 @@ impl FontFamily {
         let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
-        while let Ok(ident) =
-            input.try_parse(|p| p.expect_ident().map(|s| std::ptr::from_ref::<[u8]>(s)))
+        while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(std::ptr::from_ref::<[u8]>))
         {
             if string.is_none() {
                 let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
@@ -736,7 +733,7 @@ impl Font {
         let mut style: Option<FontStyle> = None;
         let mut weight: Option<FontWeight> = None;
         let mut stretch: Option<FontStretch> = None;
-        let mut size: Option<FontSize> = None;
+        let final_size: FontSize;
         let mut variant_caps: Option<FontVariantCaps> = None;
         let mut count: i32 = 0;
 
@@ -783,18 +780,13 @@ impl Font {
                 }
             }
 
-            size = Some(FontSize::parse(input)?);
+            final_size = FontSize::parse(input)?;
             break;
         }
 
         if count > 4 {
             return Err(input.new_custom_error(ParserError::invalid_declaration));
         }
-
-        let final_size = match size {
-            Some(s) => s,
-            None => return Err(input.new_custom_error(ParserError::invalid_declaration)),
-        };
 
         let line_height = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             Some(LineHeight::parse(input)?)
@@ -1001,7 +993,7 @@ impl FontHandler {
                 self.size = Some(val.size.clone());
                 self.style = Some(val.style);
                 self.weight = Some(val.weight.clone());
-                self.stretch = Some(val.stretch.clone());
+                self.stretch = Some(val.stretch);
                 self.line_height = Some(val.line_height.clone());
                 self.variant_caps = Some(val.variant_caps);
                 self.has_any = true;

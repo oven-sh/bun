@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
-use bun_collections::{ByteVecExt, TaggedPtrUnion, VecExt};
+use bun_collections::{TaggedPtrUnion, VecExt};
 use bun_core::Output;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue};
@@ -830,7 +830,6 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<&'a mut JSSink<T>> {
-        use crate::webcore::jsc::JsError;
         let raw = T::from_js_extern(frame.this());
         match raw {
             from_js_result::DETACHED => Err(global.throw(format_args!(

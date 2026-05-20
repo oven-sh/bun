@@ -18,14 +18,17 @@ use std::cell::Cell;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
-    JSPromise, JSValue, JsCell, JsRef, JsResult,
+    JSValue, JsCell, JsRef, JsResult,
 };
-use bun_paths::{self as path, PathBuffer};
-use bun_resolver::fs::{FileSystem, RealFS};
+#[cfg(not(target_os = "macos"))]
+use bun_paths::PathBuffer;
+use bun_paths::{self as path};
+use bun_resolver::fs::FileSystem;
+#[cfg(not(target_os = "macos"))]
+use bun_resolver::fs::RealFS;
 // `Process`/`Rusage`/`SpawnOptions`/`Status`/`spawn_process` live in
 // `api::bun::process` (re-exported under `api::bun::spawn::posix_spawn`, but
 // not at the `spawn` module root). Alias `process` as `spawn` so the
@@ -34,9 +37,9 @@ use crate::api::bun::process::{
     self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status,
 };
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
-use bun_core::{ZStr, strings};
+use bun_core::ZStr;
 use bun_io::pipe_reader::BufferedReaderParent;
-use bun_jsc::JsClass as _;
+#[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
 // Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
 // borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.
@@ -82,10 +85,6 @@ trait CronJobBase: Sized {
         // targets (jsc/VirtualMachine.rs:2975); the prior POSIX arm's
         // `bun_uws::Loop::get()` named the same per-thread singleton.
         vm_mut().uv_loop()
-    }
-
-    fn event_loop(&self) -> *mut EventLoop {
-        vm_mut().event_loop()
     }
 
     /// May free `this` via `maybe_finished`.
@@ -143,12 +142,14 @@ pub struct CronRegisterJob {
     /// normalized numeric form for crontab/launchd
     schedule: ZString,
     title: ZString,
+    #[cfg(windows)]
     parsed_cron: CronExpression,
 
     state: RegisterState,
     // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
     process: Option<*mut Process>,
     stdout_reader: OutputReader,
+    #[cfg(windows)]
     stderr_reader: OutputReader,
     remaining_fds: i8,
     has_called_process_exit: bool,
@@ -164,9 +165,12 @@ pub struct CronRegisterJob {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RegisterState {
     ReadingCrontab,
+    #[cfg(not(target_os = "macos"))]
     InstallingCrontab,
+    #[cfg(target_os = "macos")]
     WritingPlist,
     BootingOut,
+    #[cfg(target_os = "macos")]
     Bootstrapping,
     Done,
     Failed,
@@ -382,7 +386,7 @@ impl CronRegisterJob {
     // -- Linux --
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
-    #[cfg(not(windows))]
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -394,13 +398,13 @@ impl CronRegisterJob {
             // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         };
-        let mut argv: [*const c_char; 3] =
-            [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
+        let mut argv: [*const c_char; 3] = [crontab_path, c"-l".as_ptr(), core::ptr::null()];
         // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(not(target_os = "macos"))]
     unsafe fn process_crontab_and_install(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -479,6 +483,7 @@ impl CronRegisterJob {
     // -- macOS --
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(target_os = "macos")]
     unsafe fn start_mac(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_bootout`/`finish`.
         let s = unsafe { &mut *this };
@@ -609,6 +614,7 @@ impl CronRegisterJob {
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(target_os = "macos")]
     unsafe fn spawn_bootout(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -637,6 +643,7 @@ impl CronRegisterJob {
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(target_os = "macos")]
     unsafe fn spawn_bootstrap(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -776,17 +783,20 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         abs_path,
         schedule: ZString::from_bytes(normalized_schedule),
         title: ZString::from_bytes(title_slice.slice()),
+        #[cfg(windows)]
         parsed_cron: parsed,
         state: RegisterState::ReadingCrontab,
         process: None,
         stdout_reader: OutputReader::init::<CronRegisterJob>(),
+        #[cfg(windows)]
         stderr_reader: OutputReader::init::<CronRegisterJob>(),
         remaining_fds: 0,
         has_called_process_exit: false,
         exit_status: None,
         err_msg: None,
         tmp_path: None,
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+        // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
+        event_loop_handle: unsafe { EventLoopHandle::init(vm_mut().event_loop().cast::<()>()) },
     }));
     let promise_value = {
         // SAFETY: just allocated; unique. Short-lived borrow ends before
@@ -815,6 +825,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
     Ok(promise_value)
 }
 
+#[cfg(windows)]
 impl CronRegisterJob {
     // -- Windows --
 
@@ -941,6 +952,7 @@ pub struct CronRemoveJob {
     // LIFETIMES.tsv: SHARED — `Process` is intrusively refcounted (`*mut`).
     process: Option<*mut Process>,
     stdout_reader: OutputReader,
+    #[cfg(windows)]
     stderr_reader: OutputReader,
     remaining_fds: i8,
     has_called_process_exit: bool,
@@ -1164,7 +1176,7 @@ impl CronRemoveJob {
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
-    #[cfg(not(windows))]
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -1176,13 +1188,13 @@ impl CronRemoveJob {
             // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         };
-        let mut argv: [*const c_char; 3] =
-            [crontab_path, b"-l\0".as_ptr().cast(), core::ptr::null()];
+        let mut argv: [*const c_char; 3] = [crontab_path, c"-l".as_ptr(), core::ptr::null()];
         // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(not(target_os = "macos"))]
     unsafe fn remove_crontab_entry(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -1240,6 +1252,7 @@ impl CronRemoveJob {
     }
 
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    #[cfg(target_os = "macos")]
     unsafe fn start_mac(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -1294,13 +1307,15 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         state: RemoveState::ReadingCrontab,
         process: None,
         stdout_reader: OutputReader::init::<CronRemoveJob>(),
+        #[cfg(windows)]
         stderr_reader: OutputReader::init::<CronRemoveJob>(),
         remaining_fds: 0,
         has_called_process_exit: false,
         exit_status: None,
         err_msg: None,
         tmp_path: None,
-        event_loop_handle: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+        // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
+        event_loop_handle: unsafe { EventLoopHandle::init(vm_mut().event_loop().cast::<()>()) },
     }));
     let promise_value = {
         // SAFETY: just allocated; unique. Short-lived borrow ends before
@@ -1327,6 +1342,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     Ok(promise_value)
 }
 
+#[cfg(windows)]
 impl CronRemoveJob {
     /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
     unsafe fn start_windows(this: *mut Self) {
@@ -1646,7 +1662,9 @@ impl CronJob {
         let Some(next_time) = this_ref.compute_next_timespec() else {
             return Self::finish_deferred_stop(this, vm);
         };
-        timer_all().update(this_ref.event_loop_timer.as_ptr(), &next_time);
+        // SAFETY: `event_loop_timer` is the live inline timer field of the
+        // heap-allocated `CronJob` `this_ref` borrows.
+        unsafe { timer_all().update(this_ref.event_loop_timer.as_ptr(), &next_time) };
     }
 
     pub fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
@@ -1886,7 +1904,9 @@ impl CronJob {
         );
 
         job_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-        timer_all().update(job_ref.event_loop_timer.as_ptr(), &next_time);
+        // SAFETY: `event_loop_timer` is the live inline timer field of the
+        // heap-allocated `CronJob` `job_ref` borrows.
+        unsafe { timer_all().update(job_ref.event_loop_timer.as_ptr(), &next_time) };
 
         Ok(js_value)
     }
@@ -2013,9 +2033,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 
     let from_ms: f64 = if !args[1].is_empty() && !args[1].is_undefined() && args[1] != JSValue::NULL
     {
-        if args[1].is_number() {
-            args[1].to_number(global)?
-        } else if args[1].js_type() == jsc::JSType::JSDate {
+        if args[1].is_number() || args[1].js_type() == jsc::JSType::JSDate {
             args[1].to_number(global)?
         } else {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -2049,6 +2067,7 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     unsafe fn finish(this: *mut Self);
     fn process_slot(&mut self) -> &mut Option<*mut Process>;
     fn stdout_reader(&mut self) -> &mut OutputReader;
+    #[cfg(windows)]
     fn stderr_reader(&mut self) -> &mut OutputReader;
     fn remaining_fds(&mut self) -> &mut i8;
 }
@@ -2082,6 +2101,7 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn stdout_reader(&mut self) -> &mut OutputReader {
         &mut self.stdout_reader
     }
+    #[cfg(windows)]
     fn stderr_reader(&mut self) -> &mut OutputReader {
         &mut self.stderr_reader
     }
@@ -2104,6 +2124,7 @@ impl SpawnCmdTarget for CronRemoveJob {
     fn stdout_reader(&mut self) -> &mut OutputReader {
         &mut self.stdout_reader
     }
+    #[cfg(windows)]
     fn stderr_reader(&mut self) -> &mut OutputReader {
         &mut self.stderr_reader
     }
@@ -2131,6 +2152,9 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     *s.exit_status_mut() = None;
     *s.remaining_fds() = 0;
 
+    #[cfg(not(windows))]
+    let resolved_argv0: Option<*const c_char> = None;
+    #[cfg(windows)]
     let mut resolved_argv0: Option<*const c_char> = None;
     // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
     // Windows and must outlive the SpawnOptions construction below.
@@ -2205,8 +2229,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             bun_sys::windows::libuv::Pipe,
         >()));
     let cwd = FileSystem::get().top_level_dir;
-    // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
-    let mut spawn_options = SpawnOptions {
+    let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]
@@ -2217,11 +2240,15 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         argv0: resolved_argv0,
         #[cfg(windows)]
         windows: spawn::WindowsOptions {
-            loop_: EventLoopHandle::init(vm_mut().event_loop().cast::<()>()),
+            // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
+            loop_: unsafe { EventLoopHandle::init(vm_mut().event_loop().cast::<()>()) },
             ..Default::default()
         },
         ..SpawnOptions::default()
     };
+    // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
+    #[cfg(windows)]
+    let mut spawn_options = spawn_options;
 
     // SAFETY: `argv`/`envp` are local null-terminated C-string arrays with
     // argv[0] non-null; valid for this call.
@@ -2250,6 +2277,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                 return unsafe { T::finish(this) };
             }
         };
+    #[cfg(windows)]
     let mut spawned = spawned;
 
     #[cfg(unix)]
@@ -2308,7 +2336,8 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     }
 
-    let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
+    // SAFETY: `vm_mut().event_loop()` returns the live per-thread `jsc::EventLoop`.
+    let ev_handle = unsafe { EventLoopHandle::init(vm_mut().event_loop().cast::<()>()) };
     let process = spawned.to_process(ev_handle, false);
     *s.process_slot() = Some(process);
     // SAFETY: `process` was just allocated by `to_process`; we hold the only
@@ -2334,6 +2363,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
 }
 
 /// Find crontab binary using bun.which (searches PATH).
+#[cfg(not(target_os = "macos"))]
 fn find_crontab() -> Option<*const c_char> {
     #[cfg(windows)]
     {
@@ -2389,6 +2419,7 @@ fn resolve_path(
     Ok(ZString::from_bytes(entry_path.text))
 }
 
+#[cfg(any(target_os = "macos", windows))]
 fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::AllocError> {
     let mut v = Vec::new();
     v.write_fmt(args).map_err(|_| bun_alloc::AllocError)?;
@@ -2396,6 +2427,7 @@ fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::A
 }
 
 /// Create a temp file path with a random suffix to avoid TOCTOU/symlink attacks.
+#[cfg(not(target_os = "macos"))]
 fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
     let mut name_buf = PathBuffer::uninit();
     // PORT NOTE: Zig used `prefix ++ "tmp"` at comptime; concat at runtime here.
@@ -2828,10 +2860,7 @@ pub fn cron_to_task_xml(
                     append_calendar_trigger_with_schedule(
                         &mut xml,
                         sb,
-                        ScheduleType::ByMonth {
-                            cron: *cron,
-                            months_is_wild,
-                        },
+                        ScheduleType::ByMonth { cron: *cron },
                     )?;
                 }
 
@@ -2848,10 +2877,7 @@ pub fn cron_to_task_xml(
                         append_calendar_trigger_with_schedule(
                             &mut xml,
                             sb,
-                            ScheduleType::ByMonthDow {
-                                cron: *cron,
-                                months_is_wild,
-                            },
+                            ScheduleType::ByMonthDow { cron: *cron },
                         )?;
                     }
                 }
@@ -2975,11 +3001,9 @@ enum ScheduleType {
     ByWeek(u8),
     ByMonth {
         cron: CronExpression,
-        months_is_wild: bool,
     },
     ByMonthDow {
         cron: CronExpression,
-        months_is_wild: bool,
     },
     /// months bitmask (daily with month restriction)
     ByMonthAllDays(u16),
@@ -3009,13 +3033,13 @@ fn append_calendar_trigger_with_schedule(
             append_days_of_week_xml(xml, weekdays)?;
             xml.extend_from_slice(b"      </ScheduleByWeek>\n");
         }
-        ScheduleType::ByMonth { cron, .. } => {
+        ScheduleType::ByMonth { cron } => {
             xml.extend_from_slice(b"      <ScheduleByMonth>\n");
             append_days_of_month_xml(xml, cron.days)?;
             append_months_xml(xml, cron.months)?;
             xml.extend_from_slice(b"      </ScheduleByMonth>\n");
         }
-        ScheduleType::ByMonthDow { cron, .. } => {
+        ScheduleType::ByMonthDow { cron } => {
             // ScheduleByMonthDayOfWeek: weekday + month restriction
             xml.extend_from_slice(b"      <ScheduleByMonthDayOfWeek>\n");
             xml.extend_from_slice(b"        <Weeks><Week>1</Week><Week>2</Week><Week>3</Week><Week>4</Week><Week>Last</Week></Weeks>\n");

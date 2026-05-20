@@ -1,8 +1,7 @@
 //! `Bun.Transpiler` — single-file transform/scan over the JS parser.
 
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::{ByteVecExt, VecExt};
-use bun_options_types::{LoaderExt as _, TargetExt as _};
+use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::node::{Encoding, StringOrBuffer};
@@ -24,8 +23,8 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
-    JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsError, JsResult,
-    LogJsc, StringJsc,
+    JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
+    StringJsc,
 };
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
@@ -819,7 +818,7 @@ impl<'a> TransformTask<'a> {
             file_descriptor: None,
             loader: self.loader,
             jsx,
-            path: source.path.clone(),
+            path: source.path,
             virtual_source: Some(source),
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
             experimental_decorators: self.tsconfig.map_or(false, |ts| ts.experimental_decorators),
@@ -1257,6 +1256,7 @@ impl JSTranspiler {
     /// outer-struct fix does not address. The R-2 invariant this upholds is
     /// that no `noalias &mut JSTranspiler` is live across that re-entry.
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     unsafe fn transpiler_mut(&self) -> &mut Transpiler::Transpiler<'static> {
         // SAFETY: caller upholds the no-aliasing precondition documented on this
         // `unsafe fn`; `JsCell::get_mut` projects through `UnsafeCell`.
@@ -1308,7 +1308,7 @@ impl JSTranspiler {
             file_descriptor: None,
             loader: loader.unwrap_or(config.default_loader),
             jsx,
-            path: source.path.clone(),
+            path: source.path,
             virtual_source: Some(source),
             replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
             macro_js_ctx,

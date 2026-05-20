@@ -1,12 +1,9 @@
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 // Entry point for Valkey client
 //
 // This file contains the core Valkey client implementation with protocol handling
 
-use core::mem::offset_of;
-
 use bun_collections::OffsetByteList;
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
@@ -144,10 +141,12 @@ impl Protocol {
     }
 }
 
+#[derive(Default)]
 pub enum TLS {
+    #[default]
     None,
     Enabled,
-    Custom(crate::server::server_config::SSLConfig),
+    Custom(Box<crate::server::server_config::SSLConfig>),
 }
 
 impl TLS {
@@ -168,12 +167,6 @@ impl TLS {
             TLS::Enabled => vm.get_tls_reject_unauthorized(),
             _ => false,
         }
-    }
-}
-
-impl Default for TLS {
-    fn default() -> Self {
-        TLS::None
     }
 }
 
@@ -468,7 +461,6 @@ impl ValkeyClient {
         // satisfy borrowck (closure would alias `&mut self`). Could revisit with a raw-ptr guard.
 
         // Start draining the command queue
-        let mut have_more = false;
         let mut total_bytelength: usize = 0;
 
         // PORT NOTE: reshaped for borrowck — Zig held `to_process` slice while mutating
@@ -509,7 +501,7 @@ impl ValkeyClient {
 
         let _ = self.flush_data();
 
-        have_more = self.queue.readable_length() > 0;
+        let have_more = self.queue.readable_length() > 0;
         self.auto_flusher.registered.set(have_more);
 
         self.deref();
@@ -795,7 +787,7 @@ impl ValkeyClient {
                 let mut reader = protocol::ValkeyReader::init(remaining_buffer);
                 let before_read_pos = reader_pos(&reader);
 
-                let mut value = match reader.read_value() {
+                let value = match reader.read_value() {
                     Ok(v) => v,
                     Err(err) => {
                         if err == RedisError::InvalidResponse {
@@ -845,7 +837,7 @@ impl ValkeyClient {
             let mut reader = protocol::ValkeyReader::init(current_data_slice);
             let before_read_pos = reader_pos(&reader);
 
-            let mut value = match reader.read_value() {
+            let value = match reader.read_value() {
                 Ok(v) => v,
                 Err(err) => {
                     if err == RedisError::InvalidResponse {
@@ -1577,7 +1569,7 @@ impl HasAutoFlusher for ValkeyClient {
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
     }
-    fn on_auto_flush(this: *mut Self) -> bool {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: `this` was registered as `&ValkeyClient` cast to `*mut c_void`;
         // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread after
         // microtasks), so no aliasing across the call.

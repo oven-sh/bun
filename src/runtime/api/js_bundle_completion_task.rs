@@ -8,13 +8,13 @@
 //! through the `bun_bundler::bundle_v2::CompletionStruct` trait
 //! (layout-agnostic).
 
-use bun_options_types::{LoaderExt as _, TargetExt as _};
+use bun_options_types::TargetExt as _;
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
-    BundleThread, BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
+    BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
     JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
 };
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
@@ -22,23 +22,22 @@ use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
 use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
-use bun_core::strings;
 use bun_io::KeepAlive;
 use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::WorkPool;
 use bun_jsc::event_loop::EventLoop;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsError};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, PathBuffer, SEP};
 use bun_ptr::BackRef;
-use bun_ptr::{RefCount, RefCounted};
+use bun_ptr::RefCount;
 use bun_standalone_graph::StandaloneModuleGraph::{
-    self as standalone_graph, CompileErrorReason, CompileResult, Flags as StandaloneFlags,
-    target_base_public_path, to_executable,
+    CompileErrorReason, CompileResult, Flags as StandaloneFlags, target_base_public_path,
+    to_executable,
 };
-use bun_sys::{self as sys, Dir, OpenDirOptions};
+use bun_sys::{Dir, OpenDirOptions};
 
 use crate::api::js_bundler::BuildArtifact;
 use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};

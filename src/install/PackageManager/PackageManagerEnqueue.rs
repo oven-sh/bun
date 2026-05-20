@@ -19,18 +19,16 @@ use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
-use crate::network_task::Authorization;
 use crate::package_manager_real::{
     self, FailFn, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
-    generate_network_task_for_tarball, get_cache_directory, get_preinstall_state,
-    get_temporary_directory, run_tasks, set_preinstall_state,
+    get_cache_directory, get_preinstall_state, get_temporary_directory, run_tasks,
+    set_preinstall_state,
 };
 use crate::package_manager_task as Task;
-use crate::patch_install::{Callback as PatchCallback, EnqueueAfterState};
+use crate::patch_install::EnqueueAfterState;
 use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{
     NpmVersionInfo as ResolutionNpmValue, Tag as ResolutionTag, TaggedValue as ResolutionTagged,
-    Value as ResolutionValue,
 };
 use crate::{ManifestLoad, dependency};
 use bun_install::NetworkTask;
@@ -1212,7 +1210,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
             }
-            return Ok(());
         }
         dependency::version::Tag::Git => {
             let dep: Repository = *version.git();

@@ -2375,7 +2375,6 @@ lexer_impl_header! {
         let mut rest = &text[0..end_comment_text];
 
         while let Some(i) = strings::index_of_any(rest, b"@#") {
-            let i = i as usize;
             let c = rest[i];
             rest = &rest[(i + 1).min(rest.len())..];
             match c {
@@ -2646,7 +2645,7 @@ lexer_impl_header! {
                         0
                     };
             }
-        } else if chunk.len() >= " sourceMappingURL=".len() + 1
+        } else if chunk.len() > " sourceMappingURL=".len()
             && chunk.starts_with(b" sourceMappingURL=")
         {
             // Check includes space for prefix
@@ -2700,7 +2699,7 @@ lexer_impl_header! {
         let contents: &'a [u8] = source.contents();
         Self {
             log: core::ptr::NonNull::from(log),
-            source: source,
+            source,
             contents,
             current: 0,
             start: 0,
@@ -2732,7 +2731,7 @@ lexer_impl_header! {
             string_literal_start: 0,
             string_literal_raw_format: StringLiteralRawFormat::Ascii,
             temp_buffer_u16: Vec::new(),
-            is_ascii_only: if IS_JSON { true } else { false },
+            is_ascii_only: IS_JSON,
             track_comments: false,
             all_comments: Vec::new(),
             indent_info: IndentInfo {
@@ -4156,7 +4155,7 @@ fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> Option<u3
     // TODO(port): SIMD reimplementation
     let vsize = strings::ASCII_VECTOR_SIZE;
     let text_end_len = text_.len() & !(vsize - 1);
-    debug_assert!(text_end_len % vsize == 0);
+    debug_assert!(text_end_len.is_multiple_of(vsize));
     debug_assert!(text_end_len <= text_.len());
 
     let mut off: usize = 0;

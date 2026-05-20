@@ -223,7 +223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // PORT NOTE: reborrow per-iter (Zig passes the same pointer each time).
-            let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_mut().map(|g| &mut **g);
+            let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
             self.visit_binding(arg.binding, dup);
             if let Some(default) = arg.default.as_mut() {
                 self.visit_expr(default);

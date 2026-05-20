@@ -1,13 +1,12 @@
 #![warn(unused_must_use)]
 
 use core::cell::{Cell, RefCell};
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::ExportsKind;
 use bun_ast::Source;
-use bun_core::{self as bun, FeatureFlags, env_var};
+use bun_core::{FeatureFlags, env_var};
 use bun_core::{PathString, String as BunString, ZStr};
-use bun_io::Write as _;
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
@@ -386,7 +385,7 @@ impl Entry {
                 for v in vecs {
                     debug_assert!(v.len > 0);
                     // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
-                    total += v.len as usize;
+                    total += v.len;
                 }
                 debug_assert!(end_position == total);
             }

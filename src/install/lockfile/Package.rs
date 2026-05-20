@@ -9,7 +9,6 @@ use bun_resolver::fs::FileSystem;
 use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
-use bun_sys::File;
 
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
@@ -17,8 +16,8 @@ use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
     Npm, PackageID, PackageJSON, PackageManager, PackageNameHash, Repository,
-    TruncatedPackageNameHash, UpdateRequest, bin, bun_json, default_trusted_dependencies,
-    dependency, initialize_store, invalid_package_id,
+    TruncatedPackageNameHash, UpdateRequest, bin, default_trusted_dependencies, dependency,
+    initialize_store, invalid_package_id,
 };
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -30,7 +29,6 @@ use crate::lockfile_real as lockfile;
 use crate::lockfile_real::{
     Cloner, DependencySlice, Lockfile, PackageIDSlice, PatchedDep, PendingResolution,
     PositionalStream, Stream, StringBuilder, TrustedDependenciesSet,
-    assert_no_uninitialized_padding,
 };
 use crate::resolution_real::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::versioned_url::VersionedURLType;
@@ -494,7 +492,7 @@ impl Package<u64> {
         debug_assert_eq!(new.buffers.dependencies.len(), end as usize);
         debug_assert_eq!(new.buffers.resolutions.len(), end as usize);
 
-        let extern_strings_old_len = new.buffers.extern_strings.len();
+        let _extern_strings_old_len = new.buffers.extern_strings.len();
         // Default-fill the tail so it is valid before `bin.clone` overwrites
         // it (replaces `reserve` + raw `set_len`).
         bun_core::vec::grow_default(&mut new.buffers.extern_strings, new_extern_string_count);
@@ -743,7 +741,7 @@ impl Package<u64> {
         let mut string_builder = crate::string_builder!(lockfile);
 
         let mut total_dependencies_count: u32 = 0;
-        let mut bin_extern_strings_count: u32 = 0;
+        let bin_extern_strings_count: u32;
 
         // --- Counting
         {
@@ -1328,7 +1326,7 @@ impl Diff {
             {
                 break 'patched_dependencies_changed true;
             }
-            let mut iter = to_lockfile.patched_dependencies.iterator();
+            let iter = to_lockfile.patched_dependencies.iterator();
             for entry in iter {
                 if let Some(val) = from_lockfile.patched_dependencies.get(&*entry.key_ptr) {
                     if val
@@ -3006,7 +3004,7 @@ impl Package<u64> {
         // one exists (matching pnpm/yarn). Webpack relies on this for
         // `webpack-cli`, which it lists in meta but not in
         // `peerDependencies`.
-        let mut meta_only = optional_peer_dependencies.iterator();
+        let meta_only = optional_peer_dependencies.iterator();
         for entry in meta_only {
             let external_name = string_builder.append::<ExternalString>(*entry.value_ptr);
             if let Some(dep_) = Self::parse_dependency(
@@ -3249,7 +3247,7 @@ pub mod serializer {
             // whose element size matches `SIZES_BYTES[field as usize]`; we
             // address the column as raw bytes for serialisation.
             let bytes: &[u8] = unsafe {
-                let n = list.len();
+                let _n = list.len();
                 let sz =
                     bun_collections::multi_array_list::Slice::<Package<SemverIntType>>::field_size(
                         field as usize,
@@ -3319,7 +3317,7 @@ pub mod serializer {
     ) -> Result<PackagesLoadResult<u64>, bun_core::Error> {
         type SemverIntType = u64;
         // TODO(port): narrow error set
-        let mut reader = stream.reader();
+        let reader = stream.reader();
 
         let list_len = reader.read_int_le::<u64>()?;
         if list_len > u32::MAX as u64 - 1 {
@@ -3447,7 +3445,7 @@ pub mod serializer {
         needs_update: &mut bool,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        let n = list.len();
+        let _n = list.len();
         let mut sliced = list.slice();
 
         // PERF(port): was `inline for (FieldsEnum.fields)` — profile if hot.

@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use crate::node::fs::{MkdirCtx, NodeFS, args as fs_args};
 use crate::node::types::PathLike;
 use crate::shell::ExitCode;
@@ -166,7 +164,16 @@ impl Mkdir {
     }
 
     /// Spec: mkdir.zig `onShellMkdirTaskDone`.
-    pub fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellMkdirTask) {
+    ///
+    /// # Safety
+    /// `task` must be a live heap allocation produced by
+    /// [`ShellMkdirTask::create`]; ownership is consumed (reclaimed via
+    /// `heap::take`).
+    pub unsafe fn on_shell_mkdir_task_done(
+        interp: &Interpreter,
+        cmd: NodeId,
+        task: *mut ShellMkdirTask,
+    ) {
         // SAFETY: task was heap-allocated in create(); reclaim ownership.
         let mut task = unsafe { bun_core::heap::take(task) };
         let output = core::mem::take(&mut task.created_directories);
@@ -358,10 +365,14 @@ impl ShellMkdirTask {
         // loops).
     }
 
-    pub fn run_from_main_thread(this: *mut ShellMkdirTask, interp: &Interpreter) {
+    /// # Safety
+    /// `this` must be a live heap allocation produced by [`Self::create`];
+    /// ownership is consumed via [`Mkdir::on_shell_mkdir_task_done`].
+    pub unsafe fn run_from_main_thread(this: *mut ShellMkdirTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
-        Mkdir::on_shell_mkdir_task_done(interp, cmd, this);
+        // SAFETY: forwarded from caller's contract.
+        unsafe { Mkdir::on_shell_mkdir_task_done(interp, cmd, this) };
     }
 }
 
@@ -408,7 +419,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        Self::run_from_main_thread(this, interp)
+        // SAFETY: `ShellTaskCtx` callers guarantee `this` is the live
+        // heap-allocated task posted via `ShellTask::schedule`.
+        unsafe { Self::run_from_main_thread(this, interp) }
     }
 }
 

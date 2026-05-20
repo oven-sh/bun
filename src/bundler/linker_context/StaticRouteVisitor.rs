@@ -4,7 +4,6 @@
 //! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.zig`?
 
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, AutoBitSet};
 use bun_core::env_var;
 

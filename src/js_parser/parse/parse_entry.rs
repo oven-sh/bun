@@ -5,24 +5,21 @@ use core::mem::MaybeUninit;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_core::strings;
-use bun_core::{self, Error, Output, err};
+use bun_core::{self, Error, err};
 use bun_wyhash::Wyhash;
 
 use crate::parser::options;
 use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
 
-use crate as js_parser;
 use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports, ScanPassResult,
-    SideEffects, WrapMode,
+    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, WrapMode,
 };
 use bun_ast as js_ast;
-use bun_ast::g::Decl;
+use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt, Symbol};
-use bun_ast::{DeclaredSymbol, StmtList};
 
 // Named instantiations of `P<'_, TS, SCAN>` matching the Zig
 // `JavaScriptParser`/`TypeScriptParser`/etc. comptime aliases.
@@ -1464,7 +1461,7 @@ impl<'a> Parser<'a> {
                         if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
                             let value: Expr = s_expr.value;
 
-                            if let js_ast::ExprData::EBinary(mut bin_ptr) = value.data {
+                            if let js_ast::ExprData::EBinary(bin_ptr) = value.data {
                                 let mut bin = bin_ptr;
                                 loop {
                                     let left = bin.left;

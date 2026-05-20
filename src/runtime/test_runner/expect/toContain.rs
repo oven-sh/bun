@@ -1,8 +1,6 @@
 use core::ffi::c_void;
-use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
-use bun_jsc::console_object::Formatter;
 use bun_core::strings;
 
 use super::Expect;

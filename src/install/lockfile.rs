@@ -14,7 +14,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Error as BunError, Global, Output, err};
-use bun_paths::{self as Path, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -38,10 +38,10 @@ use crate::resolution_real::{self as resolution, Resolution};
 use crate::string_builder;
 use crate::update_request::UpdateRequest;
 use crate::{
-    self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageInstall,
-    PackageManager, PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash,
-    dependency, dependency::Dependency, initialize_store, invalid_dependency_id,
-    invalid_package_id, npm as Npm,
+    self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
+    PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
+    dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
+    npm as Npm,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -276,8 +276,6 @@ pub struct Scripts {
 }
 
 impl Scripts {
-    const MAX_PARALLEL_PROCESSES: usize = 10;
-
     pub const NAMES: [&'static str; 6] = [
         "preinstall",
         "install",
@@ -478,9 +476,9 @@ impl<'a> LoadResult<'a> {
         }
     }
 
-    /// Zig: `load_lockfile.ok` field projection (src/install/lockfile.zig).
-    /// Callers reach this only after `handleLoadLockfileErrors` has exited on
-    /// the `NotFound`/`Err` arms, so the variant is known-`Ok`.
+    // Zig: `load_lockfile.ok` field projection (src/install/lockfile.zig).
+    // Callers reach this only after `handleLoadLockfileErrors` has exited on
+    // the `NotFound`/`Err` arms, so the variant is known-`Ok`.
     bun_core::enum_unwrap!(pub LoadResult, Ok => fn ok / ok_mut -> LoadResultOk<'a>);
 }
 
@@ -3180,11 +3178,14 @@ impl Lockfile {
         }
 
         let mut digest = ZERO_HASH;
-        Crypto::SHA512_256::hash(
-            alphabetized_name_version_string,
-            &mut digest,
-            core::ptr::null_mut(),
-        );
+        // SAFETY: engine is null (default).
+        unsafe {
+            Crypto::SHA512_256::hash(
+                alphabetized_name_version_string,
+                &mut digest,
+                core::ptr::null_mut(),
+            )
+        };
 
         Ok(digest)
     }

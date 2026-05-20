@@ -849,8 +849,9 @@ impl<'a> RouteLoader<'a> {
                 // it to lazily stat when `need_stat` is true, so null would be
                 // a latent crash / silent route-drop once the stub forwards it.
                 // Zig `Entry.Kind` is exactly `{dir, file}` (resolver/fs.zig:378).
-                // SAFETY: no other live borrow of `*entry_ptr` here.
-                let kind = unsafe { &mut *entry_ptr }.kind(resolver.fs_impl(), false);
+                // SAFETY: no other live borrow of `*entry_ptr` here; entries_mutex
+                // held; `resolver.fs_impl()` points at the process-global RealFS.
+                let kind = unsafe { (&mut *entry_ptr).kind(resolver.fs_impl(), false) };
                 // SAFETY: shared read-only borrow for the match arms; the only
                 // subsequent mutation is via `Route::parse` which takes the raw
                 // pointer and reborrows internally.

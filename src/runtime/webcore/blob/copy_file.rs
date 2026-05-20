@@ -1,13 +1,15 @@
 //! blocking, but off the main thread
 
-use core::ffi::{c_int, c_void};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use core::ffi::c_int;
+use core::ffi::c_void;
 use core::marker::ConstParamTy;
 #[cfg(windows)]
 use core::mem::offset_of;
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, Store, StoreRef, store};
+use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, StoreRef, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
@@ -636,7 +638,10 @@ impl<'a> CopyFile<'a> {
         {
             // defer task.onFinish();
 
+            #[cfg(target_os = "macos")]
             let mut stat_: Option<Stat> = None;
+            #[cfg(not(target_os = "macos"))]
+            let stat_: Option<Stat> = None;
 
             if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
                 self.destination_fd = *fd;
@@ -1866,6 +1871,7 @@ fn unsupported_directory_error() -> SystemError {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn unsupported_non_regular_file_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::ENOTSUP as i32,

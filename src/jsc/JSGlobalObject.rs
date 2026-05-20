@@ -1,6 +1,5 @@
 use core::ffi::{c_char, c_void};
 use core::fmt::Arguments;
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::Error as JscError; // jsc.Error (ErrorCode enum)
 use crate::ErrorCode as NodeErrorCode;
@@ -845,7 +844,7 @@ impl JSGlobalObject {
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
         self.queue_microtask_job(
             function,
-            args.get(0).copied().unwrap_or(JSValue::ZERO),
+            args.first().copied().unwrap_or(JSValue::ZERO),
             args.get(1).copied().unwrap_or(JSValue::ZERO),
         );
     }

@@ -639,10 +639,4 @@ fn skip_globstars(glob: &[u8], glob_index: &mut u32) {
     *glob_index -= 2;
 }
 
-#[derive(Copy, Clone, Default)]
-struct BraceIndex {
-    start: u32,
-    end: u32,
-}
-
 // ported from: src/glob/matcher.zig

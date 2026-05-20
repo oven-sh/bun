@@ -37,8 +37,7 @@
     clashing_extern_declarations,
     clippy::missing_safety_doc,
     clippy::not_unsafe_ptr_arg_deref,
-    clippy::too_many_arguments,
-    clippy::all
+    clippy::too_many_arguments
 )]
 
 use crate::{JSGlobalObject, JSValue, JsError, JsResult};

@@ -21,12 +21,11 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
-use bun_io::file_poll::{FilePoll, Store as FilePollStore};
+use bun_io::file_poll::Store as FilePollStore;
 use bun_sys::{self as sys, Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
@@ -436,14 +435,17 @@ impl<'a> MiniEventLoop<'a> {
     /// decl). Zig's lazy analysis lets this compile because no caller exists. The
     /// faithful port writes to `self.tasks` (the local non-concurrent FIFO), which is
     /// the only plausible target for a `*JSCTask` push on a MiniEventLoop.
-    pub fn enqueue_task<C>(
+    ///
+    /// # Safety
+    /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,
+    /// and `ctx` is non-null and live for the task's duration.
+    pub unsafe fn enqueue_task<C>(
         &mut self,
         ctx: *mut C,
         callback: fn(*mut C, *mut ()),
         field_offset: usize,
     ) {
-        // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
-        // `<field>: AnyTaskWithExtraContext`, and `ctx` is live for the task's duration.
+        // SAFETY: caller contract — see fn `# Safety`.
         let task = unsafe { ctx.byte_add(field_offset).cast::<AnyTaskWithExtraContext>() };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
@@ -452,8 +454,11 @@ impl<'a> MiniEventLoop<'a> {
         self.tasks.write_item(task).expect("unreachable");
     }
 
-    pub fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
-        // SAFETY: caller contract — `task` is a valid live intrusive node.
+    /// # Safety
+    /// `task` must point to a valid live intrusive `AnyTaskWithExtraContext` node that
+    /// outlives the queued task; ownership stays with the caller.
+    pub unsafe fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
+        // SAFETY: caller contract — see fn `# Safety`.
         unsafe { self.concurrent_tasks.push(task) };
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
@@ -465,16 +470,19 @@ impl<'a> MiniEventLoop<'a> {
     /// `comptime field: std.meta.FieldEnum(Context)` + `@field(ctx, name)` is replaced
     /// per PORTING.md (§reflection) with a caller-supplied `field_offset =
     /// core::mem::offset_of!(C, <field>)` into the embedded `AnyTaskWithExtraContext`.
-    pub fn enqueue_task_concurrent_with_extra_ctx<C, P>(
+    ///
+    /// # Safety
+    /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,
+    /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
+    /// with caller).
+    pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
         &mut self,
         ctx: *mut C,
         callback: fn(*mut C, *mut P),
         field_offset: usize,
     ) {
         // Zig: jsc.markBinding(@src()) — debug-only source marker; no Rust equivalent needed.
-        // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
-        // `<field>: AnyTaskWithExtraContext`, and `ctx` outlives the queued task
-        // (intrusive node; ownership stays with caller).
+        // SAFETY: caller contract — see fn `# Safety`.
         let task = unsafe { ctx.byte_add(field_offset).cast::<AnyTaskWithExtraContext>() };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
@@ -554,10 +562,12 @@ bun_io::link_impl_EventLoopCtx! {
 }
 
 impl<'a> MiniEventLoop<'a> {
+    /// # Safety
+    /// `this` must be the live per-thread `MiniEventLoop` singleton; it outlives every
+    /// `EventLoopCtx` derived from it.
     #[inline]
-    pub fn as_event_loop_ctx(this: *mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
-        // SAFETY: `this` is the live per-thread MiniEventLoop singleton; it
-        // outlives every `EventLoopCtx` derived from it.
+    pub unsafe fn as_event_loop_ctx(this: *mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
+        // SAFETY: caller contract — see fn `# Safety`.
         unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
     }
 }

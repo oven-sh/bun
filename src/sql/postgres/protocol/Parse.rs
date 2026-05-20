@@ -1,7 +1,6 @@
 use core::mem::size_of;
 
 use super::new_writer::NewWriter;
-use super::write_wrap::WriteWrap;
 use super::z_helpers::z_count;
 use crate::postgres::types::int_types::{Int4, int32};
 
@@ -30,7 +29,7 @@ impl<'a> Parse<'a> {
         }
         let count: usize = size_of::<u32>()
             + size_of::<u16>()
-            + (parameters.len() * size_of::<u32>())
+            + std::mem::size_of_val(parameters)
             + z_count(self.name).max(1)
             + z_count(self.query).max(1);
 

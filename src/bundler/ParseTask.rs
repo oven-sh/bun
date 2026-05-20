@@ -1389,7 +1389,7 @@ pub mod parse_worker {
         resolver: *mut Resolver,
         bump: &Bump,
         file_path: &mut Fs::Path,
-        loader: Loader,
+        _loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -2839,11 +2839,15 @@ pub mod parse_worker {
                 );
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
-                    result,
-                    on_complete_mini,
-                    offset_of!(Result, task),
-                );
+                // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
+                // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
+                unsafe {
+                    mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
+                        result,
+                        on_complete_mini,
+                        offset_of!(Result, task),
+                    );
+                }
             }
         }
         // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
@@ -2903,8 +2907,6 @@ pub use parse_worker::{FileLoaderHash, OnBeforeParsePlugin, get_runtime_source, 
 // ───────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ───────────────────────────────────────────────────────────────────────────
-
-use bun_ast::Ref;
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 

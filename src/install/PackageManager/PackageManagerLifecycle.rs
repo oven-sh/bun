@@ -9,7 +9,7 @@ use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{join_abs_string_z, platform};
-use bun_paths::{self as Path, AutoAbsPath, EnvPath};
+use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 use bun_threading::Mutex;
@@ -17,7 +17,6 @@ use bun_threading::Mutex;
 use crate::bun_fs::FileSystem;
 
 use super::directories;
-use super::package_manager_options::Do;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
@@ -55,7 +54,7 @@ impl LifecycleScriptTimeLog {
     }
 
     /// this can be called if .start was never called
-    pub fn print_and_deinit(mut self) {
+    pub fn print_and_deinit(self) {
         if cfg!(debug_assertions) {
             if !self.mutex.try_lock() {
                 panic!("LifecycleScriptTimeLog.print is not intended to be thread-safe");

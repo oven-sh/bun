@@ -231,6 +231,7 @@ impl File {
             }
             #[cfg(not(unix))]
             {
+                let _ = off;
                 read(self.handle, dst)
             }
         })

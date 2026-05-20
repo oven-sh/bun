@@ -568,7 +568,6 @@ impl NewBuilder<VLQSourceMap> {
                         let remaining = slice[i..].len();
                         debug_assert!(remaining <= i32::MAX as usize);
                         self.generated_column += remaining as i32 + 1;
-                        i = n;
                         break;
                     }
                 }

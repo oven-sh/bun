@@ -4,7 +4,7 @@ use bun_jsc::bun_string_jsc::create_utf8_for_js;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
-use bun_core::{self as bstr, ZigStringSlice as Utf8Slice, strings};
+use bun_core::{ZigStringSlice as Utf8Slice, strings};
 use bun_ptr::RawSlice;
 
 pub struct S3ListObjectsOptions {
@@ -45,11 +45,6 @@ struct ObjectOwner<'a> {
     display_name: Option<&'a [u8]>,
 }
 
-struct ObjectRestoreStatus<'a> {
-    is_restore_in_progress: Option<bool>,
-    restore_expiry_date: Option<&'a [u8]>,
-}
-
 pub struct S3ListObjectsContents<'a> {
     key: &'a [u8],
     // Zig: ?bun.ptr.OwnedIn([]const u8, MaybeOwned(DefaultAllocator)) —
@@ -61,7 +56,6 @@ pub struct S3ListObjectsContents<'a> {
     object_size: Option<i64>,
     storage_class: Option<&'a [u8]>,
     owner: Option<ObjectOwner<'a>>,
-    restore_status: Option<ObjectRestoreStatus<'a>>,
 }
 
 // Zig deinit only freed `etag` when owned; Cow handles that in Drop.
@@ -242,8 +236,6 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                     let mut checksum_algorithme: Option<&[u8]> = None;
                     let mut owner_id: Option<&[u8]> = None;
                     let mut owner_display_name: Option<&[u8]> = None;
-                    let mut is_restore_in_progress: Option<bool> = None;
-                    let mut restore_expiry_date: Option<&[u8]> = None;
 
                     while looking_for_end_tag {
                         if i >= xml.len() {
@@ -357,50 +349,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     if let Some(__tag_end) =
                                         strings::index_of(&xml[i..], b"</RestoreStatus>")
                                     {
-                                        let restore_status = &xml[i..i + __tag_end];
                                         i = i + __tag_end + 16;
-
-                                        if let Some(start) = strings::index_of(
-                                            restore_status,
-                                            b"<IsRestoreInProgress>",
-                                        ) {
-                                            let start_pos = start + 21;
-                                            if let Some(_end) = strings::index_of(
-                                                restore_status,
-                                                b"</IsRestoreInProgress>",
-                                            ) {
-                                                let is_not_empty = start_pos < _end;
-                                                if is_not_empty {
-                                                    let is_restore_in_progress_string =
-                                                        &restore_status[start_pos.._end];
-
-                                                    if is_restore_in_progress_string == b"true" {
-                                                        is_restore_in_progress = Some(true);
-                                                    } else if is_restore_in_progress_string
-                                                        == b"false"
-                                                    {
-                                                        is_restore_in_progress = Some(false);
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if let Some(start) = strings::index_of(
-                                            restore_status,
-                                            b"<RestoreExpiryDate>",
-                                        ) {
-                                            let start_pos = start + 19;
-                                            if let Some(_end) = strings::index_of(
-                                                restore_status,
-                                                b"</RestoreExpiryDate>",
-                                            ) {
-                                                let is_not_empty = start_pos < _end;
-                                                if is_not_empty {
-                                                    restore_expiry_date =
-                                                        Some(&restore_status[start_pos.._end]);
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             } else {
@@ -423,15 +372,6 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             });
                         }
 
-                        let mut restore_status: Option<ObjectRestoreStatus<'_>> = None;
-
-                        if is_restore_in_progress.is_some() || restore_expiry_date.is_some() {
-                            restore_status = Some(ObjectRestoreStatus {
-                                is_restore_in_progress,
-                                restore_expiry_date,
-                            });
-                        }
-
                         contents.push(S3ListObjectsContents {
                             key: object_key_val,
                             etag: match (etag_owned, etag) {
@@ -445,7 +385,6 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             object_size,
                             storage_class,
                             owner,
-                            restore_status,
                         });
                     }
                 } else if tag_name == b"Name" {

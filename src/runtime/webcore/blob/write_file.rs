@@ -6,9 +6,7 @@ use bun_core::ZigString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{
-    self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SysErrorJsc, SystemError,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
@@ -24,7 +22,7 @@ bun_output::declare_scope!(WriteFile, hidden);
 // modeled here as a plain Rust enum. Verify layout if it crosses FFI.
 pub enum WriteFileResultType {
     Result(SizeType),
-    Err(SystemError),
+    Err(Box<SystemError>),
 }
 
 pub type WriteFileOnWriteFileCallback =
@@ -39,7 +37,8 @@ impl bun_jsc::work_task::WorkTaskContext for WriteFile {
         unsafe { (*this).run(task) }
     }
     fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), JsTerminated> {
-        WriteFile::then(this, global)
+        // SAFETY: WorkTask drives `then` on the JS thread with the live Box-allocated context.
+        unsafe { WriteFile::then(this, global) }
     }
 }
 
@@ -368,7 +367,10 @@ impl WriteFile {
         true
     }
 
-    pub fn then(this: *mut WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
+    /// # Safety
+    /// `this` must point to a live Box-allocated `WriteFile` (created via
+    /// [`Self::create_with_ctx`]). The allocation is consumed here.
+    pub unsafe fn then(this: *mut WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
         let cb;
         let cb_ctx;
         let system_error;
@@ -392,7 +394,7 @@ impl WriteFile {
         }
 
         if let Some(err) = system_error {
-            cb(cb_ctx, WriteFileResultType::Err(err))?;
+            cb(cb_ctx, WriteFileResultType::Err(Box::new(err)))?;
             return Ok(());
         }
 
@@ -1096,7 +1098,7 @@ mod windows_impl {
             if let Some(err) = unsafe { (*this).to_system_error() } {
                 // SAFETY: caller contract — `this` is live; consumed here.
                 unsafe { Self::deinit(this) };
-                if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(err)) {
+                if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(Box::new(err))) {
                     return e.into();
                 }
             } else {
@@ -1325,11 +1327,15 @@ pub struct WriteFileWaitFromLockedValueTask {
 
 impl WriteFileWaitFromLockedValueTask {
     pub fn then_wrap(this: *mut c_void, value: &mut body::Value) {
-        let _ = Self::then(this.cast::<WriteFileWaitFromLockedValueTask>(), value);
+        // SAFETY: `this` is the Box-allocated task registered as `locked.task` below.
+        let _ = unsafe { Self::then(this.cast::<WriteFileWaitFromLockedValueTask>(), value) };
         // TODO: properly propagate exception upwards
     }
 
-    pub fn then(
+    /// # Safety
+    /// `this` must point to a live Box-allocated `WriteFileWaitFromLockedValueTask`.
+    /// On every arm except `body::Value::Locked`, the allocation is consumed.
+    pub unsafe fn then(
         this: *mut WriteFileWaitFromLockedValueTask,
         value: &mut body::Value,
     ) -> Result<(), JsTerminated> {

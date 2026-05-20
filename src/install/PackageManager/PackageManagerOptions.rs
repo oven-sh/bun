@@ -1,7 +1,6 @@
+use bun_core::ZStr;
 use bun_core::{Output, env_var};
-use bun_core::{ZStr, strings};
-use bun_paths::{self as Path, PathBuffer};
-use bun_url::URL;
+use bun_paths::PathBuffer;
 // TODO(port): move to <area>_sys / verify crate path for schema API
 use crate::bun_schema::api as Api;
 

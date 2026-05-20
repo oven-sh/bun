@@ -17,9 +17,9 @@
 
 use core::ffi::c_void;
 use core::marker::PhantomData;
-use core::mem::offset_of;
 
 use bun_collections::VecExt;
+#[cfg(windows)]
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{Fd, FdExt as _};
@@ -689,8 +689,5 @@ impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
         this.ingest(&[]);
     }
 }
-
-// Silence unused-import on the non-selecting cfg arm.
-use offset_of as _;
 
 // ported from: src/cli/test/parallel/Channel.zig

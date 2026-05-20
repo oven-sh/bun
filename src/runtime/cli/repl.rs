@@ -91,7 +91,7 @@ fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
 /// is the sole driver of `tick()` / `wait_for_promise()` here. The Rust port
 /// stores `&VirtualMachine` for borrowck simplicity and casts at the call site.
 #[inline]
-#[allow(invalid_reference_casting)]
+#[allow(invalid_reference_casting, clippy::mut_from_ref)]
 fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
     // Launder through a raw pointer; rustc's `invalid_reference_casting` lint is
     // silenced above because the Zig spec's `*JSC.VirtualMachine` is a freely-
@@ -108,12 +108,9 @@ fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
 // ============================================================================
 
 const MAX_HISTORY_SIZE: usize = 1000;
-const MAX_LINE_LENGTH: usize = 16384;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
-const TAB_WIDTH: usize = 2;
 
 // ANSI escape codes
-const ESC: &str = "\x1b";
 const CSI: &str = concat!("\x1b", "[");
 
 // Colors — Color::RESET, Color::CYAN, … resolve unchanged
@@ -122,14 +119,8 @@ use bun_core::output::ansi as Color;
 // Cursor control
 struct Cursor;
 impl Cursor {
-    const HIDE: &'static str = concat!("\x1b", "[", "?25l");
-    const SHOW: &'static str = concat!("\x1b", "[", "?25h");
-    const SAVE: &'static str = concat!("\x1b", "7");
-    const RESTORE: &'static str = concat!("\x1b", "8");
     const HOME: &'static str = concat!("\x1b", "[", "H");
     const CLEAR_LINE: &'static str = concat!("\x1b", "[", "2K");
-    const CLEAR_TO_END: &'static str = concat!("\x1b", "[", "0K");
-    const CLEAR_TO_START: &'static str = concat!("\x1b", "[", "1K");
     const CLEAR_SCREEN: &'static str = concat!("\x1b", "[", "2J");
     const CLEAR_SCROLLBACK: &'static str = concat!("\x1b", "[", "3J");
 }
@@ -593,7 +584,6 @@ impl ReplCommand {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReplResult {
-    ContinueRepl,
     ExitRepl,
     SkipEval,
 }
@@ -1811,7 +1801,7 @@ impl<'a> Repl<'a> {
         let source = bun_ast::Source::init_path_string(b"[repl]", processed_code);
 
         // Parse with REPL transforms
-        let mut parser = match bun_js_parser::Parser::init(
+        let parser = match bun_js_parser::Parser::init(
             opts,
             &mut log,
             &source,
@@ -1874,12 +1864,6 @@ impl<'a> Repl<'a> {
         // Get the written buffer
         let written = buffer_printer.ctx.get_written();
         Some(Box::<[u8]>::from(written))
-    }
-
-    fn set_repl_variables(&self) {
-        // For now, we rely on the C++ evaluation to handle this
-        // The C++ code sets _ and _error after each evaluation
-        let _ = self;
     }
 
     fn print_js_error(&self, error_value: JSValue) {
@@ -1963,10 +1947,6 @@ impl<'a> Repl<'a> {
     // ========================================================================
     // Main Loop
     // ========================================================================
-
-    pub fn run(&mut self) -> Result<(), bun_core::Error> {
-        self.run_with_vm(None)
-    }
 
     pub fn run_with_vm(&mut self, vm: Option<&'a VirtualMachine>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
@@ -2172,7 +2152,6 @@ impl<'a> Repl<'a> {
                         self.refresh_line();
                         return Ok(());
                     }
-                    ReplResult::ContinueRepl => {}
                 }
             } else {
                 self.print_error(format_args!("Unknown command: {}\n", BStr::new(cmd_name)));
@@ -2502,17 +2481,6 @@ fn is_incomplete_code(code: &[u8]) -> bool {
 }
 
 use crate::api::js_transpiler::is_likely_object_literal;
-
-// ============================================================================
-// Public Entry Point (for CLI integration)
-// ============================================================================
-
-pub fn exec(ctx: crate::cli::Command::Context) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
-    let _ = ctx;
-    let mut repl = Repl::init();
-    repl.run()
-}
 
 const VERSION: &str = Environment::VERSION_STRING;
 

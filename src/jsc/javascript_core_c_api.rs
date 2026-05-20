@@ -7,7 +7,6 @@
 #![allow(non_camel_case_types, non_upper_case_globals, non_snake_case)]
 
 use core::ffi::{c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 use bun_jsc::{JSGlobalObject, JSValue};
 

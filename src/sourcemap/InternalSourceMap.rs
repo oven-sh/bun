@@ -92,7 +92,7 @@ use bun_collections::VecExt as _;
 use bun_core::MutableString;
 
 use crate::vlq::decode as vlq_decode;
-use crate::{LineColumnOffset, Mapping, SourceMapState, VLQ, append_mapping_to_buffer};
+use crate::{LineColumnOffset, Mapping, SourceMapState, append_mapping_to_buffer};
 
 /// A sync entry is emitted every `SYNC_INTERVAL` mappings.
 pub const SYNC_INTERVAL: usize = 64;
@@ -207,7 +207,7 @@ impl InternalSourceMap {
         // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
         // the global allocator with this exact length.
         unsafe {
-            drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
+            drop(Box::<[u8]>::from_raw(std::ptr::slice_from_raw_parts_mut(
                 self.data.cast_mut(),
                 self.total_len(),
             )));

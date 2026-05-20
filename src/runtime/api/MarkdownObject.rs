@@ -442,8 +442,6 @@ struct Components {
 
 struct ParseStackEntry {
     children: JSValue,
-    block_type: Option<md::BlockType>,
-    span_type: Option<md::SpanType>,
     data: u32,
     flags: u32,
     // PORT NOTE: `SpanDetail` borrows from `src_text`; the `RendererImpl`
@@ -457,8 +455,6 @@ impl Default for ParseStackEntry {
     fn default() -> Self {
         Self {
             children: JSValue::ZERO,
-            block_type: None,
-            span_type: None,
             data: 0,
             flags: 0,
             detail: md::SpanDetail::default(),
@@ -524,7 +520,6 @@ impl<'a> ParseRenderer<'a> {
         self_.marked_args.append(root_array);
         self_.stack.push(ParseStackEntry {
             children: root_array,
-            block_type: Some(md::BlockType::Doc),
             ..Default::default()
         });
         Ok(self_)
@@ -651,7 +646,6 @@ impl<'a> ParseRenderer<'a> {
         self.marked_args.append(array);
         self.stack.push(ParseStackEntry {
             children: array,
-            block_type: Some(block_type),
             data,
             flags,
             ..Default::default()

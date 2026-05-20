@@ -1,5 +1,4 @@
 use bun_collections::VecExt;
-use core::ffi::c_char;
 use core::fmt;
 use std::io::Write as _;
 
@@ -7,7 +6,7 @@ use crate::cli::Command;
 use crate::cli::publish_command as Publish;
 use bun_alloc::AllocError;
 use bun_collections::StringHashMap;
-use bun_core::{self as bun, Global, Output, Progress, fmt as bun_fmt};
+use bun_core::{Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
@@ -903,7 +902,7 @@ fn iterate_bundled_deps(
         return Ok(bundled_pack_queue);
     }
 
-    let mut dir: Dir = match dir_open_dir_z(
+    let dir: Dir = match dir_open_dir_z(
         root_dir,
         ZStr::from_static(b"node_modules\0"),
         bun_sys::OpenDirOptions {
@@ -946,7 +945,7 @@ fn iterate_bundled_deps(
         if strings::starts_with_char(_entry_name, b'@') {
             let concat = entry_subpath(b"node_modules", _entry_name)?;
 
-            let mut scoped_dir: Dir = match dir_open_dir_z(
+            let scoped_dir: Dir = match dir_open_dir_z(
                 root_dir,
                 &concat,
                 bun_sys::OpenDirOptions {
@@ -1723,25 +1722,6 @@ type BufferedFileReader = bun_core::deprecated::BufferedReader<{ 1024 * 512 }, b
 // ───────────────────────────────────────────────────────────────────────────
 
 use bun_libarchive::lib::Result as ArchiveResult;
-use bun_sys::FdDirExt as _;
-
-/// `Expr::as_string`/`as_string_cloned` now require a `&Bump`; package.json
-/// JSON strings are always UTF-8 literals, so route through
-/// `as_utf8_string_literal` until an arena is threaded through.
-trait PackExprExt {
-    fn pack_as_string(&self) -> Option<&[u8]>;
-    fn pack_as_string_cloned(&self) -> Result<Option<Box<[u8]>>, AllocError>;
-}
-impl PackExprExt for Expr {
-    #[inline]
-    fn pack_as_string(&self) -> Option<&[u8]> {
-        self.as_utf8_string_literal()
-    }
-    #[inline]
-    fn pack_as_string_cloned(&self) -> Result<Option<Box<[u8]>>, AllocError> {
-        Ok(self.as_utf8_string_literal().map(Box::from))
-    }
-}
 
 /// NUL-terminated literal → `&'static ZStr` (replacement for missing
 /// `ZStr::from_lit`).
@@ -1942,10 +1922,6 @@ fn opt_pack_filename(m: &PackageManager) -> &[u8] {
 #[inline]
 fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
     m.options.pack_gzip_level
-}
-#[inline]
-fn manager_env<'a>(m: &'a PackageManager) -> &'a bun_dotenv::Loader<'static> {
-    m.env()
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3242,7 +3218,7 @@ fn archive_package_json(
     entry.set_size(i64::try_from(edited_package_json.len()).expect("int cast"));
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
-    entry.set_perm(u32::try_from(stat.st_mode).expect("int cast"));
+    entry.set_perm(bun_sys::Mode::try_from(stat.st_mode).expect("int cast"));
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
     entry.set_mtime(499162500, 0);
@@ -3297,7 +3273,7 @@ fn add_archive_entry(
     entry.set_pathname(pathname);
     print_buf.clear();
 
-    entry.set_size(i64::try_from(stat.st_size).expect("int cast"));
+    entry.set_size(stat.st_size as i64);
 
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
@@ -3802,11 +3778,6 @@ impl IgnorePatterns {
         line
     }
 
-    fn maybe_trim_leading_spaces(line: &[u8]) -> &[u8] {
-        // npm will trim, git will not
-        line
-    }
-
     /// ignore files are always ignored, don't need to worry about opening or reading twice
     pub fn read_from_disk(
         dir: &Dir,
@@ -4088,8 +4059,7 @@ pub mod bindings {
     use super::*;
     use bun_core::String as BunString;
     use bun_jsc::{
-        CallFrame, JSArray, JSGlobalObject, JSObject, JSValue, JsResult, StringJsc as _,
-        bun_string_jsc,
+        CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc,
     };
 
     #[bun_jsc::host_fn]
@@ -4149,7 +4119,6 @@ pub mod bindings {
             pathname: BunString,
             kind: BunString,
             perm: bun_sys::Mode,
-            size: Option<usize>,
             contents: Option<BunString>,
         }
         let mut entries_info: Vec<EntryInfo> = Vec::new();
@@ -4228,7 +4197,7 @@ pub mod bindings {
                     let pathname_string = {
                         let pathname_w = archive_entry_ref.pathname_w();
                         // bun.handleOom — panic on OOM
-                        let result = bun::handle_oom(strings::to_utf8_list_with_type(
+                        let result = bun_core::handle_oom(strings::to_utf8_list_with_type(
                             Vec::new(),
                             pathname_w,
                         ));
@@ -4244,7 +4213,6 @@ pub mod bindings {
                         pathname: pathname_string,
                         kind: BunString::static_(file_kind_tag(kind)),
                         perm,
-                        size: None,
                         contents: None,
                     };
 

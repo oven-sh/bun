@@ -573,7 +573,7 @@ pub(crate) fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
     // UNC NetworkShare: `\\server\share` or `//server/share` (uniform sep).
     // `inline for ("/\\") |this_sep|` — separator that started the prefix
     // must match throughout; mixing `/` and `\` falls through to relative.
-    for this_sep in [b'/', b'\\'] {
+    for this_sep in *b"/\\" {
         if path[0].eq_ascii(this_sep) && path[1].eq_ascii(this_sep) {
             if path[2].eq_ascii(this_sep) {
                 return 0;

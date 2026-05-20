@@ -20,8 +20,8 @@ use crate::lockfile::{
     self, Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile,
     Migrated, PackageListEntry,
 };
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
-use crate::lockfile_real::package::{PackageColumns as _, PackageField};
 use crate::npm::{self as Npm};
 use crate::pnpm;
 use crate::pnpm::MigratePnpmLockfileError;
@@ -216,6 +216,7 @@ struct IdMapValue {
 const PACKAGE_ID_IS_LINK: u32 = u32::MAX;
 const PACKAGE_ID_IS_BUNDLED: u32 = u32::MAX - 1;
 
+#[cfg(debug_assertions)]
 const UNSET_PACKAGE_ID: PackageID = Install::INVALID_PACKAGE_ID - 1;
 
 use bun_install_types::DependencyGroup;
@@ -424,7 +425,7 @@ pub fn migrate_npm_lockfile<'a>(
                 0 => return Err(err!("InvalidNPMLockfile")),
                 1 => {}
                 n => {
-                    num_extern_strings += (n * 2);
+                    num_extern_strings += n * 2;
                 }
             }
         }

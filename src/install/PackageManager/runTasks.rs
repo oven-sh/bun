@@ -4,14 +4,14 @@ use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
 use bun_core::strings;
-use bun_core::{self as bun, Environment, Output};
+use bun_core::{Environment, Output};
 use bun_http::{self as http, AsyncHTTP};
-use bun_threading::thread_pool::{self as thread_pool, Batch as ThreadPoolBatch};
+use bun_threading::thread_pool::Batch as ThreadPoolBatch;
 
 use crate::extract_tarball;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
-use crate::patch_install::{self, Callback as PatchTaskCallback, PatchTask};
+use crate::patch_install::{Callback as PatchTaskCallback, PatchTask};
 use crate::tarball_stream::TarballStream;
 use bun_install::{
     DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, PackageManifestError,
@@ -30,7 +30,7 @@ use crate::lifecycle_script_runner::InstallCtx;
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
-use bun_install::lockfile::{Lockfile, Package};
+use bun_install::lockfile::Package;
 use bun_install::package_manager_task as Task;
 // `Options::LogLevel` etc. are namespaced types in Zig (`PackageManager.Options.LogLevel`);
 // import the *module* under the `Options` name so `Options::LogLevel` resolves as a path

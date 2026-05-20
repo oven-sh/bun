@@ -12,14 +12,12 @@
 //! We also make `IOWriter` reference counted (via `Arc` in the Rust port),
 //! this simplifies management of the file descriptor.
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-#[cfg(not(windows))]
-use bun_io::pipe_writer::PosixPipeWriter as _;
 use bun_sys::{self as sys, E, Fd};
 
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
@@ -197,9 +195,12 @@ impl IOWriter {
     /// Spec: IOWriter.zig `__deinit` (the body `AsyncDeinitWriter` posts back
     /// to main). Tears down the underlying `WriterImpl` and drops the last
     /// strong ref.
-    pub fn deinit_on_main_thread(this: *mut IOWriter) {
-        // SAFETY: `this` is the `Arc::as_ptr` whose strong count was held by
-        // the async-deinit task.
+    ///
+    /// # Safety
+    /// `this` must be the `Arc::as_ptr` of a live `Arc<IOWriter>` whose strong
+    /// count is held by the async-deinit task; this call drops that ref.
+    pub unsafe fn deinit_on_main_thread(this: *mut IOWriter) {
+        // SAFETY: caller contract above.
         unsafe { std::sync::Arc::decrement_strong_count(this) };
     }
 }
@@ -248,6 +249,7 @@ impl IOWriter {
     /// a re-entrant `enqueue` from a child callback (Zig had the same hazard
     /// and guards via the `Yield` trampoline).
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     fn state(&self) -> &mut State {
         // SAFETY: single-threaded; callers uphold the no-overlapping-`&mut State`
         // invariant documented on this fn (re-derive across re-entrant calls).
@@ -318,10 +320,13 @@ impl IOWriter {
 
     /// Stash the interpreter backref so async poll callbacks can drive
     /// `Yield::run`. Idempotent.
+    ///
+    /// # Safety
+    /// `interp` must be null or point to the live owning `Interpreter` (which
+    /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
     #[inline]
-    pub fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: `interp` is the live owning Interpreter (it owns the IO
-        // struct that holds this Arc); single-threaded.
+    pub unsafe fn set_interp(&self, interp: *mut Interpreter) {
+        // SAFETY: caller contract above.
         self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
 
@@ -499,6 +504,7 @@ impl IOWriter {
                 }
                 return WriteOutcome::Suspended;
             }
+            #[cfg(windows)]
             return WriteOutcome::Suspended;
         }
 
@@ -576,10 +582,6 @@ impl IOWriter {
     fn wrote_everything(&self) -> bool {
         let s = self.state();
         s.total_bytes_written >= s.buf.len()
-    }
-
-    fn is_last_idx(&self, idx: usize) -> bool {
-        idx == self.state().writers.len().saturating_sub(1)
     }
 
     /// Only does things on windows. Spec: IOWriter.zig `setWriting`.

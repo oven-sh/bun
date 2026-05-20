@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use bun_paths::resolve_path;
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
@@ -61,8 +59,8 @@ pub struct EbusyState {
     /// Absolute target paths that some task copied successfully — used to
     /// suppress a sibling task's EBUSY on the same target. Spec: cp.zig
     /// `EbusyState.absolute_targets` (`StringArrayHashMapUnmanaged(void)`).
-    pub absolute_targets: std::collections::HashSet<Vec<u8>>,
-    pub absolute_srcs: std::collections::HashSet<Vec<u8>>,
+    pub absolute_targets: bun_collections::StringSet,
+    pub absolute_srcs: bun_collections::StringSet,
 }
 
 impl Cp {
@@ -105,7 +103,11 @@ impl Cp {
         loop {
             enum Action {
                 Done(ExitCode),
-                Schedule { start: usize, target: usize },
+                Schedule {
+                    start: usize,
+                    target: usize,
+                },
+                #[cfg(windows)]
                 Ebusy(ExitCode),
             }
             let action = match &mut Self::state_mut(interp, cmd).state {
@@ -156,23 +158,16 @@ impl Cp {
                     Self::state_mut(interp, cmd).state = State::Done;
                     return Builtin::done(interp, cmd, code);
                 }
+                #[cfg(windows)]
                 Action::Ebusy(exit_code) => {
-                    #[cfg(windows)]
-                    {
-                        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                            unreachable!()
-                        };
-                        let mut ebusy = core::mem::take(&mut exec.ebusy);
-                        ebusy.idx = 0;
-                        ebusy.main_exit_code = exit_code;
-                        Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
-                        continue;
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        let _ = exit_code;
-                        unreachable!();
-                    }
+                    let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                        unreachable!()
+                    };
+                    let mut ebusy = core::mem::take(&mut exec.ebusy);
+                    ebusy.idx = 0;
+                    ebusy.main_exit_code = exit_code;
+                    Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
+                    continue;
                 }
                 Action::Schedule { start, target } => {
                     let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
@@ -304,10 +299,10 @@ impl Cp {
                     // Record successful absolute paths so a deferred EBUSY
                     // sibling can be suppressed.
                     if let Some(tgt) = tref.tgt_absolute.take() {
-                        exec.ebusy.absolute_targets.insert(tgt);
+                        bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
                     }
                     if let Some(src) = tref.src_absolute.take() {
-                        exec.ebusy.absolute_srcs.insert(src);
+                        bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
                     }
                 }
             }
@@ -762,8 +757,10 @@ impl ShellCpTask {
         None
     }
 
-    pub fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap-allocated task.
+    /// # Safety
+    /// `this` must be a live `heap::alloc`'d task (see [`create`](Self::create)).
+    pub unsafe fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
+        // SAFETY: caller contract.
         let cmd = unsafe { (*this).cmd };
         Cp::on_shell_cp_task_done(interp, cmd, this);
     }
@@ -786,7 +783,8 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
         );
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        Self::run_from_main_thread(this, interp)
+        // SAFETY: `ShellTask::run_from_main_thread` dispatch contract.
+        unsafe { Self::run_from_main_thread(this, interp) }
     }
 }
 

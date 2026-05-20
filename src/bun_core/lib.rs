@@ -1,13 +1,15 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
-#![feature(macro_metavar_expr)] // `$$` in define_scoped_log! (nightly-2026-05-06)
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+// bun_core is the T0 foundation crate that bun_threading, bun_sys, and
+// bun_collections depend on; importing any of them to satisfy the disallowed-*
+// lints would create a dependency cycle. `output`/`Progress`/`Global` here ARE
+// the std-backed implementations the lints route everyone else through.
 #![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
+    clippy::disallowed_types,
+    clippy::disallowed_methods,
+    clippy::disallowed_macros
 )]
 #![warn(unused_must_use, unreachable_pub)]
 
@@ -2142,26 +2144,10 @@ pub(crate) mod strings_impl {
     // `bun_sys::posix::AF`. Keep a thin libc/ws2def passthrough instead. The
     // previous hand-rolled cfg ladder hardcoded `10` for the BSD fallback,
     // which is wrong (FreeBSD AF_INET6 == 28); routing through `libc` fixes that.
-    const AF_INET: core::ffi::c_int = 2;
     #[cfg(not(windows))]
     const AF_INET6: core::ffi::c_int = libc::AF_INET6 as core::ffi::c_int;
     #[cfg(windows)]
     const AF_INET6: core::ffi::c_int = 23; // ws2def.h
-
-    /// Zig: `bun.strings.isIPAddress` — `ares_inet_pton(AF_INET || AF_INET6) > 0`.
-    pub(crate) fn is_ip_address(input: &[u8]) -> bool {
-        let mut buf = [0u8; 512];
-        if input.len() >= buf.len() {
-            return false;
-        }
-        buf[..input.len()].copy_from_slice(input);
-        let mut dst = [0u8; 28];
-        // SAFETY: buf is NUL-terminated; dst ≥ sizeof(in6_addr).
-        unsafe {
-            ares_inet_pton(AF_INET, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
-                || ares_inet_pton(AF_INET6, buf.as_ptr().cast(), dst.as_mut_ptr().cast()) > 0
-        }
-    }
 
     /// Zig: `bun.strings.isIPV6Address` — `ares_inet_pton(AF_INET6, …) > 0`.
     /// Must be a strict parse, not a `contains(':')` heuristic: on Windows a
@@ -2437,11 +2423,7 @@ pub(crate) mod strings_impl {
             }
             let b = self.bytes[i];
             // TODO(port): full UTF-8 decode — bun_str owns the table-driven impl.
-            let (cp, w) = if b < 0x80 {
-                (b as i32, 1u8)
-            } else {
-                (b as i32, 1u8)
-            };
+            let (cp, w) = (b as i32, 1u8);
             cursor.i = i;
             cursor.c = cp;
             cursor.width = w;
@@ -3229,8 +3211,14 @@ pub fn get_total_memory_size() -> usize {
     target_os = "netbsd",
     target_os = "openbsd",
 ))]
+/// # Safety
+/// `out` must be writable for `cap` `usize` slots (or null/`cap == 0`).
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
+pub unsafe extern "C" fn Bun__captureStackTrace(
+    begin: usize,
+    out: *mut usize,
+    cap: usize,
+) -> usize {
     if out.is_null() || cap == 0 {
         return 0;
     }
@@ -3275,8 +3263,14 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
 /// `std.debug.captureStackTrace` uses this on Windows. No DbgHelp dependency
 /// for capture; symbolization happens later in `dump_stack_trace`.
 #[cfg(windows)]
+/// # Safety
+/// `out` must be writable for `cap` `usize` slots (or null/`cap == 0`).
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
+pub unsafe extern "C" fn Bun__captureStackTrace(
+    begin: usize,
+    out: *mut usize,
+    cap: usize,
+) -> usize {
     if out.is_null() || cap == 0 {
         return 0;
     }
@@ -3337,9 +3331,9 @@ pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usi
 /// no caller re-declares the `extern "C"` import.
 #[inline]
 pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
-    // Direct Rust call into the same-crate `extern "C" fn` above (not an FFI
-    // import), so no `unsafe` needed; the impl writes at most `addrs.len()` words.
-    Bun__captureStackTrace(begin, addrs.as_mut_ptr(), addrs.len())
+    // SAFETY: `addrs.as_mut_ptr()` is writable for `addrs.len()` slots; the
+    // impl writes at most `addrs.len()` words.
+    unsafe { Bun__captureStackTrace(begin, addrs.as_mut_ptr(), addrs.len()) }
 }
 
 /// Zig `@returnAddress()` placeholder. Rust has no stable equivalent; `0` tells

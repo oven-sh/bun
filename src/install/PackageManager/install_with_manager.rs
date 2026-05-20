@@ -1,18 +1,17 @@
 use core::sync::atomic::Ordering;
 
 use bun_core::time::nano_timestamp;
-use bun_core::{Global, Output, Progress};
+use bun_core::{Global, Output};
 
 use crate::bun_fs::FileSystem;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
-use bun_paths as Path;
 use bun_semver::String as SemverString;
 
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::Subcommand;
 use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
-use crate::lockfile::{self, Lockfile, Package};
+use crate::lockfile::{self, Lockfile};
 use crate::resolution::Tag as ResolutionTag;
 use crate::{
     Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
@@ -406,7 +405,7 @@ pub fn install_with_manager(
                     {
                         lf.workspace_paths.reserve(lockfile.workspace_paths.len());
                         lf.workspace_paths.clear();
-                        let mut iter = lockfile.workspace_paths.iter();
+                        let iter = lockfile.workspace_paths.iter();
                         for (key, value) in iter {
                             // The string offsets will be wrong so fix them
                             let path = value.slice(&lockfile.buffers.string_bytes);
@@ -421,7 +420,7 @@ pub fn install_with_manager(
                         lf.workspace_versions
                             .reserve(lockfile.workspace_versions.len());
                         lf.workspace_versions.clear();
-                        let mut iter = lockfile.workspace_versions.iter();
+                        let iter = lockfile.workspace_versions.iter();
                         for (key, value) in iter {
                             // Copy version string offsets
                             let version = value.append(&lockfile.buffers.string_bytes, builder);
@@ -432,7 +431,7 @@ pub fn install_with_manager(
 
                     // Update patched dependencies
                     {
-                        let mut iter = lockfile.patched_dependencies.iter();
+                        let iter = lockfile.patched_dependencies.iter();
                         for (key, value) in iter {
                             let pkg_name_and_version_hash = *key;
                             debug_assert!(value.patchfile_hash_is_null);
@@ -1310,12 +1309,12 @@ pub fn get_workspace_filters(
 
             #[cfg(windows)]
             {
-                let abs_path = Path::path_to_posix_buf::<u8>(
+                let abs_path = bun_paths::path_to_posix_buf::<u8>(
                     FileSystem::instance().top_level_dir,
                     &mut path_buf.0,
                 );
                 break 'abs_root_path strings::without_trailing_slash(
-                    &abs_path[Path::windows_volume_name_len(abs_path).0..],
+                    &abs_path[bun_paths::windows_volume_name_len(abs_path).0..],
                 );
             }
         };

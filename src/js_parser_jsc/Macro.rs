@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ast::DisableStoreReset;
-use bun_ast::{self as js_ast, E, Expr, ExprData, ExprNodeList, G, S, ToJSError};
+use bun_ast::{E, Expr, ExprData, ExprNodeList, G, S, ToJSError};
 use bun_ast::{Log, Range, Source};
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::{ArrayHashMap, HashMap};
@@ -154,7 +154,7 @@ impl MacroContext {
                             bstr::BStr::new(import_record_path)
                         ),
                         import_record_path,
-                        bun_ast::ImportKind::Stmt.into(),
+                        bun_ast::ImportKind::Stmt,
                         e,
                     );
                     return Err(err!("MacroNotFound"));
@@ -786,7 +786,7 @@ impl<'a> Run<'a> {
                 // recursion releases `self`.
                 if let ExprData::EArray(mut e_array) = expr.data {
                     e_array.items = array;
-                    e_array.items.truncate((i) as usize);
+                    e_array.items.truncate(i);
                 }
                 return Ok(expr);
             }

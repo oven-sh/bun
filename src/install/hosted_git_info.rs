@@ -252,7 +252,7 @@ impl HostedGitInfo {
         //  - It aliases `git_url`, in which case it must not be freed.
         //  - It actually points to a new allocation, in which case it must be freed.
         // PORT NOTE: modeled as Cow-like local; Drop handles the owned case.
-        let mut git_url_owned: Option<Box<[u8]>> = None;
+        let git_url_owned: Option<Box<[u8]>>;
         let mut git_url_mut: &[u8] = git_url;
 
         if is_github_shorthand(git_url) {
@@ -265,7 +265,10 @@ impl HostedGitInfo {
             let concatenated = strings::concat(&[b"github:", git_url]);
             git_url_owned = Some(concatenated);
             git_url_mut = git_url_owned.as_deref().unwrap();
+        } else {
+            git_url_owned = None;
         }
+        let _ = &git_url_owned;
 
         let Ok(parsed) = parse_url(git_url_mut) else {
             return Ok(None);
@@ -954,43 +957,6 @@ impl HostProvider {
         HostProvider::Sourcehut,
     ];
 
-    fn format_ssh(
-        self,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_ssh)(self, user, project, committish)
-    }
-
-    fn format_ssh_url(
-        self,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_sshurl)(self, user, project, committish)
-    }
-
-    fn format_https(
-        self,
-        auth: Option<&[u8]>,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_https)(self, auth, user, project, committish)
-    }
-
-    fn format_shortcut(
-        self,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_shortcut)(self, user, project, committish)
-    }
-
     fn extract(self, url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
         (configs()[self].format_extract)(url)
     }
@@ -1008,25 +974,9 @@ impl HostProvider {
         configs()[self].domain
     }
 
-    fn protocols(self) -> &'static [WellDefinedProtocol] {
-        configs()[self].protocols
-    }
-
     fn shortcut_without_colon(self) -> &'static [u8] {
         let shct = self.shortcut();
         &shct[0..shct.len() - 1]
-    }
-
-    fn tree_path(self) -> Option<&'static [u8]> {
-        configs()[self].tree_path
-    }
-
-    fn blob_path(self) -> Option<&'static [u8]> {
-        configs()[self].blob_path
-    }
-
-    fn edit_path(self) -> Option<&'static [u8]> {
-        configs()[self].edit_path
     }
 
     /// Find the appropriate host provider by its shortcut (e.g. "github:").

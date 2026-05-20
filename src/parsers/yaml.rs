@@ -3439,7 +3439,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
 
                     let mut copy = match self.anchors.get(Enc::key_bytes(alias.slice(self.input))) {
-                        Some(e) => e.clone(),
+                        Some(e) => *e,
                         None => {
                             // we failed to find the alias, but it might be cyclic and
                             // available later. (see Zig comment block)
@@ -3500,7 +3500,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors
-                                .put(Enc::key_bytes(key_anchor.slice(self.input)), seq.clone())?;
+                                .put(Enc::key_bytes(key_anchor.slice(self.input)), seq)?;
                         }
 
                         let map = self.parse_block_mapping(
@@ -3511,10 +3511,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors.put(
-                                Enc::key_bytes(mapping_anchor.slice(self.input)),
-                                map.clone(),
-                            )?;
+                            self.anchors
+                                .put(Enc::key_bytes(mapping_anchor.slice(self.input)), map)?;
                         }
 
                         return Ok(map);
@@ -3570,7 +3568,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
                             self.anchors
-                                .put(Enc::key_bytes(key_anchor.slice(self.input)), map.clone())?;
+                                .put(Enc::key_bytes(key_anchor.slice(self.input)), map)?;
                         }
 
                         let parent_map = self.parse_block_mapping(
@@ -3583,7 +3581,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
                             self.anchors.put(
                                 Enc::key_bytes(mapping_anchor.slice(self.input)),
-                                parent_map.clone(),
+                                parent_map,
                             )?;
                         }
 
@@ -3700,10 +3698,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line);
 
                         if let Some(key_anchor) = implicit_key_anchors.key_anchor {
-                            self.anchors.put(
-                                Enc::key_bytes(key_anchor.slice(self.input)),
-                                implicit_key.clone(),
-                            )?;
+                            self.anchors
+                                .put(Enc::key_bytes(key_anchor.slice(self.input)), implicit_key)?;
                         }
 
                         let mapping = self.parse_block_mapping(
@@ -3714,10 +3710,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
-                            self.anchors.put(
-                                Enc::key_bytes(mapping_anchor.slice(self.input)),
-                                mapping.clone(),
-                            )?;
+                            self.anchors
+                                .put(Enc::key_bytes(mapping_anchor.slice(self.input)), mapping)?;
                         }
 
                         return Ok(mapping);
@@ -3748,7 +3742,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         if let Some(anchor) = node_props.anchor() {
             self.anchors
-                .put(Enc::key_bytes(anchor.slice(self.input)), resolved.clone())?;
+                .put(Enc::key_bytes(anchor.slice(self.input)), resolved)?;
         }
 
         Ok(resolved)

@@ -5,7 +5,6 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::ArrayHashMap;
 
 use crate as css;
-use crate::PrintErr;
 // TODO(port): narrow error set
 pub use crate::Error;
 
@@ -369,7 +368,7 @@ impl Pattern {
 
     pub fn write_to_string<'a>(
         &self,
-        bump: &'a Bump,
+        _bump: &'a Bump,
         res_: BumpVec<'a, u8>,
         hash_: &[u8],
         path: &[u8],

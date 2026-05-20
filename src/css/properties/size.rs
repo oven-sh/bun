@@ -6,7 +6,6 @@ use css::PrintErr;
 use css::Printer;
 
 use crate::properties::{Property, PropertyId, PropertyIdTag};
-use css::css_properties::custom::UnparsedProperty;
 
 use css::logical::PropertyCategory;
 
@@ -382,7 +381,7 @@ impl AspectRatio {
 
     pub fn deep_clone(&self, _bump: &Bump) -> Self {
         // PORT NOTE: css.implementDeepClone — `Ratio` is two `f32`s; #[derive(Clone)] is exact.
-        self.clone()
+        *self
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {

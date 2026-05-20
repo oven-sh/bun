@@ -24,16 +24,31 @@
 //! new handler appended. `detach()` removes a handler; the last one out tears down
 //! the OS watch.
 
-use core::cell::{Cell, UnsafeCell};
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+use core::cell::Cell;
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_collections::HashMap;
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::strings;
-use bun_core::{Output, ZBox, ZStr, handle_oom, zstr};
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+use bun_core::{Output, zstr};
+use bun_core::{ZBox, ZStr, handle_oom};
+use bun_paths as path;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_paths::PathBuffer;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+use bun_paths::platform;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_paths::resolve_path::{join_string_buf, join_z_buf};
-use bun_paths::{self as path, PathBuffer, platform};
-use bun_sys::{self as sys, E, Fd, FdExt, Tag};
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+use bun_sys::FdExt;
+use bun_sys::{self as sys, E, Fd, Tag};
 use bun_threading::Mutex;
 use bun_wyhash::hash;
 
@@ -80,6 +95,7 @@ pub struct PathWatcherManager {
     /// Platform-specific dispatch maps (inotify wd_map / kqueue entries).
     /// On macOS this is empty — FSEvents owns its own thread via `fs_events.zig`.
     /// Interior-mutable for the same reason as `watchers`.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     platform: UnsafeCell<Platform>,
 
     /// inotify/kqueue fd. Set once in `Platform::init` *before* the reader thread
@@ -116,6 +132,7 @@ impl Default for PathWatcherManager {
         Self {
             mutex: Mutex::new(),
             watchers: UnsafeCell::new(StringArrayHashMap::default()),
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             platform: UnsafeCell::new(Platform::default()),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             platform_fd: Cell::new(Fd::INVALID),
@@ -189,6 +206,7 @@ pub struct PathWatcher {
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
     path: ZBox,
     recursive: bool,
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
 
     /// JS `FSWatcher` contexts sharing this OS watch. Each gets its own ChangeEvent
@@ -202,11 +220,12 @@ pub struct PathWatcher {
     platform: PlatformWatch,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum EventType {
     #[strum(serialize = "rename")]
     Rename,
     #[strum(serialize = "change")]
+    #[default]
     Change,
 }
 
@@ -232,12 +251,6 @@ pub struct ChangeEvent {
     hash: u64,
     event_type_: EventType,
     timestamp: i64,
-}
-
-impl Default for EventType {
-    fn default() -> Self {
-        EventType::Change
-    }
 }
 
 impl ChangeEvent {
@@ -280,6 +293,7 @@ impl PathWatcher {
         }
     }
 
+    #[cfg(not(target_os = "freebsd"))]
     fn emit_error(&mut self, err: &sys::Error) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(Some(ctx), Event::Error(err.clone()), false);
@@ -307,7 +321,11 @@ impl PathWatcher {
     /// `manager.mutex`). Holding both here would be AB/BA with the CF thread. Once
     /// `fse.deinit()` returns, `_events_cb` has released the loop mutex and nulled our
     /// slot, so no further callbacks will fire and `destroy()` is safe.
-    pub fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
+    ///
+    /// # Safety
+    /// `this` must be a live `PathWatcher` produced by [`PathWatcher::new`] whose
+    /// `handlers` still contains `ctx`. Called from the JS thread only.
+    pub unsafe fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
         // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`. Read
         // `manager` via the raw pointer so no `&mut PathWatcher` is asserted before
         // we hold `manager.mutex` — on macOS the CF thread may concurrently raw-read
@@ -444,11 +462,14 @@ pub fn watch(
         return Ok(existing);
     }
 
+    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+    let _ = is_file;
     // New watcher: own the key and path.
     let watcher = PathWatcher::new(PathWatcher {
         manager: Some(manager),
         path: ZBox::from_bytes(resolved.as_bytes()),
         recursive,
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
         handlers: ArrayHashMap::default(),
         platform: PlatformWatch::default(),
@@ -534,6 +555,7 @@ pub fn watch(
 /// subdirectory just stops that branch (matches Node). Uses `bun.sys` /
 /// `bun.DirIterator` / `bun.path` throughout; no std.fs.
 // PORT NOTE: ctx+comptime cb collapsed to FnMut closure (same monomorphization).
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
     rel_dir: &[u8],

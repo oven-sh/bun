@@ -1,7 +1,6 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_core::output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
@@ -69,7 +68,6 @@ impl Readable {
     fn pipe_detach(pipe: IntrusiveRc<PipeReader>) {
         Self::pipe_reader_mut(&pipe).process = None;
         pipe.deref();
-        drop(pipe);
     }
 
     pub fn memory_cost(&self) -> usize {

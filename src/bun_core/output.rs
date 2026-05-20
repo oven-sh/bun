@@ -15,11 +15,8 @@ use core::ffi::c_int;
 use core::fmt;
 // `#[macro_export]` macros land at crate root; re-import so order-of-definition
 // inside this module doesn't matter for the early call sites.
-use crate::{
-    declare_scope, err_generic, note, pretty, pretty_error, pretty_errorln, prettyln, scoped_log,
-    warn,
-};
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicU32, Ordering};
+use crate::{pretty, pretty_error, pretty_errorln};
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use crate::Global;
 use crate::env_var;
@@ -1046,12 +1043,10 @@ pub fn panic(args: fmt::Arguments<'_>) -> ! {
     // PORT NOTE: Zig branched on enable_ansi_colors_stderr to pick the comptime-colored
     // vs stripped format string. In Rust callers use `panic!(pretty_fmt!(...))` directly;
     // this fn is kept for non-macro callers and writes the (already-formatted) args.
-    if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
-        core::panic!("{args}");
-    } else {
-        core::panic!("{args}");
-    }
-    // TODO(port): callers must wrap fmt in `pretty_fmt!(.., enable_ansi_colors_stderr)`
+    // TODO(port): branch on ENABLE_ANSI_COLORS_STDERR once the colored vs
+    // stripped paths actually differ; callers should wrap fmt in
+    // `pretty_fmt!(.., enable_ansi_colors_stderr)`.
+    core::panic!("{args}");
 }
 
 pub type WriterType = QuietWriter;
@@ -1188,18 +1183,10 @@ pub fn flush_guard() -> FlushGuard {
 // ElapsedFormatter
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct ElapsedFormatter {
     pub colors: bool,
     pub duration_ns: u64,
-}
-
-impl Default for ElapsedFormatter {
-    fn default() -> Self {
-        Self {
-            colors: false,
-            duration_ns: 0,
-        }
-    }
 }
 
 impl fmt::Display for ElapsedFormatter {
@@ -1338,20 +1325,16 @@ fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) 
     // Load the writer pointer and *drop the RefCell borrow* before invoking `f`;
     // holding the `with_borrow_mut` guard across re-entry panics with BorrowMutError.
     let w: *mut io::Writer = SOURCE.with_borrow_mut(|s| match dest {
-        Destination::Stdout => std::ptr::from_mut(
-            (if buffering {
-                s.buffered_stream()
-            } else {
-                s.stream()
-            }),
-        ),
-        Destination::Stderr => std::ptr::from_mut(
-            (if buffering {
-                s.buffered_error_stream()
-            } else {
-                s.error_stream()
-            }),
-        ),
+        Destination::Stdout => std::ptr::from_mut(if buffering {
+            s.buffered_stream()
+        } else {
+            s.stream()
+        }),
+        Destination::Stderr => std::ptr::from_mut(if buffering {
+            s.buffered_error_stream()
+        } else {
+            s.error_stream()
+        }),
     });
     // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local
     // `Source`, whose address is stable for the thread's lifetime once
@@ -1772,7 +1755,6 @@ pub fn clear_to_end() {
 // <d> - dim
 // </r> - reset
 // <r> - reset
-const CSI: &str = "\x1b[";
 
 /// Lowercase lookup wrapper (Zig: `Output.color_map.get(name)`). The table
 /// itself lives in `bun_output_tags` (shared with the `pretty_fmt!` proc-macro
@@ -2761,10 +2743,10 @@ fn scoped_writer() -> QuietWriter {
     // `Scoped()` no-op struct never references it. Rust's `compile_error!` is
     // eager and would break every release build, so assert at runtime instead.
     // All callers are already gated on `Environment::ENABLE_LOGS`.
-    debug_assert!(
-        Environment::ENABLE_LOGS,
-        "scopedWriter() should only be called in debug mode",
-    );
+    #[cfg(debug_assertions)]
+    if !Environment::ENABLE_LOGS {
+        unreachable!("scopedWriter() should only be called in debug mode");
+    }
     // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter is Copy POD.
     unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() }
 }

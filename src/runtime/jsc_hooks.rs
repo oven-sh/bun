@@ -20,19 +20,15 @@
 //!   4. `__bun_get_vm_ctx` / `__bun_js_vm_get` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
-use bun_collections::{ByteVecExt, VecExt};
 use bun_core::WTFStringImplExt as _;
-use bun_options_types::{LoaderExt as _, TargetExt as _};
+use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
 
-use bun_core::immutable::Appender as _;
-
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{
-    ArenaResetGuard, FetchBuiltinResult, FetchFlags, LoaderHooks, ModuleLoader, TranspileArgs,
-    TranspileExtra,
+    ArenaResetGuard, FetchBuiltinResult, FetchFlags, LoaderHooks, TranspileArgs, TranspileExtra,
 };
 use bun_jsc::resolved_source::OwnedResolvedSource;
 use bun_jsc::virtual_machine::{
@@ -1379,7 +1375,6 @@ fn ipc_child_singleton_deinit() {
 mod vm_loader_ctx {
     use super::*;
     use crate::webcore::Blob;
-    use crate::webcore::blob::BlobExt as _;
     use bun_bundler::options::OpaqueBlob;
     use bun_resolver::package_json::PackageJSON;
 
@@ -1777,7 +1772,6 @@ fn console_print_runtime_object_inner<const C: bool>(
     use crate::api::BuildArtifact;
     use crate::api::archive::Archive;
     use crate::webcore::{Blob, Request, Response, S3Client};
-    use bun_jsc::{ConsoleFormatter as _, JsClass as _};
     use core::fmt::Write as _;
 
     macro_rules! pf {
@@ -2096,7 +2090,7 @@ fn transpile_source_code_inner(
             // ParseError / AsyncModule paths (which hand the arena to the
             // async queue or leak it intentionally for the caller to inspect).
             // SAFETY: per fn contract.
-            let mut arena: Box<bun_alloc::Arena> =
+            let arena: Box<bun_alloc::Arena> =
                 unsafe { (*jsc_vm).module_loader.transpile_source_code_arena.take() }
                     .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
             // Stable heap address (Box interior); survives the move into
@@ -2107,7 +2101,7 @@ fn transpile_source_code_inner(
             // `AST_HEAP`; this rebinds it to the heap that the parser scratch
             // and printer arena allocations also use.
             bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
-            let mut give_back_arena = true;
+            let give_back_arena = true;
             // PORT NOTE: reshaped for borrowck — Zig's `defer` block becomes a
             // scopeguard so `?`-early-returns still run it.
             let mut arena_guard = scopeguard::guard(
@@ -2371,7 +2365,7 @@ fn transpile_source_code_inner(
 
             // ── Node-fallback virtual source ────────────────────────────────
             // Spec :258-264.
-            let mut fallback_source: bun_ast::Source;
+            let fallback_source: bun_ast::Source;
             let mut virtual_source = args.virtual_source;
             if is_node_override {
                 if let Some(code) = node_fallbacks::contents_from_path(specifier) {
@@ -2905,7 +2899,7 @@ fn transpile_source_code_inner(
                             &*global_object,
                             bun_jsc::async_module::InitOpts {
                                 parse_result,
-                                path: path.clone(),
+                                path: *path,
                                 loader,
                                 fd,
                                 package_json: package_json.map(|p| {
@@ -3120,8 +3114,6 @@ fn transpile_source_code_inner(
                     ..Default::default()
                 }));
             }
-            // (parse→link→print arm always `return`s; no fallthrough.)
-            { unreachable!() }
         }
 
         // Spec :595 — `provideFetch()` should be called.
@@ -3150,11 +3142,6 @@ fn transpile_source_code_inner(
                         ..Default::default()
                     }));
                 }
-                // Spec :637-659 RETURNS the wasi-runner source here; it must
-                // NOT fall through to the `.file` recursion below. Fail closed
-                // until the gated ctor above un-gates (PORTING.md §Forbidden:
-                // no silent-no-op fall-through).
-                return Err(bun_core::err!("NotSupported"));
             }
             // Spec :661-675 — recurse as `.file`.
             // SAFETY: per fn contract — `extra` is live for the call.
@@ -3508,11 +3495,6 @@ fn get_hardcoded_module(
                     ..ResolvedSource::default()
                 }));
             }
-            // Fail closed: until `Runtime::source_code()` un-gates, returning
-            // a default-zeroed `ResolvedSource` here would hand C++ a garbage
-            // `.tag`. Spec returns a populated source; `None` falls through to
-            // `FetchBuiltinResult::NotFound` → coherent error instead.
-            None
         }
         // Zig: `inline else => |tag| jsSyntheticModule(@field(ResolvedSource.Tag, @tagName(tag)), specifier)`
         // — every other `HardcodedModule` is served straight out of the
@@ -3956,8 +3938,8 @@ thread_local! {
     /// `&'static [u8]` keys point into the `FilenameStore` BSS singleton, so
     /// the set itself owns nothing beyond its bucket array.
     static TRANSPILE_PATH_INTERN: core::cell::RefCell<
-        std::collections::HashSet<&'static [u8]>,
-    > = core::cell::RefCell::new(std::collections::HashSet::new());
+        bun_collections::HashMap<&'static [u8], ()>,
+    > = core::cell::RefCell::new(bun_collections::HashMap::new());
 }
 
 /// Intern `value` into the process-lifetime `FilenameStore`, returning a
@@ -4000,12 +3982,12 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
     }
     TRANSPILE_PATH_INTERN.with(|cell| {
         let mut set = cell.borrow_mut();
-        if let Some(interned) = set.get(value) {
+        if let Some((interned, ())) = set.get_key_value(value) {
             return *interned;
         }
         let interned: &'static [u8] =
             bun_core::handle_oom(Fs::FilenameStore::instance().append_slice(value));
-        set.insert(interned);
+        set.insert(interned, ());
         interned
     })
 }
@@ -4053,7 +4035,7 @@ unsafe fn transpile_file(
 
     // Spec :895 — `var log = logger.Log.init(jsc_vm.transpiler.allocator)`.
     // PORT NOTE: per §Allocators the explicit allocator threads are dropped.
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
     // PORT NOTE: reshaped for borrowck — Zig `defer log.deinit()` becomes a
     // scopeguard so every `return null` path still frees the msg vec.
     let mut log = scopeguard::guard(log, |mut l| {
@@ -5221,9 +5203,11 @@ pub fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
         bun_io::AllocatorType::Mini => {
             // SAFETY: `GLOBAL` is set by `MiniEventLoop::init_global` before
             // any caller asks for `AllocatorType::Mini` (Zig: `MiniEventLoop.
-            // global` is the only mini loop and is init-once).
+            // global` is the only mini loop and is init-once); `mini` is live
+            // for the process and `as_event_loop_ctx` only stores it as a tagged
+            // backref.
             let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
-            bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(mini)
+            unsafe { bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(mini) }
         }
     }
 }

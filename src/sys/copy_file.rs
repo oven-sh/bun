@@ -4,8 +4,11 @@
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
+#[cfg(not(windows))]
+use crate::E;
+use crate::Fd;
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
-use crate::{E, Fd};
 
 // PORT NOTE: Zig was `const debug = bun.Output.scoped(.copy_file, .hidden)`.
 // `declare_scope!` uses the ident as both static name AND tag string, but
@@ -51,26 +54,26 @@ pub type InputType<'a> = Fd;
 // PORT NOTE: lifetime param is unused on posix (Fd is Copy); kept so callers
 // can write `InputType<'_>` uniformly across platforms.
 
-/// In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
-///
-/// The intended order here is:
-/// 1. ioctl_ficlone
-/// 2. copy_file_range
-/// 3. sendfile()
-/// 4. read() write() loop
-///
-/// copy_file_range is supposed to do all the fast ways. It might be unnecessary
-/// to do ioctl_ficlone.
-///
-/// sendfile() is a good fallback to avoid the read-write loops. sendfile() improves
-/// performance by moving the copying step to the kernel.
-///
-/// On Linux, sendfile() can work between any two file descriptors which can be mmap'd.
-/// This means that it cannot work with TTYs and some special devices
-/// But it can work with two ordinary files
-///
-/// on macOS and other platforms, sendfile() only works when one of the ends is a socket
-/// and in general on macOS, it doesn't seem to have much performance impact.
+// In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
+//
+// The intended order here is:
+// 1. ioctl_ficlone
+// 2. copy_file_range
+// 3. sendfile()
+// 4. read() write() loop
+//
+// copy_file_range is supposed to do all the fast ways. It might be unnecessary
+// to do ioctl_ficlone.
+//
+// sendfile() is a good fallback to avoid the read-write loops. sendfile() improves
+// performance by moving the copying step to the kernel.
+//
+// On Linux, sendfile() can work between any two file descriptors which can be mmap'd.
+// This means that it cannot work with TTYs and some special devices
+// But it can work with two ordinary files
+//
+// on macOS and other platforms, sendfile() only works when one of the ends is a socket
+// and in general on macOS, it doesn't seem to have much performance impact.
 // PORT NOTE: `packed struct(u8)` with all-bool fields → bitflags!; field reads/writes
 // reshaped to `.contains()`/`.insert()` below.
 bitflags::bitflags! {
@@ -108,6 +111,8 @@ pub fn copy_file_with_state(
     out: InputType<'_>,
     copy_file_state: &mut CopyFileState,
 ) -> CopyFileReturnType {
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = copy_file_state;
     #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
@@ -173,16 +178,13 @@ pub fn copy_file_with_state(
             // The kernel checks the u64 value `offset+count` for overflow, use
             // a 32 bit value so that the syscall won't return EINVAL except for
             // impossibly large files (> 2^64-1 - 2^32-1).
-            let amt = match copy_file_range(
+            let amt = copy_file_range(
                 in_.native(),
                 out.native(),
                 (i32::MAX - 1) as usize,
                 0,
                 copy_file_state,
-            ) {
-                Ok(a) => a,
-                Err(err) => return Err(err),
-            };
+            )?;
             // Terminate when no data was copied
             if amt == 0 {
                 break 'cfr_loop;
@@ -455,15 +457,14 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
             }
 
             while amt_written < amt_read {
-                match crate::write(Fd::from_native(out as _), &buf[amt_written..amt_read]) {
-                    Ok(wrote) => {
-                        if wrote == 0 {
-                            return Ok(amt_written);
-                        }
-
-                        amt_written += wrote;
+                {
+                    let wrote =
+                        crate::write(Fd::from_native(out as _), &buf[amt_written..amt_read])?;
+                    if wrote == 0 {
+                        return Ok(amt_written);
                     }
-                    Err(err) => return Err(err),
+
+                    amt_written += wrote;
                 }
             }
             if amt_read == 0 {

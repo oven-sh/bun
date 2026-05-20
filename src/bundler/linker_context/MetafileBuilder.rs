@@ -457,7 +457,7 @@ enum JsonValue {
     Null,
     Bool(bool),
     Integer(i64),
-    Float(f64),
+    Float(#[expect(dead_code)] f64),
     String(Box<[u8]>),
     Array(Vec<JsonValue>),
     Object(JsonObject),

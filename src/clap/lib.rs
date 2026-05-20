@@ -637,7 +637,7 @@ where
                 stream.write_char(' ')?;
             }
             let ht2 = help_text(context, param).map_err(Into::into)?;
-            write!(stream, "\t{}\n", bstr::BStr::new(ht2))?;
+            writeln!(stream, "\t{}", bstr::BStr::new(ht2))?;
         }
     }
     Ok(())

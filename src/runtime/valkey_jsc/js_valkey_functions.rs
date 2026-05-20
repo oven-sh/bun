@@ -1,6 +1,6 @@
 use crate::node::BlobOrStringOrBuffer as JSArgument;
 use bun_collections::VecExt as _;
-use bun_core::{OwnedString, strings};
+use bun_core::OwnedString;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
     JsRef, JsResult,
@@ -143,8 +143,6 @@ pub(crate) mod compile {
 
     #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
     pub enum ClientStateRequirement {
-        /// The client must be a subscriber (in subscription mode).
-        Subscriber,
         /// The client must not be a subscriber (not in subscription mode).
         NotSubscriber,
         /// We don't care about the client state (subscriber or not).
@@ -156,9 +154,6 @@ pub(crate) mod compile {
         js_client_prototype_function_name: &[u8],
     ) -> JsResult<()> {
         match REQ {
-            ClientStateRequirement::Subscriber => {
-                require_subscriber(this, js_client_prototype_function_name)
-            }
             ClientStateRequirement::NotSubscriber => {
                 require_not_subscriber(this, js_client_prototype_function_name)
             }

@@ -5,7 +5,7 @@ use core::fmt;
 use bun_core::Output;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
-    ConsoleObject, JSFunction, JSPropertyIterator, JSArrayIterator, JSString,
+    ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_core::ZigString;
@@ -17,7 +17,7 @@ use super::bun_test::{self, DescribeScope};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-use super::expect::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, make_formatter};
+use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 
 use bun_jsc::js_error_to_write_error;
 
@@ -219,7 +219,7 @@ impl Expect {
 
     pub fn increment_expect_call_counter(&self) {
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
-        let Some(mut buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
+        let Some(buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
         let buntest = buntest_strong.get();
         if let Some(sequence) = parent.phase.sequence(buntest) {
             // found active sequence
@@ -258,7 +258,7 @@ impl Expect {
         // — same lifetime semantics as the Zig comptime result. Returning
         // `&'static str` keeps the ~188 call sites and `throw()`'s `signature:
         // &'static str` parameter unchanged.
-        use std::collections::HashMap;
+        use bun_collections::HashMap;
         use std::sync::OnceLock;
         type Key = (&'static str, &'static str, bool);
         static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, Box<str>>>> = OnceLock::new();
@@ -514,8 +514,12 @@ impl Expect {
     }
 
     /// Called by C++ when matching with asymmetric matchers
+    ///
+    /// # Safety
+    /// `out_flags`, `value`, and `any_constructor_type` must be valid, properly
+    /// aligned pointers for the duration of the call.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Expect_readFlagsAndProcessPromise(
+    pub unsafe extern "C" fn Expect_readFlagsAndProcessPromise(
         instance_value: JSValue,
         global_this: &JSGlobalObject,
         out_flags: *mut FlagsCppType,
@@ -567,7 +571,7 @@ impl Expect {
     pub fn get_snapshot_name(&self, hint: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
         // TODO(port): narrow error set
         let parent = self.parent.as_ref().ok_or_else(|| bun_core::err!("NoTest"))?;
-        let mut buntest_strong = parent.bun_test().ok_or_else(|| bun_core::err!("TestNotActive"))?;
+        let buntest_strong = parent.bun_test().ok_or_else(|| bun_core::err!("TestNotActive"))?;
         let buntest = buntest_strong.get();
         let execution_entry = parent
             .phase
@@ -652,7 +656,7 @@ impl Expect {
         }
 
         let active_execution_entry_ref = if let Some(buntest_strong_) = bun_test::clone_active_strong() {
-            let mut buntest_strong = buntest_strong_;
+            let buntest_strong = buntest_strong_;
             let state = buntest_strong.get().get_current_state_data();
             Some(bun_test::BunTest::ref_(&buntest_strong, state))
         } else {
@@ -850,7 +854,7 @@ impl Expect {
         // Drain existing unhandled rejections
         vm.global().handle_rejected_promises();
 
-        let mut scope = vm.unhandled_rejection_scope();
+        let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
@@ -1038,7 +1042,7 @@ impl Expect {
         }
 
         let update = runner.snapshots.update_snapshots;
-        let mut needs_write = false;
+        let needs_write;
 
         let mut pretty_value: Vec<u8> = Vec::new();
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
@@ -1089,7 +1093,7 @@ impl Expect {
                     );
                 }
             }
-            let Some(mut buntest_strong) = this.bun_test() else {
+            let Some(buntest_strong) = this.bun_test() else {
                 let signature = Self::get_signature(fn_name, "", false);
                 return this.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
             };
@@ -1192,7 +1196,7 @@ impl Expect {
         let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
             Ok(v) => v,
             Err(err) => {
-                let Some(mut buntest_strong) = this.bun_test() else {
+                let Some(buntest_strong) = this.bun_test() else {
                     return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
                 };
                 let buntest = buntest_strong.get();
@@ -1567,7 +1571,7 @@ impl Expect {
 
         // retrieve the user-provided matcher function (matcher_fn)
         let func: JSValue = call_frame.callee();
-        let mut matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
+        let matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
         if !matcher_fn.js_type().is_function() {
             return Err(global_this.throw2(
                 "Internal consistency error: failed to retrieve the matcher function for a custom matcher!",
@@ -1647,7 +1651,7 @@ impl Expect {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
-        let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
+        let Some(buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
@@ -1700,7 +1704,7 @@ impl Expect {
 
         let unsigned_expected_assertions: u32 = expected_assertions as u32;
 
-        let Some(mut buntest_strong) = bun_test::clone_active_strong() else {
+        let Some(buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
@@ -2674,8 +2678,12 @@ impl ExpectCustomAsymmetricMatcher {
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
+    ///
+    /// # Safety
+    /// `this` must point to a live `Self` and `global_this` must point to a live
+    /// `JSGlobalObject` for the duration of the call.
     #[unsafe(no_mangle)]
-    pub extern "C" fn ExpectCustomAsymmetricMatcher__execute(
+    pub unsafe extern "C" fn ExpectCustomAsymmetricMatcher__execute(
         this: *mut Self,
         this_value: JSValue,
         global_this: *const JSGlobalObject,

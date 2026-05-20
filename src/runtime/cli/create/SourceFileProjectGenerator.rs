@@ -11,7 +11,6 @@ use bun_bundler::bundle_v2::BundleV2;
 use bun_bundler::bundle_v2::DependenciesScannerResult;
 use bun_bundler::mal_prelude::*;
 use bun_collections::StringSet;
-use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_core::strings;
 use bun_core::{Global, Output};
@@ -19,7 +18,7 @@ use bun_js_parser::js_lexer;
 use bun_paths as path;
 use bun_paths::fs::FileSystem;
 use bun_paths::resolve_path;
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd};
 
 // Generate project files based on the entry point and dependencies
 pub fn generate(
@@ -345,11 +344,7 @@ pub fn generate_files(
     }
 
     if !dev_dependencies.is_empty() {
-        let mut argv: Vec<&[u8]> = Vec::new();
-        argv.push(b"bun");
-        argv.push(b"--only-missing");
-        argv.push(b"add");
-        argv.push(b"-d");
+        let mut argv: Vec<&[u8]> = vec![b"bun", b"--only-missing", b"add", b"-d"];
         argv.extend_from_slice(dev_dependencies);
         run_install(&mut argv)?;
     }

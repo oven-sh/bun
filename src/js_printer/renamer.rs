@@ -217,8 +217,10 @@ pub struct InlineString {
 
 impl InlineString {
     pub fn init(str_: &[u8]) -> InlineString {
-        let mut this = InlineString::default();
-        this.len = u8::try_from(str_.len().min(15)).expect("int cast");
+        let mut this = InlineString {
+            len: u8::try_from(str_.len().min(15)).expect("int cast"),
+            ..Default::default()
+        };
         for (b, c) in this.bytes[0..this.len as usize]
             .iter_mut()
             .zip(&str_[0..this.len as usize])
@@ -761,14 +763,13 @@ impl NumberRenamer {
         parent: Option<bun_ptr::ParentRef<NumberScope>>,
         sorted: &mut Vec<u32>,
     ) {
-        let s: *mut NumberScope = self.number_scope_pool.get();
-        // SAFETY: `s` is a valid pool slot (HiveArrayFallback::get never returns null).
-        unsafe {
-            s.write(NumberScope {
+        let s: *mut NumberScope = self
+            .number_scope_pool
+            .get_init(NumberScope {
                 parent,
                 name_counts: NameCountMap::default(),
-            });
-        }
+            })
+            .as_ptr();
 
         self.assign_names_recursive_with_number_scope(s, scope, source_index, sorted);
 
@@ -819,10 +820,9 @@ impl NumberRenamer {
         loop {
             let symbol_count = scope.members.count() + scope.generated.len_u32() as usize;
             if symbol_count > 0 {
-                let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
-                // SAFETY: `new_child_scope` is a valid pool slot.
-                unsafe {
-                    new_child_scope.write(NumberScope {
+                let new_child_scope: *mut NumberScope = self
+                    .number_scope_pool
+                    .get_init(NumberScope {
                         // `s` is non-null (either `initial_scope` or a fresh
                         // pool slot from a prior iteration); the new child
                         // outlives this `ParentRef` only until `put()` below.
@@ -840,8 +840,8 @@ impl NumberRenamer {
                             symbol_count,
                             Default::default(),
                         ),
-                    });
-                }
+                    })
+                    .as_ptr();
                 s = new_child_scope;
 
                 // SAFETY: s is a valid pool slot just initialized above
@@ -957,10 +957,9 @@ impl NameUse {
         // same precomputed hash via hashbrown's raw-entry API; the previous
         // `get_adapted`/`contains_adapted` calls re-hashed `name` per scope.
         let hash = {
-            use core::hash::{BuildHasher, Hash, Hasher};
-            let mut state = <bun_wyhash::BuildHasher as Default>::default().build_hasher();
-            name.hash(&mut state);
-            state.finish()
+            use core::hash::BuildHasher;
+
+            <bun_wyhash::BuildHasher as Default>::default().hash_one(name)
         };
 
         if let Some((_, &count)) = this

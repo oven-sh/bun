@@ -22,7 +22,6 @@ pub use store::Store;
 pub use store::entry::Id as EntryId;
 
 use crate::lockfile::package::PackageColumns as _;
-use std::hash::Hasher as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
@@ -287,7 +286,7 @@ pub fn install_isolated_packages(
         }
         let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).expect("int cast");
 
-        let mut leaking_peers: DynamicBitSetList =
+        let leaking_peers: DynamicBitSetList =
             DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
 
         if peer_name_count != 0 {
@@ -312,9 +311,9 @@ pub fn install_isolated_packages(
             // Per-package bits computed once: own peer-dep names, and non-peer
             // dependency names that will appear in `node_dependencies` (i.e., not
             // filtered out by bundled/disabled/unresolved).
-            let mut own_peers: DynamicBitSetList =
+            let own_peers: DynamicBitSetList =
                 DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
-            let mut provides: DynamicBitSetList =
+            let provides: DynamicBitSetList =
                 DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
             for pkg_idx in 0..lockfile.packages.len() {
                 let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
@@ -1956,9 +1955,9 @@ pub fn install_isolated_packages(
     {
         // TODO(port): Progress.Node locals are conditionally initialized in Zig;
         // model with Option.
-        let mut download_node: ProgressNode = ProgressNode::default();
+        let mut download_node: ProgressNode;
         let mut install_node: ProgressNode = ProgressNode::default();
-        let mut scripts_node: ProgressNode = ProgressNode::default();
+        let mut scripts_node: ProgressNode;
         let progress: *mut Progress = &raw mut manager.progress;
         // SAFETY: `progress` aliases `manager.progress`; reborrows below are
         // disjoint from the other `manager.*` field accesses (Zig holds the

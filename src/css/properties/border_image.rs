@@ -8,7 +8,7 @@ use css::SmallList;
 
 use crate::generics::IsCompatible as _;
 use css::VendorPrefix;
-use css::css_properties::{Property, PropertyId, PropertyIdTag};
+use css::css_properties::{Property, PropertyIdTag};
 use css::css_values::image::Image;
 use css::css_values::length::LengthOrNumber;
 use css::css_values::length::LengthPercentage;
@@ -72,18 +72,14 @@ impl BorderImage {
                             Option<Rect<BorderImageSideWidth>>,
                             Option<Rect<LengthOrNumber>>,
                         )> {
-                            if let Err(e) = i.expect_delim(b'/') {
-                                return Err(e);
-                            }
+                            i.expect_delim(b'/')?;
 
                             let w = i.try_parse(Rect::<BorderImageSideWidth>::parse).ok();
 
                             let o = i
                                 .try_parse(
                                     |in_: &mut css::Parser| -> Result<Rect<LengthOrNumber>> {
-                                        if let Err(e) = in_.expect_delim(b'/') {
-                                            return Err(e);
-                                        }
+                                        in_.expect_delim(b'/')?;
                                         Rect::<LengthOrNumber>::parse(in_)
                                     },
                                 )
@@ -258,10 +254,7 @@ pub struct BorderImageRepeat {
 
 impl BorderImageRepeat {
     pub fn parse(input: &mut css::Parser) -> Result<BorderImageRepeat> {
-        let horizontal = match BorderImageRepeatKeyword::parse(input) {
-            Ok(v) => v,
-            Err(e) => return Err(e),
-        };
+        let horizontal = BorderImageRepeatKeyword::parse(input)?;
         let vertical = input.try_parse(BorderImageRepeatKeyword::parse).ok();
         Ok(BorderImageRepeat {
             horizontal,
@@ -401,10 +394,7 @@ impl BorderImageSlice {
         let mut fill = input
             .try_parse(|i| i.expect_ident_matching(b"fill"))
             .is_ok();
-        let offsets = match Rect::<NumberOrPercentage>::parse(input) {
-            Err(e) => return Err(e),
-            Ok(v) => v,
-        };
+        let offsets = Rect::<NumberOrPercentage>::parse(input)?;
         if !fill {
             fill = input
                 .try_parse(|i| i.expect_ident_matching(b"fill"))
@@ -554,7 +544,7 @@ impl BorderImageHandler {
                 self.width = Some(val.width.deep_clone(arena));
                 self.outset = Some(val.outset.deep_clone(arena));
                 self.repeat = Some(val.repeat.deep_clone(arena));
-                self.vendor_prefix = self.vendor_prefix | vp;
+                self.vendor_prefix |= vp;
                 self.has_any = true;
             }
             Property::Unparsed(unparsed) => {
@@ -637,98 +627,96 @@ impl BorderImageHandler {
 
         self.has_any = false;
 
-        let mut source = self.source.take();
-        let slice = self.slice.take();
-        let width = self.width.take();
-        let outset = self.outset.take();
-        let repeat = self.repeat.take();
+        match (
+            self.source.take(),
+            self.slice.take(),
+            self.width.take(),
+            self.outset.take(),
+            self.repeat.take(),
+        ) {
+            (Some(source), Some(slice), Some(width), Some(outset), Some(repeat)) => {
+                let mut border_image = BorderImage {
+                    source,
+                    slice,
+                    width,
+                    outset,
+                    repeat,
+                };
 
-        if source.is_some()
-            && slice.is_some()
-            && width.is_some()
-            && outset.is_some()
-            && repeat.is_some()
-        {
-            let mut border_image = BorderImage {
-                source: source.unwrap(),
-                slice: slice.unwrap(),
-                width: width.unwrap(),
-                outset: outset.unwrap(),
-                repeat: repeat.unwrap(),
-            };
-
-            let mut prefix = self.vendor_prefix;
-            if prefix.contains(VendorPrefix::NONE) && !border_image.slice.fill {
-                prefix = context
-                    .targets
-                    .prefixes(self.vendor_prefix, css::prefixes::Feature::BorderImage);
-                if self.flushed_properties.is_empty() {
-                    let fallbacks = border_image.get_fallbacks(arena, &context.targets);
-                    for fallback in fallbacks.slice() {
-                        // Match prefix of fallback. e.g. -webkit-linear-gradient
-                        // can only be used in -webkit-border-image, not -moz-border-image.
-                        // However, if border-image is unprefixed, gradients can still be.
-                        let mut p = fallback.source.get_vendor_prefix() & prefix;
-                        if p.is_empty() {
-                            p = prefix;
+                let mut prefix = self.vendor_prefix;
+                if prefix.contains(VendorPrefix::NONE) && !border_image.slice.fill {
+                    prefix = context
+                        .targets
+                        .prefixes(self.vendor_prefix, css::prefixes::Feature::BorderImage);
+                    if self.flushed_properties.is_empty() {
+                        let fallbacks = border_image.get_fallbacks(arena, &context.targets);
+                        for fallback in fallbacks.slice() {
+                            // Match prefix of fallback. e.g. -webkit-linear-gradient
+                            // can only be used in -webkit-border-image, not -moz-border-image.
+                            // However, if border-image is unprefixed, gradients can still be.
+                            let mut p = fallback.source.get_vendor_prefix() & prefix;
+                            if p.is_empty() {
+                                p = prefix;
+                            }
+                            // TODO(port): Zig moved `fallback` by value; SmallList has no
+                            // by-value drain yet — deep_clone until IntoIterator lands.
+                            dest.push(Property::BorderImage((fallback.deep_clone(arena), p)));
                         }
-                        // TODO(port): Zig moved `fallback` by value; SmallList has no
-                        // by-value drain yet — deep_clone until IntoIterator lands.
-                        dest.push(Property::BorderImage((fallback.deep_clone(arena), p)));
-                    }
-                }
-            }
-
-            let p = border_image.source.get_vendor_prefix() & prefix;
-            if !p.is_empty() {
-                prefix = p;
-            }
-
-            dest.push(Property::BorderImage((border_image, prefix)));
-            self.flushed_properties
-                .insert(BorderImageProperty::BORDER_IMAGE);
-        } else {
-            if let Some(mut_source) = &mut source {
-                if !self
-                    .flushed_properties
-                    .contains(BorderImageProperty::BORDER_IMAGE_SOURCE)
-                {
-                    let img_fallbacks = mut_source.get_fallbacks(arena, &context.targets);
-                    for fallback in img_fallbacks.slice() {
-                        // TODO(port): same by-value move note as above.
-                        dest.push(Property::BorderImageSource(fallback.deep_clone(arena)));
                     }
                 }
 
-                dest.push(Property::BorderImageSource(mut_source.deep_clone(arena)));
-                // TODO(port): Zig pushed `mut_source.*` by value (move). Cloning here to
-                // avoid partial-move out of `source: Option<Image>`.
-                self.flushed_properties
-                    .insert(BorderImageProperty::BORDER_IMAGE_SOURCE);
-            }
+                let p = border_image.source.get_vendor_prefix() & prefix;
+                if !p.is_empty() {
+                    prefix = p;
+                }
 
-            if let Some(s) = slice {
-                dest.push(Property::BorderImageSlice(s));
+                dest.push(Property::BorderImage((border_image, prefix)));
                 self.flushed_properties
-                    .insert(BorderImageProperty::BORDER_IMAGE_SLICE);
+                    .insert(BorderImageProperty::BORDER_IMAGE);
             }
+            (mut source, slice, width, outset, repeat) => {
+                if let Some(mut_source) = &mut source {
+                    if !self
+                        .flushed_properties
+                        .contains(BorderImageProperty::BORDER_IMAGE_SOURCE)
+                    {
+                        let img_fallbacks = mut_source.get_fallbacks(arena, &context.targets);
+                        for fallback in img_fallbacks.slice() {
+                            // TODO(port): same by-value move note as above.
+                            dest.push(Property::BorderImageSource(fallback.deep_clone(arena)));
+                        }
+                    }
 
-            if let Some(w) = width {
-                dest.push(Property::BorderImageWidth(w));
-                self.flushed_properties
-                    .insert(BorderImageProperty::BORDER_IMAGE_WIDTH);
-            }
+                    dest.push(Property::BorderImageSource(mut_source.deep_clone(arena)));
+                    // TODO(port): Zig pushed `mut_source.*` by value (move). Cloning here to
+                    // avoid partial-move out of `source: Option<Image>`.
+                    self.flushed_properties
+                        .insert(BorderImageProperty::BORDER_IMAGE_SOURCE);
+                }
 
-            if let Some(o) = outset {
-                dest.push(Property::BorderImageOutset(o));
-                self.flushed_properties
-                    .insert(BorderImageProperty::BORDER_IMAGE_OUTSET);
-            }
+                if let Some(s) = slice {
+                    dest.push(Property::BorderImageSlice(s));
+                    self.flushed_properties
+                        .insert(BorderImageProperty::BORDER_IMAGE_SLICE);
+                }
 
-            if let Some(r) = repeat {
-                dest.push(Property::BorderImageRepeat(r));
-                self.flushed_properties
-                    .insert(BorderImageProperty::BORDER_IMAGE_REPEAT);
+                if let Some(w) = width {
+                    dest.push(Property::BorderImageWidth(w));
+                    self.flushed_properties
+                        .insert(BorderImageProperty::BORDER_IMAGE_WIDTH);
+                }
+
+                if let Some(o) = outset {
+                    dest.push(Property::BorderImageOutset(o));
+                    self.flushed_properties
+                        .insert(BorderImageProperty::BORDER_IMAGE_OUTSET);
+                }
+
+                if let Some(r) = repeat {
+                    dest.push(Property::BorderImageRepeat(r));
+                    self.flushed_properties
+                        .insert(BorderImageProperty::BORDER_IMAGE_REPEAT);
+                }
             }
         }
 

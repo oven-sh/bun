@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
@@ -151,7 +149,15 @@ impl Touch {
     }
 
     /// Spec: touch.zig `onShellTouchTaskDone`.
-    pub fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellTouchTask) {
+    ///
+    /// # Safety
+    /// `task` must be a live heap allocation produced by
+    /// [`ShellTouchTask::create`]; ownership is reclaimed here.
+    pub unsafe fn on_shell_touch_task_done(
+        interp: &Interpreter,
+        cmd: NodeId,
+        task: *mut ShellTouchTask,
+    ) {
         // SAFETY: task was heap-allocated in create(); reclaim.
         let mut task = unsafe { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -319,10 +325,14 @@ impl ShellTouchTask {
         // this returns (Zig: `event_loop.enqueueTaskConcurrent(...)`).
     }
 
-    pub fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
+    /// # Safety
+    /// `this` must be a live heap allocation produced by [`Self::create`];
+    /// ownership is consumed via [`Touch::on_shell_touch_task_done`].
+    pub unsafe fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task.
         let cmd = unsafe { (*this).cmd };
-        Touch::on_shell_touch_task_done(interp, cmd, this);
+        // SAFETY: forwarded from caller's contract.
+        unsafe { Touch::on_shell_touch_task_done(interp, cmd, this) };
     }
 }
 
@@ -336,7 +346,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        Self::run_from_main_thread(this, interp)
+        // SAFETY: `ShellTaskCtx` callers guarantee `this` is the live
+        // heap-allocated task posted via `ShellTask::schedule`.
+        unsafe { Self::run_from_main_thread(this, interp) }
     }
 }
 

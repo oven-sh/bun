@@ -1,5 +1,4 @@
-use core::ffi::{c_char, c_ushort};
-use core::marker::{PhantomData, PhantomPinned};
+use core::ffi::c_ushort;
 
 // TODO(port): verify module path for H3 request opaque (h3.zig:19 — H3.Request = opaque{})
 use crate::h3::Request as H3Request;

@@ -5,7 +5,9 @@
     clippy::missing_safety_doc
 )]
 
-use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ushort, c_void};
+#[cfg(windows)]
+use core::ffi::c_short;
+use core::ffi::{c_char, c_int, c_long, c_uint, c_ushort, c_void};
 use core::ptr;
 
 #[cfg(windows)]
@@ -246,12 +248,6 @@ pub struct struct_ares_server_failover_options {
     pub retry_delay: usize,
 }
 
-const ARES_EVSYS_DEFAULT: c_int = 0;
-const ARES_EVSYS_WIN32: c_int = 1;
-const ARES_EVSYS_EPOLL: c_int = 2;
-const ARES_EVSYS_KQUEUE: c_int = 3;
-const ARES_EVSYS_POLL: c_int = 4;
-const ARES_EVSYS_SELECT: c_int = 5;
 type ares_evsys_t = c_uint;
 
 #[repr(C)]
@@ -458,7 +454,7 @@ pub trait HostentWithTtlsHandler: Sized {
     /// `hostent_with_ttls::parse_a` or `parse_aaaa` — selects the c-ares reply
     /// parser for [`hostent_with_ttls::callback_wrapper`]. Mirrors the Zig
     /// `callbackWrapper(comptime lookup_name, ...)` parameterization.
-    const PARSE: fn(*mut u8, c_int) -> Result<Box<hostent_with_ttls>, Error>;
+    const PARSE: unsafe fn(*mut u8, c_int) -> Result<Box<hostent_with_ttls>, Error>;
 
     fn on_hostent_with_ttls(
         &mut self,
@@ -502,13 +498,20 @@ impl hostent_with_ttls {
             this.on_hostent_with_ttls(Error::get(status), timeouts, None);
             return;
         }
-        match T::PARSE(buffer, buffer_length) {
+        // SAFETY: c-ares passes the reply buffer it owns; valid for `buffer_length`.
+        match unsafe { T::PARSE(buffer, buffer_length) } {
             Ok(result) => this.on_hostent_with_ttls(None, timeouts, Some(result)),
             Err(err) => this.on_hostent_with_ttls(Some(err), timeouts, None),
         }
     }
 
-    pub fn parse_a(buffer: *mut u8, buffer_length: c_int) -> Result<Box<hostent_with_ttls>, Error> {
+    /// # Safety
+    /// `buffer` must be readable for `buffer_length` bytes (the raw c-ares
+    /// reply buffer passed to the callback).
+    pub unsafe fn parse_a(
+        buffer: *mut u8,
+        buffer_length: c_int,
+    ) -> Result<Box<hostent_with_ttls>, Error> {
         let mut start: *mut struct_hostent = ptr::null_mut();
         let mut addrttls = [struct_ares_addrttl::default(); 256];
         let mut naddrttls: c_int = 256;
@@ -536,7 +539,10 @@ impl hostent_with_ttls {
         Ok(with_ttls)
     }
 
-    pub fn parse_aaaa(
+    /// # Safety
+    /// `buffer` must be readable for `buffer_length` bytes (the raw c-ares
+    /// reply buffer passed to the callback).
+    pub unsafe fn parse_aaaa(
         buffer: *mut u8,
         buffer_length: c_int,
     ) -> Result<Box<hostent_with_ttls>, Error> {
@@ -802,22 +808,23 @@ impl Channel {
             container.on_dns_socket_state(socket, readable != 0, writable != 0);
         }
 
-        let mut opts = Options::default();
-
-        // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
-        // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
-        // NOT set ARES_FLAG_NO_DFLT_SVR here — that makes init fail with
-        // ENOSERVER, which breaks dns.setServers() (it needs an initialized
-        // channel to call ares_set_servers_ports). Letting the 127.0.0.1
-        // default stand means setServers() works as the documented workaround.
-        opts.flags = ARES_FLAG_NOCHECKRESP;
-        opts.sock_state_cb = Some(on_sock_state::<C>);
-        // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
-        // callback derefs as shared (`&*const`) and the implementor mutates via
-        // interior mutability.
-        opts.sock_state_cb_data = std::ptr::from_ref::<C>(this).cast_mut().cast::<c_void>();
-        opts.timeout = options.timeout.unwrap_or(-1);
-        opts.tries = options.tries.unwrap_or(4);
+        let mut opts = Options {
+            // Android note: c-ares can't auto-discover servers (no /etc/resolv.conf,
+            // no JNI), so it falls back to 127.0.0.1 and queries time out. We do
+            // NOT set ARES_FLAG_NO_DFLT_SVR here — that makes init fail with
+            // ENOSERVER, which breaks dns.setServers() (it needs an initialized
+            // channel to call ares_set_servers_ports). Letting the 127.0.0.1
+            // default stand means setServers() works as the documented workaround.
+            flags: ARES_FLAG_NOCHECKRESP,
+            sock_state_cb: Some(on_sock_state::<C>),
+            // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
+            // callback derefs as shared (`&*const`) and the implementor mutates via
+            // interior mutability.
+            sock_state_cb_data: std::ptr::from_ref::<C>(this).cast_mut().cast::<c_void>(),
+            timeout: options.timeout.unwrap_or(-1),
+            tries: options.tries.unwrap_or(4),
+            ..Default::default()
+        };
 
         let optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
@@ -1529,26 +1536,32 @@ impl struct_any_reply {
         buffer: *mut u8,
         buffer_length: c_int,
     ) {
-        // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
-        let this = unsafe { bun_core::callback_ctx::<T>(ctx) };
-        if status != ARES_SUCCESS {
-            this.on_any(Error::get(status), timeouts, None);
-            return;
-        }
-        match Self::parse(buffer, buffer_length) {
-            Ok(reply) => this.on_any(None, timeouts, Some(reply)),
-            Err(err) => this.on_any(Some(err), timeouts, None),
+        unsafe {
+            // SAFETY: ctx was passed as *mut T to the ares call that registered this thunk.
+            let this = bun_core::callback_ctx::<T>(ctx);
+            if status != ARES_SUCCESS {
+                this.on_any(Error::get(status), timeouts, None);
+                return;
+            }
+            match Self::parse(buffer, buffer_length) {
+                Ok(reply) => this.on_any(None, timeouts, Some(reply)),
+                Err(err) => this.on_any(Some(err), timeouts, None),
+            }
         }
     }
 
     /// Parse a DNS `ANY` reply buffer into a heap-allocated aggregate. Returns
     /// the last per-record parse error if no record type parsed successfully.
-    pub fn parse(buffer: *mut u8, buffer_length: c_int) -> Result<Box<Self>, Error> {
+    /// # Safety
+    /// `buffer` must be readable for `buffer_length` bytes (the raw c-ares
+    /// reply buffer passed to the callback).
+    pub unsafe fn parse(buffer: *mut u8, buffer_length: c_int) -> Result<Box<Self>, Error> {
         let mut any_success = false;
         let mut last_error: Option<c_int> = None;
         let mut reply = Box::new(struct_any_reply::default());
 
-        match hostent_with_ttls::parse_a(buffer, buffer_length) {
+        // SAFETY: forwarded — `buffer[..buffer_length]` validity is the fn-level contract.
+        match unsafe { hostent_with_ttls::parse_a(buffer, buffer_length) } {
             Ok(result) => {
                 reply.a_reply = Some(result);
                 any_success = true;
@@ -1556,7 +1569,8 @@ impl struct_any_reply {
             Err(err) => last_error = Some(err as c_int),
         }
 
-        match hostent_with_ttls::parse_aaaa(buffer, buffer_length) {
+        // SAFETY: forwarded — `buffer[..buffer_length]` validity is the fn-level contract.
+        match unsafe { hostent_with_ttls::parse_aaaa(buffer, buffer_length) } {
             Ok(result) => {
                 reply.aaaa_reply = Some(result);
                 any_success = true;
@@ -2218,6 +2232,5 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
 // sockaddr_in (not the 4-byte in_addr). Preserved for ABI parity in `Options.servers`.
 // TODO(port): verify against c-ares header; this looks like a Zig-side misnomer.
 type in_addr = sockaddr_in;
-type struct_sockaddr = sockaddr;
 
 // ported from: src/cares_sys/c_ares.zig

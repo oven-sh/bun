@@ -7,9 +7,8 @@
 //! host-fns (`cc`/`linkSymbols`/`callback`) stay gated on `bun_tcc_sys::State`
 //! API.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
-use std::sync::Once;
 
 use bun_collections::StringArrayHashMap;
 use bun_core::{ZBox, ZStr};
@@ -136,87 +135,6 @@ mod TCC {
     ))]
     pub unsafe fn tcc_delete(_s: *mut State) {
         unreachable!("tcc_delete: TinyCC not built on this target (cfg.tinycc = false)");
-    }
-}
-
-// ─── JIT write-protect helper ────────────────────────────────────────────────
-
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    fn pthread_jit_write_protect_np(enable: c_int);
-}
-
-/// RAII scope that disables `pthread_jit_write_protect_np` for the current
-/// thread on aarch64 macOS, re-enabling it on `Drop`. No-op elsewhere.
-struct JitWriteUnprotected(());
-
-impl JitWriteUnprotected {
-    const HAS_PROTECTION: bool = cfg!(all(target_arch = "aarch64", target_os = "macos"));
-
-    #[inline]
-    fn new() -> Self {
-        if Self::HAS_PROTECTION {
-            // SAFETY: aarch64 macOS only; toggles W^X for the current thread
-            unsafe { pthread_jit_write_protect_np(false as c_int) };
-        }
-        Self(())
-    }
-}
-
-impl Drop for JitWriteUnprotected {
-    #[inline]
-    fn drop(&mut self) {
-        if Self::HAS_PROTECTION {
-            // SAFETY: re-enable JIT write protection on scope exit
-            unsafe { pthread_jit_write_protect_np(true as c_int) };
-        }
-    }
-}
-
-/// Run a function that needs to write to JIT-protected memory.
-///
-/// This is dangerous as it allows overwriting executable regions of memory.
-/// Do not pass in user-defined functions (including JSFunctions).
-pub(crate) fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
-    let _guard = JitWriteUnprotected::new();
-    // PERF(port): was @call(bun.callmod_inline, ...) — profile if it shows up on a hot path.
-    func()
-}
-
-// ─── Offsets bridge ──────────────────────────────────────────────────────────
-
-#[repr(C)]
-pub(crate) struct Offsets {
-    pub js_array_buffer_view_offset_of_length: u32,
-    pub js_array_buffer_view_offset_of_byte_offset: u32,
-    pub js_array_buffer_view_offset_of_vector: u32,
-    pub js_cell_offset_of_type: u32,
-}
-
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    // Populated once by C++ via `Bun__FFI__ensureOffsetsAreLoaded`; Rust only
-    // reads after the `Once` below fires. C++ mutates these bytes, so a plain
-    // non-`mut` extern static would assert immutability to the optimizer (UB
-    // per the Rust reference). `RacyCell<T>` is `#[repr(transparent)]` over
-    // `UnsafeCell<T>`, so the linker sees the same `Offsets` layout while Rust
-    // sees interior mutability.
-    #[link_name = "Bun__FFI__offsets"]
-    static BUN_FFI_OFFSETS: bun_core::RacyCell<Offsets>;
-    #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
-    fn bun_ffi_ensure_offsets_are_loaded();
-}
-
-impl Offsets {
-    fn load_once() {
-        // SAFETY: extern "C" fn populating a static
-        unsafe { bun_ffi_ensure_offsets_are_loaded() };
-    }
-    pub fn get() -> &'static Offsets {
-        static ONCE: Once = Once::new();
-        ONCE.call_once(Self::load_once);
-        // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
-        unsafe { &*BUN_FFI_OFFSETS.get() }
     }
 }
 
@@ -367,8 +285,7 @@ impl Default for Function {
 // PORTING.md §Global mutable state: written once at startup with the
 // resolved tinycc lib dir; read by the FFI compile path. RacyCell over the
 // raw C-string pointer (no concurrent writers).
-pub static LIB_DIR_Z: bun_core::RacyCell<*const c_char> =
-    bun_core::RacyCell::new(b"\0".as_ptr().cast::<c_char>());
+pub static LIB_DIR_Z: bun_core::RacyCell<*const c_char> = bun_core::RacyCell::new(c"".as_ptr());
 
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
@@ -464,22 +381,6 @@ impl Step {
     }
 }
 
-// ─── FFI_Callback externs ────────────────────────────────────────────────────
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    fn FFI_Callback_call(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_call_0(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_call_1(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_call_2(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_call_3(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_call_4(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_call_5(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_threadsafe_call(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_call_6(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn FFI_Callback_call_7(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
-    fn Bun__createFFICallbackFunction(_: &JSGlobalObject, _: JSValue) -> *mut c_void;
-}
-
 // ═════════════════════════════════════════════════════════════════════════════
 // ABIType — single source of truth lives in abi_type.rs
 // ═════════════════════════════════════════════════════════════════════════════
@@ -504,15 +405,18 @@ impl CompilerRtSources {
 }
 
 impl CompilerRT {
+    /// # Safety
+    /// Caller (TCC-compiled code) guarantees `dest[0..byte_count]` is writable.
     #[inline(never)]
-    pub extern "C" fn memset(dest: *mut u8, c: u8, byte_count: usize) {
-        // SAFETY: caller (TCC-compiled code) guarantees dest[0..byte_count] is writable
+    pub unsafe extern "C" fn memset(dest: *mut u8, c: u8, byte_count: usize) {
         unsafe { core::slice::from_raw_parts_mut(dest, byte_count) }.fill(c);
     }
 
+    /// # Safety
+    /// Caller (TCC-compiled code) guarantees `dest[0..byte_count]` and
+    /// `source[0..byte_count]` are valid and non-overlapping.
     #[inline(never)]
-    pub extern "C" fn memcpy(dest: *mut u8, source: *const u8, byte_count: usize) {
-        // SAFETY: caller (TCC-compiled code) guarantees non-overlapping valid ranges
+    pub unsafe extern "C" fn memcpy(dest: *mut u8, source: *const u8, byte_count: usize) {
         unsafe {
             core::slice::from_raw_parts_mut(dest, byte_count)
                 .copy_from_slice(core::slice::from_raw_parts(source, byte_count));

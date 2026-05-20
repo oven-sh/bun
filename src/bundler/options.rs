@@ -1,18 +1,15 @@
 //! This file is mostly the API schema but with all the options normalized.
 //! Normalization is necessary because most fields in the API schema are optional
 
-use bun_collections::VecExt;
-use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap, StringHashMap};
+use bun_collections::{MultiArrayList, StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_dotenv as DotEnv;
 use bun_js_parser::parser::Runtime;
 use bun_options_types::schema::api;
-use bun_resolver as resolver;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-use bun_url::URL;
 use std::borrow::Cow;
 // TODO(b2-blocked): bun_analytics — Cargo.toml does not yet list the dep
 // (adding it triggers upstream rebuilds with in-progress breakage). The
@@ -32,7 +29,7 @@ mod analytics {
         pub static external: AtomicUsize = AtomicUsize::new(0);
     }
 }
-use enum_map::{Enum, EnumMap};
+use enum_map::EnumMap;
 
 pub use crate::defines;
 pub use defines::Define;
@@ -391,7 +388,7 @@ pub use bun_options_types::WindowsOptions;
 // Spec options.zig:568 has exactly ONE `Loader`; re-export so the bundler's
 // `BundleOptions.loaders` and the resolver's `Path::loader()` operate on the
 // same nominal type.
-pub(crate) use bun_ast::{Loader, LoaderOptional};
+pub(crate) use bun_ast::Loader;
 
 pub use bun_options_types::LOADER_API_NAMES;
 
@@ -678,6 +675,7 @@ pub fn get_loader_and_virtual_source<'a>(
     })
 }
 
+#[cfg(test)]
 const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".jsx", Loader::Jsx),
     (b".json", Loader::Json),
@@ -703,7 +701,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".markdown", Loader::Md),
 ];
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh)];
 
 /// File-extension → default [`Loader`] map (options.zig `defaultLoaders`).
@@ -1084,11 +1082,6 @@ const DEFAULT_LOADER_EXT: &[&[u8]] = &[
 
 // Only set it for browsers by default.
 const DEFAULT_LOADER_EXT_BROWSER: &[&[u8]] = &[b".html"];
-
-const NODE_MODULES_DEFAULT_LOADER_EXT: &[&[u8]] = &[
-    b".jsx", b".js", b".cjs", b".mjs", b".ts", b".mts", b".toml", b".yaml", b".yml", b".txt",
-    b".json", b".jsonc", b".json5", b".css", b".tsx", b".cts", b".wasm", b".text", b".html",
-];
 
 #[derive(Debug, Clone)]
 pub struct ResolveFileExtensions {

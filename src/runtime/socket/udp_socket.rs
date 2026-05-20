@@ -7,10 +7,10 @@ use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, MarkedArgumentBuffer,
-    Ref as JscRef, StringJsc, SysErrorJsc, SystemError,
+    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, Ref as JscRef,
+    StringJsc, SysErrorJsc, SystemError,
 };
-use bun_ptr::{AsCtxPtr, BackRef};
+use bun_ptr::BackRef;
 
 use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -75,7 +75,6 @@ unsafe extern "C" {
     // libc byte-order conversions are pure on the integer argument — no
     // pointer/aliasing/thread preconditions — so declare them `safe fn`.
     safe fn ntohs(nshort: u16) -> u16;
-    safe fn htonl(hlong: u32) -> u32;
     safe fn htons(hshort: u16) -> u16;
 }
 
@@ -148,8 +147,8 @@ extern "C" fn on_data(
         let peer = buf.get_peer(i);
 
         let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
-        let mut hostname: Option<&[u8]> = None;
-        let mut port: u16 = 0;
+        let hostname: Option<&[u8]>;
+        let port: u16;
         let mut scope_id: Option<u32> = None;
 
         // SAFETY: peer points to a sockaddr_storage; family discriminates the cast.
@@ -1616,8 +1615,7 @@ impl UDPSocket {
         };
         let config = UDPSocketConfig::from_js(global_this, options, this_value)?;
 
-        let previous_config = this.config.replace(config);
-        drop(previous_config);
+        let _ = this.config.replace(config);
 
         Ok(JSValue::UNDEFINED)
     }

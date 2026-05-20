@@ -15,13 +15,12 @@ use core::ptr::NonNull;
 use bun_boringssl as boringssl;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_core::Output;
 use bun_core::{ZigString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
-use bun_ptr::{IntrusiveRc, ThisPtr};
+use bun_ptr::ThisPtr;
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -53,9 +52,6 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
-/// DEFLATE overhead
-const COMPRESSION_OVERHEAD: usize = 4;
-
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
@@ -418,7 +414,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return;
                     }
                 };
-                let mut outstring = ZigString::EMPTY;
+                let mut outstring;
                 if let Some(utf16) = utf16_bytes {
                     // Ownership of the UTF-16 buffer transfers to C++: with
                     // `clone=false` and the global tag set, `Zig::toString`
@@ -981,7 +977,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                         self.ping_frame_bytes[6 + receive_body_remain..][..to_copy]
                             .copy_from_slice(&data[..to_copy]);
                         receive_body_remain += to_copy;
-                        data = &data[to_copy..];
                         if receive_body_remain < self.ping_len as usize {
                             break;
                         }
@@ -1101,7 +1096,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if should_compress {
             // For compressed messages, we need to compress the content first
-            let mut temp_buffer: Option<Vec<u8>> = None;
+            let temp_buffer: Option<Vec<u8>>;
             // PORT NOTE: Zig used deflate.rare_data.arena(); in Rust we use global mimalloc.
             // PERF(port): was rare_data arena allocator
             let content_to_compress: &[u8] = match bytes {
@@ -1290,7 +1285,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         header.set_opcode(Opcode::Pong);
 
         header.set_mask(true);
-        header.set_len((self.ping_len & 0x7F) as u8); // @truncate to u7
+        header.set_len(self.ping_len & 0x7F); // @truncate to u7
         let header_slice = header.slice();
         self.ping_frame_bytes[0] = header_slice[0];
         self.ping_frame_bytes[1] = header_slice[1];
@@ -1799,7 +1794,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // The Rust global allocator is also mimalloc, so `heap::take`
             // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
             let buffered_slice: Box<[u8]> = unsafe {
-                bun_core::heap::take(core::slice::from_raw_parts_mut(
+                bun_core::heap::take(std::ptr::slice_from_raw_parts_mut(
                     buffered_data,
                     buffered_data_len,
                 ))
@@ -1918,7 +1913,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: see `init()` — adopt the C++ mimalloc-owned buffer
             // directly so it is freed (not leaked) when the handler drops.
             let buffered_slice: Box<[u8]> = unsafe {
-                bun_core::heap::take(core::slice::from_raw_parts_mut(
+                bun_core::heap::take(std::ptr::slice_from_raw_parts_mut(
                     buffered_data,
                     buffered_data_len,
                 ))

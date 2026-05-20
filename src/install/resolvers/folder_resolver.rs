@@ -9,7 +9,7 @@ use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
 
 use crate::bun_json::Expr;
-use crate::dependency::{self, Dependency};
+use crate::dependency::{self};
 use crate::install::{Features, Lockfile, PackageID};
 use crate::lockfile::Package as LockfilePackage;
 use crate::lockfile_real::StringBuilder;
@@ -190,7 +190,7 @@ fn normalize_package_json_path<'a>(
     joined: &'a mut PathBuffer,
     non_normalized_path: &[u8],
 ) -> Paths<'a> {
-    let mut abs: &[u8] = b"";
+    let abs: &[u8];
     let rel: &[u8];
     // We consider it valid if there is a package.json in the folder
     let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {

@@ -577,7 +577,7 @@ impl S3Client {
         // by value while `defer blob.detach()` was still armed on the original.
         // Here we move into `PathOrBlob` directly; cleanup of the moved-out
         // value is handled by `Drop`.
-        let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(blob);
+        let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
         crate::webcore::blob::write_file_internal(
             global,
             &mut blob_internal,

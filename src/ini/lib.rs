@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
 // Pieces that transitively need the JS-AST (`Expr`/`E::Object`/`Rope`) or the
@@ -241,7 +240,7 @@ mod draft {
     use core::ptr;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, BunInstall, NpmRegistry, NpmRegistryMap, npm_registry};
+    use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData};
     use bun_ast::{IntoStr, Loc, Log, Source};
@@ -699,7 +698,7 @@ mod draft {
                     let c = val[i];
                     if esc {
                         match c {
-                            b'\\' => unesc.extend_from_slice(&[b'\\']),
+                            b'\\' => unesc.extend_from_slice(b"\\"),
                             b';' | b'#' | b'$' => unesc.push(c),
                             b'.' => {
                                 if usage == Usage::Section {
@@ -1309,12 +1308,12 @@ mod draft {
             }
             if log.has_errors() {
                 if log.errors == 1 {
-                    Output::warn(&format_args!(
+                    Output::warn(format_args!(
                         "Encountered an error while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
                     ));
                 } else {
-                    Output::warn(&format_args!(
+                    Output::warn(format_args!(
                         "Encountered errors while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
                     ));
@@ -1349,9 +1348,10 @@ mod draft {
         };
         let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
         // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
-        // SAFETY: arena outlives all bump-allocated slices used below. TODO(refactor):
-        // restructure Parser so the bump is passed externally or split borrows.
-        let bump: &Arena = unsafe { &*(&raw const parser.arena) };
+        // TODO(refactor): restructure Parser so the bump is passed externally or split borrows.
+        let bump_ptr: *const Arena = &raw const parser.arena;
+        // SAFETY: arena outlives all bump-allocated slices used below.
+        let bump: &Arena = unsafe { &*bump_ptr };
         parser.parse(bump)?;
         // Need to be very, very careful here with strings.
         // They are allocated in the Parser's arena, which of course gets
@@ -1527,10 +1527,7 @@ mod draft {
                 };
         }
 
-        let mut registry_map = install
-            .scoped
-            .take()
-            .unwrap_or_else(NpmRegistryMap::default);
+        let mut registry_map = install.scoped.take().unwrap_or_default();
 
         // SAFETY: `parser.out` is an `E::Object` produced by `Parser::parse`; the
         // arena pointee lives until `parser` drops at end of fn.

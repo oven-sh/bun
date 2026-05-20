@@ -83,7 +83,7 @@ impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
         match res {
             Ok(()) => {}
             Err(e) => {
-                return write!(writer, "<error writing declaration block: {}>\n", e.name());
+                return writeln!(writer, "<error writing declaration block: {}>", e.name());
             }
         }
         write!(writer, "{}", bstr::BStr::new(&arraylist))
@@ -303,7 +303,6 @@ impl<'bump> DeclarationBlock<'bump> {
     }
 
     pub fn eql(&self, other: &Self) -> bool {
-        use crate::generics::CssEql;
         if self.declarations.len() != other.declarations.len()
             || self.important_declarations.len() != other.important_declarations.len()
         {

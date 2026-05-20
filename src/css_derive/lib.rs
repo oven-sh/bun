@@ -136,7 +136,7 @@ fn with_trait_bounds(input: &DeriveInput, trait_path: &TokenStream2) -> syn::Gen
 
 fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let generics = with_trait_bounds(&input, &quote!(::bun_css::generics::CssEql));
+    let generics = with_trait_bounds(input, &quote!(::bun_css::generics::CssEql));
     let (impl_g, ty_g, where_g) = generics.split_for_impl();
 
     let body = match &input.data {
@@ -259,7 +259,7 @@ fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
 fn expand_css_hash(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let generics = with_trait_bounds(&input, &quote!(::bun_css::generics::CssHash));
+    let generics = with_trait_bounds(input, &quote!(::bun_css::generics::CssHash));
     let (impl_g, ty_g, where_g) = generics.split_for_impl();
 
     let body = match &input.data {
@@ -386,7 +386,7 @@ pub fn derive_is_compatible(input: TokenStream) -> TokenStream {
 
 fn expand_is_compatible(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
-    let generics = with_trait_bounds(&input, &quote!(::bun_css::generics::IsCompatible));
+    let generics = with_trait_bounds(input, &quote!(::bun_css::generics::IsCompatible));
     let (impl_g, ty_g, where_g) = generics.split_for_impl();
 
     let body = match &input.data {
@@ -952,7 +952,7 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // Trait-impl generics carry `T: generics::ToCss` for every type parameter
     // so generic containers (`Foo<T>`) constrain their payload. The inherent
     // forwarder reuses the same bounds (it calls the trait method).
-    let bounded = with_trait_bounds(&input, &quote!(::bun_css::generics::ToCss));
+    let bounded = with_trait_bounds(input, &quote!(::bun_css::generics::ToCss));
     let (impl_g, ty_g, where_g) = bounded.split_for_impl();
 
     let body = match &input.data {
@@ -1198,7 +1198,7 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // `parse` is kept as a thin forwarder for call sites that don't import the
     // trait. `ParseWithOptions` ignores options (Zig fallthrough) — types that
     // genuinely consume options hand-write their own impl instead of deriving.
-    let bounded = with_trait_bounds(&input, &quote!(::bun_css::generics::Parse));
+    let bounded = with_trait_bounds(input, &quote!(::bun_css::generics::Parse));
     let (b_impl_g, _, b_where_g) = bounded.split_for_impl();
 
     Ok(quote! {

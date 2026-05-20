@@ -1,7 +1,6 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::JSValue;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for JSC's `MarkedArgumentBuffer` (a GC-rooted argument list).

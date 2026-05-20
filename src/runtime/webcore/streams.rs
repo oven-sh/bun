@@ -5,15 +5,15 @@ use bun_ptr::{BackRef, RawSlice};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
-    JSPromise, JSPromiseStrong, JSType, JSValue, JsError, JsResult, SysErrorJsc, VirtualMachine,
+    JSPromise, JSPromiseStrong, JSType, JSValue, JsResult, SysErrorJsc, VirtualMachine,
 };
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
-use crate::webcore::blob::{Any as AnyBlob, Blob};
-use crate::webcore::sink::{Sink, SinkHandler};
+use crate::webcore::blob::Any as AnyBlob;
+use crate::webcore::sink::Sink;
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // PORT NOTE: scope statics renamed with `Log` suffix so they don't collide with
@@ -687,7 +687,10 @@ impl Pending {
             .enqueue_task(bun_event_loop::Task::from_boxed(clone));
     }
 
-    pub fn run_from_js_thread(this: *mut Pending) {
+    /// # Safety
+    /// `this` must be a valid, uniquely-owned pointer previously produced by
+    /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
+    pub unsafe fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.run();
@@ -1901,7 +1904,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         false
     }
 
-    pub fn destroy(this: *mut Self) {
+    /// # Safety
+    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
+    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
+    pub unsafe fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
         // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
         // the Box first so we never hold a `&mut *this` alongside the Box's
@@ -2146,13 +2152,6 @@ impl NetworkSink {
     }
     // TODO(port): bun.TrivialDeinit → relies on Drop; explicit deinit is no-op here
 
-    fn get_high_water_mark(&self) -> BlobSizeType {
-        if let Some(task) = self.task_ref() {
-            return task.part_size_in_bytes() as BlobSizeType;
-        }
-        self.high_water_mark
-    }
-
     pub fn path(&self) -> Option<&[u8]> {
         if let Some(task) = self.task_ref() {
             return Some(&task.path);
@@ -2196,7 +2195,7 @@ impl NetworkSink {
     fn detach_writable(&mut self) {
         if let Some(task) = self.task.take() {
             // SAFETY: task is ref-counted; deref releases our ref
-            bun_s3::MultiPartUpload::deref_(task.as_ptr());
+            unsafe { bun_s3::MultiPartUpload::deref_(task.as_ptr()) };
         }
     }
 
@@ -2254,7 +2253,10 @@ impl NetworkSink {
         ))
     }
 
-    pub fn finalize_and_destroy(this: *mut Self) {
+    /// # Safety
+    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
+    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
+    pub unsafe fn finalize_and_destroy(this: *mut Self) {
         // SAFETY: this was heap-allocated; reclaim sole ownership before
         // touching fields so no `&mut *this` is live alongside the Box.
         let mut this = unsafe { bun_core::heap::take(this) };

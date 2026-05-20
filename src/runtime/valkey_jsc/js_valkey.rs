@@ -1,4 +1,3 @@
-use bun_collections::{ByteVecExt, VecExt};
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -16,7 +15,6 @@ use bun_jsc::{
 use bun_ptr::{AsCtxPtr, BackRef};
 use bun_uws as uws;
 
-use super::js_valkey_functions as fns;
 use super::protocol_jsc;
 use super::valkey;
 use super::valkey_command_body as command;
@@ -56,20 +54,6 @@ fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
 #[inline]
 fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
-}
-
-/// `AnySocket::isClosed` — dispatches to the inner handler.
-trait AnySocketIsClosed {
-    fn is_closed(&self) -> bool;
-}
-impl AnySocketIsClosed for uws::AnySocket {
-    #[inline]
-    fn is_closed(&self) -> bool {
-        match self {
-            uws::AnySocket::SocketTcp(s) => s.is_closed(),
-            uws::AnySocket::SocketTls(s) => s.is_closed(),
-        }
-    }
 }
 
 /// Scope-guarded `ref/deref` over a raw pointer — sidesteps the
@@ -249,7 +233,7 @@ impl SubscriptionCtx {
         // PORT NOTE: Zig `defer` ≡ scopeguard-on-drop here.
         let map = self.subscription_callback_map();
 
-        let mut handlers_array: JSValue = JSValue::UNDEFINED;
+        let handlers_array: JSValue;
         let mut is_new_channel = false;
         let existing_handler_arr = map.get(global_object, channel_name)?;
         if existing_handler_arr != JSValue::UNDEFINED {
@@ -1864,7 +1848,6 @@ impl JSValkeyClient {
 // `js_valkey_functions.rs`, so no re-export is needed (and `pub use` of impl
 // methods is not legal Rust). Keep `fns` referenced so the sibling module is
 // linked into the build.
-use fns as _fns_anchor;
 
 // ───────────────────────────────────────────────────────────────────────────
 // SocketHandler
@@ -2193,7 +2176,7 @@ impl Options {
                 if let Some(ssl_config) =
                     SSLConfig::from_js(global_object.bun_vm(), global_object, tls)?
                 {
-                    this.tls = valkey::TLS::Custom(ssl_config);
+                    this.tls = valkey::TLS::Custom(Box::new(ssl_config));
                 } else {
                     return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
                 }

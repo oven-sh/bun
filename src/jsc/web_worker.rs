@@ -93,7 +93,6 @@ pub struct WebWorker {
     // crosses threads; the backref invariant (parent outlives child via
     // `parent_poll_ref`) is documented above.
     parent: bun_ptr::BackRef<VirtualMachine>,
-    parent_context_id: u32,
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -481,7 +480,7 @@ impl WebWorker {
         name_str: BunString,
         specifier_str: BunString,
         error_message: &mut BunString,
-        parent_context_id: u32,
+        _parent_context_id: u32,
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
@@ -543,7 +542,6 @@ impl WebWorker {
             cpp_worker,
             // `parent` is the calling thread's live VM; non-null by FFI contract.
             parent: bun_ptr::BackRef::from(NonNull::new(parent).expect("parent VM")),
-            parent_context_id,
             execution_context_id: this_context_id,
             mini,
             eval_mode,

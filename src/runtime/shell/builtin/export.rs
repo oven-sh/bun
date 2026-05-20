@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use crate::shell::EnvStr;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};

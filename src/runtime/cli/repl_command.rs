@@ -16,7 +16,6 @@ use crate::dns_jsc::Order as DnsOrder;
 use bun_alloc::Arena;
 use bun_core::ZigString;
 use bun_core::{Global, Output};
-use bun_js_parser as js_ast;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject};
 
@@ -69,9 +68,6 @@ impl ReplCommand {
         // (mi_heap wrapper) — TODO(refactor): either have bun_jsc::VirtualMachine own its arena
         // internally (drop the param) or expose a distinct `bun_alloc::MimallocArena` type.
         let arena = Arena::new();
-
-        // Create a virtual path for REPL evaluation
-        let repl_path: &'static [u8] = b"[repl]";
 
         // Validate DNS result order (InitOptions doesn't carry it yet — see TODO below).
         let _dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
@@ -155,7 +151,6 @@ impl ReplCommand {
             repl,
             vm,
             arena,
-            entry_path: repl_path,
             // PORT NOTE: ctx is the process-global ContextData; extend the
             // borrow past the local reborrow lifetime via raw ptr (the runner
             // never outlives ctx — global_exit() is `!`).
@@ -217,7 +212,6 @@ struct ReplRunner<'a, 'r> {
     repl: &'a mut Repl<'r>,
     vm: *mut VirtualMachine,
     arena: Arena,
-    entry_path: &'static [u8],
     eval_script: &'a [u8],
     eval_and_print: bool,
 }

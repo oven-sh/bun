@@ -1,11 +1,3 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    unused_unsafe,
-    clippy::all
-)]
 #![warn(unused_must_use)]
 pub mod parse_entry;
 pub mod parse_fn;
@@ -19,7 +11,6 @@ pub mod parse_suffix;
 pub mod parse_typescript;
 
 use bun_collections::VecExt;
-use core::mem;
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
@@ -28,7 +19,7 @@ use bun_core::{Error, err};
 
 use bun_ast::LexerLog as _;
 
-use crate::lexer::{self as js_lexer, T};
+use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
@@ -40,9 +31,7 @@ use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
-use bun_ast::{
-    B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt, Symbol,
-};
+use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
 
 // Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -752,7 +741,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn parse_clause_alias(&mut self, kind: &[u8]) -> Result<&'a [u8], Error> {
+    pub fn parse_clause_alias(&mut self, _kind: &[u8]) -> Result<&'a [u8], Error> {
         let p = self;
         let loc = p.lexer.loc();
 

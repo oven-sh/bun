@@ -6,6 +6,7 @@ use bun_jsc::{JSGlobalObject, JSValue};
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
+#[derive(Default)]
 pub struct DiffFormatter<'a> {
     pub received_string: Option<&'a [u8]>,
     pub expected_string: Option<&'a [u8]>,
@@ -15,28 +16,12 @@ pub struct DiffFormatter<'a> {
     pub not: bool,
 }
 
-impl<'a> Default for DiffFormatter<'a> {
-    fn default() -> Self {
-        Self {
-            received_string: None,
-            expected_string: None,
-            received: None,
-            expected: None,
-            global_this: None,
-            not: false,
-        }
-    }
-}
-
 impl<'a> fmt::Display for DiffFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let diff_config =
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());
 
-        if self.expected_string.is_some() && self.received_string.is_some() {
-            let received = self.received_string.unwrap();
-            let expected = self.expected_string.unwrap();
-
+        if let (Some(expected), Some(received)) = (self.expected_string, self.received_string) {
             print_diff_main(self.not, received, expected, f, &diff_config)?;
             return Ok(());
         }

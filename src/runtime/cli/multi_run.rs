@@ -8,7 +8,7 @@ use bun_core::strings;
 use bun_core::{self as bun, Error, Global, Output, err};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
-use bun_io::{BufferedReader, ReadState};
+use bun_io::BufferedReader;
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
@@ -125,12 +125,11 @@ impl<'a> ProcessHandle<'a> {
         // spawnProcess. Using *const c_char placeholders.
         let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr().cast::<c_char>(),
-            (if cfg!(unix) {
-                b"-c\0".as_ptr()
+            if cfg!(unix) {
+                c"-c".as_ptr()
             } else {
-                b"exec\0".as_ptr()
-            })
-            .cast::<c_char>(),
+                c"exec".as_ptr()
+            },
             self.config.command.as_ptr().cast::<c_char>(),
             ptr::null(),
         ];
@@ -141,9 +140,7 @@ impl<'a> ProcessHandle<'a> {
         // end; allocates on heap here. Profile if it shows up on a hot path.
         let envp;
         let env_ptr = state.env;
-        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`;
-        // on POSIX `to_process` consumes `self` by value.
-        let mut spawned: SpawnProcessResult = {
+        let spawned: SpawnProcessResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader.
             let env = unsafe { &mut *env_ptr };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
@@ -165,6 +162,11 @@ impl<'a> ProcessHandle<'a> {
             }?
             .map_err(|e| Error::from(e))?
         };
+        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`
+        // and the stdout/stderr pipes are `.take()`n below; on POSIX `to_process` consumes
+        // `self` by value.
+        #[cfg(windows)]
+        let mut spawned = spawned;
         // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
         // On Windows the readers are wired via `Source::Pipe` taken from
         // `spawned.stdout/stderr` below, and `WindowsStdioResult` is not `Copy`.

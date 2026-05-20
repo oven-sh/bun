@@ -7,7 +7,6 @@ use crate::{PrintErr, Printer};
 
 use bun_alloc::Arena;
 use bun_ast::ImportRecord;
-use bun_collections::VecExt;
 
 /// Named replacement for the Zig anonymous `struct { v: ?LayerName }` used in
 /// both `ImportConditions.layer` and `ImportRule.layer`. The two Zig anonymous
@@ -369,6 +368,5 @@ const _: () = {
 };
 
 // silence unused-import warnings on the gated bodies' deps
-use {Arena as _Arena, ImportRecord as _ImportRecord};
 
 // ported from: src/css/rules/import.zig

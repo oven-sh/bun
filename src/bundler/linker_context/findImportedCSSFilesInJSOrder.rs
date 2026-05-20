@@ -4,7 +4,7 @@ use bun_ast::ImportRecord;
 use bun_collections::VecExt;
 
 use crate::options::Loader;
-use crate::{Index, LinkerContext, Part};
+use crate::{Index, LinkerContext};
 use bun_ast::PartList;
 use bun_collections::DynamicBitSet as BitSet;
 

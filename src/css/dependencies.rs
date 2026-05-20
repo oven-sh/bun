@@ -1,5 +1,4 @@
 //! CSS dependency tracking — `@import` and `url()` references collected during printing.
-use bun_collections::VecExt;
 
 use crate::SourceLocation;
 // const Location = css.Location; — shadowed by the local `Location` below in Zig too.

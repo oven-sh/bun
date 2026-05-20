@@ -2,7 +2,6 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_core::fmt::PathSep;
-use bun_core::output::ErrName as _;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_paths::platform;
@@ -661,23 +660,6 @@ pub fn do_patch_commit(
     }))
 }
 
-fn patch_commit_get_version<'a>(
-    buf: &'a mut [u8; 1024],
-    patch_tag_path: &ZStr,
-) -> sys::Maybe<&'a [u8]> {
-    let patch_tag = sys::File::open(patch_tag_path, sys::O::RDONLY, 0)?;
-    let _cleanup = scopeguard::guard(patch_tag, |f| {
-        drop(f);
-        let _ = sys::unlink(patch_tag_path);
-    });
-
-    let version = _cleanup.read_fill_buf(&mut buf[..])?;
-
-    // maybe if someone opens it in their editor and hits save a newline will be inserted,
-    // so trim that off
-    Ok(strings::trim_right(version, b" \n\r\t"))
-}
-
 fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
     #[derive(Copy, Clone, PartialEq, Eq)]
     #[repr(u8)]
@@ -1099,7 +1081,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             #[cfg(not(windows))]
             {
                 if let Ok(st) = sys::lstat(p.slice_z()) {
-                    // `mode_t` is `u16` on android, `u32` on linux/darwin.
+                    // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
                     sys::posix::s_islnk(st.st_mode as u32)
                 } else {
                     return;

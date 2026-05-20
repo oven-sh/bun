@@ -7,7 +7,7 @@ use bun_core::err;
 use bun_core::{PathString, ZStr};
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, PathBuffer};
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
 use bun_sys::{self, Fd};
 
@@ -354,7 +354,8 @@ impl<'a> Scanner<'a> {
         // `Entry::kind` takes `*mut RealFS` (Zig `*Implementation`); cast the
         // shared singleton ref — `kind()` only stat()s through it.
         let real_fs = (&raw const self.fs.fs).cast_mut();
-        match entry.kind(real_fs, true) {
+        // SAFETY: entries_mutex held; real_fs points at the process-global RealFS.
+        match unsafe { entry.kind(real_fs, true) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;

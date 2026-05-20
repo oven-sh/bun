@@ -1,4 +1,3 @@
-use core::ffi::CStr;
 use std::io::Write as _;
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};

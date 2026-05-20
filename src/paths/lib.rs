@@ -766,7 +766,7 @@ pub mod fs {
             let mut is_absolute = true;
             let has_disk_designator = path.len() > 2
                 && path[1] == b':'
-                && matches!(path[0], b'a'..=b'z' | b'A'..=b'Z')
+                && path[0].is_ascii_alphabetic()
                 && is_sep_any(path[2]);
             if has_disk_designator {
                 path = &path[2..];

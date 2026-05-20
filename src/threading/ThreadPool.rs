@@ -482,12 +482,12 @@ impl ThreadPool {
     /// `*mut V`) to an arbitrary worker thread; the raw-pointer round-trip
     /// through the intrusive `Task` callback would otherwise smuggle `!Send`
     /// data across threads with no compiler check (Zig's `anytype` had none).
-    pub fn each<Ctx, V: Copy, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
+    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
         // TODO(port): narrow bounds — Zig used `anytype` + comptime fn
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
-        V: core::marker::Sync + core::marker::Send,
+        V: Copy + core::marker::Sync + core::marker::Send,
     {
         self.each_impl(ctx, ByValue(run_fn), values);
     }

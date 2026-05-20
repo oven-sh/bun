@@ -212,10 +212,9 @@ impl Debug {
     }
 }
 
-#[repr(u8)]
-enum DrainMicrotasksResult {
-    Success = 0,
-    JsTerminated = 1,
+mod drain_result {
+    pub const SUCCESS: u8 = 0;
+    pub const JS_TERMINATED: u8 = 1;
 }
 
 // TODO(port): move to jsc_sys
@@ -223,7 +222,7 @@ enum DrainMicrotasksResult {
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ mutating
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
-    safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> DrainMicrotasksResult;
+    safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -413,8 +412,9 @@ impl EventLoop {
         jsc_vm.release_weak_refs();
 
         match JSC__JSGlobalObject__drainMicrotasks(global_object) {
-            DrainMicrotasksResult::Success => {}
-            DrainMicrotasksResult::JsTerminated => return Err(JsTerminated::JSTerminated),
+            drain_result::SUCCESS => {}
+            drain_result::JS_TERMINATED => return Err(JsTerminated::JSTerminated),
+            _ => unreachable!(),
         }
 
         // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
@@ -984,8 +984,10 @@ impl EventLoop {
         // typed `set_parent_event_loop` extension trait in `bun_uws` expects
         // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
         // exposes `into_tag_ptr()` — go straight to the sys-level setter.
-        let (tag, ptr) = EventLoopHandle::init(std::ptr::from_mut::<EventLoop>(self).cast::<()>())
-            .into_tag_ptr();
+        // SAFETY: `self` is the live per-thread `jsc::EventLoop` (mut ref).
+        let (tag, ptr) =
+            unsafe { EventLoopHandle::init(std::ptr::from_mut::<EventLoop>(self).cast::<()>()) }
+                .into_tag_ptr();
         // SAFETY: `uws::Loop::get()` returns the live process-global uws loop.
         unsafe {
             (*uws::Loop::get())

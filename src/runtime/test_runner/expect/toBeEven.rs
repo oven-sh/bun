@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::{Expect, JSValueTestExt};
+use super::Expect;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]

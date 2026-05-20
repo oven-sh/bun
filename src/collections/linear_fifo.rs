@@ -332,7 +332,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 ptr::write_bytes(
                     unused.as_mut_ptr().cast::<u8>(),
                     0xAA,
-                    unused.len() * mem::size_of::<T>(),
+                    std::mem::size_of_val(unused),
                 );
             }
         }

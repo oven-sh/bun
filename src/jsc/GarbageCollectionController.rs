@@ -20,6 +20,7 @@
 
 use core::ffi::c_int;
 
+#[cfg(debug_assertions)]
 use bun_core::env_var;
 use bun_uws as uws;
 

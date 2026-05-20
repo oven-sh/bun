@@ -2426,8 +2426,6 @@ pub mod O {
         pub const RDWR: i32 = 0o2;
         pub const CREAT: i32 = 0o100;
         pub const EXCL: i32 = 0o200;
-        // sys.zig:195 `.windows => { NOCTTY = 0 }` — meaningless on Windows.
-        pub const NOCTTY: i32 = 0;
         pub const TRUNC: i32 = 0o1000;
         pub const APPEND: i32 = 0o2000;
         pub const NONBLOCK: i32 = 0o4000;

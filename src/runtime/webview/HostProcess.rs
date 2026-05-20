@@ -14,18 +14,22 @@
 //! This file owns process lifetime only. The usockets client lives in C++
 //! (WebKitBackend.cpp) — usockets is a C API and the frame protocol is C structs.
 
-use core::ffi::c_char;
 use core::ptr::{self, NonNull};
 
-use bun_core::{self, Error};
 use bun_jsc::JSGlobalObject;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_output::{declare_scope, scoped_log};
-use bun_spawn::{
-    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
-    SpawnResultExt as _, Status, Stdio,
+use bun_spawn::{self, Process};
+
+#[cfg(target_os = "macos")]
+use {
+    bun_core::Error,
+    bun_jsc::virtual_machine::VirtualMachine,
+    bun_spawn::{
+        EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
+    },
+    bun_sys::{self, Fd, FdExt as _},
+    core::ffi::c_char,
 };
-use bun_sys::{self, Fd, FdExt as _};
 
 declare_scope!(WebViewHost, hidden);
 
@@ -124,6 +128,7 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
     #[cfg(not(target_os = "macos"))]
     {
@@ -191,8 +196,9 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // argv[0] non-null; valid for this call.
         let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
-        // SAFETY: vm is valid for the call.
-        let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
+        // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
+        // per-thread `jsc::EventLoop`.
+        let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
         let process =
             NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));

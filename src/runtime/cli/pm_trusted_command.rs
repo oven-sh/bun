@@ -70,10 +70,10 @@ impl UntrustedCommand {
         // `load_lockfile` borrows but is never dereferenced via `load_lockfile`
         // here.
         unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
-        drop(load_lockfile);
 
-        // SAFETY: `load_lockfile` dropped above; `pm_raw` is the only path to
-        // the singleton for the rest of this fn (same as the original `pm`).
+        // SAFETY: `load_lockfile` is not used past this point; `pm_raw` is the
+        // only path to the singleton for the rest of this fn (same as the
+        // original `pm`).
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
         let log: &mut bun_ast::Log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
@@ -353,7 +353,7 @@ impl TrustCommand {
             let nm_saved = node_modules_path.len();
             let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
 
-            let node_modules_dir = match bun_sys::Dir::cwd()
+            let _node_modules_dir = match bun_sys::Dir::cwd()
                 .open_at(node_modules.relative_path.as_bytes())
                 .map_err(bun_core::Error::from)
             {
@@ -442,10 +442,6 @@ impl TrustCommand {
             Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
             Global::crash();
         }
-
-        // Drop the read-only lockfile borrow before the run-scripts phase
-        // (which needs `&mut PackageManager`).
-        drop(tree_iter);
 
         let mut scripts_node: Progress::Node;
         // SAFETY: `pm_raw` singleton; `progress` is owned inline.
@@ -651,7 +647,6 @@ impl TrustCommand {
             let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
         }
-        drop(load_lockfile);
 
         let mut buffer_writer = bun_js_printer::BufferWriter::init();
         buffer_writer.buffer.list.reserve(

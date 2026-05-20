@@ -9,7 +9,6 @@ use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
-use bun_options_types::compile_target;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::{PathBuffer, resolve_path};

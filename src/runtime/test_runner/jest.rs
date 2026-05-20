@@ -1,5 +1,4 @@
 use core::ptr::NonNull;
-use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
@@ -12,11 +11,10 @@ use bun_jsc::{
 };
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
-use bun_core::strings;
 
 pub use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
-use super::scope_functions::{self, create_bound, strings as scope_strings, Mode as ScopeKind};
+use super::scope_functions::{create_bound, strings as scope_strings, Mode as ScopeKind};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
 use bun_test::js_fns::generic_hook;

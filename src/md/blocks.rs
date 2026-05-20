@@ -911,7 +911,7 @@ impl Parser<'_> {
             {
                 self.consume_ref_defs_from_current_block();
             }
-            let mut hdr = self.get_block_header_at(cb_off);
+            let hdr = self.get_block_header_at(cb_off);
 
             // Handle setext heading after ref def consumption
             if hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0 {
@@ -923,7 +923,7 @@ impl Parser<'_> {
                     // Only underline left after eating ref defs → convert to paragraph,
                     // keep block open so subsequent lines join this paragraph (md4c behavior)
                     hdr.block_type = BlockType::P;
-                    hdr.flags &= !(types::BLOCK_SETEXT_HEADER as u32);
+                    hdr.flags &= !types::BLOCK_SETEXT_HEADER;
                     return Ok(()); // Don't close the block!
                 } else {
                     // All lines consumed (shouldn't normally happen)
@@ -989,7 +989,8 @@ impl Parser<'_> {
 
             // First definition wins
             let label = norm_label.into_boxed_slice();
-            if self.ref_def_labels.insert(label.clone()) {
+            if !self.ref_def_labels.contains(&label) {
+                let _ = self.ref_def_labels.insert(&label);
                 self.ref_defs.push(crate::ref_defs::RefDef {
                     label,
                     dest: dest_dupe,

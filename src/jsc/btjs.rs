@@ -14,11 +14,15 @@ use bun_core::{self, Error, err};
 // through to fp-walking exactly as Zig does on targets without DWARF support.
 #[cfg(debug_assertions)]
 mod zig_std_debug {
-    use core::ffi::{c_int, c_void};
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use core::ffi::c_int;
+    use core::ffi::c_void;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     use core::sync::atomic::{AtomicI32, Ordering};
 
-    use bun_core::{Error, err};
+    use bun_core::Error;
+    #[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
+    use bun_core::err;
 
     // ── ThreadContext / have_ucontext ────────────────────────────────────
     // Zig: `pub const ThreadContext = if (windows) windows.CONTEXT else if (have_ucontext) posix.ucontext_t else void;`
@@ -31,6 +35,7 @@ mod zig_std_debug {
     pub const HAVE_UCONTEXT: bool = cfg!(not(windows));
     // Zig: `pub const have_getcontext = @TypeOf(posix.system.getcontext) != void;`
     // Android / OpenBSD / Haiku lack getcontext; everywhere else we link libc's.
+    #[cfg(not(windows))]
     const HAVE_GETCONTEXT: bool = cfg!(all(
         not(windows),
         not(target_os = "android"),
@@ -39,6 +44,7 @@ mod zig_std_debug {
 
     // DWARF unwinding requires the full `Dwarf` parser (not ported). Zig falls back to
     // fp-walking when `SelfInfo.supports_unwinding == false`; we hard-code that here.
+    #[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
     const SUPPORTS_UNWINDING: bool = false;
 
     // ── std.debug.getContext ─────────────────────────────────────────────
@@ -135,7 +141,7 @@ mod zig_std_debug {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         mem: c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        mem: (),
+        _mem: (),
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -146,7 +152,7 @@ mod zig_std_debug {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             mem: -1,
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            mem: (),
+            _mem: (),
         };
 
         fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {

@@ -8,7 +8,6 @@
 
 #![warn(unused_must_use)]
 
-use bun_collections::VecExt;
 use bun_core::strings;
 // `Ref` is re-exported (pub use) below for `crate::Ref`; the local `use` here
 // is intentionally folded into that to avoid duplicate-import errors.
@@ -579,7 +578,6 @@ pub enum WrapKind {
 }
 
 pub use crate::options_impl::PathTemplate;
-pub(crate) use bun_ast::ServerComponentBoundary;
 pub(crate) use bun_ast::UseDirective;
 
 /// `bundle_v2.zig:MangledProps`.
@@ -597,7 +595,7 @@ pub use bun_js_printer::MangledProps;
 
 /// `js_ast.BundledAst` (the bundler-facing AST view).
 pub type JSAst<'a> = crate::BundledAst<'a>;
-pub(crate) use bun_ast::{Part, Ref, Symbol};
+pub(crate) use bun_ast::{Part, Ref};
 
 /// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module
 /// below) a namespace for `Kind`. Rust keeps types and modules in separate
@@ -680,7 +678,7 @@ pub mod js_meta {
     use bun_alloc::{AstAlloc, AstVec};
     use bun_ast::{Dependency, Ref};
     use bun_collections::array_hash_map::StringContext;
-    use bun_collections::{ArrayHashMap, AutoContext, StringArrayHashMap, VecExt};
+    use bun_collections::{ArrayHashMap, AutoContext, StringArrayHashMap};
 
     use crate::{ImportTracker, Index, WrapKind};
 
@@ -817,10 +815,10 @@ pub use crate::linker_context_mod::EventLoop;
 // crate-private aliases mirroring Zig's `Index.Int` / `Part.List` /
 // `ImportRecord.List` nesting.
 pub(crate) mod index {
-    pub(crate) use bun_ast::{Index, IndexInt as Int};
+    pub(crate) use bun_ast::IndexInt as Int;
 }
 pub(crate) mod part {
-    pub(crate) use bun_ast::{Dependency, PartList as List, symbol::Use as SymbolUse};
+    pub(crate) use bun_ast::PartList as List;
 }
 pub(crate) mod import_record {
     pub(crate) use bun_ast::import_record::List;

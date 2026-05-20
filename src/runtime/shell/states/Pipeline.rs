@@ -1,5 +1,3 @@
-use bun_ptr::AsCtxPtr;
-
 use crate::shell::ast;
 use crate::shell::interpreter::{
     Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind, closefd, log,
@@ -189,7 +187,8 @@ impl Pipeline {
                 me.io.stdin.clone()
             } else {
                 let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
-                r.set_interp(interp_ptr);
+                // SAFETY: `interp_ptr` is the live `Interpreter` this pipeline runs under.
+                unsafe { r.set_interp(interp_ptr) };
                 InKind::Fd(r)
             };
             let stdout = if cmd_count == 1 || cmd_idx == cmd_count - 1 {
@@ -207,7 +206,8 @@ impl Pipeline {
                     },
                     evtloop,
                 );
-                w.set_interp(interp_ptr);
+                // SAFETY: `interp_ptr` is the live `Interpreter` this pipeline runs under.
+                unsafe { w.set_interp(interp_ptr) };
                 OutKind::Fd(crate::shell::io::OutFd {
                     writer: w,
                     captured: None,
@@ -358,7 +358,9 @@ impl Pipeline {
             if let Some(base) = interp.node_mut(child).base_mut() {
                 let shell = core::mem::replace(&mut base.shell, core::ptr::null_mut());
                 if !shell.is_null() {
-                    ShellExecEnv::deinit_impl(shell);
+                    // SAFETY: `shell` is the duped env this pipeline child owned;
+                    // null-checked above and exclusively held here.
+                    unsafe { ShellExecEnv::deinit_impl(shell) };
                 }
             }
         }

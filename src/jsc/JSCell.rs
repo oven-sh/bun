@@ -1,5 +1,3 @@
-use core::marker::{PhantomData, PhantomPinned};
-
 use crate::custom_getter_setter::CustomGetterSetter;
 use crate::getter_setter::GetterSetter;
 use crate::{JSGlobalObject, JSObject, JSValue};

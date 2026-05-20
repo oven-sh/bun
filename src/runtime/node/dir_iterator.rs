@@ -7,11 +7,10 @@
 
 #![warn(unused_must_use)]
 
-use bun_paths::strings;
-use core::mem::{offset_of, size_of};
+use core::mem::offset_of;
 
 use bun_core::{PathString, RawSlice, WStr};
-use bun_sys::{self as sys, Fd, SystemErrno, Tag};
+use bun_sys::{self as sys, Fd, Tag};
 
 // `Entry.Kind` in Zig is `jsc.Node.Dirent.Kind` == `std.fs.Dir.Entry.Kind`.
 // In the Rust port that maps to `bun_core::FileKind`, re-exported here as
@@ -88,7 +87,6 @@ impl<const B: bool> WrappedSelect<B> for () {}
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
-    use bun_sys::darwin as posix_system;
     use core::ptr::addr_of;
 
     /// Zig: `buf: [8192]u8 align(@alignOf(posix.system.dirent))`.
@@ -442,6 +440,8 @@ mod platform {
 #[cfg(windows)]
 mod platform {
     use super::*;
+    use bun_paths::strings;
+    use bun_sys::SystemErrno;
     use bun_sys::windows as w;
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{

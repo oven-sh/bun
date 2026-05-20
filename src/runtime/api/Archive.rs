@@ -1,24 +1,20 @@
 //! `Bun.Archive` — tar/tgz pack + extract over libarchive.
 
-use core::ffi::{CStr, c_char};
-use core::mem::offset_of;
 use std::ffi::CString;
-use std::sync::Arc;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox};
-use bun_core::{ZigString, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_glob as glob;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSPropertyIterator,
-    JSPropertyIteratorOptions, JSValue, JsResult, WorkPool, WorkPoolTask,
+    self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
+    WorkPool, WorkPoolTask,
 };
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
@@ -29,8 +25,9 @@ use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 const FILETYPE_REGULAR: u32 = 0o100000;
 
 /// Compression options for the archive
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub enum Compression {
+    #[default]
     None,
     Gzip(GzipOptions),
 }
@@ -44,12 +41,6 @@ pub struct GzipOptions {
 impl Default for GzipOptions {
     fn default() -> Self {
         Self { level: 6 }
-    }
-}
-
-impl Default for Compression {
-    fn default() -> Self {
-        Compression::None
     }
 }
 
@@ -754,8 +745,12 @@ impl<C: TaskContext> AsyncTask<C> {
         }
     }
 
-    pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: called once on the JS thread after run_callback enqueued us; reclaim ownership.
+    /// # Safety
+    /// `this` must be the live `heap::into_raw` allocation produced by
+    /// [`create`](Self::create), called exactly once on the JS thread after
+    /// `run_callback` enqueues it. Takes ownership of the allocation.
+    pub unsafe fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
+        // SAFETY: see fn-level safety contract.
         let mut owned = unsafe { bun_core::heap::take(this) };
         owned.keep_alive.unref(bun_io::js_vm_ctx());
 
@@ -893,8 +888,6 @@ enum BlobOutputType {
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 enum BlobError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("GzipInitFailed")]
     GzipInitFailed,
     #[error("GzipCompressFailed")]
@@ -997,8 +990,6 @@ fn start_blob_task(
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 enum WriteError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("GzipInitFailed")]
     GzipInitFailed,
     #[error("GzipCompressFailed")]
@@ -1318,8 +1309,6 @@ enum CompressError {
     GzipInitFailed,
     #[error("GzipCompressFailed")]
     GzipCompressFailed,
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
 
 impl From<CompressError> for BlobError {
@@ -1327,7 +1316,6 @@ impl From<CompressError> for BlobError {
         match e {
             CompressError::GzipInitFailed => BlobError::GzipInitFailed,
             CompressError::GzipCompressFailed => BlobError::GzipCompressFailed,
-            CompressError::OutOfMemory => BlobError::OutOfMemory,
         }
     }
 }
@@ -1337,7 +1325,6 @@ impl From<CompressError> for WriteError {
         match e {
             CompressError::GzipInitFailed => WriteError::GzipInitFailed,
             CompressError::GzipCompressFailed => WriteError::GzipCompressFailed,
-            CompressError::OutOfMemory => WriteError::OutOfMemory,
         }
     }
 }

@@ -7,7 +7,6 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, Ordering};
 
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
@@ -15,8 +14,8 @@ use bun_jsc::StringJsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromise, JSPromiseStrong,
-    JSValue, Strong, StrongOptional, Task,
+    self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
+    StrongOptional, Task,
 };
 use bun_threading::Condition as Condvar;
 use bun_threading::Mutex;
@@ -28,10 +27,8 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 /// yet surfaced on the Rust `bun_jsc::JSValue` type. Declared as a trait so the
 /// call sites read identically to the Zig source.
 trait JSValueNapiExt {
-    fn js_type_loose(self) -> jsc::JSType;
     fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool>;
     fn is_async_context_frame(self) -> bool;
-    fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue>;
 }
 
 unsafe extern "C" {
@@ -41,20 +38,9 @@ unsafe extern "C" {
         global: *mut JSGlobalObject,
     ) -> bool;
     fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
-    fn JSBuffer__bufferFromLength(global: *mut JSGlobalObject, len: i64) -> JSValue;
 }
 
 impl JSValueNapiExt for JSValue {
-    /// Zig `jsTypeLoose()` — like `js_type()` but returns `Cell` for non-cell
-    /// values instead of triggering UB on the cell-type read.
-    #[inline]
-    fn js_type_loose(self) -> jsc::JSType {
-        if self.is_cell() {
-            self.js_type()
-        } else {
-            jsc::JSType::Cell
-        }
-    }
     fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> jsc::JsResult<bool> {
         // SAFETY: FFI; may run JS (getters on Proxy etc.). Zig: `fromJSHostCallGeneric` →
         // check_slow (open scope before call, then `returnIfException`).
@@ -66,12 +52,6 @@ impl JSValueNapiExt for JSValue {
     fn is_async_context_frame(self) -> bool {
         // SAFETY: trivial FFI.
         unsafe { Bun__JSValue__isAsyncContextFrame(self) }
-    }
-    fn create_buffer_from_length(global: &JSGlobalObject, len: usize) -> jsc::JsResult<JSValue> {
-        // SAFETY: FFI; may throw OOM. Zig: `fromJSHostCall` → zero_is_throw.
-        bun_jsc::call_zero_is_throw!(global, || unsafe {
-            JSBuffer__bufferFromLength(global.as_mut_ptr(), len as i64)
-        })
     }
 }
 
@@ -190,19 +170,6 @@ impl NapiEnv {
             return Some(exception);
         }
         None
-    }
-}
-
-/// Vtable for `bun_ptr::ExternalShared<NapiEnv>`.
-pub mod napi_env_external_shared_descriptor {
-    use super::*;
-    pub unsafe fn ref_(env: *mut NapiEnv) {
-        // SAFETY: caller contract — `env` is a valid C++-owned napi_env.
-        unsafe { NapiEnv__ref(env) }
-    }
-    pub unsafe fn deref(env: *mut NapiEnv) {
-        // SAFETY: caller contract — `env` is a valid C++-owned napi_env.
-        unsafe { NapiEnv__deref(env) }
     }
 }
 
@@ -375,20 +342,9 @@ impl napi_value {
 type char16_t = u16;
 pub type napi_property_attributes = c_uint;
 
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub enum napi_valuetype {
-    undefined = 0,
-    null = 1,
-    boolean = 2,
-    number = 3,
-    string = 4,
-    symbol = 5,
-    object = 6,
-    function = 7,
-    external = 8,
-    bigint = 9,
-}
+// Only used as `*mut napi_valuetype` out-param written by C++; Rust never
+// constructs or matches variants.
+pub type napi_valuetype = u32;
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -424,51 +380,6 @@ impl napi_typedarray_type {
             jsc::JSType::BigUint64Array => napi_typedarray_type::biguint64_array,
             _ => return None,
         })
-    }
-
-    pub fn to_js_type(self) -> jsc::JSType {
-        match self {
-            napi_typedarray_type::int8_array => jsc::JSType::Int8Array,
-            napi_typedarray_type::uint8_array => jsc::JSType::Uint8Array,
-            napi_typedarray_type::uint8_clamped_array => jsc::JSType::Uint8ClampedArray,
-            napi_typedarray_type::int16_array => jsc::JSType::Int16Array,
-            napi_typedarray_type::uint16_array => jsc::JSType::Uint16Array,
-            napi_typedarray_type::int32_array => jsc::JSType::Int32Array,
-            napi_typedarray_type::uint32_array => jsc::JSType::Uint32Array,
-            napi_typedarray_type::float32_array => jsc::JSType::Float32Array,
-            napi_typedarray_type::float64_array => jsc::JSType::Float64Array,
-            napi_typedarray_type::bigint64_array => jsc::JSType::BigInt64Array,
-            napi_typedarray_type::biguint64_array => jsc::JSType::BigUint64Array,
-        }
-    }
-
-    pub fn to_c(self) -> jsc::C::JSTypedArrayType {
-        self.to_js_type().to_typed_array_type().to_c()
-    }
-
-    /// Zig: `ArrayBuffer.TypedArrayType.toNapi` (array_buffer.zig:524).
-    ///
-    /// LAYERING: lives here (not as `TypedArrayType::to_napi` in `bun_jsc`) because
-    /// `napi_typedarray_type` is defined in `bun_runtime`, which depends on `bun_jsc`.
-    /// Hosting the inverse mapping on the napi side breaks the cycle.
-    pub fn from_typed_array_type(ty: jsc::TypedArrayType) -> Option<napi_typedarray_type> {
-        use jsc::TypedArrayType as T;
-        match ty {
-            T::TypeNone => None,
-            T::TypeInt8 => Some(napi_typedarray_type::int8_array),
-            T::TypeInt16 => Some(napi_typedarray_type::int16_array),
-            T::TypeInt32 => Some(napi_typedarray_type::int32_array),
-            T::TypeUint8 => Some(napi_typedarray_type::uint8_array),
-            T::TypeUint8Clamped => Some(napi_typedarray_type::uint8_clamped_array),
-            T::TypeUint16 => Some(napi_typedarray_type::uint16_array),
-            T::TypeUint32 => Some(napi_typedarray_type::uint32_array),
-            T::TypeFloat16 => None,
-            T::TypeFloat32 => Some(napi_typedarray_type::float32_array),
-            T::TypeFloat64 => Some(napi_typedarray_type::float64_array),
-            T::TypeBigInt64 => Some(napi_typedarray_type::bigint64_array),
-            T::TypeBigUint64 => Some(napi_typedarray_type::biguint64_array),
-            T::TypeDataView => None,
-        }
     }
 }
 
@@ -1284,33 +1195,6 @@ pub extern "C" fn napi_make_callback(
     env.ok()
 }
 
-// Sometimes shared libraries reference symbols which are not used
-// We don't want to fail to load the library because of that
-// so we instead return an error and warn the user
-fn not_implemented_yet(name: &'static str) {
-    // TODO(port): bun.onceUnsafe — emit warning only once per `name`.
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        // SAFETY: VirtualMachine::get() returns the current thread's VM (non-null);
-        // `log` is set during init.
-        let should_warn = unsafe {
-            VirtualMachine::get().as_mut()
-                .log
-                .map_or(true, |l| l.as_ref().level.at_least(bun_ast::Level::Warn))
-        };
-        if should_warn {
-            bun_core::Output::pretty_errorln(
-                format_args!(
-                    "<r><yellow>warning<r><d>:<r> Node-API function <b>\"{}\"<r> is not implemented yet.\n Track the status of Node-API in Bun: https://github.com/oven-sh/bun/issues/158",
-                    name
-                ),
-            );
-            bun_core::Output::flush();
-        }
-    });
-    let _ = name;
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn napi_open_escapable_handle_scope(
     env_: napi_env,
@@ -1991,7 +1875,6 @@ pub enum napi_threadsafe_function_release_mode {
     abort = 1,
 }
 
-pub const NAPI_TSFN_NONBLOCKING: c_uint = 0;
 pub const NAPI_TSFN_BLOCKING: c_uint = 1;
 pub type napi_threadsafe_function_call_mode = c_uint;
 pub type napi_async_execute_callback = extern "C" fn(napi_env, *mut c_void);
@@ -2043,20 +1926,6 @@ bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
 pub type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
 pub type napi_async_cleanup_hook =
     Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;
-
-pub type napi_addon_register_func = extern "C" fn(napi_env, napi_value) -> napi_value;
-
-#[repr(C)]
-pub struct struct_napi_module {
-    pub nm_version: c_int,
-    pub nm_flags: c_uint,
-    pub nm_filename: *const c_char,
-    pub nm_register_func: napi_addon_register_func,
-    pub nm_modname: *const c_char,
-    pub nm_priv: *mut c_void,
-    pub reserved: [*mut c_void; 4],
-}
-pub type napi_module = struct_napi_module;
 
 fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
     // SAFETY: caller-supplied C string region; lifetime is the duration of the NAPI call.
@@ -4320,9 +4189,6 @@ pub fn fix_dead_code_elimination() {
 pub struct NapiFinalizerTask {
     pub finalizer: Finalizer,
 }
-
-// TODO(port): jsc.AnyTask.New(@This(), runOnJSThread) — codegen vtable wiring.
-type NapiFinalizerAnyTask = AnyTask;
 
 impl NapiFinalizerTask {
     pub fn init(finalizer: Finalizer) -> Box<NapiFinalizerTask> {

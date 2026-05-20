@@ -6,8 +6,8 @@ use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
-    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HTTPThread, Headers,
-    HeadersExt, Method,
+    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
+    Method,
 };
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -89,7 +89,7 @@ pub enum S3DeleteResult<'a> {
 }
 
 pub enum S3ListObjectsResult<'a> {
-    Success(list_objects::S3ListObjectsV2Result<'a>),
+    Success(Box<list_objects::S3ListObjectsV2Result<'a>>),
     NotFound(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -327,7 +327,11 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the task callback from the last task result and is always in the main thread
-    pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
+    ///
+    /// # Safety
+    /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` whose ownership
+    /// is being transferred to this call (it is reclaimed and dropped here exactly once).
+    pub unsafe fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract. Dropping
         // `this` at scope exit replaces Zig's `defer this.deinit()`.
@@ -372,7 +376,10 @@ impl S3HttpSimpleTask {
                         // failure modes abort in Rust), so the Zig `catch` arm is unreachable.
                         let success =
                             list_objects::parse_s3_list_objects_result(body.list.as_slice());
-                        callback(S3ListObjectsResult::Success(success), this.callback_context)?;
+                        callback(
+                            S3ListObjectsResult::Success(Box::new(success)),
+                            this.callback_context,
+                        )?;
                     } else {
                         this.error_with_body(ErrorType::Failure)?;
                     }
@@ -426,7 +433,12 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
-    pub fn http_callback(
+    ///
+    /// # Safety
+    /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` and exclusively
+    /// owned by the HTTP thread for the duration of this call. `async_http` must be a valid
+    /// pointer to an initialised `AsyncHTTP` for the duration of this call.
+    pub unsafe fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult<'_>,
@@ -554,7 +566,7 @@ pub fn execute_simple_s3_request(
     callback: Callback,
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
-    let mut result = match this.sign_request::<false>(
+    let result = match this.sign_request::<false>(
         &SignOptions {
             path: options.path,
             method: options.method,
@@ -670,7 +682,9 @@ pub fn execute_simple_s3_request(
         body,
         HTTPClientResultCallback::new::<S3HttpSimpleTask>(
             task_ptr,
-            S3HttpSimpleTask::http_callback,
+            // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
+            // the HTTP thread as a live pointer for the duration of the callback.
+            |this, http, result| unsafe { S3HttpSimpleTask::http_callback(this, http, result) },
         ),
         FetchRedirect::Follow,
         HttpOptions {

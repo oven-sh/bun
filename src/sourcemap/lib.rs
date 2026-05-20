@@ -1,11 +1,5 @@
 #![feature(allocator_api)]
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 //! `bun_sourcemap` — source map parsing, encoding, and lookup.
 //!
@@ -45,8 +39,8 @@ pub use bun_core::Ordinal;
 pub use chunk::Chunk;
 pub use internal_source_map::InternalSourceMap;
 
-/// Opaque FFI handle. The real type lives in `bun_jsc` (tier 6); this crate
-/// only ever sees it as a pointer.
+// Opaque FFI handle. The real type lives in `bun_jsc` (tier 6); this crate
+// only ever sees it as a pointer.
 bun_opaque::opaque_ffi! { pub struct BakeSourceProvider; }
 
 // TODO(port): move to <area>_sys
@@ -449,10 +443,10 @@ impl core::fmt::Display for DebugIDFormatter {
     }
 }
 
-/// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
-/// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
-///
-/// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
+// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
+// when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
+//
+// This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
 bun_opaque::opaque_ffi! { pub struct SourceProviderMap; }
 
 // TODO(port): move to <area>_sys
@@ -657,7 +651,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                             // calling `error.stack`. This message is only printed if
                             // the sourcemap has been found but is invalid, such as being
                             // invalid JSON text or corrupt mappings.
-                            bun_core::Output::warn(&format_args!(
+                            bun_core::Output::warn(format_args!(
                                 "Could not decode sourcemap in dev server runtime: {} - {}",
                                 ::bstr::BStr::new(source_filename),
                                 ::bstr::BStr::new(err.name()),
@@ -685,7 +679,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                                 // calling `error.stack`. This message is only printed if
                                 // the sourcemap has been found but is invalid, such as being
                                 // invalid JSON text or corrupt mappings.
-                                bun_core::Output::warn(&format_args!(
+                                bun_core::Output::warn(format_args!(
                                     "Could not decode sourcemap in '{}': {}",
                                     ::bstr::BStr::new(source_filename),
                                     ::bstr::BStr::new(err.name()),
@@ -730,7 +724,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                         // calling `error.stack`. This message is only printed if
                         // the sourcemap has been found but is invalid, such as being
                         // invalid JSON text or corrupt mappings.
-                        bun_core::Output::warn(&format_args!(
+                        bun_core::Output::warn(format_args!(
                             "Could not decode sourcemap in '{}': {}",
                             ::bstr::BStr::new(source_filename),
                             ::bstr::BStr::new(err.name()),
@@ -744,7 +738,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
         }
 
         if let Some(err) = inline_err {
-            bun_core::Output::warn(&format_args!(
+            bun_core::Output::warn(format_args!(
                 "Could not decode sourcemap in '{}': {}",
                 ::bstr::BStr::new(source_filename),
                 ::bstr::BStr::new(err.name()),
@@ -798,7 +792,7 @@ pub mod SavedSourceMap {
                 return;
             }
             if let Some(note) = PATH.lock().as_deref() {
-                bun_core::Output::note(&format_args!(
+                bun_core::Output::note(format_args!(
                     "missing sourcemaps for {}",
                     ::bstr::BStr::new(note),
                 ));
@@ -927,7 +921,7 @@ pub mod SerializedSourceMap {
                 self.decompressed_files[index] =
                     Some(match bun_zstd::decompress(&mut bytes, compressed_file) {
                         bun_zstd::Result::Err(err) => {
-                            bun_core::Output::warn(&format_args!(
+                            bun_core::Output::warn(format_args!(
                                 "Source map decompression error: {}",
                                 ::bstr::BStr::new(err.as_bytes()),
                             ));
@@ -1278,12 +1272,12 @@ pub fn parse_json(
         ParseUrlResultHint::MappingsOnly => (None, None),
     };
 
-    let content_slice: Option<Box<[u8]>> = if !matches!(hint, ParseUrlResultHint::MappingsOnly)
-        && source_index.is_some()
-        && (source_index.unwrap() as usize) < sources_content.items.len_u32() as usize
-    {
+    let content_slice: Option<Box<[u8]>> = match source_index {
+        Some(idx)
+            if !matches!(hint, ParseUrlResultHint::MappingsOnly)
+                && (idx as usize) < sources_content.items.len_u32() as usize =>
         'content: {
-            let item = &sources_content.items.slice()[source_index.unwrap() as usize];
+            let item = &sources_content.items.slice()[idx as usize];
             let Some(estr) = item.data.as_e_string() else {
                 break 'content None;
             };
@@ -1296,8 +1290,7 @@ pub fn parse_json(
 
             Some(Box::<[u8]>::from(str))
         }
-    } else {
-        None
+        _ => None,
     };
 
     Ok(ParseUrl {

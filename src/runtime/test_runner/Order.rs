@@ -33,7 +33,10 @@ impl Order {
         match current {
             TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
             TestScheduleEntry::TestCallback(test_callback) => {
-                self.generate_order_test(&raw mut **test_callback)?
+                // SAFETY: `test_callback` is a live `Box<ExecutionEntry>` owned by the
+                // DescribeScope tree; `&raw mut **` yields its heap pointer with mutable
+                // provenance, satisfying `generate_order_test`'s pointer precondition.
+                unsafe { self.generate_order_test(&raw mut **test_callback)? }
             }
         }
         Ok(())
@@ -123,8 +126,11 @@ impl Order {
         Ok(())
     }
 
-    pub fn generate_order_test(&mut self, current: *mut ExecutionEntry) -> JsResult<()> {
-        // SAFETY: caller guarantees `current` is a valid live ExecutionEntry (Box-owned in DescribeScope.entries).
+    /// # Safety
+    /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
+    /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
+    /// `base.parent` chain reachable from `*current` must consist of live `DescribeScope` nodes.
+    pub unsafe fn generate_order_test(&mut self, current: *mut ExecutionEntry) -> JsResult<()> {
         // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
         // loop below, so we never hold a long-lived `&mut *current` across those calls — each access
         // dereferences the raw pointer locally.

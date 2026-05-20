@@ -1,23 +1,11 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    unreachable_code
-)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
-use bun_core::strings;
 
-use crate::lexer as js_lexer;
 use crate::p::P;
-use crate::parser::{
-    self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode, SideEffects,
-};
-use bun_ast::G::{Decl, Property};
+use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
-use bun_ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt, Symbol};
+use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with

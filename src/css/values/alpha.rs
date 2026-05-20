@@ -15,10 +15,7 @@ impl AlphaValue {
     pub fn parse(input: &mut Parser) -> Result<AlphaValue> {
         // For some reason NumberOrPercentage.parse makes zls crash, using this instead.
         // PORT NOTE: the Zig used `@call(.auto, @field(...))` as a zls workaround; direct call in Rust.
-        let val: NumberOrPercentage = match NumberOrPercentage::parse(input) {
-            Result::Ok(v) => v,
-            Result::Err(e) => return Result::Err(e),
-        };
+        let val: NumberOrPercentage = NumberOrPercentage::parse(input)?;
         let final_ = match val {
             NumberOrPercentage::Percentage(percent) => AlphaValue { v: percent.v },
             NumberOrPercentage::Number(num) => AlphaValue { v: num },

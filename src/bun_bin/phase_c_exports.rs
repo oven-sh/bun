@@ -22,7 +22,6 @@
 
 #![allow(
     non_snake_case,
-    unused_variables,
     clippy::missing_safety_doc,
     clippy::not_unsafe_ptr_arg_deref
 )]
@@ -133,7 +132,7 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // Bun__VM__allowRejectionHandledWarning
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__scriptExecutionStatus(vm: *const VirtualMachine) -> i32 {
+pub extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachine) -> i32 {
     // jsc.ScriptExecutionStatus.running = 0
     0
 }
@@ -259,8 +258,8 @@ pub extern "C" fn Bun__VM__scriptExecutionStatus(vm: *const VirtualMachine) -> i
 // Declared `CPP_DECL` in headers.h:279 but bindings.cpp never defines it.
 #[unsafe(no_mangle)]
 pub extern "C" fn JSC__JSValue__parseJSON(
-    string: *const c_void,
-    global: *const JSGlobalObject,
+    _string: *const c_void,
+    _global: *const JSGlobalObject,
 ) -> JSValue {
     unreachable!(
         "JSC__JSValue__parseJSON: not implemented in Zig either (CPP_DECL with no C++ body)"
@@ -270,8 +269,8 @@ pub extern "C" fn JSC__JSValue__parseJSON(
 // Imported by bun_jsc/bun_sys_jsc as extern but no provider in C++ or Zig.
 #[unsafe(no_mangle)]
 pub extern "C" fn BunString__toErrorInstance(
-    this: *const c_void,
-    global: *mut JSGlobalObject,
+    _this: *const c_void,
+    _global: *mut JSGlobalObject,
 ) -> JSValue {
     unreachable!("BunString__toErrorInstance: not implemented in Zig either (no C++ body)")
 }

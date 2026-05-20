@@ -10,9 +10,7 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
-use crate::watcher_impl::{
-    ChangedFilePath, MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher,
-};
+use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
 
 bun_core::declare_scope!(watcher, visible);
 
@@ -190,8 +188,7 @@ impl INotifyWatcher {
     pub fn unwatch(&mut self, wd: EventListIndex) {
         debug_assert!(self.loaded);
         let _ = self.watch_count.fetch_sub(1, Ordering::Release);
-        // SAFETY: fd is a valid inotify fd (loaded == true).
-        let _ = unsafe { bun_sys::linux::inotify_rm_watch(self.fd.native(), wd) };
+        let _ = bun_sys::linux::inotify_rm_watch(self.fd.native(), wd);
     }
 
     // PORT NOTE: kept as in-place &mut self init (not `-> Result<Self, _>`) because
@@ -207,8 +204,7 @@ impl INotifyWatcher {
             .unwrap_or(100_000);
 
         // TODO: convert to bun.sys.Error
-        // SAFETY: IN::CLOEXEC is a valid flag combination for inotify_init1.
-        let raw = unsafe { bun_sys::linux::inotify_init1(IN::CLOEXEC) };
+        let raw = bun_sys::linux::inotify_init1(IN::CLOEXEC);
         if raw < 0 {
             // TODO(port): narrow error set — Zig propagated the std.posix error union here.
             return Err(bun_core::err!("InotifyInitFailed"));
@@ -427,7 +423,7 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let mut event_id: usize = 0;
     let mut events_processed: usize = 0;
 
-    while events_processed < events.len() {
+    if events_processed < events.len() {
         let mut name_off: u8 = 0;
         // PERF(port): Zig left this `undefined`; we zero-init for safety.
         let mut temp_name_list: [Option<&ZStr>; 128] = [None; 128];
@@ -499,7 +495,6 @@ pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             process_inotify_event_batch(this, event_id, &temp_name_list[..temp_name_off as usize])?;
         }
         let _ = name_off;
-        break;
     }
 
     Ok(())

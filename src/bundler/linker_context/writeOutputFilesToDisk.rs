@@ -1,6 +1,4 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
-use core::mem::offset_of;
 use std::io::Write as _;
 
 use bun_alloc::MaxHeapAllocator;

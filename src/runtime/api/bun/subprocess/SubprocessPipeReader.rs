@@ -6,10 +6,9 @@ use bun_io::FilePollFlag;
 use bun_io::Loop as AsyncLoop;
 use bun_io::max_buf::MaxBuf;
 use bun_io::pipe_reader::PosixFlags;
-use bun_io::pipes::ReadState;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
-use bun_ptr::{IntrusiveRc, ParentRef, RefCount, RefCounted, ScopedRef};
+use bun_ptr::{IntrusiveRc, ParentRef, RefCount, ScopedRef};
 use bun_sys;
 
 use super::readable::Readable;
@@ -18,16 +17,12 @@ use super::{StdioKind, StdioResult, Subprocess};
 pub type IOReader = BufferedReader;
 pub type Poll = IOReader;
 
+#[derive(Default)]
 pub enum State {
+    #[default]
     Pending,
     Done(Vec<u8>),
     Err(bun_sys::Error),
-}
-
-impl Default for State {
-    fn default() -> Self {
-        State::Pending
-    }
 }
 
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive, single-thread.
@@ -116,7 +111,10 @@ impl PipeReader {
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
             event_loop: event_loop.into(),
-            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
+            // SAFETY: `event_loop` is a live `BackRef<EventLoop>` (per-thread).
+            event_loop_handle: unsafe {
+                bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>())
+            },
             stdio_result: result,
             state: State::Pending,
         });
@@ -154,7 +152,9 @@ impl PipeReader {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
         self.event_loop = event_loop.into();
-        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        // SAFETY: `event_loop` is a live `BackRef<EventLoop>` (per-thread).
+        self.event_loop_handle =
+            unsafe { bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()) };
         #[cfg(windows)]
         {
             return self.reader.start_with_current_pipe();

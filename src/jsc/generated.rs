@@ -28,7 +28,7 @@
 use core::ffi::c_uint;
 use core::mem::MaybeUninit;
 
-use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Generic accessor wrappers.

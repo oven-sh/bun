@@ -521,7 +521,6 @@ impl OutputFile {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        let mut do_close = false;
         let mut in_buf = PathBuffer::uninit();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
@@ -532,20 +531,15 @@ impl OutputFile {
 
         #[cfg(windows)]
         {
-            // SAFETY: `FileSystem::instance()` is initialized before any bundler
-            // output is produced.
-            do_close = crate::bun_fs::FileSystem::get().fs.need_to_close_files();
-
+            let _ = (fd_out, fd_in);
             // use paths instead of bun.getFdPathW()
             panic!("TODO windows");
         }
-
-        let _close_out = do_close.then(|| bun_sys::CloseOnDrop::new(fd_out));
-        let _close_in = do_close.then(|| bun_sys::CloseOnDrop::new(fd_in));
-
-        bun_sys::copy_file(fd_in, fd_out)?;
-
-        Ok(())
+        #[cfg(not(windows))]
+        {
+            bun_sys::copy_file(fd_in, fd_out)?;
+            Ok(())
+        }
     }
 }
 

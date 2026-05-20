@@ -1,7 +1,6 @@
 //! Port of `src/cli/bunx_command.zig`.
 
 use bun_collections::VecExt;
-use core::mem::size_of;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -21,7 +20,9 @@ use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER, PathBuffer};
 use bun_resolver::fs::RealFS;
-use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, O};
+#[cfg(windows)]
+use bun_sys::FdExt as _;
+use bun_sys::{self, Fd, FdDirExt as _, O};
 use bun_wyhash::hash;
 use std::env::consts::EXE_SUFFIX;
 
@@ -165,7 +166,7 @@ impl Options {
         }
 
         // Handle --package flag case differently
-        if opts.specified_package.is_some() {
+        if let Some(specified_package) = opts.specified_package {
             if let Some(package_name) = maybe_package_name {
                 if package_name.is_empty() {
                     Output::err_generic(
@@ -188,7 +189,7 @@ impl Options {
                 Global::exit(1);
             }
             opts.binary_name = maybe_package_name;
-            opts.package_name = opts.specified_package.unwrap();
+            opts.package_name = specified_package;
         } else {
             // Normal case: package_name is the first non-flag argument
             if maybe_package_name.is_none() || maybe_package_name.unwrap().is_empty() {
@@ -275,6 +276,7 @@ impl BunxCommand {
     /// 1 day
     const SECONDS_CACHE_VALID: i64 = 60 * 60 * 24;
     /// 1 day
+    #[cfg(windows)]
     const NANOSECONDS_CACHE_VALID: i128 = (Self::SECONDS_CACHE_VALID as i128) * 1_000_000_000;
 
     fn get_bin_name_from_subpath(
@@ -570,7 +572,7 @@ impl BunxCommand {
         // Don't log stuff
         ctx.debug.silent = true;
 
-        let mut opts = Options::parse(ctx, argv)?;
+        let opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
         // SAFETY: CLI dispatch is single-threaded and `ctx_log` is consumed by
@@ -1477,17 +1479,14 @@ impl BunxCommand {
             }
         }
 
-        if opts.specified_package.is_some() && opts.binary_name.is_some() {
+        if let (Some(_), Some(binary_name)) = (opts.specified_package, opts.binary_name) {
             Output::err_generic(
                 "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                (
-                    BStr::new(&update_request.name),
-                    BStr::new(opts.binary_name.unwrap()),
-                ),
+                (BStr::new(&update_request.name), BStr::new(binary_name)),
             );
             Output::prettyln(format_args!(
                 "  <d>hint: try running without --package to install and run {} directly<r>",
-                BStr::new(opts.binary_name.unwrap()),
+                BStr::new(binary_name),
             ));
         } else {
             Output::err_generic(

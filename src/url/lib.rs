@@ -613,8 +613,10 @@ impl<'a> URL<'a> {
         if base.is_empty() {
             return URL::default();
         }
-        let mut url = URL::default();
-        url.href = base;
+        let mut url = URL {
+            href: base,
+            ..Default::default()
+        };
         // PORT NOTE: Zig uses u31; Rust has no u31 — using u32 (values never approach 2^31).
         let mut offset: u32 = 0;
         match base[0] {

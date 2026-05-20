@@ -6,7 +6,6 @@ use crate::values::calc::Calc;
 use crate::values::number::{CSSNumber, CSSNumberFns};
 use crate::values::percentage::DimensionPercentage;
 
-use bun_core::strings;
 use core::cmp::Ordering;
 
 const TAG_DEG: u8 = 1;
@@ -33,16 +32,6 @@ pub enum Angle {
 
 impl Angle {
     // ~toCssImpl
-
-    #[inline]
-    fn tag(self) -> u8 {
-        match self {
-            Angle::Deg(_) => TAG_DEG,
-            Angle::Rad(_) => TAG_RAD,
-            Angle::Grad(_) => TAG_GRAD,
-            Angle::Turn(_) => TAG_TURN,
-        }
-    }
 
     pub fn parse(input: &mut Parser) -> Result<Angle> {
         Angle::parse_internal(input, false)

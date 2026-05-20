@@ -10,8 +10,6 @@
 //! Full earlier drafts are preserved gated under ` mod *_draft`
 //! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
 
-use core::mem::offset_of;
-
 use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
 #[cfg(windows)]
@@ -31,7 +29,7 @@ pub use bun_event_loop::EventLoopTimer::{
 // lower tier switches to `bun_core::Timespec`.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::jsc::JSValue;
 
 // ─── JS-facing surface (`impl All { set_timeout / clear_* / … }`) ────────────
 // Named `timer` so codegen (`generated_js2native.rs`) resolves
@@ -831,7 +829,11 @@ impl All {
     }
 
     /// Remove the EventLoopTimer if necessary, then re-insert at `time`.
-    pub fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
+    ///
+    /// # Safety
+    /// `timer` must point to a live `EventLoopTimer` with whole-container
+    /// provenance for its tag (see [`js_timer_flags_ptr`]).
+    pub unsafe fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         self.lock.lock();
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         // Read `state` via raw deref so we don't hold a `&mut *timer` across
@@ -868,10 +870,6 @@ impl All {
         self.lock.unlock();
     }
 
-    fn is_date_timer_active(&self) -> bool {
-        self.date_header_timer.event_loop_timer.state == EventLoopTimerState::ACTIVE
-    }
-
     /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
     /// Returns `true` if `spec` was written.
     ///
@@ -879,7 +877,11 @@ impl All {
     /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
     /// it needs — `event_loop.immediate_tasks.len()` and the QUIC tick — are
     /// passed in pre-computed until the cycle is broken.
-    pub fn get_timeout(
+    ///
+    /// # Safety
+    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
+    /// must remain live across any `EventLoopTimer::fire` re-entry.
+    pub unsafe fn get_timeout(
         &mut self,
         spec: &mut Timespec,
         has_pending_immediate: bool,
@@ -1013,7 +1015,10 @@ impl All {
         out
     }
 
-    pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
+    /// # Safety
+    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
+    /// must remain live across any `EventLoopTimer::fire` re-entry.
+    pub unsafe fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
         // PORT NOTE (§Forbidden aliased-&mut): spec Timer.zig:346-354 takes
         // `*All` (raw pointer) because fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
@@ -1053,7 +1058,9 @@ impl All {
         }
     }
 
-    pub fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    /// # Safety
+    /// `uws_loop` must point to the calling VM's live uws loop.
+    pub unsafe fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.immediate_ref_count;
         let new = old + delta;
         self.immediate_ref_count = new;
@@ -1097,7 +1104,9 @@ impl All {
         // prevent libuv from polling forever
     }
 
-    pub fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    /// # Safety
+    /// `uws_loop` must point to the calling VM's live uws loop.
+    pub unsafe fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
         let old = self.active_timer_count;
         let new = old + delta;
         debug_assert!(new >= 0);

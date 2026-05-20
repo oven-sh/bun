@@ -1,8 +1,6 @@
 use core::cell::Cell;
-use core::mem::offset_of;
 
 use bun_collections::VecExt;
-use bun_core::Output;
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 

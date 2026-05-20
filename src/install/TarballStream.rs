@@ -19,17 +19,20 @@
 //! without holding the full compressed or decompressed tarball in memory.
 
 use core::ffi::{c_int, c_void};
-use core::mem::{ManuallyDrop, offset_of};
+use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::VecExt;
+#[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
 use bun_paths::resolve_path::{self, platform};
-use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSlice, OSPathSliceZ, PathBuffer};
-use bun_sys::{self, Dir, E, Fd, FdDirExt, FdExt, FileKind, Mode, O};
-use bun_threading::{Mutex, ThreadPool, thread_pool};
+use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+#[cfg(not(windows))]
+use bun_sys::FdDirExt;
+use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
+use bun_threading::{Mutex, thread_pool};
 
 use crate::NetworkTask;
 use crate::bun_fs::FileSystem;
@@ -112,6 +115,7 @@ pub struct TarballStream {
     /// Output file for the entry currently being written. `None` while
     /// between entries or when the current entry is being skipped.
     out_fd: Option<Fd>,
+    #[cfg(unix)]
     use_pwrite: bool,
     use_lseek: bool,
     /// Per-entry write cursors, carried across `write_data_block` calls so
@@ -222,7 +226,8 @@ impl TarballStream {
             archive: None,
             phase: Phase::WantHeader,
             out_fd: None,
-            use_pwrite: cfg!(unix),
+            #[cfg(unix)]
+            use_pwrite: true,
             use_lseek: true,
             entry_actual_offset: 0,
             entry_final_offset: 0,
@@ -1258,6 +1263,7 @@ fn open_output_file(
     let flags = O::WRONLY | O::CREAT | O::TRUNC;
     #[cfg(windows)]
     {
+        let _ = mode;
         return match bun_sys::openat_windows(dest_fd, path, flags, 0) {
             Ok(fd) => Ok(fd),
             Err(e) => match e.get_errno() {

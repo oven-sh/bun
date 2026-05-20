@@ -1,13 +1,11 @@
 use crate::mal_prelude::*;
 use core::ffi::c_void;
-use core::mem::offset_of;
 use std::io::Write as _;
 
 use bstr::BStr;
 
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
-use bun_collections::VecExt;
 use bun_core::strings;
 use bun_lolhtml_sys::lol_html as lol;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
@@ -16,7 +14,7 @@ use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, PendingPartRange, debug};
 use crate::options::Loader;
 use crate::thread_pool::Worker;
-use crate::{BundleV2, Chunk, CompileResult, IndexInt};
+use crate::{Chunk, CompileResult};
 
 /// Rrewrite the HTML with the following transforms:
 /// 1. Remove all <script> and <link> tags which were not marked as
@@ -82,16 +80,13 @@ struct EndTagIndices {
 
 struct HTMLLoader<'a> {
     linker: &'a LinkerContext<'a>,
-    source_index: IndexInt,
     import_records: &'a [ImportRecord],
-    log: *mut Log,
     current_import_record_index: u32,
     /// Backref to this task's HTML chunk (an element of `*chunks`). The chunk
     /// outlives this `HTMLLoader` (link-step duration), so `BackRef`'s
     /// owner-outlives-holder invariant holds and reads go through safe `Deref`.
     chunk: bun_ptr::BackRef<Chunk>,
     chunks: *mut [Chunk],
-    minify_whitespace: bool,
     compile_to_standalone_html: bool,
     output: Vec<u8>,
     end_tag_indices: EndTagIndices,
@@ -420,13 +415,11 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     let contents: &[u8] = &sources[source_index as usize].contents;
     let records = import_records[source_index as usize].as_slice();
 
+    let _ = (source_index, log, minify_whitespace);
     let mut html_loader = HTMLLoader {
         linker: c,
-        source_index,
         import_records: records,
-        log,
         current_import_record_index: 0,
-        minify_whitespace,
         compile_to_standalone_html,
         chunk: bun_ptr::BackRef::new(chunk),
         chunks,

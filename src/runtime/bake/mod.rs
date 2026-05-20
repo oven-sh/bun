@@ -41,7 +41,6 @@ pub(crate) mod jsc {
     pub use crate::api::js_bundler::Plugin;
     pub use crate::jsc::*;
     pub use bun_jsc::debugger::DebuggerId;
-    pub use bun_jsc::virtual_machine::VirtualMachine;
 }
 
 /// export default { app: ... };
@@ -339,7 +338,7 @@ impl Framework {
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
             );
-            use bun_bundler::{DefineDataExt, DefineExt};
+            use bun_bundler::DefineDataExt;
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -493,6 +492,7 @@ impl Framework {
 }
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
+#[derive(Default)]
 pub struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
@@ -500,16 +500,6 @@ pub struct SplitBundlerOptions {
     pub client: BuildConfigSubset,
     pub server: BuildConfigSubset,
     pub ssr: BuildConfigSubset,
-}
-impl Default for SplitBundlerOptions {
-    fn default() -> Self {
-        Self {
-            plugin: None,
-            client: Default::default(),
-            server: Default::default(),
-            ssr: Default::default(),
-        }
-    }
 }
 
 // ─── bake_body → keystone bridges ────────────────────────────────────────────

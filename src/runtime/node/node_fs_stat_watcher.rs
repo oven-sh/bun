@@ -146,14 +146,19 @@ impl Drop for WatcherRefGuard {
 }
 
 impl StatWatcherScheduler {
+    /// # Safety
+    /// `this` must point to a live `StatWatcherScheduler`.
     #[inline]
-    pub fn ref_(this: *mut Self) {
-        // SAFETY: caller guarantees `this` is live.
+    pub unsafe fn ref_(this: *mut Self) {
+        // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::ref_(this) };
     }
+    /// # Safety
+    /// `this` must point to a live `StatWatcherScheduler` and the caller must
+    /// own one outstanding ref, which is released.
     #[inline]
-    pub fn deref(this: *mut Self) {
-        // SAFETY: caller guarantees `this` is live and owns one ref.
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::deref(this) };
     }
 
@@ -199,7 +204,10 @@ impl StatWatcherScheduler {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn append(this: *mut Self, watcher: *mut StatWatcher) {
+    /// # Safety
+    /// `this` must point to a live `StatWatcherScheduler` (caller holds a ref)
+    /// and `watcher` must point to a live `StatWatcher`.
+    pub unsafe fn append(this: *mut Self, watcher: *mut StatWatcher) {
         // BACKREF — `watcher` is a live ref-counted StatWatcher (we ref() it
         // below). R-2: shared `&` only — all field access goes through
         // Cell/Atomic. `ParentRef` Deref collapses the per-site raw deref.
@@ -208,7 +216,8 @@ impl StatWatcherScheduler {
         debug_assert!(!w.closed.load(Ordering::Relaxed));
         debug_assert!(w.next.is_null());
 
-        StatWatcher::ref_(watcher);
+        // SAFETY: per fn contract — `watcher` is live.
+        unsafe { StatWatcher::ref_(watcher) };
         // BACKREF — `this` is live (caller holds a ref).
         let this_ref = ParentRef::from(NonNull::new(this).expect("append: scheduler"));
         // SAFETY: `watcher` is non-null (checked above) and ref'd; live until deref.
@@ -264,10 +273,14 @@ impl StatWatcherScheduler {
         }
 
         // reschedule the timer
-        timer_all.update(
-            elt,
-            &Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(interval)),
-        );
+        // SAFETY: `elt` is the live `EventLoopTimer` field of the heap-allocated
+        // scheduler this fn is called on (see `# Safety` on `update`).
+        unsafe {
+            timer_all.update(
+                elt,
+                &Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(interval)),
+            );
+        }
     }
 
     /// Schedule a task to set the timer in the main thread
@@ -338,7 +351,8 @@ impl StatWatcherScheduler {
         // `SchedulerRefGuard` in `work_pool_callback`). Taken here — not in
         // `set_interval` — so the count exactly tracks "task in flight" instead
         // of accumulating one leak per `set_interval(0)` / re-arm.
-        Self::ref_(core::ptr::from_mut(self));
+        // SAFETY: `self` is live (`&mut self`).
+        unsafe { Self::ref_(core::ptr::from_mut(self)) };
         self.work_pool_in_flight.store(true, Ordering::Release);
         WorkPool::schedule(&raw mut self.task);
     }
@@ -480,7 +494,8 @@ impl StatWatcherScheduler {
         // scheduler stays alive until every remaining `StatWatcher::finalize`
         // drops its `RefPtr` during `lastChanceToFinalize`; the last of those
         // brings the count to zero.
-        Self::deref(this);
+        // SAFETY: `this` is live and we own the RareData ref.
+        unsafe { Self::deref(this) };
     }
 }
 
@@ -615,14 +630,19 @@ impl StatWatcher {
         unsafe { RefPtr::init_ref(raw) }
     }
 
+    /// # Safety
+    /// `this` must point to a live `StatWatcher`.
     #[inline]
-    pub fn ref_(this: *mut Self) {
-        // SAFETY: caller guarantees `this` is live.
+    pub unsafe fn ref_(this: *mut Self) {
+        // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::ref_(this) };
     }
+    /// # Safety
+    /// `this` must point to a live `StatWatcher` and the caller must own one
+    /// outstanding ref, which is released.
     #[inline]
-    pub fn deref(this: *mut Self) {
-        // SAFETY: caller guarantees `this` is live and owns one ref.
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: per fn contract.
         unsafe { ThreadSafeRefCount::<Self>::deref(this) };
     }
 
@@ -646,13 +666,15 @@ impl StatWatcher {
         self.ctx.event_loop()
     }
 
-    pub fn enqueue_task_concurrent(
+    /// # Safety
+    /// `task` must be a fresh heap-allocated `ConcurrentTask` not yet enqueued
+    /// elsewhere; the queue takes ownership of it.
+    pub unsafe fn enqueue_task_concurrent(
         &self,
         task: *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
     ) {
         // `event_loop_shared()` returns the VM's live `&EventLoop`.
-        // SAFETY: `task` is a fresh heap-allocated `ConcurrentTaskItem`; the
-        // queue takes ownership of it.
+        // SAFETY: per fn contract.
         unsafe { self.ctx.event_loop_shared().enqueue_task_concurrent(task) };
     }
 
@@ -777,12 +799,11 @@ impl StatWatcher {
         this.closed.store(true, Ordering::Relaxed);
         this.scheduler.deref();
         // but don't deinit until the scheduler drops its reference.
-        Self::deref(this_ptr);
+        // SAFETY: `this_ptr` was just leaked from `Box`; we own one ref.
+        unsafe { Self::deref(this_ptr) };
     }
 
-    pub fn initial_stat_success_on_main_thread(
-        this: *mut StatWatcher,
-    ) -> bun_event_loop::JsResult<()> {
+    fn initial_stat_success_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in
@@ -808,13 +829,12 @@ impl StatWatcher {
             };
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
-        StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
+        // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
+        unsafe { StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this) };
         Ok(())
     }
 
-    pub fn initial_stat_error_on_main_thread(
-        this: *mut StatWatcher,
-    ) -> bun_event_loop::JsResult<()> {
+    fn initial_stat_error_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in
@@ -853,7 +873,8 @@ impl StatWatcher {
         if this_ref.closed.load(Ordering::Relaxed) {
             return Ok(());
         }
-        StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
+        // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
+        unsafe { StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this) };
         Ok(())
     }
 
@@ -895,15 +916,19 @@ impl StatWatcher {
         // R-2: derive the ctx pointer from `&self` — the callback derefs it as
         // shared (`&*const`), so no write provenance is required.
         let this_ptr: *mut StatWatcher = self.as_ctx_ptr();
-        Self::ref_(this_ptr); // Ensure it stays alive long enough to receive the callback.
-        self.enqueue_task_concurrent(ConcurrentTask::from_callback(
-            this_ptr,
-            Self::swap_and_call_listener_on_main_thread,
-        ));
+        // SAFETY: `this_ptr` derives from `&self` (live). Ensure it stays alive
+        // long enough to receive the callback. Task is freshly heap-allocated.
+        unsafe {
+            Self::ref_(this_ptr);
+            self.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                this_ptr,
+                Self::swap_and_call_listener_on_main_thread,
+            ));
+        }
     }
 
     /// After a restat found the file changed, this calls the listener function.
-    pub fn swap_and_call_listener_on_main_thread(
+    fn swap_and_call_listener_on_main_thread(
         this: *mut StatWatcher,
     ) -> bun_event_loop::JsResult<()> {
         // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
@@ -1027,7 +1052,8 @@ impl StatWatcher {
                     },
                 );
         }
-        InitialStatTask::create_and_schedule(this_ptr);
+        // SAFETY: `this_ptr` was just leaked from `Box`; live with refcount 1.
+        unsafe { InitialStatTask::create_and_schedule(this_ptr) };
 
         Ok(scopeguard::ScopeGuard::into_inner(guard))
     }
@@ -1137,11 +1163,13 @@ pub struct InitialStatTask {
 bun_threading::owned_task!(InitialStatTask, task);
 
 impl InitialStatTask {
-    pub fn create_and_schedule(watcher: *mut StatWatcher) {
-        // SAFETY: `watcher` is alive; we bump its intrusive refcount, held across
+    /// # Safety
+    /// `watcher` must point to a live `StatWatcher`.
+    pub unsafe fn create_and_schedule(watcher: *mut StatWatcher) {
+        // SAFETY: per fn contract; we bump its intrusive refcount, held across
         // the task lifetime (balanced by `deref()` in run_owned's closed path or
         // by the main-thread `initial_stat_*_on_main_thread` callbacks).
-        StatWatcher::ref_(watcher);
+        unsafe { StatWatcher::ref_(watcher) };
         WorkPool::schedule_new(InitialStatTask {
             watcher,
             task: WorkPoolTask::default(),
@@ -1164,7 +1192,8 @@ impl InitialStatTask {
 
         if this_ref.closed.load(Ordering::Relaxed) {
             // Balance the ref() from createAndSchedule().
-            StatWatcher::deref(this);
+            // SAFETY: `this` is live (ref'd in `create_and_schedule`); we own that ref.
+            unsafe { StatWatcher::deref(this) };
             return;
         }
 
@@ -1173,20 +1202,26 @@ impl InitialStatTask {
             Ok(ref res) => {
                 // we store the stat, but do not call the callback
                 this_ref.set_last_stat(res);
-                this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                    this,
-                    StatWatcher::initial_stat_success_on_main_thread,
-                ));
+                // SAFETY: task is freshly heap-allocated; queue takes ownership.
+                unsafe {
+                    this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                        this,
+                        StatWatcher::initial_stat_success_on_main_thread,
+                    ));
+                }
             }
             Err(_) => {
                 // on enoent, eperm, we call cb with two zeroed stat objects
                 // and store previous stat as a zeroed stat object, and then call the callback.
                 // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
                 this_ref.set_last_stat(&bun_core::ffi::zeroed::<PosixStat>());
-                this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
-                    this,
-                    StatWatcher::initial_stat_error_on_main_thread,
-                ));
+                // SAFETY: task is freshly heap-allocated; queue takes ownership.
+                unsafe {
+                    this_ref.enqueue_task_concurrent(ConcurrentTask::from_callback(
+                        this,
+                        StatWatcher::initial_stat_error_on_main_thread,
+                    ));
+                }
             }
         }
         // ref ownership transferred to main-thread callback

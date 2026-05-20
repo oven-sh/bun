@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::ptr;
 
 use bstr::BStr;
 
@@ -12,15 +11,13 @@ use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::IntrusiveWorkTask as _;
-use bun_threading::thread_pool::{
-    self as thread_pool, Batch, Node as ThreadPoolNode, Task as ThreadPoolTask,
-};
+use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_wyhash::Wyhash11;
 
 use crate::package_install::PackageInstall;
 use crate::package_manager;
 use crate::{
-    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Lockfile, lockfile::Package,
+    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Package,
     resolution::Resolution,
 };
 

@@ -8,10 +8,7 @@ use std::io::Write as _;
 use bun_core::{SliceWithUnderlyingString, String, Tag, ZigStringSlice, strings};
 
 use crate::zig_string::{self, ZigString};
-use crate::{
-    CallFrame, ExceptionValidationScope, JSGlobalObject, JSValue, JsError, JsResult,
-    ZigStringJsc as _,
-};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
 
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
@@ -24,11 +21,6 @@ use crate::{
 // `Bun__parseDate`) are NOT redeclared here — route through `crate::cpp::*`,
 // which owns the canonical extern decl + per-mode exception scope.
 unsafe extern "C" {
-    safe fn BunString__toJSWithLength(
-        global_object: &JSGlobalObject,
-        in_: &String,
-        len: usize,
-    ) -> JSValue;
     safe fn BunString__toJSDOMURL(global_object: &JSGlobalObject, in_: &mut String) -> JSValue;
     fn BunString__createArray(
         global_object: &JSGlobalObject,

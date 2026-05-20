@@ -155,6 +155,7 @@ impl ContextData {
     /// If `self.log` is null (i.e. `create_context_data()` has not run).
     #[track_caller]
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
         assert!(
             !self.log.is_null(),

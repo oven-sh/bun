@@ -16,7 +16,7 @@
 
 #![warn(unused_must_use)]
 
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
@@ -73,25 +73,6 @@ pub fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mysql_erro
 // for the few extension-trait bodies below that call extern "C" symbols
 // directly).
 // ──────────────────────────────────────────────────────────────────────────
-#[inline]
-fn from_js_host_call(global: &JSGlobalObject, v: JSValue) -> JsResult<JSValue> {
-    if global.has_exception() {
-        return Err(JsError::Thrown);
-    }
-    debug_assert!(
-        !v.is_empty(),
-        "fromJSHostCall: empty JSValue with no pending exception"
-    );
-    Ok(v)
-}
-#[inline]
-fn from_js_host_call_generic<R>(global: &JSGlobalObject, r: R) -> JsResult<R> {
-    if global.has_exception() {
-        Err(JsError::Thrown)
-    } else {
-        Ok(r)
-    }
-}
 
 // `uws.us_bun_verify_error_t::toJS` — sunk to `bun_jsc::system_error` so both
 // `bun_runtime` and this crate import the single canonical body (was
@@ -402,9 +383,9 @@ pub use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
 
-/// `bun_runtime::timer::All` — heap of `EventLoopTimer`. Opaque on this side
-/// (the layout is high-tier); insert/remove forward to `bun_runtime` via the
-/// [`SqlRuntimeHooks`] vtable.
+// `bun_runtime::timer::All` — heap of `EventLoopTimer`. Opaque on this side
+// (the layout is high-tier); insert/remove forward to `bun_runtime` via the
+// [`SqlRuntimeHooks`] vtable.
 bun_opaque::opaque_ffi! { pub struct TimerHeap; }
 impl TimerHeap {
     pub fn insert(&mut self, t: &mut EventLoopTimer) {
@@ -573,11 +554,11 @@ pub mod webcore {
     pub use super::AutoFlusher;
     use super::*;
 
-    /// Opaque view of `bun_runtime::webcore::Blob`. Never constructed by value
-    /// on this side — SQL only ever holds `*mut Blob` recovered from a JS
-    /// wrapper's `m_ctx` via `value.as_::<Blob>()`. Field accessors route
-    /// through [`SqlRuntimeHooks`]; the `from_js`/`from_js_direct` codegen
-    /// externs are real C++ symbols (generate-classes.ts), not Rust shims.
+    // Opaque view of `bun_runtime::webcore::Blob`. Never constructed by value
+    // on this side — SQL only ever holds `*mut Blob` recovered from a JS
+    // wrapper's `m_ctx` via `value.as_::<Blob>()`. Field accessors route
+    // through [`SqlRuntimeHooks`]; the `from_js`/`from_js_direct` codegen
+    // externs are real C++ symbols (generate-classes.ts), not Rust shims.
     bun_opaque::opaque_ffi! { pub struct Blob; }
     impl Blob {
         pub fn needs_to_read_file(&self) -> bool {
@@ -953,9 +934,9 @@ pub fn marked_argument_buffer_run<Ctx>(
     MarkedArgumentBuffer__run(ctx, f)
 }
 
-/// Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
-/// `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
-/// by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
+// Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
+// `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
+// by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
 bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
 impl SslCtxCache {
     pub fn get_or_create_opts(

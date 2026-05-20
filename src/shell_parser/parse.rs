@@ -3,12 +3,7 @@
 //! `bun_shell_parser` crate (no `bun_jsc` dependency). `Interpreter::parse`
 //! in `bun_runtime` consumes these via `bun_shell_parser::*`.
 
-#![allow(
-    non_camel_case_types,
-    non_snake_case,
-    dead_code,
-    clippy::too_many_arguments
-)]
+#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
 
 use core::fmt;
 use core::mem::size_of;
@@ -16,8 +11,7 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::VecExt;
-use bun_core::{self as bun_str, String as BunString, immutable as strings};
+use bun_core::{String as BunString, immutable as strings};
 
 // PORT NOTE: `strings::Cursor` (immutable.zig CodepointIterator.Cursor). Aliased
 // as `CodepointCursor` so the body reads identically to the Zig source.
@@ -1578,17 +1572,15 @@ impl<'bump> Parser<'bump> {
             }
         }
 
-        let at_end = if self.inside_subshell.is_none() {
-            self.check_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
-        } else {
+        let at_end = if let Some(subshell) = self.inside_subshell {
             self.check_any(&[
                 TokenTag::Semicolon,
                 TokenTag::Newline,
                 TokenTag::Eof,
-                self.inside_subshell
-                    .expect("infallible: checked is_some")
-                    .closing_tok(),
+                subshell.closing_tok(),
             ])
+        } else {
+            self.check_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
         };
         if at_end {
             if assigns.is_empty() {
@@ -1757,17 +1749,12 @@ impl<'bump> Parser<'bump> {
                 }
                 Token::Eof | Token::Semicolon | Token::Newline => false,
                 t => {
-                    if self.inside_subshell.is_some()
+                    !(self.inside_subshell.is_some()
                         && self
                             .inside_subshell
                             .expect("infallible: checked is_some")
                             .closing_tok()
-                            == t.tag()
-                    {
-                        false
-                    } else {
-                        true
-                    }
+                            == t.tag())
                 }
             } {
                 let next = self.peek_n(1);
@@ -2130,7 +2117,8 @@ impl<'bump> Parser<'bump> {
 
     pub fn combine_errors(&self) -> &'bump [u8] {
         let errors = &self.errors[..];
-        let str = {
+
+        ({
             let size = {
                 let mut i = 0usize;
                 for e in errors {
@@ -2145,8 +2133,7 @@ impl<'bump> Parser<'bump> {
                 i += e.msg.len();
             }
             buf
-        };
-        str
+        }) as _
     }
 
     fn add_error(&mut self, args: fmt::Arguments<'_>) -> ParseResult<()> {
@@ -2392,8 +2379,9 @@ pub struct LexResult<'bump> {
 
 impl<'bump> LexResult<'bump> {
     pub fn combine_errors(&self, bump: &'bump Bump) -> &'bump [u8] {
-        let errors = &self.errors[..];
-        let str = {
+        let errors = self.errors;
+
+        ({
             let size = {
                 let mut i = 0usize;
                 for e in errors {
@@ -2409,8 +2397,7 @@ impl<'bump> LexResult<'bump> {
                 i += s.len();
             }
             buf
-        };
-        str
+        }) as _
     }
 }
 
@@ -3360,7 +3347,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             // Just allow the std file descriptors for now
             _ => return None,
         }
-        let mut dir = RedirectDirection::Out;
         if let Some(input) = self.peek() {
             if input.escaped {
                 return None;
@@ -3368,8 +3354,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             match input.char {
                 c if c == u32::from(b'>') => {
                     let _ = self.eat();
-                    dir = RedirectDirection::Out;
-                    let is_double = self.eat_simple_redirect_operator(dir);
+                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::Out);
                     if is_double {
                         flags |= ast::RedirectFlags::APPEND;
                     }
@@ -3406,8 +3391,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     Some(flags)
                 }
                 c if c == u32::from(b'<') => {
-                    dir = RedirectDirection::In;
-                    let is_double = self.eat_simple_redirect_operator(dir);
+                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
                     if is_double {
                         flags |= ast::RedirectFlags::APPEND;
                     }
@@ -3418,155 +3402,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         } else {
             None
         }
-    }
-
-    fn eat_redirect_old(&mut self, first: InputChar) -> Option<ast::RedirectFlags> {
-        let mut flags = ast::RedirectFlags::default();
-        if self.matches_ascii_literal(b"2>&1") {
-        } else if self.matches_ascii_literal(b"1>&2") {
-        } else {
-            match first.char {
-                c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                    // Codepoint int casts are safe here because the digits are in the ASCII range
-                    let mut count: usize = 1;
-                    let mut buf = [u8::try_from(first.char).expect("int cast"); 32];
-
-                    while let Some(peeked) = self.peek() {
-                        let char = peeked.char;
-                        match char {
-                            c2 if (u32::from(b'0')..=u32::from(b'9')).contains(&c2) => {
-                                let _ = self.eat();
-                                if count >= 32 {
-                                    return None;
-                                }
-                                buf[count] = u8::try_from(char).expect("int cast");
-                                count += 1;
-                                continue;
-                            }
-                            _ => break,
-                        }
-                    }
-
-                    let num = match bun_core::parse_int::<usize>(&buf[..count], 10) {
-                        Ok(n) => n,
-                        // This means the number was really large, meaning it
-                        // probably was supposed to be a string
-                        Err(_) => return None,
-                    };
-
-                    match num {
-                        0 => flags |= ast::RedirectFlags::STDIN,
-                        1 => flags |= ast::RedirectFlags::STDOUT,
-                        2 => flags |= ast::RedirectFlags::STDERR,
-                        _ => {
-                            // FIXME support redirection to any arbitrary fd
-                            log!("redirection to fd {} is invalid\n", num);
-                            return None;
-                        }
-                    }
-                }
-                c if c == u32::from(b'&') => {
-                    if first.escaped {
-                        return None;
-                    }
-                    flags |= ast::RedirectFlags::STDOUT;
-                    flags |= ast::RedirectFlags::STDERR;
-                    let _ = self.eat();
-                }
-                _ => return None,
-            }
-        }
-
-        let mut dir = RedirectDirection::Out;
-        if let Some(input) = self.peek() {
-            if input.escaped {
-                return None;
-            }
-            match input.char {
-                c if c == u32::from(b'>') => dir = RedirectDirection::Out,
-                c if c == u32::from(b'<') => dir = RedirectDirection::In,
-                _ => return None,
-            }
-            let _ = self.eat();
-        } else {
-            return None;
-        }
-
-        let is_double = self.eat_simple_redirect_operator(dir);
-        if is_double {
-            flags |= ast::RedirectFlags::APPEND;
-        }
-
-        Some(flags)
-    }
-
-    /// Assumes the first character of the literal has been eaten
-    /// Backtracks and returns false if unsuccessful
-    // PORT NOTE: shell.zig `eatLiteral` is dead (no callers); preserved for
-    // shape parity. Reshaped to avoid `{ N - 1 }` const-generic arithmetic by
-    // peeking element-wise — same observable behaviour.
-    fn eat_literal<CP: PartialEq + Copy + Default + TryFrom<u32>>(
-        &mut self,
-        literal: &[CP],
-    ) -> bool {
-        let literal_skip_first = &literal[1..];
-        let snapshot = self.make_snapshot();
-        for &want in literal_skip_first {
-            match self.peek() {
-                Some(got) => {
-                    let Ok(v) = CP::try_from(got.char) else {
-                        self.backtrack(&snapshot);
-                        return false;
-                    };
-                    if v != want {
-                        self.backtrack(&snapshot);
-                        return false;
-                    }
-                    let _ = self.eat();
-                }
-                None => {
-                    self.backtrack(&snapshot);
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    fn eat_number_word(&mut self) -> Option<usize> {
-        let snap = self.make_snapshot();
-        let mut count: usize = 0;
-        let mut buf = [0u8; 32];
-
-        while let Some(result) = self.eat() {
-            let char = result.char;
-            match char {
-                c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                    if count >= 32 {
-                        return None;
-                    }
-                    buf[count] = u8::try_from(char).expect("int cast");
-                    count += 1;
-                    continue;
-                }
-                _ => break,
-            }
-        }
-
-        if count == 0 {
-            self.backtrack(&snap);
-            return None;
-        }
-
-        let num = match bun_core::parse_int::<usize>(&buf[..count], 10) {
-            Ok(n) => n,
-            Err(_) => {
-                self.backtrack(&snap);
-                return None;
-            }
-        };
-
-        Some(num)
     }
 
     fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {
@@ -3658,7 +3493,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     fn looks_like_js_obj_ref(&mut self) -> bool {
         let bytes = self.chars.src_bytes_at_cursor();
-        if LEX_JS_OBJREF_PREFIX.len() - 1 >= bytes.len() {
+        if LEX_JS_OBJREF_PREFIX.len() > bytes.len() {
             return false;
         }
         bytes[..LEX_JS_OBJREF_PREFIX.len() - 1] == LEX_JS_OBJREF_PREFIX[1..]
@@ -3666,7 +3501,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     fn looks_like_js_string_ref(&mut self) -> bool {
         let bytes = self.chars.src_bytes_at_cursor();
-        if LEX_JS_STRING_PREFIX.len() - 1 >= bytes.len() {
+        if LEX_JS_STRING_PREFIX.len() > bytes.len() {
             return false;
         }
         bytes[..LEX_JS_STRING_PREFIX.len() - 1] == LEX_JS_STRING_PREFIX[1..]
@@ -3904,6 +3739,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.chars.eat()
     }
 
+    fn peek(&mut self) -> Option<InputChar> {
+        self.chars.peek()
+    }
+
     fn eat_comment(&mut self) {
         while let Some(peeked) = self.eat() {
             if peeked.escaped {
@@ -3913,36 +3752,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 break;
             }
         }
-    }
-
-    fn eat_slice<CP: Copy + Default, const N: usize>(&mut self) -> Option<[CP; N]>
-    where
-        CP: TryFrom<u32>,
-    {
-        // TODO(port): Zig branched on whether CP's max >= source codepoint range; here we use
-        // TryFrom and bail if conversion fails.
-        let mut slice = [CP::default(); N];
-        let mut i: usize = 0;
-        while let Some(result) = self.peek() {
-            let Ok(v) = CP::try_from(result.char) else {
-                return None;
-            };
-            slice[i] = v;
-            i += 1;
-            let _ = self.eat();
-            if i == N {
-                return Some(slice);
-            }
-        }
-        None
-    }
-
-    fn peek(&mut self) -> Option<InputChar> {
-        self.chars.peek()
-    }
-
-    fn read_char(&mut self) -> Option<InputChar> {
-        self.chars.read_char()
     }
 }
 
@@ -3971,10 +3780,6 @@ impl SrcAsciiIndexValue {
     #[inline]
     fn char(self) -> u8 {
         self.0 & 0x7F
-    }
-    #[inline]
-    fn escaped(self) -> bool {
-        (self.0 & 0x80) != 0
     }
 }
 
@@ -4419,7 +4224,7 @@ pub fn assert_special_char(c: u8) {
 }
 
 /// Characters that need to be backslashed inside double quotes
-pub const BACKSLASHABLE_CHARS: [u8; 4] = [b'$', b'`', b'"', b'\\'];
+pub const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 
 pub fn escape_bun_str<const ADD_QUOTES: bool>(
     bunstr: BunString,

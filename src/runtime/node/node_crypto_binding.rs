@@ -619,7 +619,7 @@ pub mod random {
 
         #[bun_jsc::host_fn]
         pub fn random_fill(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-            let [buf_value, mut offset_value, mut size_value, mut callback] =
+            let [buf_value, offset_value, mut size_value, mut callback] =
                 call_frame.arguments_as_array::<4>();
 
             let Some(buf) = buf_value.as_array_buffer(global) else {
@@ -632,7 +632,7 @@ pub mod random {
 
             let element_size = buf.bytes_per_element().unwrap_or(1);
 
-            let mut offset: u32 = 0;
+            let offset: u32;
             if offset_value.is_callable() {
                 callback = offset_value;
                 offset =

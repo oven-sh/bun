@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use super::DiffFormatter;
 use super::{get_signature, Expect};
 

@@ -2,7 +2,6 @@ use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsClass as _, JsRe
 use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{group_begin, BunTest, RefDataPtr};
-use crate::test_runner::expect::JSValueTestExt as _;
 
 #[bun_jsc::JsClass(no_construct, no_constructor)] // codegen wires to_js / from_js (Zig: jsc.Codegen.JSDoneCallback)
 pub struct DoneCallback {
@@ -50,11 +49,11 @@ impl DoneCallback {
     }
 }
 
-/// Raw C-ABI shim for [`BunTest::bun_test_done_callback`] so it can be passed
-/// as a `JSHostFn` pointer to `JSFunction::create` (Zig used comptime
-/// `toJSHostFn`; Rust mints the thunk explicitly and routes the result through
-/// `to_js_host_fn_result` for `JsResult` → `JSValue` mapping + debug exception
-/// assertions).
+// Raw C-ABI shim for [`BunTest::bun_test_done_callback`] so it can be passed
+// as a `JSHostFn` pointer to `JSFunction::create` (Zig used comptime
+// `toJSHostFn`; Rust mints the thunk explicitly and routes the result through
+// `to_js_host_fn_result` for `JsResult` → `JSValue` mapping + debug exception
+// assertions).
 bun_jsc::jsc_host_abi! {
     unsafe fn __jsc_host_bun_test_done_callback(
         g: *mut JSGlobalObject,

@@ -2,8 +2,8 @@ pub use _impl::{Context, NativeZstd};
 
 mod _impl {
     use core::cell::Cell;
-    use core::ffi::{CStr, c_int, c_uint, c_void};
-    use core::{mem, ptr};
+    use core::ffi::{c_int, c_uint, c_void};
+    use core::ptr;
 
     use bun_jsc::{
         self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,

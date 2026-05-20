@@ -1,13 +1,12 @@
 use crate::mal_prelude::*;
 use bstr::BStr;
-use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
 use bun_core::handle_oom;
 
-use crate::Graph::{Graph, InputFileColumns as _};
+use crate::Graph::Graph;
 use crate::bun_css::css_parser::BundlerCssRule;
 use crate::bun_css::{BundlerStyleSheet, ImportConditions, LayerName};
 use crate::chunk::{CssImportOrder, CssImportOrderKind, Layers};
@@ -612,7 +611,7 @@ pub fn find_imported_files_in_css_order<'a>(
                     indices: Vec::new(),
                 });
             }
-            let mut duplicates: &[u32] = layer_duplicates.at(index).indices.slice();
+            let duplicates: &[u32] = layer_duplicates.at(index).indices.slice();
             let mut j = duplicates.len();
             while j != 0 {
                 j -= 1;
@@ -654,7 +653,7 @@ pub fn find_imported_files_in_css_order<'a>(
                                 )
                             {
                                 // Remove the previous entry and then overwrite it below
-                                duplicates = &duplicates[0..j];
+                                let _ = j;
                                 // SAFETY: `duplicate_index == wip_order.len() - 1`
                                 // (checked above), so the new len is `< capacity`.
                                 // The truncated entry's buffers are arena-owned
@@ -907,6 +906,7 @@ enum CssOrderDebugStep {
 }
 
 impl CssOrderDebugStep {
+    #[cfg(debug_assertions)]
     fn tag_name(self) -> &'static str {
         match self {
             Self::BeforeHoisting => "BEFORE_HOISTING",
@@ -943,6 +943,7 @@ fn debug_css_order(this: &LinkerContext, order: &Vec<CssImportOrder>, step: CssO
     }
 }
 
+#[cfg(debug_assertions)]
 fn debug_css_order_impl(
     this: &LinkerContext,
     order: &Vec<CssImportOrder>,

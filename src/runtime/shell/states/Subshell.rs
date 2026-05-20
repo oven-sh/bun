@@ -49,14 +49,17 @@ impl Subshell {
     /// Zig `Subshell.initDupeShellState` — dupe the parent env and `init`.
     /// Called by Stmt/Binary via `Interpreter::spawn_expr`. Pipeline does
     /// NOT use this (it dupes per-child itself and calls `init` directly).
-    pub fn init_dupe_shell_state(
+    ///
+    /// # Safety
+    /// `parent_shell` must point to a live `ShellExecEnv` owned by the parent
+    /// state for the duration of this call.
+    pub unsafe fn init_dupe_shell_state(
         interp: &Interpreter,
         parent_shell: *mut ShellExecEnv,
         node: &ast::Subshell,
         parent: NodeId,
         io: IO,
     ) -> bun_sys::Result<NodeId> {
-        // SAFETY: `parent_shell` is a live env owned by the parent state.
         let duped = unsafe { (*parent_shell).dupe_for_subshell(&io, ShellExecEnvKind::Subshell) }?;
         Ok(Self::init(interp, duped, node, parent, io))
     }
@@ -102,14 +105,12 @@ impl Subshell {
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
-        err: Option<bun_sys::SystemError>,
+        _err: Option<bun_sys::SystemError>,
     ) -> Yield {
         debug_assert!(matches!(
             interp.as_subshell(this).state,
             SubshellState::WaitWriteErr
         ));
-        // Spec just `e.deref()` — Drop handles that.
-        drop(err);
         let (parent, exit) = {
             let me = interp.as_subshell_mut(this);
             me.state = SubshellState::Done;
@@ -139,7 +140,9 @@ impl Subshell {
         // The env was duped at construction (either by Pipeline or by
         // `init_dupe_shell_state`) — Subshell always owns it.
         if !me.base.shell.is_null() {
-            ShellExecEnv::deinit_impl(me.base.shell);
+            // SAFETY: `me.base.shell` is the duped env this Subshell owned;
+            // null-checked and exclusively held here.
+            unsafe { ShellExecEnv::deinit_impl(me.base.shell) };
             me.base.shell = core::ptr::null_mut();
         }
         me.base.end_scope();

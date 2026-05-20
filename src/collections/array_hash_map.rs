@@ -1886,10 +1886,8 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// one insert into the new one, same (lowercased) basename bytes.
     #[inline]
     pub fn hash_key(&self, key: &[u8]) -> u64 {
-        use core::hash::{BuildHasher, Hash, Hasher};
-        let mut state = self.inner.hasher().build_hasher();
-        key.hash(&mut state);
-        state.finish()
+        use core::hash::BuildHasher;
+        self.inner.hasher().hash_one(key)
     }
 
     /// `get` with a caller-supplied hash. `hash` MUST equal `self.hash_key(key)`

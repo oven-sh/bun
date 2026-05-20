@@ -10,9 +10,8 @@ use bun_core::{Environment, Error, Global, Output, err};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dotenv;
 use bun_http as http;
-use bun_http::HeaderBuilder;
 use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::{self as install, Dependency, Lockfile, Npm, PackageManager, Subcommand};
+use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
@@ -50,7 +49,7 @@ fn json_get_string_cloned<'b>(
 }
 
 use crate::Command;
-use crate::cli::pack_command::{self as pack, PackCommand as Pack};
+use crate::cli::pack_command::{self as pack};
 
 pub struct ReadmeInfo {
     pub filename: Vec<u8>,

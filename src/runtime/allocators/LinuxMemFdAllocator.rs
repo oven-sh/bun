@@ -16,6 +16,7 @@
 //! data that we expect to be cloned multiple times. Such as Blob in FormData.
 
 use core::ffi::c_void;
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::{Alignment, AllocatorVTable, StdAllocator};
@@ -57,6 +58,7 @@ impl LinuxMemFdAllocator {
 
 pub type Ref = bun_ptr::IntrusiveArc<LinuxMemFdAllocator>;
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl LinuxMemFdAllocator {

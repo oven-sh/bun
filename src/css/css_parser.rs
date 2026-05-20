@@ -96,7 +96,6 @@ pub use gated_shims::*;
 /// reaches into by name remain shimmed here. When a leaf un-gates, delete the
 /// matching shim.
 mod gated_shims {
-    use super::*;
 
     // ── rules/ leaf-module payload re-exports ────────────────────────────
     // The leaf modules are un-gated; re-export the real prelude payload types
@@ -105,11 +104,6 @@ mod gated_shims {
     pub use crate::rules::container::{ContainerCondition, ContainerName};
     pub use crate::rules::keyframes::KeyframesName;
     pub use crate::rules::page::PageSelector;
-
-    // ── values::{number,string} ──────────────────────────────────────────
-    pub type CSSNumber = f32;
-    pub type CSSInteger = i32;
-    pub type CSSString = &'static [u8];
 
     // ── ast crate-tier shims ─────────────────────────────────────────────
     /// `bun.ast.Ref` / `bun.ast.MangledProps` were re-exported via
@@ -550,9 +544,7 @@ fn parse_qualified_rule<P: QualifiedRuleParser>(
     delimiters: Delimiters,
 ) -> CssResult<P::QualifiedRule> {
     let prelude_result = input.parse_until_before(delimiters, |i| P::parse_prelude(parser, i));
-    if let Err(e) = input.expect_curly_bracket_block() {
-        return Err(e);
-    }
+    input.expect_curly_bracket_block()?;
     let prelude = prelude_result?;
     parse_nested_block(input, |input2| {
         P::parse_block(parser, prelude, start, input2)
@@ -1256,7 +1248,7 @@ where
                     let delimiters = Delimiters::SEMICOLON | Delimiters::CLOSE_CURLY_BRACKET;
                     let _ = self
                         .input
-                        .parse_until_after(delimiters, |p| Parser::parse_empty(p));
+                        .parse_until_after(delimiters, Parser::parse_empty);
                 } else {
                     return Some(parse_at_rule(&start, name, self.input, self.parser));
                 }
@@ -2299,11 +2291,7 @@ mod rule_parsers {
     // blocked_on: media_query::{MediaList,MediaQuery}::parse
     #[inline]
     fn parse_media_list(input: &mut Parser, options: &ParserOptions) -> CssResult<MediaList> {
-        {
-            return MediaList::parse(input, options);
-        }
-        let _ = (input, options);
-        todo("MediaList::parse — media_query.rs parse surface gated")
+        MediaList::parse(input, options)
     }
 } // mod rule_parsers
 
@@ -2331,21 +2319,13 @@ pub struct ToCssResultInternal {
     pub dependencies: Option<Vec<Dependency>>,
 }
 
+#[derive(Default)]
 pub struct MinifyOptions {
     /// Targets to compile the CSS for.
     pub targets: targets::Targets,
     /// A list of known unused symbols, including CSS class names, ids, and
     /// `@keyframe` names. The declarations of these will be removed.
     pub unused_symbols: ArrayHashMap<Box<[u8]>, ()>,
-}
-
-impl Default for MinifyOptions {
-    fn default() -> Self {
-        Self {
-            targets: targets::Targets::default(),
-            unused_symbols: ArrayHashMap::default(),
-        }
-    }
 }
 
 pub type BundlerStyleSheet = StyleSheet<BundlerAtRule>;
@@ -2685,6 +2665,7 @@ mod stylesheet_impl {
 
             if let Some(config) = &self.options.css_modules {
                 let mut references = CssModuleReferences::default();
+                let references_ptr: *mut CssModuleReferences<'_> = &raw mut references;
                 // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
                 // holds `&'a mut CssModuleReferences<'a>`; tying the borrow to `'a`
                 // (the printer's whole lifetime) makes the local `references`
@@ -2692,8 +2673,7 @@ mod stylesheet_impl {
                 // `printer.css_module` before moving `references` out below.
                 // Re-thread once `Printer<'a>` / `CssModule<'a>` split borrow vs.
                 // arena lifetimes (see rules/mod.rs `decl_block_static`).
-                let references_mut: &mut CssModuleReferences<'_> =
-                    unsafe { &mut *(&raw mut references) };
+                let references_mut: &mut CssModuleReferences<'_> = unsafe { &mut *references_ptr };
                 printer.css_module = Some(CssModule::new(
                     printer.arena,
                     config,
@@ -2875,10 +2855,9 @@ mod stylesheet_impl {
                 }
             }
 
-            let mut sources: Vec<Box<[u8]>> = Vec::with_capacity(1);
-            sources.push(Box::<[u8]>::from(options.filename));
-            let mut source_map_urls: Vec<Option<Box<[u8]>>> = Vec::with_capacity(1);
-            source_map_urls.push(parser.current_source_map_url().map(Box::<[u8]>::from));
+            let sources: Vec<Box<[u8]>> = vec![Box::<[u8]>::from(options.filename)];
+            let source_map_urls: Vec<Option<Box<[u8]>>> =
+                vec![parser.current_source_map_url().map(Box::<[u8]>::from)];
 
             // Spec: `.layer_names = if (comptime P == BundlerAtRuleParser)
             // at_rule_parser.layer_names else .{}` (css_parser.zig:3324). Rust
@@ -3076,9 +3055,7 @@ mod stylesheet_impl {
                 },
                 Some(&mut parser_extra),
             );
-            let mut sources: Vec<Box<[u8]>> = Vec::with_capacity(1);
-            // PERF(port): was appendAssumeCapacity
-            sources.push(options.filename.into());
+            let sources: Vec<Box<[u8]>> = vec![options.filename.into()];
             Ok(StyleAttribute {
                 declarations: match DeclarationBlock::parse(&mut parser, options) {
                     Ok(v) => v,
@@ -4082,15 +4059,9 @@ impl<'a> Parser<'a> {
     /// Same as `Parser::next`, but does not skip whitespace tokens.
     pub fn next_including_whitespace(&mut self) -> CssResult<&Token> {
         loop {
-            match self.next_including_whitespace_and_comments() {
-                Ok(tok) => {
-                    if matches!(tok, Token::Comment(_)) {
-                        continue;
-                    } else {
-                        break;
-                    }
-                }
-                Err(e) => return Err(e),
+            let tok = self.next_including_whitespace_and_comments()?;
+            if !matches!(tok, Token::Comment(_)) {
+                break;
             }
         }
         Ok(&self.input.cached_token.as_ref().unwrap().token)
@@ -4402,8 +4373,8 @@ pub mod nth {
             }
         }
         if let Token::Number(n) = tok {
-            if n.has_sign && n.int_value.is_some() {
-                return Ok((a, n.int_value.unwrap()));
+            if let (true, Some(int_value)) = (n.has_sign, n.int_value) {
+                return Ok((a, int_value));
             }
         }
         input.reset(&start);
@@ -4413,8 +4384,7 @@ pub mod nth {
     fn parse_signless_b(input: &mut Parser, a: i32, b_sign: i32) -> CssResult<NthResult> {
         let tok = input.next()?;
         if let Token::Number(n) = tok {
-            if !n.has_sign && n.int_value.is_some() {
-                let b = n.int_value.unwrap();
+            if let (false, Some(b)) = (n.has_sign, n.int_value) {
                 return Ok((a, b_sign * b));
             }
         }
@@ -4661,10 +4631,10 @@ impl<'a> Tokenizer<'a> {
                 }
             }
             b'+' => {
-                if (self.has_at_least(1) && matches!(self.byte_at(1), b'0'..=b'9'))
+                if (self.has_at_least(1) && self.byte_at(1).is_ascii_digit())
                     || (self.has_at_least(2)
                         && self.byte_at(1) == b'.'
-                        && matches!(self.byte_at(2), b'0'..=b'9'))
+                        && self.byte_at(2).is_ascii_digit())
                 {
                     self.consume_numeric()
                 } else {
@@ -4677,10 +4647,10 @@ impl<'a> Tokenizer<'a> {
                 Token::Comma
             }
             b'-' => {
-                if (self.has_at_least(1) && matches!(self.byte_at(1), b'0'..=b'9'))
+                if (self.has_at_least(1) && self.byte_at(1).is_ascii_digit())
                     || (self.has_at_least(2)
                         && self.byte_at(1) == b'.'
-                        && matches!(self.byte_at(2), b'0'..=b'9'))
+                        && self.byte_at(2).is_ascii_digit())
                 {
                     self.consume_numeric()
                 } else if self.starts_with(b"-->") {
@@ -4694,7 +4664,7 @@ impl<'a> Tokenizer<'a> {
                 }
             }
             b'.' => {
-                if self.has_at_least(1) && matches!(self.byte_at(1), b'0'..=b'9') {
+                if self.has_at_least(1) && self.byte_at(1).is_ascii_digit() {
                     self.consume_numeric()
                 } else {
                     self.advance(1);
@@ -4868,7 +4838,7 @@ impl<'a> Tokenizer<'a> {
         let mut fractional_part: f64 = 0.0;
         if self.has_at_least(1)
             && self.next_byte_unchecked() == b'.'
-            && matches!(self.byte_at(1), b'0'..=b'9')
+            && self.byte_at(1).is_ascii_digit()
         {
             is_integer = false;
             self.advance(1); // Consume '.'
@@ -4886,10 +4856,10 @@ impl<'a> Tokenizer<'a> {
         let mut value: f64 = sign * (integral_part + fractional_part);
 
         if self.has_at_least(1) && matches!(self.next_byte_unchecked(), b'e' | b'E') {
-            if matches!(self.byte_at(1), b'0'..=b'9')
+            if self.byte_at(1).is_ascii_digit()
                 || (self.has_at_least(2)
                     && matches!(self.byte_at(1), b'+' | b'-')
-                    && matches!(self.byte_at(2), b'0'..=b'9'))
+                    && self.byte_at(2).is_ascii_digit())
             {
                 is_integer = false;
                 self.advance(1);
@@ -5541,7 +5511,7 @@ impl<'a> Tokenizer<'a> {
         let mut p = [0u8; 4];
         let avail = (self.src.len() - self.position).min(4);
         p[..avail].copy_from_slice(&self.src[self.position..self.position + avail]);
-        strings::decode_wtf8_rune_t::<u32>(p, len, strings::UNICODE_REPLACEMENT as u32)
+        strings::decode_wtf8_rune_t::<u32>(p, len, strings::UNICODE_REPLACEMENT)
     }
 
     #[inline]
@@ -6011,8 +5981,6 @@ impl<'a> CopyOnWriteStr<'a> {
 // ───────────────────────────── color ─────────────────────────────
 
 pub mod color {
-    use super::*;
-
     /// The opaque alpha value of 1.0.
     pub const OPAQUE: f32 = 1.0;
 
@@ -6441,7 +6409,7 @@ pub mod serializer {
     }
 
     pub fn hex_escape<W: WriteAll + ?Sized>(ascii_byte: u8, writer: &mut W) -> bun_io::Result<()> {
-        let mut bytes = [0u8; 4];
+        let bytes: [u8; 4];
         let slice: &[u8] = if ascii_byte > 0x0F {
             let [hi, lo] = bun_core::fmt::hex_byte_lower(ascii_byte);
             bytes = [b'\\', hi, lo, b' '];

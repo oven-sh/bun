@@ -3,10 +3,9 @@
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
-use bun_boringssl as boringssl;
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_ptr::IntrusiveRc;
@@ -17,8 +16,8 @@ use bun_boringssl_sys::SSL_CTX;
 use bun_collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsRef, JsResult, Strong,
-    SysErrorJsc, SystemError,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, SysErrorJsc,
+    SystemError,
 };
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
@@ -26,9 +25,8 @@ use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex}
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
-use crate::webcore::blob::BlobExt;
 use bun_boringssl_sys as boringssl_sys;
-use bun_core::{self as bstr, String as BunString, ZStr, ZigString};
+use bun_core::String as BunString;
 use bun_event_loop::AnyTask::AnyTask;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
@@ -43,111 +41,6 @@ fn from_duplex<const SSL: bool>(duplex: &mut UpgradedDuplex) -> uws::NewSocketHa
     uws::NewSocketHandler::<SSL>::from_duplex(std::ptr::from_mut::<UpgradedDuplex>(duplex).cast())
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local NewSocketHandler address helpers (not yet in `bun_uws`)
-// ──────────────────────────────────────────────────────────────────────────
-//
-// `bun_uws::NewSocketHandler` exposes `local_port`/`remote_port` but not the
-// address accessors. The underlying `us_socket_t` already has them, so wrap
-// with a small extension trait until they land upstream.
-trait SocketHandlerAddrExt {
-    fn local_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]>;
-    fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]>;
-}
-
-// `bun_uws::NewSocketHandler` lacks pause/resume/nodelay/keepalive/is_named_pipe;
-// the underlying `us_socket_t` already has them (uws_sys/us_socket_t.rs), so
-// dispatch over `InternalSocket` here until they land upstream.
-trait SocketHandlerStreamExt {
-    fn resume_stream(&self) -> bool;
-    fn pause_stream(&self) -> bool;
-    fn set_no_delay(&self, enabled: bool) -> bool;
-    fn set_keep_alive(&self, enabled: bool, delay: u32) -> bool;
-    fn is_named_pipe(&self) -> bool;
-}
-impl<const SSL: bool> SocketHandlerStreamExt for uws::NewSocketHandler<SSL> {
-    fn resume_stream(&self) -> bool {
-        match self.socket {
-            uws::InternalSocket::Connected(s) => {
-                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(s).resume();
-                true
-            }
-            uws::InternalSocket::Detached => true,
-            #[cfg(windows)]
-            uws::InternalSocket::Pipe(p) => {
-                // SAFETY: `Pipe` carries a non-null `*mut WindowsNamedPipe`
-                // (type-erased in `bun_uws`); set by `WindowsNamedPipeContext`.
-                unsafe {
-                    (*p.cast::<super::windows_named_pipe::WindowsNamedPipe>()).resume_stream()
-                }
-            }
-            _ => false,
-        }
-    }
-    fn pause_stream(&self) -> bool {
-        match self.socket {
-            uws::InternalSocket::Connected(s) => {
-                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(s).pause();
-                true
-            }
-            uws::InternalSocket::Detached => true,
-            #[cfg(windows)]
-            uws::InternalSocket::Pipe(p) => {
-                // SAFETY: see `resume_stream` above.
-                unsafe { (*p.cast::<super::windows_named_pipe::WindowsNamedPipe>()).pause_stream() }
-            }
-            _ => false,
-        }
-    }
-    fn set_no_delay(&self, enabled: bool) -> bool {
-        match self.socket {
-            uws::InternalSocket::Connected(s) => {
-                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(s).set_nodelay(enabled);
-                true
-            }
-            _ => false,
-        }
-    }
-    fn set_keep_alive(&self, enabled: bool, delay: u32) -> bool {
-        match self.socket {
-            uws::InternalSocket::Connected(s) => {
-                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(s).set_keepalive(enabled, delay) == 0
-            }
-            _ => false,
-        }
-    }
-    fn is_named_pipe(&self) -> bool {
-        #[cfg(windows)]
-        return matches!(self.socket, uws::InternalSocket::Pipe(_));
-        #[cfg(not(windows))]
-        return matches!(self.socket, uws::InternalSocket::Pipe);
-    }
-}
-impl<const SSL: bool> SocketHandlerAddrExt for uws::NewSocketHandler<SSL> {
-    fn local_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-        match self.socket {
-            uws::InternalSocket::Connected(s) => {
-                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(s).local_address(buf).ok()
-            }
-            _ => None,
-        }
-    }
-    fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-        match self.socket {
-            uws::InternalSocket::Connected(s) => {
-                // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(s).remote_address(buf).ok()
-            }
-            _ => None,
-        }
-    }
-}
-
 /// Shorthand for the JS-side `EventLoopCtx` (replaces direct VM passing to
 /// `KeepAlive::ref_/unref` — `bun_io` no longer accepts `&VirtualMachine`).
 #[inline]
@@ -160,13 +53,7 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use super::handlers::Handlers;
-pub use super::handlers::SocketConfig;
 pub use super::listener::Listener;
-pub use super::socket_address::SocketAddress;
-#[cfg(windows)]
-pub use super::windows_named_pipe_context::WindowsNamedPipeContext;
-#[cfg(not(windows))]
-pub type WindowsNamedPipeContext = ();
 
 mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
@@ -653,9 +540,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         let initial_delay: u32 = if args.len > 1 {
-            // TODO(port): `JSGlobalObject::validate_integer_range` is gated
-            // `bun_sql_jsc` extension-trait port until it's un-gated.
-            use bun_sql_jsc::jsc::JSGlobalObjectSqlExt as _;
             u32::try_from(global.validate_integer_range(
                 args.ptr[1],
                 0i32,
@@ -703,7 +587,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = Handlers::enter_ref(handlers);
+        let scope = Handlers::enter_ref(handlers);
         // TODO(port): errdefer — `scope.exit()` returns true when handlers freed
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
@@ -763,7 +647,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = Handlers::enter_ref(handlers);
+        let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -806,7 +690,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = Handlers::enter_ref(handlers);
+        let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -941,7 +825,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         debug_assert!(errno >= 0);
-        let mut errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int {
+        let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int {
             sys::SystemErrno::ENOENT as c_int
         } else {
             sys::SystemErrno::ECONNREFUSED as c_int
@@ -952,14 +836,16 @@ impl<const SSL: bool> NewSocket<SSL> {
             BunString::static_("ECONNREFUSED")
         };
         #[cfg(windows)]
-        {
+        let errno_ = {
+            let mut errno_ = errno_;
             if errno_ == sys::SystemErrno::ENOENT as c_int {
                 errno_ = sys::SystemErrno::UV_ENOENT as c_int;
             }
             if errno_ == sys::SystemErrno::ECONNREFUSED as c_int {
                 errno_ = sys::SystemErrno::UV_ECONNREFUSED as c_int;
             }
-        }
+            errno_
+        };
 
         let callback = handlers.on_connect_error;
         let global = handlers.global_object;
@@ -984,7 +870,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // local so it lives to end of scope like Zig's `defer`.
         let _scope_guard = scopeguard::guard(
             (this.as_ctx_ptr(), scope, captured_handlers),
-            |(p, mut sc, h)| {
+            |(p, sc, h)| {
                 if sc.exit() {
                     // Connection never opened (`is_active == false`), so the
                     // scope's decrement is what brings client handlers to zero
@@ -1304,7 +1190,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = Handlers::enter_ref(handlers);
+        let scope = Handlers::enter_ref(handlers);
         let result = match callback.call(&global, this_value, &[this_value]) {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
@@ -1382,7 +1268,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = Handlers::enter_ref(handlers);
+        let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -1446,7 +1332,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = Handlers::enter_ref(handlers);
+        let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -1615,7 +1501,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = Handlers::enter_ref(handlers);
+        let scope = Handlers::enter_ref(handlers);
 
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
@@ -1691,7 +1577,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
-        let mut scope = Handlers::enter_ref(handlers);
+        let scope = Handlers::enter_ref(handlers);
 
         // const encoding = handlers.encoding;
         if let Err(err) = callback.call(&global, this_value, &[this_value, output_value]) {
@@ -3811,8 +3697,8 @@ impl DuplexUpgradeContext {
             // `heap::take` free below — no protector spans the dealloc.
             let this_ref = unsafe { &mut *this };
             if let Some(tls) = this_ref.tls.take() {
-                // Zig `tls.deref()` — IntrusiveRc::drop decrements.
-                drop(tls);
+                // Zig `tls.deref()` — release the owner's +1.
+                tls.deref();
             }
             // Close raced ahead of StartTLS — drop the unconsumed config.
             this_ref.ssl_config = None;

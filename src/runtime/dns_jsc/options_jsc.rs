@@ -6,8 +6,8 @@ use bun_jsc::{
 };
 
 use bun_dns::{
-    BACKEND_LABEL, Backend, FAMILY_MAP, Family, GetAddrInfo, GetAddrInfoResult as GaiResult,
-    Options, PROTOCOL_MAP, Protocol, ResultAny, SOCKET_TYPE_MAP, SocketType,
+    BACKEND_LABEL, Backend, FAMILY_MAP, Family, GetAddrInfoResult as GaiResult, Options,
+    PROTOCOL_MAP, Protocol, ResultAny, SOCKET_TYPE_MAP, SocketType,
 };
 use bun_dns::{addr_info_count, address_to_string};
 // PORT NOTE: Zig's `Options.FromJSError` is the error-set union of all the
@@ -273,6 +273,5 @@ pub fn addr_info_to_js_array(
 }
 
 // (unused import in Zig: `JSError = bun.JSError` — dropped)
-use bun_dns::GetAddrInfo as _GetAddrInfo;
 
 // ported from: src/runtime/dns_jsc/options_jsc.zig

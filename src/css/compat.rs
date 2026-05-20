@@ -5474,15 +5474,14 @@ impl Feature {
     pub fn is_partially_compatible(self, targets: &Browsers) -> bool {
         // Generic implementation in terms of `is_compatible`, mirroring
         // compat.zig:5327-5394 — probe each browser field one at a time.
-        let mut browsers = Browsers::default();
         macro_rules! probe {
             ($field:ident) => {
                 if targets.$field.is_some() {
+                    let mut browsers = Browsers::default();
                     browsers.$field = targets.$field;
                     if self.is_compatible(&browsers) {
                         return true;
                     }
-                    browsers.$field = None;
                 }
             };
         }

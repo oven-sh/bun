@@ -17,7 +17,6 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::StringArrayHashMap;
-use bun_core::ZBox;
 use bun_core::{self, ZigString};
 use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
 
@@ -26,8 +25,6 @@ use crate::napi::NapiEnv;
 use super::{ABIType, Function};
 
 unsafe extern "C" {
-    /// `JSGlobalObject::makeNapiEnvForFFI` — heap-allocated env owned by VM.
-    fn ZigGlobalObject__makeNapiEnvForFFI(global: *const JSGlobalObject) -> *mut NapiEnv;
     /// `JSValue::getOwn` — own-property lookup (no prototype-chain walk).
     /// Declared locally while `bun_jsc::JSValue::get_own` (JSValue.rs) is gated.
     fn JSC__JSValue__getOwn(
@@ -530,27 +527,6 @@ impl Function {
         writer.write_all(b";\n}\n\n")?;
         Ok(())
     }
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// NAPI env helper
-// ══════════════════════════════════════════════════════════════════════════
-
-/// Allocates a `NapiEnv` only if any `Function` in the set takes a
-/// `napi_env`/`napi_value` argument.
-pub(super) fn make_napi_env_if_needed<'a>(
-    functions: impl IntoIterator<Item = &'a Function>,
-    global_this: &JSGlobalObject,
-) -> Option<&'static NapiEnv> {
-    for function in functions {
-        if function.needs_napi_env() {
-            // SAFETY: C++ returns a non-null heap-allocated env owned by the
-            // VM (lifetime ≥ DevServer/FFI lifetime).
-            // TODO(port): lifetime — `'static` is a stand-in for VM lifetime.
-            return Some(unsafe { &*ZigGlobalObject__makeNapiEnvForFFI(global_this) });
-        }
-    }
-    None
 }
 
 // ported from: src/runtime/ffi/FFI.zig

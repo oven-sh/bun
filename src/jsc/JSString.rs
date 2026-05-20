@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 use bun_core::ZigString;

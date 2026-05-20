@@ -1,4 +1,6 @@
+#[cfg(debug_assertions)]
 use core::mem::ManuallyDrop;
+#[cfg(debug_assertions)]
 use core::ptr::NonNull;
 
 use crate::JSValue;
@@ -9,8 +11,8 @@ use crate::JSValue;
 //
 // PORT NOTE: Zig `deinit` → `impl Drop`. The manual `ref()`/`unref()` path
 // overlaps teardown; to avoid Drop double-`unprotect`ing after a final `unref`,
-// `unref()` zeroes `raw` and clears `safety` when it frees (debug builds), so
-// Drop becomes a no-op (`unprotect` on ZERO is a no-op; `safety == None` skips
+// `unref()` zeroes `raw` and clears `_safety` when it frees (debug builds), so
+// Drop becomes a no-op (`unprotect` on ZERO is a no-op; `_safety == None` skips
 // the canary free).
 // TODO(port): release builds have no ref_count, so a caller that does the final
 // `unref()` and then lets Drop fire would double-unprotect — audit call sites
@@ -57,7 +59,7 @@ pub struct DeprecatedStrong {
     // wrapper (uses JSValueProtect/Unprotect), so the §JSC "never store bare
     // JSValue on the heap" rule does not apply here.
     raw: JSValue,
-    safety: Safety,
+    _safety: Safety,
 }
 
 impl DeprecatedStrong {
@@ -65,26 +67,29 @@ impl DeprecatedStrong {
         debug_assert!(!non_cell.is_cell());
         DeprecatedStrong {
             raw: non_cell,
-            safety: SAFETY_NONE,
+            _safety: SAFETY_NONE,
         }
     }
 
     pub fn init(value: JSValue) -> DeprecatedStrong {
         value.protect();
         #[cfg(debug_assertions)]
-        let safety: Safety = Some(SafetyData {
+        let _safety: Safety = Some(SafetyData {
             // ManuallyDrop<T> is #[repr(transparent)], so the cast to
             // NonNull<DeprecatedStrong> is sound.
             ptr: bun_core::heap::into_raw_nn(Box::new(ManuallyDrop::new(DeprecatedStrong {
                 raw: JSValue::from_encoded(0xAEBCFA),
-                safety: None,
+                _safety: None,
             })))
             .cast::<DeprecatedStrong>(),
             ref_count: 1,
         });
         #[cfg(not(debug_assertions))]
-        let safety: Safety = ();
-        DeprecatedStrong { raw: value, safety }
+        let _safety: Safety = ();
+        DeprecatedStrong {
+            raw: value,
+            _safety,
+        }
     }
 
     pub fn get(&self) -> JSValue {
@@ -106,31 +111,34 @@ impl DeprecatedStrong {
     pub fn r#ref(&mut self) {
         self.raw.protect();
         #[cfg(debug_assertions)]
-        if let Some(safety) = &mut self.safety {
-            safety.ref_count += 1;
+        if let Some(_safety) = &mut self._safety {
+            _safety.ref_count += 1;
         }
     }
 
     pub fn unref(&mut self) {
         self.raw.unprotect();
         #[cfg(debug_assertions)]
-        if let Some(safety) = &mut self.safety {
-            if safety.ref_count == 1 {
+        if let Some(_safety) = &mut self._safety {
+            if _safety.ref_count == 1 {
                 // SAFETY: ptr was produced by heap::alloc in `init` and not yet freed.
                 unsafe {
-                    debug_assert!((*safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
-                    (*safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
+                    debug_assert!((*_safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
+                    (*_safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
                     // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
                     drop(bun_core::heap::take(
-                        safety.ptr.as_ptr().cast::<ManuallyDrop<DeprecatedStrong>>(),
+                        _safety
+                            .ptr
+                            .as_ptr()
+                            .cast::<ManuallyDrop<DeprecatedStrong>>(),
                     ));
                 }
                 // Neutralize so Drop is a no-op (see top-of-file PORT NOTE).
-                self.safety = None;
+                self._safety = None;
                 self.raw = JSValue::ZERO;
                 return;
             }
-            safety.ref_count -= 1;
+            _safety.ref_count -= 1;
         }
     }
 }
@@ -139,16 +147,19 @@ impl Drop for DeprecatedStrong {
     fn drop(&mut self) {
         self.raw.unprotect();
         #[cfg(debug_assertions)]
-        if let Some(safety) = &mut self.safety {
+        if let Some(_safety) = &mut self._safety {
             // SAFETY: ptr was produced by heap::alloc in `init` and has not been freed
             // (ref_count == 1 asserted below).
             unsafe {
-                debug_assert!((*safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
-                (*safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
-                debug_assert!(safety.ref_count == 1);
+                debug_assert!((*_safety.ptr.as_ptr()).raw.encoded() == 0xAEBCFA);
+                (*_safety.ptr.as_ptr()).raw = JSValue::from_encoded(0xFFFFFF);
+                debug_assert!(_safety.ref_count == 1);
                 // Free without running Drop on the sentinel (ManuallyDrop is repr(transparent)).
                 drop(bun_core::heap::take(
-                    safety.ptr.as_ptr().cast::<ManuallyDrop<DeprecatedStrong>>(),
+                    _safety
+                        .ptr
+                        .as_ptr()
+                        .cast::<ManuallyDrop<DeprecatedStrong>>(),
                 ));
             }
         }
@@ -165,7 +176,7 @@ impl Optional {
     pub const EMPTY: Optional = Optional {
         backing: DeprecatedStrong {
             raw: JSValue::ZERO,
-            safety: SAFETY_NONE,
+            _safety: SAFETY_NONE,
         },
     };
 

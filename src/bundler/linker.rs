@@ -7,7 +7,6 @@ use std::io::Write as _;
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::HashMap;
-use bun_collections::VecExt;
 use bun_paths::{self, SEP};
 // PORT NOTE: two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines

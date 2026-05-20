@@ -1,9 +1,7 @@
 use bun_ast::ExprData;
 use bun_ast::Ref;
 use bun_collections::StringHashMap;
-use bun_collections::VecExt;
 use bun_core::strings;
-use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
 
 use crate::defines_table::{
@@ -605,9 +603,6 @@ impl DefineDataExt for DefineData {
         Ok(user_defines)
     }
 }
-
-// var nan_val = try arena.create(js_ast.E.Number);
-const NAN_VAL: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
 
 // Zig `deinit` freed `dots` values, cleared maps, and destroyed `self`.
 // In Rust: `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their

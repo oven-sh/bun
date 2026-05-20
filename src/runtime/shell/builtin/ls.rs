@@ -1,4 +1,3 @@
-use core::ffi::CStr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
@@ -213,8 +212,12 @@ impl Ls {
     }
 
     /// Spec: ls.zig `onShellLsTaskDone`.
-    pub fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellLsTask) {
-        // SAFETY: task was heap-allocated in create(); reclaim.
+    ///
+    /// # Safety
+    /// `task` must be a live heap allocation produced by
+    /// [`ShellLsTask::create`]; ownership is reclaimed here.
+    pub unsafe fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellLsTask) {
+        // SAFETY: precondition.
         let mut task = unsafe { bun_core::heap::take(task) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
@@ -636,10 +639,16 @@ impl ShellLsTask {
         err.with_path(self.path.as_bytes())
     }
 
-    pub fn run_from_main_thread(this: *mut ShellLsTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap-allocated task.
-        let cmd = unsafe { (*this).cmd };
-        Ls::on_shell_ls_task_done(interp, cmd, this);
+    /// # Safety
+    /// `this` must be a live heap allocation produced by
+    /// [`ShellLsTask::create`]; ownership is reclaimed via
+    /// [`Ls::on_shell_ls_task_done`].
+    pub unsafe fn run_from_main_thread(this: *mut ShellLsTask, interp: &Interpreter) {
+        // SAFETY: precondition.
+        unsafe {
+            let cmd = (*this).cmd;
+            Ls::on_shell_ls_task_done(interp, cmd, this);
+        }
     }
 }
 
@@ -791,7 +800,9 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
         Self::run_from_thread_pool(this)
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        Self::run_from_main_thread(this, interp)
+        // SAFETY: `ShellTask` trampoline hands back the heap allocation
+        // produced by `ShellLsTask::create`.
+        unsafe { Self::run_from_main_thread(this, interp) }
     }
 }
 

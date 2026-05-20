@@ -660,7 +660,7 @@ impl<'a> Transpiler<'a> {
 // `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
 // ══════════════════════════════════════════════════════════════════════════
 
-use bun_resolver::tsconfig_json::{JsxField, TSConfigJSON};
+use bun_resolver::tsconfig_json::TSConfigJSON;
 
 /// D042: resolver-side and bundler-side `jsx::Pragma` are now the SAME
 /// nominal type (`bun_options_types::jsx::Pragma`). Identity clone; kept so
@@ -823,7 +823,6 @@ impl<'a> Transpiler<'a> {
 // per-loader transpile branches.
 // ══════════════════════════════════════════════════════════════════════════
 
-use crate::cache::RuntimeTranspilerCacheExt as _;
 use crate::entry_points as EntryPoints;
 use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
 use bun_ast::RuntimeTranspilerCache;
@@ -3301,7 +3300,7 @@ impl<'a> Transpiler<'a> {
 #[derive(Clone, Copy)]
 enum TransformOutstream {
     Stdout,
-    Dir(bun_sys::Fd),
+    Dir(#[expect(dead_code)] bun_sys::Fd),
 }
 
 /// Port of `transpiler.zig:374 BuildResolveResultPair`.

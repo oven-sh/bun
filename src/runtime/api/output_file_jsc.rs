@@ -76,7 +76,7 @@ impl SavedFile {
         )
         .expect("unreachable");
 
-        let mut blob = Blob::init_with_store(store, global_this);
+        let blob = Blob::init_with_store(store, global_this);
         // PORT NOTE: Zig overwrites `blob.content_type = mime.value` here;
         // `init_with_store` already populated it from the store's `File`
         // mime (which is the same value), so the overwrite is a no-op.

@@ -3,8 +3,6 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
-use bun_ptr::AsCtxPtr;
-
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
@@ -17,7 +15,7 @@ use crate::shell::states::expansion::{Expansion, ExpansionOpts};
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 
 pub struct Cmd {
     pub base: Base,
@@ -53,16 +51,12 @@ pub enum CmdState {
     Done,
 }
 
+#[derive(Default)]
 pub enum Exec {
+    #[default]
     None,
     Builtin(Box<Builtin>),
     Subproc(Box<SubprocExec>),
-}
-
-impl Default for Exec {
-    fn default() -> Self {
-        Exec::None
-    }
 }
 
 impl Cmd {
@@ -876,7 +870,8 @@ impl Cmd {
         me.args.clear();
         me.redirection_file.clear();
         if let Some(fd) = me.redirection_fd.take() {
-            CowFd::deref(fd);
+            // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
+            unsafe { CowFd::deref(fd) };
         }
         // Spec (Cmd.zig deinit lines 715-730): tear down the running exec.
         match core::mem::take(&mut me.exec) {

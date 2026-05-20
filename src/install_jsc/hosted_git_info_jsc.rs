@@ -80,7 +80,7 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // PORT NOTE: Zig used `ZigString.Slice.mut()` to get a mutable view; the Rust
     // `ZigStringSlice` is read-only, so own a mutable copy via `into_vec()`.
     let mut as_utf8 = npa_str.to_utf8().into_vec();
-    let mut parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
+    let parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
         Ok(p) => p,
         Err(err) => {
             return Err(go.throw(format_args!(

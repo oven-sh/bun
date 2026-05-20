@@ -1,5 +1,3 @@
-use core::mem::offset_of;
-
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
 use bun_collections::{HashMap, OffsetByteList, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
@@ -71,7 +69,7 @@ pub struct MySQLConnection {
     status_flags: StatusFlags,
 
     auth_plugin: Option<AuthMethod>,
-    auth_state: AuthState,
+    _auth_state: AuthState,
 
     auth_data: Vec<u8>,
     // TODO(perf): in Zig, database/user/password/options are sub-slices into options_buf
@@ -83,7 +81,7 @@ pub struct MySQLConnection {
     database: Box<[u8]>,
     user: Box<[u8]>,
     password: Box<[u8]>,
-    options: Box<[u8]>,
+    _options: Box<[u8]>,
     options_buf: Box<[u8]>,
     secure: Option<*mut SslCtx>,
     tls_config: SSLConfig,
@@ -109,12 +107,12 @@ impl Default for MySQLConnection {
             character_set: CharacterSet::default(),
             status_flags: StatusFlags::default(),
             auth_plugin: None,
-            auth_state: AuthState::Pending,
+            _auth_state: AuthState::Pending,
             auth_data: Vec::new(),
             database: Box::default(),
             user: Box::default(),
             password: Box::default(),
-            options: Box::default(),
+            _options: Box::default(),
             options_buf: Box::default(),
             secure: None,
             tls_config: SSLConfig::default(),
@@ -145,7 +143,7 @@ impl MySQLConnection {
             database,
             user: username,
             password,
-            options,
+            _options: options,
             options_buf,
             socket: Socket::SocketTcp(uws::SocketTCP::detached()),
             queue: MySQLRequestQueue::init(),
@@ -726,7 +724,7 @@ impl MySQLConnection {
         // revert back to authenticating since we received the public key
         self.set_status(ConnectionState::Authenticating);
 
-        let mut encrypted_password = Auth::caching_sha2_password::EncryptedPassword {
+        let encrypted_password = Auth::caching_sha2_password::EncryptedPassword {
             password: bun_ptr::RawSlice::new(&self.password),
             public_key: bun_ptr::RawSlice::new(response.data.slice()),
             nonce: bun_ptr::RawSlice::new(&self.auth_data),
@@ -1641,7 +1639,7 @@ impl ReaderContext for Reader {
         }
 
         let ucount: usize = usize::try_from(count).expect("int cast");
-        if rb.head as usize + ucount > rb.byte_list.len() as usize {
+        if rb.head as usize + ucount > rb.byte_list.len() {
             rb.head = rb.byte_list.len() as u32;
             return;
         }

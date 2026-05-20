@@ -22,12 +22,12 @@ use crate::bun_css;
 use crate::bun_fs;
 use crate::bun_renamer;
 
-use crate::Graph::{Graph, InputFileColumns as _};
+use crate::Graph::Graph;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, CrossChunkImport, LinkerContext, LinkerGraph, PartRange,
-    PathTemplate, cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
+    cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;

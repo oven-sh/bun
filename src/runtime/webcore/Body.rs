@@ -1,17 +1,16 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Body
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
 use crate::webcore::jsc::{
     self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData,
-    JSGlobalObject, JSPromise, JSValue, JsResult, Strong, SystemError, URLSearchParams,
-    VirtualMachine,
+    JSGlobalObject, JSPromise, JSValue, JsResult, SystemError, URLSearchParams, VirtualMachine,
 };
 use crate::webcore::{
-    self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, Lifetime, Pipe,
+    self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, Lifetime,
     ReadableStream, blob, streams,
 };
 use bun_core::Output;
@@ -21,7 +20,7 @@ use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
-use bun_core::{MutableString, String as BunString, ZigString, strings};
+use bun_core::{MutableString, String as BunString, ZigString};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::{JsCell, StringJsc as _};
@@ -249,15 +248,15 @@ pub struct PendingValue {
     pub task: Option<*mut c_void>,
 
     /// runs after the data is available.
-    pub on_receive_value: Option<fn(ctx: *mut c_void, value: &mut Value)>,
+    pub on_receive_value: Option<unsafe fn(ctx: *mut c_void, value: &mut Value)>,
 
     /// conditionally runs when requesting data
     /// used in HTTP server to ignore request bodies unless asked for it
-    pub on_start_buffering: Option<fn(ctx: *mut c_void)>,
-    pub on_start_streaming: Option<fn(ctx: *mut c_void) -> DrainResult>,
+    pub on_start_buffering: Option<unsafe fn(ctx: *mut c_void)>,
+    pub on_start_streaming: Option<unsafe fn(ctx: *mut c_void) -> DrainResult>,
     pub on_readable_stream_available:
-        Option<fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
-    pub on_stream_cancelled: Option<fn(ctx: Option<*mut c_void>)>,
+        Option<unsafe fn(ctx: *mut c_void, global_this: &JSGlobalObject, readable: ReadableStream)>,
+    pub on_stream_cancelled: Option<unsafe fn(ctx: Option<*mut c_void>)>,
     pub size_hint: blob::SizeType,
 
     pub deinit: bool,
@@ -444,7 +443,9 @@ impl PendingValue {
             promise_value.protect();
 
             if let Some(on_start_buffering) = self.on_start_buffering.take() {
-                on_start_buffering(self.task.unwrap());
+                // SAFETY: `task` is the live request-ctx pointer registered alongside
+                // this callback in `prepare_js_request_context`.
+                unsafe { on_start_buffering(self.task.unwrap()) };
             }
             Ok(promise_value)
         }
@@ -872,7 +873,9 @@ impl Value {
                 let mut drain_result = DrainResult::EstimatedSize(0);
 
                 if let Some(drain) = locked.on_start_streaming.take() {
-                    drain_result = drain(locked.task.unwrap());
+                    // SAFETY: `task` is the live request-ctx pointer registered alongside
+                    // this callback.
+                    drain_result = unsafe { drain(locked.task.unwrap()) };
                 }
 
                 if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
@@ -927,11 +930,15 @@ impl Value {
                 );
 
                 if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
-                    on_readable_stream_available(
-                        locked.task.unwrap(),
-                        global_this,
-                        locked.readable.get(global_this).unwrap(),
-                    );
+                    // SAFETY: `task` is the live request-ctx pointer registered alongside
+                    // this callback.
+                    unsafe {
+                        on_readable_stream_available(
+                            locked.task.unwrap(),
+                            global_this,
+                            locked.readable.get(global_this).unwrap(),
+                        );
+                    }
                 }
 
                 Ok(locked.readable.get(global_this).unwrap().value)
@@ -1023,7 +1030,7 @@ impl Value {
                 // SAFETY: `encoded.bytes` is the codec-owned slice; copy then drop frees it.
                 let owned: Box<[u8]> = Box::from(unsafe { encoded.bytes.as_ref() });
                 drop(encoded);
-                let mut blob = Blob::init(owned.into_vec(), global_this);
+                let blob = Blob::init(owned.into_vec(), global_this);
                 blob.content_type
                     .set(std::ptr::from_ref::<[u8]>(mime.as_bytes()));
                 blob.content_type_was_set.set(true);
@@ -1114,7 +1121,9 @@ impl Value {
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
-                callback(locked.task.unwrap(), new);
+                // SAFETY: `task` is the live request-ctx pointer registered alongside
+                // this callback.
+                unsafe { callback(locked.task.unwrap(), new) };
                 return Ok(());
             }
 
@@ -1138,7 +1147,7 @@ impl Value {
                             result?;
                         }
                         _ => {
-                            let mut blob = new.use_();
+                            let blob = new.use_();
                             promise.wrap(global, |g| blob.to_string_transfer(g))?;
                         }
                     },
@@ -1472,7 +1481,9 @@ impl Value {
             }
 
             if let Some(on_receive_value) = locked.on_receive_value.take() {
-                on_receive_value(locked.task.unwrap(), self);
+                // SAFETY: `task` is the live request-ctx pointer registered alongside
+                // this callback.
+                unsafe { on_receive_value(locked.task.unwrap(), self) };
             }
 
             return Ok(());
@@ -1590,7 +1601,9 @@ impl Value {
         let mut drain_result = DrainResult::EstimatedSize(0);
 
         if let Some(drain) = locked.on_start_streaming.take() {
-            drain_result = drain(locked.task.unwrap());
+            // SAFETY: `task` is the live request-ctx pointer registered alongside
+            // this callback.
+            drain_result = unsafe { drain(locked.task.unwrap()) };
         }
 
         if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
@@ -1641,11 +1654,15 @@ impl Value {
         );
 
         if let Some(on_readable_stream_available) = locked.on_readable_stream_available {
-            on_readable_stream_available(
-                locked.task.unwrap(),
-                global_this,
-                locked.readable.get(global_this).unwrap(),
-            );
+            // SAFETY: `task` is the live request-ctx pointer registered alongside
+            // this callback.
+            unsafe {
+                on_readable_stream_available(
+                    locked.task.unwrap(),
+                    global_this,
+                    locked.readable.get(global_this).unwrap(),
+                );
+            }
         }
 
         let teed = match locked.readable.tee(global_this)? {
@@ -2100,7 +2117,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
         };
 
         let value = self.get_body_value();
-        if let Value::Locked(locked) = value {
+        if let Value::Locked(_locked) = value {
             let owned_readable = self.get_body_readable_stream(global_object);
             // PORT NOTE: reshaped for borrowck — re-borrow after self method call.
             let value = self.get_body_value();
@@ -2255,18 +2272,6 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
             format_args!("Body already used"),
         )
         .reject()
-}
-
-// TODO(port): `lifetimeWrap` returns a fn at comptime in Zig. The wrapped
-// call has been inlined at each `JSPromise::wrap` callsite as a closure;
-// keep this helper for reference / future macro extraction.
-fn lifetime_wrap(
-    f: fn(&mut AnyBlob, &JSGlobalObject, Lifetime) -> JsResult<JSValue>,
-    lifetime: Lifetime,
-) -> impl Fn(&mut AnyBlob, &JSGlobalObject) -> JSValue {
-    move |this, global_object| {
-        jsc::to_js_host_call(global_object, || f(this, global_object, lifetime))
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -2426,7 +2431,7 @@ impl<'a> ValueBufferer<'a> {
     }
 
     fn on_stream_pipe(&mut self, stream: streams::Result) {
-        let mut stream_ = stream;
+        let stream_ = stream;
         let stream_needs_deinit = matches!(
             stream_,
             streams::Result::Owned(_) | streams::Result::OwnedAndDone(_)
@@ -2510,91 +2515,6 @@ impl<'a> ValueBufferer<'a> {
             bun_core::scoped_log!(BodyValueBufferer, "handleResolveStream no sink");
             (self.on_finished_buffering)(self.ctx, b"", None, is_async);
         }
-    }
-
-    fn create_js_sink(&mut self, stream: ReadableStream) -> Result<(), bun_core::Error> {
-        // PORT NOTE: The Zig caller has this path commented out ("this is broken
-        // right now" — see buffer_locked_body_value below). Ported faithfully so
-        // un-commenting that call site needs no further work.
-        stream.value.ensure_still_alive();
-        let global_this = self.global;
-        // Stash the Box in `self.js_sink` first (so error paths / Drop find it),
-        // then re-borrow mutably through the slot for `assign_to_stream`.
-        self.js_sink = Some(Box::new(ArrayBufferJSSink {
-            sink: ArrayBufferSink {
-                bytes: Default::default(),
-                next: None,
-                ..Default::default()
-            },
-        }));
-        // Just inserted above; `Some` guaranteed.
-        let buffer_stream: &mut ArrayBufferJSSink = self.js_sink.as_deref_mut().unwrap();
-
-        buffer_stream.sink.signal = sink::SinkSignal::<ArrayBufferSink>::init(JSValue::ZERO);
-
-        // explicitly set it to a dead pointer
-        // we use this memory address to disable signals being sent
-        buffer_stream.sink.signal.clear();
-        debug_assert!(buffer_stream.sink.signal.is_dead());
-
-        // PORT NOTE: reshaped for borrowck — capture the `signal.ptr` slot as a raw
-        // pointer before passing `buffer_stream` to FFI (Zig aliased both).
-        let signal_ptr_slot: *mut *mut c_void =
-            (&raw mut buffer_stream.sink.signal.ptr).cast::<*mut c_void>();
-
-        // Zig passes `buffer_stream` (the `*ArrayBufferSink.JSSink` wrapper). The
-        // Rust `assign_to_stream` takes `&mut T` and casts to `*mut c_void`; since
-        // `JSSink<T>` is `#[repr(transparent)]` over `T`, `&mut buffer_stream.sink`
-        // and `buffer_stream as *mut JSSink<T>` are address-identical. Reborrow the
-        // wrapper through the inner field via the transparent guarantee.
-        // SAFETY: `JSSink<T>` is `#[repr(transparent)]` (single field `sink: T`).
-        let inner: &mut ArrayBufferSink = unsafe {
-            &mut *std::ptr::from_mut::<ArrayBufferJSSink>(buffer_stream).cast::<ArrayBufferSink>()
-        };
-        let assignment_result: JSValue =
-            ArrayBufferJSSink::assign_to_stream(global_this, stream.value, inner, signal_ptr_slot);
-
-        assignment_result.ensure_still_alive();
-
-        // assert that it was updated
-        debug_assert!(!buffer_stream.sink.signal.is_dead());
-
-        if assignment_result.is_error() {
-            return Err(bun_core::err!("PipeFailed"));
-        }
-
-        if !assignment_result.is_empty_or_undefined_or_null() {
-            assignment_result.ensure_still_alive();
-            // it returns a Promise when it goes through ReadableStreamDefaultReader
-            if let Some(promise) = assignment_result.as_any_promise() {
-                match promise.status() {
-                    jsc::js_promise::Status::Pending => {
-                        let cell = crate::api::NativePromiseContext::create(
-                            global_this,
-                            std::ptr::from_mut::<Self>(self),
-                        );
-                        // Zig: `catch {}` — termination is observed by the surrounding scope.
-                        assignment_result.then_with_value(
-                            global_this,
-                            cell,
-                            Bun__BodyValueBufferer__onResolveStream,
-                            Bun__BodyValueBufferer__onRejectStream,
-                        );
-                    }
-                    jsc::js_promise::Status::Fulfilled => {
-                        let _guard = jsc::js_value::Protected::adopt(stream.value);
-                        self.handle_resolve_stream(false);
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        let _guard = jsc::js_value::Protected::adopt(stream.value);
-                        self.handle_reject_stream(promise.result(global_this.vm()), false);
-                    }
-                }
-                return Ok(());
-            }
-        }
-
-        Err(bun_core::err!("PipeFailed"))
     }
 
     fn buffer_locked_body_value(
@@ -2718,7 +2638,7 @@ impl<'a> ValueBufferer<'a> {
             }
             _ => {
                 value.to_blob_if_possible();
-                let mut input = value.use_as_any_blob_allow_non_utf8_string();
+                let input = value.use_as_any_blob_allow_non_utf8_string();
                 let bytes = input.slice();
                 bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue {}", bytes.len());
                 (sink.on_finished_buffering)(sink.ctx, bytes, None, true);

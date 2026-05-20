@@ -124,8 +124,8 @@ impl Background {
         }
 
         Ok(Background {
-            image: image.unwrap_or_else(Image::default),
-            color: color.unwrap_or_else(CssColor::default),
+            image: image.unwrap_or_default(),
+            color: color.unwrap_or_default(),
             position: position.unwrap_or_else(BackgroundPosition::default),
             repeat: repeat.unwrap_or_else(BackgroundRepeat::default),
             size: size.unwrap_or_else(BackgroundSize::default),
@@ -496,7 +496,6 @@ impl BackgroundAttachment {
 /// A value for the [background-origin](https://www.w3.org/TR/css-backgrounds-3/#background-origin) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 #[repr(u8)]
-
 pub enum BackgroundOrigin {
     /// The position is relative to the border box.
     BorderBox,
@@ -509,7 +508,6 @@ pub enum BackgroundOrigin {
 /// A value for the [background-clip](https://drafts.csswg.org/css-backgrounds-4/#background-clip) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 #[repr(u8)]
-
 pub enum BackgroundClip {
     /// The background is clipped to the border box.
     BorderBox,
@@ -880,26 +878,27 @@ impl BackgroundHandler {
             self.clips.take();
         // Zig had `defer { ... deinit }` here — Drop handles cleanup at scope exit.
 
-        if maybe_color.is_some()
-            && maybe_images.is_some()
-            && maybe_x_positions.is_some()
-            && maybe_y_positions.is_some()
-            && maybe_repeats.is_some()
-            && maybe_sizes.is_some()
-            && maybe_attachments.is_some()
-            && maybe_origins.is_some()
-            && maybe_clips.is_some()
-        {
-            let color = maybe_color.as_ref().unwrap();
-            let images = maybe_images.as_mut().unwrap();
-            let x_positions = maybe_x_positions.as_mut().unwrap();
-            let y_positions = maybe_y_positions.as_mut().unwrap();
-            let repeats = maybe_repeats.as_mut().unwrap();
-            let sizes = maybe_sizes.as_mut().unwrap();
-            let attachments = maybe_attachments.as_mut().unwrap();
-            let origins = maybe_origins.as_mut().unwrap();
-            let clips = maybe_clips.as_mut().unwrap();
-
+        if let (
+            Some(color),
+            Some(images),
+            Some(x_positions),
+            Some(y_positions),
+            Some(repeats),
+            Some(sizes),
+            Some(attachments),
+            Some(origins),
+            Some(clips),
+        ) = (
+            maybe_color.as_ref(),
+            maybe_images.as_mut(),
+            maybe_x_positions.as_mut(),
+            maybe_y_positions.as_mut(),
+            maybe_repeats.as_mut(),
+            maybe_sizes.as_mut(),
+            maybe_attachments.as_mut(),
+            maybe_origins.as_mut(),
+            maybe_clips.as_mut(),
+        ) {
             // Only use shorthand syntax if the number of layers matches on all properties.
             let len = images.len();
             if x_positions.len() == len

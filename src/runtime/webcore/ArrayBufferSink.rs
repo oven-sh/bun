@@ -1,4 +1,4 @@
-use crate::webcore::sink::{self, Sink, SinkHandler};
+use crate::webcore::sink::{self, Sink};
 use crate::webcore::streams::{self, Signal};
 use bun_collections::{ByteVecExt, VecExt};
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
@@ -9,6 +9,7 @@ pub type JSSink = sink::JSSink<ArrayBufferSink>;
 // `Sink.JSSink()`; in Rust the symbol-name concatenation lives in the
 // `JsSinkAbi` impl in `Sink.rs` (see `array_buffer_sink_abi`).
 
+#[derive(Default)]
 pub struct ArrayBufferSink {
     pub bytes: Vec<u8>,
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
@@ -21,19 +22,6 @@ pub struct ArrayBufferSink {
     pub next: Option<Sink<'static>>,
     pub streaming: bool,
     pub as_uint8array: bool,
-}
-
-impl Default for ArrayBufferSink {
-    fn default() -> Self {
-        Self {
-            bytes: Vec::<u8>::default(),
-            done: false,
-            signal: Signal::default(),
-            next: None,
-            streaming: false,
-            as_uint8array: false,
-        }
-    }
 }
 
 impl ArrayBufferSink {
@@ -97,9 +85,10 @@ impl ArrayBufferSink {
     // `${abi_name}__finalize` thunk (generated_jssink.rs), which calls
     // the trait `JsSinkType::finalize(&mut self)`; that forwards here. The
     // `Box<Self>` contract applies only to generate-classes.ts classes.
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: called from JSC lazy sweep on the mutator thread; `this` is
-        // the m_ctx payload allocated via heap::alloc in init/JSSink.
+    /// # Safety
+    /// `this` must be the m_ctx payload allocated via `heap::alloc` in
+    /// init/JSSink, called from JSC lazy sweep on the mutator thread.
+    pub unsafe fn finalize(this: *mut Self) {
         unsafe { Self::destroy(this) };
     }
 
@@ -281,7 +270,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
         // Zig: ArrayBufferSink.finalize destroys the heap allocation; the
         // `JSSink::finalize` C export owns that path. The trait impl here is
         // the *inner* finalize.
-        Self::finalize(std::ptr::from_mut::<Self>(self));
+        unsafe { Self::finalize(std::ptr::from_mut::<Self>(self)) };
     }
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         Self::construct(this);

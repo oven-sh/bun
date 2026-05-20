@@ -263,11 +263,13 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         debug_assert!(new_cap as usize > self.metadata.len());
         debug_assert!(new_cap.is_power_of_two());
 
-        let mut map: Self = Self::default();
-        map.metadata = vec![SLOT_FREE; new_cap as usize];
-        // LSAN: this Vec is owned by the map and freed by HashMap's auto-Drop.
-        // A leak reported here means the *container* HashMap leaked, not grow().
-        map.slots = Vec::with_capacity(new_cap as usize);
+        let mut map = Self {
+            metadata: vec![SLOT_FREE; new_cap as usize],
+            // LSAN: this Vec is owned by the map and freed by HashMap's auto-Drop.
+            // A leak reported here means the *container* HashMap leaked, not grow().
+            slots: Vec::with_capacity(new_cap as usize),
+            ..Default::default()
+        };
         for _ in 0..new_cap {
             map.slots.push(None);
         }

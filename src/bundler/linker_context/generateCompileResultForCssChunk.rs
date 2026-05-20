@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-use core::mem::offset_of;
 use core::sync::atomic::Ordering;
 
 use bun_ast::ImportRecord;
@@ -9,7 +8,7 @@ use bun_threading::thread_pool as ThreadPoolLib;
 use crate::bun_css::{BundlerStyleSheet, ImportInfo, LocalsResultsMap, PrinterOptions, Targets};
 
 use crate::chunk::{Content, CssImportOrderKind};
-use crate::linker_context_mod::{LinkerContext, PendingPartRange};
+use crate::linker_context_mod::LinkerContext;
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index};
 

@@ -133,11 +133,11 @@ pub fn intern_cached(slot: &core::sync::atomic::AtomicU16, name: &'static str) -
 impl Error {
     // ── const handles into SEED (indices are load-bearing) ────────────────
     // SAFETY: literal 1 is non-zero (SEED[0] = "Unexpected").
-    pub const UNEXPECTED: Self = Self(unsafe { NonZeroU16::new_unchecked(1) });
+    pub const UNEXPECTED: Self = Self(NonZeroU16::new(1).unwrap());
     // SAFETY: literal 2 is non-zero (SEED[1] = "OutOfMemory").
-    pub const OUT_OF_MEMORY: Self = Self(unsafe { NonZeroU16::new_unchecked(2) });
+    pub const OUT_OF_MEMORY: Self = Self(NonZeroU16::new(2).unwrap());
     // SAFETY: literal 6 is non-zero (SEED[5] = "WriteFailed").
-    pub const WRITE_FAILED: Self = Self(unsafe { NonZeroU16::new_unchecked(6) });
+    pub const WRITE_FAILED: Self = Self(NonZeroU16::new(6).unwrap());
     /// Placeholder retained for callers not yet migrated to `err!()`.
     /// Aliases `Unexpected` so it round-trips through `name()` sensibly.
     pub const TODO: Self = Self::UNEXPECTED;

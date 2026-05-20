@@ -65,7 +65,6 @@ unsafe extern "system" {
 // stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`
 // from B-0 round 1 is removed; tty/ansi/winsize route through the new
 // `OutputSinkVTable` slots so `bun_core` stays T0 (no `bun_sys` dep).
-use crate::Fd;
 pub use crate::output::File;
 use crate::output::output_sink;
 

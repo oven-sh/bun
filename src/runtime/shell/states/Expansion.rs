@@ -57,7 +57,7 @@ pub enum ExpansionState {
     Done,
     /// Spec: Expansion.zig `.err`. The parent inspects this on
     /// `child_done(_, 1)` to print the message.
-    Err(ShellErr),
+    Err(Box<ShellErr>),
 }
 
 #[derive(Default)]
@@ -271,7 +271,7 @@ impl Expansion {
         const MAX_BRACE_EXPANSIONS: u32 = 65536;
         if count > MAX_BRACE_EXPANSIONS {
             let msg = format!("too many brace expansions ({count} > {MAX_BRACE_EXPANSIONS})");
-            me.state = ExpansionState::Err(ShellErr::Custom(msg.into_bytes().into()));
+            me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
             return;
         }
         let count = count as usize;
@@ -330,12 +330,14 @@ impl Expansion {
         ) {
             Ok(Ok(w)) => w,
             Ok(Err(e)) => {
-                interp.as_expansion_mut(this).state = ExpansionState::Err(ShellErr::new_sys(&e));
+                interp.as_expansion_mut(this).state =
+                    ExpansionState::Err(Box::new(ShellErr::new_sys(&e)));
                 return Yield::Next(this);
             }
             Err(e) => {
-                interp.as_expansion_mut(this).state =
-                    ExpansionState::Err(ShellErr::Custom(e.to_string().into_bytes().into()));
+                interp.as_expansion_mut(this).state = ExpansionState::Err(Box::new(
+                    ShellErr::Custom(e.to_string().into_bytes().into()),
+                ));
                 return Yield::Next(this);
             }
         };
@@ -379,7 +381,10 @@ impl Expansion {
                 }
             }
             ast::SimpleAtom::VarArgv(int) => {
-                Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
+                // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
+                unsafe {
+                    Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
+                }
             }
             ast::SimpleAtom::Asterisk => out.push(b'*'),
             ast::SimpleAtom::DoubleAsterisk => out.extend_from_slice(b"**"),
@@ -550,7 +555,7 @@ impl Expansion {
                 me.state = ExpansionState::Done;
             } else {
                 let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
-                me.state = ExpansionState::Err(ShellErr::Custom(msg.into_bytes().into()));
+                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
             }
             Yield::Next(this).run(interp);
             return;
@@ -576,7 +581,7 @@ impl Expansion {
     pub fn take_err(interp: &Interpreter, this: NodeId) -> Option<ShellErr> {
         let me = interp.as_expansion_mut(this);
         match core::mem::replace(&mut me.state, ExpansionState::Done) {
-            ExpansionState::Err(e) => Some(e),
+            ExpansionState::Err(e) => Some(*e),
             other => {
                 me.state = other;
                 None

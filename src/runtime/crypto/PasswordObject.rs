@@ -28,22 +28,6 @@ use super::pwhash;
 use bun_sha_hmac::SHA512;
 
 // ───────────────────────────────────────────────────────────────────────────
-// gated upstream in bun_jsc; provide a file-local shim matching the Zig
-// `globalObject.throwNotEnoughArguments(name, expected, got)` shape.
-// ───────────────────────────────────────────────────────────────────────────
-
-trait JSGlobalObjectPasswordExt {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> JsError;
-}
-impl JSGlobalObjectPasswordExt for JSGlobalObject {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> JsError {
-        self.throw_invalid_arguments(format_args!(
-            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
-        ))
-    }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
 // PasswordObject
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -182,7 +166,6 @@ impl AlgorithmValue {
                         });
                     }
                 }
-                { unreachable!() }
             } else {
                 return Err(global_object.throw_invalid_argument_type(
                     "hash",
@@ -218,7 +201,6 @@ impl AlgorithmValue {
         } else {
             return Err(global_object.throw_invalid_argument_type("hash", "algorithm", "string"));
         }
-        { unreachable!() }
     }
 }
 

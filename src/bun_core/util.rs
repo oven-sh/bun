@@ -242,7 +242,7 @@ impl<T: Copy> Unaligned<T> {
     #[inline]
     pub fn slice_align_cast(slice: &[Unaligned<T>]) -> &[T] {
         debug_assert!(
-            (slice.as_ptr() as usize) % core::mem::align_of::<T>() == 0,
+            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
             "Unaligned::slice_align_cast: pointer is not {}-byte aligned",
             core::mem::align_of::<T>(),
         );
@@ -256,7 +256,7 @@ impl<T: Copy> Unaligned<T> {
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
         debug_assert!(
-            (slice.as_ptr() as usize) % core::mem::align_of::<T>() == 0,
+            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
             "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
             core::mem::align_of::<T>(),
         );
@@ -267,15 +267,6 @@ impl<T: Copy> Unaligned<T> {
 
 // ─── needsAllocator ───────────────────────────────────────────────────────────
 // Zig: `fn needsAllocator(comptime Fn: anytype) bool { ArgsTuple(Fn).len > 2 }`
-// Used only to decide whether to pass `allocator` to `ensureUnusedCapacity`.
-// Allocator params are dropped in Rust (non-AST crate), so this is dead.
-// TODO(port): delete once all callers are migrated.
-#[doc(hidden)]
-#[inline(always)]
-const fn needs_allocator() -> bool {
-    false
-}
-
 // ─── trait impls for concrete collections ─────────────────────────────────────
 // PORT NOTE: these did not exist in the Zig — they are the Rust replacement for
 // the `@hasField` / `@hasDecl` probes. Impls for HashMap/Vec/MultiArrayList
@@ -323,7 +314,7 @@ pub struct ZStr([u8]);
 impl ZStr {
     // SAFETY: `b"\0"` is a 'static 1-byte allocation with `ptr[0] == 0`, so
     // `ptr[len] == 0` holds for `len = 0` and `ptr[..0]` is trivially readable.
-    pub const EMPTY: &'static ZStr = unsafe { Self::from_raw(b"\0".as_ptr(), 0) };
+    pub const EMPTY: &'static ZStr = unsafe { Self::from_raw(c"".as_ptr().cast::<u8>(), 0) };
 
     /// SAFETY: `ptr[len] == 0` and `ptr[..len]` is readable for `'a`.
     #[inline]
@@ -1353,7 +1344,7 @@ impl Fd {
     #[cfg(not(windows))]
     #[inline]
     pub const fn is_stdio(self) -> bool {
-        matches!(self.0, 0 | 1 | 2)
+        matches!(self.0, 0..=2)
     }
     #[cfg(windows)]
     pub fn is_stdio(self) -> bool {
@@ -1620,6 +1611,7 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
     }
     #[cfg(target_os = "macos")]
     {
+        let _ = cap;
         // SAFETY: F_GETPATH expects buf with at least MAXPATHLEN bytes; callers
         // pass ≥1024 which is the platform MAXPATHLEN on Darwin.
         let rc = unsafe { libc::fcntl(fd.0, libc::F_GETPATH, buf) };
@@ -1780,6 +1772,7 @@ impl core::fmt::Display for Fd {
 /// crate dep, just `extern` symbols; libuv is linked into the final binary).
 pub mod fd {
     use super::Fd;
+    #[cfg(windows)]
     use core::ffi::{c_int, c_void};
 
     // Written once in windows_stdio::init() during single-threaded startup
@@ -2388,6 +2381,7 @@ pub struct ThreadLock {
 // `Cell` is `!Sync` but the AcqRel `swap` on `owning_thread` is the lock that
 // serializes its non-atomic load/store across threads.
 unsafe impl Sync for ThreadLock {}
+#[cfg(debug_assertions)]
 const INVALID_THREAD_ID: u64 = 0;
 impl ThreadLock {
     pub const fn init_unlocked() -> Self {
@@ -3118,7 +3112,7 @@ pub fn csprng(bytes: &mut [u8]) {
 pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
     static CELL: Once<Result<ZBox, crate::Error>> = Once::new();
     let r = CELL.get_or_init(|| {
-        let mut path = std::env::current_exe().map_err(crate::Error::from)?;
+        let path = std::env::current_exe().map_err(crate::Error::from)?;
         // PORT NOTE: Zig's `std.fs.selfExePath` resolves symlinks. Rust's
         // `current_exe()` already does on Linux (`readlink /proc/self/exe`),
         // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
@@ -3131,9 +3125,7 @@ pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
         // (test/js/node/process/process-args.test.js,
         //  test/js/node/test/parallel/test-process-execpath.js).
         #[cfg(any(target_vendor = "apple", windows))]
-        if let Ok(real) = path.canonicalize() {
-            path = real;
-        }
+        let path = path.canonicalize().unwrap_or(path);
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStringExt;
@@ -3341,7 +3333,6 @@ pub enum EmbedKind {
 pub type EmbedDir = EmbedKind;
 
 pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static str {
-    debug_assert!(crate::Environment::IS_DEBUG);
     panic!(
         "runtime_embed_file({sub_path}): non-embedded debug load requires a per-site \
          static cache — migrate this call to `bun_core::runtime_embed_file!` or rebuild \
@@ -3678,10 +3669,7 @@ macro_rules! extern_union_accessors {
 /// accepts anything that is itself viewable as bytes (covers the actual call
 /// sites: `u8` tags, `usize` lengths, `Index` newtypes).
 #[inline]
-pub fn write_any_to_hasher<H: Hasher + ?Sized, T: AsBytes + ?Sized>(hasher: &mut H, thing: T)
-where
-    T: Sized,
-{
+pub fn write_any_to_hasher<H: Hasher + ?Sized, T: AsBytes>(hasher: &mut H, thing: T) {
     hasher.update(thing.as_bytes_for_hash());
 }
 
@@ -4084,7 +4072,7 @@ pub mod base64 {
     /// `std.base64.standard.Encoder.calcSize` — alias of `encode_len` taking a length.
     #[inline]
     pub const fn standard_encoder_calc_size(source_len: usize) -> usize {
-        ((source_len + 2) / 3) * 4
+        source_len.div_ceil(3) * 4
     }
 
     /// `std.base64.standard.Encoder.encode` returning the written sub-slice.
@@ -4237,6 +4225,7 @@ pub unsafe fn init_argv(argc: core::ffi::c_int, argv: *const *const core::ffi::c
 
 /// Kernel-provided argv slice if [`init_argv`] was called, else `None`.
 #[inline]
+#[cfg(not(windows))]
 fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
     let p = OS_ARGV.load(core::sync::atomic::Ordering::Relaxed);
     if p.is_null() {
@@ -4794,6 +4783,7 @@ pub fn exit_thread() -> ! {
     #[cfg(windows)]
     // `ExitThread` is declared `safe fn` in `bun_windows_sys::kernel32`.
     crate::windows_sys::kernel32::ExitThread(0);
+    #[cfg(not(any(unix, windows)))]
     loop {
         core::hint::spin_loop();
     }
@@ -4950,7 +4940,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // execve only returns on error.
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
         if may_return {
-            crate::output::pretty_errorln(&format_args!(
+            crate::output::pretty_errorln(format_args!(
                 "error: Failed to reload process: errno {}",
                 errno
             ));
@@ -5319,9 +5309,7 @@ impl Timespec {
         if self.sec <= 0 {
             return self.nsec.max(0) as u64;
         }
-        let s_ns = (self.sec as u64)
-            .checked_mul(Self::NS_PER_S as u64)
-            .unwrap_or(u64::MAX);
+        let s_ns = (self.sec as u64).saturating_mul(Self::NS_PER_S as u64);
         // Zig-exact (bun.zig:3313 returns maxInt(i64))
         s_ns.checked_add(self.nsec.max(0) as u64)
             .unwrap_or(i64::MAX as u64)
@@ -5460,8 +5448,8 @@ impl Timespec {
             };
             clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
             Timespec {
-                sec: ts.tv_sec as i64,
-                nsec: ts.tv_nsec as i64,
+                sec: ts.tv_sec,
+                nsec: ts.tv_nsec,
             }
         }
         #[cfg(not(unix))]
@@ -5692,6 +5680,7 @@ pub mod perf {
                 linux: Some(Linux::init(name)),
             };
         }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = name;
             Ctx::DISABLED

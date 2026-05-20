@@ -96,7 +96,7 @@ fn print_bytes(bytes: &[u8; 16], buf: &mut [u8; 36]) {
     // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
     for (j, &i) in ENCODED_POS.iter().enumerate() {
         let [hi, lo] = bun_core::fmt::hex_byte_lower(bytes[j]);
-        buf[i as usize + 0] = hi;
+        buf[i as usize] = hi;
         buf[i as usize + 1] = lo;
     }
 }

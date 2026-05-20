@@ -1,10 +1,4 @@
-#![allow(
-    unused,
-    nonstandard_style,
-    ambiguous_glob_reexports,
-    incomplete_features
-)]
-#![warn(unused_must_use)]
+#![allow(nonstandard_style, ambiguous_glob_reexports, incomplete_features)]
 #![feature(adt_const_params)]
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -14,7 +8,6 @@
 // Self-alias so Phase-A drafts written against `bun_install::…` resolve
 // without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
 // lifecycle_script_runner.rs).
-use bun_collections::VecExt;
 extern crate bun_core as bun_str;
 extern crate bun_sha_hmac as bun_sha;
 extern crate self as bun_install;
@@ -34,7 +27,7 @@ pub(crate) mod bun_schema {
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
 pub(crate) mod bun_json {
-    pub use bun_ast::{Expr, ExprData, G::Property, e as E, expr::Query};
+    pub use bun_ast::{Expr, ExprData, G::Property, e as E};
     pub use bun_parsers::json::*;
 }
 
@@ -63,7 +56,7 @@ pub(crate) mod bun_progress {
 /// crate-root `bun_bunfig` name shadows the extern crate, so callers needing
 /// the real crate spell it `::bun_bunfig`.
 pub(crate) mod bun_bunfig {
-    pub use ::bun_bunfig::*;
+
     pub use bun_options_types::context as Arguments;
 }
 
@@ -485,6 +478,7 @@ pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
 use bun_core::ZStr;
 
 impl RunCommand {
+    #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
     /// `/tmp/bun-node-<sha>` (or debug variant). Windows builds compute the path
@@ -1019,7 +1013,6 @@ pub fn initialize_store() {
 /// ASTMemoryAllocator uses a smaller fixed buffer allocator
 pub fn initialize_mini_store() {
     use bun_alloc::Arena;
-    use bun_js_parser as js_ast;
 
     struct MiniStore {
         heap: Arena,

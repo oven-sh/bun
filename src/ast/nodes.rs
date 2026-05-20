@@ -1,5 +1,5 @@
 //! Core AST node payload types and arena-slice helpers.
-#![allow(non_snake_case, dead_code, clippy::all)]
+#![allow(non_snake_case)]
 
 use core::fmt;
 use core::ops::{Deref, DerefMut};
@@ -632,18 +632,10 @@ impl Default for ClauseItem {
     }
 }
 
-#[derive(Copy, Clone)]
+// EnumMap<_, u32>::default() zero-fills (Zig: SlotNamespace.CountsArray.initFill(0)).
+#[derive(Copy, Clone, Default)]
 pub struct SlotCounts {
     pub slots: symbol::SlotNamespaceCountsArray,
-}
-
-impl Default for SlotCounts {
-    fn default() -> Self {
-        // EnumMap<_, u32>::default() zero-fills (Zig: SlotNamespace.CountsArray.initFill(0)).
-        Self {
-            slots: symbol::SlotNamespaceCountsArray::default(),
-        }
-    }
 }
 
 impl SlotCounts {

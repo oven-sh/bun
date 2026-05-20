@@ -6,10 +6,9 @@
 use crate::jsc::{
     ArrayBuffer, Error as JscError, JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc,
 };
-use bun_core::String as BunString;
-use bun_valkey::valkey_protocol::{self as protocol, RESPValue, RedisError};
+use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
-use protocol as _; // keep `protocol` referenced for sibling drafts
+// keep `protocol` referenced for sibling drafts
 
 /// Zig: `valkeyErrorToJS(global, message: ?[]const u8, err)`.
 /// All Rust callers always provide a message (never `None`), so the parameter

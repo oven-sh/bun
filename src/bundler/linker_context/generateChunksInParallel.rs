@@ -5,9 +5,6 @@ use std::io::Write as _;
 use bun_collections::AutoBitSet;
 use bun_collections::StringArrayHashMap;
 use bun_collections::StringHashMap;
-use bun_collections::VecExt;
-use bun_core::Environment;
-use bun_core::Output;
 // PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; `Batch`/`Task`
 // are free types in that module, not associated types on the struct.
 use bun_core::String as BunString;
@@ -24,9 +21,7 @@ use crate::analyze_transpiled_module::StringIDExt as _;
 use crate::cheap_prefix_normalizer;
 use crate::options;
 use crate::options::Loader;
-use crate::options::OutputFile;
 
-use crate::CompileResult;
 use crate::LinkerContext;
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;

@@ -6,8 +6,6 @@
 //!
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
-use bun_collections::VecExt;
-
 // `bun_css` is a T2 peer crate that does not depend on `bun_js_parser`, so the
 // dep is acyclic. Typing the `css` field concretely removes the `*mut c_void`
 // erasure that forced every bundler/linker call site to `.cast()` back.
@@ -32,7 +30,7 @@ pub type CssCol = Option<CssAstRef>;
 use bun_ast::import_record;
 use bun_core::strings;
 
-use bun_ast::ast_result::{self, Ast};
+use bun_ast::ast_result::Ast;
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
 

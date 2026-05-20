@@ -650,7 +650,8 @@ pub fn build_with_vm(
         // Zig: `.{ .js = vm.event_loop }` — construct the `AnyEventLoop` enum
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
         // Lives in this block's stack frame, outliving the bundle call.
-        let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
+        // SAFETY: `vm.event_loop()` is the live per-thread `jsc::EventLoop`.
+        let mut any_loop = unsafe { bun_event_loop::AnyEventLoop::js(vm.event_loop().cast()) };
 
         // Spec production.zig:312 — plain `try`; propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for
@@ -1038,15 +1039,7 @@ pub fn build_with_vm(
             _ => {}
         }
         let mut file_count: u32 = 1;
-        let mut css_file_count: u32 = u32::try_from(
-            pt.output_file(main_file_route_index)
-                .referenced_css_chunks
-                .len(),
-        )
-        .expect("int cast");
-        if let Some(file) = route.file_layout {
-            css_file_count +=
-                u32::try_from(pt.output_file(file).referenced_css_chunks.len()).expect("int cast");
+        if route.file_layout.is_some() {
             file_count += 1;
         }
         let mut next: Option<framework_router::RouteIndex> = route.parent;
@@ -1067,9 +1060,7 @@ pub fn build_with_vm(
                 }
                 _ => {}
             }
-            if let Some(file) = parent.file_layout {
-                css_file_count += u32::try_from(pt.output_file(file).referenced_css_chunks.len())
-                    .expect("int cast");
+            if parent.file_layout.is_some() {
                 file_count += 1;
             }
             next = parent.parent;
@@ -1081,7 +1072,7 @@ pub fn build_with_vm(
 
         next = route.parent;
         file_count = 1;
-        css_file_count = 0;
+        let mut css_file_count: u32 = 0;
         file_list
             .put_index(
                 global,
@@ -1333,7 +1324,7 @@ fn bake_get_on_module_namespace(
     Some(result)
 }
 
-/// Renders all routes for static site generation by calling the JavaScript implementation.
+// Renders all routes for static site generation by calling the JavaScript implementation.
 // TODO(port): move to bake_sys
 // All args are by-value `JSValue`/`BunString` plus a live `&JSGlobalObject`
 // (UnsafeCell-backed); C++ allocates and returns a non-null `JSPromise*`.
@@ -1364,25 +1355,6 @@ unsafe extern "C" {
         // CSS URLs per route (e.g., [["/main.css"], ["/main.css", "/blog.css"]])
         styles: JSValue,
     ) -> *mut JSPromise;
-}
-
-/// The result of this function is a JSValue that wont be garbage collected, as
-/// it will always have at least one reference by the module loader.
-pub fn bake_register_production_chunk(
-    global: &JSGlobalObject,
-    key: BunString,
-    source_code: BunString,
-) -> JsResult<JSValue> {
-    unsafe extern "C" {
-        #[link_name = "BakeRegisterProductionChunk"]
-        safe fn f(global: &JSGlobalObject, key: BunString, source_code: BunString) -> JSValue;
-    }
-    let result: JSValue = f(global, key, source_code);
-    if result.is_empty() {
-        return Err(jsc::JsError::Thrown);
-    }
-    debug_assert!(result.is_string());
-    Ok(result)
 }
 
 #[unsafe(no_mangle)]

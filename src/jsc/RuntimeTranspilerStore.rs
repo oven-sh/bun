@@ -1,28 +1,18 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    clippy::needless_return
-)]
+#![allow(clippy::needless_return)]
 #![warn(unused_must_use)]
 
-use bun_collections::{ByteVecExt, VecExt};
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::mem::offset_of;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_alloc::Arena;
 use bun_ast::Loader;
-use bun_ast::{self as js_ast, ASTMemoryAllocator, ExportsKind};
+use bun_ast::{ASTMemoryAllocator, ExportsKind};
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
-use bun_bundler::options::{self, ModuleType};
-use bun_bundler::transpiler::{
-    self as transpiler, AlreadyBundled, ParseOptions, ParseResult, Transpiler,
-};
+use bun_bundler::options::ModuleType;
+use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -39,7 +29,7 @@ use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
 use bun_threading::Guarded;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
-use bun_watcher::{WatchItemColumns, Watcher};
+use bun_watcher::Watcher;
 
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
@@ -52,7 +42,7 @@ use crate::runtime_transpiler_cache::{
 };
 use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, create_if_different};
-use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult, ResolvedSource};
+use crate::{JSGlobalObject, JSInternalPromise, JSValue, JsResult, ResolvedSource};
 use bun_core::OwnedString;
 
 // LAYERING: `ParseOptions.runtime_transpiler_cache` carries the canonical
@@ -80,7 +70,7 @@ pub unsafe fn dump_source(vm: *mut VirtualMachine, specifier: &[u8], printer: &B
 pub unsafe fn dump_source_string(vm: *mut VirtualMachine, specifier: &[u8], written: &[u8]) {
     // SAFETY: caller contract — `vm` is a live `VirtualMachine` BACKREF.
     if let Err(e) = unsafe { dump_source_string_failiable(vm, specifier, written) } {
-        bun_core::output::debug_warn(&format_args!("Failed to dump source string: {}", e.name()));
+        bun_core::output::debug_warn(format_args!("Failed to dump source string: {}", e.name()));
     }
 }
 
@@ -140,7 +130,7 @@ pub unsafe fn dump_source_string_failiable(
         let base = bun_paths::basename(specifier);
         let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
         if let Err(e) = File::write_file(parent.fd, base_z, written) {
-            bun_core::output::debug_warn(&format_args!(
+            bun_core::output::debug_warn(format_args!(
                 "Failed to dump source string: writeFile {}",
                 bun_core::Error::from(e).name()
             ));
@@ -277,7 +267,7 @@ impl RuntimeTranspilerStore {
         global: &JSGlobalObject,
         vm: *mut VirtualMachine,
     ) {
-        let mut batch = self.queue.pop_batch();
+        let batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm).jsc_vm() };
         let mut iter = batch.iterator();
@@ -1142,7 +1132,7 @@ impl TranspilerJob {
         // closure returns; the raw pointer stays valid until `module_info` is
         // moved/touched again (after `print_with_source_map`).
         let module_info_ptr: Option<*mut analyze_transpiled_module::ModuleInfo> =
-            module_info.as_deref_mut().map(|m| std::ptr::from_mut(m));
+            module_info.as_deref_mut().map(std::ptr::from_mut);
 
         let print_result = {
             // SAFETY: see `vm` PORT NOTE above — `from_raw` stores `vm` as a raw

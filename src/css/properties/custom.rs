@@ -1,7 +1,6 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //!
 //! Ported from `src/css/properties/custom.zig`.
-use bun_collections::VecExt;
 //
 // `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
@@ -1001,13 +1000,13 @@ impl UnresolvedColor {
     }
 
     pub fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {
-        let mut lightlist: Vec<TokenOrValue> = Vec::with_capacity(1);
-        lightlist.push(TokenOrValue::UnresolvedColor(light));
-        let mut darklist: Vec<TokenOrValue> = Vec::with_capacity(1);
-        darklist.push(TokenOrValue::UnresolvedColor(dark));
         UnresolvedColor::LightDark {
-            light: TokenList { v: lightlist },
-            dark: TokenList { v: darklist },
+            light: TokenList {
+                v: vec![TokenOrValue::UnresolvedColor(light)],
+            },
+            dark: TokenList {
+                v: vec![TokenOrValue::UnresolvedColor(dark)],
+            },
         }
     }
 }

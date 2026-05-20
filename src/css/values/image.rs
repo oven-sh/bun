@@ -6,16 +6,17 @@ use crate::values::color::ColorFallbackKind;
 use crate::values::gradient::Gradient;
 use crate::values::resolution::Resolution;
 use crate::values::url::Url;
-use crate::{PrintErr, Printer, VendorPrefix};
+use crate::{PrintErr, VendorPrefix};
 use bun_alloc::Arena;
 use bun_ast::ImportKind;
-use bun_core::strings;
 
 /// A CSS [`<image>`](https://www.w3.org/TR/css-images-3/#image-values) value.
 // TODO(port): `parse`/`to_css` were `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
 // — comptime-reflection derives. Hand-expanded below until the proc-macro lands.
+#[derive(Default)]
 pub enum Image {
     /// The `none` keyword.
+    #[default]
     None,
     /// A `url()`.
     Url(Url),
@@ -35,33 +36,31 @@ impl Image {
             Image::Gradient(g) => match &**g {
                 Gradient::Linear(linear) => {
                     css::Feature::LinearGradient.is_compatible(browsers)
-                        && linear.is_compatible(&browsers)
+                        && linear.is_compatible(browsers)
                 }
                 Gradient::RepeatingLinear(repeating_linear) => {
                     css::Feature::RepeatingLinearGradient.is_compatible(browsers)
-                        && repeating_linear.is_compatible(&browsers)
+                        && repeating_linear.is_compatible(browsers)
                 }
                 Gradient::Radial(radial) => {
                     css::Feature::RadialGradient.is_compatible(browsers)
-                        && radial.is_compatible(&browsers)
+                        && radial.is_compatible(browsers)
                 }
                 Gradient::RepeatingRadial(repeating_radial) => {
                     css::Feature::RepeatingRadialGradient.is_compatible(browsers)
-                        && repeating_radial.is_compatible(&browsers)
+                        && repeating_radial.is_compatible(browsers)
                 }
                 Gradient::Conic(conic) => {
                     css::Feature::ConicGradient.is_compatible(browsers)
-                        && conic.is_compatible(&browsers)
+                        && conic.is_compatible(browsers)
                 }
                 Gradient::RepeatingConic(repeating_conic) => {
                     css::Feature::RepeatingConicGradient.is_compatible(browsers)
-                        && repeating_conic.is_compatible(&browsers)
+                        && repeating_conic.is_compatible(browsers)
                 }
-                Gradient::WebkitGradient(_) => {
-                    css::prefixes::Feature::is_webkit_gradient(&browsers)
-                }
+                Gradient::WebkitGradient(_) => css::prefixes::Feature::is_webkit_gradient(browsers),
             },
-            Image::ImageSet(image_set) => image_set.is_compatible(&browsers),
+            Image::ImageSet(image_set) => image_set.is_compatible(browsers),
             Image::Url(_) | Image::None => true,
         }
     }
@@ -269,12 +268,6 @@ impl Image {
     }
 }
 
-impl Default for Image {
-    fn default() -> Image {
-        Image::None
-    }
-}
-
 impl crate::small_list::ImageFallback for Image {
     #[inline]
     fn get_image(&self) -> &Image {
@@ -406,12 +399,8 @@ impl ImageSetOption {
         // it can't be used as a `try_parse` callback directly (the result type
         // `R` may not borrow the closure arg). Erase the borrow via `*const`
         // — token slices are arena-static (see `css_parser::src_str`).
-        let image = if let Some(url) = input
-            .try_parse(|p| {
-                p.expect_url_or_string()
-                    .map(|s| std::ptr::from_ref::<[u8]>(s))
-            })
-            .ok()
+        let image = if let Ok(url) =
+            input.try_parse(|p| p.expect_url_or_string().map(std::ptr::from_ref::<[u8]>))
         {
             // SAFETY: see above — `url` borrows the parser's source/arena.
             let url: &[u8] = unsafe { crate::arena_str(url) };
@@ -426,7 +415,7 @@ impl ImageSetOption {
         };
 
         let (resolution, file_type): (Resolution, Option<*const [u8]>) =
-            if let Some(res) = input.try_parse(Resolution::parse).ok() {
+            if let Ok(res) = input.try_parse(Resolution::parse) {
                 let file_type = input.try_parse(parse_file_type).ok();
                 (res, file_type)
             } else {
@@ -540,7 +529,7 @@ fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
     input.expect_function_matching(b"type")?;
     input.parse_nested_block(|i: &mut css::Parser| {
         // TODO(port): expect_string returns arena-borrowed &[u8]; coerced to raw ptr to avoid struct lifetime
-        i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s))
+        i.expect_string().map(std::ptr::from_ref::<[u8]>)
     })
 }
 

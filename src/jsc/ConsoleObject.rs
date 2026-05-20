@@ -6,18 +6,14 @@
 //! calls into.
 
 use crate::{ComptimeStringMapExt as _, ZigStringJsc as _};
-use bun_io::Write as _;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
-use core::fmt::Write as _;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{
-    CallFrame, EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigException, ZigString,
-};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
 use bun_collections::HashMap;
-use bun_core::{Environment, Output, StackCheck};
+use bun_core::{Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
@@ -629,7 +625,6 @@ fn message_with_type_and_level_(
 
 pub struct TablePrinter<'a> {
     global_object: &'a JSGlobalObject,
-    level: MessageLevel,
     /// Per-cell value formatter. Public so callers (e.g. `Bun.inspect.table`)
     /// can override `depth` / `ordered_properties` / `single_line` after init.
     pub value_formatter: Formatter<'a>,
@@ -675,8 +670,8 @@ impl<'a> TablePrinter<'a> {
         tabular_data: JSValue,
         properties: JSValue,
     ) -> JsResult<Self> {
+        let _ = level;
         Ok(TablePrinter {
-            level,
             global_object,
             tabular_data,
             properties,
@@ -2526,9 +2521,6 @@ pub mod formatter {
             Ok(TagResult { tag, cell: js_type })
         }
     }
-
-    /// Mirrors Zig's `jsc.C.CellType` — same enum as `JSType` in this codebase.
-    type CellType = jsc::JSType;
 
     /// <https://console.spec.whatwg.org/#formatter>
     #[derive(Copy, Clone, Eq, PartialEq)]
@@ -4862,7 +4854,7 @@ pub mod formatter {
             if self.single_line {
                 let _ = write!(writer_, "{map_name}({length}) {{ ");
             } else {
-                let _ = write!(writer_, "{map_name}({length}) {{\n");
+                let _ = writeln!(writer_, "{map_name}({length}) {{");
             }
             {
                 self.indent += 1;
@@ -5007,7 +4999,7 @@ pub mod formatter {
             if self.single_line {
                 let _ = write!(writer_, "{set_name}({length}) {{ ");
             } else {
-                let _ = write!(writer_, "{set_name}({length}) {{\n");
+                let _ = writeln!(writer_, "{set_name}({length}) {{");
             }
             {
                 self.indent += 1;
@@ -5104,9 +5096,9 @@ pub mod formatter {
                 EventType::ErrorEvent => "ErrorEvent",
                 _ => unreachable!(),
             };
-            let _ = write!(
+            let _ = writeln!(
                 writer_,
-                "{}{}{} {{\n",
+                "{}{}{} {{",
                 pf!("<r><cyan>"),
                 event_tag_name,
                 pf!("<r>")
@@ -5133,9 +5125,9 @@ pub mod formatter {
                         pf!("<r>")
                     );
                 } else {
-                    let _ = write!(
+                    let _ = writeln!(
                         writer_,
-                        "{}type: {}\"{}\"{}{},{}\n",
+                        "{}type: {}\"{}\"{}{},{}",
                         pf!("<r>"),
                         pf!("<green>"),
                         bstr::BStr::new(event_type.label()),
@@ -5977,19 +5969,18 @@ pub extern "C" fn Bun__ConsoleObject__count(
 
     let writer = this.writer();
     if Output::enable_ansi_colors_stdout() {
-        let _ = write!(
+        let _ = writeln!(
             writer,
-            "{}{}{}: {}{}{}{}\n",
+            "{}{}{}: {}{}{}",
             pfmt!("<r>", true),
             bstr::BStr::new(slice),
             pfmt!("<d>", true),
             pfmt!("<r><yellow>", true),
             current,
             pfmt!("<r>", true),
-            "",
         );
     } else {
-        let _ = write!(writer, "{}: {}\n", bstr::BStr::new(slice), current);
+        let _ = writeln!(writer, "{}: {}", bstr::BStr::new(slice), current);
     }
     let _ = writer.flush();
 }

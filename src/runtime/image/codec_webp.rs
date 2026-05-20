@@ -196,7 +196,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
             break 'blk None;
         }
         // SAFETY: all-zero is a valid WebPChunkIterator (#[repr(C)] POD, raw ptr + ints).
-        let mut iter: WebPChunkIterator = unsafe { core::mem::zeroed::<WebPChunkIterator>() };
+        let mut iter: WebPChunkIterator =
+            unsafe { core::mem::MaybeUninit::<WebPChunkIterator>::zeroed().assume_init() };
         // SAFETY: dmux is live; fourcc reads exactly 4 bytes; iter is a valid out-param.
         if unsafe { WebPDemuxGetChunk(dmux, b"ICCP".as_ptr(), 1, &raw mut iter) } == 0 {
             break 'blk None;

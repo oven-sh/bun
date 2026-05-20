@@ -4,17 +4,24 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use bun_alloc::AllocError;
 use bun_collections::{StringHashMap, VecExt};
 use bun_core::Error;
-use bun_core::{ZStr, w};
+use bun_core::ZStr;
+#[cfg(windows)]
+use bun_core::w;
+#[cfg(not(windows))]
+use bun_paths::MAX_PATH_BYTES;
+#[cfg(windows)]
+use bun_paths::WPathBuffer;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_paths::resolve_path;
 use bun_paths::strings;
-use bun_paths::{self as path, AbsPath, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, WPathBuffer};
+use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd, FdExt as _, Mode};
 
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};
-use crate::install::{self as Install, DependencyID, ExternalStringList};
+use crate::install::{DependencyID, ExternalStringList};
+#[cfg(windows)]
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
 use crate::windows_shim::Shebang as WinShimShebang;
@@ -890,6 +897,7 @@ impl<'a> Linker<'a> {
         }
     }
 
+    #[cfg(not(windows))]
     fn try_normalize_shebang(abs_target: &ZStr) {
         let mut shebang_buf = [0u8; 2048];
 

@@ -5,9 +5,9 @@ use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
+use bun_collections::{HashMap, StringHashMap};
 use bun_core::strings;
-use bun_core::{self, OOM};
+use bun_core::{self};
 use bun_paths::PathBuffer;
 use bun_semver::semver_string::{
     Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts,
@@ -15,15 +15,15 @@ use bun_semver::semver_string::{
 use bun_semver::{self as Semver, ExternalString, String};
 
 use crate::{
-    self as Install, DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash,
-    Repository, Resolution, TruncatedPackageNameHash,
+    DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
+    TruncatedPackageNameHash,
     bin::{Bin, Tag as BinTag},
     dependency,
     dependency::{
         Behavior, Dependency, Value as DependencyVersionValue, Version as DependencyVersion,
     },
     invalid_package_id,
-    resolution::{Tag as ResolutionTag, Value as ResolutionValue},
+    resolution::Tag as ResolutionTag,
 };
 // Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a duplicate
 // enum (different nominal type) that does not unify with the
@@ -31,7 +31,6 @@ use crate::{
 // so assignments at the two `.tag = Workspace` sites type-check.
 use crate::bin_real::ToJsonStyle;
 use crate::config_version::ConfigVersion;
-use crate::dependency::DependencyExt as _;
 use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
@@ -2304,6 +2303,7 @@ pub fn parse_into_binary_lockfile(
                     }
 
                     let pkgs = lockfile.packages.slice();
+                    #[cfg(debug_assertions)]
                     let pkg_names = pkgs.items_name();
                     let pkg_resolutions = pkgs.items_resolution();
 
@@ -2476,7 +2476,6 @@ pub fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     }
                     let integrity_expr = pkg_info.at(i);
-                    i += 1;
                     let Some(integrity_str) = integrity_expr.as_utf8_string_literal() else {
                         log.add_error(Some(source), integrity_expr.loc, b"Expected a string");
                         return Err(ParseError::InvalidPackageInfo);
@@ -2490,7 +2489,6 @@ pub fn parse_into_binary_lockfile(
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
-                            i += 1;
                         }
                     }
                 }
@@ -2521,7 +2519,6 @@ pub fn parse_into_binary_lockfile(
                         let integrity_expr = pkg_info.at(i);
                         if let Some(integrity_str) = integrity_expr.as_utf8_string_literal() {
                             pkg.meta.integrity = Integrity::parse(integrity_str);
-                            i += 1;
                         }
                     }
                 }

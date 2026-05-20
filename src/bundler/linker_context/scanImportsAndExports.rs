@@ -12,22 +12,20 @@
 // `bun_collections::multi_array_list::Slice::items_raw`.
 
 use crate::mal_prelude::*;
-use bun_alloc::AllocError;
 use bun_ast::Source;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
-use bun_collections::{HashMap, MultiArrayList, VecExt};
+use bun_collections::{HashMap, VecExt};
 use bun_core::FeatureFlags;
 
 use crate::bundled_ast::{self, NamedExports, NamedImports};
 use crate::options::{self, Format, Loader};
 use crate::ungate_support::perf;
 use crate::{
-    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, JSMeta, LinkerContext,
-    Part, RefImportData, ResolvedExports, WrapKind, js_meta,
+    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext, Part,
+    RefImportData, ResolvedExports, WrapKind, js_meta,
 };
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{Dependency, ExportsKind, PartList, Ref};
-use bun_js_parser as js_ast;
 
 use crate::linker_context_mod::LinkerCtx;
 

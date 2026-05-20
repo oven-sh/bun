@@ -47,7 +47,8 @@
 //! ```
 
 #[cfg(not(windows))]
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::AtomicU32;
+use core::sync::atomic::Ordering;
 
 #[cfg(not(windows))]
 use crate::Futex;

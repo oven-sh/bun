@@ -515,7 +515,7 @@ impl Default for MatchResult {
 pub enum MatchStatus {
     NotFound,
     Success,
-    Pending(PendingResolution),
+    Pending(Box<PendingResolution>),
     Failure(bun_core::Error),
 }
 

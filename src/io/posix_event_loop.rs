@@ -570,8 +570,7 @@ impl FilePoll {
     // `EventLoopCtx` tag. The two agree only when `vm` is built from the
     // concrete VM/MiniEventLoop (the sole Zig call path, via `init`). Kept
     // non-`pub` so callers can't pass a re-wrapped handle and diverge.
-    #[allow(dead_code)]
-    fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
+        fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
         let generation_number = value.generation_number;
         let poll = vm.alloc_file_poll(value).as_ptr();

@@ -984,14 +984,12 @@ mod __macro_smoke {
 
     #[crate::JsClass(no_construct)]
     pub struct Smoke {
-        #[allow(dead_code)]
-        n: u32,
+                n: u32,
     }
     impl Smoke {
         // Required by the `construct` hook when `no_construct` is omitted; kept
         // here so a future flip exercises it.
-        #[allow(dead_code)]
-        pub fn constructor(_g: &JSGlobalObject, _f: &CallFrame) -> JsResult<*mut Smoke> {
+                pub fn constructor(_g: &JSGlobalObject, _f: &CallFrame) -> JsResult<*mut Smoke> {
             Err(super::JsError::Thrown)
         }
         #[crate::host_fn(getter)]

@@ -369,7 +369,7 @@ impl Pattern {
 
     pub fn write_to_string<'a>(
         &self,
-        #[allow(unused)] bump: &'a Bump,
+        bump: &'a Bump,
         res_: BumpVec<'a, u8>,
         hash_: &[u8],
         path: &[u8],

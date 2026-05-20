@@ -110,8 +110,7 @@ macro_rules! dispatch {
                 // accessed for the duration of the dispatch arm.
                 let $ctx = unsafe { &mut *this.ptr.cast::<$Ty>() };
                 type $T = $Ty;
-                #[allow(unused)]
-                let _ = core::marker::PhantomData::<$T>;
+                                let _ = core::marker::PhantomData::<$T>;
                 $body
             }};
         }

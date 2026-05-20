@@ -3,13 +3,10 @@ use core::ptr::NonNull;
 use enumset::{EnumSet, EnumSetType};
 
 use bun_alloc as allocators;
-#[allow(unused_imports)]
 use bun_core::Generation;
-#[allow(unused_imports)]
 use bun_core::feature_flags as FeatureFlags;
 use bun_sys::Fd;
 
-#[allow(unused_imports)]
 use crate::fs;
 use crate::package_json::PackageJSON;
 use crate::tsconfig_json::TSConfigJSON;

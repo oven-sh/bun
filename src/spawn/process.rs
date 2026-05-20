@@ -24,7 +24,6 @@ use bun_sys::{self, Fd, Maybe};
 use uv::{UvHandle as _, UvStream as _};
 
 // posix_spawn(2) wrappers — owned by the `bun_spawn_sys` leaf crate.
-#[allow(unused_imports)]
 use bun_spawn_sys::posix_spawn::posix_spawn;
 /// `posix_spawn::WaitPidResult` — re-exported from `bun_spawn_sys`. `status`
 /// is `u32` there (Zig `c_int` reinterpreted via the `W*` macros);
@@ -345,8 +344,7 @@ impl Process {
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
         // Mutated only on the macOS ESRCH retry path below.
-        #[allow(unused_mut)]
-        let mut rusage_result = *rusage;
+                let mut rusage_result = *rusage;
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
             match self.rewatch_posix() {
@@ -1411,8 +1409,7 @@ pub mod waiter_thread_posix {
         // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
         let this: &'static WaiterThreadPosix = instance_ref();
 
-        #[allow(unused_labels)]
-        'outer: loop {
+                'outer: loop {
             // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
             // in `append()` (interior mutability via `active: UnsafeCell`).
             this.js_process.loop_();
@@ -2888,8 +2885,7 @@ mod spawn_process_body {
 
         // Forward signals from parent to the child process.
         // FFI decls live in `bun_spawn_sys::ffi` (leaf -sys crate).
-        #[allow(unused_imports)]
-        use bun_spawn_sys::ffi::{
+                use bun_spawn_sys::ffi::{
             Bun__currentSyncPID, Bun__noOrphans_begin, Bun__noOrphans_onExit,
             Bun__noOrphans_onFork, Bun__noOrphans_releaseKq, Bun__registerSignalsForForwarding,
             Bun__sendPendingSignalIfNecessary, Bun__unregisterSignalsForForwarding,
@@ -3109,8 +3105,7 @@ mod spawn_process_body {
             // scan root after spawn.
             // LIFO: `no_orphans_kq` drops (closes) LAST — after killSyncScriptTree()
             // (which scans via m_kq) and the releaseKq() defer below.
-            #[allow(unused_mut, unused_variables)]
-            let mut no_orphans_kq = AutoCloseFd::invalid();
+                        let mut no_orphans_kq = AutoCloseFd::invalid();
             #[cfg(target_os = "macos")]
             if no_orphans {
                 let kq = kqueue();

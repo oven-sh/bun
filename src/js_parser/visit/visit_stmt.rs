@@ -340,8 +340,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // TODO(port): dead branch in Zig — `data.items.len = j;` runs first, so
             // `j == 0 and data.items.len > 0` is always false. Mirrored bug-for-bug.
-            #[allow(unreachable_code)]
-            if j == 0 && data.items.len() > 0 {
+                        if j == 0 && data.items.len() > 0 {
                 return Ok(());
             }
         } else {

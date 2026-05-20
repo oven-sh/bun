@@ -1,6 +1,5 @@
 //! JSC bridge for `bun.logger`. Keeps `src/logger/` free of JSC types.
 
-#![allow(unused, nonstandard_style)]
 #![warn(unused_must_use)]
 
 use std::borrow::Cow;

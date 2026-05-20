@@ -13,7 +13,6 @@ use bun_uws as uws;
 
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
-#[allow(unused_imports)]
 use crate::ipc::IPC; // scoped logger static for `bun_core::scoped_log!(IPC, ...)`
 use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
@@ -2701,8 +2700,7 @@ impl<'a> SourceMapHandlerGetter<'a> {
     /// pointer once the writer's last byte has been emitted (i.e. inside
     /// `on_source_map_chunk`, which the printer invokes from its tail).
     #[inline]
-    #[allow(dead_code)]
-    pub(crate) fn printer_ptr(&self) -> *mut bun_js_printer::BufferPrinter {
+        pub(crate) fn printer_ptr(&self) -> *mut bun_js_printer::BufferPrinter {
         self.printer
     }
 
@@ -5178,8 +5176,7 @@ impl VirtualMachine {
             // loop body always re-locks before loop-end) but keeps the
             // lock-state invariant explicit per the Zig spec.
             self.source_mappings.unlock();
-            #[allow(unused_assignments)]
-            {
+                        {
                 table_locked = false;
             }
             if let Some(lookup) = self.resolve_source_mapping(

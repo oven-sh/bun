@@ -4,7 +4,6 @@
 //! Zig version queued deinitialization onto the event loop to prevent bugs;
 //! see the `Drop` impl note for the Rust equivalent.
 
-#![allow(dead_code)]
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;

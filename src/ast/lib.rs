@@ -23,7 +23,6 @@ use std::borrow::Cow;
 
 // `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
-#[allow(unused_imports)]
 use bun_core::Output;
 
 // TODO(port): swap to `bun_core::StringBuilder` once `clone_with_builder` is
@@ -31,7 +30,6 @@ use bun_core::Output;
 // breaks the `'static` slice pass-through this stub fakes).
 #[derive(Default)]
 pub struct StringBuilder;
-#[allow(unused_variables)]
 impl StringBuilder {
     pub fn count(&mut self, s: &[u8]) {
         let _ = s;
@@ -431,7 +429,6 @@ impl fmt::Debug for Ref {
 // Local mirror so init_file / init_recycled_file resolve until paths' move-in lands.
 // `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
 // `Source::init_recycled_file` (transpiler.zig:852).
-#[allow(dead_code)]
 /// A [`Source`]'s path paired with its raw bytes (used by virtual-module
 /// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
 #[derive(Clone, Copy)]
@@ -440,7 +437,6 @@ pub struct PathContentsPair {
     pub contents: &'static [u8],
 }
 // TODO(port): bun_schema::api — `to_api` methods gated behind .
-#[allow(unused_imports)]
 use bun_core::strings;
 
 // In Zig: `const string = []const u8;`

@@ -6,7 +6,6 @@
 //! whole set from here (its draft duplicates were collapsed in DEDUP D059);
 //! nothing here owns behavior that belongs elsewhere.
 
-#![allow(unused)]
 #![warn(unused_must_use)]
 
 use bun_collections::VecExt;

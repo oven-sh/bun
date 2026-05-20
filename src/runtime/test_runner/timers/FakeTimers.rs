@@ -101,8 +101,7 @@ enum AssertMode {
     // PORT NOTE: `.unlocked` callers (`execute_*`/`fire`) were converted to
     // associated fns with no `self` (noalias re-entrancy — see below); the
     // Zig `.unlocked` arm was a no-op anyway.
-    #[allow(dead_code)]
-    Unlocked,
+        Unlocked,
 }
 
 use crate::jsc_hooks::timer_all;

@@ -1350,7 +1350,7 @@ impl Run {
     /// `Run.start` — load the entry point, run the event loop until idle,
     /// fire `beforeExit`/`exit`, then `globalExit`. Called under the JSC API
     /// lock via `hold_api_lock`.
-    #[allow(unused_assignments)] // `printed_…` writes before `global_exit` are intentional Zig-shape.
+    // `printed_…` writes before `global_exit` are intentional Zig-shape.
     fn start(&mut self) -> ! {
         // PORT NOTE: deref the raw VM/ctx pointers once so the rest of this
         // body can borrow `vm` and `ctx` alongside `self.entry_path`.

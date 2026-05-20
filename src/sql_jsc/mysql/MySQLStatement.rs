@@ -206,7 +206,6 @@ impl Drop for MySQLStatement {
     }
 }
 
-#[allow(dead_code)]
 struct ParamUnused {
     r#type: types::FieldType,
     flags: ColumnFlags,

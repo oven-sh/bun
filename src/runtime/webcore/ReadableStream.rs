@@ -10,7 +10,6 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_sys as syscall;
 
 use crate::webcore::streams;
-#[allow(unused_imports)]
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
 
 #[derive(Copy, Clone)]

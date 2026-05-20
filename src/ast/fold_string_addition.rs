@@ -325,7 +325,6 @@ pub fn fold_string_addition(
 }
 
 // silence unused-import warning when only some helpers fire
-#[allow(unused_imports)]
 use js_ast as _;
 
 // ported from: src/js_parser/ast/foldStringAddition.zig

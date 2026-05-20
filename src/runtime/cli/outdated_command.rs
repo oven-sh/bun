@@ -33,8 +33,7 @@ struct GroupedOutdatedInfo {
     package_id: PackageID,
     dep_id: DependencyID,
     workspace_pkg_id: PackageID,
-    #[allow(dead_code)]
-    is_catalog: bool,
+        is_catalog: bool,
     grouped_workspace_names: Option<Box<[u8]>>,
 }
 
@@ -42,8 +41,7 @@ struct GroupedOutdatedInfo {
 enum FilterType<'a> {
     All,
     Name(&'a [u8]),
-    #[allow(dead_code)]
-    Path(&'a [u8]),
+        Path(&'a [u8]),
 }
 
 impl<'a> FilterType<'a> {
@@ -906,7 +904,6 @@ impl OutdatedCommand {
     }
 }
 
-#[allow(dead_code)]
 type _AssertImports = (
     package_manager::WorkspaceFilter,
     package_manager::ManifestCacheOptions<'static>,

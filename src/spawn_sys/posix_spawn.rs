@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code, unused_variables)]
 #![warn(unused_must_use)]
 
 use core::ffi::{c_char, c_int, c_short};
@@ -768,8 +767,7 @@ pub mod posix_spawn {
         // early return always fires; rustc can't prove that from the runtime
         // bool. macOS falls through to the system-posix_spawn block above.
         #[cfg(all(unix, not(target_os = "macos")))]
-        #[allow(unreachable_code)]
-        {
+                {
             unreachable!("posix_spawn_bun handles all unix-non-darwin spawns");
         }
 
@@ -777,8 +775,7 @@ pub mod posix_spawn {
         // Gated not(unix) because `actions`/`attr` here are PosixSpawnActions/PosixSpawnAttr
         // fields; on unix the Actions/Attr aliases resolve to bun_spawn::* which lack `.attr`.
         #[cfg(not(unix))]
-        #[allow(unreachable_code)]
-        {
+                {
             let mut pid: pid_t = 0;
             // SAFETY: all pointers valid; argv/envp NULL-terminated
             let rc = unsafe {

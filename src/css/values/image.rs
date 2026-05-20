@@ -536,7 +536,6 @@ impl ImageSetOption {
     }
 }
 
-#[allow(dead_code)]
 fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
     input.expect_function_matching(b"type")?;
     input.parse_nested_block(|i: &mut css::Parser| {

@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use crate::test_runner::expect::{JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
 use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_ulong;

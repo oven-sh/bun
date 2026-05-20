@@ -192,6 +192,14 @@ strip = "symbols"
 # by scripts/build/rust.ts for asan builds; register it here so a plain
 # `cargo build` / `cargo check` (without those flags) doesn't warn.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
+dead_code = "deny"
+unused_imports = "deny"
+unused_variables = "deny"
+unused_mut = "deny"
+unused_assignments = "deny"
+unused_macros = "deny"
+unreachable_code = "deny"
+unreachable_patterns = "deny"
 
 [workspace.lints.clippy]
 # == provenance-safe pointer casts ==
@@ -241,6 +249,18 @@ if_same_then_else = "deny"
 todo = "deny"
 unimplemented = "deny"
 dbg_macro = "deny"
+clone_on_copy = "deny"
+useless_conversion = "deny"
+vec_box = "deny"
+boxed_local = "deny"
+arc_with_non_send_sync = "deny"
+manual_swap = "deny"
+mem_replace_option_with_none = "deny"
+redundant_locals = "deny"
+manual_c_str_literals = "deny"
+precedence = "deny"
+implicit_saturating_sub = "deny"
+ptr_eq = "deny"
 
 # == disallowed-* (configured in clippy.toml) ==
 disallowed_methods = "deny"
@@ -271,6 +291,14 @@ new_without_default = "allow"
 single_match = "allow"
 manual_range_contains = "allow"
 needless_lifetimes = "allow"
+needless_range_loop = "allow"
+while_let_loop = "allow"
+while_let_on_iterator = "allow"
+blocks_in_conditions = "allow"
+diverging_sub_expression = "allow"
+declare_interior_mutable_const = "allow"
+empty_line_after_doc_comments = "allow"
+empty_docs = "allow"
 
 [workspace.dependencies]
 rust-argon2 = "3.0"

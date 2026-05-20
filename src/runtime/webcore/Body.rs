@@ -2260,7 +2260,6 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 // TODO(port): `lifetimeWrap` returns a fn at comptime in Zig. The wrapped
 // call has been inlined at each `JSPromise::wrap` callsite as a closure;
 // keep this helper for reference / future macro extraction.
-#[allow(dead_code)]
 fn lifetime_wrap(
     f: fn(&mut AnyBlob, &JSGlobalObject, Lifetime) -> JsResult<JSValue>,
     lifetime: Lifetime,
@@ -2513,8 +2512,7 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
-    #[allow(dead_code)]
-    fn create_js_sink(&mut self, stream: ReadableStream) -> Result<(), bun_core::Error> {
+        fn create_js_sink(&mut self, stream: ReadableStream) -> Result<(), bun_core::Error> {
         // PORT NOTE: The Zig caller has this path commented out ("this is broken
         // right now" — see buffer_locked_body_value below). Ported faithfully so
         // un-commenting that call site needs no further work.

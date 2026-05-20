@@ -607,7 +607,6 @@ impl DefineDataExt for DefineData {
 }
 
 // var nan_val = try arena.create(js_ast.E.Number);
-#[allow(dead_code)]
 const NAN_VAL: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
 
 // Zig `deinit` freed `dots` values, cleared maps, and destroyed `self`.

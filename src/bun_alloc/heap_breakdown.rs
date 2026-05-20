@@ -1,4 +1,4 @@
-#[allow(unused_imports)] // c_int / c_uint only used in the macOS-gated extern block
+// c_int / c_uint only used in the macOS-gated extern block
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
 // Only referenced from the Darwin `extern "C"` block below; rustc's

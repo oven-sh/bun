@@ -143,8 +143,7 @@ impl<'a> ProcessHandle<'a> {
         let env_ptr = state.env;
         // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`;
         // on POSIX `to_process` consumes `self` by value.
-        #[allow(unused_mut)]
-        let mut spawned: SpawnProcessResult = {
+                let mut spawned: SpawnProcessResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader.
             let env = unsafe { &mut *env_ptr };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();

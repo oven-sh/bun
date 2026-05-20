@@ -691,7 +691,6 @@ impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
 }
 
 // Silence unused-import on the non-selecting cfg arm.
-#[allow(unused_imports)]
 use offset_of as _;
 
 // ported from: src/cli/test/parallel/Channel.zig

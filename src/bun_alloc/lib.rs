@@ -771,7 +771,7 @@ impl Mutex {
 /// Unlocks the paired [`Mutex`] on drop. See the type-level comment on
 /// [`Mutex`] for why this erases the guard lifetime rather than borrowing.
 #[must_use = "if unused the Mutex will immediately unlock"]
-pub struct MutexGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+pub struct MutexGuard(std::sync::MutexGuard<'static, ()>);
 impl Default for Mutex {
     fn default() -> Self {
         Self::new()
@@ -2107,7 +2107,6 @@ macro_rules! bss_map {
 
 // Compile-time smoke test for the declare-site macros (no runtime cost; the
 // statics live in BSS and the accessors are dead-stripped if unused).
-#[allow(dead_code)]
 mod __bss_macro_smoke {
     crate::bss_list! { _l  : u32, 4 }
     crate::bss_string_list! { _sl : 4, 8 }

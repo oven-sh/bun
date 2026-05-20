@@ -534,7 +534,6 @@ pub fn watch(
 /// subdirectory just stops that branch (matches Node). Uses `bun.sys` /
 /// `bun.DirIterator` / `bun.path` throughout; no std.fs.
 // PORT NOTE: ctx+comptime cb collapsed to FnMut closure (same monomorphization).
-#[allow(dead_code)]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
     rel_dir: &[u8],

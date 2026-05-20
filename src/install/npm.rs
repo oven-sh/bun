@@ -1188,8 +1188,7 @@ pub mod package_manifest {
                         // `renameat2(.exchange)` fallback reachable. On
                         // Linux/FreeBSD the two names alias the same value;
                         // the redundant arm is intentional.
-                        #[allow(unreachable_patterns)]
-                        if matches!(
+                                                if matches!(
                             err.get_errno(),
                             bun_sys::Errno::EEXIST
                                 | bun_sys::Errno::ENOTEMPTY

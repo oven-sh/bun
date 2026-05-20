@@ -40,7 +40,6 @@ pub struct MachoFile {
     pub section: macho::section_64,
 }
 
-#[allow(dead_code)]
 struct LoadCommand {
     cmd: u32,
     cmdsize: u32,

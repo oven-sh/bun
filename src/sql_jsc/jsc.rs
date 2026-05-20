@@ -14,7 +14,6 @@
 //! the per-protocol `SocketGroup`s and is reached via the inherent
 //! `VirtualMachine::rare_data()`).
 
-#![allow(unused_variables, non_snake_case, dead_code, unused_imports)]
 #![warn(unused_must_use)]
 
 use core::ffi::{c_char, c_int, c_uint, c_void};

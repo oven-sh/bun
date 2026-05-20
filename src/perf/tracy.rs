@@ -5,13 +5,11 @@
 //! This file is based on the code from Zig's transpiler source.
 //! Thank you to the Zig team
 
-#![allow(dead_code)]
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-#[allow(unused_imports)]
 use bun_core::env_var;
 
 pub const ENABLE_ALLOCATION: bool = false;

@@ -6,7 +6,6 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-#[allow(unused_imports)]
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 use bun_core::strings;
@@ -46,11 +45,9 @@ pub use crate::webcore::s3::simple_request::S3UploadResult;
 use crate::webcore::s3::simple_request as s3_simple_request;
 
 use crate::webcore::ResumableSinkBackpressure;
-#[allow(unused_imports)]
 use crate::webcore::resumable_sink::{ResumableS3UploadSink, ResumableSinkContext};
 
 use crate::webcore::BlobSizeType;
-#[allow(unused_imports)]
 use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;

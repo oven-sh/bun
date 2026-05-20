@@ -9,7 +9,6 @@ use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
-#[allow(unused_imports)]
 use bun_options_types::compile_target;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
@@ -817,8 +816,7 @@ impl BuildCommand {
                 }
 
                 // TODO(port): outfile may need owned storage when reassigned to allocated buffer below
-                #[allow(unused_assignments)]
-                let mut outfile_owned: Vec<u8>;
+                                let mut outfile_owned: Vec<u8>;
                 if compile_target.os == OperatingSystem::Windows
                     && !strings::has_suffix_comptime(outfile, b".exe")
                 {
@@ -906,8 +904,7 @@ impl BuildCommand {
 
                             // Use the sourcemap's own dest_path basename if available,
                             // otherwise fall back to {outfile}.map
-                            #[allow(unused_assignments)]
-                            let mut map_basename_owned: Vec<u8>;
+                                                        let mut map_basename_owned: Vec<u8>;
                             let map_basename: &[u8] = if !f.dest_path.is_empty() {
                                 bun_paths::basename(&f.dest_path)
                             } else {

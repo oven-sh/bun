@@ -131,7 +131,6 @@ pub fn bundle_generate_chunk_action(
 bun_core::define_scoped_log!(debug, crate::linker_context_mod::LinkerCtx);
 pub(crate) use debug;
 bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
-#[allow(unused_imports)]
 pub(crate) use debug_tree_shake;
 
 // Re-exports from sibling modules in `linker_context/`.

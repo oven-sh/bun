@@ -2218,7 +2218,6 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
 // sockaddr_in (not the 4-byte in_addr). Preserved for ABI parity in `Options.servers`.
 // TODO(port): verify against c-ares header; this looks like a Zig-side misnomer.
 type in_addr = sockaddr_in;
-#[allow(dead_code)]
 type struct_sockaddr = sockaddr;
 
 // ported from: src/cares_sys/c_ares.zig

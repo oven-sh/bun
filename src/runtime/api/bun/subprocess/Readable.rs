@@ -329,7 +329,6 @@ impl Readable {
     }
 }
 
-#[allow(unused_imports)]
 use bun_core as _; // bun.Output → bun_core (panics inlined as panic!())
 
 // ported from: src/runtime/api/bun/subprocess/Readable.zig

@@ -220,7 +220,6 @@ impl Optional {
 }
 
 // suppress unused warning in release builds
-#[allow(unused_macros)]
 const _: bool = enable_safety!();
 
 // ported from: src/jsc/DeprecatedStrong.zig

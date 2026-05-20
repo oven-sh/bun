@@ -1,5 +1,5 @@
 use core::cell::{Cell, RefCell};
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
+use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use core::ffi::c_void;
 use bun_io::Write as _;
 

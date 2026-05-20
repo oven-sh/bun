@@ -17,7 +17,6 @@ use super::bun_test::{self, DescribeScope};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-#[allow(unused_imports)]
 use super::expect::{JSValueTestExt, JSGlobalObjectTestExt, FormatterTestExt, make_formatter};
 
 use bun_jsc::js_error_to_write_error;
@@ -3353,8 +3352,7 @@ mod tests {
         }
     }
 
-    #[allow(dead_code)]
-    fn test_one(input: &[u8]) {
+        fn test_one(input: &[u8]) {
         let mut cpy = vec![0u8; input.len()];
         let res = Expect::trim_leading_whitespace_for_inline_snapshot(input, &mut cpy);
         sanity_check(input, &res);

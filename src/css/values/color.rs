@@ -1007,7 +1007,6 @@ impl ColorFallbackKind {
     }
 }
 
-#[allow(unused_imports)]
 use super::color_generated::generated_color_conversions as _;
 
 // ──────────────────────────────────────────────────────────────────────────

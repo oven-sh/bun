@@ -3118,8 +3118,7 @@ pub fn csprng(bytes: &mut [u8]) {
 pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
     static CELL: Once<Result<ZBox, crate::Error>> = Once::new();
     let r = CELL.get_or_init(|| {
-        #[allow(unused_mut)]
-        let mut path = std::env::current_exe().map_err(crate::Error::from)?;
+                let mut path = std::env::current_exe().map_err(crate::Error::from)?;
         // PORT NOTE: Zig's `std.fs.selfExePath` resolves symlinks. Rust's
         // `current_exe()` already does on Linux (`readlink /proc/self/exe`),
         // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
@@ -4795,8 +4794,7 @@ pub fn exit_thread() -> ! {
     #[cfg(windows)]
     // `ExitThread` is declared `safe fn` in `bun_windows_sys::kernel32`.
     crate::windows_sys::kernel32::ExitThread(0);
-    #[allow(unreachable_code)]
-    loop {
+        loop {
         core::hint::spin_loop();
     }
 }
@@ -5694,8 +5692,7 @@ pub mod perf {
                 linux: Some(Linux::init(name)),
             };
         }
-        #[allow(unreachable_code)]
-        {
+                {
             let _ = name;
             Ctx::DISABLED
         }
@@ -5758,8 +5755,7 @@ pub mod perf {
             /// No preconditions; returns 0/1 based on tracefs availability.
             pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
             /// No preconditions.
-            #[allow(dead_code)]
-            pub safe fn Bun__linux_trace_close();
+                        pub safe fn Bun__linux_trace_close();
             pub fn Bun__linux_trace_emit(
                 event_name: *const core::ffi::c_char,
                 duration_ns: i64,

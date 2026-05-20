@@ -2,7 +2,6 @@
 //! It provides protection against Cross-Site Request Forgery attacks
 //! by generating and validating tokens using HMAC signatures
 
-#![allow(unused, nonstandard_style)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 use bun_boringssl_sys as boring;

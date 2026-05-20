@@ -98,8 +98,7 @@ macro_rules! css_rule_variants {
             where
                 R: css::generics::DeepClone<'bump>,
             {
-                #[allow(unused_imports)]
-                use css::generics::DeepClone as _;
+                                use css::generics::DeepClone as _;
                 match self {
                     $( CssRule::$Variant(x) => CssRule::$Variant(x.deep_clone(bump)), )+
                     CssRule::Unknown(x) => CssRule::Unknown(x.deep_clone(bump)),

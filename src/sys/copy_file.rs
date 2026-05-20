@@ -103,7 +103,6 @@ pub type CopyFileState = EmptyCopyFileState;
 
 type CopyFileReturnType = crate::Result<()>;
 
-#[allow(unused_variables)]
 pub fn copy_file_with_state(
     in_: InputType<'_>,
     out: InputType<'_>,

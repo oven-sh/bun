@@ -1,5 +1,4 @@
 #![feature(allocator_api)]
-#![allow(unused, dead_code, non_snake_case, non_upper_case_globals)]
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
 // Pieces that transitively need the JS-AST (`Expr`/`E::Object`/`Rope`) or the

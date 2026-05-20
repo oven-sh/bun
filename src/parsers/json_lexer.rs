@@ -19,7 +19,6 @@
 //! `bun_js_parser::js_lexer` remains the canonical lexer; this module is a
 //! sliced re-port and is NOT re-exported outside `bun_interchange`.
 
-#![allow(dead_code)]
 
 use bun_alloc::Arena as Bump;
 

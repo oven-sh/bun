@@ -1412,7 +1412,6 @@ pub enum StmtsKind {
 }
 
 #[cold]
-#[allow(dead_code)]
 fn notimpl() -> ! {
     Output::panic(format_args!("Not implemented yet!!"));
 }
@@ -1965,8 +1964,7 @@ pub mod prefill {
     use super::*;
 
     pub mod hot_module_reloading {
-        #[allow(unused_imports)]
-        use super::*;
+                use super::*;
         // TODO(port): mutable static Expr arrays — need `static mut` or `LazyLock`.
         // pub static DEBUG_ENABLED_ARGS: [Expr; 1] = [...];
         // pub static DEBUG_DISABLED: [Expr; 1] = [...];
@@ -2022,7 +2020,6 @@ pub mod prefill {
 }
 
 #[derive(Default)]
-#[allow(dead_code)]
 struct ReactJSX {
     // TODO(port): ArrayHashMap with bun.ArrayIdentityContext (identity hash on Ref)
     hoisted_elements: ArrayHashMap<Ref, G::Decl>,

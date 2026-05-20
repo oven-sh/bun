@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_variables, unused_imports, unused_mut)]
 use bun_collections::VecExt;
 use core::ffi::c_void;
 use std::io::Write as _;

@@ -407,8 +407,7 @@ pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
             #[derive(Clone, Copy)]
             #[repr(u8)]
             pub enum Gc { #( #variants, )* }
-            #[allow(dead_code)]
-            impl Gc {
+                        impl Gc {
                 #[inline] pub fn get(self, this_value: ::bun_jsc::JSValue) -> ::core::option::Option<::bun_jsc::JSValue> {
                     match self { #( #get_arms )* }
                 }
@@ -980,7 +979,6 @@ fn classify_uws_arg(ty: &syn::Type) -> UwsArg {
 // Compile-time sanity: a `#[host_fn]` body must take refs, not raw pointers.
 // (Best-effort lint; the real type-check happens when the shim calls the fn.)
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(dead_code)]
 fn assert_ref_args(func: &ItemFn) -> syn::Result<()> {
     for arg in &func.sig.inputs {
         if let FnArg::Typed(pt) = arg {

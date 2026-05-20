@@ -1,9 +1,7 @@
 use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
-#[allow(unused_imports)]
 use std::sync::Arc;
 
-#[allow(unused_imports)]
 use bun_sys::FdExt as _;
 
 use bun_core::String as BunString;

@@ -135,7 +135,7 @@ fn eat_content_args(
 /// - `$null_ret` — sentinel when the raw ptr is null. **Differs per wrapper**:
 ///                 `JSValue::UNDEFINED` for TextChunk/Element,
 ///                 `JSValue::NULL` for DocEnd/Comment/EndTag (matches Zig).
-/// - Each op arm accepts leading attrs (doc comments, `#[allow(dead_code)]`).
+/// - Each op arm accepts leading attrs (doc comments, ``).
 ///
 /// Expands inside an `impl $Wrapper { ... }` block to associated items.
 macro_rules! lol_content_ops {
@@ -1927,7 +1927,7 @@ impl EndTag {
     lol_content_ops! { EndTag, end_tag, JSValue::NULL;
         before / before_,
         after / after_,
-        #[allow(dead_code)] replace / replace_,
+        replace / replace_,
     }
 
     #[bun_jsc::host_fn(method)]

@@ -735,8 +735,7 @@ impl Terminal {
         }
     }
     #[cfg(not(windows))]
-    #[allow(unused)]
-    fn close_pseudoconsole_off_thread(&self, _hpcon: *mut c_void) {}
+        fn close_pseudoconsole_off_thread(&self, _hpcon: *mut c_void) {}
 }
 
 pub struct PtyResult {
@@ -775,8 +774,7 @@ fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     {
         return create_pty_windows(cols, rows);
     }
-    #[allow(unreachable_code)]
-    Err(CreatePtyError::NotSupported)
+        Err(CreatePtyError::NotSupported)
 }
 
 // OpenPtyTermios is required for the openpty() extern signature even though we pass null.
@@ -871,8 +869,7 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
         return lib_util::get_open_pty();
     }
 
-    #[allow(unreachable_code)]
-    None
+        None
 }
 
 #[cfg(unix)]

@@ -45,7 +45,7 @@ impl fmt::Display for Range {
 }
 
 // PORT NOTE: helper for Range's Display impl above (Zig relied on default struct formatting).
-struct ComparatorDisplay<'a>(#[allow(dead_code)] &'a Comparator);
+struct ComparatorDisplay<'a>(&'a Comparator);
 impl fmt::Display for ComparatorDisplay<'_> {
     fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO(port): no buffer available here; upstream Zig path appears unused.

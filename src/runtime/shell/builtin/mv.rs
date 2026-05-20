@@ -574,8 +574,7 @@ impl ShellMvBatchedTask {
     /// Spec: mv.zig `ShellMvBatchedTask.moveAcrossFilesystems` — `rename(2)`
     /// fails with EXDEV across mounts; fall back to `cp -pRP` + `rm -rf`.
     /// TODO(port): unimplemented in Zig too.
-    #[allow(dead_code)]
-    fn move_across_filesystems(&mut self, _src: &ZStr, _dest: &ZStr) {}
+        fn move_across_filesystems(&mut self, _src: &ZStr, _dest: &ZStr) {}
 
     pub fn run_from_main_thread(this: *mut ShellMvBatchedTask, interp: &Interpreter) {
         // SAFETY: `this` is a live boxed task held in `MvState::Executing::tasks`.

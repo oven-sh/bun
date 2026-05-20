@@ -9,7 +9,6 @@ use crate::jsc::{
 use bun_core::String as BunString;
 use bun_valkey::valkey_protocol::{self as protocol, RESPValue, RedisError};
 
-#[allow(unused_imports)]
 use protocol as _; // keep `protocol` referenced for sibling drafts
 
 /// Zig: `valkeyErrorToJS(global, message: ?[]const u8, err)`.

@@ -4,7 +4,6 @@ use crate::css_values::url::Url;
 
 /// An SVG [`<paint>`](https://www.w3.org/TR/SVG2/painting.html#SpecifyingPaint) value
 /// used in the `fill` and `stroke` properties.
-#[allow(dead_code)]
 enum SVGPaint {
     /// A URL reference to a paint server element, e.g. `linearGradient`, `radialGradient`, and `pattern`.
     Url {
@@ -26,7 +25,6 @@ enum SVGPaint {
 /// A fallback for an SVG paint in case a paint server `url()` cannot be resolved.
 ///
 /// See [SVGPaint](SVGPaint).
-#[allow(dead_code)]
 enum SVGPaintFallback {
     /// No fallback.
     None,
@@ -44,7 +42,6 @@ pub enum StrokeLinecap {}
 pub enum StrokeLinejoin {}
 
 /// A value for the [stroke-dasharray](https://www.w3.org/TR/SVG2/painting.html#StrokeDashing) property.
-#[allow(dead_code)]
 enum StrokeDasharray {
     /// No dashing is used.
     None,
@@ -55,7 +52,6 @@ enum StrokeDasharray {
 }
 
 /// A value for the [marker](https://www.w3.org/TR/SVG2/painting.html#VertexMarkerProperties) properties.
-#[allow(dead_code)]
 enum Marker {
     /// No marker.
     None,

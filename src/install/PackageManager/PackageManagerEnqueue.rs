@@ -1212,8 +1212,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
             }
-            #[allow(unreachable_code)]
-            return Ok(());
+                        return Ok(());
         }
         dependency::version::Tag::Git => {
             let dep: Repository = *version.git();

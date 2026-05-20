@@ -273,7 +273,6 @@ pub fn addr_info_to_js_array(
 }
 
 // (unused import in Zig: `JSError = bun.JSError` — dropped)
-#[allow(unused_imports)]
 use bun_dns::GetAddrInfo as _GetAddrInfo;
 
 // ported from: src/runtime/dns_jsc/options_jsc.zig

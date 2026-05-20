@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::Output;

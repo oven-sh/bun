@@ -157,9 +157,7 @@ mod bun_test {
 // TODO(port): module-level static `var path_buf: bun.PathBuffer = undefined;` — these are
 // process-wide mutable buffers. PORTING.md §Global mutable state: single-thread
 // CLI scratch → RacyCell. Currently unused (Zig parity placeholders).
-#[allow(dead_code)]
 static PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-#[allow(dead_code)]
 static PATH_BUF2: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 pub fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
@@ -3069,8 +3067,7 @@ impl TestCommand {
             // diverges, so the closure is the sole mutator.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
         }
-        #[allow(unreachable_code)]
-        Ok(())
+                Ok(())
     }
 
     fn run_event_loop_for_watch(vm: &mut VirtualMachine) {

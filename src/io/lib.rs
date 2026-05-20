@@ -11,7 +11,6 @@
 // `bun_core::debug_warn`).
 // ════════════════════════════════════════════════════════════════════════════
 
-#![allow(dead_code, unused_variables, unused_imports, unused_mut, clippy::all)]
 #![allow(unsafe_op_in_unsafe_fn)]
 // ── submodules ──────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
@@ -427,8 +426,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                 $crate::BufferedReaderParentLinkKind::$variant;
             const HAS_ON_READ_CHUNK: bool = $has;
             $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn on_read_chunk(
+                                unsafe fn on_read_chunk(
                     $rc_this: *mut Self,
                     $rc_chunk: &[u8],
                     $rc_more: $crate::ReadState,
@@ -436,25 +434,20 @@ macro_rules! __impl_buffered_reader_parent_body {
                     unsafe { $rc }
                 }
             )?
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn on_reader_done($rd_this: *mut Self) {
+                        unsafe fn on_reader_done($rd_this: *mut Self) {
                 unsafe { $rd }
             }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
+                        unsafe fn on_reader_error($re_this: *mut Self, $re_err: $crate::__bun_sys::Error) {
                 unsafe { $re }
             }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
+                        unsafe fn loop_($l_this: *mut Self) -> *mut $crate::pipe_reader::Loop {
                 unsafe { $lp }
             }
-            #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
+                        unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
                 unsafe { $ev }
             }
             $(
-                #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-                unsafe fn on_max_buffer_overflow(
+                                unsafe fn on_max_buffer_overflow(
                     $mb_this: *mut Self,
                     $mb_buf: ::core::ptr::NonNull<$crate::max_buf::MaxBuf>,
                 ) {

@@ -58,7 +58,6 @@ pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 
 type StrDiffList<'a> = DiffList<&'a [u8]>;
 
-#[allow(dead_code)]
 fn diff_list_to_js(global: &JSGlobalObject, diff_list: &StrDiffList<'_>) -> JsResult<JSValue> {
     // todo: replace with toJS
     JSValue::create_array_from_iter(global, diff_list.iter(), |line| {

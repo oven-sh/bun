@@ -401,14 +401,12 @@ impl Waker {
     }
 
     // TODO(port): Zig used @compileError here; on Windows these must never be linked.
-    #[allow(unused)]
-    pub fn get_fd(&self) -> Fd {
+        pub fn get_fd(&self) -> Fd {
         unreachable!("Waker.getFd is unsupported on Windows");
     }
 
     // TODO(port): Zig used @compileError here; on Windows these must never be linked.
-    #[allow(unused)]
-    pub fn init_with_file_descriptor(_fd: Fd) -> Waker {
+        pub fn init_with_file_descriptor(_fd: Fd) -> Waker {
         unreachable!("Waker.initWithFileDescriptor is unsupported on Windows");
     }
 

@@ -1,4 +1,3 @@
-#![allow(unused_imports, unused_variables, dead_code)]
 #![warn(unused_must_use)]
 
 use core::ffi::c_void;

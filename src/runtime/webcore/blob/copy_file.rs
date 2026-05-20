@@ -7,7 +7,6 @@ use core::mem::offset_of;
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
-#[allow(unused_imports)]
 use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, Store, StoreRef, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
@@ -25,7 +24,6 @@ use bun_sys_jsc::ErrorJsc as _;
 // Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
 // the same Zig `jsc.SystemError` extern struct; map field-by-field because the
 // two Rust definitions order their fields differently.
-#[allow(dead_code)]
 fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
     jsc::SystemError {
         errno: e.errno,
@@ -341,8 +339,7 @@ impl<'a> CopyFile<'a> {
         // TODO(refactor): defer captures &mut to disjoint field via raw ptr;
         // reshape to set read_len at each return site instead.
 
-        #[allow(unused_mut, unused_variables)]
-        let mut has_unset_append = false;
+                let mut has_unset_append = false;
 
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()

@@ -1,6 +1,5 @@
 //! JSC bridges for `url/url.zig` `URL`. The struct + parser stay in `url/`.
 
-#![allow(unused, dead_code)]
 #![warn(unused_must_use)]
 
 use bun_core::{String as BunString, Tag};

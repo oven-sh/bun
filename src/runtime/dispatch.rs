@@ -139,7 +139,6 @@ use crate::node::zlib::{
     native_brotli::NativeBrotli, native_zlib::NativeZlib, native_zstd::NativeZstd,
 };
 
-#[allow(unused_imports)]
 use crate::dns_jsc::{GetAddrInfoRequest, Resolver as DNSResolver, get_addr_info_request};
 use crate::server::ServerAllConnectionsClosedTask;
 
@@ -161,7 +160,6 @@ use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 
-#[allow(unused_imports)]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -960,11 +958,9 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
     macro_rules! timer_arm {
         ($Ty:ty, $field:ident, |$c:ident, $now:ident, $vm:ident| $body:expr) => {{
             let $c: *mut $Ty = owner!($Ty, $field);
-            #[allow(unused_variables)]
-            let ($now, $vm) = (now, vm);
+                        let ($now, $vm) = (now, vm);
             // SAFETY: per fn contract; container derived from a live `$Ty`.
-            #[allow(unused_unsafe)]
-            unsafe {
+                        unsafe {
                 $body
             };
         }};

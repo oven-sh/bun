@@ -244,8 +244,7 @@ impl<R> StyleRule<R> {
     {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
-        #[allow(unused_mut)]
-        let mut unused = false;
+                let mut unused = false;
         // TODO(port): blocked_on key-type mismatch — `selector::is_unused` takes
         // `&ArrayHashMap<&[u8], ()>` but `MinifyContext.unused_symbols` is
         // `&ArrayHashMap<Box<[u8]>, ()>` (rules/mod.rs PORT NOTE: "reconcile when

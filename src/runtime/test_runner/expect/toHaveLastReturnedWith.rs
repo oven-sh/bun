@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, FormatterTestExt, make_formatter};
+use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, FormatterTestExt, make_formatter};
 use bun_jsc::console_object::Formatter;
 // TODO(port): verify path for JSMockFunction__getReturns FFI binding
 use super::mock::JSMockFunction__getReturns;

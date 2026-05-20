@@ -640,8 +640,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
             // block below and `filter_run.rs` for the canonical pattern.
             // `mut` only for the Windows error-path `.deinit()` below.
-            #[allow(unused_mut)]
-            let mut spawn_options = SpawnOptions {
+                        let mut spawn_options = SpawnOptions {
                 stdin: if (*this).foreground {
                     bun_spawn::Stdio::Inherit
                 } else {

@@ -467,8 +467,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
         self.len += converted_len;
     }
 
-    #[allow(dead_code)]
-    fn convert_append(&mut self, _characters: &[U::Other]) {
+        fn convert_append(&mut self, _characters: &[U::Other]) {
         // Intentionally empty — Zig body is fully commented out.
     }
 }
@@ -521,7 +520,6 @@ fn dirname_posix<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     Some(&path[..end_index])
 }
 
-#[allow(dead_code)]
 #[inline]
 fn dirname_windows<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     if path.is_empty() {

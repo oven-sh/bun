@@ -1,5 +1,4 @@
 use crate::jsc::JSGlobalObject;
-#[allow(unused_imports)]
 use crate::mysql::my_sql_value::Value;
 use crate::mysql::my_sql_value::{DateTime, Time};
 use crate::shared::sql_data_cell::SQLDataCell;

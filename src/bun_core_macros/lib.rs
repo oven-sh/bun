@@ -304,8 +304,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
             unsafe fn destroy(this: *mut Self) {
                 // SAFETY: trait contract — refcount hit zero, `this` is the
                 // sole live owner of its allocation.
-                #[allow(unused_unsafe)]
-                unsafe { (#path)(this) }
+                                unsafe { (#path)(this) }
             }
         }
     });
@@ -492,8 +491,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
             #[inline]
             unsafe fn destructor(this: *mut Self) {
                 // SAFETY: trait contract — refcount hit zero.
-                #[allow(unused_unsafe)]
-                unsafe { (#path)(this) }
+                                unsafe { (#path)(this) }
             }
         }
     });
@@ -630,8 +628,7 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
         Some(path) => quote! {
             // SAFETY: trait contract — refcount hit zero, `this` is the
             // sole live owner of its allocation.
-            #[allow(unused_unsafe)]
-            unsafe { (#path)(this) }
+                        unsafe { (#path)(this) }
         },
         None => quote! {
             // SAFETY: trait contract — refcount hit zero; allocated via

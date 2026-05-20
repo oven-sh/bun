@@ -31,7 +31,6 @@
 //! their translation unit's `.text` instead of interleaving with the
 //! startup chain.
 
-#![allow(unused_imports)]
 #![warn(unused_must_use)]
 
 use core::ffi::{c_char, c_int};

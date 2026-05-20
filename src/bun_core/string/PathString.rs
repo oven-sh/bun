@@ -45,7 +45,6 @@ const POINTER_BITS: u32 = if USE_SMALL_PATH_STRING_ {
 } else {
     usize::BITS
 };
-#[allow(dead_code)]
 const LEN_BITS: u32 = if USE_SMALL_PATH_STRING_ {
     PATH_INT_LEN_BITS
 } else {

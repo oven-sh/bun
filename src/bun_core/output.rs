@@ -15,7 +15,6 @@ use core::ffi::c_int;
 use core::fmt;
 // `#[macro_export]` macros land at crate root; re-import so order-of-definition
 // inside this module doesn't matter for the early call sites.
-#[allow(unused_imports)]
 use crate::{
     declare_scope, err_generic, note, pretty, pretty_error, pretty_errorln, prettyln, scoped_log,
     warn,
@@ -1725,8 +1724,7 @@ macro_rules! define_scoped_log {
         $crate::define_scoped_log!(@inner $mac, $scope, $);
     };
     (@inner $mac:ident, $scope:path, $d:tt) => {
-        #[allow(unused_macros)]
-        macro_rules! $mac {
+                macro_rules! $mac {
             ($d($d arg:tt)*) => { $crate::scoped_log!($scope, $d($d arg)*) };
         }
     };

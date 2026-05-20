@@ -1,5 +1,4 @@
 // This is close to WHATWG URL, but we don't want the validation errors
-#![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 use core::cell::RefCell;

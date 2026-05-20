@@ -904,7 +904,6 @@ pub fn js_assert_encoding_valid(
 
 // ──────────────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 pub enum PathOrBuffer {
     Path(bun_core::PathString),
     Buffer(Buffer),

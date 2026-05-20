@@ -2011,7 +2011,6 @@ unsafe fn transpile_source_code(
 /// `vm.transpiler` while also touching `vm.module_loader` / `vm.bun_watcher`,
 /// which would alias under `&mut` (PORTING.md §Forbidden). Per-field deref via
 /// the raw ptr, mirroring `auto_tick` above.
-#[allow(unused_variables, unused_mut, unreachable_code)]
 fn transpile_source_code_inner(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
@@ -3122,8 +3121,7 @@ fn transpile_source_code_inner(
                 }));
             }
             // (parse→link→print arm always `return`s; no fallthrough.)
-            #[allow(unreachable_code)]
-            {
+                        {
                 unreachable!()
             }
         }
@@ -3158,8 +3156,7 @@ fn transpile_source_code_inner(
                 // NOT fall through to the `.file` recursion below. Fail closed
                 // until the gated ctor above un-gates (PORTING.md §Forbidden:
                 // no silent-no-op fall-through).
-                #[allow(unreachable_code)]
-                return Err(bun_core::err!("NotSupported"));
+                                return Err(bun_core::err!("NotSupported"));
             }
             // Spec :661-675 — recurse as `.file`.
             // SAFETY: per fn contract — `extra` is live for the call.
@@ -4038,7 +4035,6 @@ const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 /// `specifier_ptr`/`referrer` are valid `bun.String*` for the call's duration;
 /// `type_attribute` is null or a valid `bun.String*`; `ret` is a valid
 /// out-param the caller reads when `null` is returned.
-#[allow(unused_variables, unused_mut)]
 unsafe fn transpile_file(
     jsc_vm: *mut VirtualMachine,
     global: *mut JSGlobalObject,

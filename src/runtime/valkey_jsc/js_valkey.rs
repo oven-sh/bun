@@ -1864,7 +1864,6 @@ impl JSValkeyClient {
 // `js_valkey_functions.rs`, so no re-export is needed (and `pub use` of impl
 // methods is not legal Rust). Keep `fns` referenced so the sibling module is
 // linked into the build.
-#[allow(unused_imports)]
 use fns as _fns_anchor;
 
 // ───────────────────────────────────────────────────────────────────────────

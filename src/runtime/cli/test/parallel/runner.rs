@@ -710,8 +710,7 @@ pub fn run_as_worker(
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
         unsafe { (*vm).global_exit() }
     });
-    #[allow(unreachable_code)]
-    {
+        {
         Global::exit(0);
     }
 }

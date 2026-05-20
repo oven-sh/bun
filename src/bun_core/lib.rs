@@ -1054,8 +1054,7 @@ macro_rules! enum_unwrap {
         $vis fn $get(&self) -> &$Out {
             match self {
                 $Enum::$Variant(__x) => __x,
-                #[allow(unreachable_patterns)]
-                _ => ::core::unreachable!(
+                                _ => ::core::unreachable!(
                     ::core::concat!(::core::stringify!($Enum), "::", ::core::stringify!($get),
                                     " on non-", ::core::stringify!($Variant), " variant")
                 ),
@@ -1066,8 +1065,7 @@ macro_rules! enum_unwrap {
         $vis fn $get_mut(&mut self) -> &mut $Out {
             match self {
                 $Enum::$Variant(__x) => __x,
-                #[allow(unreachable_patterns)]
-                _ => ::core::unreachable!(
+                                _ => ::core::unreachable!(
                     ::core::concat!(::core::stringify!($Enum), "::", ::core::stringify!($get_mut),
                                     " on non-", ::core::stringify!($Variant), " variant")
                 ),
@@ -1080,8 +1078,7 @@ macro_rules! enum_unwrap {
         $vis fn $into(self) -> $Out {
             match self {
                 $Enum::$Variant(__x) => __x,
-                #[allow(unreachable_patterns)]
-                _ => ::core::unreachable!(
+                                _ => ::core::unreachable!(
                     ::core::concat!(::core::stringify!($Enum), "::", ::core::stringify!($into),
                                     " on non-", ::core::stringify!($Variant), " variant")
                 ),

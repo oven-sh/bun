@@ -1115,8 +1115,7 @@ pub mod renamer {
 
     // The remaining renamer types are only consumed by the printer and bundler
     // — they live in `bun_js_printer`.
-    #[allow(unused_imports)]
-    use symbol as _;
+        use symbol as _;
 }
 
 // ported from: src/js_parser/js_parser.zig

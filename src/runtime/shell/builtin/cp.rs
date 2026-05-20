@@ -103,8 +103,7 @@ impl Cp {
 
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
-            #[allow(dead_code)]
-            enum Action {
+                        enum Action {
                 Done(ExitCode),
                 Schedule { start: usize, target: usize },
                 Ebusy(ExitCode),

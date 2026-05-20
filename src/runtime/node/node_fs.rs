@@ -251,9 +251,7 @@ use super::util::validators;
 //   - `super::types::FdJsc`  → `Fd::from_js_validated()`
 //   - `bun_jsc::SysErrorJsc` → `bun_sys::Error::to_js()`
 //   - `bun_sys_jsc::ErrorJsc`→ `bun_sys::Error::to_js_with_async_stack()`
-#[allow(unused_imports)]
 use super::types::FdJsc as _;
-#[allow(unused_imports)]
 use bun_jsc::SysErrorJsc as _;
 use bun_sys_jsc::ErrorJsc as _;
 
@@ -4944,8 +4942,7 @@ impl NodeFS {
             // `from_libuv` is `#[cfg(windows)]`-only on `bun_sys::Error`; build the
             // base value first and set it conditionally so this body compiles on all
             // targets (`uv_close` is reached via the cross-platform UVFSRequest path).
-            #[allow(unused_mut)]
-            let mut e = sys::Error {
+                        let mut e = sys::Error {
                 errno: (-rc) as _,
                 syscall: sys::Tag::close,
                 fd: args.fd,
@@ -5551,8 +5548,7 @@ impl NodeFS {
             return Ok(());
         }
 
-        #[allow(unreachable_code)]
-        {
+                {
             unreachable!()
         }
     }
@@ -9185,8 +9181,7 @@ impl NodeFS {
             target_os = "freebsd",
             windows
         )))]
-        #[allow(unreachable_code)]
-        {
+                {
             let _ = (src, dest, mode, reuse_stat);
             Maybe::<ret::CopyFile>::todo()
         }
@@ -10331,8 +10326,7 @@ impl NodeFSFunctionEnum {
 struct i52;
 impl i52 {
     const MIN: i64 = -(1i64 << 51);
-    #[allow(dead_code)]
-    const MAX: i64 = (1i64 << 51) - 1;
+        const MAX: i64 = (1i64 << 51) - 1;
     /// `JSValue.to(i52)` — `@truncate(@intCast(toInt64()))`. Truncate to the low
     /// 52 bits and sign-extend bit 51 (matches Zig `@truncate` semantics).
     #[inline]

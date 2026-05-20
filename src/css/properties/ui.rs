@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use crate as css;
 
@@ -6,7 +5,6 @@ use css::css_properties::Property;
 use css::{PrintErr, Printer, PropertyHandlerContext, SmallList};
 
 use css::css_values::color::CssColor;
-#[allow(unused_imports)]
 use css::css_values::ident::DashedIdent;
 use css::css_values::number::CSSNumber;
 use css::css_values::url::Url;

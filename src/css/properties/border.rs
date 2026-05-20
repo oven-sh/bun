@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
 use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
@@ -133,8 +132,7 @@ where
                 dest.write_str(b" ")?;
             }
             self.color.to_css(dest)?;
-            #[allow(unused_assignments)]
-            {
+                        {
                 needs_space = true;
             }
         }

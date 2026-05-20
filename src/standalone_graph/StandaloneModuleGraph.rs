@@ -1216,8 +1216,7 @@ pub fn inject(
                                 _ => break,
                             }
 
-                            #[allow(unreachable_code)]
-                            {
+                                                        {
                                 Output::pretty_errorln(format_args!(
                                     "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
                                     err
@@ -1545,8 +1544,7 @@ pub fn inject(
 
     // TODO(port): the code below is unreachable in Zig too (every match arm returns).
     // Keeping for parity with Zig source.
-    #[allow(unreachable_code)]
-    {
+        {
         #[cfg(windows)]
         if inject_options.hide_console {
             if let Err(e) = bun_sys::windows::edit_win32_binary_subsystem(

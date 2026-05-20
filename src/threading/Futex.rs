@@ -11,7 +11,6 @@
 //! Using Futex, other Thread synchronization primitives can be built which
 //! efficiently wait for cross-thread events or signals.
 
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 
 use core::ffi::{c_int, c_ulong, c_void};
@@ -100,7 +99,6 @@ use windows_impl as imp;
 
 /// We can't do @compileError() in the `Impl` switch statement above as its eagerly evaluated.
 /// So instead, we @compileError() on the methods themselves for platforms which don't support futex.
-#[allow(dead_code)]
 mod unsupported_impl {
     use super::*;
 

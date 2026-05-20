@@ -317,7 +317,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
 
 // PORT NOTE: Zig returned `(Error || error{BackendUnavailable})!Decoded`;
 // reshaped to `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
-#[allow(unused_variables)]
 fn decode_via_system(bytes: &[u8], max_pixels: u64) -> Result<Option<Decoded>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {

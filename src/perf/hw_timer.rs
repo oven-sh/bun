@@ -18,7 +18,6 @@
 //! See WebKit r312153 (UnbarrieredMonotonicTime) for the original design and
 //! drift/monotonicity measurements on Darwin/arm64.
 
-#[allow(unused_imports)]
 use core::ffi::{c_char, c_int, c_void};
 
 /// True on every target Bun ships. Kept for callers that want to gate on it.

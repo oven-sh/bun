@@ -82,7 +82,6 @@ pub struct PackageResolveError<'a> {
     pub version: bun_install::dependency::Version,
 }
 
-#[allow(dead_code)]
 pub struct DeferredDependencyError {
     pub dependency: Dependency,
     pub root_dependency_id: DependencyID,

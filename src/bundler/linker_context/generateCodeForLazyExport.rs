@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-#[allow(unused_imports)]
 use bun_collections::VecExt as _VecExt;
 use std::io::Write as _;
 

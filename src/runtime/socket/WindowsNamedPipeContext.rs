@@ -120,13 +120,11 @@ macro_rules! match_socket {
     ($scrutinee:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
         match $scrutinee {
             SocketType::Tls($s) => {
-                #[allow(dead_code)]
-                const $ssl: bool = true;
+                                const $ssl: bool = true;
                 $body
             }
             SocketType::Tcp($s) => {
-                #[allow(dead_code)]
-                const $ssl: bool = false;
+                                const $ssl: bool = false;
                 $body
             }
             SocketType::None => {}

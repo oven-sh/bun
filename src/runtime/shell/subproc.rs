@@ -90,10 +90,8 @@ mod __pipe_reader_thread_confined {
     }
     impl<T: ?Sized> NotSyncCheck<()> for T {}
     impl<T: ?Sized + Sync> NotSyncCheck<u8> for T {}
-    #[allow(dead_code)]
-    const _NOT_SEND: () = <Arc<PipeReader> as NotSendCheck<_>>::OK;
-    #[allow(dead_code)]
-    const _NOT_SYNC: () = <Arc<PipeReader> as NotSyncCheck<_>>::OK;
+        const _NOT_SEND: () = <Arc<PipeReader> as NotSendCheck<_>>::OK;
+        const _NOT_SYNC: () = <Arc<PipeReader> as NotSyncCheck<_>>::OK;
 }
 
 /// Mutably borrow a `RefPtr<StaticPipeWriter>` payload.

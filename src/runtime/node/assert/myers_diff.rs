@@ -463,7 +463,6 @@ bun_core::oom_from_alloc!(Error);
 // TODO(port): narrow error set — `From<Error> for bun_core::Error` provided by
 // the `IntoStaticStr` derive convention (see PORTING.md §Type map).
 
-#[allow(dead_code)]
 type TraceFrame = Vec<u8>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

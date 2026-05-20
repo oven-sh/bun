@@ -343,7 +343,6 @@ pub fn populate_manifest_cache(
     Ok(())
 }
 
-#[allow(unused_imports)]
 use Options::LogLevel;
 
 // ported from: src/install/PackageManager/PopulateManifestCache.zig

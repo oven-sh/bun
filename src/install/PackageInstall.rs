@@ -167,8 +167,7 @@ impl Method {
         {
             return Self::windows()[self];
         }
-        #[allow(unreachable_code)]
-        false
+                false
     }
 }
 
@@ -299,8 +298,7 @@ struct InstallDirState {
 }
 
 impl InstallDirState {
-    #[allow(dead_code)]
-    #[inline]
+        #[inline]
     fn walker(&mut self) -> &mut Walker {
         // SAFETY: `init_install_dir` always populates `walker` before any backend calls `copy()`.
         self.walker.as_mut().unwrap()
@@ -1376,10 +1374,10 @@ impl<'a> PackageInstall<'a> {
             destination_dir_: &Dir,
             walker: &mut Walker,
             mut progress_: Option<&mut Progress>,
-            #[allow(unused)] to_copy_into1_offset: WinOffset,
-            #[allow(unused)] head1: WinSlice<'_>,
-            #[allow(unused)] to_copy_into2_offset: WinOffset,
-            #[allow(unused)] head2: WinSlice<'_>,
+            to_copy_into1_offset: WinOffset,
+            head1: WinSlice<'_>,
+            to_copy_into2_offset: WinOffset,
+            head2: WinSlice<'_>,
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
             let mut real_file_count: u32 = 0;
@@ -1625,10 +1623,10 @@ impl<'a> PackageInstall<'a> {
         fn copy(
             destination_dir: &Dir,
             walker: &mut Walker,
-            #[allow(unused)] to_copy_into1_offset: WinOffset,
-            #[allow(unused)] head1: WinSlice<'_>,
-            #[allow(unused)] to_copy_into2_offset: WinOffset,
-            #[allow(unused)] head2: WinSlice<'_>,
+            to_copy_into1_offset: WinOffset,
+            head1: WinSlice<'_>,
+            to_copy_into2_offset: WinOffset,
+            head2: WinSlice<'_>,
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set
             let mut real_file_count: u32 = 0;
@@ -1807,8 +1805,7 @@ impl<'a> PackageInstall<'a> {
         }
 
         let mut buf2 = PathBuffer::uninit();
-        #[allow(unused)]
-        let mut to_copy_buf2_offset: usize = 0;
+                let mut to_copy_buf2_offset: usize = 0;
         #[cfg(unix)]
         {
             let cache_dir_path = sys::get_fd_path(state.cached_package_dir.fd(), &mut buf2)?;
@@ -1841,9 +1838,9 @@ impl<'a> PackageInstall<'a> {
         fn copy(
             destination_dir: &Dir,
             walker: &mut Walker,
-            #[allow(unused)] to_copy_into1_offset: WinOffset,
-            #[allow(unused)] head1: WinSlice<'_>,
-            #[allow(unused)] to_copy_into2_offset: usize,
+            to_copy_into1_offset: WinOffset,
+            head1: WinSlice<'_>,
+            to_copy_into2_offset: usize,
             head2: &mut [Head2Char],
         ) -> Result<u32, bun_core::Error> {
             // TODO(port): narrow error set

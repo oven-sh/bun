@@ -72,17 +72,14 @@ bun_opaque::opaque_ffi! {
     pub struct BrotliDecoder;
 }
 
-#[allow(dead_code)]
 type BrotliDecoderSetMetadataCallbacks = unsafe extern "C" fn(
     state: *mut BrotliDecoder,
     start_func: brotli_decoder_metadata_start_func,
     chunk_func: brotli_decoder_metadata_chunk_func,
     opaque: *mut c_void,
 );
-#[allow(dead_code)]
 type brotli_decoder_metadata_start_func =
     Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize)>;
-#[allow(dead_code)]
 type brotli_decoder_metadata_chunk_func =
     Option<unsafe extern "C" fn(opaque: *mut c_void, data: *const u8, size: usize)>;
 

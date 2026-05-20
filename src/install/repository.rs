@@ -11,7 +11,6 @@ use bun_paths::{self as Path, PathBuffer};
 use bun_semver::String;
 use bun_semver::StringBuilder as StringBuilderLike;
 use bun_semver::string::Buf as StringBuf;
-#[allow(unused_imports)]
 use bun_sys::File;
 
 use crate::dependency as Dependency;

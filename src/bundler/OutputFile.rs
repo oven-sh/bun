@@ -521,8 +521,7 @@ impl OutputFile {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        #[allow(unused_mut)]
-        let mut do_close = false;
+                let mut do_close = false;
         let mut in_buf = PathBuffer::uninit();
         let fd_in = bun_sys::openat(
             Fd::cwd(),

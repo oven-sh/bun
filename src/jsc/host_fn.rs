@@ -759,7 +759,6 @@ struct ParsedHostFunctionErrorSet {
 // helper validates them at const-eval time. An unknown name `panic!`s — the const-context
 // analogue of Zig's `@compileError`. The `T: type` parameter (used only for the diagnostic
 // string in Zig) is dropped; the macro embeds the function name in its own error message.
-#[allow(dead_code)]
 const fn parse_error_set(errors: &[&str]) -> ParsedHostFunctionErrorSet {
     let mut errs = ParsedHostFunctionErrorSet { out_of_memory: false, js_error: false };
     let mut i = 0;

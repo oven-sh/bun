@@ -19,7 +19,6 @@
 //! gnu/musl/bionic distinction). Rust splits `target_os` into
 //! `linux`/`android`, so the gate must list both.
 #![cfg(any(target_os = "linux", target_os = "android"))]
-#![allow(unreachable_pub)]
 
 use rustix::fd::{BorrowedFd, IntoRawFd, OwnedFd};
 use rustix::io::Errno;

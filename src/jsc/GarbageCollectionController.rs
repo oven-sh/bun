@@ -20,11 +20,9 @@
 
 use core::ffi::c_int;
 
-#[allow(unused_imports)]
 use bun_core::env_var;
 use bun_uws as uws;
 
-#[allow(unused_imports)]
 use crate::VM;
 use crate::virtual_machine::VirtualMachine;
 

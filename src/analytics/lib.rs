@@ -4,12 +4,10 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use bun_core::env_var;
-#[allow(unused_imports)]
 use bun_semver as semver;
 
 use crate::schema::analytics;
 
-#[allow(unused_imports)]
 use bun_core::slice_to_nul;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -451,8 +449,7 @@ pub mod generate_header {
                         arch: PLATFORM_ARCH,
                     };
                 }
-                #[allow(unreachable_code)]
-                Platform {
+                                Platform {
                     os: analytics::OperatingSystem::_none,
                     version: &[],
                     arch: PLATFORM_ARCH,

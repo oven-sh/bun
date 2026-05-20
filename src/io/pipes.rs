@@ -59,8 +59,7 @@ impl PollOrFd {
         F: FnOnce(*mut c_void),
     {
         let fd = self.get_fd();
-        #[allow(unused_mut)]
-        let mut close_async = true;
+                let mut close_async = true;
         if matches!(self, PollOrFd::Poll(_)) {
             // workaround kqueue bug.
             // 1) non-blocking FIFO

@@ -242,8 +242,7 @@ impl<T: VersionInt> VersionType<T> {
     ///    from package.json)
     ///
     /// The goal of this function is to avoid a complete parse of semver that's unused
-    #[allow(unused_assignments)]
-    pub fn which_version_is_pinned(input: &[u8]) -> PinnedVersion {
+        pub fn which_version_is_pinned(input: &[u8]) -> PinnedVersion {
         let version = strings::trim(input, &strings::WHITESPACE_CHARS);
 
         let mut i: usize = 0;
@@ -471,8 +470,7 @@ impl<T: VersionInt> VersionType<T> {
         self.tag.order_without_build(rhs.tag, lhs_buf, rhs_buf)
     }
 
-    #[allow(unused_assignments)]
-    pub fn parse(sliced_string: SlicedString) -> ParseResult<T> {
+        pub fn parse(sliced_string: SlicedString) -> ParseResult<T> {
         let input = sliced_string.slice;
         let mut result = ParseResult::<T>::default();
 
@@ -991,7 +989,6 @@ pub struct Tag {
 
 // PORT NOTE: unused module-level static in Zig (`var multi_tag_warn = false;`).
 // Kept as a note; remove if confirmed dead.
-#[allow(dead_code)]
 static MULTI_TAG_WARN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // TODO: support multiple tags
 

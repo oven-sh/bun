@@ -1309,8 +1309,7 @@ impl Display for FormatValidIdentifier<'_> {
             // If it ends with an emoji
             if needs_gap {
                 f.write_str("_")?;
-                #[allow(unused_assignments)]
-                {
+                                {
                     needs_gap = false;
                     has_needed_gap = true;
                 }
@@ -2300,8 +2299,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             i = 1;
                             break 'jsx;
 
-                            #[allow(unreachable_code)]
-                            while i < text.len() && text[i] != b'>' {
+                                                        while i < text.len() && text[i] != b'>' {
                                 i += 1;
 
                                 if i < text.len() && text[i] == b'<' {

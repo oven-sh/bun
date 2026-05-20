@@ -661,7 +661,6 @@ pub fn do_patch_commit(
     }))
 }
 
-#[allow(dead_code)]
 fn patch_commit_get_version<'a>(
     buf: &'a mut [u8; 1024],
     patch_tag_path: &ZStr,

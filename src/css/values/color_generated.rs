@@ -13,7 +13,6 @@
 //!   - `From<HSL> for RGBA`  (Zig: `convert_HSL.intoRGBA`)
 //!   - `From<HWB> for RGBA`  (Zig: `convert_HWB.intoRGBA`)
 
-#![allow(dead_code, unused_imports)]
 
 use super::color::{
     A98, HSL, HWB, LAB, LCH, OKLAB, OKLCH, P3, ProPhoto, RGBA, Rec2020, SRGB, SRGBLinear, XYZd50,

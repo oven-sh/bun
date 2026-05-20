@@ -1,5 +1,4 @@
 // @link "../deps/libarchive.a"
-#![allow(unused, dead_code, clippy::all)]
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
 // Thin `extern "C"` wrappers over the libarchive C library live in `mod lib`

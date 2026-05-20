@@ -369,7 +369,6 @@ const _: () = {
 };
 
 // silence unused-import warnings on the gated bodies' deps
-#[allow(unused_imports)]
 use {Arena as _Arena, ImportRecord as _ImportRecord};
 
 // ported from: src/css/rules/import.zig

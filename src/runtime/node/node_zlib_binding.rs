@@ -965,8 +965,7 @@ macro_rules! __impl_compression_stream {
         /// `T.js.*` — cached-property accessors emitted by
         /// `generate-classes.ts` for `values: ["writeCallback",
         /// "errorCallback", "dictionary"]`.
-        #[allow(unused)]
-        pub mod js {
+                pub mod js {
             ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary);
         }
 

@@ -31,7 +31,6 @@ struct VulnerabilityInfo {
 }
 
 #[derive(Default)]
-#[allow(dead_code)]
 struct PackageInfo {
     package_id: u32,
     name: Box<[u8]>,
@@ -41,7 +40,6 @@ struct PackageInfo {
 }
 
 // In Zig this is `PackageInfo.DependencyPath`; hoisted because Rust has no nested struct types.
-#[allow(dead_code)]
 struct DependencyPath {
     path: Vec<Box<[u8]>>,
     is_direct: bool,

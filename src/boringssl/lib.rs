@@ -1,7 +1,6 @@
 // TODO: move all custom functions from the translated file into this file, then
 // the translated file can be provided by `zig translate-c`
 
-#![allow(unused, static_mut_refs)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 use core::ffi::CStr;

@@ -66,8 +66,7 @@ bun_core::declare_scope!(CowFd, hidden);
 #[macro_export]
 macro_rules! shell_log {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {{
-        #[allow(unused_imports)]
-        use $crate::shell::interpreter::SHELL;
+                use $crate::shell::interpreter::SHELL;
         bun_core::scoped_log!(SHELL, $fmt $(, $arg)*);
     }};
 }
@@ -2486,7 +2485,7 @@ fn shell_get_path<'a>(
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
 /// the error with the *original* `path_` (not the rewritten one). POSIX: plain
 /// `bun_sys::fstatat(dir, path_)`.
-#[allow(dead_code)] // consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`)
+// consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`)
 pub fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
     #[cfg(windows)]
     {
@@ -2566,7 +2565,7 @@ pub fn shell_openat(
 /// fd), so unlike `openat`'s NT-handle directory path this needs no explicit
 /// `makeLibUVOwnedForSyscall` — the dead `if (isWindows)` tail in the Zig
 /// source is unreachable after the early `return bun.sys.open(...)`.
-#[allow(dead_code)] // no Zig callers yet; ported for ShellSyscall surface parity
+// no Zig callers yet; ported for ShellSyscall surface parity
 pub fn shell_open(
     file_path: &bun_core::ZStr,
     flags: i32,

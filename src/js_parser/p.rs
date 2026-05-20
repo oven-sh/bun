@@ -3872,8 +3872,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return None;
             }
         }
-        #[allow(unreachable_code)]
-        None
+                None
     }
 
     // TODO(port): heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
@@ -7777,8 +7776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // there, i.e. provably uncalled (Zig would refuse to build if any caller
     // existed). Port as `unreachable!()` per the @compileError convention used
     // elsewhere in this file (see `wrap_identifier` arm).
-    #[allow(unused)]
-    fn keep_stmt_symbol_name(&mut self, _loc: bun_ast::Loc, _ref: Ref, _name: &[u8]) -> Stmt {
+        fn keep_stmt_symbol_name(&mut self, _loc: bun_ast::Loc, _ref: Ref, _name: &[u8]) -> Stmt {
         unreachable!("not implemented")
     }
 

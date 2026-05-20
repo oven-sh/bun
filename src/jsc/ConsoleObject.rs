@@ -2524,8 +2524,7 @@ pub mod formatter {
     }
 
     /// Mirrors Zig's `jsc.C.CellType` — same enum as `JSType` in this codebase.
-    #[allow(dead_code)]
-    type CellType = jsc::JSType;
+        type CellType = jsc::JSType;
 
     /// <https://console.spec.whatwg.org/#formatter>
     #[derive(Copy, Clone, Eq, PartialEq)]

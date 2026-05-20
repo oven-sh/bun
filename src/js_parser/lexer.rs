@@ -472,8 +472,7 @@ impl<
 }
 
 lexer_impl_header! {
-    #[allow(dead_code)]
-    const JSON: JSONOptions = JSONOptions {
+        const JSON: JSONOptions = JSONOptions {
         is_json: IS_JSON,
         allow_comments: ALLOW_COMMENTS,
         allow_trailing_commas: ALLOW_TRAILING_COMMAS,

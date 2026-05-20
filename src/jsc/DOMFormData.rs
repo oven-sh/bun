@@ -47,8 +47,7 @@ unsafe extern "C" {
 
     // Declared in the Zig but never called (WebCore__DOMFormData__toQueryString is used instead).
     // Kept for symbol parity.
-    #[allow(dead_code)]
-    fn DOMFormData__toQueryString(
+        fn DOMFormData__toQueryString(
         this: *mut DOMFormData,
         ctx: *mut c_void,
         callback: extern "C" fn(ctx: *mut c_void, arg1: *mut ZigString),

@@ -262,7 +262,6 @@ impl Default for IdentOrRef {
 const PTRBITS_MASK: u128 = (1u128 << 63) - 1;
 const REF_BIT: u128 = 1u128 << 63;
 
-#[allow(dead_code)]
 enum Tag {
     Ident,
     Ref,
@@ -343,8 +342,7 @@ impl IdentOrRef {
 
     pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
         let len: u64 = r.to_raw_bits();
-        #[allow(unused_mut)]
-        let mut this = Self::pack(0, true, len);
+                let mut this = Self::pack(0, true, len);
 
         #[cfg(debug_assertions)]
         {

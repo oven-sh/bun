@@ -182,8 +182,7 @@ impl AlgorithmValue {
                         });
                     }
                 }
-                #[allow(unreachable_code)]
-                {
+                                {
                     unreachable!()
                 }
             } else {
@@ -221,8 +220,7 @@ impl AlgorithmValue {
         } else {
             return Err(global_object.throw_invalid_argument_type("hash", "algorithm", "string"));
         }
-        #[allow(unreachable_code)]
-        {
+                {
             unreachable!()
         }
     }

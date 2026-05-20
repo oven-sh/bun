@@ -11,7 +11,6 @@ use bun_event_loop::AnyTask::AnyTask;
 use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-#[allow(unused_imports)]
 use bun_jsc::StringJsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -4323,7 +4322,6 @@ pub struct NapiFinalizerTask {
 }
 
 // TODO(port): jsc.AnyTask.New(@This(), runOnJSThread) — codegen vtable wiring.
-#[allow(dead_code)]
 type NapiFinalizerAnyTask = AnyTask;
 
 impl NapiFinalizerTask {

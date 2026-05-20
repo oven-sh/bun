@@ -632,8 +632,7 @@ pub mod random {
 
             let element_size = buf.bytes_per_element().unwrap_or(1);
 
-            #[allow(unused_assignments)]
-            let mut offset: u32 = 0;
+                        let mut offset: u32 = 0;
             if offset_value.is_callable() {
                 callback = offset_value;
                 offset =

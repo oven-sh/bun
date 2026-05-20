@@ -14,10 +14,8 @@ use core::sync::atomic::Ordering;
 use bun_core::Output;
 use bun_sys::{self, Fd, FdExt as _};
 
-#[allow(unused_imports)]
 use crate::posix_spawn::posix_spawn;
 #[cfg(unix)]
-#[allow(unused_imports)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
 
 #[cfg(unix)]

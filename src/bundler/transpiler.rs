@@ -3298,7 +3298,6 @@ impl<'a> Transpiler<'a> {
 /// `processResolveQueue` / `buildWithResolveResultEager` — Zig switched on
 /// `bun.sys.File` vs `std.fs.Dir` at the type level; collapse to a runtime
 /// enum since the only behavioural difference is unused (`_ = outstream`).
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum TransformOutstream {
     Stdout,

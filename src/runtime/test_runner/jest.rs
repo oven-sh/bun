@@ -1,5 +1,5 @@
 use core::ptr::NonNull;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
+use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
@@ -10,7 +10,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
 };
-#[allow(unused_imports)]
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
 use bun_core::strings;

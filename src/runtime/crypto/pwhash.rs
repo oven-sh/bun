@@ -15,7 +15,6 @@
 //!     Rust `bcrypt` crate has no PHC codec). `silently_truncate_password` is
 //!     asserted `true` (Bun's only caller never sets `false`).
 
-#![allow(dead_code)]
 
 use bun_core::Error;
 

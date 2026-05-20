@@ -431,8 +431,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             }
         }
     }
-    #[allow(unreachable_code)]
-    unreachable!()
+        unreachable!()
 }
 
 pub struct CacheDir {

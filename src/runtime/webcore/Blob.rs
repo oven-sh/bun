@@ -3733,15 +3733,11 @@ use crate::webcore::s3_file as S3File;
 // vs value namespace); alias the module so the call sites read unambiguously.
 use self::write_file as write_file_mod;
 use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
-#[allow(unused_imports)]
 use bun_bundler::options_impl::LoaderExt as _;
-#[allow(unused_imports)]
 use bun_jsc::{JsClass as _, StringJsc as _};
 // `bun_jsc::zig_string::ZigString` re-exports `bun_core::ZigString`; JSC-side
 // methods (`to_js`, …) come from the `ZigStringJsc` extension trait.
-#[allow(unused_imports)]
 use bun_jsc::ZigStringJsc as _;
-#[allow(unused_imports)]
 use bun_jsc::zig_string::ZigString as JscZigString;
 
 /// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
@@ -4047,8 +4043,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     ));
                 }
             }
-            #[allow(unreachable_code)]
-            return Ok(JSValue::ZERO);
+                        return Ok(JSValue::ZERO);
         }
         store::SerializeTag::Empty => Blob::new(Blob::init_empty(global_this)),
     };
@@ -6909,8 +6904,7 @@ pub trait FileOpener: Sized {
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
     /// straight through to the error branch as in the Zig spec.
-    #[allow(unused_variables)]
-    fn try_mkdirp(
+        fn try_mkdirp(
         &mut self,
         err: bun_sys::Error,
         path: &bun_core::ZStr,

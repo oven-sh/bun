@@ -353,7 +353,6 @@ pub mod hashers {
 // counterpart; they are private and unreferenced in the Zig source, so only
 // `labels` is kept.
 
-#[allow(dead_code)]
 const LABELS: [&[u8]; 7] = [
     b"SHA1",
     b"SHA512",

@@ -95,8 +95,7 @@ impl<'a> ProcessHandle<'a> {
         // TODO(port): Zig uses `[_:null]?[*:0]const u8` (null-terminated array of nullable C strings).
 
         handle.start_time = Some(Instant::now());
-        #[allow(unused_mut)]
-        let mut spawned: spawn::SpawnProcessResult = 'brk: {
+                let mut spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process

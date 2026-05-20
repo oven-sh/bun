@@ -16,7 +16,6 @@ use crate::string::immutable::CodePoint; // i32
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
 }
-#[allow(unused_imports)]
 use crate::strings::{is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii};
 use bun_simdutf_sys::simdutf;
 
@@ -1506,7 +1505,6 @@ pub(super) use crate::strings::{push_codepoint_utf16, u16_lead, u16_trail};
 // `unreachable_pub`: these are re-exported externally via the parent's
 // `pub use unicode_draft::{… u16_is_lead, u16_is_trail …}`; the lint does not
 // trace that multi-hop re-export, so the `pub` is required here.
-#[allow(unreachable_pub)]
 pub use crate::strings::{
     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
     u16_get_supplementary, u16_is_lead, u16_is_surrogate, u16_is_trail,

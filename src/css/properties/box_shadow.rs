@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports)]
 use crate as css;
 use crate::PrintErr;
 use crate::Printer;

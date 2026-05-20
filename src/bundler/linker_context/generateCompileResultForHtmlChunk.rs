@@ -82,19 +82,16 @@ struct EndTagIndices {
 
 struct HTMLLoader<'a> {
     linker: &'a LinkerContext<'a>,
-    #[allow(dead_code)]
-    source_index: IndexInt,
+        source_index: IndexInt,
     import_records: &'a [ImportRecord],
-    #[allow(dead_code)]
-    log: *mut Log,
+        log: *mut Log,
     current_import_record_index: u32,
     /// Backref to this task's HTML chunk (an element of `*chunks`). The chunk
     /// outlives this `HTMLLoader` (link-step duration), so `BackRef`'s
     /// owner-outlives-holder invariant holds and reads go through safe `Deref`.
     chunk: bun_ptr::BackRef<Chunk>,
     chunks: *mut [Chunk],
-    #[allow(dead_code)]
-    minify_whitespace: bool,
+        minify_whitespace: bool,
     compile_to_standalone_html: bool,
     output: Vec<u8>,
     end_tag_indices: EndTagIndices,

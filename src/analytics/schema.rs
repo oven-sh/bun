@@ -121,7 +121,6 @@ impl<'a> Reader for BufReader<'a> {
 // Architecture, Platform). The full encode/decode machinery and the rest of
 // the schema (EventKind, EventListHeader, …) are unused at runtime today and
 // will be filled in by the peechy regen.
-#[allow(dead_code, non_camel_case_types)]
 pub mod analytics {
     /// Zig: `pub const OperatingSystem = enum(u8) { _none, linux, macos, windows, wsl, android, freebsd, _ }`
     // PORT NOTE: Zig's open enum (`_`) is dropped — Rust enums are closed; the

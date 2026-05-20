@@ -2250,7 +2250,7 @@ impl<'a> Parser<'a> {
     // PORT NOTE: associated fn (was `&self` reading `self.lexer.source.contents`)
     // because `_parse` consumes `self` by value and destructures it before this
     // call site; the source contents are passed explicitly.
-    #[allow(dead_code)] // called from gated `_parse` body above
+    // called from gated `_parse` body above
     fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let end = contents.len();

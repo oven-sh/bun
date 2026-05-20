@@ -17,7 +17,6 @@
 // carries a `blocked_on:` note so the next round can lift bodies as their
 // deps land.
 
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 
 use crate::PrintResult;

@@ -755,7 +755,7 @@ impl Token {
     }
 }
 
-#[allow(unused_variables, unused_assignments)] // prev_token is dead in upstream Zig too
+// prev_token is dead in upstream Zig too
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {

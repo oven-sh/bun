@@ -5,7 +5,6 @@ use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, StoreExt as _, StoreRef};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
-#[allow(unused_imports)]
 use crate::webcore::s3::client::error_jsc::S3ErrorJsc as _;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;

@@ -1313,8 +1313,7 @@ impl ShellRmTask {
                         // as a directory.
                         return vtable.on_is_dir(parent_dir_task, path, is_absolute, buf);
                     }
-                    #[allow(unreachable_code)]
-                    Err(self.error_with_path(&e, path.as_bytes()))
+                                        Err(self.error_with_path(&e, path.as_bytes()))
                 }
                 _ => Err(self.error_with_path(&e, path.as_bytes())),
             },

@@ -1728,7 +1728,6 @@ use bun_sys::FdDirExt as _;
 /// `Expr::as_string`/`as_string_cloned` now require a `&Bump`; package.json
 /// JSON strings are always UTF-8 literals, so route through
 /// `as_utf8_string_literal` until an arena is threaded through.
-#[allow(dead_code)]
 trait PackExprExt {
     fn pack_as_string(&self) -> Option<&[u8]>;
     fn pack_as_string_cloned(&self) -> Result<Option<Box<[u8]>>, AllocError>;
@@ -3803,8 +3802,7 @@ impl IgnorePatterns {
         line
     }
 
-    #[allow(dead_code)]
-    fn maybe_trim_leading_spaces(line: &[u8]) -> &[u8] {
+        fn maybe_trim_leading_spaces(line: &[u8]) -> &[u8] {
         // npm will trim, git will not
         line
     }

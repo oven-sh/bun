@@ -18,7 +18,6 @@ use bun_core::{self, FeatureFlags, env_var, output as Output};
 use bun_sys::Fd;
 use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 
-#[allow(unused_imports)]
 use crate::cache::{self as CacheSet, Contents, Entry as CacheEntry, ExternalFreeFunction};
 use crate::linker_context_mod::StmtList;
 // PORT NOTE: `crate::options::Target` is the lower-tier `bun_options_types`
@@ -326,8 +325,7 @@ impl ThreadPool {
             return bun_core::get_thread_count() > 3;
         }
 
-        #[allow(unreachable_code)]
-        false
+                false
     }
 
     /// Shut down the IO pool, if and only if no `ThreadPool`s exist right now.

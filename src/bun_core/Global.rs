@@ -1,7 +1,6 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
 use core::ffi::{c_char, c_int, c_void};
-#[allow(unused_imports)]
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 use const_format::{concatcp, formatcp};
@@ -696,12 +695,10 @@ pub fn exit(code: u32) -> ! {
     {
         if env::ENABLE_ASAN {
             libc_exit(code as i32);
-            #[allow(unreachable_code)]
-            libc_abort();
+                        libc_abort();
         }
         quick_exit(code as c_int);
-        #[allow(unreachable_code)]
-        libc_abort();
+                libc_abort();
     }
 }
 

@@ -4,7 +4,6 @@ use core::ptr;
 pub use bun_brotli_sys::brotli_c as c;
 use c::{BrotliDecoder, BrotliEncoder};
 
-#[allow(unused_imports)]
 use bun_core::{self as bun, Error, err};
 
 // ──────────────────────────────────────────────────────────────────────────

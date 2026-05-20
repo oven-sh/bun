@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports, unused_macros)]
 use crate as css;
 use crate::VendorPrefix;
 use crate::css_properties::custom::UnparsedProperty;
@@ -23,8 +22,7 @@ pub struct FallbackHandler {
 
 impl FallbackHandler {
     // TODO(port): Zig computed this via @typeInfo(FallbackHandler).Struct.fields.len.
-    #[allow(dead_code)]
-    const FIELD_COUNT: usize = 2;
+        const FIELD_COUNT: usize = 2;
 
     pub fn handle_property(
         &mut self,

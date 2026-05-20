@@ -318,7 +318,6 @@ impl<'a> Parser<'a> {
 
 // Silence unused-import warnings for the sibling modules referenced only in
 // the doc-comment above.
-#[allow(unused_imports)]
 use {
     blocks_mod as _, containers_mod as _, inlines_mod as _, line_analysis_mod as _, links_mod as _,
     ref_defs_mod as _, render_blocks_mod as _, types as _,

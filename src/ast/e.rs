@@ -796,8 +796,7 @@ impl Number {
             // do not attempt to implement the spec here, it would be error prone.
         }
 
-        #[allow(unreachable_code)]
-        None
+                None
     }
 
     #[inline]

@@ -103,7 +103,6 @@ impl UnsupportedPackages {
 
 // PORTING.md §Global mutable state: single-threaded CLI usage; currently
 // write-once / never read (Zig parity placeholder). RacyCell.
-#[allow(dead_code)]
 static BUN_PATH: bun_core::RacyCell<Option<&'static bun_core::ZStr>> =
     bun_core::RacyCell::new(None);
 

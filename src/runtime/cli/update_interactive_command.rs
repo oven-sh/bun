@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports, unused_variables)]
 
 use core::fmt;
 use core::fmt::Write as _;
@@ -399,8 +398,7 @@ impl UpdateInteractiveCommand {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn update_catalog_definitions(
+        fn update_catalog_definitions(
         manager: &mut PackageManager,
         catalog_updates: &StringHashMap<CatalogUpdate>,
     ) -> Result<(), bun_core::Error> {
@@ -1276,8 +1274,7 @@ impl UpdateInteractiveCommand {
         result.into_boxed_slice()
     }
 
-    #[allow(dead_code)]
-    fn prompt_for_updates(
+        fn prompt_for_updates(
         packages: &mut [OutdatedPackage],
     ) -> Result<Box<[bool]>, bun_core::Error> {
         if packages.is_empty() {

@@ -2131,8 +2131,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     *s.exit_status_mut() = None;
     *s.remaining_fds() = 0;
 
-    #[allow(unused_mut)]
-    let mut resolved_argv0: Option<*const c_char> = None;
+        let mut resolved_argv0: Option<*const c_char> = None;
     // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
     // Windows and must outlive the SpawnOptions construction below.
     #[cfg(windows)]
@@ -2207,8 +2206,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         >()));
     let cwd = FileSystem::get().top_level_dir;
     // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
-    #[allow(unused_mut)]
-    let mut spawn_options = SpawnOptions {
+        let mut spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]

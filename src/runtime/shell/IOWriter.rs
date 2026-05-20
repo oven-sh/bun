@@ -12,7 +12,6 @@
 //! We also make `IOWriter` reference counted (via `Arc` in the Rust port),
 //! this simplifies management of the file descriptor.
 
-#![allow(dead_code)]
 
 use bun_collections::{ByteVecExt, VecExt};
 use core::cell::UnsafeCell;
@@ -501,8 +500,7 @@ impl IOWriter {
                 }
                 return WriteOutcome::Suspended;
             }
-            #[allow(unreachable_code)]
-            return WriteOutcome::Suspended;
+                        return WriteOutcome::Suspended;
         }
 
         #[cfg(windows)]
@@ -610,8 +608,7 @@ impl IOWriter {
             // the `'self` lifetime the signature wants — no raw-parts needed.
             return s.winbuf.as_slice();
         }
-        #[allow(unreachable_code)]
-        result
+                result
     }
 
     fn get_buffer_impl(&self) -> &[u8] {

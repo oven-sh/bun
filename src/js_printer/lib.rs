@@ -10,7 +10,6 @@
 //! ESM-to-CJS __export emission path, `print_dev_server_module`, the source-map
 //! self-borrow in `init`, and the `print_ast` minify-renamer driver / `print_json`.
 
-#![allow(unused, nonstandard_style, clippy::all)]
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
 #![feature(allocator_api)]
@@ -314,8 +313,7 @@ pub mod analyze_transpiled_module {
     /// Owns a duplicated byte buffer and exposes a `ModuleInfoDeserialized` view into it.
     /// Replaces Zig's `.owner = .allocated_slice` arm.
     pub struct ModuleInfoDeserializedOwned {
-        #[allow(dead_code)]
-        backing: AlignedBytes,
+                backing: AlignedBytes,
         // `RecordKind` is a `#[repr(u8)]` enum (not all bit patterns valid), so
         // the validated discriminants are decoded once in `create()` and owned
         // here instead of being reinterpreted from `backing` on every `as_ref()`.

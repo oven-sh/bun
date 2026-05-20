@@ -84,8 +84,7 @@ impl CAllocator {
             };
             return new_len <= usable;
         }
-        #[allow(unreachable_code)]
-        false
+                false
     }
 
     #[inline]

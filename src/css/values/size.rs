@@ -101,7 +101,6 @@ where
 
 // Keep references to the f32/LengthPercentage special-case helpers so trait
 // impls can be wired up later if they don't already exist.
-#[allow(unused_imports)]
 use {CSSNumberFns as _, LengthPercentage as _};
 
 // ported from: src/css/values/size.zig

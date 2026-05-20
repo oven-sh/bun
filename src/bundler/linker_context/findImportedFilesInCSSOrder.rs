@@ -897,7 +897,6 @@ pub fn is_conditional_import_redundant(
 }
 
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 enum CssOrderDebugStep {
     BeforeHoisting,
     AfterHoisting,

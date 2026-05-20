@@ -79,6 +79,15 @@ LINT-SPECIFIC GUIDANCE:
 - useless_attribute / absurd_extreme_comparisons: delete the attribute / dead branch.
 - todo / unimplemented: Grep for the function's callers. If unreachable in practice, replace with \`unreachable!()\` + a SAFETY-style comment. Otherwise skip and note — implementing missing functionality is out of scope.
 - dbg_macro: delete the \`dbg!()\` (keep its inner expression if its value is used).
+- clone_on_copy / useless_conversion / manual_swap / mem_replace_option_with_none / redundant_locals / manual_c_str_literals / precedence / implicit_saturating_sub / ptr_eq / vec_box / boxed_local: apply clippy's suggested rewrite.
+- arc_with_non_send_sync: change \`Arc<T>\` → \`Rc<T>\` if the value never crosses threads (Grep for cross-thread sends); otherwise make \`T: Send + Sync\` (or wrap the non-Sync field in a Mutex).
+- dead_code (fn/method/type/static/const/variant/field never used): DELETE it. First Grep for the name across \`src/\` to confirm zero references (sometimes used via macro/FFI symbol name). If it's \`#[no_mangle]\`/\`extern\` or referenced by a \`.classes.ts\`/codegen script, keep it and note in \`skipped\` (FFI export). For a never-read field, prefix with \`_\` if the struct is FFI-layout-pinned (\`#[repr(C)]\`), else delete the field + update constructors.
+- unused_imports: delete the import (or just the unused names from a \`use {a, b, c}\` group).
+- unused_variables / unused_mut: prefix with \`_\` if the binding is required (pattern match, FFI signature), else delete the binding.
+- unused_assignments: delete the dead write; if it documents a state transition, note in \`skipped\`.
+- unused_macros: delete the macro definition.
+- unreachable_code / unreachable_patterns: delete the unreachable arm/statement. If it's a \`#[cfg]\`-gated fallthrough that's reachable on another platform, wrap it in the matching \`#[cfg]\` instead.
+- non_snake_case / non_camel_case_types / non_upper_case_globals: rename to the conventional case AND update all references (Grep). If the name is FFI-pinned (\`#[no_mangle]\`, matches a C++ symbol, or appears in a \`.classes.ts\`/\`.bind.ts\`), keep the name and note in \`skipped\`.
 `;
 
 const REVIEWER_RULES = `

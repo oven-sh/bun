@@ -36,7 +36,7 @@
 //! ```
 
 use core::ptr::NonNull;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
+use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::{JSGlobalObject, JsResult};

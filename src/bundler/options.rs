@@ -5,16 +5,13 @@ use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
-#[allow(unused_imports)]
 use bun_dotenv as DotEnv;
 use bun_js_parser::parser::Runtime;
 use bun_options_types::schema::api;
-#[allow(unused_imports)]
 use bun_resolver as resolver;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-#[allow(unused_imports)]
 use bun_url::URL;
 use std::borrow::Cow;
 // TODO(b2-blocked): bun_analytics — Cargo.toml does not yet list the dep
@@ -42,7 +39,6 @@ pub use defines::Define;
 // B-3: `Define::init` / `DefineData::{from_input,parse}` are extension-trait
 // methods (the canonical types live in `bun_js_parser::defines`); bring the
 // traits into scope so the associated-fn call syntax below resolves.
-#[allow(unused_imports)]
 use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::global_cache::GlobalCache;
 

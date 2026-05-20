@@ -311,7 +311,6 @@ pub fn into_raw<T>(boxed: Box<T>) -> *mut T {
 }
 
 // Suppress unused-import warnings until the unused helpers are pruned.
-#[allow(unused_imports)]
 use {AddConst as _, AllocError as _, ManuallyDrop as _, PointerInfo as _};
 
 // ported from: src/ptr/owned.zig

@@ -232,8 +232,7 @@ fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
             quote! {
                 match (self, __other) {
                     #(#arms)*
-                    #[allow(unreachable_patterns)]
-                    _ => false,
+                                        _ => false,
                 }
             }
         }
@@ -249,8 +248,7 @@ fn expand_css_eql(input: &DeriveInput) -> syn::Result<TokenStream2> {
         #[automatically_derived]
         impl #impl_g ::bun_css::generics::CssEql for #name #ty_g #where_g {
             #[inline]
-            #[allow(unused_variables)]
-            fn eql(&self, __other: &Self) -> bool {
+                        fn eql(&self, __other: &Self) -> bool {
                 #body
             }
         }
@@ -344,8 +342,7 @@ fn expand_css_hash(input: &DeriveInput) -> syn::Result<TokenStream2> {
         #[automatically_derived]
         impl #impl_g ::bun_css::generics::CssHash for #name #ty_g #where_g {
             #[inline]
-            #[allow(unused_variables)]
-            fn hash(&self, __hasher: &mut ::bun_css::generics::Wyhash) {
+                        fn hash(&self, __hasher: &mut ::bun_css::generics::Wyhash) {
                 let _ = __hasher;
                 #body
             }
@@ -484,8 +481,7 @@ fn expand_is_compatible(input: &DeriveInput) -> syn::Result<TokenStream2> {
         #[automatically_derived]
         impl #impl_g ::bun_css::generics::IsCompatible for #name #ty_g #where_g {
             #[inline]
-            #[allow(unused_variables)]
-            fn is_compatible(&self, __browsers: &::bun_css::targets::Browsers) -> bool {
+                        fn is_compatible(&self, __browsers: &::bun_css::targets::Browsers) -> bool {
                 #body
             }
         }
@@ -777,8 +773,7 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
-        impl #name {
+                impl #name {
             /// CSS keyword for this variant (Zig: `@tagName`).
             #[inline]
             pub const fn as_str(&self) -> &'static str {
@@ -1037,20 +1032,17 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
     Ok(quote! {
         #[automatically_derived]
         impl #impl_g ::bun_css::generics::ToCss for #name #ty_g #where_g {
-            #[allow(unused_variables)]
-            fn to_css(
+                        fn to_css(
                 &self,
                 __dest: &mut ::bun_css::printer::Printer<'_>,
             ) -> ::core::result::Result<(), ::bun_css::PrintErr> {
-                #[allow(unused_imports)]
-                use ::bun_css::generics::ToCss as _;
+                                use ::bun_css::generics::ToCss as _;
                 #body
             }
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
-        impl #impl_g #name #ty_g #where_g {
+                impl #impl_g #name #ty_g #where_g {
             #[inline]
             pub fn to_css(
                 &self,
@@ -1204,12 +1196,10 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
     Ok(quote! {
         #[automatically_derived]
         impl #b_impl_g ::bun_css::generics::Parse for #name #ty_g #b_where_g {
-            #[allow(unreachable_code)]
-            fn parse(
+                        fn parse(
                 __input: &mut ::bun_css::css_parser::Parser<'_>,
             ) -> ::bun_css::Result<Self> {
-                #[allow(unused_imports)]
-                use ::bun_css::generics::Parse as _;
+                                use ::bun_css::generics::Parse as _;
                 #body
             }
         }
@@ -1226,8 +1216,7 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         #[automatically_derived]
-        #[allow(dead_code)]
-        impl #b_impl_g #name #ty_g #b_where_g {
+                impl #b_impl_g #name #ty_g #b_where_g {
             #[inline]
             pub fn parse(
                 __input: &mut ::bun_css::css_parser::Parser<'_>,

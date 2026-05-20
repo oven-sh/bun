@@ -19,7 +19,6 @@
 //!
 //! See `docs/SPAWN_SYS_PROPOSAL.md` for the full crate-graph rationale.
 
-#![allow(dead_code)]
 
 use core::ffi::c_char;
 

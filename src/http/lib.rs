@@ -3,7 +3,6 @@
 //! `HTTPClient` struct. In Rust the struct is named explicitly and free
 //! functions become inherent methods on it.
 
-#![allow(unused, nonstandard_style, unexpected_cfgs, static_mut_refs)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 #[path = "AsyncHTTP.rs"]

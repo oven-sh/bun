@@ -39,8 +39,7 @@ macro_rules! tcc_externs {
         }
         $(
             #[cfg(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64")))]
-            #[allow(unused_variables, clippy::missing_safety_doc)]
-            unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
+                        unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
                 unreachable!(concat!(
                     stringify!($name),
                     " called but TinyCC is disabled on this target — keep the ",

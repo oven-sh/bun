@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
 use crate as css;
 use bun_alloc::ArenaVecExt as _;
@@ -843,8 +842,7 @@ impl FlexHandler {
                     if !prefix.is_empty() {
                         prefix = context.targets.prefixes(prefix, PrefixFeature::$feature);
                         // 2009 block
-                        #[allow(unused)]
-                        {
+                                                {
                             if prefix.contains(VendorPrefix::NONE) {
                                 // 2009 spec, implemented by webkit and firefox
                                 if let Some(targets) = &context.targets.browsers {

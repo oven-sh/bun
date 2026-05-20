@@ -1993,7 +1993,7 @@ where
             }
         }
 
-        if sec_websocket_key_str.len == 0 {
+        if sec_websocket_key_str.len != 24 {
             return Ok(JSValue::FALSE);
         }
         if sec_websocket_protocol.len > 0 {

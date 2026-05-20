@@ -2433,7 +2433,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         return {};
     }
     uint32_t currentByteLength = castedThis->byteLength();
-    uint32_t currentRemaining = offset < currentByteLength ? currentByteLength - offset : 0;
+    if (offset >= currentByteLength)
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(0)));
+    uint32_t currentRemaining = currentByteLength - offset;
     if (length > currentRemaining) length = currentRemaining;
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));

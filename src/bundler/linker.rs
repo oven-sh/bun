@@ -440,13 +440,7 @@ impl Linker {
                         if import_record.path.namespace == b"runtime" {
                             if import_path_format == ImportPathFormat::AbsoluteUrl {
                                 import_record.path = PFs::Path::init_with_namespace(
-                                    dupe(&origin.join_alloc(
-                                        b"",
-                                        b"",
-                                        b"bun:wrap",
-                                        b"",
-                                        b"",
-                                    )?),
+                                    dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
                                     b"bun",
                                 );
                             } else {

@@ -405,7 +405,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .status_code
                         > 499
                 {
-                    let err = task.response.fail.unwrap_or_else(|| bun_core::err!("HTTPError"));
+                    let err = task
+                        .response
+                        .fail
+                        .unwrap_or_else(|| bun_core::err!("HTTPError"));
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
@@ -430,7 +433,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 let Some(metadata) = task.response.metadata.as_ref() else {
                     // Handle non-retry-able errors.
-                    let err = task.response.fail.unwrap_or_else(|| bun_core::err!("HTTPError"));
+                    let err = task
+                        .response
+                        .fail
+                        .unwrap_or_else(|| bun_core::err!("HTTPError"));
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, &task.url_buf);
@@ -1095,7 +1101,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or_else(|| bun_core::err!("TarballFailedToExtract"));
+                    let err = task
+                        .err
+                        .unwrap_or_else(|| bun_core::err!("TarballFailedToExtract"));
 
                     // Extract-task failure (integrity check, libarchive error, etc.)
                     // is symmetric with the HTTP 4xx/5xx branch above: drop the

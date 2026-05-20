@@ -158,7 +158,12 @@ impl<'a> Parser<'a> {
         // TODO(port): borrowck — this returns &mut into self.block_bytes while other
         // &mut self borrows may be live at call sites; may need raw *mut.
         unsafe {
-            let ptr = self.block_bytes.as_mut_ptr().add(off).cast::<c_void>().cast::<BlockHeader>();
+            let ptr = self
+                .block_bytes
+                .as_mut_ptr()
+                .add(off)
+                .cast::<c_void>()
+                .cast::<BlockHeader>();
             debug_assert!(ptr.is_aligned());
             &mut *ptr
         }

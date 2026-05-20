@@ -450,7 +450,6 @@ pub struct PosixSpawnResult {
     pub has_exited: bool,
 }
 
-
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
 pub enum ExtraPipe {
     /// We created this fd (e.g. socketpair for `"pipe"`); expose it via
@@ -675,10 +674,7 @@ pub unsafe fn spawn_process_posix(
     // but not for Android. Bionic's `<spawn.h>` uses the same values as glibc
     // (`0x04`/`0x08`) — they're POSIX-mandated bit flags, not OS-specific.
     #[cfg(not(target_os = "android"))]
-    let (setsigdef, setsigmask) = (
-        libc::POSIX_SPAWN_SETSIGDEF,
-        libc::POSIX_SPAWN_SETSIGMASK,
-    );
+    let (setsigdef, setsigmask) = (libc::POSIX_SPAWN_SETSIGDEF, libc::POSIX_SPAWN_SETSIGMASK);
     #[cfg(target_os = "android")]
     let (setsigdef, setsigmask) = (0x04_i32, 0x08_i32);
     let mut flags: i32 = setsigdef | setsigmask;

@@ -1217,7 +1217,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // For named class expressions: swap to expr_class_ref for suffix ops
         let mut original_class_name_for_decorator: Option<&'a [u8]> = None;
-        if is_expr && !expr_class_is_anonymous && let Some(ecr) = expr_class_ref {
+        if is_expr
+            && !expr_class_is_anonymous
+            && let Some(ecr) = expr_class_ref
+        {
             // SAFETY: see above.
             original_class_name_for_decorator = Some(
                 p.symbols[class_name_ref.inner_index() as usize]
@@ -1364,7 +1367,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
                         let fn_ref = p.new_sym(js_ast::symbol::Kind::Other, fn_nm);
 
-                        let mut new_info = existing.unwrap_or_else(|| PrivateLoweredInfo::new(ws_ref));
+                        let mut new_info =
+                            existing.unwrap_or_else(|| PrivateLoweredInfo::new(ws_ref));
                         if nk == 1 {
                             new_info.method_fn_ref = Some(fn_ref);
                         } else if nk == 2 {

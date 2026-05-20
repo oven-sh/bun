@@ -280,7 +280,10 @@ impl<'a> Task<'a> {
 
                     let Some(metadata) = &network.response.metadata else {
                         // Handle the case when metadata is null (e.g., network failure before receiving headers)
-                        let err = network.response.fail.unwrap_or_else(|| bun_core::err!("HTTPError"));
+                        let err = network
+                            .response
+                            .fail
+                            .unwrap_or_else(|| bun_core::err!("HTTPError"));
                         this.log.add_error_fmt(
                             None,
                             Loc::EMPTY,

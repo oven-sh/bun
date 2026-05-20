@@ -551,10 +551,13 @@ impl Image {
         fmt: codecs::Format,
     ) -> JsResult<JSValue> {
         let mut enc: codecs::EncodeOptions =
-            self.pipeline.get().output.unwrap_or_else(|| codecs::EncodeOptions {
-                format: fmt,
-                ..Default::default()
-            });
+            self.pipeline
+                .get()
+                .output
+                .unwrap_or_else(|| codecs::EncodeOptions {
+                    format: fmt,
+                    ..Default::default()
+                });
         enc.format = fmt;
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {

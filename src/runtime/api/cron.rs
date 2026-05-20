@@ -2227,30 +2227,31 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
 
     // SAFETY: `argv`/`envp` are local null-terminated C-string arrays with
     // argv[0] non-null; valid for this call.
-    let spawned = match unsafe { spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) } {
-        Ok(Ok(sp)) => sp,
-        Ok(Err(err)) => {
-            // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-            // raw `*mut uv::Pipe` on the SUCCESS path; on every error return
-            // ownership stays with the caller and `WindowsStdio` has no
-            // `Drop`. Reclaim it (uv_close + free if init'd) here.
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
-            s.set_err(format_args!(
-                "Failed to spawn process: {}",
-                bstr::BStr::new(err.name())
-            ));
-            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
-            return unsafe { T::finish(this) };
-        }
-        Err(e) => {
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
-            s.set_err(format_args!("Failed to spawn process: {}", e.name()));
-            // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
-            return unsafe { T::finish(this) };
-        }
-    };
+    let spawned =
+        match unsafe { spawn::spawn_process(&spawn_options, argv.as_mut_ptr().cast(), envp) } {
+            Ok(Ok(sp)) => sp,
+            Ok(Err(err)) => {
+                // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
+                // raw `*mut uv::Pipe` on the SUCCESS path; on every error return
+                // ownership stays with the caller and `WindowsStdio` has no
+                // `Drop`. Reclaim it (uv_close + free if init'd) here.
+                #[cfg(windows)]
+                spawn_options.stderr.deinit();
+                s.set_err(format_args!(
+                    "Failed to spawn process: {}",
+                    bstr::BStr::new(err.name())
+                ));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
+                return unsafe { T::finish(this) };
+            }
+            Err(e) => {
+                #[cfg(windows)]
+                spawn_options.stderr.deinit();
+                s.set_err(format_args!("Failed to spawn process: {}", e.name()));
+                // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
+                return unsafe { T::finish(this) };
+            }
+        };
     let mut spawned = spawned;
 
     #[cfg(unix)]
@@ -2384,7 +2385,9 @@ fn resolve_path(
         .resolver
         .resolve(source_dir, path_, bun_ast::ImportKind::EntryPointRun)
         .map_err(|_| bun_core::err!("ModuleNotFound"))?;
-    let entry_path = resolved.path().ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
+    let entry_path = resolved
+        .path()
+        .ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
     Ok(ZString::from_bytes(entry_path.text))
 }
 

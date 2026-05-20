@@ -28,7 +28,6 @@ pub struct PendingConnect {
     pub waiters: Vec<NonNull<HTTPClient<'static>>>,
 }
 
-
 impl PendingConnect {
     /// Zig: `pub const new = bun.TrivialNew(@This());`
     pub fn new(init: Self) -> Box<Self> {

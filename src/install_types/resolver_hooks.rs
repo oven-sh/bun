@@ -1405,7 +1405,8 @@ pub struct WakeHandler {
     /// Zig: `fn(ctx: *anyopaque, pm: *PackageManager) void`.
     pub handler: Option<fn(*mut c_void, *mut c_void)>,
     /// Zig: `fn(ctx: *anyopaque, dep: Dependency, dep_id: DependencyID, err: anyerror) void`.
-    pub on_dependency_error: Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
+    pub on_dependency_error:
+        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
 }
 
 impl WakeHandler {

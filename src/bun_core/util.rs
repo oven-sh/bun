@@ -755,7 +755,10 @@ impl WStr {
     pub unsafe fn from_raw_mut<'a>(ptr: *mut u16, len: usize) -> &'a mut WStr {
         // SAFETY: caller upholds `ptr[..=len]` writable for `'a`; `WStr` is
         // `repr(transparent)` over `[u16]` so the fat-pointer cast preserves layout.
-        unsafe { &mut *(std::ptr::from_mut::<[u16]>(core::slice::from_raw_parts_mut(ptr, len)) as *mut WStr) }
+        unsafe {
+            &mut *(std::ptr::from_mut::<[u16]>(core::slice::from_raw_parts_mut(ptr, len))
+                as *mut WStr)
+        }
     }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {

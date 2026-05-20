@@ -293,8 +293,7 @@ pub fn perform_security_scan_for_all(
         return Ok(None);
     };
 
-    let result =
-        attempt_security_scan(manager, security_scanner, true, command_ctx, original_cwd)?;
+    let result = attempt_security_scan(manager, security_scanner, true, command_ctx, original_cwd)?;
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {

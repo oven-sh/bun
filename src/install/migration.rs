@@ -432,7 +432,9 @@ pub fn migrate_npm_lockfile<'a>(
         if pkg.get(b"resolved").is_none() {
             let version_prop = pkg.get(b"version");
             let pkg_name = package_name_from_path(pkg_path);
-            if let Some(version_prop) = version_prop && !pkg_name.is_empty() {
+            if let Some(version_prop) = version_prop
+                && !pkg_name.is_empty()
+            {
                 // construct registry url
                 let href: &[u8] = manager.scope_for_package_name(pkg_name).url.href();
                 let mut count: usize = 0;
@@ -981,7 +983,9 @@ pub fn migrate_npm_lockfile<'a>(
                 };
                 let mut map = StringArrayHashMap::<()>::with_capacity(arr.items.len_u32() as usize);
                 for item in arr.items.slice() {
-                    let s = item.as_string(&arena).ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                    let s = item
+                        .as_string(&arena)
+                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                     map.put_assume_capacity(s, ());
                 }
                 break 'deps Some(map);

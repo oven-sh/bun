@@ -446,7 +446,11 @@ unsafe impl<U> Atom for *const U {
     unsafe fn _atomic_swap(p: *mut Self, v: Self, ord: Ordering) -> Self {
         // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
         // have identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).swap(v.cast_mut(), ord).cast_const() }
+        unsafe {
+            (*(p as *const AtomicPtr<U>))
+                .swap(v.cast_mut(), ord)
+                .cast_const()
+        }
     }
     #[inline]
     unsafe fn _atomic_cas(
@@ -459,8 +463,12 @@ unsafe impl<U> Atom for *const U {
         // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
         // have identical layout (see `_atomic_load`).
         unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(cur.cast_mut(), new.cast_mut(), s, f)
-            {
+            match (*(p as *const AtomicPtr<U>)).compare_exchange(
+                cur.cast_mut(),
+                new.cast_mut(),
+                s,
+                f,
+            ) {
                 Ok(x) => Ok(x.cast_const()),
                 Err(x) => Err(x.cast_const()),
             }

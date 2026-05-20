@@ -2029,8 +2029,8 @@ fn git_diff_postprocess(
 
         if !skip {
             // a/$old_folder/
-            if let Some(idx) = strings::index_of(&stdout[line_start..line_end], a_old_folder_slash)
-                .map(|i| i)
+            if let Some(idx) =
+                strings::index_of(&stdout[line_start..line_end], a_old_folder_slash).map(|i| i)
             {
                 let old_folder_slash_start = idx + 2;
                 stdout.drain(
@@ -2043,8 +2043,8 @@ fn git_diff_postprocess(
                 continue;
             }
             // b/$new_folder/
-            if let Some(idx) = strings::index_of(&stdout[line_start..line_end], b_new_folder_slash)
-                .map(|i| i)
+            if let Some(idx) =
+                strings::index_of(&stdout[line_start..line_end], b_new_folder_slash).map(|i| i)
             {
                 let new_folder_slash_start = idx + 2;
                 stdout.drain(

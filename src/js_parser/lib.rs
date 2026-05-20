@@ -176,7 +176,11 @@ pub mod Macro {
             // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
             // retain the pointer past return (the boxed state it allocates owns
             // its own data).
-            unsafe { __bun_macro_context_init(core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>()) }
+            unsafe {
+                __bun_macro_context_init(
+                    core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>(),
+                )
+            }
         }
         /// Free the boxed higher-tier state behind `data`. Only call when the
         /// owning `Transpiler` is a short-lived bytewise clone (e.g. the

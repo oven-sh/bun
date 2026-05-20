@@ -4553,15 +4553,13 @@ impl<'a> Resolver<'a> {
                     }
                     None => bun_core::heap::into_raw(Box::new(new_entry)),
                 };
-                dir_entries_option = rfs!()
-                    .entries
-                    .put(
-                        &mut cached_dir_entry_result,
-                        Fs::file_system::real_fs::EntriesOption::Entries(
-                            // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
-                            unsafe { &mut *dir_entries_ptr },
-                        ),
-                    )?;
+                dir_entries_option = rfs!().entries.put(
+                    &mut cached_dir_entry_result,
+                    Fs::file_system::real_fs::EntriesOption::Entries(
+                        // SAFETY: `dir_entries_ptr` is a live BSSMap slot (`in_place`) or a freshly boxed entry.
+                        unsafe { &mut *dir_entries_ptr },
+                    ),
+                )?;
                 // bun.fs.debug("readdir({f}, {s}) = {d}", ...) — TODO(port): scoped log
             }
 

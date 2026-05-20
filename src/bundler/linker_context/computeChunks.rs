@@ -596,10 +596,15 @@ pub fn compute_chunks(
                     .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
                 {
                     chunk.template.data.clone_from(
-                        &bv2.transpiler_for_target(Target::Browser).options.entry_naming,
+                        &bv2.transpiler_for_target(Target::Browser)
+                            .options
+                            .entry_naming,
                     );
                 } else {
-                    chunk.template.data.clone_from(&bv2.transpiler().options.entry_naming);
+                    chunk
+                        .template
+                        .data
+                        .clone_from(&bv2.transpiler().options.entry_naming);
                 }
             }
         } else {
@@ -612,10 +617,15 @@ pub fn compute_chunks(
                     .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
                 {
                     chunk.template.data.clone_from(
-                        &bv2.transpiler_for_target(Target::Browser).options.chunk_naming,
+                        &bv2.transpiler_for_target(Target::Browser)
+                            .options
+                            .chunk_naming,
                     );
                 } else {
-                    chunk.template.data.clone_from(&bv2.transpiler().options.chunk_naming);
+                    chunk
+                        .template
+                        .data
+                        .clone_from(&bv2.transpiler().options.chunk_naming);
                 }
             }
         }

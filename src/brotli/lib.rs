@@ -34,7 +34,6 @@ pub struct DecoderParams {
     pub disable_ring_buffer_reallocation: bool,
 }
 
-
 impl Default for DecoderOptions {
     fn default() -> Self {
         Self {

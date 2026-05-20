@@ -2190,7 +2190,9 @@ impl H2FrameParser {
     pub fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack.decode(src_buffer).map_err(|e| hpack_error_to_core(&e));
+                return hpack
+                    .decode(src_buffer)
+                    .map_err(|e| hpack_error_to_core(&e));
             }
             Err(bun_core::err!("UnableToDecode"))
         })

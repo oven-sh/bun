@@ -1092,20 +1092,22 @@ fn add_bundled_dep(
                             break 'root_depth;
                         }
                         // find more dependencies to bundle
-                        let source = match file_to_source_at(
-                            dir,
-                            entry_name_z(entry_name, &entry_subpath_),
-                        ) {
-                            Ok(s) => s,
-                            Err(err) => {
-                                Output::err(
-                                    err,
-                                    "failed to read package.json: \"{}\"",
-                                    format_args!("{}", bstr::BStr::new(entry_subpath_.as_bytes())),
-                                );
-                                Global::crash();
-                            }
-                        };
+                        let source =
+                            match file_to_source_at(dir, entry_name_z(entry_name, &entry_subpath_))
+                            {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    Output::err(
+                                        err,
+                                        "failed to read package.json: \"{}\"",
+                                        format_args!(
+                                            "{}",
+                                            bstr::BStr::new(entry_subpath_.as_bytes())
+                                        ),
+                                    );
+                                    Global::crash();
+                                }
+                            };
 
                         let json = match JSON::parse_package_json_utf8(
                             &source,
@@ -3223,7 +3225,8 @@ fn archive_package_json(
 ) -> Result<*mut ArchiveEntry, AllocError> {
     // Zig: `entry: *Archive.Entry` → `*Archive.Entry` (same pointer after `.clear()`).
     let entry = ArchiveEntry::opaque_ref(entry);
-    let stat = match bun_sys::fstatat(Fd::from_std_dir(*root_dir), bun_core::zstr!("package.json")) {
+    let stat = match bun_sys::fstatat(Fd::from_std_dir(*root_dir), bun_core::zstr!("package.json"))
+    {
         Ok(s) => s,
         Err(err) => {
             Output::err(

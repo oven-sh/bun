@@ -140,9 +140,9 @@ impl FileCopier {
             let entry = {
                 let res = self.walker.next()?;
                 match res {
-                Some(entry) => entry,
-                None => break,
-            }
+                    Some(entry) => entry,
+                    None => break,
+                }
             };
 
             #[cfg(windows)]

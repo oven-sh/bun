@@ -721,8 +721,7 @@ impl Process {
 // PORT NOTE: not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest. The
 // Zig `union(enum)` is copyable because its `.err` arm borrows the path; the
 // Rust port owns it (see Error.rs TODO). Callers use `.clone()`.
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub enum Status {
     #[default]
     Running,
@@ -736,7 +735,6 @@ pub enum Status {
     Signaled(u8),
     Err(bun_sys::Error),
 }
-
 
 #[derive(Clone, Copy, Default)]
 pub struct Exited {
@@ -3141,11 +3139,12 @@ mod spawn_process_body {
 
             // SAFETY: caller-built argv/envp are null-terminated C-string
             // arrays with argv[0] non-null; valid for this call.
-            let process =
-                match unsafe { spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp) }? {
-                    Err(err) => return Ok(Err(err)),
-                    Ok(proces) => proces,
-                };
+            let process = match unsafe {
+                spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)
+            }? {
+                Err(err) => return Ok(Err(err)),
+                Ok(proces) => proces,
+            };
             // Negative → kill() in the C++ signal forwarder targets the pgroup, so
             // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
             // that hasn't `setsid()`-escaped.

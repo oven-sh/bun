@@ -236,12 +236,14 @@ fn should_print_package_install<'a>(
         if let Some(entry) = manager.updating_packages.get(name) {
             if let Some(original_version) = entry.original_version {
                 if !original_version.eql(npm_version) {
-                    return ShouldPrintPackageInstallResult::Update(Box::new(PackageUpdatePrintInfo {
-                        version: original_version,
-                        version_buf: entry.original_version_string_buf.as_ref(),
-                        resolution,
-                        dependency_id: dep_id,
-                    }));
+                    return ShouldPrintPackageInstallResult::Update(Box::new(
+                        PackageUpdatePrintInfo {
+                            version: original_version,
+                            version_buf: entry.original_version_string_buf.as_ref(),
+                            resolution,
+                            dependency_id: dep_id,
+                        },
+                    ));
                 }
             }
         }

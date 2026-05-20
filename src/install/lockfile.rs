@@ -1893,8 +1893,7 @@ impl Lockfile {
             let package: Package = *self.packages.get(i);
             debug_assert!(self.str(&package.name).len() == package.name.len());
             debug_assert!(
-                SemverStringBuilder::string_hash(self.str(&package.name))
-                    == package.name_hash
+                SemverStringBuilder::string_hash(self.str(&package.name)) == package.name_hash
             );
             debug_assert!(
                 package

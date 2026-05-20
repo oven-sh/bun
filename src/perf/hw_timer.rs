@@ -93,15 +93,13 @@ pub fn now_ms() -> u64 {
 
 const SHIFT: u32 = 32;
 
-#[derive(Clone, Copy)]
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct Calibration {
     start_counter: u64,
     start_ns: u64,
     /// elapsed_ns = (ticks * mult) >> 32. Zero ⇒ HW path disabled.
     mult: u64,
 }
-
 
 // PORTING.md §Global mutable state: written exactly once inside
 // `CALIBRATE_ONCE.call_once`, which establishes happens-before for readers.

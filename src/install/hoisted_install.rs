@@ -83,7 +83,10 @@ pub fn install_hoisted_packages(
     // live. Rust `Vec` can't alias like that, so the rollback below restores
     // the *taken* originals; `filter()` repopulates the live ones in-place.
     this.lockfile.buffers.trees.clone_from(&original_trees);
-    this.lockfile.buffers.hoisted_dependencies.clone_from(&original_tree_dep_ids);
+    this.lockfile
+        .buffers
+        .hoisted_dependencies
+        .clone_from(&original_tree_dep_ids);
 
     {
         // PORT NOTE: reshaped for borrowck — Zig passes `this.log, this` (two

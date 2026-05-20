@@ -344,7 +344,12 @@ impl FetchHeaders {
         WebCore__FetchHeaders__deref(self)
     }
 
-    pub unsafe fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
+    pub unsafe fn copy_to(
+        &mut self,
+        names: *mut StringPointer,
+        values: *mut StringPointer,
+        buf: *mut u8,
+    ) {
         // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
         unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
     }

@@ -597,7 +597,13 @@ fn message_with_type_and_level_(
     }
 
     if print_length > 0 {
-        format2(level, global, &vals_slice[..print_length], writer, print_options)?;
+        format2(
+            level,
+            global,
+            &vals_slice[..print_length],
+            writer,
+            print_options,
+        )?;
     } else if message_type == MessageType::Log {
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and
@@ -3227,7 +3233,8 @@ pub mod formatter {
                 if (!key.is_16_bit()
                     && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
                     || (key.is_16_bit()
-                        && (!quote_keys && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned())))
+                        && (!quote_keys
+                            && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned())))
                 {
                     writer.add_for_new_line(key.len + 1);
                     writer.print(format_args!(

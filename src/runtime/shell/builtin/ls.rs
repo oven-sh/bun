@@ -618,13 +618,7 @@ impl ShellLsTask {
         let _ = write!(
             self.output,
             "{}{} {:>3} {:>5} {:>5} {:>8} {} ",
-            file_type as char,
-            perms_str,
-            nlink,
-            uid,
-            gid,
-            size,
-            time_s,
+            file_type as char, perms_str, nlink, uid, gid, size, time_s,
         );
         self.output.extend_from_slice(name);
         self.output.push(b'\n');

@@ -631,8 +631,7 @@ impl FileReader {
                     if in_progress.len() >= buf.len() && !has_more {
                         in_progress[0..buf.len()].copy_from_slice(buf);
                         // SAFETY: lifetime laundering matches the field's TODO(port) note.
-                        let remaining =
-                            unsafe { &mut *(&raw mut in_progress[buf.len()..]) };
+                        let remaining = unsafe { &mut *(&raw mut in_progress[buf.len()..]) };
                         *riop = ReadDuringJSOnPullResult::Js(remaining);
                     } else if !in_progress.is_empty() && !has_more {
                         // `buf` outlives the `on_pull` call that consumes this

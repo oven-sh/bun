@@ -1430,7 +1430,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 } else if git_tag_version == b"false" {
                     cli.git_tag_version = false;
                 }
-            } else { cli.git_tag_version = !args.flag(b"--no-git-tag-version"); }
+            } else {
+                cli.git_tag_version = !args.flag(b"--no-git-tag-version");
+            }
             cli.allow_same_version = args.flag(b"--allow-same-version");
             if let Some(preid) = args.option(b"--preid") {
                 cli.preid = preid;

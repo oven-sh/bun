@@ -1310,8 +1310,10 @@ mod _event_loop_draft {
 }
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
-static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) =
-    (bun_threading::Guarded::new(false), bun_threading::Condvar::new());
+static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
+    bun_threading::Guarded::new(false),
+    bun_threading::Condvar::new(),
+);
 
 struct ShutdownReclaim {
     ctx: *mut c_void,

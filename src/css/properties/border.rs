@@ -1283,7 +1283,10 @@ mod border_handler_body {
                     if let Some(existing) = &self.$key.$prop {
                         if !existing.eql($val)
                             && context.targets.browsers.is_some()
-                            && !css::generic::is_compatible($val, &context.targets.browsers.unwrap())
+                            && !css::generic::is_compatible(
+                                $val,
+                                &context.targets.browsers.unwrap(),
+                            )
                         {
                             self.flush(dest, context);
                         }

@@ -118,8 +118,8 @@ impl SASL {
 
         let server_key = hmac(self.salted_password(), b"Server Key")
             .ok_or_else(|| bun_core::err!("InvalidServerKey"))?;
-        let server_signature_bytes =
-            hmac(&server_key, auth_string).ok_or_else(|| bun_core::err!("InvalidServerSignature"))?;
+        let server_signature_bytes = hmac(&server_key, auth_string)
+            .ok_or_else(|| bun_core::err!("InvalidServerSignature"))?;
         self.server_signature_len = u8::try_from(bun_base64::encode(
             &mut self.server_signature_base64_bytes,
             &server_signature_bytes,

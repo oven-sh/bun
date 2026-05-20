@@ -642,7 +642,6 @@ pub enum TrackInstalledBin {
     Basename(Box<[u8]>),
 }
 
-
 pub struct ScriptRunEnvironment {
     pub root_dir_info: Option<NonNull<DirInfo>>, // UNKNOWN — struct appears unused // TODO(port): lifetime
     pub transpiler: Transpiler<'static>,
@@ -979,7 +978,12 @@ impl PackageManager {
             // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
             // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
             unsafe {
-                (self.on_wake.get_on_dependency_error())(ctx.as_ptr(), dependency, dependency_id, err);
+                (self.on_wake.get_on_dependency_error())(
+                    ctx.as_ptr(),
+                    dependency,
+                    dependency_id,
+                    err,
+                );
             }
         }
     }
@@ -2197,17 +2201,15 @@ pub fn init(
             }
         }
 
-        manager
-            .options
-            .load(
-                // SAFETY: ctx.log is the process-lifetime CLI log set by
-                // create_context_data(); single-threaded init region.
-                unsafe { &mut *ctx.log },
-                env,
-                Some(cli),
-                ctx.install.as_deref(),
-                subcommand,
-            )?;
+        manager.options.load(
+            // SAFETY: ctx.log is the process-lifetime CLI log set by
+            // create_context_data(); single-threaded init region.
+            unsafe { &mut *ctx.log },
+            env,
+            Some(cli),
+            ctx.install.as_deref(),
+            subcommand,
+        )?;
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {

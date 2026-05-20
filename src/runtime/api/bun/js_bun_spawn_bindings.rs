@@ -1720,7 +1720,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
             // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
-            unsafe { (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr())) };
+            unsafe {
+                (*jsc_vm_ptr)
+                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+            };
         }
         return Ok(out);
     }
@@ -1764,7 +1767,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     if !subprocess.has_exited() {
         // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
         // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
-        unsafe { (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr())) };
+        unsafe {
+            (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+        };
     }
 
     let mut did_timeout = false;

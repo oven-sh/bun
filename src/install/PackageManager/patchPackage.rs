@@ -39,7 +39,6 @@ pub struct PatchCommitResult {
     pub not_in_workspace_root: bool,
 }
 
-
 /// - Arg is the dir containing the package with changes OR name and version
 /// - Get the patch file contents by running git diff on the temp dir and the original package dir
 /// - Write the patch file to $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
@@ -1279,9 +1278,7 @@ fn node_modules_folder_for_dependency_id(
 ) -> Option<Vec<u8>> {
     loop {
         let node_modules = iterator.next(None)?;
-        if !node_modules
-            .dependencies.contains(&dependency_id)
-        {
+        if !node_modules.dependencies.contains(&dependency_id) {
             continue;
         }
         return Some(node_modules.relative_path.as_bytes().to_vec());

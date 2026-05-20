@@ -8474,8 +8474,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
                     // (Borrowed-origin BabyLists, raw stmt slices) — bitwise copy
                     // matches Zig struct-assignment semantics.
-                    let mut part =
-                        core::mem::ManuallyDrop::new(unsafe { core::ptr::read(&raw const parts[idx]) });
+                    let mut part = core::mem::ManuallyDrop::new(unsafe {
+                        core::ptr::read(&raw const parts[idx])
+                    });
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 

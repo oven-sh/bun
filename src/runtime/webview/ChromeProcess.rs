@@ -519,7 +519,8 @@ fn spawn(
         // TODO(port): narrow error set — outer Result + inner bun_sys::Result
         // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
         // argv[0] non-null; valid for this call.
-        let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
+        let spawned =
+            unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
 
         // PORT NOTE: reshaped for borrowck — Zig's errdefer stays armed past
         // this point (and would re-close fds on the WatchFailed path below);

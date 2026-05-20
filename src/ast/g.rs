@@ -16,8 +16,7 @@ pub use crate::flags::FunctionSet as FnFlagsSet;
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
 // adding a `PhantomData<&'arena ()>` to `StoreSlice` in one pass.
 
-#[derive(Clone, Copy)]
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct Decl {
     pub binding: BindingNodeIndex,
     pub value: Option<ExprNodeIndex>,
@@ -26,7 +25,6 @@ pub struct Decl {
 // Zig: `pub const List = Vec(Decl);` (nested decl) — inherent assoc types
 // are nightly; free alias.
 pub type DeclList = Vec<Decl, bun_alloc::AstAlloc>;
-
 
 pub struct NamespaceAlias {
     pub namespace_ref: Ref,

@@ -728,7 +728,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     _ => None,
                 };
 
-                if let Some(ref_) = ref_ && !p.options.features.is_macro_runtime {
+                if let Some(ref_) = ref_
+                    && !p.options.features.is_macro_runtime
+                {
                     if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied() {
                         p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
@@ -1752,10 +1754,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && let Some(key) = property.key
                     && matches!(key.data, Data::EString(..))
                 {
-                    let key_str = key
-                        .data
-                        .e_string()
-                        .expect("infallible: variant checked");
+                    let key_str = key.data.e_string().expect("infallible: variant checked");
                     // PORT NOTE: Zig `string(arena)` transcodes UTF-16; while
                     // E.rs has duplicate impls (E0034), reach the bytes directly
                     // — class-name keys are parser-produced (UTF-8, no rope).

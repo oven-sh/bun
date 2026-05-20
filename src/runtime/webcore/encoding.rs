@@ -479,7 +479,10 @@ pub fn write_u8<const ENCODING: u8>(
 
     // SAFETY: caller guarantees `input[..len]` and `to_ptr[..to_len]` are valid; len/to_len > 0.
     let (input_slice, to_slice) = unsafe {
-        (bun_core::ffi::slice(input, len), slice::from_raw_parts_mut(to_ptr, to_len))
+        (
+            bun_core::ffi::slice(input, len),
+            slice::from_raw_parts_mut(to_ptr, to_len),
+        )
     };
 
     match encoding_from_u8(ENCODING) {
@@ -609,7 +612,10 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
             let (input_slice, to_slice) = unsafe {
-                (bun_core::ffi::slice(input, len), slice::from_raw_parts_mut(to, to_len))
+                (
+                    bun_core::ffi::slice(input, len),
+                    slice::from_raw_parts_mut(to, to_len),
+                )
             };
             Ok(
                 strings::copy_utf16_into_utf8_impl::<ALLOW_PARTIAL_WRITE>(to_slice, input_slice)
@@ -621,7 +627,10 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
             let (input_slice, to_slice) = unsafe {
-                (bun_core::ffi::slice(input, out), slice::from_raw_parts_mut(to, to_len))
+                (
+                    bun_core::ffi::slice(input, out),
+                    slice::from_raw_parts_mut(to, to_len),
+                )
             };
             strings::copy_u16_into_u8(to_slice, input_slice);
             Ok(out)
@@ -657,7 +666,10 @@ pub fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
             // SAFETY: caller guarantees `input[..len]` and `to[..to_len]` are valid and
             // non-overlapping for this encoding.
             let (input_slice, to_slice) = unsafe {
-                (bun_core::ffi::slice(input, len), slice::from_raw_parts_mut(to, to_len))
+                (
+                    bun_core::ffi::slice(input, len),
+                    slice::from_raw_parts_mut(to, to_len),
+                )
             };
             Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice))
         }

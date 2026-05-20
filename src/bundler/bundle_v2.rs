@@ -6589,7 +6589,8 @@ pub mod bv2_impl {
                                 import_record.path.text = path.text;
                                 import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
-                                    &self.path_with_pretty_initialized(path, target)
+                                    &self
+                                        .path_with_pretty_initialized(path, target)
                                         .expect("oom"),
                                 );
                                 if loader == Loader::Html
@@ -6647,7 +6648,8 @@ pub mod bv2_impl {
                 let resolve_entry = resolve_queue.get_or_put(&path.text).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                    import_record.path = path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
+                    import_record.path =
+                        path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
                     continue;
                 }
 
@@ -7347,11 +7349,12 @@ pub mod bv2_impl {
                             // three `Path` mirrors unify.
                             ssr_source.path.pretty = ssr_source.path.text;
                             ssr_source.path = path_as_static(
-                                &this.path_with_pretty_initialized(
-                                    &ssr_source.path,
-                                    Target::BakeServerComponentsSsr,
-                                )
-                                .expect("oom"),
+                                &this
+                                    .path_with_pretty_initialized(
+                                        &ssr_source.path,
+                                        Target::BakeServerComponentsSsr,
+                                    )
+                                    .expect("oom"),
                             );
                             let ssr_index = this
                                 .enqueue_parse_task2(
@@ -7369,11 +7372,12 @@ pub mod bv2_impl {
                             server_source.path.pretty = server_source.path.text;
                             let server_target = this.transpiler.options.target;
                             server_source.path = path_as_static(
-                                &this.path_with_pretty_initialized(
-                                    &server_source.path,
-                                    server_target,
-                                )
-                                .expect("oom"),
+                                &this
+                                    .path_with_pretty_initialized(
+                                        &server_source.path,
+                                        server_target,
+                                    )
+                                    .expect("oom"),
                             );
                             let server_index = this
                                 .enqueue_parse_task2(

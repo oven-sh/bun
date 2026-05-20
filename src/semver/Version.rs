@@ -625,10 +625,7 @@ impl<T: VersionInt> VersionType<T> {
                 c => {
                     // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
                     // npm just expects that to work...even though it has no "-" qualifier.
-                    if result.wildcard == Wildcard::None
-                        && part_i >= 2
-                        && c.is_ascii_alphabetic()
-                    {
+                    if result.wildcard == Wildcard::None && part_i >= 2 && c.is_ascii_alphabetic() {
                         part_start_i = i;
                         let tag_result =
                             Tag::parse_with_pre_count(sliced_string.sub(&input[part_start_i..]), 1);

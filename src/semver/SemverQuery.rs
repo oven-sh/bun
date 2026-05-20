@@ -234,7 +234,10 @@ impl List {
             return Ok(());
         }
 
-        let mut tail = Box::new(Query { range: *range, next: None });
+        let mut tail = Box::new(Query {
+            range: *range,
+            next: None,
+        });
         tail.range = *range;
 
         let tail_ptr = NonNull::from(&mut *tail);

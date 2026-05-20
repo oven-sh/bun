@@ -478,7 +478,9 @@ mod inherent_bridge {
     use crate::properties::custom::UAEnvironmentVariable;
     impl CssEql for UAEnvironmentVariable {
         #[inline]
-        fn eql(&self, other: &Self) -> bool { UAEnvironmentVariable::eql(*self, *other) }
+        fn eql(&self, other: &Self) -> bool {
+            UAEnvironmentVariable::eql(*self, *other)
+        }
     }
     // CssHash — via #[derive(CssHash)] on the enum (properties/custom.rs).
     bridge_deep_clone_copy!(UAEnvironmentVariable);
@@ -487,7 +489,9 @@ mod inherent_bridge {
     use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
     impl CssEql for WebKitScrollbarPseudoElement {
         #[inline]
-        fn eql(&self, other: &Self) -> bool { WebKitScrollbarPseudoElement::eql(*self, *other) }
+        fn eql(&self, other: &Self) -> bool {
+            WebKitScrollbarPseudoElement::eql(*self, *other)
+        }
     }
     bridge_eql!(ViewTransitionPartName);
     // CssHash for WebKitScrollbarPseudoElement — via #[derive(CssHash)] on the enum.

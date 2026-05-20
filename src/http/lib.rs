@@ -2434,7 +2434,9 @@ impl<'a> HTTPClient<'a> {
                 {
                     // SAFETY: runs on the HTTP thread after `HTTPThread::init`
                     // set `uws_loop` to its live `us_loop_t`.
-                    if let Some(ctx) = unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) } {
+                    let h3_ctx =
+                        unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) };
+                    if let Some(ctx) = h3_ctx {
                         if !h3::ClientContext::as_mut(ctx).connect(
                             self,
                             self.url.hostname,
@@ -2463,7 +2465,8 @@ impl<'a> HTTPClient<'a> {
             }
             // SAFETY: runs on the HTTP thread after `HTTPThread::init` set
             // `uws_loop` to its live `us_loop_t`.
-            let Some(ctx) = (unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) }) else {
+            let Some(ctx) = (unsafe { h3::ClientContext::get_or_create(http_thread().uws_loop) })
+            else {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;

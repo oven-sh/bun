@@ -655,7 +655,9 @@ impl SocketConfigTls {
             // SAFETY: tag == 1 ⇒ `_1` is the initialized union arm.
             1 => Self::Boolean(unsafe { ext.data._1 }),
             // SAFETY: tag == 2 ⇒ `_2` is the initialized union arm.
-            2 => Self::Object(Box::new(SSLConfig::convert_from_extern(unsafe { &ext.data._2 }))),
+            2 => Self::Object(Box::new(SSLConfig::convert_from_extern(unsafe {
+                &ext.data._2
+            }))),
             // SAFETY: tag space is 0..=2 per bindgen contract.
             _ => unsafe { core::hint::unreachable_unchecked() },
         }

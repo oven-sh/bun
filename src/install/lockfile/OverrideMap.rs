@@ -47,10 +47,7 @@ impl OverrideMap {
     // the string buffer (the only field `sort` reads).
     pub fn sort(&mut self, string_bytes: &[u8]) {
         self.map.sort(|_, deps: &[Dependency], l, r| {
-            deps[l]
-                .name
-                .order(deps[r].name, string_bytes, string_bytes)
-                == Ordering::Less
+            deps[l].name.order(deps[r].name, string_bytes, string_bytes) == Ordering::Less
         });
     }
 

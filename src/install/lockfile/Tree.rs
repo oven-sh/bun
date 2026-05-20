@@ -154,7 +154,6 @@ pub struct Placement {
     pub bundled: bool,
 }
 
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum SubtreeError {
     #[error("OutOfMemory")]

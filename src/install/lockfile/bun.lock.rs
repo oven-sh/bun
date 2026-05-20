@@ -235,11 +235,7 @@ impl Stringifier {
         writer.write_all(b"{\n")?;
         Self::inc_indent(writer, indent)?;
         {
-            writeln!(
-                writer,
-                "\"lockfileVersion\": {},",
-                Version::CURRENT as u32
-            )?;
+            writeln!(writer, "\"lockfileVersion\": {},", Version::CURRENT as u32)?;
             Self::write_indent(writer, *indent)?;
 
             let config_version: ConfigVersion =

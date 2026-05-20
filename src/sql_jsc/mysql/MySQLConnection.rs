@@ -1241,7 +1241,8 @@ impl MySQLConnection {
                 // temporary — and `*self` sits inside the parent's `JsCell`, so
                 // re-entrant `connection_mut()` does not alias the outer
                 // shared borrow.
-                self.js_connection_ref().on_error_packet(Some(request), &err);
+                self.js_connection_ref()
+                    .on_error_packet(Some(request), &err);
                 self.advance();
             }
 
@@ -1364,7 +1365,8 @@ impl MySQLConnection {
                 // `js_connection_ref()` container_of accessor. `*self` lives
                 // inside the parent's `JsCell`, so re-entrant `connection_mut()`
                 // does not alias this outer shared borrow.
-                self.js_connection_ref().on_error_packet(Some(request), &err);
+                self.js_connection_ref()
+                    .on_error_packet(Some(request), &err);
                 let _ = self.flush_queue();
             }
 

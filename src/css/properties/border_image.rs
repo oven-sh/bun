@@ -7,6 +7,7 @@ use css::PrintErr;
 use css::Printer;
 use css::SmallList;
 
+use crate::generics::IsCompatible as _;
 use css::VendorPrefix;
 use css::css_properties::{Property, PropertyId, PropertyIdTag};
 use css::css_values::image::Image;
@@ -16,7 +17,6 @@ use css::css_values::number::{CSSNumber, CSSNumberFns};
 use css::css_values::percentage::NumberOrPercentage;
 use css::css_values::percentage::Percentage;
 use css::css_values::rect::Rect;
-use crate::generics::IsCompatible as _;
 
 use bun_alloc::Arena;
 

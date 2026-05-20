@@ -2087,7 +2087,11 @@ impl ZigStringJsc for bun_core::ZigString {
 /// # Safety
 /// See [`zig_string::to_external_u16`].
 #[inline]
-pub unsafe fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
+pub unsafe fn zig_string_to_external_u16(
+    ptr: *const u16,
+    len: usize,
+    global: &JSGlobalObject,
+) -> JSValue {
     // SAFETY: caller upholds `to_external_u16`'s contract.
     unsafe { crate::zig_string::to_external_u16(ptr, len, global) }
 }

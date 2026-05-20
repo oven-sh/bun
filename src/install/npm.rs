@@ -246,7 +246,9 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         bun_fmt::redacted_npm_url(req.url.href),
     ));
 
-    if res.status_code == 404 && let Some((package_name, package_version)) = pkg_id {
+    if res.status_code == 404
+        && let Some((package_name, package_version)) = pkg_id
+    {
         Output::pretty_errorln(format_args!(
             "\n - '{}@{}' does not exist in this registry",
             bstr::BStr::new(package_name),

@@ -361,10 +361,7 @@ impl MachoFile {
                         let mut symtab: macho::symtab_command =
                             core::ptr::read_unaligned(cmd_ptr.cast::<macho::symtab_command>());
                         shift_fields!(shifter, symtab, symoff, stroff);
-                        core::ptr::write_unaligned(
-                            cmd_ptr.cast::<macho::symtab_command>(),
-                            symtab,
-                        );
+                        core::ptr::write_unaligned(cmd_ptr.cast::<macho::symtab_command>(), symtab);
                     }
                 }
                 macho::LC::DYSYMTAB => {

@@ -1294,9 +1294,7 @@ impl Diff {
 
                 // removed
                 for &from_trusted in from_trusted_dependencies.keys() {
-                    if !default_trusted_dependencies::has_with_hash(
-                        u64::from(from_trusted),
-                    ) {
+                    if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
                         summary.removed_trusted_dependencies.put(from_trusted, ())?;
                     }
                 }
@@ -1833,11 +1831,11 @@ impl Package<u64> {
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {
-                    let satisfies = dependency_version.npm().version.satisfies(
-                        workspace_version,
-                        buf,
-                        buf,
-                    );
+                    let satisfies =
+                        dependency_version
+                            .npm()
+                            .version
+                            .satisfies(workspace_version, buf, buf);
                     if pm.options.link_workspace_packages && satisfies {
                         // `String::sliced` takes `&'a self`; bind the unwrapped
                         // value so the borrow outlives the parse call.

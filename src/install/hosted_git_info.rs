@@ -1054,7 +1054,9 @@ impl HostProvider {
     /// Find the appropriate host provider by its domain (e.g. "github.com").
     fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
         // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
-        Self::ALL.into_iter().find(|&provider| provider.domain() == domain_str)
+        Self::ALL
+            .into_iter()
+            .find(|&provider| provider.domain() == domain_str)
     }
 
     /// Parse a URL and return the appropriate host provider, if any.
@@ -1938,10 +1940,7 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
                 format_extract: formatters::extract::gitlab,
             },
             HostProvider::Sourcehut => Config {
-                protocols: &[
-                    WellDefinedProtocol::GitPlusSsh,
-                    WellDefinedProtocol::Https,
-                ],
+                protocols: &[WellDefinedProtocol::GitPlusSsh, WellDefinedProtocol::Https],
                 domain: b"git.sr.ht",
                 shortcut: b"sourcehut:",
                 tree_path: Some(b"tree"),

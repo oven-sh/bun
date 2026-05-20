@@ -46,7 +46,6 @@ pub struct LifecycleScriptTimeLogEntry {
     pub duration: u64,
 }
 
-
 impl LifecycleScriptTimeLog {
     pub fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
         self.mutex.lock();

@@ -173,7 +173,12 @@ impl S3HttpDownloadStreamingTask {
         } else {
             // dont report empty chunks if we have more data to read
             if !has_more || chunk.len() > 0 {
-                (self.callback)(&chunk, has_more, None, self.callback_context.as_ptr().cast());
+                (self.callback)(
+                    &chunk,
+                    has_more,
+                    None,
+                    self.callback_context.as_ptr().cast(),
+                );
                 self.reported_response_buffer.reset();
             }
         }

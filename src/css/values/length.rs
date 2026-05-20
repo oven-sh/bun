@@ -412,11 +412,7 @@ impl LengthValue {
         None
     }
 
-    pub fn try_op_to<R>(
-        self,
-        other: LengthValue,
-        op_fn: impl FnOnce(f32, f32) -> R,
-    ) -> Option<R> {
+    pub fn try_op_to<R>(self, other: LengthValue, op_fn: impl FnOnce(f32, f32) -> R) -> Option<R> {
         if core::mem::discriminant(&self) == core::mem::discriminant(&other) {
             let a = self.value();
             let b = other.value();

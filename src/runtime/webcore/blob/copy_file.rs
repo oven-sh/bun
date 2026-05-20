@@ -279,8 +279,7 @@ impl<'a> CopyFile<'a> {
                         }
                     }
                     bun_sys::Result::Err(errno) => {
-                        match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes())
-                        {
+                        match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes()) {
                             Retry::Continue => continue,
                             Retry::Fail => {
                                 if matches!(WHICH, IOWhich::Both) {

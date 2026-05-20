@@ -2016,7 +2016,6 @@ pub struct ResolvedPackageResult {
     pub task: Option<ResolvedPackageTask>,
 }
 
-
 fn get_or_put_resolved_package_with_find_result(
     this: &mut PackageManager,
     name_hash: PackageNameHash,

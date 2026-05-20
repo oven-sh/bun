@@ -57,7 +57,9 @@ impl Image {
                     css::Feature::RepeatingConicGradient.is_compatible(browsers)
                         && repeating_conic.is_compatible(&browsers)
                 }
-                Gradient::WebkitGradient(_) => css::prefixes::Feature::is_webkit_gradient(&browsers),
+                Gradient::WebkitGradient(_) => {
+                    css::prefixes::Feature::is_webkit_gradient(&browsers)
+                }
             },
             Image::ImageSet(image_set) => image_set.is_compatible(&browsers),
             Image::Url(_) | Image::None => true,

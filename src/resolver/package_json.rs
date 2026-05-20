@@ -2168,7 +2168,9 @@ impl<'a> Package<'a> {
             let after = usize::try_from(slash).expect("int cast") + 1;
             let slash2 = strings::index_of_char(&specifier[after..], b'/')
                 .map(|v| v as usize)
-                .unwrap_or_else(|| specifier[u32::try_from(slash + 1).expect("int cast") as usize..].len());
+                .unwrap_or_else(|| {
+                    specifier[u32::try_from(slash + 1).expect("int cast") as usize..].len()
+                });
             Some(&specifier[0..usize::try_from(slash + 1).expect("int cast") + slash2])
         }
     }

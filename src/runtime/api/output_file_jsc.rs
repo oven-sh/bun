@@ -41,8 +41,9 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
         // by `blob`; no other borrow exists yet.
         unsafe {
             (*store_ptr).mime_type = mime;
-            blob.content_type
-                .set(std::ptr::from_ref::<[u8]>((*store_ptr).mime_type.value.as_ref()));
+            blob.content_type.set(std::ptr::from_ref::<[u8]>(
+                (*store_ptr).mime_type.value.as_ref(),
+            ));
         }
     } else {
         // No store (empty bytes). Loader-derived `mime.value` is `'static` — point at it

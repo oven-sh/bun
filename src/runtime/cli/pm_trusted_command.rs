@@ -482,8 +482,7 @@ impl TrustCommand {
                 }
 
                 // SAFETY: `pm_raw` singleton; `options` is CLI config set at init.
-                let max_concurrent =
-                    unsafe { (*pm_raw).options.max_concurrent_lifecycle_scripts };
+                let max_concurrent = unsafe { (*pm_raw).options.max_concurrent_lifecycle_scripts };
                 while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
                     >= max_concurrent
                 {

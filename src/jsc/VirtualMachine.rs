@@ -823,7 +823,8 @@ impl VirtualMachine {
     /// a single mutex-guarded `Watcher` operation.
     #[inline]
     pub fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
-        self.bun_watcher.cast::<crate::hot_reloader::ImportWatcher>()
+        self.bun_watcher
+            .cast::<crate::hot_reloader::ImportWatcher>()
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
@@ -3506,7 +3507,11 @@ impl VirtualMachine {
         // and only ever names that one type, so the concrete 64-byte alignment
         // is preserved through the `dyn` erasure. `get_package_manager` never
         // returns null (it lazy-inits the process-static singleton).
-        unsafe { &mut *NonNull::new_unchecked(pm).cast::<bun_install::PackageManager>().as_ptr() }
+        unsafe {
+            &mut *NonNull::new_unchecked(pm)
+                .cast::<bun_install::PackageManager>()
+                .as_ptr()
+        }
     }
 
     /// Spec VirtualMachine.zig:769 `reload`.
@@ -3613,7 +3618,10 @@ impl VirtualMachine {
     /// # Safety
     /// See [`crate::event_loop::EventLoop::enqueue_task_concurrent`].
     #[inline]
-    pub unsafe fn enqueue_task_concurrent(&mut self, task: *mut crate::event_loop::ConcurrentTaskItem) {
+    pub unsafe fn enqueue_task_concurrent(
+        &mut self,
+        task: *mut crate::event_loop::ConcurrentTaskItem,
+    ) {
         // SAFETY: forwarded — see fn-level Safety contract.
         unsafe { self.event_loop_mut().enqueue_task_concurrent(task) };
     }
@@ -3932,9 +3940,7 @@ impl VirtualMachine {
         let mut ret = ErrorableResolvedSource::ok(ResolvedSource::default());
         // SAFETY: `global_ptr` is derived from the live `&JSGlobalObject` above.
         let builtin = unsafe {
-            ModuleLoader::fetch_builtin_module(
-                jsc_vm, global_ptr, &specifier, &referrer, &mut ret,
-            )
+            ModuleLoader::fetch_builtin_module(jsc_vm, global_ptr, &specifier, &referrer, &mut ret)
         };
         match builtin {
             ModuleLoader::FetchBuiltinResult::Found | ModuleLoader::FetchBuiltinResult::Errored => {

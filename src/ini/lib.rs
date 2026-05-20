@@ -1085,8 +1085,8 @@ mod draft {
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
-                let _ = rope_head
-                    .append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
+                let _ =
+                    rope_head.append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
                 dot_idx = next_dot_idx;
             }
 

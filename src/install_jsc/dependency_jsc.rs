@@ -48,11 +48,7 @@ pub fn version_to_js(
         }
         Tag::Git => {
             let v = dep.git();
-            object.put(
-                global,
-                b"owner",
-                semver_string_to_js(v.owner, buf, global)?,
-            );
+            object.put(global, b"owner", semver_string_to_js(v.owner, buf, global)?);
             object.put(global, b"repo", semver_string_to_js(v.repo, buf, global)?);
             object.put(
                 global,
@@ -62,11 +58,7 @@ pub fn version_to_js(
         }
         Tag::Github => {
             let v = dep.github();
-            object.put(
-                global,
-                b"owner",
-                semver_string_to_js(v.owner, buf, global)?,
-            );
+            object.put(global, b"owner", semver_string_to_js(v.owner, buf, global)?);
             object.put(global, b"repo", semver_string_to_js(v.repo, buf, global)?);
             object.put(
                 global,

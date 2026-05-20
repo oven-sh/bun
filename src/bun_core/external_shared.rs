@@ -70,7 +70,9 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
     /// Consumes `self`, converting into the optional form.
     pub fn into_optional(self) -> ExternalSharedOptional<T> {
         let this = core::mem::ManuallyDrop::new(self);
-        ExternalSharedOptional { ptr: Some(this.ptr) }
+        ExternalSharedOptional {
+            ptr: Some(this.ptr),
+        }
     }
 
     // TODO(port): Zig's `ExternalShared(T).Optional` was an inherent associated type.

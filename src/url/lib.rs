@@ -935,14 +935,13 @@ impl Clone for QueryStringMap {
         // into `self.buffer` (decoding path) or borrows an external query_string the
         // caller keeps alive (nothing-needs-decoding fast path).
         let self_slice = unsafe { &*self.slice };
-        let slice = if !self.buffer.is_empty()
-            && bun_alloc::is_slice_in_buffer(self_slice, &self.buffer)
-        {
-            let len = self_slice.len();
-            &raw const buffer[..len]
-        } else {
-            self.slice
-        };
+        let slice =
+            if !self.buffer.is_empty() && bun_alloc::is_slice_in_buffer(self_slice, &self.buffer) {
+                let len = self_slice.len();
+                &raw const buffer[..len]
+            } else {
+                self.slice
+            };
         Self {
             slice,
             buffer,

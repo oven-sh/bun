@@ -69,10 +69,7 @@ impl ObjectRopeExt for E::Object {
             let obj = Expr::init(E::Object::default(), rope.head.loc);
             // SAFETY: rope.next non-null and arena-owned.
             let next = unsafe { &*rope.next };
-            obj.data
-                .e_object()
-                .unwrap()
-                .set_rope(next, bump, value)?;
+            obj.data.e_object().unwrap().set_rope(next, bump, value)?;
             value_ = obj;
         }
 

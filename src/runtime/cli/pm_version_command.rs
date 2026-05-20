@@ -124,8 +124,7 @@ impl PmVersionCommand {
             // process-static `Log` (via `ctx` or `pm`) is live for its duration.
             unsafe { ctx.log_mut() },
             &json_bump,
-        )
-        {
+        ) {
             Ok(r) => r,
             Err(err) => {
                 Output::err_generic("Failed to parse package.json: {}", (err.name(),));

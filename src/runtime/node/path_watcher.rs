@@ -878,7 +878,9 @@ impl Linux {
                 // `AlignedBuf`, so byte offset `i` always lands on an aligned
                 // event header within the `n` bytes the kernel just wrote.
                 let ev: &InotifyEvent = unsafe {
-                    &*core::ptr::from_ref(&*buf).cast::<InotifyEvent>().byte_add(i)
+                    &*core::ptr::from_ref(&*buf)
+                        .cast::<InotifyEvent>()
+                        .byte_add(i)
                 };
                 i += core::mem::size_of::<InotifyEvent>() + ev.name_len as usize;
                 let wd = ev.watch_descriptor;

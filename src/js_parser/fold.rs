@@ -499,8 +499,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     if prop.flags.len() == 0
                                         && matches!(key.data, js_ast::ExprData::EString(_))
                                         && e_string_eql_bytes(
-                                            &key
-                                                .data
+                                            &key.data
                                                 .e_string()
                                                 .expect("infallible: variant checked"),
                                             name,

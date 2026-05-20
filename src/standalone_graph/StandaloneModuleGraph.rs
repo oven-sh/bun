@@ -2462,7 +2462,9 @@ pub fn serialize_json_source_map_for_standalone(
     let json = bun_parsers::json::parse::<false>(&json_src, &mut log, &arena)
         .map_err(|_| err!("InvalidSourceMap"))?;
 
-    let mappings_str = json.get(b"mappings").ok_or_else(|| err!("InvalidSourceMap"))?;
+    let mappings_str = json
+        .get(b"mappings")
+        .ok_or_else(|| err!("InvalidSourceMap"))?;
     if !matches!(mappings_str.data, AstData::EString(_)) {
         return Err(err!("InvalidSourceMap"));
     }
@@ -2474,7 +2476,11 @@ pub fn serialize_json_source_map_for_standalone(
         AstData::EArray(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };
-    let sources_paths = match json.get(b"sources").ok_or_else(|| err!("InvalidSourceMap"))?.data {
+    let sources_paths = match json
+        .get(b"sources")
+        .ok_or_else(|| err!("InvalidSourceMap"))?
+        .data
+    {
         AstData::EArray(arr) => arr,
         _ => return Err(err!("InvalidSourceMap")),
     };

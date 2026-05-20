@@ -537,7 +537,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Group this socket is linked into. `None` for non-uSockets transports.
     pub fn group(&self) -> Option<*mut SocketGroup> {
         match self.socket {
-            InternalSocket::Connected(s) => Some(std::ptr::from_mut::<SocketGroup>(sock(s).group())),
+            InternalSocket::Connected(s) => {
+                Some(std::ptr::from_mut::<SocketGroup>(sock(s).group()))
+            }
             InternalSocket::Connecting(s) => Some(conn(s).group()),
             _ => None,
         }

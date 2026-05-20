@@ -195,7 +195,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
         // FunctionBodyContainsUseStrict of FunctionBody is true and
         // IsSimpleParameterList of FormalParameters is false."
-        if let Some(strict_loc) = strict_loc && !has_simple_args {
+        if let Some(strict_loc) = strict_loc
+            && !has_simple_args
+        {
             self.log()
                 .add_range_error(
                     Some(self.source),

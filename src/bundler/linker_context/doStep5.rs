@@ -95,8 +95,10 @@ impl LinkerContext<'_> {
             }};
         }
 
-        let resolved_exports: *mut ResolvedExports =
-            meta.resolved_exports.cast::<ResolvedExports>().wrapping_add(id as usize);
+        let resolved_exports: *mut ResolvedExports = meta
+            .resolved_exports
+            .cast::<ResolvedExports>()
+            .wrapping_add(id as usize);
         // Read-only columns (never written during step 5) — whole-column
         // shared slices are fine here.
         // SAFETY: `split_raw()` columns are valid for `meta.len()` elements;
@@ -201,8 +203,10 @@ impl LinkerContext<'_> {
         // raw per-row pointers via `split_raw()` so concurrent tasks never
         // hold overlapping `&mut [T]`.
         let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).as_mut_slice();
-        let named_imports: *mut crate::bundled_ast::NamedImports =
-            ast.named_imports.cast::<crate::bundled_ast::NamedImports>().wrapping_add(id as usize);
+        let named_imports: *mut crate::bundled_ast::NamedImports = ast
+            .named_imports
+            .cast::<crate::bundled_ast::NamedImports>()
+            .wrapping_add(id as usize);
         // SAFETY: `named_imports` is a stable column pointer (see above). We
         // hoist the emptiness check so the per-symbol-use inner loop skips
         // the lookup entirely for files with no imports (≈ all leaf modules).

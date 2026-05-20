@@ -269,7 +269,8 @@ describe("out-of-range \\u{...} caret points at the backslash (#31134)", () => {
       cwd: String(dir),
     });
 
-    expect(exitCode).toBe(1);
+    // Check stderr first so a location/caret mismatch surfaces directly
+    // instead of getting hidden behind a bare exitCode assertion.
     const err = stderr.toString();
     expect(err).toContain("Unicode escape sequence is out of range");
     // Reported error location: `:1:<col>` — 1-indexed byte column of the `\`.
@@ -287,5 +288,6 @@ describe("out-of-range \\u{...} caret points at the backslash (#31134)", () => {
     const backslashIdx = sourceLine.indexOf("\\u{110000}");
     expect(backslashIdx).toBeGreaterThanOrEqual(0);
     expect(caretLine[backslashIdx]).toBe("^");
+    expect(exitCode).toBe(1);
   });
 });

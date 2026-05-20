@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { setTimeout as sleep } from "node:timers/promises";
 
 // Subprocess.killTree(signal): walks the process tree rooted at the
 // subprocess and signals every descendant. Shares the freeze-verify-signal
 // machinery with `--no-orphans` (/proc/<pid>/task/*/children on Linux,
-// proc_listchildpids on macOS). POSIX only; on Windows it falls back to
-// signalling just the root.
+// proc_listchildpids on macOS). On Windows and other POSIX targets it
+// falls back to signalling just the root, so the descendant-death
+// assertions below are gated on Linux/macOS specifically.
 
 function isAlive(pid: number): boolean {
   try {
@@ -119,7 +120,7 @@ async function spawnTree() {
   return { proc, rootPid, childPid, outerShPid, innerShPid };
 }
 
-describe.skipIf(!isPosix)("Subprocess.killTree()", () => {
+describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
   test("exists and is a function", async () => {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setTimeout(()=>{}, 1e6)"], env: bunEnv });
     expect(typeof proc.killTree).toBe("function");

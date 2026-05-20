@@ -7304,10 +7304,13 @@ declare module "bun" {
      * pid reuse. For catchable signals, `SIGCONT` is sent afterwards so the
      * pending signal is delivered.
      *
-     * On Windows, this currently behaves the same as {@link kill} and only
-     * signals the root process.
+     * On Windows and on POSIX platforms other than Linux/macOS, this
+     * currently behaves the same as {@link kill} and only signals the root
+     * process.
      *
-     * @param signal The signal to send (name or number). Defaults to `SIGTERM`.
+     * @param signal The signal to send (name or number). Defaults to
+     * `SIGTERM`. Passing `0` performs a liveness probe on the root process
+     * (equivalent to `kill(0)`) and does not walk or signal descendants.
      */
     killTree(signal?: number | NodeJS.Signals): void;
 

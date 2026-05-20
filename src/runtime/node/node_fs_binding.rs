@@ -287,7 +287,7 @@ impl Binding {
         // scoped via `with_mut` so the borrow cannot outlive the call.
         match this
             .node_fs
-            .with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync))
+            .with_mut(|nfs| nfs.watch(&watch_args, Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
@@ -335,7 +335,7 @@ impl Binding {
 
         match this
             .node_fs
-            .with_mut(|nfs| nfs.unwatch_file(&(), Flavor::Sync))
+            .with_mut(|nfs| nfs.unwatch_file((), Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),

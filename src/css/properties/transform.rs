@@ -387,33 +387,33 @@ impl Transform {
                 let y: f32 = sy.into_f32();
                 if dest.minify && x == 1.0 && y != 1.0 {
                     dest.write_str("scaleY(")?;
-                    CSSNumberFns::to_css(&y, dest)?;
+                    CSSNumberFns::to_css(y, dest)?;
                 } else if dest.minify && x != 1.0 && y == 1.0 {
                     dest.write_str("scaleX(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                 } else {
                     dest.write_str("scale(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                     if y != x {
                         dest.delim(b',', false)?;
-                        CSSNumberFns::to_css(&y, dest)?;
+                        CSSNumberFns::to_css(y, dest)?;
                     }
                 }
                 dest.write_char(b')')?;
             }
             Transform::ScaleX(x) => {
                 dest.write_str("scaleX(")?;
-                CSSNumberFns::to_css(&x.into_f32(), dest)?;
+                CSSNumberFns::to_css(x.into_f32(), dest)?;
                 dest.write_char(b')')?;
             }
             Transform::ScaleY(y) => {
                 dest.write_str("scaleY(")?;
-                CSSNumberFns::to_css(&y.into_f32(), dest)?;
+                CSSNumberFns::to_css(y.into_f32(), dest)?;
                 dest.write_char(b')')?;
             }
             Transform::ScaleZ(z) => {
                 dest.write_str("scaleZ(")?;
-                CSSNumberFns::to_css(&z.into_f32(), dest)?;
+                CSSNumberFns::to_css(z.into_f32(), dest)?;
                 dest.write_char(b')')?;
             }
             Transform::Scale3d {
@@ -426,28 +426,28 @@ impl Transform {
                 let z: f32 = sz.into_f32();
                 if dest.minify && z == 1.0 && x == y {
                     dest.write_str("scale(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                 } else if dest.minify && x != 1.0 && y == 1.0 && z == 1.0 {
                     dest.write_str("scaleX(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                 } else if dest.minify && x == 1.0 && y != 1.0 && z == 1.0 {
                     dest.write_str("scaleY(")?;
-                    CSSNumberFns::to_css(&y, dest)?;
+                    CSSNumberFns::to_css(y, dest)?;
                 } else if dest.minify && x == 1.0 && y == 1.0 && z != 1.0 {
                     dest.write_str("scaleZ(")?;
-                    CSSNumberFns::to_css(&z, dest)?;
+                    CSSNumberFns::to_css(z, dest)?;
                 } else if dest.minify && z == 1.0 {
                     dest.write_str("scale(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(&y, dest)?;
+                    CSSNumberFns::to_css(y, dest)?;
                 } else {
                     dest.write_str("scale3d(")?;
-                    CSSNumberFns::to_css(&x, dest)?;
+                    CSSNumberFns::to_css(x, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(&y, dest)?;
+                    CSSNumberFns::to_css(y, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(&z, dest)?;
+                    CSSNumberFns::to_css(z, dest)?;
                 }
                 dest.write_char(b')')?;
             }
@@ -483,11 +483,11 @@ impl Transform {
                     angle.to_css_with_unitless_zero(dest)?;
                 } else {
                     dest.write_str("rotate3d(")?;
-                    CSSNumberFns::to_css(x, dest)?;
+                    CSSNumberFns::to_css(*x, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(y, dest)?;
+                    CSSNumberFns::to_css(*y, dest)?;
                     dest.delim(b',', false)?;
-                    CSSNumberFns::to_css(z, dest)?;
+                    CSSNumberFns::to_css(*z, dest)?;
                     dest.delim(b',', false)?;
                     angle.to_css_with_unitless_zero(dest)?;
                 }
@@ -524,52 +524,52 @@ impl Transform {
             }
             Transform::Matrix(m) => {
                 dest.write_str("matrix(")?;
-                CSSNumberFns::to_css(&m.a, dest)?;
+                CSSNumberFns::to_css(m.a, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.b, dest)?;
+                CSSNumberFns::to_css(m.b, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.c, dest)?;
+                CSSNumberFns::to_css(m.c, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.d, dest)?;
+                CSSNumberFns::to_css(m.d, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.e, dest)?;
+                CSSNumberFns::to_css(m.e, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.f, dest)?;
+                CSSNumberFns::to_css(m.f, dest)?;
                 dest.write_char(b')')?;
             }
             Transform::Matrix3d(m) => {
                 dest.write_str("matrix3d(")?;
-                CSSNumberFns::to_css(&m.m11, dest)?;
+                CSSNumberFns::to_css(m.m11, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m12, dest)?;
+                CSSNumberFns::to_css(m.m12, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m13, dest)?;
+                CSSNumberFns::to_css(m.m13, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m14, dest)?;
+                CSSNumberFns::to_css(m.m14, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m21, dest)?;
+                CSSNumberFns::to_css(m.m21, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m22, dest)?;
+                CSSNumberFns::to_css(m.m22, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m23, dest)?;
+                CSSNumberFns::to_css(m.m23, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m24, dest)?;
+                CSSNumberFns::to_css(m.m24, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m31, dest)?;
+                CSSNumberFns::to_css(m.m31, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m32, dest)?;
+                CSSNumberFns::to_css(m.m32, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m33, dest)?;
+                CSSNumberFns::to_css(m.m33, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m34, dest)?;
+                CSSNumberFns::to_css(m.m34, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m41, dest)?;
+                CSSNumberFns::to_css(m.m41, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m42, dest)?;
+                CSSNumberFns::to_css(m.m42, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m43, dest)?;
+                CSSNumberFns::to_css(m.m43, dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&m.m44, dest)?;
+                CSSNumberFns::to_css(m.m44, dest)?;
                 dest.write_char(b')')?;
             }
         }
@@ -856,11 +856,11 @@ impl Rotate {
         } else if self.x == 0.0 && self.y == 1.0 && self.z == 0.0 {
             dest.write_str("y ")?;
         } else if !(self.x == 0.0 && self.y == 0.0 && self.z == 1.0) {
-            CSSNumberFns::to_css(&self.x, dest)?;
+            CSSNumberFns::to_css(self.x, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(&self.y, dest)?;
+            CSSNumberFns::to_css(self.y, dest)?;
             dest.write_char(b' ')?;
-            CSSNumberFns::to_css(&self.z, dest)?;
+            CSSNumberFns::to_css(self.z, dest)?;
             dest.write_char(b' ')?;
         }
 

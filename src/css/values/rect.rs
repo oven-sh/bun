@@ -156,7 +156,7 @@ impl<T> Rect<T> {
 }
 
 impl<T: IsCompatible> IsCompatible for Rect<T> {
-    fn is_compatible(&self, browsers: Browsers) -> bool {
+    fn is_compatible(&self, browsers: &Browsers) -> bool {
         self.top.is_compatible(browsers)
             && self.right.is_compatible(browsers)
             && self.bottom.is_compatible(browsers)

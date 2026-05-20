@@ -111,7 +111,7 @@ impl Angle {
     ) -> core::result::Result<(), PrintErr> {
         if self.is_zero() {
             let v: f32 = 0.0;
-            CSSNumberFns::to_css(&v, dest)
+            CSSNumberFns::to_css(v, dest)
         } else {
             self.to_css(dest)
         }
@@ -260,7 +260,7 @@ impl Angle {
     pub fn sign(self) -> f32 {
         match self {
             Angle::Deg(v) | Angle::Rad(v) | Angle::Grad(v) | Angle::Turn(v) => {
-                CSSNumberFns::sign(&v)
+                CSSNumberFns::sign(v)
             }
         }
     }

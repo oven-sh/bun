@@ -227,10 +227,10 @@ impl Flex {
         };
 
         if self.grow != 1.0 || self.shrink != 1.0 || basis_kind != ZeroKind::NonZero {
-            CSSNumberFns::to_css(&self.grow, dest)?;
+            CSSNumberFns::to_css(self.grow, dest)?;
             if self.shrink != 1.0 || basis_kind == ZeroKind::Length {
                 dest.write_str(" ")?;
-                CSSNumberFns::to_css(&self.shrink, dest)?;
+                CSSNumberFns::to_css(self.shrink, dest)?;
             }
         }
 

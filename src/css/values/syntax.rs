@@ -462,13 +462,13 @@ impl ParsedComponent {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             ParsedComponent::Length(v) => v.to_css(dest),
-            ParsedComponent::Number(v) => CSSNumberFns::to_css(v, dest),
+            ParsedComponent::Number(v) => CSSNumberFns::to_css(*v, dest),
             ParsedComponent::Percentage(v) => v.to_css(dest),
             ParsedComponent::LengthPercentage(v) => v.to_css(dest),
             ParsedComponent::Color(v) => v.to_css(dest),
             ParsedComponent::Image(v) => v.to_css(dest),
             ParsedComponent::Url(v) => v.to_css(dest),
-            ParsedComponent::Integer(v) => CSSIntegerFns::to_css(v, dest),
+            ParsedComponent::Integer(v) => CSSIntegerFns::to_css(*v, dest),
             ParsedComponent::Angle(v) => v.to_css(dest),
             ParsedComponent::Time(v) => v.to_css(dest),
             ParsedComponent::Resolution(v) => v.to_css(dest),

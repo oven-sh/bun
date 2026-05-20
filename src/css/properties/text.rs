@@ -244,11 +244,11 @@ impl TextShadow {
     }
 
     pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
-        self.color.is_compatible(*browsers)
-            && self.x_offset.is_compatible(*browsers)
-            && self.y_offset.is_compatible(*browsers)
-            && self.blur.is_compatible(*browsers)
-            && self.spread.is_compatible(*browsers)
+        self.color.is_compatible(browsers)
+            && self.x_offset.is_compatible(browsers)
+            && self.y_offset.is_compatible(browsers)
+            && self.blur.is_compatible(browsers)
+            && self.spread.is_compatible(browsers)
     }
 
     // Zig: `pub fn eql` via `css.implementEql(@This(), ...)` — field-wise equality.
@@ -268,7 +268,7 @@ impl TextShadow {
 // (DeepClone is bridged via `bridge_deep_clone!(TextShadow)` in generics.rs.)
 impl css::generics::IsCompatible for TextShadow {
     #[inline]
-    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.is_compatible(&browsers)
     }
 }

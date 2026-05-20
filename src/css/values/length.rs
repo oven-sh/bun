@@ -23,7 +23,7 @@ impl LengthOrNumber {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)]
     // (f32 resolves via generics::{Parse,ToCss} for f32). is_compatible KEPT.
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             Self::Length(l) => l.is_compatible(browsers),
             Self::Number(_) => true,
@@ -54,7 +54,7 @@ pub enum LengthPercentageOrAuto {
 impl LengthPercentageOrAuto {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)]. is_compatible KEPT.
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             Self::Length(l) => l.is_compatible(browsers),
             _ => true,
@@ -445,7 +445,7 @@ impl LengthValue {
         None
     }
 
-    pub fn is_compatible(self, browsers: Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &Browsers) -> bool {
         match self.feature() {
             Some(feature) => feature.is_compatible(browsers),
             None => true,
@@ -722,7 +722,7 @@ impl Length {
         }
     }
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             Self::Value(v) => v.is_compatible(browsers),
             Self::Calc(c) => c.is_compatible(&browsers),
@@ -830,7 +830,7 @@ impl protocol::ToCss for LengthValue {
 }
 impl protocol::IsCompatible for LengthValue {
     #[inline]
-    fn is_compatible(&self, browsers: Browsers) -> bool {
+    fn is_compatible(&self, browsers: &Browsers) -> bool {
         LengthValue::is_compatible(*self, browsers)
     }
 }
@@ -923,7 +923,7 @@ impl protocol::ToCss for Angle {
 }
 impl protocol::IsCompatible for Angle {
     #[inline]
-    fn is_compatible(&self, _: Browsers) -> bool {
+    fn is_compatible(&self, _: &Browsers) -> bool {
         true
     }
 }

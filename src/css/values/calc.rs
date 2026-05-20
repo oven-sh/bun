@@ -967,7 +967,7 @@ impl<V: CalcValue> Calc<V> {
     pub fn to_css_impl(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Calc::Value(v) => v.to_css(dest),
-            Calc::Number(n) => CSSNumberFns::to_css(n, dest),
+            Calc::Number(n) => CSSNumberFns::to_css(*n, dest),
             Calc::Sum { left: a, right: b } => {
                 a.to_css(dest)?;
                 // White space is always required.
@@ -988,9 +988,9 @@ impl<V: CalcValue> Calc<V> {
                     let div = 1.0 / num;
                     calc.to_css(dest)?;
                     dest.delim(b'/', true)?;
-                    CSSNumberFns::to_css(&div, dest)?;
+                    CSSNumberFns::to_css(div, dest)?;
                 } else {
-                    CSSNumberFns::to_css(&num, dest)?;
+                    CSSNumberFns::to_css(num, dest)?;
                     dest.delim(b'*', true)?;
                     calc.to_css(dest)?;
                 }
@@ -1107,7 +1107,7 @@ impl<V: CalcValue> Calc<V> {
             }
             Calc::Product { expression, .. } => expression.is_compatible(browsers),
             Calc::Function(f) => f.is_compatible(browsers),
-            Calc::Value(v) => v.is_compatible(*browsers),
+            Calc::Value(v) => v.is_compatible(browsers),
             Calc::Number(_) => true,
         }
     }
@@ -1429,18 +1429,18 @@ impl<V> MathFunction<V> {
         use crate::compat::Feature as F;
         match self {
             MathFunction::Calc(c) => {
-                F::CalcFunction.is_compatible(*browsers) && c.is_compatible(browsers)
+                F::CalcFunction.is_compatible(browsers) && c.is_compatible(browsers)
             }
             MathFunction::Min(m) => {
-                F::MinFunction.is_compatible(*browsers)
+                F::MinFunction.is_compatible(browsers)
                     && m.iter().all(|arg| arg.is_compatible(browsers))
             }
             MathFunction::Max(m) => {
-                F::MaxFunction.is_compatible(*browsers)
+                F::MaxFunction.is_compatible(browsers)
                     && m.iter().all(|arg| arg.is_compatible(browsers))
             }
             MathFunction::Clamp { min, center, max } => {
-                F::ClampFunction.is_compatible(*browsers)
+                F::ClampFunction.is_compatible(browsers)
                     && min.is_compatible(browsers)
                     && center.is_compatible(browsers)
                     && max.is_compatible(browsers)
@@ -1448,28 +1448,28 @@ impl<V> MathFunction<V> {
             MathFunction::Round {
                 value, interval, ..
             } => {
-                F::RoundFunction.is_compatible(*browsers)
+                F::RoundFunction.is_compatible(browsers)
                     && value.is_compatible(browsers)
                     && interval.is_compatible(browsers)
             }
             MathFunction::Rem { dividend, divisor } => {
-                F::RemFunction.is_compatible(*browsers)
+                F::RemFunction.is_compatible(browsers)
                     && dividend.is_compatible(browsers)
                     && divisor.is_compatible(browsers)
             }
             MathFunction::Mod { dividend, divisor } => {
-                F::ModFunction.is_compatible(*browsers)
+                F::ModFunction.is_compatible(browsers)
                     && dividend.is_compatible(browsers)
                     && divisor.is_compatible(browsers)
             }
             MathFunction::Abs(a) => {
-                F::AbsFunction.is_compatible(*browsers) && a.is_compatible(browsers)
+                F::AbsFunction.is_compatible(browsers) && a.is_compatible(browsers)
             }
             MathFunction::Sign(s) => {
-                F::SignFunction.is_compatible(*browsers) && s.is_compatible(browsers)
+                F::SignFunction.is_compatible(browsers) && s.is_compatible(browsers)
             }
             MathFunction::Hypot(h) => {
-                F::HypotFunction.is_compatible(*browsers)
+                F::HypotFunction.is_compatible(browsers)
                     && h.iter().all(|arg| arg.is_compatible(browsers))
             }
         }
@@ -1648,6 +1648,10 @@ macro_rules! calc_protocol_forwarders {
         impl protocol::PartialCmp for $T { #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { <$T>::partial_cmp(self, rhs) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
+    (@ $T:ty; partial_cmp: forward_copy, $($r:tt)*) => {
+        impl protocol::PartialCmp for $T { #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { <$T>::partial_cmp(*self, *rhs) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
     (@ $T:ty; try_from_angle: forward, $($r:tt)*) => {
         impl protocol::TryFromAngle for $T { #[inline] fn try_from_angle(a: Angle) -> Option<Self> { <$T>::try_from_angle(a) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
@@ -1666,6 +1670,10 @@ macro_rules! calc_protocol_forwarders {
     };
     (@ $T:ty; try_map: forward, $($r:tt)*) => {
         impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { <$T>::try_map(self, f) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; try_map: forward_copy, $($r:tt)*) => {
+        impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { <$T>::try_map(*self, f) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; try_map: $m:ident, $($r:tt)*) => {
@@ -1701,16 +1709,21 @@ macro_rules! calc_protocol_forwarders {
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; is_compatible: forward, $($r:tt)*) => {
-        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, b: css::targets::Browsers) -> bool { <$T>::is_compatible(self, b) } }
+        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, b: &css::targets::Browsers) -> bool { <$T>::is_compatible(self, b) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; is_compatible: always_true, $($r:tt)*) => {
-        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true } }
+        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, _: &css::targets::Browsers) -> bool { true } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; parse_to_css: forward, $($r:tt)*) => {
         impl protocol::Parse for $T { #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { <$T>::parse(input) } }
         impl protocol::ToCss for $T { #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { <$T>::to_css(self, dest) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
+    (@ $T:ty; parse_to_css: forward_copy, $($r:tt)*) => {
+        impl protocol::Parse for $T { #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { <$T>::parse(input) } }
+        impl protocol::ToCss for $T { #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { <$T>::to_css(*self, dest) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
 }
@@ -1719,12 +1732,12 @@ calc_protocol_forwarders!(Percentage {
     mul_f32: forward,
     try_from_angle: none,
     try_sign: sign,
-    try_map: forward,
+    try_map: forward_copy,
     try_op: forward,
     try_op_to: |this, rhs, ctx, f| { Some(this.op_to(*rhs, ctx, f)) },
-    partial_cmp: forward,
+    partial_cmp: forward_copy,
     is_compatible: always_true,
-    parse_to_css: forward,
+    parse_to_css: forward_copy,
 });
 impl CalcValue for Percentage {
     #[inline]
@@ -1770,7 +1783,7 @@ calc_protocol_forwarders!(Time {
             (Time::Milliseconds(a), Time::Seconds(b)) => f(ctx, a, b * 1000.0),
         })
     },
-    partial_cmp: forward,
+    partial_cmp: forward_copy,
     is_compatible: always_true,
 });
 impl CalcValue for Time {

@@ -360,7 +360,7 @@ pub enum SystemColor {
 }
 
 impl SystemColor {
-    pub fn is_compatible(self, browsers: targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &targets::Browsers) -> bool {
         match self {
             SystemColor::Accentcolor | SystemColor::Accentcolortext => {
                 Feature::AccentSystemColor.is_compatible(browsers)
@@ -483,7 +483,7 @@ impl CssColor {
                                 rounded_alpha = (color.alpha_f32() * 1000.0).round() / 1000.0;
                             }
 
-                            CSSNumberFns::to_css(&rounded_alpha, dest)?;
+                            CSSNumberFns::to_css(rounded_alpha, dest)?;
                             dest.write_char(b')')?;
                             return Ok(());
                         }
@@ -537,7 +537,7 @@ impl CssColor {
         }
     }
 
-    pub fn is_compatible(&self, browsers: targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &targets::Browsers) -> bool {
         match self {
             CssColor::CurrentColor | CssColor::Rgba(_) | CssColor::Float(_) => true,
             CssColor::Lab(lab) => match **lab {
@@ -581,7 +581,7 @@ impl CssColor {
     pub fn get_fallbacks(
         &mut self,
         _arena: &Arena,
-        targets: targets::Targets,
+        targets: &targets::Targets,
     ) -> crate::SmallList<CssColor, 2> {
         let fallbacks = self.get_necessary_fallbacks(targets);
 
@@ -613,14 +613,14 @@ impl CssColor {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub fn get_necessary_fallbacks(&self, targets: targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &targets::Targets) -> ColorFallbackKind {
         // Get the full set of possible fallbacks, and remove the highest one, which
         // will replace the original declaration. The remaining fallbacks need to be added.
         let fallbacks = self.get_possible_fallbacks(targets);
         fallbacks.difference(fallbacks.highest())
     }
 
-    pub fn get_possible_fallbacks(&self, targets: targets::Targets) -> ColorFallbackKind {
+    pub fn get_possible_fallbacks(&self, targets: &targets::Targets) -> ColorFallbackKind {
         // Fallbacks occur in levels: Oklab -> Lab -> P3 -> RGB. We start with all levels
         // below and including the authored color space, and remove the ones that aren't
         // compatible with our browser targets.
@@ -676,7 +676,7 @@ impl CssColor {
                 fallbacks = fallbacks.difference(ColorFallbackKind::P3.and_below());
             } else if targets
                 .browsers
-                .map_or(false, |b| Feature::LabColors.is_partially_compatible(b))
+                .map_or(false, |b| Feature::LabColors.is_partially_compatible(&b))
             {
                 // We don't need P3 if Lab is supported by some of our targets.
                 // No browser implements Lab but not P3.
@@ -690,7 +690,7 @@ impl CssColor {
             } else if fallbacks.highest() != ColorFallbackKind::P3
                 && targets
                     .browsers
-                    .map_or(true, |b| !Feature::P3Colors.is_partially_compatible(b))
+                    .map_or(true, |b| !Feature::P3Colors.is_partially_compatible(&b))
             {
                 // Remove P3 if it isn't supported by any targets, and wasn't the
                 // original authored color.
@@ -2723,7 +2723,7 @@ pub fn write_component(c: f32, dest: &mut Printer) -> Result<(), PrintErr> {
     if c.is_nan() {
         dest.write_str("none")
     } else {
-        CSSNumberFns::to_css(&c, dest)
+        CSSNumberFns::to_css(c, dest)
     }
 }
 

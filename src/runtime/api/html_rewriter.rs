@@ -553,7 +553,7 @@ impl HTMLRewriterLoader {
         let borrowed = bun_ptr::RawSlice::new(bytes);
         let write_result = self
             .output
-            .write(webcore::sink::Data::Bytes(StreamResult::Temporary(
+            .write(&webcore::sink::Data::Bytes(StreamResult::Temporary(
                 borrowed,
             )));
 
@@ -665,51 +665,26 @@ impl HTMLRewriterLoader {
         None
     }
 
-    pub fn write(&mut self, data: StreamResult) -> streams::Writable {
+    pub fn write(&mut self, data: &StreamResult) -> streams::Writable {
+        let bytes = data.slice();
+        let len = bytes.len() as webcore::BlobSizeType;
+        if let Some(err) = self.write_bytes(bytes) {
+            return Writable::Err(err);
+        }
         match data {
-            StreamResult::Owned(bytes) => {
-                let len = bytes.len() as webcore::BlobSizeType;
-                // Spec: do NOT free on the error path.
-                let bytes = core::mem::ManuallyDrop::new(bytes);
-                if let Some(err) = self.write_bytes(bytes.slice()) {
-                    return Writable::Err(err);
-                }
-                drop(core::mem::ManuallyDrop::into_inner(bytes));
-                Writable::Owned(len)
-            }
-            StreamResult::OwnedAndDone(bytes) => {
-                let len = bytes.len() as webcore::BlobSizeType;
-                // Spec: do NOT free on the error path.
-                let bytes = core::mem::ManuallyDrop::new(bytes);
-                if let Some(err) = self.write_bytes(bytes.slice()) {
-                    return Writable::Err(err);
-                }
-                drop(core::mem::ManuallyDrop::into_inner(bytes));
-                Writable::OwnedAndDone(len)
-            }
-            StreamResult::TemporaryAndDone(bytes) => {
-                let len = bytes.len() as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes(bytes.slice()) {
-                    return Writable::Err(err);
-                }
-                Writable::TemporaryAndDone(len)
-            }
-            StreamResult::Temporary(bytes) => {
-                let len = bytes.len() as webcore::BlobSizeType;
-                if let Some(err) = self.write_bytes(bytes.slice()) {
-                    return Writable::Err(err);
-                }
-                Writable::Temporary(len)
-            }
+            StreamResult::Owned(_) => Writable::Owned(len),
+            StreamResult::OwnedAndDone(_) => Writable::OwnedAndDone(len),
+            StreamResult::TemporaryAndDone(_) => Writable::TemporaryAndDone(len),
+            StreamResult::Temporary(_) => Writable::Temporary(len),
             _ => unreachable!(),
         }
     }
 
-    pub fn write_utf16(&mut self, data: StreamResult) -> streams::Writable {
-        webcore::sink::UTF8Fallback::write_utf16(self, &data, HTMLRewriterLoader::write)
+    pub fn write_utf16(&mut self, data: &StreamResult) -> streams::Writable {
+        webcore::sink::UTF8Fallback::write_utf16(self, data, HTMLRewriterLoader::write)
     }
 
-    pub fn write_latin1(&mut self, data: StreamResult) -> streams::Writable {
+    pub fn write_latin1(&mut self, data: &StreamResult) -> streams::Writable {
         webcore::sink::UTF8Fallback::write_latin1(self, data, HTMLRewriterLoader::write)
     }
 

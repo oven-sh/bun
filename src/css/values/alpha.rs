@@ -27,7 +27,7 @@ impl AlphaValue {
     }
 
     pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CSSNumberFns::to_css(&self.v, dest)
+        CSSNumberFns::to_css(self.v, dest)
     }
 
     pub fn eql(lhs: Self, rhs: Self) -> bool {

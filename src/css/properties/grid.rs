@@ -439,7 +439,7 @@ impl RepeatCount {
     // PORT NOTE: `css.DeriveToCss(@This()).toCss` — hand-expanded.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            RepeatCount::Number(n) => CSSIntegerFns::to_css(n, dest),
+            RepeatCount::Number(n) => CSSIntegerFns::to_css(*n, dest),
             RepeatCount::AutoFill => dest.write_str("auto-fill"),
             RepeatCount::AutoFit => dest.write_str("auto-fit"),
         }

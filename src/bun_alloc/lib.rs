@@ -1,4 +1,8 @@
 //! Port of `src/bun_alloc/bun_alloc.zig`.
+// bun_alloc is the T0 foundation crate that bun_threading and bun_collections
+// depend on; importing either to satisfy the disallowed-types lint would create
+// a dependency cycle.
+#![allow(clippy::disallowed_types)]
 #![feature(arbitrary_self_types_pointers)]
 #![feature(allocator_api)]
 // `#[thread_local]` (vs the `thread_local!` macro) compiles to a bare

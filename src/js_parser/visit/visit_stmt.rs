@@ -1858,21 +1858,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match data.yes.data {
                 StmtData::SExpr(yes_expr) => {
                     if yes_expr.value.is_missing() {
-                        if data.no.is_none() {
-                            if can_remove_test {
+                        if let Some(no) = data.no {
+                            if no.is_missing_expr() && can_remove_test {
                                 return Ok(());
                             }
-                        } else if data.no.unwrap().is_missing_expr() && can_remove_test {
+                        } else if can_remove_test {
                             return Ok(());
                         }
                     }
                 }
                 StmtData::SEmpty(_) => {
-                    if data.no.is_none() {
-                        if can_remove_test {
+                    if let Some(no) = data.no {
+                        if no.is_missing_expr() && can_remove_test {
                             return Ok(());
                         }
-                    } else if data.no.unwrap().is_missing_expr() && can_remove_test {
+                    } else if can_remove_test {
                         return Ok(());
                     }
                 }

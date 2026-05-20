@@ -514,7 +514,7 @@ mod inherent_bridge {
         ($($t:ty),* $(,)?) => {$(
             impl super::IsCompatible for $t {
                 #[inline]
-                fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+                fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
                     <$t>::is_compatible(self, browsers)
                 }
             }
@@ -617,13 +617,13 @@ mod inherent_bridge {
     bridge_deep_clone_copy!(LineStyle);
     impl super::IsCompatible for BorderSideWidth {
         #[inline]
-        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             BorderSideWidth::is_compatible(self, &browsers)
         }
     }
     impl super::IsCompatible for LineStyle {
         #[inline]
-        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             LineStyle::is_compatible(*self, &browsers)
         }
     }
@@ -740,43 +740,43 @@ mod inherent_bridge {
     );
     impl super::IsCompatible for FontWeight {
         #[inline]
-        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             FontWeight::is_compatible(self, &browsers)
         }
     }
     impl super::IsCompatible for FontSize {
         #[inline]
-        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             FontSize::is_compatible(self, &browsers)
         }
     }
     impl super::IsCompatible for FontStretch {
         #[inline]
-        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             FontStretch::is_compatible(*self, &browsers)
         }
     }
     impl super::IsCompatible for FontStyle {
         #[inline]
-        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             FontStyle::is_compatible(*self, &browsers)
         }
     }
     impl super::IsCompatible for FontVariantCaps {
         #[inline]
-        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             FontVariantCaps::is_compatible(*self, browsers)
         }
     }
     impl super::IsCompatible for LineHeight {
         #[inline]
-        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             LineHeight::is_compatible(self, &browsers)
         }
     }
     impl super::IsCompatible for FontFamily {
         #[inline]
-        fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+        fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
             FontFamily::is_compatible(self, &browsers)
         }
     }
@@ -1100,7 +1100,7 @@ pub fn slice<L: ListContainer>(val: &L) -> &[L::Item] {
 }
 
 pub trait IsCompatible {
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool;
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool;
 }
 
 /// `#[derive(IsCompatible)]` — field-wise / variant-wise port of the
@@ -1111,27 +1111,27 @@ pub trait IsCompatible {
 pub use bun_css_derive::IsCompatible;
 
 #[inline]
-pub fn is_compatible<T: IsCompatible>(val: &T, browsers: crate::targets::Browsers) -> bool {
+pub fn is_compatible<T: IsCompatible>(val: &T, browsers: &crate::targets::Browsers) -> bool {
     val.is_compatible(browsers)
 }
 
 impl<T: IsCompatible + ?Sized> IsCompatible for &T {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         (**self).is_compatible(browsers)
     }
 }
 
 impl<T: IsCompatible + ?Sized> IsCompatible for Box<T> {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         (**self).is_compatible(browsers)
     }
 }
 
 impl<T: IsCompatible> IsCompatible for Option<T> {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         // Zig's `isCompatible` doesn't special-case Optional, but every
         // hand-written caller treats absent as compatible (no value → no
         // feature gate to check).
@@ -1144,7 +1144,7 @@ impl<T: IsCompatible> IsCompatible for Option<T> {
 
 impl<T: IsCompatible> IsCompatible for [T] {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         for item in self {
             if !item.is_compatible(browsers) {
                 return false;
@@ -1156,14 +1156,14 @@ impl<T: IsCompatible> IsCompatible for [T] {
 
 impl<T: IsCompatible, const N: usize> IsCompatible for [T; N] {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         self.as_slice().is_compatible(browsers)
     }
 }
 
 impl<T: IsCompatible> IsCompatible for Vec<T> {
     #[inline]
-    fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         self.as_slice().is_compatible(browsers)
     }
 }
@@ -1178,7 +1178,7 @@ macro_rules! is_compatible_container {
         where
             <$ty as ListContainer>::Item: IsCompatible,
         {
-            fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+            fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
                 for item in ListContainer::slice(self) {
                     if !item.is_compatible(browsers) {
                         return false;
@@ -1440,13 +1440,13 @@ impl<T: ToCss + PartialEq> ToCss for Rect<T> {
 impl ToCss for f32 {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CSSNumberFns::to_css(self, dest)
+        CSSNumberFns::to_css(*self, dest)
     }
 }
 impl ToCss for CSSInteger {
     #[inline]
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CSSIntegerFns::to_css(self, dest)
+        CSSIntegerFns::to_css(*self, dest)
     }
 }
 impl ToCss for CustomIdent {
@@ -1558,7 +1558,7 @@ pub fn try_sign<T: TrySign>(val: &T) -> Option<f32> {
 impl TrySign for CSSNumber {
     #[inline]
     fn try_sign(&self) -> Option<f32> {
-        Some(CSSNumberFns::sign(self))
+        Some(CSSNumberFns::sign(*self))
     }
 }
 // TODO(port): Zig fallback `if @hasDecl(T, "sign") T.sign else T.trySign` —
@@ -1607,7 +1607,7 @@ impl TryOpTo for CSSNumber {
 
 impl IsCompatible for CSSNumber {
     #[inline]
-    fn is_compatible(&self, _: crate::targets::Browsers) -> bool {
+    fn is_compatible(&self, _: &crate::targets::Browsers) -> bool {
         true
     }
 }

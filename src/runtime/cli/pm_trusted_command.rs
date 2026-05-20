@@ -296,8 +296,8 @@ impl TrustCommand {
         }
 
         // SAFETY: `pm_raw` is the singleton; `pm.log` set at init, non-null.
-        // Read-only `lockfile` borrow for the discovery phase.
         let log: *mut bun_ast::Log = unsafe { (*pm_raw).log };
+        // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow for the discovery phase.
         let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
 
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -481,10 +481,13 @@ impl TrustCommand {
                     continue;
                 }
 
-                // SAFETY: `pm_raw` singleton; reads atomics + `options`.
+                // SAFETY: `pm_raw` singleton; `options` is CLI config set at init.
+                let max_concurrent =
+                    unsafe { (*pm_raw).options.max_concurrent_lifecycle_scripts };
                 while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
-                    >= unsafe { (*pm_raw).options.max_concurrent_lifecycle_scripts }
+                    >= max_concurrent
                 {
+                    // SAFETY: `pm_raw` singleton; `options.log_level` is CLI config set at init.
                     if unsafe { (*pm_raw).options.log_level.is_verbose() }
                         && PackageManager::has_enough_time_passed_between_waiting_messages()
                     {
@@ -511,6 +514,7 @@ impl TrustCommand {
                     )?;
                 }
 
+                // SAFETY: `pm_raw` singleton; `options.log_level` is CLI config set at init.
                 if unsafe { (*pm_raw).options.log_level.show_progress() } {
                     // SAFETY: `scripts_node` initialized above when
                     // `show_progress` was true at the same `log_level`.
@@ -518,6 +522,7 @@ impl TrustCommand {
                         // SAFETY: points at our stack-local `scripts_node`.
                         unsafe { sn.as_ptr().as_mut().unwrap().activate() };
                     }
+                    // SAFETY: `pm_raw` singleton; `progress` owned inline by `pm`.
                     unsafe { (*pm_raw).progress.refresh() };
                 }
             }
@@ -529,6 +534,7 @@ impl TrustCommand {
                     .load(Ordering::Relaxed)
             } > 0
             {
+                // SAFETY: `pm_raw` singleton; `sleep()` ticks the event loop on the CLI thread.
                 unsafe { (*pm_raw).sleep() };
             }
         }

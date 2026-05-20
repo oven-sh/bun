@@ -801,7 +801,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     name_hash,
                     name,
                     dependency,
-                    version.clone(),
+                    &version,
                     dependency.behavior,
                     id,
                     resolution,
@@ -1408,7 +1408,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 name_hash,
                 name,
                 dependency,
-                version.clone(),
+                &version,
                 dependency.behavior,
                 id,
                 resolution,
@@ -2228,7 +2228,7 @@ fn get_or_put_resolved_package(
     name_hash: PackageNameHash,
     name: SemverString,
     dependency: &Dependency,
-    version: dependency::Version,
+    version: &dependency::Version,
     behavior: Behavior,
     dependency_id: DependencyID,
     resolution: PackageID,
@@ -2245,7 +2245,7 @@ fn get_or_put_resolved_package(
                     let existing_id = *existing_id;
                     if (existing_id as usize) < resolutions.len() {
                         let existing_resolution = resolutions[existing_id as usize];
-                        if resolution_satisfies_dependency(this, &existing_resolution, &version) {
+                        if resolution_satisfies_dependency(this, &existing_resolution, version) {
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
@@ -2291,7 +2291,7 @@ fn get_or_put_resolved_package(
                     for &existing_id in list.iter() {
                         if (existing_id as usize) < resolutions.len() {
                             let existing_resolution = resolutions[existing_id as usize];
-                            if resolution_satisfies_dependency(this, &existing_resolution, &version)
+                            if resolution_satisfies_dependency(this, &existing_resolution, version)
                             {
                                 success_fn(this, dependency_id, existing_id);
                                 return Ok(Some(ResolvedPackageResult {
@@ -2579,7 +2579,7 @@ fn get_or_put_resolved_package(
                 name_hash,
                 name,
                 dependency,
-                &version,
+                version,
                 dependency_id,
                 behavior,
                 manifest_ref.get(),
@@ -2625,7 +2625,7 @@ fn get_or_put_resolved_package(
 
                     break 'res FolderResolution::get_or_put(
                         GlobalOrRelative::Relative(dependency::version::Tag::Folder),
-                        &version,
+                        version,
                         folder_path_abs,
                         this,
                     );
@@ -2716,7 +2716,7 @@ fn get_or_put_resolved_package(
 
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Relative(dependency::version::Tag::Workspace),
-                &version,
+                version,
                 workspace_path_u8,
                 this,
             );
@@ -2755,7 +2755,7 @@ fn get_or_put_resolved_package(
             let symlink_path = this.lockfile.str_detached(version.symlink());
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Global(link_dir),
-                &version,
+                version,
                 symlink_path,
                 this,
             );

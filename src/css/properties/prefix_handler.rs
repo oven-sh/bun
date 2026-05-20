@@ -61,12 +61,12 @@ impl FallbackHandler {
 
                     if $self_field.is_none() {
                         // PORT NOTE: `has_fallbacks` only used in the vendor-prefixed branch in Zig.
-                        ($fb)(&mut val, arena, context.targets, dest);
+                        ($fb)(&mut val, arena, &context.targets, dest);
                     }
 
                     if $self_field.is_none()
                         || (context.targets.browsers.is_some()
-                            && !($ic)(&val, context.targets.browsers.unwrap()))
+                            && !($ic)(&val, &context.targets.browsers.unwrap()))
                     {
                         *$self_field = Some(dest.len());
                         dest.push(Property::$Variant(val));
@@ -114,7 +114,7 @@ impl FallbackHandler {
                          a: &bun_alloc::Arena,
                          t,
                          d: &mut css::DeclarationList| {
-                for fb in css::small_list::get_fallbacks_text_shadow(v, a, &t)
+                for fb in css::small_list::get_fallbacks_text_shadow(v, a, t)
                     .to_owned_slice()
                     .into_vec()
                 {

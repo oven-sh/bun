@@ -728,9 +728,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     _ => None,
                 };
 
-                if ref_.is_some() && !p.options.features.is_macro_runtime {
-                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_.unwrap()).copied() {
-                        p.ignore_usage(ref_.unwrap());
+                if let Some(ref_) = ref_ && !p.options.features.is_macro_runtime {
+                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied() {
+                        p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
                             return;
@@ -1733,38 +1733,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            if property.value.is_some() {
+            if let Some(value) = &mut property.value {
                 // Propagate name from property key for decorated anonymous class expressions
                 // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
                 if in_.assign_target == js_ast::AssignTarget::None
-                    && matches!(
-                        property.value.expect("infallible: prop has value").data,
-                        Data::EClass(..)
-                    )
-                    && property
-                        .value
-                        .unwrap()
+                    && matches!(value.data, Data::EClass(..))
+                    && value
                         .data
                         .e_class()
                         .unwrap()
                         .should_lower_standard_decorators
-                    && property
-                        .value
-                        .expect("infallible: prop has value")
+                    && value
                         .data
                         .e_class()
                         .expect("infallible: variant checked")
                         .class_name
                         .is_none()
-                    && property.key.is_some()
-                    && matches!(
-                        property.key.expect("infallible: prop has key").data,
-                        Data::EString(..)
-                    )
+                    && let Some(key) = property.key
+                    && matches!(key.data, Data::EString(..))
                 {
-                    let key_str = property
-                        .key
-                        .expect("infallible: prop has key")
+                    let key_str = key
                         .data
                         .e_string()
                         .expect("infallible: variant checked");
@@ -1778,7 +1766,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                 }
                 p.visit_expr_in_out(
-                    property.value.as_mut().expect("infallible: prop has value"),
+                    value,
                     ExprIn {
                         assign_target: in_.assign_target,
                         ..Default::default()
@@ -2516,7 +2504,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
             args_mut,
-            VisitArgsOpts {
+            &VisitArgsOpts {
                 has_rest_arg: e_.has_rest_arg,
                 body: dupe,
                 is_unique_formal_parameters: true,

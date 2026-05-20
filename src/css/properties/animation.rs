@@ -376,7 +376,7 @@ impl AnimationIterationCount {
     // Port of `css.DeriveToCss(@This()).toCss`.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(n, dest),
+            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(*n, dest),
             AnimationIterationCount::Infinite => dest.write_str(b"infinite"),
         }
     }

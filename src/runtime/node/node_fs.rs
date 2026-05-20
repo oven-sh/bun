@@ -1784,15 +1784,20 @@ mod _async_tasks {
                 // PORT NOTE: `ConcurrentTask::from_callback` expects `fn(*mut T) -> JsResult<()>`;
                 // Zig accepted `fn(*T) JSError!void` directly. Adapt the signature inline.
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
-                    js: ConcurrentTask::from_callback(this, |p| unsafe {
-                        (&mut *p).run_from_js_thread().map_err(Into::into)
+                    js: ConcurrentTask::from_callback(this, |p| {
+                        // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
+                        // JS-thread callback holds the only live reference (exclusive `&mut`).
+                        unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
                     }),
                 });
             } else {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     mini: AnyTaskWithExtraContext::from_callback_auto_deinit(
                         this,
-                        |p: *mut Self, ctx| unsafe { (*p).run_from_js_thread_mini(ctx) },
+                        |p: *mut Self, ctx| {
+                            // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked task.
+                            unsafe { (*p).run_from_js_thread_mini(ctx) }
+                        },
                     ),
                 });
             }
@@ -1835,6 +1840,8 @@ mod _async_tasks {
                 Err(err) => match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
                     Ok(v) => v,
                     Err(e) => {
+                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
+                        // reference on this thread (see comment above `let promise`).
                         return unsafe { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
@@ -1842,6 +1849,8 @@ mod _async_tasks {
                 Ok(res) => match FsReturn::fs_to_js(res, global_object) {
                     Ok(v) => v,
                     Err(e) => {
+                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
+                        // reference on this thread (see comment above `let promise`).
                         return unsafe { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
@@ -1987,7 +1996,7 @@ mod _async_tasks {
                                 0i32
                             },
                         ),
-                        Some(stat_),
+                        Some(&stat_),
                         &this.args,
                     );
                     if let Err(e) = &r {
@@ -2505,6 +2514,8 @@ mod _async_tasks {
                         Vec::with_capacity(8192usize / core::mem::size_of::<$T>());
                     let res = NodeFS::readdir_with_entries_recursive_async::<$T>(
                         buf,
+                        // SAFETY: `args_ptr` was derived from `&*self.args` above; the boxed
+                        // `self.args` outlives this call and is only read here.
                         unsafe { &*args_ptr },
                         self,
                         basename,
@@ -2656,14 +2667,14 @@ mod _async_tasks {
                 }
                 // SAFETY: `val` is a live queue node until freed below
                 unsafe { &mut *val }.value.deinit();
-                // SAFETY: paired with heap::alloc in write_results()
                 if let Some(dest) = to_destroy {
+                    // SAFETY: paired with heap::alloc in write_results()
                     unsafe { drop(bun_core::heap::take(dest)) };
                 }
                 to_destroy = Some(val);
             }
-            // SAFETY: paired with heap::alloc in write_results()
             if let Some(dest) = to_destroy {
+                // SAFETY: paired with heap::alloc in write_results()
                 unsafe { drop(bun_core::heap::take(dest)) };
             }
             self.result_list_count.store(0, Ordering::Relaxed);
@@ -2687,6 +2698,8 @@ mod _async_tasks {
                 match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
                     Ok(v) => v,
                     Err(e) => {
+                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
+                        // reference on this thread (see comment above `let promise`).
                         return unsafe { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
@@ -2705,6 +2718,8 @@ mod _async_tasks {
                 match res.to_js(global_object) {
                     Ok(v) => v,
                     Err(e) => {
+                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
+                        // reference on this thread (see comment above `let promise`).
                         return unsafe { &mut *promise }
                             .reject(global_object, Ok(global_object.take_exception(e)));
                     }
@@ -2964,7 +2979,7 @@ pub mod args {
             let len: BlobSizeType = BlobSizeType::try_from(
                 validators::validate_integer(
                     ctx,
-                    arguments.next().unwrap_or(JSValue::js_number(0.0)),
+                    arguments.next().unwrap_or_else(|| JSValue::js_number(0.0)),
                     "len",
                     Some(i52::MIN),
                     Some(BLOB_SIZE_MAX as i64),
@@ -5817,13 +5832,13 @@ impl NodeFS {
     }
 
     pub fn mkdir_recursive(&mut self, args: &args::Mkdir) -> Maybe<ret::Mkdir> {
-        self.mkdir_recursive_impl::<()>(args, ())
+        self.mkdir_recursive_impl::<()>(args, &())
     }
 
     pub fn mkdir_recursive_impl<Ctx: MkdirCtx>(
         &mut self,
         args: &args::Mkdir,
-        ctx: Ctx,
+        ctx: &Ctx,
     ) -> Maybe<ret::Mkdir> {
         let mut buf = paths::path_buffer_pool::get();
         let path = args.path.os_path_kernel32(&mut *buf);
@@ -5842,15 +5857,15 @@ impl NodeFS {
     ) -> Maybe<ret::Mkdir> {
         // PERF(port): was comptime bool — runtime branch here
         if return_path {
-            self.mkdir_recursive_os_path_impl::<(), true>((), path, mode)
+            self.mkdir_recursive_os_path_impl::<(), true>(&(), path, mode)
         } else {
-            self.mkdir_recursive_os_path_impl::<(), false>((), path, mode)
+            self.mkdir_recursive_os_path_impl::<(), false>(&(), path, mode)
         }
     }
 
     pub fn mkdir_recursive_os_path_impl<Ctx: MkdirCtx, const RETURN_PATH: bool>(
         &mut self,
-        ctx: Ctx,
+        ctx: &Ctx,
         path: &OSPathSliceZ,
         mode: Mode,
     ) -> Maybe<ret::Mkdir> {
@@ -5930,6 +5945,8 @@ impl NodeFS {
             sync_error_buf_ptr.cast::<OSPathChar>().is_aligned(),
             "NodeFS.sync_error_buf misaligned for OSPathChar",
         );
+        // SAFETY: alignment asserted above; `OSPathBuffer` fits inside `PathBuffer`
+        // (same type on POSIX; smaller on Windows) and `self.sync_error_buf` is exclusive.
         let working_mem: &mut OSPathBuffer =
             unsafe { &mut *sync_error_buf_ptr.cast::<OSPathBuffer>() };
         working_mem[..len as usize].copy_from_slice(&(&path[..])[..len as usize]);
@@ -5940,6 +5957,8 @@ impl NodeFS {
         while i > 0 {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
+                // SAFETY: `working_mem[..i]` is initialized from `path` above and
+                // `working_mem[i]` was just set to NUL; the slice is in-bounds.
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
@@ -6022,6 +6041,8 @@ impl NodeFS {
         while i < len {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
+                // SAFETY: `working_mem[..i]` is initialized from `path` and
+                // `working_mem[i]` was just set to NUL; the slice is in-bounds.
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
@@ -6053,6 +6074,8 @@ impl NodeFS {
 
         // Our final directory will not have a trailing separator
         // so we have to create it once again
+        // SAFETY: `working_mem[..len]` is the full input path and `working_mem[len]`
+        // was just set to NUL; the slice is in-bounds.
         let final_ = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), len as usize) };
         match mkdir_os_path(final_, mode) {
             Err(err) => match err.get_errno() {
@@ -6125,10 +6148,10 @@ impl NodeFS {
             // generated name back into the buffer in-place.
             let rc = unsafe { libc::mkdtemp(prefix_buf.as_mut_ptr().cast()) };
             if !rc.is_null() {
-                return Ok(
-                    ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(rc) }.to_bytes())
-                        .expect("oom"),
-                );
+                // SAFETY: `rc` is non-null and points back into `prefix_buf`, which is
+                // NUL-terminated and outlives this borrow.
+                let bytes = unsafe { bun_core::ffi::cstr(rc) }.to_bytes();
+                return Ok(ZigString::dupe_for_js(bytes).expect("oom"));
             }
 
             // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly
@@ -7850,8 +7873,8 @@ impl NodeFS {
             // vendored std.posix.unlinkZ maps `.PERM => PermissionDenied`
             // (not AccessDenied), so raw EPERM is *not* in this set.
             if args.recursive && matches!(e1, E::EISDIR | E::ENOTDIR | E::EACCES) {
-                // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
                 if let Some(Err(err2)) = Maybe::<()>::errno_sys_p(
+                    // SAFETY: `dest` is NUL-terminated by `slice_z`; rmdir(2) is the libc FFI.
                     unsafe { libc::rmdir(dest.as_ptr().cast()) },
                     sys::Tag::rmdir,
                     args.path.slice(),
@@ -8140,7 +8163,7 @@ impl NodeFS {
         }
     }
 
-    pub fn unwatch_file(&mut self, _: &args::UnwatchFile, _: Flavor) -> Maybe<ret::UnwatchFile> {
+    pub fn unwatch_file(&mut self, _: args::UnwatchFile, _: Flavor) -> Maybe<ret::UnwatchFile> {
         Maybe::<ret::UnwatchFile>::todo()
     }
 
@@ -8216,7 +8239,7 @@ impl NodeFS {
         }
     }
 
-    pub fn watch(&mut self, args: args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
+    pub fn watch(&mut self, args: &args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
         match args.create_fs_watcher() {
             // SAFETY: `create_fs_watcher` returns a freshly-heap-allocated
             // `*mut FSWatcher` whose ownership is held by the JS wrapper
@@ -8295,10 +8318,12 @@ impl NodeFS {
         let cp_flags = &args.flags;
         let sd = src_dir_len as usize;
         let dd = dest_dir_len as usize;
-        // SAFETY: caller wrote NUL at [len]; constructing the sentinel slices.
         src_buf[sd] = 0;
         dest_buf[dd] = 0;
+        // SAFETY: `src_buf[..sd]`/`dest_buf[..dd]` were written by the caller and the
+        // NUL sentinel at `[len]` was set just above; both ranges are in-bounds.
         let src = unsafe { OSPathSliceZ::from_raw(src_buf.as_ptr(), sd) };
+        // SAFETY: see `src` above.
         let dest = unsafe { OSPathSliceZ::from_raw(dest_buf.as_ptr(), dd) };
 
         #[cfg(windows)]
@@ -8350,7 +8375,7 @@ impl NodeFS {
                     } else {
                         0i32
                     }),
-                    Some(stat_),
+                    Some(&stat_),
                     args,
                 );
                 if let Err(ref e) = r {
@@ -8590,7 +8615,7 @@ impl NodeFS {
         mode: constants::Copyfile,
         // Stat on posix, file attributes on windows
         #[cfg(windows)] reuse_stat: Option<windows::DWORD>,
-        #[cfg(not(windows))] reuse_stat: Option<sys::Stat>,
+        #[cfg(not(windows))] reuse_stat: Option<&sys::Stat>,
         args: &args::Cp,
     ) -> Maybe<ret::CopyFile> {
         let _ = args; // only the Windows branch consults `args` (shouldIgnoreEbusy)
@@ -8608,7 +8633,7 @@ impl NodeFS {
                 .unwrap_or(Ok(()));
             }
             let stat_ = match reuse_stat {
-                Some(s) => s,
+                Some(s) => *s,
                 None => match Syscall::lstat(src) {
                     Ok(result) => result,
                     Err(err) => {

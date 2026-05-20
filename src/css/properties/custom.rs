@@ -427,7 +427,7 @@ impl TokenList {
                         has_whitespace = false;
                     }
                     Token::Number(v) => {
-                        CSSNumberFns::to_css(&v.value, dest)?;
+                        CSSNumberFns::to_css(v.value, dest)?;
                         has_whitespace = false;
                     }
                     _ => {
@@ -800,7 +800,7 @@ impl TokenList {
         for token_or_value in self.v.iter() {
             match token_or_value {
                 TokenOrValue::Color(color) => {
-                    fallbacks.insert(color.get_possible_fallbacks(*targets));
+                    fallbacks.insert(color.get_possible_fallbacks(targets));
                 }
                 TokenOrValue::Function(f) => {
                     fallbacks.insert(f.arguments.get_necessary_fallbacks(targets));
@@ -909,7 +909,7 @@ impl UnresolvedColor {
                     .should_compile_same(css::compat::Feature::SpaceSeparatedColorNotation)
                 {
                     dest.write_str("hsla(")?;
-                    CSSNumberFns::to_css(h, dest)?;
+                    CSSNumberFns::to_css(*h, dest)?;
                     dest.delim(b',', false)?;
                     Percentage { v: *s }.to_css(dest)?;
                     dest.delim(b',', false)?;
@@ -921,7 +921,7 @@ impl UnresolvedColor {
                 }
 
                 dest.write_str("hsl(")?;
-                CSSNumberFns::to_css(h, dest)?;
+                CSSNumberFns::to_css(*h, dest)?;
                 dest.write_char(b' ')?;
                 Percentage { v: *s }.to_css(dest)?;
                 dest.write_char(b' ')?;

@@ -129,7 +129,7 @@ impl ArrayBufferSink {
         });
     }
 
-    pub fn write(&mut self, data: streams::Result) -> streams::result::Writable {
+    pub fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
         if let Some(next) = &mut self.next {
             return next.write_bytes(data);
         }
@@ -143,11 +143,11 @@ impl ArrayBufferSink {
     }
 
     #[inline]
-    pub fn write_bytes(&mut self, data: streams::Result) -> streams::result::Writable {
+    pub fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
         self.write(data)
     }
 
-    pub fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable {
+    pub fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
         if let Some(next) = &mut self.next {
             return next.write_latin1(data);
         }
@@ -159,7 +159,7 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable {
+    pub fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
         if let Some(next) = &mut self.next {
             return next.write_utf16(data);
         }
@@ -286,13 +286,13 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         Self::construct(this);
     }
-    fn write_bytes(&mut self, data: streams::Result) -> streams::result::Writable {
+    fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write(self, data)
     }
-    fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable {
+    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write_utf16(self, data)
     }
-    fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable {
+    fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write_latin1(self, data)
     }
     fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {

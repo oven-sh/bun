@@ -123,7 +123,7 @@ impl AbsoluteFontWeight {
 
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
-            AbsoluteFontWeight::Weight(weight) => CSSNumberFns::to_css(weight, dest),
+            AbsoluteFontWeight::Weight(weight) => CSSNumberFns::to_css(*weight, dest),
             AbsoluteFontWeight::Normal => {
                 dest.write_str(if dest.minify { "400" } else { "normal" })
             }
@@ -136,7 +136,7 @@ impl AbsoluteFontWeight {
             // Older browsers only supported 100, 200, 300, ...900 rather than arbitrary values.
             AbsoluteFontWeight::Weight(val) => {
                 if !((*val >= 100.0 && *val <= 900.0) && (*val % 100.0) == 0.0) {
-                    Feature::FontWeightNumber.is_compatible(*browsers)
+                    Feature::FontWeightNumber.is_compatible(browsers)
                 } else {
                     true
                 }
@@ -172,9 +172,9 @@ impl FontSize {
         match self {
             FontSize::Length(l) => match l {
                 DimensionPercentage::Dimension(LengthValue::Rem(_)) => {
-                    Feature::FontSizeRem.is_compatible(*browsers)
+                    Feature::FontSizeRem.is_compatible(browsers)
                 }
-                _ => l.is_compatible(*browsers),
+                _ => l.is_compatible(browsers),
             },
             FontSize::Absolute(a) => a.is_compatible(browsers),
             FontSize::Relative(_) => true,
@@ -212,7 +212,7 @@ pub enum AbsoluteFontSize {
 impl AbsoluteFontSize {
     pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            AbsoluteFontSize::XxxLarge => Feature::FontSizeXXXLarge.is_compatible(*browsers),
+            AbsoluteFontSize::XxxLarge => Feature::FontSizeXXXLarge.is_compatible(browsers),
             _ => true,
         }
     }
@@ -268,7 +268,7 @@ impl FontStretch {
 
     pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            FontStretch::Percentage(_) => Feature::FontStretchPercentage.is_compatible(*browsers),
+            FontStretch::Percentage(_) => Feature::FontStretchPercentage.is_compatible(browsers),
             FontStretch::Keyword(_) => true,
         }
     }
@@ -523,11 +523,11 @@ pub enum GenericFontFamily {
 impl GenericFontFamily {
     pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            GenericFontFamily::SystemUi => Feature::FontFamilySystemUi.is_compatible(*browsers),
+            GenericFontFamily::SystemUi => Feature::FontFamilySystemUi.is_compatible(browsers),
             GenericFontFamily::UiSerif
             | GenericFontFamily::UiSansSerif
             | GenericFontFamily::UiMonospace
-            | GenericFontFamily::UiRounded => Feature::ExtendedSystemFonts.is_compatible(*browsers),
+            | GenericFontFamily::UiRounded => Feature::ExtendedSystemFonts.is_compatible(browsers),
             _ => true,
         }
     }
@@ -584,7 +584,7 @@ impl FontStyle {
         match self {
             FontStyle::Oblique(angle) => {
                 if angle != FontStyle::default_oblique_angle() {
-                    Feature::FontStyleObliqueAngle.is_compatible(*browsers)
+                    Feature::FontStyleObliqueAngle.is_compatible(browsers)
                 } else {
                     true
                 }
@@ -637,7 +637,7 @@ impl FontVariantCaps {
         Ok(value)
     }
 
-    pub fn is_compatible(self, _: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, _: &crate::targets::Browsers) -> bool {
         true
     }
 }
@@ -672,14 +672,14 @@ impl LineHeight {
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             LineHeight::Normal => dest.write_str("normal"),
-            LineHeight::Number(n) => CSSNumberFns::to_css(n, dest),
+            LineHeight::Number(n) => CSSNumberFns::to_css(*n, dest),
             LineHeight::Length(l) => l.to_css(dest),
         }
     }
 
     pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
-            LineHeight::Length(l) => l.is_compatible(*browsers),
+            LineHeight::Length(l) => l.is_compatible(browsers),
             LineHeight::Normal | LineHeight::Number(_) => true,
         }
     }
@@ -966,7 +966,7 @@ impl FontHandler {
                 if $this.$field.is_some()
                     && !crate::generic::eql($this.$field.as_ref().unwrap(), $val)
                     && context.targets.browsers.is_some()
-                    && !crate::generic::is_compatible($val, context.targets.browsers.unwrap())
+                    && !crate::generic::is_compatible($val, &context.targets.browsers.unwrap())
                 {
                     $this.flush(dest, context);
                 }

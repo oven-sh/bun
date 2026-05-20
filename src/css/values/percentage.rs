@@ -27,7 +27,7 @@ impl Percentage {
         Ok(Percentage { v: percent })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let x = self.v * 100.0;
         let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
             // PORT NOTE: Rust `as` saturates on overflow/NaN where Zig is UB.
@@ -96,7 +96,7 @@ impl Percentage {
         Some(self.sign())
     }
 
-    pub fn partial_cmp(&self, other: &Percentage) -> Option<Ordering> {
+    pub fn partial_cmp(self, other: Percentage) -> Option<Ordering> {
         crate::generic::partial_cmp_f32(self.v, other.v)
     }
 
@@ -104,7 +104,7 @@ impl Percentage {
         None
     }
 
-    pub fn try_map(&self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
+    pub fn try_map(self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
         // Percentages cannot be mapped because we don't know what they will resolve to.
         // For example, they might be positive or negative depending on what they are a
         // percentage of, which we don't know.
@@ -217,7 +217,7 @@ where
         }
     }
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::IsCompatible,
@@ -477,7 +477,7 @@ where
     {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a.partial_cmp(b),
-            (Self::Percentage(a), Self::Percentage(b)) => a.partial_cmp(b),
+            (Self::Percentage(a), Self::Percentage(b)) => Percentage::partial_cmp(*a, *b),
             _ => None,
         }
     }
@@ -580,7 +580,7 @@ impl NumberOrPercentage {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(n, dest),
+            NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(*n, dest),
             NumberOrPercentage::Percentage(p) => p.to_css(dest),
         }
     }

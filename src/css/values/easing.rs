@@ -191,13 +191,13 @@ impl EasingFunction {
                 match self {
                     EasingFunction::CubicBezier(cb) => {
                         dest.write_str("cubic-bezier(")?;
-                        CSSNumberFns::to_css(&cb.x1, dest)?;
+                        CSSNumberFns::to_css(cb.x1, dest)?;
                         dest.write_char(b',')?;
-                        CSSNumberFns::to_css(&cb.y1, dest)?;
+                        CSSNumberFns::to_css(cb.y1, dest)?;
                         dest.write_char(b',')?;
-                        CSSNumberFns::to_css(&cb.x2, dest)?;
+                        CSSNumberFns::to_css(cb.x2, dest)?;
                         dest.write_char(b',')?;
-                        CSSNumberFns::to_css(&cb.y2, dest)?;
+                        CSSNumberFns::to_css(cb.y2, dest)?;
                         dest.write_char(b')')
                     }
                     EasingFunction::Steps(steps) => {

@@ -968,7 +968,7 @@ impl BunTest {
             global_this.clear_termination_exception();
             // SAFETY: `UnsafeCell`-derived `*mut`; short-lived field read between re-entrant calls.
             let step_result: StepResult = match unsafe { (*this).phase } {
-                Phase::Collection => Collection::step(this_strong, global_this, result)?,
+                Phase::Collection => Collection::step(this_strong, global_this, &result)?,
                 Phase::Execution => Execution::Execution::step(this_strong, global_this, &result)?,
                 Phase::Done => StepResult::Complete,
             };

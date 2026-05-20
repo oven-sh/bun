@@ -853,7 +853,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         if category != self.category
             || (self.physical_slot_is_some(field)
                 && context.targets.browsers.is_some()
-                && !val.is_compatible(context.targets.browsers.unwrap()))
+                && !val.is_compatible(&context.targets.browsers.unwrap()))
         {
             self.flush(dest, context);
         }
@@ -875,7 +875,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         if category != self.category
             || (self.logical_slot_is_some(field)
                 && context.targets.browsers.is_some()
-                && !val.is_compatible(context.targets.browsers.unwrap()))
+                && !val.is_compatible(&context.targets.browsers.unwrap()))
         {
             self.flush(dest, context);
         }

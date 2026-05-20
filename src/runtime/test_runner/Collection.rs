@@ -177,14 +177,14 @@ impl Collection {
     pub fn step(
         buntest_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
-        data: RefDataValue,
+        data: &RefDataValue,
     ) -> JsResult<StepResult> {
         let _g = group::begin();
         let buntest = buntest_strong.get();
         let this = &mut buntest.collection;
 
         if !matches!(data, RefDataValue::Start) {
-            this.run_one_completed(global_this, None, &data)?;
+            this.run_one_completed(global_this, None, data)?;
         }
 
         let _formatter = make_formatter(global_this);

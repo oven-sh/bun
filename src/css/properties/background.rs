@@ -237,7 +237,7 @@ impl Background {
     }
 
     pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
-        self.color.get_necessary_fallbacks(*targets)
+        self.color.get_necessary_fallbacks(targets)
             | self.get_image().get_necessary_fallbacks(targets)
     }
 
@@ -657,7 +657,7 @@ macro_rules! flush_helper {
         if let Some(existing) = &$this.$field {
             if !crate::generic::eql(existing, $val)
                 && $context.targets.browsers.is_some()
-                && !crate::generic::is_compatible($val, $context.targets.browsers.unwrap())
+                && !crate::generic::is_compatible($val, &$context.targets.browsers.unwrap())
             {
                 $this.flush($dest, $context);
             }
@@ -1003,7 +1003,7 @@ impl BackgroundHandler {
 
         if let Some(mut color) = maybe_color.take() {
             if !self.flushed_properties.contains(BackgroundProperty::COLOR) {
-                let fallbacks = color.get_fallbacks(arena, context.targets);
+                let fallbacks = color.get_fallbacks(arena, &context.targets);
                 for fallback in fallbacks.into_iter() {
                     push_property!(
                         self,

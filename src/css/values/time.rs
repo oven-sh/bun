@@ -83,25 +83,25 @@ impl Time {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // 0.1s is shorter than 100ms
         // anything smaller is longer
-        match *self {
+        match self {
             Time::Seconds(s) => {
                 if s > 0.0 && s < 0.1 {
-                    CSSNumberFns::to_css(&(s * 1000.0), dest)?;
+                    CSSNumberFns::to_css(s * 1000.0, dest)?;
                     dest.write_str("ms")?;
                 } else {
-                    CSSNumberFns::to_css(&s, dest)?;
+                    CSSNumberFns::to_css(s, dest)?;
                     dest.write_str("s")?;
                 }
             }
             Time::Milliseconds(ms) => {
                 if ms == 0.0 || ms >= 100.0 {
-                    CSSNumberFns::to_css(&(ms / 1000.0), dest)?;
+                    CSSNumberFns::to_css(ms / 1000.0, dest)?;
                     dest.write_str("s")?;
                 } else {
-                    CSSNumberFns::to_css(&ms, dest)?;
+                    CSSNumberFns::to_css(ms, dest)?;
                     dest.write_str("ms")?;
                 }
             }
@@ -163,7 +163,7 @@ impl Time {
         self.op(other, |a, b| a + b)
     }
 
-    pub fn partial_cmp(&self, other: &Time) -> Option<core::cmp::Ordering> {
+    pub fn partial_cmp(self, other: Time) -> Option<core::cmp::Ordering> {
         crate::generic::partial_cmp_f32(self.to_ms(), other.to_ms())
     }
 
@@ -177,8 +177,8 @@ impl Time {
 
     pub fn sign(self) -> f32 {
         match self {
-            Time::Seconds(v) => CSSNumberFns::sign(&v),
-            Time::Milliseconds(v) => CSSNumberFns::sign(&v),
+            Time::Seconds(v) => CSSNumberFns::sign(v),
+            Time::Milliseconds(v) => CSSNumberFns::sign(v),
         }
     }
 

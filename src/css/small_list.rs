@@ -202,7 +202,7 @@ pub mod fallbacks_gated {
     ) -> SmallList<SmallList<TextShadow, 1>, 2> {
         let mut fallbacks = css::ColorFallbackKind::default();
         for shadow in this.slice() {
-            fallbacks.insert(shadow.color.get_necessary_fallbacks(*targets));
+            fallbacks.insert(shadow.color.get_necessary_fallbacks(targets));
         }
 
         let mut res = SmallList::<SmallList<TextShadow, 1>, 2>::default();

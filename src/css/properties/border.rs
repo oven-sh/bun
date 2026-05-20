@@ -151,7 +151,7 @@ where
         + for<'b> css::generics::DeepClone<'b>
         + css::generics::CssEql,
 {
-    fn get_fallbacks(&mut self, arena: &Bump, targets: Targets) -> SmallList<Self, 2> {
+    fn get_fallbacks(&mut self, arena: &Bump, targets: &Targets) -> SmallList<Self, 2> {
         use css::generics::DeepClone as _;
         let fallbacks = self.color.get_fallbacks(arena, targets);
         // PERF(port): was arena bulk-free (fallbacks.deinit) — profile if it shows up on a hot path
@@ -262,7 +262,7 @@ impl BorderSideWidth {
     // blocked_on: Length::is_compatible
     pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
-            BorderSideWidth::Length(len) => len.is_compatible(*browsers),
+            BorderSideWidth::Length(len) => len.is_compatible(browsers),
             _ => true,
         }
     }
@@ -292,7 +292,7 @@ macro_rules! impl_fallbacks {
             pub fn get_fallbacks(
                 &mut self,
                 arena: &Bump,
-                targets: Targets,
+                targets: &Targets,
             ) -> SmallList<$T, 2> {
                 let _ = arena;
                 let mut fallbacks = ColorFallbackKind::empty();
@@ -743,7 +743,7 @@ mod border_handler_body {
                 .flushed_properties
                 .contains(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap())
             {
-                let fbs = val.get_fallbacks(f.arena, f.ctx.targets);
+                let fbs = val.get_fallbacks(f.arena, &f.ctx.targets);
                 for fallback in css::generic::slice(&fbs) {
                     f.dest.push(Property::$p(fallback.clone()));
                 }
@@ -1256,7 +1256,7 @@ mod border_handler_body {
                     if let Some(existing) = &self.$key.$prop {
                         if !existing.eql($val)
                             && context.targets.browsers.is_some()
-                            && !css::generic::is_compatible($val, context.targets.browsers.unwrap())
+                            && !css::generic::is_compatible($val, &context.targets.browsers.unwrap())
                         {
                             self.flush(dest, context);
                         }

@@ -202,9 +202,9 @@ impl BorderImage {
     pub fn get_fallbacks(
         &mut self,
         arena: &Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
     ) -> SmallList<BorderImage, 6> {
-        let fallbacks = self.source.get_fallbacks(arena, &targets);
+        let fallbacks = self.source.get_fallbacks(arena, targets);
         // PORT NOTE: `defer fallbacks.deinit(arena)` dropped — SmallList drops at scope exit.
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
         for fallback in fallbacks.slice() {
@@ -279,7 +279,7 @@ impl BorderImageRepeat {
         Ok(())
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.horizontal.is_compatible(browsers) && self.vertical.is_compatible(browsers)
     }
 
@@ -330,7 +330,7 @@ impl BorderImageSideWidth {
 
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
-            BorderImageSideWidth::Number(n) => CSSNumberFns::to_css(n, dest),
+            BorderImageSideWidth::Number(n) => CSSNumberFns::to_css(*n, dest),
             BorderImageSideWidth::LengthPercentage(lp) => lp.to_css(dest),
             BorderImageSideWidth::Auto => dest.write_str("auto"),
         }
@@ -344,7 +344,7 @@ impl BorderImageSideWidth {
         self.clone()
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             BorderImageSideWidth::LengthPercentage(l) => l.is_compatible(browsers),
             _ => true,
@@ -354,7 +354,7 @@ impl BorderImageSideWidth {
 
 impl crate::generics::IsCompatible for BorderImageSideWidth {
     #[inline]
-    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         Self::is_compatible(self, browsers)
     }
 }
@@ -376,7 +376,7 @@ pub enum BorderImageRepeatKeyword {
 }
 
 impl BorderImageRepeatKeyword {
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &css::targets::Browsers) -> bool {
         match self {
             BorderImageRepeatKeyword::Round => {
                 css::compat::Feature::BorderImageRepeatRound.is_compatible(browsers)
@@ -422,7 +422,7 @@ impl BorderImageSlice {
         Ok(())
     }
 
-    pub fn is_compatible(&self, _: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, _: &css::targets::Browsers) -> bool {
         true
     }
 
@@ -513,7 +513,7 @@ impl BorderImageHandler {
                 if $self.$name.is_some()
                     && !$self.$name.as_ref().unwrap().eql($val)
                     && $ctx.targets.browsers.is_some()
-                    && $val.is_compatible($ctx.targets.browsers.unwrap())
+                    && $val.is_compatible(&$ctx.targets.browsers.unwrap())
                 {
                     $self.flush($d, $ctx);
                 }
@@ -664,7 +664,7 @@ impl BorderImageHandler {
                     .targets
                     .prefixes(self.vendor_prefix, css::prefixes::Feature::BorderImage);
                 if self.flushed_properties.is_empty() {
-                    let fallbacks = border_image.get_fallbacks(arena, context.targets);
+                    let fallbacks = border_image.get_fallbacks(arena, &context.targets);
                     for fallback in fallbacks.slice() {
                         // Match prefix of fallback. e.g. -webkit-linear-gradient
                         // can only be used in -webkit-border-image, not -moz-border-image.

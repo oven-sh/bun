@@ -1628,7 +1628,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_sys::Result::Ok(())
     }
 
-    pub fn write(&mut self, data: StreamResult) -> Writable {
+    pub fn write(&mut self, data: &StreamResult) -> Writable {
         if self.done || self.requested_end {
             return Writable::Owned(0);
         }
@@ -1668,11 +1668,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         Writable::Owned(len)
     }
 
-    pub fn write_bytes(&mut self, data: StreamResult) -> Writable {
+    pub fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         self.write(data)
     }
 
-    pub fn write_latin1(&mut self, data: StreamResult) -> Writable {
+    pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         if self.done || self.requested_end {
             return Writable::Owned(0);
         }
@@ -1730,7 +1730,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         Writable::Owned(len)
     }
 
-    pub fn write_utf16(&mut self, data: StreamResult) -> Writable {
+    pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
         if self.done || self.requested_end {
             return Writable::Owned(0);
         }
@@ -2032,13 +2032,13 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     fn finalize(&mut self) {
         Self::finalize(self)
     }
-    fn write_bytes(&mut self, data: StreamResult) -> Writable {
+    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         Self::write(self, data)
     }
-    fn write_utf16(&mut self, data: StreamResult) -> Writable {
+    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
         Self::write_utf16(self, data)
     }
-    fn write_latin1(&mut self, data: StreamResult) -> Writable {
+    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         Self::write_latin1(self, data)
     }
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
@@ -2268,7 +2268,7 @@ impl NetworkSink {
         self.finalize();
     }
 
-    pub fn write(&mut self, data: StreamResult) -> Writable {
+    pub fn write(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
@@ -2283,11 +2283,11 @@ impl NetworkSink {
         Writable::Owned(len)
     }
 
-    pub fn write_bytes(&mut self, data: StreamResult) -> Writable {
+    pub fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         self.write(data)
     }
 
-    pub fn write_latin1(&mut self, data: StreamResult) -> Writable {
+    pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
@@ -2303,7 +2303,7 @@ impl NetworkSink {
         Writable::Owned(len)
     }
 
-    pub fn write_utf16(&mut self, data: StreamResult) -> Writable {
+    pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
@@ -2393,13 +2393,13 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     fn finalize(&mut self) {
         Self::finalize(self)
     }
-    fn write_bytes(&mut self, data: StreamResult) -> Writable {
+    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         Self::write(self, data)
     }
-    fn write_utf16(&mut self, data: StreamResult) -> Writable {
+    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
         Self::write_utf16(self, data)
     }
-    fn write_latin1(&mut self, data: StreamResult) -> Writable {
+    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         Self::write_latin1(self, data)
     }
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {

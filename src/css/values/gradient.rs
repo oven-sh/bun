@@ -773,11 +773,11 @@ impl WebKitGradient {
                 dest.delim(b',', false)?;
                 radial.from.to_css(dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&radial.r0, dest)?;
+                CSSNumberFns::to_css(radial.r0, dest)?;
                 dest.delim(b',', false)?;
                 radial.to.to_css(dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&radial.r1, dest)?;
+                CSSNumberFns::to_css(radial.r1, dest)?;
                 for stop in radial.stops.iter() {
                     dest.delim(b',', false)?;
                     stop.to_css(dest)?;
@@ -1055,9 +1055,9 @@ impl<D: GradientPosition> GradientItem<D> {
 
     pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
-            GradientItem::ColorStop(c) => c.color.is_compatible(*browsers),
+            GradientItem::ColorStop(c) => c.color.is_compatible(browsers),
             GradientItem::Hint(_) => {
-                css::compat::Feature::GradientInterpolationHints.is_compatible(*browsers)
+                css::compat::Feature::GradientInterpolationHints.is_compatible(browsers)
             }
         }
     }
@@ -1076,7 +1076,7 @@ impl<D: GradientPosition> GradientItem<D> {
     /// Returns the color fallback types needed for the given browser targets.
     pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         match self {
-            GradientItem::ColorStop(stop) => stop.color.get_necessary_fallbacks(*targets),
+            GradientItem::ColorStop(stop) => stop.color.get_necessary_fallbacks(targets),
             GradientItem::Hint(_) => ColorFallbackKind::empty(),
         }
     }
@@ -1258,7 +1258,7 @@ impl WebKitColorStop {
             self.color.to_css(dest)?;
         } else {
             dest.write_str(b"color-stop(")?;
-            CSSNumberFns::to_css(&self.position, dest)?;
+            CSSNumberFns::to_css(self.position, dest)?;
             dest.delim(b',', false)?;
             self.color.to_css(dest)?;
         }

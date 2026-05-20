@@ -30,7 +30,7 @@ impl Image {
     // NOTE: `pub fn deinit` was a no-op in Zig (all CSS parser memory is arena-owned).
     // No `Drop` impl needed — Box/Vec fields drop automatically.
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             Image::Gradient(g) => match &**g {
                 Gradient::Linear(linear) => {
@@ -336,10 +336,10 @@ impl ImageSet {
     }
 
     pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
-        css::Feature::ImageSet.is_compatible(*browsers)
+        css::Feature::ImageSet.is_compatible(browsers)
             && 'blk: {
                 for opt in self.options.iter() {
-                    if !opt.image.is_compatible(*browsers) {
+                    if !opt.image.is_compatible(browsers) {
                         break 'blk false;
                     }
                 }

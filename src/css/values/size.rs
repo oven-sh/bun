@@ -72,7 +72,7 @@ where
     where
         T: IsCompatible,
     {
-        self.a.is_compatible(*browsers) && self.b.is_compatible(*browsers)
+        self.a.is_compatible(browsers) && self.b.is_compatible(browsers)
     }
 
     pub fn deep_clone(&self, _bump: &Arena) -> Self {

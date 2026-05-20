@@ -134,7 +134,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let args: &mut [G::Arg] = func.args.slice_mut();
         self.visit_args(
             args,
-            VisitArgsOpts {
+            &VisitArgsOpts {
                 has_rest_arg: func.flags.contains(flags::Function::HasRestArg),
                 body: body_stmts,
                 is_unique_formal_parameters: true,
@@ -184,7 +184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         func
     }
 
-    pub fn visit_args(&mut self, args: &mut [G::Arg], opts: VisitArgsOpts) {
+    pub fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases (replaces Zig `defer release`).
@@ -195,11 +195,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
         // FunctionBodyContainsUseStrict of FunctionBody is true and
         // IsSimpleParameterList of FormalParameters is false."
-        if strict_loc.is_some() && !has_simple_args {
+        if let Some(strict_loc) = strict_loc && !has_simple_args {
             self.log()
                 .add_range_error(
                     Some(self.source),
-                    self.source.range_of_string(strict_loc.unwrap()),
+                    self.source.range_of_string(strict_loc),
                     b"Cannot use a \"use strict\" directive in a function with a non-simple parameter list".as_slice(),
                 );
         }
@@ -551,8 +551,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
-                    if could_be_macro && decl.value.is_some() {
-                        self.visit_binding_and_expr_for_macro(decl.binding, decl.value.unwrap());
+                    if could_be_macro && let Some(value) = decl.value {
+                        self.visit_binding_and_expr_for_macro(decl.binding, value);
                     }
                 }
             }

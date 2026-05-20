@@ -166,12 +166,12 @@ impl Size {
     pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
-            Size::LengthPercentage(l) => l.is_compatible(*browsers),
-            Size::MinContent(_) => F::MinContentSize.is_compatible(*browsers),
-            Size::MaxContent(_) => F::MaxContentSize.is_compatible(*browsers),
-            Size::FitContent(_) => F::FitContentSize.is_compatible(*browsers),
+            Size::LengthPercentage(l) => l.is_compatible(browsers),
+            Size::MinContent(_) => F::MinContentSize.is_compatible(browsers),
+            Size::MaxContent(_) => F::MaxContentSize.is_compatible(browsers),
+            Size::FitContent(_) => F::FitContentSize.is_compatible(browsers),
             Size::FitContentFunction(l) => {
-                F::FitContentFunctionSize.is_compatible(*browsers) && l.is_compatible(*browsers)
+                F::FitContentFunctionSize.is_compatible(browsers) && l.is_compatible(browsers)
             }
             Size::Stretch(vp) => {
                 let feature = if *vp == VendorPrefix::NONE {
@@ -183,7 +183,7 @@ impl Size {
                 } else {
                     return false;
                 };
-                feature.is_compatible(*browsers)
+                feature.is_compatible(browsers)
             }
             Size::Contain => false, // ??? no data in mdn
             Size::Auto => true,
@@ -304,12 +304,12 @@ impl MaxSize {
     pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
-            MaxSize::LengthPercentage(l) => l.is_compatible(*browsers),
-            MaxSize::MinContent(_) => F::MinContentSize.is_compatible(*browsers),
-            MaxSize::MaxContent(_) => F::MaxContentSize.is_compatible(*browsers),
-            MaxSize::FitContent(_) => F::FitContentSize.is_compatible(*browsers),
+            MaxSize::LengthPercentage(l) => l.is_compatible(browsers),
+            MaxSize::MinContent(_) => F::MinContentSize.is_compatible(browsers),
+            MaxSize::MaxContent(_) => F::MaxContentSize.is_compatible(browsers),
+            MaxSize::FitContent(_) => F::FitContentSize.is_compatible(browsers),
             MaxSize::FitContentFunction(l) => {
-                F::FitContentFunctionSize.is_compatible(*browsers) && l.is_compatible(*browsers)
+                F::FitContentFunctionSize.is_compatible(browsers) && l.is_compatible(browsers)
             }
             MaxSize::Stretch(vp) => {
                 let feature = if *vp == VendorPrefix::NONE {
@@ -321,7 +321,7 @@ impl MaxSize {
                 } else {
                     return false;
                 };
-                feature.is_compatible(*browsers)
+                feature.is_compatible(browsers)
             }
             MaxSize::Contain => false, // ??? no data in mdn
             MaxSize::None => true,

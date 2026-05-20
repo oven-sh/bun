@@ -187,7 +187,7 @@ fn size2d_lp_is_compatible(
     val: &Size2D<LengthPercentage>,
     browsers: &css::targets::Browsers,
 ) -> bool {
-    val.a.is_compatible(*browsers) && val.b.is_compatible(*browsers)
+    val.a.is_compatible(browsers) && val.b.is_compatible(browsers)
 }
 
 macro_rules! maybe_flush {

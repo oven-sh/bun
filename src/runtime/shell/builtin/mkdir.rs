@@ -334,7 +334,7 @@ impl ShellMkdirTask {
                 inner: &raw mut this.created_directories,
                 active: this.opts.verbose,
             };
-            if let Err(e) = node_fs.mkdir_recursive_impl(&args, vtable) {
+            if let Err(e) = node_fs.mkdir_recursive_impl(&args, &vtable) {
                 this.err = Some(e.with_path(filepath.as_bytes()));
                 core::hint::black_box(&node_fs);
             }

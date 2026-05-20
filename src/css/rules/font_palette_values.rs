@@ -161,7 +161,7 @@ impl OverrideColors {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::number::CSSIntegerFns;
-        CSSIntegerFns::to_css(&(i32::from(self.index)), dest)?;
+        CSSIntegerFns::to_css(i32::from(self.index), dest)?;
         dest.write_char(b' ')?;
         self.color.to_css(dest)
     }
@@ -216,7 +216,7 @@ impl BasePalette {
         match self {
             BasePalette::Light => dest.write_str("light"),
             BasePalette::Dark => dest.write_str("dark"),
-            BasePalette::Integer(n) => CSSIntegerFns::to_css(&(i32::from(*n)), dest),
+            BasePalette::Integer(n) => CSSIntegerFns::to_css(i32::from(*n), dest),
         }
     }
 

@@ -444,6 +444,9 @@ impl<
     type Err = Error;
     #[inline]
     fn log_mut(&mut self) -> &mut Log {
+        // SAFETY: `self.log` was constructed from `&'a mut Log` in the `init*`
+        // constructors, so the pointee is valid and uniquely borrowed for `'a`;
+        // `&mut self` ensures no overlapping reborrow exists for this call.
         unsafe { self.log.as_mut() }
     }
     #[inline]
@@ -3299,8 +3302,8 @@ lexer_impl_header! {
             match cursor.c {
                 0x0D | 0x0A | 0x2028 | 0x2029 =>
                 {
-                    if first_non_whitespace.is_some()
-                        && after_last_non_whitespace.is_some()
+                    if let (Some(start), Some(end)) =
+                        (first_non_whitespace, after_last_non_whitespace)
                     {
                         // Newline
                         if !decoded.is_empty() {
@@ -3309,8 +3312,7 @@ lexer_impl_header! {
 
                         // Trim whitespace off the start and end of lines in the middle
                         self.decode_jsx_entities(
-                            &text[first_non_whitespace.unwrap() as usize
-                                ..after_last_non_whitespace.unwrap() as usize],
+                            &text[start as usize..end as usize],
                             decoded,
                         )?;
                     }

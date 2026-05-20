@@ -151,7 +151,7 @@ impl Targets {
 
     pub fn is_compatible(&self, feature: css::compat::Feature) -> bool {
         if let Some(targets) = &self.browsers {
-            return feature.is_compatible(*targets);
+            return feature.is_compatible(targets);
         }
         true
     }

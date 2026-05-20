@@ -1202,7 +1202,7 @@ impl FileSink {
         this
     }
 
-    pub fn write(&self, data: streams::Result) -> streams::Writable {
+    pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1212,11 +1212,11 @@ impl FileSink {
     }
 
     #[inline]
-    pub fn write_bytes(&self, data: streams::Result) -> streams::Writable {
+    pub fn write_bytes(&self, data: &streams::Result) -> streams::Writable {
         self.write(data)
     }
 
-    pub fn write_latin1(&self, data: streams::Result) -> streams::Writable {
+    pub fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1225,7 +1225,7 @@ impl FileSink {
         self.to_result(rc)
     }
 
-    pub fn write_utf16(&self, data: streams::Result) -> streams::Writable {
+    pub fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1440,13 +1440,13 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // the C++ `JSFileSink` wrapper `js_construct` is about to create.
         this.write(Self::construct());
     }
-    fn write_bytes(&mut self, data: streams::Result) -> streams::result::Writable {
+    fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write(self, data)
     }
-    fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable {
+    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write_utf16(self, data)
     }
-    fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable {
+    fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
         Self::write_latin1(self, data)
     }
     fn end(&mut self, err: Option<sys::Error>) -> sys::Result<()> {

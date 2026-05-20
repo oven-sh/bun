@@ -485,7 +485,7 @@ fn expand_is_compatible(input: &DeriveInput) -> syn::Result<TokenStream2> {
         impl #impl_g ::bun_css::generics::IsCompatible for #name #ty_g #where_g {
             #[inline]
             #[allow(unused_variables)]
-            fn is_compatible(&self, __browsers: ::bun_css::targets::Browsers) -> bool {
+            fn is_compatible(&self, __browsers: &::bun_css::targets::Browsers) -> bool {
                 #body
             }
         }

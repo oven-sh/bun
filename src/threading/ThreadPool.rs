@@ -580,8 +580,8 @@ impl ThreadPool {
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
-    fn schedule_impl(&self, batch: Batch, try_current: bool) {
-        let Batch { len, head, tail } = batch;
+    fn schedule_impl(&self, batch: &Batch, try_current: bool) {
+        let Batch { len, head, tail } = *batch;
         // Sanity check
         if len == 0 {
             return;
@@ -638,23 +638,23 @@ impl ThreadPool {
             // SAFETY: current is the calling thread's own Thread; exclusive access.
             unsafe {
                 if (*current).run_buffer.push(&mut list).is_err() {
-                    (*current).run_queue.push(list);
+                    (*current).run_queue.push(&list);
                 }
             }
         } else {
-            self.run_queue.push(list);
+            self.run_queue.push(&list);
         }
         self.force_spawn();
     }
 
     /// Schedule a batch of tasks to be executed by some thread on the thread pool.
     pub fn schedule(&self, batch: Batch) {
-        self.schedule_impl(batch, false);
+        self.schedule_impl(&batch, false);
     }
 
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
-        self.schedule_impl(batch, true);
+        self.schedule_impl(&batch, true);
     }
 
     /// Wait for all tasks to complete. This does not shut down or deinit the thread pool.
@@ -1161,7 +1161,7 @@ impl Thread {
             head: node_ptr,
             tail: node_ptr,
         };
-        self.idle_queue.push(list);
+        self.idle_queue.push(&list);
     }
 
     /// Thread entry point which runs a worker for the ThreadPool
@@ -1539,8 +1539,8 @@ pub mod node {
         const _ALIGN_CHECK: () =
             assert!(core::mem::align_of::<Node>() >= ((Self::IS_CONSUMING | Self::HAS_CACHE) + 1));
 
-        pub(super) fn push(&self, list: List) {
-            let List { head, tail } = list;
+        pub(super) fn push(&self, list: &List) {
+            let List { head, tail } = *list;
             let mut stack = self.stack.load(Ordering::Relaxed);
             loop {
                 // Attach the list to the stack (pt. 1)

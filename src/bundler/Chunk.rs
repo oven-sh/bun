@@ -1521,7 +1521,6 @@ pub type ImportsFromOtherChunks = ArrayHashMap<IndexInt, crate::cross_chunk_impo
 // `Chunk` is bump-arena-allocated (no Drop on free); boxing the large arm
 // would leak. The CSS/JS chunk size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-
 pub enum Content {
     Javascript(JavaScriptChunk),
     Css(CssChunk),

@@ -7167,10 +7167,10 @@ pub mod bv2_impl {
                             let reference_source_index = this
                                 .enqueue_server_component_generated_file(
                                     crate::ServerComponentParseTask::Data::ClientReferenceProxy(
-                                        Box::new(crate::ServerComponentParseTask::ReferenceProxy {
+                                        crate::ServerComponentParseTask::ReferenceProxy {
                                             other_source,
                                             named_exports,
-                                        }),
+                                        },
                                     ),
                                     scb_source,
                                 )

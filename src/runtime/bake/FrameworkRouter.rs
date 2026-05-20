@@ -1516,7 +1516,9 @@ impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashCont
     #[inline]
     fn ctx_hash(key: &Box<[u8]>) -> u64 {
         // Zig: `std.hash.Wyhash.hash(0, s)` — `bun_wyhash::hash` is the final4
-        // variant with seed 0 (NOT the legacy `Wyhash11` used by `OneShotHasher`).
+        // variant with seed 0. (Don't route through `auto_hash`/`OneShotHasher`
+        // here: Rust's `<[u8] as Hash>` mixes in a length prefix, which would
+        // shift the bucket layout the snapshot below depends on.)
         bun_wyhash::hash(key)
     }
     #[inline]

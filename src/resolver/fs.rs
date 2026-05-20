@@ -1635,6 +1635,15 @@ impl RealFS {
         let mut iter = bun_sys::iterate_dir(handle_fd);
         let mut dir = DirEntry::init(dir_, generation);
         let mut prev_map = prev_map;
+        // PERF(port): on a re-read, the previous entry count is the best
+        // capacity guess we have — reserving it up-front avoids the
+        // grow-then-rehash-every-key cascade hashbrown otherwise pays
+        // (perf showed `RawTable::reserve_rehash` as the dominant `add_entry`
+        // cost). Zig's `StringHashMap` grows the same way but its hash inlines
+        // into `grow`; we additionally skip the grows when we can.
+        if let Some(prev) = prev_map.as_deref() {
+            dir.data.reserve(prev.len());
+        }
 
         if store_fd {
             FileSystem::set_max_fd(handle_fd.native());

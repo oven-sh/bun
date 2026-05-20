@@ -146,7 +146,6 @@ pub struct Result {
 // `Result` lives in a bump arena (no Drop on free); boxing the large arm
 // would leak the heap allocation. The size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-
 pub enum ResultValue {
     Success(Success),
     Err(ResultError),

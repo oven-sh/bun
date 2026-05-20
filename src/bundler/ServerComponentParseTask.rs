@@ -39,10 +39,13 @@ pub struct ServerComponentParseTask {
     pub source: Source,
 }
 
+// `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
+// would leak. The size diff is acceptable.
+#[allow(clippy::large_enum_variant)]
 pub enum Data {
     /// Generate server-side code for a "use client" module. Given the
     /// client ast, a "reference proxy" is created with identical exports.
-    ClientReferenceProxy(Box<ReferenceProxy>),
+    ClientReferenceProxy(ReferenceProxy),
 
     ClientEntryWrapper(ClientEntryWrapper),
 }

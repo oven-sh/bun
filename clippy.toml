@@ -23,7 +23,7 @@ disallowed-types = [
   { path = "std::collections::HashMap", reason = "use bun_collections (wyhash)" },
   { path = "std::collections::HashSet", reason = "use bun_collections (wyhash)" },
   { path = "std::fs::File", reason = "use bun_sys::File" },
-  { path = "std::process::Command", reason = "use bun_sys::process" },
+  { path = "std::process::Command", reason = "use bun_core::util::spawn_sync_inherit (CLI helpers) or bun_spawn_sys (full control)" },
 ]
 
 disallowed-macros = [

@@ -3104,7 +3104,14 @@ impl<'a> HTTPClient<'a> {
             ) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
-                    if to_read!().len() > max_http_header_size() {
+                    // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
+                    // request-side knob (Node `--max-http-header-size`); reusing
+                    // it here rejects legitimate responses with large
+                    // `Location`/`Set-Cookie` headers. The intent is to bound
+                    // `response_message_buffer` growth, so use a generous fixed
+                    // cap independent of that knob.
+                    const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
+                    if to_read!().len() > MAX_RESPONSE_HEADER_BUFFER {
                         self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
                         return;
                     }

@@ -309,7 +309,12 @@ fn index_rehasher(hashes: &[u32]) -> impl Fn(&u32) -> u64 + '_ {
 /// ~5 cycles against a ~30-cycle SwissTable insert; the win is one hot copy
 /// the linker can order instead of N scattered ones.
 #[inline(never)]
-fn index_insert_unique(index: &mut hashbrown::HashTable<u32>, hashes: &[u32], i: u32, h: u32) {
+fn index_insert_unique<A: MapAllocator>(
+    index: &mut hashbrown::HashTable<u32, IndexAlloc<A>>,
+    hashes: &[u32],
+    i: u32,
+    h: u32,
+) {
     index.insert_unique(spread_hash(h), i, index_rehasher(hashes));
 }
 
@@ -322,7 +327,11 @@ fn index_insert_unique(index: &mut hashbrown::HashTable<u32>, hashes: &[u32], i:
 /// header) pays the SwissTable grow once instead of `O(log n)` times across the
 /// following `push_entry` loop.
 #[inline(never)]
-fn index_reserve(index: &mut hashbrown::HashTable<u32>, hashes: &[u32], target: usize) {
+fn index_reserve<A: MapAllocator>(
+    index: &mut hashbrown::HashTable<u32, IndexAlloc<A>>,
+    hashes: &[u32],
+    target: usize,
+) {
     let extra = target.saturating_sub(index.len());
     if extra != 0 {
         index.reserve(extra, index_rehasher(hashes));
@@ -337,18 +346,23 @@ fn index_reserve(index: &mut hashbrown::HashTable<u32>, hashes: &[u32], target: 
 /// [`INDEX_THRESHOLD`], so the per-`push_entry` SwissTable grow path never
 /// runs again.
 ///
-/// Free fn (no `K`/`V`/`C`/`A` in scope) + `#[inline(never)]` so this — and
-/// the `HashTable::with_capacity` / grow path inside it — is one symbol shared
-/// by every `ArrayHashMap` instantiation. Boxed so the caller can store it as
-/// `Option<Box<…>>` (8 B header vs the 32 B inline `HashTable`).
+/// Free fn (no `K`/`V`/`C` in scope) + `#[inline(never)]` so this — and the
+/// `HashTable::with_capacity` / grow path inside it — is one symbol shared by
+/// every `ArrayHashMap` instantiation that uses the same `A` (only two ZST
+/// allocators exist today: `DefaultAlloc` and `AstAlloc`). Boxed so the caller
+/// can store it as `Option<Box<…>>` (8 B header vs the 32 B inline `HashTable`).
 #[cold]
 #[inline(never)]
-fn rebuild_index_from_hashes(hashes: &[u32], capacity: usize) -> Box<hashbrown::HashTable<u32>> {
-    let mut table = hashbrown::HashTable::with_capacity(capacity.max(hashes.len()));
+fn rebuild_index_from_hashes<A: MapAllocator>(
+    hashes: &[u32],
+    capacity: usize,
+) -> Box<hashbrown::HashTable<u32, IndexAlloc<A>>, A> {
+    let mut table =
+        hashbrown::HashTable::with_capacity_in(capacity.max(hashes.len()), IndexAlloc(A::default()));
     for (i, &h) in hashes.iter().enumerate() {
         table.insert_unique(spread_hash(h), i as u32, index_rehasher(hashes));
     }
-    Box::new(table)
+    Box::new_in(table, A::default())
 }
 
 /// Shorthand for the allocator bound every `ArrayHashMap`/`StringArrayHashMap`
@@ -356,20 +370,45 @@ fn rebuild_index_from_hashes(hashes: &[u32], capacity: usize) -> Box<hashbrown::
 /// columns and the per-key `Box<[u8], A>`; `Clone` so `Vec`/`Box` can clone
 /// their allocator on resize/clone; `Default` so constructors don't need an
 /// `*_in(alloc: A)` variant — all current `A` (`Global`, `AstAlloc`) are ZST.
-///
-/// Unlike `StringHashMap<V, A>`, this does **not** require
-/// `HashbrownAllocator`: the `hashbrown::HashTable<u32>` index accelerator is
-/// kept on hashbrown's default global allocator regardless of `A`. The index
-/// is ~4 bytes/entry and only materialises past [`INDEX_THRESHOLD`]; for
-/// `Ast.named_exports` (10 000 entries) it is ~40 KB vs ~1 MB of column +
-/// key-box bytes, so routing only the latter through `AstAlloc` captures
-/// >95% of the leak while keeping the default `A = std::alloc::Global` —
-/// which means `Box<[u8], A>` defaults to plain `Box<[u8]>` and existing call
-/// sites that name that type (e.g. `StringMap::keys() -> &[Box<[u8]>]`)
-/// compile unchanged. Bridging `Global` to `allocator_api2::Allocator` to
-/// route the index too is blocked by orphan rules.
 pub trait MapAllocator: Allocator + Clone + Default {}
 impl<A: Allocator + Clone + Default> MapAllocator for A {}
+
+/// Bridges any `core::alloc::Allocator` `A` to the `allocator_api2` polyfill
+/// trait that `hashbrown::HashTable<_, A>` is bounded on, so the index
+/// accelerator's bucket array can route through `A` without `MapAllocator`
+/// itself requiring `HashbrownAllocator` (orphan rules block bridging
+/// `std::alloc::Global`, the default `A`, directly).
+///
+/// This makes an `ArrayHashMap<_, _, _, AstAlloc>` fully arena-backed: when
+/// its `Drop` never runs (the AST `MultiArrayList` slab-only-drop pattern,
+/// e.g. `BundledAst` columns), nothing — columns, key boxes, index header,
+/// *or* index buckets — is stranded on the global heap.
+#[derive(Clone, Copy, Default)]
+struct IndexAlloc<A>(A);
+
+// SAFETY: 1:1 forward to `A: core::alloc::Allocator`; the polyfill trait's
+// contract is identical (memory blocks are valid for the returned size,
+// `deallocate` is only called on blocks `allocate` returned, etc.). hashbrown
+// only calls `allocate`/`deallocate` (it grows by alloc-new + move +
+// dealloc-old), so the defaulted `grow`/`shrink`/`allocate_zeroed` — which
+// forward to `allocate`/`deallocate` — are sufficient.
+unsafe impl<A: Allocator> allocator_api2::alloc::Allocator for IndexAlloc<A> {
+    #[inline]
+    fn allocate(
+        &self,
+        layout: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, allocator_api2::alloc::AllocError> {
+        self.0
+            .allocate(layout)
+            .map_err(|_| allocator_api2::alloc::AllocError)
+    }
+    #[inline]
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        // SAFETY: `ptr`/`layout` were returned by `allocate` above on this same
+        // `A` (per the polyfill trait's caller contract).
+        unsafe { self.0.deallocate(ptr, layout) }
+    }
+}
 
 /// Insertion-ordered hash map with contiguous key / value storage.
 ///
@@ -389,8 +428,10 @@ pub struct ArrayHashMap<K, V, C = AutoContext, A: MapAllocator = Global> {
     /// entries. Stores `u32` indices; the table is hashed by [`spread_hash`]
     /// of `self.hashes[i]` so lookups never re-hash `K`. Kept in sync with
     /// the column vecs by every mutation path (patched on point removal,
-    /// rebuilt on permutation). Stays on hashbrown's default global allocator
-    /// regardless of `A` (see [`MapAllocator`] for why).
+    /// rebuilt on permutation). Both the `Box` and the table's bucket array
+    /// route through `A` (via [`IndexAlloc`]), so an
+    /// `ArrayHashMap<_, _, _, AstAlloc>` whose `Drop` never runs (arena
+    /// bulk-free) strands nothing on the global heap.
     ///
     /// Boxed so the per-map header cost is 8 B (`Option<Box>` uses the
     /// `NonNull` niche) instead of the 32 B inline `HashTable` — `Part`
@@ -398,7 +439,7 @@ pub struct ArrayHashMap<K, V, C = AutoContext, A: MapAllocator = Global> {
     /// every `Part` and doubled the `Vec<Part>` grow `memmove`s the bundler
     /// page-faults on. The box is allocated once, lazily, at the
     /// `INDEX_THRESHOLD` crossover.
-    index: Option<Box<hashbrown::HashTable<u32>>>,
+    index: Option<Box<hashbrown::HashTable<u32, IndexAlloc<A>>, A>>,
     ctx: C,
     // Zig `pointer_stability: std.debug.SafetyLock` — debug-only re-entrancy
     // guard around operations that may invalidate entry pointers. `AtomicBool`

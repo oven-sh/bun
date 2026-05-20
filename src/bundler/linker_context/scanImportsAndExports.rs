@@ -112,7 +112,7 @@ pub fn scan_imports_and_exports(
     let named_exports: *mut [NamedExports] = ast.named_exports;
     let flags: *mut [js_meta::Flags] = meta.flags;
     let ast_flags_list: *mut [AstFlags] = ast.flags;
-    let export_star_import_records: *mut [Box<[u32]>] = ast.export_star_import_records;
+    let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
@@ -791,7 +791,8 @@ pub fn scan_imports_and_exports(
 
                 let extra_count = (force_include_exports as usize) + (add_wrapper as usize);
 
-                let mut dependencies: Vec<Dependency> = Vec::with_capacity(extra_count);
+                let mut dependencies =
+                    bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
 
                 for alias in col_ref!(sorted_aliases)[id].iter() {
                     let exp = col_ref!(resolved_exports)[id].get(alias).unwrap();
@@ -852,7 +853,7 @@ pub fn scan_imports_and_exports(
                 let entry_point_part_index = this.graph.add_part_to_file(
                     source_index,
                     Part {
-                        dependencies: Vec::<Dependency>::move_from_list(dependencies),
+                        dependencies,
                         can_be_removed_if_unused: false,
                         ..Default::default()
                     },
@@ -1186,7 +1187,7 @@ struct DependencyWrapper<'a> {
     import_records: &'a [ImportRecordList<'a>],
     export_star_map: HashMap<IndexInt, ()>,
     entry_point_kinds: &'a [EntryPoint::Kind],
-    export_star_records: &'a [Box<[u32]>],
+    export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
 }
 
@@ -1272,7 +1273,7 @@ struct ExportStarContext<'a> {
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
-    export_star_records: *mut [Box<[u32]>],
+    export_star_records: *mut [bun_alloc::AstVec<u32>],
 }
 
 impl<'a> ExportStarContext<'a> {

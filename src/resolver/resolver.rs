@@ -4120,7 +4120,8 @@ impl<'a> Resolver<'a> {
 
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
 
-        let mut i: i32 = 1;
+        let mut i: usize = 1;
+        let queue = bufs!(dir_entry_paths_to_resolve);
         let input_path_len = input_path.len();
         dir_info_uncached_path_buf[..input_path_len].copy_from_slice(input_path);
         // The slice spans one byte past the copied path so the NUL-splice/restore at
@@ -4130,7 +4131,7 @@ impl<'a> Resolver<'a> {
         // safe slice is in-bounds and the threadlocal buffer outlives this fn.
         let path: &mut [u8] = &mut dir_info_uncached_path_buf[..input_path_len + 1];
 
-        bufs!(dir_entry_paths_to_resolve)[0].write(DirEntryResolveQueueItem {
+        queue[0].write(DirEntryResolveQueueItem {
             result: top_result,
             unsafe_path: bun_ptr::RawSlice::new(&path[..input_path_len]),
             safe_path: bun_ptr::RawSlice::EMPTY,
@@ -4181,26 +4182,21 @@ impl<'a> Resolver<'a> {
             // Path has more uncached components than our fixed queue can hold.
             // This only happens for user-controlled absolute import paths with
             // hundreds of short components — no real directory is this deep.
-            if usize::try_from(i).expect("int cast") >= bufs!(dir_entry_paths_to_resolve).len() {
+            if i >= queue.len() {
                 return Ok(None);
             }
-            bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].write(
-                DirEntryResolveQueueItem {
-                    unsafe_path: bun_ptr::RawSlice::new(top),
-                    result,
-                    safe_path: bun_ptr::RawSlice::EMPTY,
-                    fd: FD::INVALID,
-                },
-            );
+            queue[i].write(DirEntryResolveQueueItem {
+                unsafe_path: bun_ptr::RawSlice::new(top),
+                result,
+                safe_path: bun_ptr::RawSlice::EMPTY,
+                fd: FD::INVALID,
+            });
 
             if let Some(top_entry) = rfs!().entries.get(top) {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
-                        let slot = unsafe {
-                            bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")]
-                                .assume_init_mut()
-                        };
+                        let slot = unsafe { queue[i].assume_init_mut() };
                         slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
                         slot.fd = entries.fd;
                     }
@@ -4224,23 +4220,17 @@ impl<'a> Resolver<'a> {
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {
-                bufs!(dir_entry_paths_to_resolve)[usize::try_from(i).expect("int cast")].write(
-                    DirEntryResolveQueueItem {
-                        unsafe_path: bun_ptr::RawSlice::new(root_path),
-                        result,
-                        safe_path: bun_ptr::RawSlice::EMPTY,
-                        fd: FD::INVALID,
-                    },
-                );
+                queue[i].write(DirEntryResolveQueueItem {
+                    unsafe_path: bun_ptr::RawSlice::new(root_path),
+                    result,
+                    safe_path: bun_ptr::RawSlice::EMPTY,
+                    fd: FD::INVALID,
+                });
                 if let Some(top_entry) = rfs!().entries.get(top) {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
-                            let slot = unsafe {
-                                bufs!(dir_entry_paths_to_resolve)
-                                    [usize::try_from(i).expect("int cast")]
-                                .assume_init_mut()
-                            };
+                            let slot = unsafe { queue[i].assume_init_mut() };
                             slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
                             slot.fd = entries.fd;
                         }
@@ -4260,7 +4250,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let mut queue_slice_len = usize::try_from(i).expect("int cast");
+        let mut queue_slice_len = i;
         if cfg!(debug_assertions) {
             debug_assert!(queue_slice_len > 0);
         }
@@ -4303,7 +4293,7 @@ impl<'a> Resolver<'a> {
         while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top =
-                unsafe { bufs!(dir_entry_paths_to_resolve)[queue_slice_len - 1].assume_init_ref() }
+                unsafe { queue[queue_slice_len - 1].assume_init_ref() }
                     .clone();
             // `unsafe_path` was set to a slice of the threadlocal
             // `dir_info_uncached_path` buffer earlier in this fn; valid for the

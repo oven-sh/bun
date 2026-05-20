@@ -4,7 +4,7 @@
 //! a `bun_js_parser` dep. The previous blocker (`Target`/`ImportRecord` living
 //! in `bun_options_types`) is gone now that those are canonical in `bun_ast`.
 
-use bun_alloc::AstAlloc;
+use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::array_hash_map::{AutoContext, StringContext};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 
@@ -18,7 +18,7 @@ use crate::part::List as PartList;
 use crate::symbol::List as SymbolList;
 type ImportRecordList<'a> = crate::import_record::List<'a>;
 
-pub type TopLevelSymbolToParts = ArrayHashMap<Ref, Vec<u32>>;
+pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
 
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
@@ -74,8 +74,7 @@ pub struct Ast<'a> {
     // is conveniently fully parallelized.
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
-    // TODO(port): `[]u32` not freed in Zig `deinit` — likely arena-owned. Using Box<[u32]> for now.
-    pub export_star_import_records: Box<[u32]>,
+    pub export_star_import_records: AstVec<u32>,
 
     // arena: std.mem.Allocator,
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
@@ -135,7 +134,7 @@ impl<'a> Ast<'a> {
             require_ref: Ref::NONE,
             named_imports: Default::default(),
             named_exports: Default::default(),
-            export_star_import_records: Box::default(),
+            export_star_import_records: AstAlloc::vec(),
             top_level_symbols_to_parts: Default::default(),
             commonjs_named_exports: Default::default(),
             redirect_import_record_index: None,
@@ -174,7 +173,8 @@ pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringCo
 pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
 pub type NamedExports = StringArrayHashMap<NamedExport, StringContext, AstAlloc>;
 pub type ConstValuesMap = ArrayHashMap<Ref, Expr, AutoContext, AstAlloc>;
-pub type TsEnumsMap = ArrayHashMap<Ref, StringHashMap<InlinedEnumValue>, AutoContext, AstAlloc>;
+pub type TsEnumsMap =
+    ArrayHashMap<Ref, StringHashMap<InlinedEnumValue, AstAlloc>, AutoContext, AstAlloc>;
 
 impl<'a> Ast<'a> {
     pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {

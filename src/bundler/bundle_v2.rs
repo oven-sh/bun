@@ -1652,7 +1652,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         pub fn initialize_client_transpiler(&mut self) -> Result<&mut Transpiler<'a>, Error> {
             // bundle_v2.zig:198-241.
             //
@@ -1793,7 +1792,6 @@ pub mod bv2_impl {
         // deterministic given that the entry point order is deterministic, since the
         // returned order is the postorder of the graph traversal and import record
         // order within a given file is deterministic.
-        #[cold]
         pub fn visit<const CHECK_DYNAMIC_IMPORTS: bool>(
             &mut self,
             source_index: Index,
@@ -1955,7 +1953,6 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        #[cold]
         pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop (Zig: `defer trace.end()`).
             let _trace = crate::ungate_support::perf::trace("Bundler.findReachableFiles");
@@ -2104,7 +2101,6 @@ pub mod bv2_impl {
             false
         }
 
-        #[cold]
         pub fn wait_for_parse(&mut self) {
             // bundle_v2.zig:488-491 — `this.loop().tick(this, &isDone)`.
             //
@@ -2141,7 +2137,6 @@ pub mod bv2_impl {
             self.graph.pool().worker_pool().dump_stats(label);
         }
 
-        #[cold]
         pub fn scan_for_secondary_paths(&mut self) {
             if !self.graph.has_any_secondary_paths {
                 // Assert the boolean is accurate.
@@ -2205,7 +2200,6 @@ pub mod bv2_impl {
         }
 
         /// This runs on the Bundle Thread.
-        #[cold]
         pub fn run_resolver(
             &mut self,
             import_record: jsc_api::JSBundler::MiniImportRecord,
@@ -2574,7 +2568,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
@@ -2661,7 +2654,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
@@ -3013,7 +3005,6 @@ pub mod bv2_impl {
 
         // PORT NOTE: split because data type varies by variant — cannot express `switch(variant)`-typed param with const-generic enum on stable
         // TODO(port): comptime variant enum param + dependent data type — split into three monomorphic fns
-        #[cold]
         pub fn enqueue_entry_points_normal<P: AsRef<[u8]>>(
             &mut self,
             data: &[P],
@@ -3076,7 +3067,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn enqueue_entry_points_dev_server(
             &mut self,
             files: bake_types::EntryPointList,
@@ -3198,7 +3188,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn enqueue_entry_points_bake_production(
             &mut self,
             data: &bake_types::production::EntryPointMap,
@@ -3270,7 +3259,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         fn clone_ast(&mut self) -> Result<(), Error> {
             let _trace = crate::ungate_support::perf::trace("Bundler.cloneAST");
             // TODO(port): bun.safety.alloc.assertEq
@@ -3300,7 +3288,6 @@ pub mod bv2_impl {
 
         /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
         /// at the same time in one pass over the SCB list.
-        #[cold]
         pub fn process_server_component_manifest_files(&mut self) -> Result<(), AllocError> {
             // If a server components is not configured, do nothing
             let Some(fw) = &self.framework else {
@@ -3556,7 +3543,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn enqueue_parse_task(
             &mut self,
             resolve_result: &_resolver::Result,
@@ -3611,7 +3597,6 @@ pub mod bv2_impl {
             Ok(source_index.get())
         }
 
-        #[cold]
         pub fn enqueue_parse_task2(
             &mut self,
             source: &mut bun_ast::Source,
@@ -3711,7 +3696,6 @@ pub mod bv2_impl {
 
         /// Enqueue a ServerComponentParseTask.
         /// `source_without_index` is copied and assigned a new source index. That index is returned.
-        #[cold]
         pub fn enqueue_server_component_generated_file(
             &mut self,
             data: crate::ServerComponentParseTask::Data,
@@ -3817,7 +3801,6 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        #[cold]
         pub fn get_all_dependencies(
             &mut self,
             reachable_files: &[Index],
@@ -3859,7 +3842,6 @@ pub mod bv2_impl {
             (fetcher.on_fetch)(fetcher.ctx, &mut result)
         }
 
-        #[cold]
         pub fn generate_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
@@ -4015,7 +3997,6 @@ pub mod bv2_impl {
         /// no longer the bounded arena leak the Zig original described. The
         /// worker pool is owned (created with `thread_pool: None`), so tearing
         /// it down does not touch the runtime VM's parse threads.
-        #[cold]
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
@@ -4045,7 +4026,6 @@ pub mod bv2_impl {
             Ok(this)
         }
 
-        #[cold]
         pub fn generate_from_bake_production_cli(
             entry_points: &bake_types::production::EntryPointMap,
             server_transpiler: &'a mut Transpiler<'a>,
@@ -4126,7 +4106,6 @@ pub mod bv2_impl {
             result
         }
 
-        #[cold]
         pub fn add_server_component_boundaries_as_extra_entry_points(
             &mut self,
         ) -> Result<(), Error> {
@@ -4157,7 +4136,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn process_files_to_copy(&mut self, reachable_files: &[Index]) -> Result<(), Error> {
             if self.graph.estimated_file_loader_count > 0 {
                 // PORT NOTE: Zig per-file `arena` column dropped — Box owns its alloc.
@@ -4300,7 +4278,6 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        #[cold]
         pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
             // Dispatch to the loop that *owns* `BundleV2` (Zig: `switch (this.loop().*)`).
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
@@ -4325,7 +4302,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
@@ -4348,7 +4324,6 @@ pub mod bv2_impl {
         }
     }
 
-    #[cold]
     fn on_load_mini(load: *mut jsc_api::JSBundler::Load, this: *mut BundleV2<'static>) {
         // SAFETY: callback contract — `load` is the ctx passed to
         // `enqueue_task_concurrent_with_extra_ctx`; `this` is the BundleV2 the
@@ -4356,20 +4331,17 @@ pub mod bv2_impl {
         BundleV2::on_load(unsafe { &mut *load }, unsafe { &mut *this });
     }
 
-    #[cold]
     fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
         // SAFETY: see `on_load_mini`.
         BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
     }
 
-    #[cold]
     pub fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
         // SAFETY: `bv2` is a live backref set in `Load::init`.
         let bv2 = unsafe { &mut *load.bv2 };
         BundleV2::on_load(load, bv2);
     }
 
-    #[cold]
     fn on_load_from_js_loop_raw(
         load: *mut jsc_api::JSBundler::Load,
     ) -> bun_event_loop::JsResult<()> {
@@ -4379,7 +4351,6 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        #[cold]
         pub fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
@@ -4569,14 +4540,12 @@ pub mod bv2_impl {
         }
     }
 
-    #[cold]
     pub fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
         // SAFETY: `bv2` is a live backref set in `Resolve::init`.
         let bv2 = unsafe { &mut *resolve.bv2 };
         BundleV2::on_resolve(resolve, bv2);
     }
 
-    #[cold]
     fn on_resolve_from_js_loop_raw(
         resolve: *mut jsc_api::JSBundler::Resolve,
     ) -> bun_event_loop::JsResult<()> {
@@ -4586,7 +4555,6 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        #[cold]
         pub fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
             // Zig: `defer this.decrementScanCounter()`. RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
@@ -4891,7 +4859,6 @@ pub mod bv2_impl {
             // resolve is dropped here (defer resolve.deinit())
         }
 
-        #[cold]
         pub fn deinit_without_freeing_arena(&mut self) {
             {
                 // We do this first to make it harder for any dangling pointers to data to be used in there.
@@ -4946,68 +4913,25 @@ pub mod bv2_impl {
                     *t = Default::default();
                 }
 
-                // `MultiArrayList<BundledAst>` is the dominant retainer (LSan with
-                // System allocator: ~67 MB/iter `Vec<Part>` via `add_part_to_file`,
-                // ~9 MB/iter `Scope::members` via `prepare_for_visit_pass`). Zig
-                // covers this with `Ast::deinit` (parts/symbols/import_records) +
-                // `graph.heap.deinit()` for the rest; the Rust port's
-                // `MultiArrayList::drop` is slab-only and these are global-heap
-                // `Vec`/`HashMap`. `linker.graph.ast` is a bitwise SoA `memcpy` of
-                // `graph.ast` (see `MultiArrayList::clone`, line 2840), then
-                // mutated in-place (e.g. `add_part_to_file` reallocates `parts`),
-                // so it is the post-mutation owner; the parse-side rows are
-                // bitwise aliases (or stale post-realloc) and — being slab-only on
-                // drop — never run element destructors, so freeing here once is
-                // not a double-free. If `link()` errored before the clone ran the
-                // linker side is empty and the parse side is the sole owner.
+                // `MultiArrayList<BundledAst>` columns are now fully `AstAlloc`-
+                // backed (column vecs, key boxes, `ArrayHashMap` index buckets,
+                // and every `Part`/`NamedImport`/`Scope` field), so the slab-only
+                // `MultiArrayList::drop` strands nothing on the global heap —
+                // every payload is reclaimed by `mi_heap_destroy` on the AST
+                // arenas. `Symbol` / `ImportRecord` are POD; `parts` / `symbols`
+                // / `import_records` are `ArenaVec`s whose buffers also live in
+                // an AST heap. `linker.graph.ast` is a bitwise SoA `memcpy` of
+                // `graph.ast` (see `MultiArrayList::clone`, `clone_ast`), so
+                // either side may be left for the slab drop.
+                //
+                // Only `css` still needs an explicit pass: the arena-allocated
+                // `BundlerStyleSheet` never has `Drop` run by the slab and owns
+                // global-heap fields. The macro takes only one side, and
+                // `CssChunk::asts` `forget()`s its aliases, so this is the
+                // unique drop.
                 macro_rules! take_ast_cols {
                     ($ast:expr) => {{
                         let ast = $ast;
-                        for v in ast.items_parts_mut() {
-                            drop(core::mem::replace(
-                                v,
-                                bun_alloc::ArenaVec::new_in(*v.allocator()),
-                            ));
-                        }
-                        for v in ast.items_symbols_mut() {
-                            drop(core::mem::replace(
-                                v,
-                                bun_alloc::ArenaVec::new_in(*v.allocator()),
-                            ));
-                        }
-                        for v in ast.items_import_records_mut() {
-                            drop(core::mem::replace(
-                                v,
-                                bun_alloc::ArenaVec::new_in(*v.allocator()),
-                            ));
-                        }
-                        for v in ast.items_named_imports_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_named_exports_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_export_star_import_records_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_module_scope_mut() {
-                            // Not in Zig `Ast::deinit` — Zig's `Scope::members` /
-                            // `children` were arena-backed, the port's are
-                            // global-heap `HashMap` / `Vec`.
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_top_level_symbols_to_parts_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_commonjs_named_exports_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        for v in ast.items_ts_enums_mut() {
-                            drop(core::mem::take(v));
-                        }
-                        // The arena-allocated `StyleSheet` never runs Drop; free its
-                        // global-heap fields. The macro takes only one side, and
-                        // `CssChunk::asts` `forget()`s its aliases, so this is the unique drop.
                         for v in ast.items_css_mut() {
                             if let Some(css_ref) = v.take() {
                                 // SAFETY: live arena pointer; dropped exactly once.
@@ -5035,7 +4959,6 @@ pub mod bv2_impl {
                 take_col!(meta, items_imports_to_bind_mut);
                 take_col!(meta, items_resolved_exports_mut);
                 take_col!(meta, items_sorted_and_filtered_export_aliases_mut);
-                take_col!(meta, items_top_level_symbol_to_parts_overlay_mut);
                 take_col!(meta, items_cjs_export_copies_mut);
             }
 
@@ -5081,7 +5004,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         pub fn run_from_js_in_new_thread(
             &mut self,
             entry_points: &[&[u8]],
@@ -5218,7 +5140,6 @@ pub mod bv2_impl {
 
     /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
     /// Metafile paths are relative to outdir, like all other output files.
-    #[cold]
     fn write_metafile_output(
         output_files: &mut Vec<options::OutputFile>,
         outdir: &[u8],
@@ -5295,7 +5216,6 @@ pub mod bv2_impl {
         }
 
         /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
-        #[cold]
         pub fn start_from_bake_dev_server(
             &mut self,
             bake_entry_points: bake_types::EntryPointList,
@@ -5318,7 +5238,6 @@ pub mod bv2_impl {
         // css_entry_points, etc.). After tier-6 collapse this fn should be HOISTED into
         // bun_runtime::bake (which can name DevServer concretely) and call back into BundleV2
         // helpers. Until then the entry-point fields are reached through the vtable.
-        #[cold]
         pub fn finish_from_bake_dev_server(
             &mut self,
             dev_server: &dispatch::DevServerHandle,
@@ -5655,7 +5574,6 @@ pub mod bv2_impl {
                 .map_err(|_| AllocError)
         }
 
-        #[cold]
         pub fn enqueue_on_resolve_plugin_if_needed(
             &mut self,
             source_index: IndexInt,
@@ -5711,7 +5629,6 @@ pub mod bv2_impl {
             false
         }
 
-        #[cold]
         pub fn enqueue_entry_point_on_resolve_plugin_if_needed(
             &mut self,
             entry_point: &[u8],
@@ -5754,7 +5671,6 @@ pub mod bv2_impl {
             false
         }
 
-        #[cold]
         pub fn enqueue_on_load_plugin_if_needed(&mut self, parse: &mut ParseTask) -> bool {
             let had_matches = self.enqueue_on_load_plugin_if_needed_impl(parse);
             if had_matches {
@@ -5793,7 +5709,6 @@ pub mod bv2_impl {
             false
         }
 
-        #[cold]
         pub fn enqueue_on_load_plugin_if_needed_impl(&mut self, parse: &mut ParseTask) -> bool {
             if let Some(plugins) = self.plugins_ref() {
                 if plugins.has_any_matches(&parse.path, true) {
@@ -5837,7 +5752,6 @@ pub mod bv2_impl {
             Ok(out)
         }
 
-        #[cold]
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
             let Some(fw) = &self.framework else {
                 return Ok(());
@@ -5919,7 +5833,6 @@ pub mod bv2_impl {
         //
         // The problem is that module resolution has many mutexes.
         // The downside is cached resolutions are faster to do in threads since they only lock very briefly.
-        #[cold]
         fn run_resolution_for_parse_task(
             parse_result: &mut parse_task::Result,
             this: &mut BundleV2,
@@ -5993,7 +5906,6 @@ pub mod bv2_impl {
         /// are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
         /// Used by both initial parse resolution and barrel un-deferral.
-        #[cold]
         pub fn resolve_import_records(
             &mut self,
             ctx: ResolveImportRecordCtx,
@@ -6683,7 +6595,6 @@ pub mod bv2_impl {
 
         /// Process a resolve queue: create input file slots and schedule parse tasks.
         /// Returns the number of newly scheduled tasks (for pending_items accounting).
-        #[cold]
         pub fn process_resolve_queue(
             &mut self,
             resolve_queue: ResolveQueue,
@@ -6848,7 +6759,6 @@ pub mod bv2_impl {
         /// Patch source_index on import records from pathToSourceIndexMap and
         /// resolve_tasks_waiting_for_import_source_index. Called after
         /// processResolveQueue has registered new modules.
-        #[cold]
         pub fn patch_import_record_source_indices(
             &mut self,
             import_records: &mut import_record::List,
@@ -6901,7 +6811,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[cold]
         fn generate_server_html_module(
             &mut self,
             path: &Fs::Path,
@@ -7008,7 +6917,6 @@ pub mod bv2_impl {
             this.on_notify_defer();
         }
 
-        #[cold]
         pub fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2) {
             let _trace = crate::ungate_support::perf::trace("Bundler.onParseTaskComplete");
             // PORT NOTE: Zig aliased `const graph = &this.graph;`. Borrowck rejects

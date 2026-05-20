@@ -6,7 +6,7 @@ use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
 pub use bun_collections::VecExt as _VecExtReexport;
-use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
+use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
 use crate::JsonWriter;
@@ -1079,7 +1079,7 @@ impl Default for Dependency {
     }
 }
 
-pub type DependencyList = Vec<Dependency>;
+pub type DependencyList = bun_alloc::AstVec<Dependency>;
 
 pub type ExprList = Vec<Expr>;
 pub type StmtList = Vec<Stmt>;
@@ -1155,8 +1155,9 @@ pub enum PartTag {
 
 // Zig: std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false)
 // TODO(port): bun_collections::ArrayHashMap must accept a custom hasher ctx (RefHashCtx).
-pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use>;
-pub type PartSymbolPropertyUseMap = ArrayHashMap<Ref, StringHashMap<symbol::Use>>;
+pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
+pub type PartSymbolPropertyUseMap =
+    ArrayHashMap<Ref, StringHashMap<symbol::Use, bun_alloc::AstAlloc>, AutoContext, bun_alloc::AstAlloc>;
 
 impl Default for Part {
     fn default() -> Self {
@@ -1167,7 +1168,7 @@ impl Default for Part {
             declared_symbols: DeclaredSymbolList::default(),
             symbol_uses: PartSymbolUseMap::default(),
             import_symbol_property_uses: PartSymbolPropertyUseMap::default(),
-            dependencies: DependencyList::default(),
+            dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
             force_tree_shaking: false,
             is_live: false,
@@ -1224,7 +1225,7 @@ impl StmtOrExpr {
 
 pub struct NamedImport {
     /// Parts within this file that use this import
-    pub local_parts_with_uses: Vec<u32>,
+    pub local_parts_with_uses: bun_alloc::AstVec<u32>,
 
     /// The original export name from the source module being imported.
     /// Examples:
@@ -1247,6 +1248,20 @@ pub struct NamedImport {
     /// It's useful to flag exported imports because if they are in a TypeScript
     /// file, we can't tell if they are a type or a value.
     pub is_exported: bool,
+}
+
+impl Default for NamedImport {
+    fn default() -> Self {
+        Self {
+            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+            alias: None,
+            alias_loc: None,
+            namespace_ref: None,
+            import_record_index: 0,
+            alias_is_star: false,
+            is_exported: false,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]

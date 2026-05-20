@@ -464,7 +464,7 @@ impl LinkerContext<'_> {
         }
         let loc = Loc::EMPTY;
         // todo: investigate if preallocating this array is faster
-        let mut ns_export_dependencies = Vec::<Dependency>::init_capacity(re_exports_count);
+        let mut ns_export_dependencies = bun_ast::DependencyList::init_capacity(re_exports_count);
         for &alias in export_aliases {
             let exp = resolved_exports.get_mut(alias).unwrap();
             let mut exp_data = exp.data;

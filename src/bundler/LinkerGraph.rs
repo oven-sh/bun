@@ -250,20 +250,14 @@ pub fn add_part_to_file(
     DeclaredSymbol::for_each_top_level_symbol(declared_symbols, &mut ctx, |ctx, ref_| {
         let id = ctx.id;
         let part_id = ctx.part_id;
-        let entry = ctx.overlay[id as usize]
-            .get_or_put(ref_)
-            .unwrap_or_else(|_| bun_core::out_of_memory());
-        if !entry.found_existing {
+        let slot = ctx.overlay[id as usize].entry(ref_).or_insert_with(|| {
             if let Some(original_parts) = ctx.ast_tlsp[id as usize].get(&ref_) {
-                let mut list = original_parts.clone();
-                list.push(part_id);
-                *entry.value_ptr = list;
+                original_parts.clone()
             } else {
-                *entry.value_ptr = vec![part_id];
+                bun_alloc::AstAlloc::vec()
             }
-        } else {
-            entry.value_ptr.push(part_id);
-        }
+        });
+        slot.push(part_id);
     });
 
     Ok(part_id)
@@ -782,10 +776,11 @@ impl<'a> LinkerGraph<'a> {
     ///
     /// Zig is a release no-op because `BabyList` passes the allocator at each
     /// `append` call site; the Rust `Vec<T, &Arena>` stores it, so swap here.
-    /// Zig also transfers `part.dependencies` and `symbols`; the Rust port
-    /// keeps `DependencyList` on the global allocator and feeds new symbols
-    /// through `self.symbols: symbol::Map` (also global) — both thread-safe
-    /// to grow, so no transfer needed.
+    /// Zig also transfers `part.dependencies` and `symbols`; the Rust port's
+    /// `DependencyList` is `Vec<_, AstAlloc>` (linker-side grows just route
+    /// through whichever thread's `AST_HEAP` is active — `AstAlloc` is a ZST,
+    /// so there is nothing to retag) and new symbols feed through
+    /// `self.symbols: symbol::Map` (global) — neither needs transfer here.
     pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
         for v in self.ast.items_import_records_mut() {
             bun_alloc::transfer_arena(v, heap);

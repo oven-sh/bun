@@ -3162,7 +3162,7 @@ impl<'a> LinkerContext<'a> {
                 // generate a dummy part that depends on the "__commonJS" symbol.
                 let dependencies: DependencyList =
                     if self.options.output_format != Format::InternalBakeDev {
-                        let mut deps = Vec::<Dependency>::init_capacity(common_js_parts.len());
+                        let mut deps = DependencyList::init_capacity(common_js_parts.len());
                         for &part in common_js_parts {
                             deps.append_assume_capacity(Dependency {
                                 part_index: part,
@@ -3171,7 +3171,7 @@ impl<'a> LinkerContext<'a> {
                         }
                         deps
                     } else {
-                        DependencyList::default()
+                        DependencyList::new_in(bun_alloc::AstAlloc)
                     };
                 let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
@@ -3277,7 +3277,7 @@ impl<'a> LinkerContext<'a> {
 
                 // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
                 let mut dependencies =
-                    Vec::<Dependency>::init_capacity(esm_parts.len() + promise_all_parts.len());
+                    DependencyList::init_capacity(esm_parts.len() + promise_all_parts.len());
                 for &part in esm_parts {
                     dependencies.append_assume_capacity(Dependency {
                         part_index: part,
@@ -4112,7 +4112,7 @@ impl<'a> LinkerContext<'a> {
             .graph
             .meta
             .items_top_level_symbol_to_parts_overlay_mut()[source_index as usize];
-        top_level.put(r#ref, Vec::<u32>::from_slice(&[part_index]))?;
+        top_level.put(r#ref, bun_alloc::AstAlloc::vec_from_slice(&[part_index]))?;
 
         let resolved_exports =
             &mut self.graph.meta.items_resolved_exports_mut()[source_index as usize];

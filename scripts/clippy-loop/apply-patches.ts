@@ -24,10 +24,17 @@ for (const r of results) {
   const patchFile = join(dir, r.file.replace(/[\/]/g, "_") + ".patch");
   // ensure trailing newline; git apply is picky
   writeFileSync(patchFile, r.patch.endsWith("\n") ? r.patch : r.patch + "\n");
-  const res = spawnSync("git", ["apply", "--unidiff-zero", "--whitespace=nowarn", patchFile], {
+  let res = spawnSync("git", ["apply", "--unidiff-zero", "--whitespace=nowarn", patchFile], {
     cwd: process.cwd(),
     encoding: "utf8",
   });
+  if (res.status !== 0) {
+    // multi-file diffs from parallel agents can context-clash; retry 3-way
+    res = spawnSync("git", ["apply", "--3way", "--whitespace=nowarn", patchFile], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+  }
   if (res.status === 0) {
     applied++;
     console.error(`[ok]   ${r.file}`);

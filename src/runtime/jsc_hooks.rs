@@ -2067,15 +2067,9 @@ fn transpile_source_code_inner(
 
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             unsafe { (*jsc_vm).transpiled_count += 1 };
-            // Spec :122 — `Transpiler::reset_store`.
-            // Inline only the block-store half and SKIP
-            // `store_ast_alloc_heap::reset()`: we bind `AST_HEAP` to
-            // `arena.heap_ptr()` below so `AstAlloc` and the parser scratch
-            // share ONE `mi_heap_t*` for this transpile. The two have
-            // identical lifetime — both reclaimed at the give-back
-            // `arena.reset_retain_with_limit` — so unifying is semantically
-            // equivalent and also drops the per-file `mi_heap_destroy`/
-            // `mi_heap_new` pair the side-arena reset paid.
+            // Spec :122 — `Transpiler::reset_store`. Inline only the
+            // block-store half; `AstAlloc` gets its own per-transpile state
+            // below, so the side module's long-lived state is not touched.
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
 
@@ -2096,23 +2090,15 @@ fn transpile_source_code_inner(
             // Stable heap address (Box interior); survives the move into
             // `arena_guard` and into the VM slot on give-back.
             let arena_ptr: *const bun_alloc::Arena = &raw const *arena;
-            // Route `AstAlloc` to `arena`'s `mi_heap_t*` (see the
-            // `reset_store` note above). `_ast_scope.enter()` already nulled
-            // `AST_HEAP`; this rebinds it to the heap that the parser scratch
-            // and printer arena allocations also use.
-            bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
+            // Captured before `arena` moves into `arena_guard` (the Box
+            // interior is address-stable across the move).
+            let arena_heap: *mut bun_alloc::mimalloc::Heap = arena.heap_ptr();
             let give_back_arena = true;
             // PORT NOTE: reshaped for borrowck — Zig's `defer` block becomes a
             // scopeguard so `?`-early-returns still run it.
             let mut arena_guard = scopeguard::guard(
                 (jsc_vm, arena, give_back_arena, args.flags),
                 |(jsc_vm, mut arena, give_back, flags)| {
-                    // `AST_HEAP` was bound to `arena.heap_ptr()` for this
-                    // transpile; clear it before `reset()` (which is
-                    // `mi_heap_destroy` + `mi_heap_new`) so it never dangles.
-                    // `_ast_scope.exit()` (drops after this guard) restores
-                    // the surrounding scope's heap regardless.
-                    bun_alloc::ast_alloc::set_thread_heap(core::ptr::null_mut());
                     // SAFETY: `jsc_vm` is the live per-thread VM (closure runs
                     // on the same thread, before the hook returns).
                     let slot = unsafe { &mut (*jsc_vm).module_loader.transpile_source_code_arena };
@@ -2191,6 +2177,13 @@ fn transpile_source_code_inner(
                     // else: drop the fresh Box (spec :161-163).
                 },
             );
+            // Per-transpile `AstAlloc` state spilling into the transpile
+            // arena. Declared after `arena_guard` so it drops before the
+            // guard can reset that heap. Small `AstVec`s live in the state's
+            // inline chunk, not the arena, so the pending-imports path must
+            // consume this scope via `take_state()` and ship the box with the
+            // arena.
+            let ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
             // ── Watcher fd / package_json lookup ────────────────────────────
             // Spec :170-176.
             let mut fd: Option<bun_sys::Fd> = None;
@@ -2891,6 +2884,9 @@ fn transpile_source_code_inner(
 
                     // Hand `arena` ownership to the queue (defuse the give-back guard).
                     let (_, arena, _, _) = scopeguard::ScopeGuard::into_inner(arena_guard);
+                    // Hand the `AstAlloc` state to the queue too: the queued
+                    // AST's small `AstVec`s live in its inline bump chunk.
+                    let ast_alloc_state = ast_alloc_scope.take_state();
                     // SAFETY: per fn contract — `jsc_vm` / `global_object` are the live
                     // per-thread VM / global; `package_json` is the opaque watcher
                     // forward-decl of `bun_resolver::package_json::PackageJSON`.
@@ -2911,6 +2907,7 @@ fn transpile_source_code_inner(
                                 referrer,
                                 hash,
                                 arena,
+                                ast_alloc_state,
                             },
                         );
                     }

@@ -204,6 +204,11 @@ impl ASTMemoryAllocator {
             !self.ast_pushed,
             "release_ast_state while the AstAllocState is still installed"
         );
+        if self.ast_pushed {
+            // Still installed in the thread-local; releasing here would let the
+            // next scope reuse storage the current scope still writes to.
+            return;
+        }
         if let Some(state) = self.ast_state.take() {
             ast_alloc::release_state(state);
         }
@@ -217,6 +222,9 @@ impl ASTMemoryAllocator {
             !self.ast_pushed,
             "take_ast_state while the AstAllocState is still installed"
         );
+        if self.ast_pushed {
+            return None;
+        }
         self.ast_state.take()
     }
 

@@ -126,8 +126,6 @@ impl JSType {
     /// ```
     pub const HeapBigInt: JSType = JSType(3);
 
-
-
     /// JavaScript Symbol primitive - unique identifiers.
     /// ```js
     /// Symbol()

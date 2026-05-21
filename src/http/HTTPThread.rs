@@ -933,7 +933,8 @@ impl HttpThread {
         bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", async_http_id);
         {
             let _guard = self.queued_shutdowns_lock.lock_guard();
-            self.queued_shutdowns.push(ShutdownMessage { async_http_id });
+            self.queued_shutdowns
+                .push(ShutdownMessage { async_http_id });
         }
         self.wakeup();
     }

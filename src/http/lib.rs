@@ -3115,10 +3115,17 @@ impl<'a> HTTPClient<'a> {
             // SAFETY: the parsed response borrows `SHARED_RESPONSE_HEADERS_BUF`
             // and the bytes behind `to_read` (`incoming_data` for the duration
             // of this callback, or `response_message_buffer` which lives on
-            // `self.state`); both outlive every read of the response, which is
-            // deep-copied by `clone_metadata()` before this fn returns. Widened
-            // to `'static` so it can be parsed into the `'static` scratch
-            // buffer and stored in `state.pending_response`.
+            // `self.state`). Both outlive every *read* of the response: it is
+            // only read within this callback (`handle_response_metadata`) and
+            // by `clone_metadata()`, which deep-copies it. The early-return
+            // paths that skip `clone_metadata()` (redirect, proxy CONNECT)
+            // overwrite or clear `state.pending_response` before the next read
+            // (`Response::default()` at the top of the next parse;
+            // `ProxyTunnel` sets it to `None`). Widened to `'static` so it can
+            // be parsed into the `'static` scratch buffer and stored in
+            // `state.pending_response`. This matches the pre-existing
+            // `detach_lifetime()` that was applied to the parsed response
+            // here before `Header` carried a lifetime.
             let parse_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(to_read!()) };
             let response = match picohttp::Response::parse_parts(
                 parse_buf,

@@ -274,7 +274,7 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, RefP
     if (isUseMainContextDefaultLoaderConstant(globalObject, dynamicImportCallback)) {
         auto defer = fetcher->temporarilyUseDefaultLoader();
         Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
-        RELEASE_AND_RETURN(scope, zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin));
+        RELEASE_AND_RETURN(scope, zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin, false));
     } else if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return nullptr;
@@ -1472,8 +1472,9 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
     return promise;
 }
 
-JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin)
+JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin, bool deferred)
 {
+    UNUSED_PARAM(deferred);
     auto* nodeVmGlobalObject = static_cast<NodeVMGlobalObject*>(globalObject);
 
     if (JSPromise* result = NodeVM::importModule(nodeVmGlobalObject, moduleName, parameters, sourceOrigin)) {

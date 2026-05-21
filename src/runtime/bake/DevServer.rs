@@ -1423,17 +1423,7 @@ fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
     let Some(host) = req.header(b"host") else {
         return false;
     };
-    let host = if host.first() == Some(&b'[') {
-        match strings::index_of_scalar(host, b']') {
-            Some(end) => &host[..=end],
-            None => host,
-        }
-    } else {
-        match strings::last_index_of_char(host, b':') {
-            Some(colon) => &host[..colon],
-            None => host,
-        }
-    };
+    let host = host_without_port(host);
     if strings::eql_case_insensitive_ascii(host, b"localhost", true) {
         return true;
     }
@@ -1466,10 +1456,71 @@ fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
     false
 }
 
+/// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).
+fn host_without_port(host: &[u8]) -> &[u8] {
+    if host.first() == Some(&b'[') {
+        match strings::index_of_scalar(host, b']') {
+            Some(end) => &host[..=end],
+            None => host,
+        }
+    } else {
+        match strings::last_index_of_char(host, b':') {
+            Some(colon) => &host[..colon],
+            None => host,
+        }
+    }
+}
+
+/// Cross-origin guard for the HMR WebSocket. WebSocket handshakes are exempt
+/// from the same-origin policy, so any page the developer visits could open
+/// `ws://localhost:<port>/_bun/hmr` and subscribe to hot-update payloads (the
+/// bundled source) — the browser still sends `Host: localhost`, so
+/// `is_allowed_dev_host` alone does not stop it. Browsers always include an
+/// `Origin` header on WebSocket handshakes; require its host to be the
+/// request's own host or a localhost name. Requests without an `Origin`
+/// header (non-browser clients) are allowed.
+fn is_allowed_dev_origin(req: &Request) -> bool {
+    let Some(origin) = req.header(b"origin") else {
+        return true;
+    };
+    // An origin is `scheme "://" host [":" port]`; opaque origins serialize
+    // to `null` and are rejected here.
+    let Some(scheme_end) = strings::index_of(origin, b"://") else {
+        return false;
+    };
+    let origin_host = host_without_port(&origin[scheme_end + 3..]);
+    if strings::eql_case_insensitive_ascii(origin_host, b"localhost", true) {
+        return true;
+    }
+    const DOT_LOCALHOST: &[u8] = b".localhost";
+    if origin_host.len() > DOT_LOCALHOST.len()
+        && strings::eql_case_insensitive_ascii(
+            &origin_host[origin_host.len() - DOT_LOCALHOST.len()..],
+            DOT_LOCALHOST,
+            true,
+        )
+    {
+        return true;
+    }
+    match req.header(b"host") {
+        Some(host) => {
+            strings::eql_case_insensitive_ascii(origin_host, host_without_port(host), true)
+        }
+        None => false,
+    }
+}
+
 fn host_forbidden(resp: AnyResponse) {
     resp.corked(move || {
         resp.write_status(b"403 Forbidden");
         resp.end(b"Blocked: Host header does not match the dev server", false);
+    });
+}
+
+fn origin_forbidden(resp: AnyResponse) {
+    resp.corked(move || {
+        resp.write_status(b"403 Forbidden");
+        resp.end(b"Blocked: Origin header does not match the dev server", false);
     });
 }
 
@@ -1599,6 +1650,9 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         let res = unsafe { &mut *res };
         if !is_allowed_dev_host(this, req) {
             return host_forbidden(res.as_any_response());
+        }
+        if !is_allowed_dev_origin(req) {
+            return origin_forbidden(res.as_any_response());
         }
         let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
         let _ = this.active_websocket_connections.insert(dw, ());

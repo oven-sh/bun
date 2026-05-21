@@ -1511,7 +1511,7 @@ impl CreateCommand {
             let _ = process?;
         }
 
-        if !postinstall_tasks.is_empty() {
+        if npm_client_.is_some() && !postinstall_tasks.is_empty() {
             for task in &postinstall_tasks {
                 exec_task(task, destination, path_env, npm_client_);
             }

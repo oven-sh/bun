@@ -3210,155 +3210,43 @@ pub fn get_total_memory_size() -> usize {
     Bun__ramSize()
 }
 
-/// Stack capture for `Global::StoredTrace` / `bun_crash_handler`.
-/// Zig used `std.debug.captureStackTrace`; route through libc `backtrace()`.
+/// C-ABI stack capture for `Global::StoredTrace` / `bun_crash_handler`.
+/// Frame-pointer walk of the current thread (see `debug::capture_current`).
+/// `begin` is a `first_address` trim point (a return address); `0` means "no
+/// trim, start from here".
 ///
-/// Only platforms whose libc actually exports `backtrace()` go through it:
-/// glibc, macOS, the BSDs. musl and Android's bionic don't have `<execinfo.h>`
-/// (the `libc` crate doesn't expose `backtrace` for them at all), so those
-/// targets — and Windows — fall back to reporting an empty trace. The crash
-/// handler already tolerates a 0-frame capture (it prints what it has), and
-/// the symbolizer path is glibc/macOS-only anyway.
-#[cfg(any(
-    all(target_os = "linux", target_env = "gnu"),
-    target_os = "macos",
-    target_os = "freebsd",
-    target_os = "dragonfly",
-    target_os = "netbsd",
-    target_os = "openbsd",
-))]
 /// # Safety
 /// `out` must be writable for `cap` `usize` slots (or null/`cap == 0`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__captureStackTrace(
-    begin: usize,
-    out: *mut usize,
-    cap: usize,
-) -> usize {
+pub unsafe extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
     if out.is_null() || cap == 0 {
         return 0;
     }
-    // SAFETY: `out` is non-null (checked above) and the C++ caller passes a
-    // writable buffer of `cap` `usize` slots; `libc::backtrace` writes at most
-    // `cap` frame pointers into it.
-    unsafe {
-        // FreeBSD's libexecinfo backtrace() takes/returns size_t; glibc/macOS use int.
-        #[cfg(any(
-            target_os = "freebsd",
-            target_os = "dragonfly",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        ))]
-        let n = libc::backtrace(out.cast::<*mut core::ffi::c_void>(), cap) as usize;
-        #[cfg(not(any(
-            target_os = "freebsd",
-            target_os = "dragonfly",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        )))]
-        let n = libc::backtrace(
-            out.cast::<*mut core::ffi::c_void>(),
-            cap as core::ffi::c_int,
-        );
-        #[cfg(not(any(
-            target_os = "freebsd",
-            target_os = "dragonfly",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        )))]
-        let n = if n < 0 { 0 } else { n as usize };
-        if begin > 0 && begin < n {
-            core::ptr::copy(out.add(begin), out, n - begin);
-            return n - begin;
-        }
-        n
-    }
+    // SAFETY: `out` is non-null (checked) and valid for `cap` `usize` writes.
+    let slice = unsafe { core::slice::from_raw_parts_mut(out, cap) };
+    let first = if begin == 0 { None } else { Some(begin) };
+    debug::capture_current(first, slice)
 }
 
-/// Windows: `RtlCaptureStackBackTrace` (kernel32/ntdll). Zig's
-/// `std.debug.captureStackTrace` uses this on Windows. No DbgHelp dependency
-/// for capture; symbolization happens later in `dump_stack_trace`.
-#[cfg(windows)]
-/// # Safety
-/// `out` must be writable for `cap` `usize` slots (or null/`cap == 0`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__captureStackTrace(
-    begin: usize,
-    out: *mut usize,
-    cap: usize,
-) -> usize {
-    if out.is_null() || cap == 0 {
-        return 0;
-    }
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn RtlCaptureStackBackTrace(
-            FramesToSkip: u32,
-            FramesToCapture: u32,
-            BackTrace: *mut *mut core::ffi::c_void,
-            BackTraceHash: *mut u32,
-        ) -> u16;
-    }
-    // `FramesToCapture` is bounded at `u16::MAX` by the API; clamp.
-    let cap_u32 = cap.min(u16::MAX as usize) as u32;
-    // SAFETY: FFI; `out` is valid for `cap` writes, hash ptr may be null.
-    let n = unsafe {
-        RtlCaptureStackBackTrace(
-            0,
-            cap_u32,
-            out as *mut *mut core::ffi::c_void,
-            core::ptr::null_mut(),
-        )
-    } as usize;
-    // Match the unix arm's `begin` semantics: treat `begin` as a small skip
-    // count when in `[1, n)`, otherwise ignore (callers also pass an address
-    // here, which is always > n and so a no-op).
-    if begin > 0 && begin < n {
-        // SAFETY: `begin < n ≤ cap`; copying `n - begin` words within `out[..n]`.
-        unsafe {
-            core::ptr::copy(out.add(begin), out, n - begin);
-        }
-        return n - begin;
-    }
-    n
-}
-
-/// Fallback for targets without `libc::backtrace` (musl, Android, …).
-/// Returns 0 frames so callers degrade to a frame-less crash report instead of
-/// failing to compile.
-#[cfg(not(any(
-    all(target_os = "linux", target_env = "gnu"),
-    target_os = "macos",
-    target_os = "freebsd",
-    target_os = "dragonfly",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    windows,
-)))]
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
-    let _ = (begin, out, cap);
-    0
-}
-
-/// Safe wrapper over the cfg-gated `Bun__captureStackTrace` definitions above.
-/// Single canonical entry point — `StoredTrace::capture` and
-/// `bun_crash_handler::debug::capture_stack_trace` both route through this so
-/// no caller re-declares the `extern "C"` import.
+/// Safe wrapper over `Bun__captureStackTrace`. Single canonical entry point —
+/// `StoredTrace::capture` and `bun_crash_handler::debug::capture_stack_trace`
+/// both route through this so no caller re-declares the `extern "C"` import.
 #[inline]
 pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
-    // SAFETY: `addrs.as_mut_ptr()` is writable for `addrs.len()` slots; the
-    // impl writes at most `addrs.len()` words.
-    unsafe { Bun__captureStackTrace(begin, addrs.as_mut_ptr(), addrs.len()) }
+    let first = if begin == 0 { None } else { Some(begin) };
+    debug::capture_current(first, addrs)
 }
 
-/// Zig `@returnAddress()` placeholder. Rust has no stable equivalent; `0` tells
-/// `capture_stack_trace` "start from here". Lives in bun_core so the canonical
-/// `StoredTrace::capture` can call it; once wired to a real intrinsic, every
-/// caller (incl. `bun_crash_handler::debug::return_address`) picks it up.
-#[inline(always)]
+/// Zig `@returnAddress()`. With frame pointers force-enabled, this (non-inlined)
+/// function's return address lives at `[fp + PC_OFFSET]` — a PC inside the
+/// caller. Used as a best-effort `first_address` trim point for current-stack
+/// captures (`capture_current` falls back to the full trace if it doesn't match).
+#[inline(never)]
 pub fn return_address() -> usize {
-    0
+    let fp = debug::frame_address();
+    // SAFETY: `fp` is this function's own valid frame pointer; the return-address
+    // slot at `[fp + PC_OFFSET]` is always mapped.
+    unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
 }
 
 /// Ports of `std.debug.{SourceLocation,SymbolInfo}` — pure data structs shared by
@@ -3379,5 +3267,349 @@ pub mod debug {
         pub name: Box<[u8]>,
         pub compile_unit_name: Box<[u8]>,
         pub source_location: Option<SourceLocation>,
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Frame-pointer stack unwinder (port of the `std.debug` subset Zig used:
+    // `@frameAddress`, `MemoryAccessor`, `StackIterator`). The Rust port had
+    // briefly routed capture through libc `backtrace()` / `RtlCaptureStackBackTrace`,
+    // which are CFI/unwind-table based — but release builds strip the unwind tables
+    // (`-fno-asynchronous-unwind-tables` + `--no-eh-frame-hdr`) and the POSIX
+    // signal handler runs on an `SA_ONSTACK` altstack, so those APIs captured only
+    // the handler's own frames (or nothing). Frame pointers are force-enabled
+    // (`-Cforce-frame-pointers=yes`, `-fno-omit-frame-pointer`), so FP walking is
+    // the correct mechanism. Lives in `bun_core` (libc/std/bun_alloc only) so the
+    // crash handler, `StoredTrace`, and `btjs` can all share one implementation.
+    // ──────────────────────────────────────────────────────────────────────
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    use core::sync::atomic::{AtomicI32, Ordering};
+
+    /// Port of Zig `@frameAddress()`. Reads the frame-pointer register directly.
+    #[inline(always)]
+    pub fn frame_address() -> usize {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let fp: usize;
+            // SAFETY: reading rbp is side-effect-free.
+            unsafe {
+                core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags))
+            };
+            fp
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            let fp: usize;
+            // SAFETY: reading x29 (fp) is side-effect-free.
+            unsafe {
+                core::arch::asm!("mov {}, x29", out(reg) fp, options(nomem, nostack, preserves_flags))
+            };
+            fp
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            // @frameAddress() — approximate with a stack local's addr on arches
+            // without an asm! mapping yet. fp-walk will fail its alignment sanity
+            // check and terminate cleanly.
+            let probe = 0u8;
+            core::ptr::from_ref::<u8>(&probe) as usize
+        }
+    }
+
+    /// Reads memory from any address of the current process, tolerating unmapped
+    /// or corrupt pages so a damaged stack can't fault the walker itself. Port of
+    /// `std.debug.MemoryAccessor`.
+    pub struct MemoryAccessor {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        mem: core::ffi::c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        _mem: (),
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    static CACHED_PID: AtomicI32 = AtomicI32::new(-1);
+
+    impl MemoryAccessor {
+        pub const INIT: Self = Self {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            mem: -1,
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            _mem: (),
+        };
+
+        fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            loop {
+                match self.mem {
+                    -2 => break,
+                    -1 => {
+                        let pid = match CACHED_PID.load(Ordering::Relaxed) {
+                            -1 => {
+                                // SAFETY: getpid has no preconditions.
+                                let pid = unsafe { libc::getpid() };
+                                CACHED_PID.store(pid, Ordering::Relaxed);
+                                pid
+                            }
+                            pid => pid,
+                        };
+                        let local = libc::iovec {
+                            iov_base: buf.as_mut_ptr().cast(),
+                            iov_len: buf.len(),
+                        };
+                        let remote = libc::iovec {
+                            iov_base: address as *mut core::ffi::c_void,
+                            iov_len: buf.len(),
+                        };
+                        // SAFETY: iovecs point to valid memory for their stated lengths.
+                        let bytes_read = unsafe {
+                            libc::process_vm_readv(pid, &raw const local, 1, &raw const remote, 1, 0)
+                        };
+                        if bytes_read >= 0 {
+                            return bytes_read as usize == buf.len();
+                        }
+                        match crate::ffi::errno() {
+                            libc::EFAULT => return false,
+                            // EPERM (containers), ENOMEM, ENOSYS (qemu) → fall through to /proc/pid/mem
+                            _ => {}
+                        }
+                        let mut path_buf = [0u8; 32];
+                        let path = {
+                            use std::io::Write as _;
+                            let mut cur = std::io::Cursor::new(&mut path_buf[..]);
+                            let _ = write!(cur, "/proc/{}/mem\0", pid);
+                            let n = cur.position() as usize;
+                            &path_buf[..n]
+                        };
+                        // SAFETY: path is NUL-terminated.
+                        let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_RDONLY) };
+                        if fd < 0 {
+                            self.mem = -2;
+                            break;
+                        }
+                        self.mem = fd;
+                    }
+                    fd => {
+                        // SAFETY: fd is a valid open file descriptor; buf is writable.
+                        let n = unsafe {
+                            libc::pread(fd, buf.as_mut_ptr().cast(), buf.len(), address as libc::off_t)
+                        };
+                        return n >= 0 && n as usize == buf.len();
+                    }
+                }
+            }
+            if !is_valid_memory(address) {
+                return false;
+            }
+            // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
+            unsafe {
+                core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
+            }
+            true
+        }
+
+        fn load_usize(&mut self, address: usize) -> Option<usize> {
+            let mut result = [0u8; core::mem::size_of::<usize>()];
+            if self.read(address, &mut result) {
+                Some(usize::from_ne_bytes(result))
+            } else {
+                None
+            }
+        }
+    }
+
+    impl Drop for MemoryAccessor {
+        fn drop(&mut self) {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if self.mem >= 0 {
+                // SAFETY: self.mem is a valid fd we opened.
+                unsafe { libc::close(self.mem) };
+            }
+        }
+    }
+
+    fn is_valid_memory(address: usize) -> bool {
+        let page_size = bun_alloc::page_size();
+        let aligned_address = address & !(page_size - 1);
+        if aligned_address == 0 {
+            return false;
+        }
+        #[cfg(windows)]
+        {
+            #[repr(C)]
+            struct MemoryBasicInformation {
+                base_address: *mut core::ffi::c_void,
+                allocation_base: *mut core::ffi::c_void,
+                allocation_protect: u32,
+                partition_id: u16,
+                region_size: usize,
+                state: u32,
+                protect: u32,
+                type_: u32,
+            }
+            const MEM_FREE: u32 = 0x10000;
+            unsafe extern "system" {
+                fn VirtualQuery(
+                    lpAddress: *const core::ffi::c_void,
+                    lpBuffer: *mut MemoryBasicInformation,
+                    dwLength: usize,
+                ) -> usize;
+            }
+            let mut mbi: MemoryBasicInformation = unsafe { core::mem::zeroed() };
+            // SAFETY: `mbi` is a valid out-param of the size we pass; VirtualQuery
+            // only inspects the address-space mapping at `aligned_address`.
+            let rc = unsafe {
+                VirtualQuery(
+                    aligned_address as *const core::ffi::c_void,
+                    &mut mbi,
+                    core::mem::size_of::<MemoryBasicInformation>(),
+                )
+            };
+            if rc == 0 {
+                return false;
+            }
+            if mbi.state == MEM_FREE {
+                return false;
+            }
+            true
+        }
+        #[cfg(not(windows))]
+        {
+            // SAFETY: msync only inspects the mapping; aligned_address is page-aligned.
+            let rc = unsafe {
+                libc::msync(aligned_address as *mut core::ffi::c_void, page_size, libc::MS_ASYNC)
+            };
+            if rc != 0 {
+                return crate::ffi::errno() != libc::ENOMEM;
+            }
+            true
+        }
+    }
+
+    /// Port of `std.debug.StackIterator`. Walks the frame-pointer chain.
+    pub struct StackIterator {
+        first_address: Option<usize>,
+        pub fp: usize,
+        ma: MemoryAccessor,
+    }
+
+    impl StackIterator {
+        // Offset of the saved BP wrt the frame pointer.
+        const FP_OFFSET: usize = if cfg!(any(target_arch = "riscv64", target_arch = "riscv32")) {
+            2 * core::mem::size_of::<usize>()
+        } else {
+            0
+        };
+        // Positive offset of the saved PC wrt the frame pointer.
+        const PC_OFFSET: usize = if cfg!(target_arch = "powerpc64") {
+            2 * core::mem::size_of::<usize>()
+        } else {
+            core::mem::size_of::<usize>()
+        };
+
+        pub fn init(first_address: Option<usize>, fp: Option<usize>) -> StackIterator {
+            StackIterator {
+                first_address,
+                // Call `frame_address` directly (not as a fn-pointer) so the
+                // `#[inline(always)]` read happens in this frame; passing it to
+                // `unwrap_or_else` would defeat inlining. Prefer an explicit `fp`.
+                fp: match fp {
+                    Some(fp) => fp,
+                    None => frame_address(),
+                },
+                ma: MemoryAccessor::INIT,
+            }
+        }
+
+        pub fn next(&mut self) -> Option<usize> {
+            let mut address = self.next_internal()?;
+            if let Some(first_address) = self.first_address {
+                while address != first_address {
+                    address = self.next_internal()?;
+                }
+                self.first_address = None;
+            }
+            Some(address)
+        }
+
+        fn next_internal(&mut self) -> Option<usize> {
+            let fp = self.fp.checked_sub(Self::FP_OFFSET)?;
+
+            // Sanity check.
+            if fp == 0 || fp % core::mem::align_of::<usize>() != 0 {
+                return None;
+            }
+            let new_fp = self.ma.load_usize(fp)?;
+
+            // The stack grows down, so parent frames must be at addresses greater
+            // than the previous one. A zero frame pointer signals the last frame.
+            if new_fp != 0 && new_fp < self.fp {
+                return None;
+            }
+            let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
+
+            self.fp = new_fp;
+
+            Some(new_pc)
+        }
+    }
+
+    pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
+
+    /// Capture the current thread's call stack via frame-pointer walking.
+    ///
+    /// `first_address`, when present, trims every frame above (and including) the
+    /// capture machinery: frames are dropped until one matches `first_address`.
+    /// If no frame matches (e.g. inlining moved the boundary), the full untrimmed
+    /// trace is returned rather than an empty one — a noisier trace beats none.
+    #[inline(never)]
+    pub fn capture_current(first_address: Option<usize>, out: &mut [usize]) -> usize {
+        // Read THIS frame's pointer inline (`frame_address` is `#[inline(always)]`,
+        // so this reads `capture_current`'s own fp) and seed the walk explicitly.
+        // Do NOT route through `StackIterator::init(_, None)` — that passes
+        // `frame_address` as a fn-pointer to `unwrap_or_else`, which forces a
+        // non-inlined `frame_address` frame whose own frame setup is unreliable and
+        // corrupts the very first link of the walk.
+        let fp = frame_address();
+        let mut it = StackIterator::init(None, Some(fp));
+        let mut n = 0usize;
+        while n < out.len() {
+            match it.next() {
+                Some(addr) => {
+                    out[n] = addr;
+                    n += 1;
+                }
+                None => break,
+            }
+        }
+        if let Some(target) = first_address {
+            if let Some(skip) = out[..n].iter().position(|&a| a == target) {
+                out.copy_within(skip..n, 0);
+                return n - skip;
+            }
+        }
+        n
+    }
+
+    /// Capture a faulting thread's call stack, seeded from the saved register
+    /// context (`pc`/`fp` read from a `ucontext_t` / `CONTEXT`). `pc` is the exact
+    /// faulting instruction and becomes frame 0; the remaining frames are walked
+    /// from `fp`. No trimming is needed because the walk starts on the faulting
+    /// stack — the signal handler's own frames are never in the chain.
+    pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
+        if out.is_empty() {
+            return 0;
+        }
+        out[0] = pc;
+        let mut n = 1usize;
+        let mut it = StackIterator::init(None, Some(fp));
+        while n < out.len() {
+            match it.next() {
+                Some(addr) => {
+                    out[n] = addr;
+                    n += 1;
+                }
+                None => break,
+            }
+        }
+        n
     }
 }

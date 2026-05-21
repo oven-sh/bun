@@ -454,19 +454,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (!cfg.debug) {
     rustflags.push("--cfg=bun_codegen_embed");
   }
-  // Drop `#[track_caller]` source-location capture in release. Every
-  // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
-  // `&'static core::panic::Location` (file/line/col), and the file path is a
-  // separate `&'static str` — together ~180 KB of `.data.rel.ro` across the
-  // crate graph (plus the per-call-site `lea` to load it). Release ships
-  // `panic = "abort"` and the crash handler resolves backtraces from frame
-  // pointers, so the textual location is never printed anyway. Kept for
-  // debug and `release-assertions` where panic messages are read by humans.
-  // Nightly-only flag; the pinned toolchain in `rust-toolchain.toml` is
-  // nightly.
-  if (cfg.release && !cfg.assertions) {
-    rustflags.push("-Zlocation-detail=none");
-  }
+  // NOTE: We intentionally do NOT pass `-Zlocation-detail=none`. It would drop
+  // the `#[track_caller]` source location (file/line/col) from every
+  // `Option::unwrap`/`slice[i]`/`RefCell::borrow` panic, saving binary size — but
+  // it replaces the panic location with the literal `<redacted>:0:0`, which made
+  // every distinct panic site collapse into one unactionable crash-report bucket.
+  // Its old justification ("backtraces come from frame pointers so the location
+  // is never printed anyway") was wrong: the crash reporter's frame-pointer
+  // capture was broken, so the location was the only differentiator left. The
+  // location stays in the panic message and aids both human reading and report
+  // grouping.
   // IR PGO, Rust half — mirrors the C++ `-fprofile-generate`/`-fprofile-use`
   // (flags.ts) so the Rust ~half of bun's `.text` participates too (a port-era
   // `bun` is mostly Rust now; instrumenting only C++ would leave most of the

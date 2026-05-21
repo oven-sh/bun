@@ -86,6 +86,7 @@ pub mod js_bindings {
                 crash_handler::CrashReason::SegmentationFault(0xDEADBEEF),
                 None,
                 Some(crash_handler::debug::return_address()),
+                None,
             );
         }
         // SAFETY: intentionally dereferencing an invalid address to trigger SIGSEGV for testing.

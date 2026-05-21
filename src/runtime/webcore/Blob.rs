@@ -78,6 +78,15 @@ pub extern "C" fn blob_store_array_buffer_deallocator(_bytes: *mut c_void, ctx: 
     }
 }
 
+/// WHATWG File API §3.1: a Blob/File `type` is only used when every character
+/// is in the range U+0020 to U+007E; otherwise it is treated as the empty
+/// string. Stricter than `is_all_ascii`: also rejects control characters such
+/// as CR/LF, which would otherwise be stored in `content_type` and written
+/// verbatim into outgoing HTTP headers.
+fn is_valid_blob_type(slice: &[u8]) -> bool {
+    slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub enum ReadBytesResult {
     /// global-allocator-owned by the callback.
@@ -1336,7 +1345,7 @@ impl BlobExt for Blob {
                     }
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
-                    if strings::is_all_ascii(slice) {
+                    if is_valid_blob_type(slice) {
                         self.free_content_type();
                         self.content_type_was_set.set(true);
 
@@ -1775,7 +1784,7 @@ impl BlobExt for Blob {
                     }
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
-                    if strings::is_all_ascii(slice) {
+                    if is_valid_blob_type(slice) {
                         self.free_content_type();
                         self.content_type_was_set.set(true);
                         // SAFETY: see other `mime_type` call sites.
@@ -2107,7 +2116,7 @@ impl BlobExt for Blob {
                     let zig_str = content_type_.get_zig_string(global_this)?;
                     let slicer = zig_str.to_slice();
                     let slice = slicer.slice();
-                    if !strings::is_all_ascii(slice) {
+                    if !is_valid_blob_type(slice) {
                         break 'inner;
                     }
 
@@ -2463,7 +2472,7 @@ impl BlobExt for Blob {
                                 if content_type.is_string() {
                                     let content_type_str = content_type.to_slice(global_this)?;
                                     let slice = content_type_str.slice();
-                                    if !strings::is_all_ascii(slice) {
+                                    if !is_valid_blob_type(slice) {
                                         break 'inner;
                                     }
                                     blob.content_type_was_set.set(true);
@@ -5584,7 +5593,7 @@ pub fn jsdom_file_construct_(
                     if content_type.is_string() {
                         let content_type_str = content_type.to_slice(global_this)?;
                         let slice = content_type_str.slice();
-                        if !strings::is_all_ascii(slice) {
+                        if !is_valid_blob_type(slice) {
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
@@ -5684,7 +5693,7 @@ pub fn construct_bun_file(
                     if file_type.is_string() {
                         let str = file_type.to_slice(global_object)?;
                         let slice = str.slice();
-                        if !strings::is_all_ascii(slice) {
+                        if !is_valid_blob_type(slice) {
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);

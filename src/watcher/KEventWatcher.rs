@@ -121,8 +121,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     const NS_PER_S: isize = 1_000_000_000;
     let interval = this.platform.coalesce_interval_ns;
     let mut iterations: u32 = 0;
-    while count > 0 && count < CHANGELIST_COUNT as c_int && iterations < MAX_COALESCE_ITERATIONS
-    {
+    while count > 0 && count < CHANGELIST_COUNT as c_int && iterations < MAX_COALESCE_ITERATIONS {
         let remain: c_int = CHANGELIST_COUNT as c_int - count;
         let off = count as usize;
         // POSIX requires tv_nsec < 10^9; split so a user-supplied

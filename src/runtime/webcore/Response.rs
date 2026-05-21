@@ -756,16 +756,13 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \"")
             )?;
+            // SAFETY: single-JS-thread `JsCell` read; the borrow is consumed
+            // by the formatter in the `write!` below.
+            let url = unsafe { self.url.get() };
             write!(
                 writer,
                 "{}",
-                // SAFETY: single-JS-thread `JsCell` read; the borrow is consumed
-                // by the formatter within this statement.
-                Output::pretty_fmt_args(
-                    "<r><b>{}<r>",
-                    ENABLE_ANSI_COLORS,
-                    (unsafe { self.url.get() },)
-                )
+                Output::pretty_fmt_args("<r><b>{}<r>", ENABLE_ANSI_COLORS, (url,))
             )?;
             writer.write_str("\"")?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;

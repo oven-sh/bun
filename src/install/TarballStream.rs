@@ -144,6 +144,13 @@ pub struct TarballStream {
     want_first_dirname: bool,
     npm_mode: bool,
 
+    /// Symlinks created so far during this extraction. Later entries whose
+    /// path traverses one of these are skipped: the per-target check in
+    /// `make_symlink` is purely lexical, so once a link is on disk the kernel
+    /// would follow it and a chained link could escape the extraction root.
+    #[cfg(unix)]
+    created_symlinks: Vec<Vec<u8>>,
+
     bytes_received: usize,
     entry_count: u32,
     fail: Option<bun_core::Error>,
@@ -237,6 +244,8 @@ impl TarballStream {
             resolved_github_dirname: b"",
             want_first_dirname,
             npm_mode,
+            #[cfg(unix)]
+            created_symlinks: Vec::new(),
             bytes_received: 0,
             entry_count: 0,
             fail: None,
@@ -800,6 +809,17 @@ impl TarballStream {
         let path_slice: &[OSPathChar] = &path[..];
         let dest = self.dest.unwrap();
 
+        // Reject any entry whose path traverses a symlink created earlier in
+        // this extraction; the kernel would follow it and the entry could land
+        // outside the extraction root. Same defense as the buffered extractor
+        // in `Archiver::extract_to_dir`.
+        #[cfg(unix)]
+        if bun_libarchive::path_traverses_created_symlink(path_slice, &self.created_symlinks) {
+            self.phase = Phase::WantData;
+            self.out_fd = None;
+            return Ok(());
+        }
+
         match kind {
             FileKind::Directory => {
                 make_directory(entry, dest, path, path_slice);
@@ -808,7 +828,9 @@ impl TarballStream {
             }
             FileKind::SymLink => {
                 #[cfg(unix)]
-                make_symlink(entry, dest, path, path_slice);
+                if make_symlink(entry, dest, path, path_slice) {
+                    self.created_symlinks.push(path_slice.to_vec());
+                }
                 self.phase = Phase::WantData;
                 self.out_fd = None;
             }
@@ -1339,13 +1361,20 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
     }
 }
 
+/// Returns `true` only when a symlink was actually created on disk, so the
+/// caller can record it in `created_symlinks`.
 #[cfg(unix)]
-fn make_symlink(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
+fn make_symlink(
+    entry: &mut lib::Entry,
+    dest_fd: Fd,
+    path: OSPathZ,
+    path_slice: &[OSPathChar],
+) -> bool {
     let target = entry.symlink();
     // Same safety rule as `isSymlinkTargetSafe` in the buffered path:
     // reject absolute targets and anything that escapes via `..`.
     if target.is_empty() || target[0] == b'/' {
-        return;
+        return false;
     }
     {
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
@@ -1356,19 +1385,19 @@ fn make_symlink(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice: 
             &[symlink_dir, target.as_bytes()],
         );
         if !resolved.starts_with(b"/packages/") {
-            return;
+            return false;
         }
     }
     match bun_sys::symlinkat(target, dest_fd, path) {
-        Ok(()) => {}
+        Ok(()) => true,
         Err(e) if matches!(e.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) => {
             let Some(dir) = bun_paths::dirname(path_slice) else {
-                return;
+                return false;
             };
             let _ = dest_fd.make_path(dir);
-            let _ = bun_sys::symlinkat(target, dest_fd, path);
+            bun_sys::symlinkat(target, dest_fd, path).is_ok()
         }
-        Err(_) => {}
+        Err(_) => false,
     }
 }
 

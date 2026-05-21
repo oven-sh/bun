@@ -1364,7 +1364,7 @@ fn is_symlink_target_safe(
 /// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
 /// rejected rather than resolved.
 #[cfg(unix)]
-fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
+pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
     if created_symlinks.is_empty() {
         return false;
     }

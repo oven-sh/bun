@@ -159,13 +159,25 @@ describe("http.request options.signal", () => {
 
     try {
       const signal = AbortSignal.timeout(20);
+      // Block until the signal has definitely fired so the assertion can
+      // only run after the late-abort path has had its chance to (wrongly)
+      // re-enter `onAbort`. We can't use `events.once(signal, "abort")` here
+      // — `AbortSignal` is an `EventTarget`, not an `EventEmitter`, and
+      // Node's `once()` hangs on one after destroy has already removed
+      // every listener. Attach a dedicated listener instead.
+      const signalFired = new Promise<void>(resolve => {
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+
       const errors: Error[] = [];
       const req = request(`http://127.0.0.1:${port}`, { signal });
       req.on("error", err => errors.push(err));
       req.destroy();
 
-      // Wait long enough for the signal to fire, plus a tick to drain.
-      await Bun.sleep(50);
+      await signalFired;
+      // Drain the nextTick queue where a stray `emitSignalAbortNT` would
+      // run if the listener-removal regressed.
+      await Bun.sleep(0);
 
       expect(errors).toEqual([]);
     } finally {

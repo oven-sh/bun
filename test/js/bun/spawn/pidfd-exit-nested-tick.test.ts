@@ -34,6 +34,7 @@ test.skipIf(!isLinux)(
     const N = 20;
     const exits: Array<Promise<void>> = [];
     let nested = false;
+    let deferred: unknown;
 
     for (let i = 0; i < N; i++) {
       const { promise, resolve } = Promise.withResolvers<void>();
@@ -58,10 +59,12 @@ test.skipIf(!isLinux)(
           // the synchronous nested tick that originally triggered the bug.
           // The test still validates that every child fires onExit (the
           // level-triggered pidfd registration makes that robust regardless
-          // of whether the nested-tick drop path is exercised).
+          // of whether the nested-tick drop path is exercised). The deferred
+          // matcher is awaited below so its PendingMatcher is freed before
+          // LSan checks at process exit.
           if (!nested) {
             nested = true;
-            expect(Bun.sleep(1)).resolves.toBe(undefined);
+            deferred = expect(Bun.sleep(1)).resolves.toBe(undefined);
           }
           resolve();
         },
@@ -72,5 +75,6 @@ test.skipIf(!isLinux)(
     // whose events were dropped never fire onExit and this await hangs until
     // the test's own 5s timeout — there is no other wake source.
     await Promise.all(exits);
+    await deferred;
   },
 );

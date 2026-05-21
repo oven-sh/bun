@@ -291,6 +291,16 @@ function ClientRequest(input, options, cb) {
     // Emit 'error' before 'close' (matching Node.js). `socketCloseListener`
     // synchronously emits 'close' and marks the request destroyed; we
     // therefore emit the error first, then close, then the legacy 'abort'.
+    //
+    // NB: when the signal fires AFTER response headers arrive (body still
+    // streaming), Bun's pre-existing early-`'close'` divergence means the
+    // request's terminal `'close'` has already fired via `maybeEmitClose()`
+    // by the time we get here. In that window this `emit('error', err)`
+    // lands after `'close'` — a stream-contract violation inherited from
+    // the early-close behaviour, not from this abort path. User code using
+    // `req.on('error', …)` still observes the abort; only
+    // `stream.finished(req)` / `pipeline` consumers (which settle on
+    // `'close'`) will miss it.
     this.emit("error", err);
     socketCloseListener();
     this.emit("abort");
@@ -476,6 +486,11 @@ function ClientRequest(input, options, cb) {
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
           res.setTimeout = clientResponseSetTimeout;
+          // Release the options.signal listener once the response body
+          // finishes — otherwise a long-lived shared signal (e.g. a
+          // process-wide shutdown AbortController) would retain every
+          // successful request's closure for the rest of the signal's life.
+          res.once("end", removeSignalListener);
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they
@@ -704,10 +719,11 @@ function ClientRequest(input, options, cb) {
     // NB: we intentionally do NOT call `removeSignalListener()` here — this
     // runs on the nextTick after response headers arrive (while the body is
     // still streaming), so detaching the listener early would make
-    // `options.signal` a no-op for the remainder of the response. Late-fire
-    // protection is instead handled by the `!res.complete` guard in
-    // `onAbort`, and the listener is cleaned up on real teardown via
-    // `socketCloseListener()` and `req.destroy()`.
+    // `options.signal` a no-op for the remainder of the response. Successful
+    // completion detaches the listener on `res`'s `'end'` event (wired up in
+    // `handleResponse` when the response is created); the `!res.complete`
+    // guard in `onAbort` covers the narrow window between close-on-headers
+    // and end-of-body.
 
     if (!this._closed) {
       process.nextTick(emitCloseNTAndComplete, this);

@@ -1997,6 +1997,23 @@ impl Archiver {
                             )
                             .unwrap();
 
+                            // `path_traverses_created_symlink` is a lexical check: on
+                            // filesystems that alias differently-encoded names (Unicode
+                            // NFC/NFD normalization on APFS/HFS+), a path component can
+                            // reach a created symlink without byte-matching its recorded
+                            // path. Once this extraction has created any symlink, ask the
+                            // kernel to refuse to follow symlinks while opening file
+                            // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets.
+                            #[cfg(unix)]
+                            let flags = {
+                                let mut flags =
+                                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                                if !created_symlinks.is_empty() {
+                                    flags |= bun_sys::O::NOFOLLOW_ANY;
+                                }
+                                flags
+                            };
+                            #[cfg(not(unix))]
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
                             #[cfg(windows)]

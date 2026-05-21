@@ -106,11 +106,12 @@ class Foo {
   },
 );
 
-test.concurrent("static accessor field is accessible through a subclass", async () => {
-  // A naive rewrite would emit `return this.#storage` for a synthesized
-  // static getter, which triggers JavaScript's private-field brand check
-  // and throws TypeError when the receiver is a subclass. Standard-decorator
-  // lowering uses a WeakMap keyed on the declaring class, so this works.
+test.concurrent("static accessor field: direct access works; subclass access throws (TC39 spec)", async () => {
+  // The standard-decorator lowering stores static accessor state in a
+  // WeakMap keyed on the declaring class. `Counter.count` round-trips; a
+  // subclass access (`Sub.count`) invokes the inherited getter with
+  // `this === Sub`, which is not in the WeakMap — matches TC39's static
+  // private-field brand-check semantics (TypeError at the key lookup).
   using dir = tempDir("issue-29197-subclass", {
     "tsconfig.json": JSON.stringify({
       compilerOptions: { experimentalDecorators: false },
@@ -120,11 +121,16 @@ class Sub extends Counter {}
 console.log(Counter.count);
 Counter.count = 99;
 console.log(Counter.count);
+try {
+  console.log("Sub.count=", Sub.count);
+} catch (e) {
+  console.log("Sub caught:", (e as any).name);
+}
 `,
   });
 
   const [stdout, , exitCode] = await runBun(String(dir), "main.ts");
-  expect(stdout).toBe("10\n99\n");
+  expect(stdout).toBe("10\n99\nSub caught: TypeError\n");
   expect(exitCode).toBe(0);
 });
 

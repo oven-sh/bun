@@ -2745,8 +2745,9 @@ pub fn init_scoped_debug_writer_at_startup() {
     // SAFETY: single-threaded startup, before any reader thread is spawned
     // (unsync because readers may later be on any thread).
     unsafe {
-        scoped_debug_writer::SCOPED_FILE_WRITER
-            .write_unsync(output_sink().quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0));
+        scoped_debug_writer::SCOPED_FILE_WRITER.write_unsync(
+            output_sink().quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0),
+        );
     }
 }
 

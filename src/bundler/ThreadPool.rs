@@ -140,8 +140,9 @@ mod io_thread_pool {
                     // `REF_COUNT` above pairs with the Release store after init,
                     // so the pointee is fully written before any deref. Unsync —
                     // `acquire()` runs on multiple threads under MUTEX/REF_COUNT.
-                    return NonNull::new(unsafe { THREAD_POOL.get_unsync() }
-                        .cast::<ThreadPoolLib::ThreadPool>())
+                    return NonNull::new(
+                        unsafe { THREAD_POOL.get_unsync() }.cast::<ThreadPoolLib::ThreadPool>(),
+                    )
                     .expect("UnsafeCell::get is non-null");
                 }
                 Err(actual) => count = actual,

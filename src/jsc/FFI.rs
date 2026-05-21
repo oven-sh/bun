@@ -70,9 +70,7 @@ pub static ValueUndefined: ImmutableJSValue = ImmutableJSValue(EncodedJSValue {
 pub const TRUE_I64: i64 = ((2 | 4) | 1) as i64;
 
 #[unsafe(no_mangle)]
-pub static ValueTrue: ImmutableJSValue = ImmutableJSValue(EncodedJSValue {
-    as_int64: TRUE_I64,
-});
+pub static ValueTrue: ImmutableJSValue = ImmutableJSValue(EncodedJSValue { as_int64: TRUE_I64 });
 
 pub type JSContext = *mut c_void;
 

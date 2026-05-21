@@ -6126,7 +6126,9 @@ impl<'a> Resolver<'a> {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
                             if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                                 // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                                unsafe { (*BIN_FOLDERS.get_unsync()).write(BinFolderArray::default()) };
+                                unsafe {
+                                    (*BIN_FOLDERS.get_unsync()).write(BinFolderArray::default())
+                                };
                                 BIN_FOLDERS_LOADED
                                     .store(true, core::sync::atomic::Ordering::Release);
                             }
@@ -6156,7 +6158,8 @@ impl<'a> Resolver<'a> {
                                 else {
                                     break 'append_bin_dir;
                                 };
-                                let _ = (*BIN_FOLDERS.get_unsync()).assume_init_mut().append(stored);
+                                let _ =
+                                    (*BIN_FOLDERS.get_unsync()).assume_init_mut().append(stored);
                             }
                         }
                     }

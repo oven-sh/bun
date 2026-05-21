@@ -2511,9 +2511,7 @@ mod racy_cell_tests {
         })
         .join()
         .unwrap();
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { CELL.get() })).is_err()
-        );
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { CELL.get() })).is_err());
     }
 
     #[test]

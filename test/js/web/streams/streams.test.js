@@ -260,6 +260,126 @@ describe("WritableStream", () => {
     await rs.pipeTo(ws);
     expect(received).toBe("hello world");
   });
+
+  describe("DefaultController.signal (issue #31156)", () => {
+    it("exposes an AbortSignal from start()", () => {
+      let captured;
+      new WritableStream({
+        start(controller) {
+          captured = controller.signal;
+        },
+        write() {},
+      });
+
+      expect(captured).toBeInstanceOf(AbortSignal);
+      expect(captured.aborted).toBe(false);
+    });
+
+    it("exposes the same AbortSignal from write()", async () => {
+      let startSignal;
+      let writeSignal;
+      const ws = new WritableStream({
+        start(controller) {
+          startSignal = controller.signal;
+        },
+        write(_chunk, controller) {
+          writeSignal = controller.signal;
+        },
+      });
+
+      const writer = ws.getWriter();
+      await writer.write("x");
+
+      expect(writeSignal).toBeInstanceOf(AbortSignal);
+      expect(writeSignal).toBe(startSignal);
+    });
+
+    it("fires 'abort' on the signal before sink.abort() runs, with the same reason", async () => {
+      const order = [];
+      let sinkReason;
+      let listenerReason;
+      let signalFromStart;
+
+      const ws = new WritableStream({
+        start(controller) {
+          signalFromStart = controller.signal;
+          controller.signal.addEventListener("abort", () => {
+            order.push("signal");
+            listenerReason = controller.signal.reason;
+          });
+        },
+        write() {},
+        abort(reason) {
+          order.push("sink.abort");
+          sinkReason = reason;
+        },
+      });
+
+      const writer = ws.getWriter();
+      await writer.abort("boom");
+
+      expect(order).toEqual(["signal", "sink.abort"]);
+      expect(listenerReason).toBe("boom");
+      expect(sinkReason).toBe("boom");
+      expect(signalFromStart.aborted).toBe(true);
+      expect(signalFromStart.reason).toBe("boom");
+    });
+
+    it("fires the signal when the stream itself is aborted", async () => {
+      let aborted = false;
+      let reasonOnSignal;
+
+      const ws = new WritableStream({
+        start(controller) {
+          controller.signal.addEventListener("abort", () => {
+            aborted = true;
+            reasonOnSignal = controller.signal.reason;
+          });
+        },
+        write() {},
+      });
+
+      await ws.abort("stream-abort-reason");
+
+      expect(aborted).toBe(true);
+      expect(reasonOnSignal).toBe("stream-abort-reason");
+    });
+
+    it("lets an abort listener unblock a pending write() — the stream-chain v4 use case", async () => {
+      // Simulates the downstream pattern from uhop/stream-chain: a sink whose
+      // write() hangs on an external condition, woken up when the signal fires.
+      let resolveWrite;
+      const writeGate = new Promise(resolve => {
+        resolveWrite = resolve;
+      });
+      let writeResolved = false;
+
+      const ws = new WritableStream({
+        start(controller) {
+          controller.signal.addEventListener("abort", () => {
+            resolveWrite();
+          });
+        },
+        async write() {
+          await writeGate;
+          writeResolved = true;
+        },
+      });
+
+      const writer = ws.getWriter();
+      const writePromise = writer.write("x").catch(() => {});
+
+      // Kick the event loop once so write() has a chance to start and park.
+      await Promise.resolve();
+
+      await writer.abort("wake");
+
+      // If the signal didn't fire, writeGate would never resolve and this test
+      // would hang.
+      await writePromise;
+      expect(writeResolved).toBe(true);
+    });
+  });
 });
 
 describe("ReadableStream.prototype.tee", () => {

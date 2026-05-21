@@ -70,6 +70,7 @@ using namespace JSC;
     macro(code) \
     macro(controlledReadableStream) \
     macro(controller) \
+    macro(createAbortSignal) \
     macro(createCommonJSModule) \
     macro(createEmptyReadableStream) \
     macro(createFIFO) \
@@ -184,6 +185,7 @@ using namespace JSC;
     macro(secure) \
     macro(self) \
     macro(signal) \
+    macro(signalAbort) \
     macro(sink) \
     macro(size) \
     macro(specifier) \

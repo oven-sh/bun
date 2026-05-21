@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import assert from "node:assert";
 // import child from "node:child_process";
 import path from "node:path";
@@ -118,6 +118,48 @@ describe("path.resolve", () => {
     expect(() => {
       return path.posix.resolve(undefined, "/hi");
     }).not.toThrow();
+  });
+
+  // https://github.com/oven-sh/bun/issues/31182
+  test.skipIf(isWindows)("win32.resolve with a drive letter from POSIX cwd", async () => {
+    using dir = tempDir("path-resolve-31182", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const path = require("node:path");
+         const out = {
+           cResolve: path.win32.resolve("C:"),
+           cNs: path.win32.toNamespacedPath("C:"),
+           dResolve: path.win32.resolve("D:"),
+           dNs: path.win32.toNamespacedPath("D:"),
+           cTail: path.win32.resolve("C:", "sub", "file.txt"),
+           cSlash: path.win32.resolve("C:/"),
+         };
+         process.stdout.write(JSON.stringify(out));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    // Node on POSIX normalises the cwd to the win32 form — slashes become
+    // backslashes — and the drive-letter argument prefixes the resulting
+    // path. The previous bug emitted `/<first-two-chars-of-cwd>\<tail>`.
+    const posixCwd = String(dir);
+    const cwdTail = posixCwd.replace(/\//g, "\\");
+    expect(JSON.parse(stdout)).toEqual({
+      cResolve: `C:${cwdTail}`,
+      cNs: `\\\\?\\C:${cwdTail}`,
+      dResolve: `D:${cwdTail}`,
+      dNs: `\\\\?\\D:${cwdTail}`,
+      cTail: `C:${cwdTail}\\sub\\file.txt`,
+      cSlash: "C:\\",
+    });
   });
 
   test("very long paths", () => {

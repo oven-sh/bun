@@ -3134,9 +3134,14 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                 path_ptr = buf2.as_ptr();
                 path_len = ep_len;
             } else {
-                // cwd is limited to MAX_PATH_BYTES.
-                cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
-                path_ptr = tmp_buf.as_ptr();
+                // cwd is limited to MAX_PATH_BYTES. Write past the
+                // `resolved_device_len` bytes that back `resolvedDevice` so
+                // `tmp_buf[0..resolved_device_len]` survives — the final write
+                // at the bottom of this function reads the device back from
+                // there.
+                cwd_len = get_cwd_t(&mut tmp_buf[resolved_device_len..])?.len();
+                // SAFETY: offsetting within the live `tmp_buf` array.
+                path_ptr = unsafe { tmp_buf.as_ptr().add(resolved_device_len) };
                 path_len = cwd_len;
                 // We must set envPath here so that it doesn't hit the null check just below.
                 env_path_len = Some(cwd_len);
@@ -3150,8 +3155,12 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             //     (StringPrototypeToLowerCase(StringPrototypeSlice(path, 0, 2)) !==
             //     StringPrototypeToLowerCase(resolvedDevice) &&
             //     StringPrototypeCharCodeAt(path, 2) === CHAR_BACKWARD_SLASH)) {
+            // JS reads `path[2]` via `charCodeAt`, which returns NaN past the
+            // end — guard the length here so a short cwd (e.g. `/`) doesn't
+            // panic the Rust indexer.
             if env_path_len.is_none()
-                || (path!()[2] == T::from_u8(CHAR_BACKWARD_SLASH)
+                || (path_len >= 3
+                    && path!()[2] == T::from_u8(CHAR_BACKWARD_SLASH)
                     && !eql_ignore_case_t(&path!()[0..2], &tmp_buf[0..resolved_device_len]))
             {
                 // Translated from the following JS code:

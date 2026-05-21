@@ -2041,8 +2041,9 @@ impl PendingMatcher {
         impl Drop for RerunGuard {
             fn drop(&mut self) {
                 // SAFETY: `expect` came from `Expect::from_js` on a value
-                // held live by `self.expect_this: Strong` for the duration
-                // of this scope.
+                // held live by the enclosing `PendingMatcher.expect_this:
+                // Strong` for the duration of this scope (the Box in
+                // `on_settle()` outlives `_guard`).
                 unsafe {
                     (*self.expect).is_async_rerun.set(self.saved_is_rerun);
                     (*self.expect).flags.set(self.saved_flags);

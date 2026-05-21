@@ -706,13 +706,14 @@ impl MySQLConnection {
             self.tls_status = TLSStatus::SslNotAvailable;
 
             match self.ssl_mode {
-                SSLMode::VerifyCa | SSLMode::VerifyFull => {
+                // The server did not advertise CLIENT_SSL. `require` and
+                // stricter must fail rather than silently continue in
+                // plaintext (matches the Postgres driver's TLSNotAvailable
+                // handling).
+                SSLMode::Require | SSLMode::VerifyCa | SSLMode::VerifyFull => {
                     return Err(AnyMySQLError::AuthenticationFailed);
                 }
-                // require behaves like prefer for postgres.js compatibility,
-                // allowing graceful fallback to non-SSL when the server
-                // doesn't support it.
-                SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
+                SSLMode::Prefer | SSLMode::Disable => {}
             }
         }
         // Send auth response

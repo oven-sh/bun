@@ -103,10 +103,12 @@ impl Class {
                 return false;
             }
 
-            // `.AutoAccessor` lowers to a `.Normal` static private field whose
-            // initializer has the same class-definition-time evaluation semantics,
-            // so the initializer check must include it to avoid moving a class
-            // with `static accessor x = sideEffect()` past preceding statements.
+            // `.AutoAccessor` static initializers evaluate at class-definition
+            // time just like `.Normal` static fields (auto-accessors are lowered
+            // later by `lower_decorators` into a WeakMap + getter/setter pair),
+            // so include them in the side-effect check to avoid hoisting
+            // `static accessor x = sideEffect()` past preceding statements.
+            // (`can_be_moved` runs pre-visit, before lowering.)
             if (property.kind == PropertyKind::Normal
                 || property.kind == PropertyKind::AutoAccessor)
                 && f.contains(flags::Property::IsStatic)

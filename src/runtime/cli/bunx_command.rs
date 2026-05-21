@@ -334,8 +334,15 @@ impl BunxCommand {
                 ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
                         if let Some(name) = name_expr.as_string(&bump) {
-                            if Self::is_safe_bin_name(name) {
-                                return Ok(Box::<[u8]>::from(name));
+                            // A scoped `name` (`@scope/pkg`) is legitimate here;
+                            // the command name is its unscoped portion.
+                            let bin_name = if name.is_empty() {
+                                name
+                            } else {
+                                bun_install::dependency::unscoped_package_name(name)
+                            };
+                            if Self::is_safe_bin_name(bin_name) {
+                                return Ok(Box::<[u8]>::from(bin_name));
                             }
                         }
                     }

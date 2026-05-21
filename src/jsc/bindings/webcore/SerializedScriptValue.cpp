@@ -4707,6 +4707,11 @@ private:
 #endif
         }
 
+        if (lengthInUint64 > static_cast<uint64_t>(m_end - m_ptr) / sizeof(uint64_t)) {
+            fail();
+            return JSValue();
+        }
+
 #if USE(BIGINT32)
         static_assert(sizeof(JSBigInt::Digit) == sizeof(uint64_t));
         if (lengthInUint64 == 1) {

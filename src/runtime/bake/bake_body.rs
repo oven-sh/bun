@@ -1197,11 +1197,10 @@ impl Framework {
     ) -> Result<(), bun_core::Error> {
         // PORT NOTE: Zig built `ASTMemoryAllocator.Scope` by hand and called
         // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
-        // returning the RAII `Scope`. `defer ast_scope.exit()` is the explicit
-        // exit at end-of-fn (the Scope has no Drop yet).
+        // returning the RAII `Scope`, whose `Drop` runs `exit()` at end-of-fn
+        // (Zig's `defer ast_scope.exit()`).
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
-        let ast_scope = ast_memory_allocator.enter();
-        let _guard = scopeguard::guard(ast_scope, |s| s.exit());
+        let _ast_scope = ast_memory_allocator.enter();
 
         // PORT NOTE: Zig passed `out: *Transpiler` pointing at `= undefined`
         // memory and assigned `out.* = try Transpiler.init(...)`. In Rust the

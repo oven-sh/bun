@@ -2096,23 +2096,18 @@ fn transpile_source_code_inner(
             // Stable heap address (Box interior); survives the move into
             // `arena_guard` and into the VM slot on give-back.
             let arena_ptr: *const bun_alloc::Arena = &raw const *arena;
-            // Route `AstAlloc` to `arena`'s `mi_heap_t*` (see the
-            // `reset_store` note above). `_ast_scope.enter()` already nulled
-            // `AST_HEAP`; this rebinds it to the heap that the parser scratch
-            // and printer arena allocations also use.
-            bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
+            // Install a per-transpile `AstAlloc` state (see the `reset_store`
+            // note above). `_ast_scope.enter()` detached `AstAlloc` to the
+            // global fallback; this gives the parser's `AstVec`s an arena that
+            // is bulk-freed when this guard drops — after `arena_guard` has
+            // run, so nothing that reads the AST outlives it.
+            let _ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::new();
             let give_back_arena = true;
             // PORT NOTE: reshaped for borrowck — Zig's `defer` block becomes a
             // scopeguard so `?`-early-returns still run it.
             let mut arena_guard = scopeguard::guard(
                 (jsc_vm, arena, give_back_arena, args.flags),
                 |(jsc_vm, mut arena, give_back, flags)| {
-                    // `AST_HEAP` was bound to `arena.heap_ptr()` for this
-                    // transpile; clear it before `reset()` (which is
-                    // `mi_heap_destroy` + `mi_heap_new`) so it never dangles.
-                    // `_ast_scope.exit()` (drops after this guard) restores
-                    // the surrounding scope's heap regardless.
-                    bun_alloc::ast_alloc::set_thread_heap(core::ptr::null_mut());
                     // SAFETY: `jsc_vm` is the live per-thread VM (closure runs
                     // on the same thread, before the hook returns).
                     let slot = unsafe { &mut (*jsc_vm).module_loader.transpile_source_code_arena };

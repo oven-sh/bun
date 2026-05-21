@@ -3225,84 +3225,72 @@ impl<T> Drop for DebugOnlyDisablerScope<T> {
     }
 }
 
-/// Per-thread side `MimallocArena` that backs `AstAlloc` while the bundler's
-/// `Stmt.Data.Store` / `Expr.Data.Store` block-store is active and **no**
-/// `ASTMemoryAllocator` scope is in effect. See `NewStore::reset` for the
-/// leak this closes.
+/// Per-thread side [`bun_alloc::ast_alloc::AstAllocState`] that backs
+/// `AstAlloc` while the bundler's `Stmt.Data.Store` / `Expr.Data.Store`
+/// block-store is active and **no** `ASTMemoryAllocator` scope is in effect.
+/// See `NewStore::reset` for the leak this closes.
 pub mod store_ast_alloc_heap {
     use core::cell::Cell;
     use core::ptr;
 
-    use bun_alloc::MimallocArena;
+    use bun_alloc::ast_alloc::{self, AstAllocState};
 
+    /// Address of this thread's installed side state — the "entered" flag and
+    /// the identity used to assert that `reset()`/`exit()` operate on the
+    /// state this module installed (the box itself lives in the `AST_ALLOC`
+    /// thread-local while entered, so it cannot be reached through a field
+    /// here). Null when not entered. Never dereferenced.
     #[thread_local]
-    static ARENA: Cell<*mut MimallocArena> = Cell::new(ptr::null_mut());
-
-    /// Reborrow the thread-local arena. Centralises the back-ref deref so
-    /// `enter` / `reset` / `current_heap` stay safe (mirrors
-    /// `Stmt::Data::Store::instance_mut`). `None` iff `enter()` has not run
-    /// (or `exit()` cleared it).
-    #[inline]
-    fn arena_mut<'a>() -> Option<&'a mut MimallocArena> {
-        // SAFETY: `ARENA` is thread-local; the `*mut MimallocArena` it holds is
-        // either null or a live `Box::into_raw` allocation owned by this thread
-        // and freed only by `exit()` (on this thread). No other `&`/`&mut` to
-        // the arena is reachable: this module is its sole accessor.
-        unsafe { ARENA.get().as_mut() }
-    }
+    static STATE_ID: Cell<*const AstAllocState> = Cell::new(ptr::null());
+    /// The `AST_ALLOC` occupant displaced by `enter()`, restored by `exit()`.
+    #[thread_local]
+    static PREVIOUS: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
 
     pub fn enter() {
         if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
             return;
         }
-        let arena = match arena_mut() {
-            Some(a) => a,
-            None => {
-                let p = Box::into_raw(Box::new(MimallocArena::new()));
-                ARENA.set(p);
-                arena_mut().expect("just set")
-            }
-        };
-        bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
+        if !STATE_ID.get().is_null() {
+            // Already entered on this thread; the long-lived side state stays
+            // installed until `exit()`.
+            debug_assert!(core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get()));
+            return;
+        }
+        let state = ast_alloc::acquire_state();
+        STATE_ID.set(&raw const *state);
+        PREVIOUS.set(ast_alloc::swap_state(Some(state)));
     }
 
     pub fn reset() {
-        let Some(arena) = arena_mut() else {
+        if STATE_ID.get().is_null() {
             enter();
             return;
-        };
-        // This is the `AstAlloc` side-heap holding `Ast.named_exports`,
+        }
+        // This is the `AstAlloc` side state holding `Ast.named_exports`,
         // `AstVec` buffers, etc. — data that is intentionally NEVER `Drop`'d
         // (the whole point of routing through `AstAlloc` is bulk-free here).
-        // `9ae903e` changed this to `reset_retain_with_limit(8M)` to avoid
-        // the per-file `mi_heap_new` bitmap memset, but that is WRONG for
-        // this heap: the previous file's allocations are never individually
-        // freed, so under the limit they accumulate as unreachable garbage.
-        // With `AstAlloc` bypassing `track_alloc` (calls `mi_heap_malloc`
-        // directly via the raw `*mut mi_heap_t`) AND `heap_committed_exceeds`
-        // being unreliable on darwin (OS-backed pages not walked by
-        // `mi_heap_visit_blocks`), the limit never trips → 83→61 MB on
-        // require-cache "long export names". Zig's
-        // `arena.reset(.{.retain_with_limit=..})` is on a BUMP allocator
-        // where reset always rewinds the cursor (= bulk-free); only the
-        // backing buffer is retained. `MimallocArena` is not a bump
-        // allocator, so the only correct mapping is destroy+new.
-        arena.reset();
-        bun_alloc::ast_alloc::set_thread_heap(arena.heap_ptr());
-    }
-
-    #[inline]
-    pub fn current_heap() -> *mut bun_alloc::mimalloc::Heap {
-        arena_mut().map_or(ptr::null_mut(), |a| a.heap_ptr())
+        // The previous file's allocations are never individually freed, so the
+        // only correct per-file reclamation is a full bulk-free (destroy the
+        // spill heap, rewind the inline cursor). The call sites gate this on
+        // `memory_allocator().is_null()`, so the installed state is ours.
+        debug_assert!(
+            core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get()),
+            "store_ast_alloc_heap::reset while another AstAllocState is installed"
+        );
+        ast_alloc::reset_active_state();
     }
 
     pub fn exit() {
-        let arena = ARENA.replace(ptr::null_mut());
-        bun_alloc::ast_alloc::set_thread_heap(ptr::null_mut());
-        if !arena.is_null() {
-            // SAFETY: `arena` was `Box::into_raw`'d in `enter()` on this
-            // thread and is now being reclaimed exactly once.
-            drop(unsafe { Box::from_raw(arena) });
+        if STATE_ID.get().is_null() {
+            return;
+        }
+        debug_assert!(
+            core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get()),
+            "store_ast_alloc_heap::exit while another AstAllocState is installed"
+        );
+        STATE_ID.set(ptr::null());
+        if let Some(state) = ast_alloc::swap_state(PREVIOUS.take()) {
+            ast_alloc::release_state(state);
         }
     }
 }

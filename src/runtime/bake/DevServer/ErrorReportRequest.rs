@@ -135,16 +135,16 @@ impl ErrorReportRequest {
         let dev: &DevServer = unsafe { &*ctx }.dev.get();
 
         // Read payload, assemble ZigException
-        let name = read_string32(&mut reader)?;
-        let message = read_string32(&mut reader)?;
-        let browser_url = read_string32(&mut reader)?;
+        let name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+        let message = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+        let browser_url = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let stack_count = reader.read_int_le::<u32>()?.min(255); // does not support more than 255
         let mut frames: Vec<ZigStackFrame> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
             let line = reader.read_int_le::<i32>()?;
             let column = reader.read_int_le::<i32>()?;
-            let function_name = read_string32(&mut reader)?;
-            let file_name = read_string32(&mut reader)?;
+            let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+            let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             frames.push(ZigStackFrame {
                 function_name: BunString::init(function_name),
                 source_url: BunString::init(file_name),
@@ -575,6 +575,27 @@ fn read_string32<'a>(
     let s = &buf[r.pos..end];
     r.pos = end;
     Ok(s)
+}
+
+/// The report body is attacker-controlled: `/_bun/report_error` accepts a
+/// CORS "simple request" POST from any origin, and these strings are printed
+/// to the developer's terminal. Replace C0 control bytes (except `\t`/`\n`)
+/// and DEL so the payload cannot inject ANSI/OSC escape sequences (cursor
+/// movement, OSC 52 clipboard writes, hyperlinks).
+fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
+    fn is_disallowed(b: u8) -> bool {
+        (b < 0x20 && b != b'\t' && b != b'\n') || b == 0x7f
+    }
+    if !s.iter().any(|&b| is_disallowed(b)) {
+        return s;
+    }
+    let copy = arena.alloc_slice_copy(s);
+    for b in copy.iter_mut() {
+        if is_disallowed(*b) {
+            *b = b' ';
+        }
+    }
+    copy
 }
 
 // ported from: src/bake/DevServer/ErrorReportRequest.zig

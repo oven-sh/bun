@@ -1777,6 +1777,13 @@ impl Archiver {
                     // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
                     let pathname: &[OSPathChar] = remaining;
 
+                    // `normalize_buf_t` writes into a fixed-size OSPathBuffer and assumes the
+                    // caller provides enough space. Tarballs can contain arbitrarily long PAX
+                    // paths, so reject entries that cannot fit including the trailing sentinel.
+                    if pathname.len() >= normalized_buf.len() {
+                        continue 'loop_;
+                    }
+
                     let normalized = bun_paths::resolve_path::normalize_buf_t::<
                         OSPathChar,
                         bun_paths::platform::Auto,
@@ -1788,6 +1795,16 @@ impl Archiver {
                     // TODO(port): Zig had `[:0]OSPathChar` here; the NUL is at path.len()
                     if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
                         continue;
+                    }
+
+                    // `normalize_buf_t` collapses interior `..` but leaves a leading `..` on
+                    // relative input. Reject those so extraction cannot escape `dir`.
+                    if path.len() >= 2
+                        && path[0] == b'.' as OSPathChar
+                        && path[1] == b'.' as OSPathChar
+                        && (path.len() == 2 || path[2] == bun_paths::SEP as OSPathChar)
+                    {
+                        continue 'loop_;
                     }
 
                     // Skip entries whose normalized path is absolute on Windows.

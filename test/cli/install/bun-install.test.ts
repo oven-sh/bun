@@ -18,6 +18,7 @@ import {
   toHaveBins,
 } from "harness";
 import { join, resolve, sep } from "path";
+import { gzipSync } from "zlib";
 import {
   createTestContext,
   destroyTestContext,
@@ -66,7 +67,71 @@ async function withContext(
 // Default context options for most tests
 const defaultOpts = { linker: "hoisted" as const };
 
+function tarHeader(name: string, size: number, type = "0") {
+  const header = Buffer.alloc(512, 0);
+  header.write(name, 0, Math.min(Buffer.byteLength(name), 100), "utf8");
+  header.write("0000644\0", 100, 8, "ascii");
+  header.write("0000000\0", 108, 8, "ascii");
+  header.write("0000000\0", 116, 8, "ascii");
+  header.write(size.toString(8).padStart(11, "0") + "\0", 124, 12, "ascii");
+  header.write("00000000000\0", 136, 12, "ascii");
+  header.fill(" ", 148, 156);
+  header.write(type, 156, 1, "ascii");
+  header.write("ustar\0", 257, 6, "ascii");
+  header.write("00", 263, 2, "ascii");
+
+  let checksum = 0;
+  for (const byte of header) checksum += byte;
+  header.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148, 8, "ascii");
+  return header;
+}
+
+function tarEntry(name: string, body: string | Buffer, type = "0") {
+  const contents = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  const padding = Buffer.alloc((512 - (contents.length % 512)) % 512);
+  return Buffer.concat([tarHeader(name, contents.length, type), contents, padding]);
+}
+
+function paxEntry(path: string) {
+  const body = ` path=${path}\n`;
+  let digits = 1;
+  while (true) {
+    const length = digits + Buffer.byteLength(body);
+    const nextDigits = String(length).length;
+    if (nextDigits === digits) return Buffer.from(`${length}${body}`);
+    digits = nextDigits;
+  }
+}
+
 describe.concurrent("bun-install", () => {
+  it("does not crash extracting npm tarballs with overlong PAX paths", async () => {
+    const package_dir = tempDir("bun-install-long-pax-path", {
+      "package.json": JSON.stringify({ dependencies: { x: "file:./pkg.tgz" } }),
+    });
+
+    const tarball = gzipSync(
+      Buffer.concat([
+        tarEntry("PaxHeader", paxEntry(`package/${Buffer.alloc(5000, "a").toString()}`), "x"),
+        tarEntry("package/short", "x"),
+        tarEntry("package/package.json", JSON.stringify({ name: "x", version: "1.0.0" })),
+        Buffer.alloc(1024),
+      ]),
+    );
+    await writeFile(join(package_dir, "pkg.tgz"), tarball);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--no-progress"],
+      cwd: package_dir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  });
+
   for (let input of ["abcdef", "65537", "-1"]) {
     it(`bun install --network-concurrency=${input} fails`, async () => {
       await withContext(defaultOpts, async ctx => {

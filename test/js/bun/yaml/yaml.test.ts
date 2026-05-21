@@ -1010,6 +1010,12 @@ folded: >
           expect(YAML.parse("? a\n: b\n?\tc\n: d\n")).toEqual({ a: "b", c: "d" });
         });
 
+        test("tab then newline after ? is an e-node key", () => {
+          // A trailing tab does not change `?\n…` semantics (s-separate, not content).
+          expect(YAML.parse("?\t\nb: 2\n")).toEqual({ null: null, b: 2 });
+          expect(YAML.parse("?\t\n: v\n")).toEqual({ null: "v" });
+        });
+
         test("tab in nested context", () => {
           expect(YAML.parse("outer:\n  a: 1\n  ?\tb\n  : 2\n")).toEqual({ outer: { a: 1, b: 2 } });
         });
@@ -1176,6 +1182,9 @@ folded: >
         expect(() => YAML.parse("? a\n  : b\n")).toThrow("Unexpected token");
         expect(() => YAML.parse("x: 1\n? a\n  : b\n")).toThrow("Unexpected token");
         expect(() => YAML.parse("x: 1\n? a\n    : b\n")).toThrow("Unexpected token");
+        // tab after `:` does not bypass the [191] check
+        expect(() => YAML.parse("? a\n  :\tb\n")).toThrow("Unexpected token");
+        expect(() => YAML.parse("x: 1\n? a\n  :\tb\n")).toThrow("Unexpected token");
       });
 
       test("explicit : at lesser indent ends the entry (e-node value)", () => {

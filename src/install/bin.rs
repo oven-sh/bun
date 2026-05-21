@@ -766,6 +766,14 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     if path::is_absolute(target) {
         return true;
     }
+    // Windows drive-relative paths (`C:foo`, `C:..\evil`) are not "absolute"
+    // (no separator after the colon) and their `C:..` component is not a bare
+    // `..`, so they would slip past the depth walk below while still resolving
+    // outside the package directory. A legitimate relative bin target never
+    // contains a colon (it is also the NTFS alternate-data-stream separator).
+    if target.contains(&b':') {
+        return true;
+    }
     let mut depth: isize = 0;
     for component in target.split(|&b| b == b'/' || b == b'\\') {
         match component {

@@ -2321,8 +2321,9 @@ pub struct Parser<'i, Enc: Encoding> {
     pub stack_check: StackCheck,
 
     /// Total key-equality comparisons performed while deduplicating `<<` merge
-    /// keys across the whole document. Bounded so that aliased anchors cannot
-    /// turn a small input into quadratic work.
+    /// keys across the entire parse invocation (all documents in a
+    /// multi-document stream; `parse_document` does not reset it). Bounded so
+    /// that aliased anchors cannot turn a small input into quadratic work.
     pub merge_key_comparisons: u64,
 }
 
@@ -3098,9 +3099,10 @@ pub struct MappingProps {
 
 impl MappingProps {
     /// Upper bound on the total number of key-equality comparisons performed
-    /// while deduplicating `<<` merge keys across a single document. Aliases
-    /// make re-merging a large anchor nearly free in input bytes, so without
-    /// a cap a small document can force quadratic work.
+    /// while deduplicating `<<` merge keys across an entire parse invocation
+    /// (cumulative over all documents in a stream). Aliases make re-merging a
+    /// large anchor nearly free in input bytes, so without a cap a small input
+    /// can force quadratic work.
     pub const MAX_MERGE_KEY_COMPARISONS: u64 = 1 << 24;
 
     pub fn init() -> Self {

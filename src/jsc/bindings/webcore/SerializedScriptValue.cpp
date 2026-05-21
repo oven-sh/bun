@@ -4075,7 +4075,7 @@ private:
 
         CryptoKeyRSAComponents::PrimeInfo firstPrimeInfo;
         CryptoKeyRSAComponents::PrimeInfo secondPrimeInfo;
-        Vector<CryptoKeyRSAComponents::PrimeInfo> otherPrimeInfos(primeCount - 2);
+        Vector<CryptoKeyRSAComponents::PrimeInfo> otherPrimeInfos;
 
         if (!read(firstPrimeInfo.primeFactor))
             return false;
@@ -4088,12 +4088,14 @@ private:
         if (!read(secondPrimeInfo.factorCRTCoefficient))
             return false;
         for (unsigned i = 2; i < primeCount; ++i) {
-            if (!read(otherPrimeInfos[i - 2].primeFactor))
+            CryptoKeyRSAComponents::PrimeInfo info;
+            if (!read(info.primeFactor))
                 return false;
-            if (!read(otherPrimeInfos[i - 2].factorCRTExponent))
+            if (!read(info.factorCRTExponent))
                 return false;
-            if (!read(otherPrimeInfos[i - 2].factorCRTCoefficient))
+            if (!read(info.factorCRTCoefficient))
                 return false;
+            otherPrimeInfos.append(WTF::move(info));
         }
 
         auto keyData = CryptoKeyRSAComponents::createPrivateWithAdditionalData(modulus, exponent, privateExponent, firstPrimeInfo, secondPrimeInfo, otherPrimeInfos);

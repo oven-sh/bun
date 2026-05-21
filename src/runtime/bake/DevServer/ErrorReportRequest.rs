@@ -581,19 +581,35 @@ fn read_string32<'a>(
 /// CORS "simple request" POST from any origin, and these strings are printed
 /// to the developer's terminal. Replace C0 control bytes (except `\t`/`\n`)
 /// and DEL so the payload cannot inject ANSI/OSC escape sequences (cursor
-/// movement, OSC 52 clipboard writes, hyperlinks).
+/// movement, OSC 52 clipboard writes, hyperlinks). UTF-8-encoded C1 controls
+/// (U+0080..=U+009F, i.e. `0xC2 0x80..=0x9F`) are also replaced: xterm-family
+/// terminals decode them back to C1, so `0xC2 0x9B` would otherwise act as CSI.
 fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
-    fn is_disallowed(b: u8) -> bool {
-        (b < 0x20 && b != b'\t' && b != b'\n') || b == 0x7f
+    fn is_disallowed(prev: u8, b: u8) -> bool {
+        // Lone 0x80..=0x9F bytes are continuation bytes of legitimate
+        // multi-byte characters and must not be blanked; only the encoded C1
+        // form (a 0xC2 lead byte followed by 0x80..=0x9F) reaches the
+        // terminal as a control.
+        (b < 0x20 && b != b'\t' && b != b'\n')
+            || b == 0x7f
+            || (prev == 0xc2 && (0x80..=0x9f).contains(&b))
     }
-    if !s.iter().any(|&b| is_disallowed(b)) {
+    let mut prev = 0u8;
+    if !s.iter().any(|&b| {
+        let bad = is_disallowed(prev, b);
+        prev = b;
+        bad
+    }) {
         return s;
     }
     let copy = arena.alloc_slice_copy(s);
+    let mut prev = 0u8;
     for b in copy.iter_mut() {
-        if is_disallowed(*b) {
+        let cur = *b;
+        if is_disallowed(prev, cur) {
             *b = b' ';
         }
+        prev = cur;
     }
     copy
 }

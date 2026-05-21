@@ -164,9 +164,7 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                                 let joined = paths::resolve_path::join_abs_string_buf::<
                                     paths::resolve_path::platform::Auto,
                                 >(
-                                    proc_cwd,
-                                    &mut cwd_abs_buf,
-                                    &[cwd_bytes],
+                                    proc_cwd, &mut cwd_abs_buf, &[cwd_bytes]
                                 );
                                 cwd_abs_len = joined.len();
                             }

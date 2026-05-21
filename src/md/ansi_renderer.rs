@@ -1975,10 +1975,7 @@ impl<'a> AnsiRenderer<'a> {
         // `![alt](DATA:image/png;base64,…)` slip through into the URL
         // fallback or OSC 8 and dump a megabyte of base64 into the output.
         let is_data_url = has_src
-            && strings::starts_with_case_insensitive_ascii(
-                src.as_deref().unwrap(),
-                b"data:",
-            );
+            && strings::starts_with_case_insensitive_ascii(src.as_deref().unwrap(), b"data:");
         let link_ok = self.theme.colors
             && self.theme.hyperlinks
             && has_src
@@ -2156,7 +2153,10 @@ fn format_c_hint(buf: &mut [u8; 16], budget: u32) -> &[u8] {
             Ok(())
         }
     }
-    let mut w = BufWriter { buf: &mut buf[..], pos: 0 };
+    let mut w = BufWriter {
+        buf: &mut buf[..],
+        pos: 0,
+    };
     let _ = write!(w, ",c={}", budget);
     let n = w.pos;
     &buf[..n]

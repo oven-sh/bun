@@ -321,17 +321,12 @@ impl INotifyWatcher {
                             'inner: loop {
                                 // SAFETY: fd valid; rest is a valid mutable buffer.
                                 let new_rc = unsafe {
-                                    system::read(
-                                        self.fd.native(),
-                                        rest.as_mut_ptr(),
-                                        rest.len(),
-                                    )
+                                    system::read(self.fd.native(), rest.as_mut_ptr(), rest.len())
                                 };
                                 let e = get_errno(new_rc);
                                 match e {
                                     E::SUCCESS => {
-                                        read_len +=
-                                            usize::try_from(new_rc).expect("int cast");
+                                        read_len += usize::try_from(new_rc).expect("int cast");
                                         break 'inner;
                                     }
                                     E::EAGAIN | E::EINTR => {

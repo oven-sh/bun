@@ -632,6 +632,7 @@ function ClientRequest(input, options, cb) {
       return true;
     } catch (err) {
       if (!!$debug) globalReportError(err);
+      removeSignalListener();
       process.nextTick((self, err) => self.emit("error", err), this, err);
       return false;
     }
@@ -664,6 +665,7 @@ function ClientRequest(input, options, cb) {
       };
     } catch (err) {
       if (!!$debug) globalReportError(err);
+      removeSignalListener();
       this.emit("error", err);
     } finally {
       process.nextTick(emitFinishAndDeferredCloseNT);
@@ -802,8 +804,9 @@ function ClientRequest(input, options, cb) {
       // request settles so a late-firing signal (e.g. a long-lived
       // AbortSignal.timeout() used as a request deadline) doesn't fire
       // `'error'` on a request that already finished or was destroyed by
-      // the caller. `removeSignalListener` is invoked from
-      // `socketCloseListener` and `req.destroy()`.
+      // the caller. Call this from every settle/teardown path where the
+      // request will not do any more I/O (normal close, manual destroy, and
+      // every terminal-error branch).
       removeSignalListener = () => signal.removeEventListener("abort", abortHandler);
     }
     this[kSignal] = signal;

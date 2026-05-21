@@ -191,18 +191,26 @@ describe("http.request options.signal", () => {
     // options.signal fires afterwards. Without listener cleanup on the
     // fetch-rejection path, a deadline signal would settle the user's
     // 'error' handler twice for one request.
-    const signal = AbortSignal.timeout(30);
-    const signalFired = new Promise<void>(resolve => {
-      signal.addEventListener("abort", () => resolve(), { once: true });
-    });
-
+    //
+    // Deterministically sequence "network error first, then abort" with an
+    // explicit AbortController rather than racing an AbortSignal.timeout()
+    // against the connect error — see the comment on the sibling test above.
+    const controller = new AbortController();
     const errors: Error[] = [];
-    // Port 1 is reliably refused on POSIX/Windows.
-    const req = request({ hostname: "127.0.0.1", port: 1, signal });
-    req.on("error", err => errors.push(err));
+    // Port 1 is reliably refused on POSIX.
+    const req = request({ hostname: "127.0.0.1", port: 1, signal: controller.signal });
+    const firstError = new Promise<void>(resolve => {
+      req.on("error", err => {
+        errors.push(err);
+        resolve();
+      });
+    });
     req.end();
 
-    await signalFired;
+    await firstError;
+    controller.abort();
+    // Drain the nextTick queue where a stray `emitSignalAbortNT` would run
+    // if the fetch-rejection path had forgotten to detach the listener.
     await Bun.sleep(0);
 
     expect(errors.length).toBe(1);
@@ -250,5 +258,39 @@ describe("http.request options.signal", () => {
     } finally {
       server.close();
     }
+  });
+
+  it("does not re-emit 'error' after a synchronous options.lookup throw when the signal fires later", async () => {
+    // A user-provided `options.lookup` that throws synchronously hits the
+    // outer try/catch in `startFetch`, which emits the throw as 'error'
+    // but (without the fix) leaves the options.signal abort listener
+    // attached. A later signal firing would then emit a second 'error'
+    // (an AbortError) on a request that already terminally failed.
+    const controller = new AbortController();
+    const errors: Error[] = [];
+    const lookupErr = new Error("sync lookup boom");
+
+    const req = request({
+      hostname: "example-regression-test.invalid",
+      port: 80,
+      signal: controller.signal,
+      lookup: () => {
+        throw lookupErr;
+      },
+    });
+    const firstError = new Promise<void>(resolve => {
+      req.on("error", err => {
+        errors.push(err);
+        resolve();
+      });
+    });
+    req.end();
+
+    await firstError;
+    controller.abort();
+    await Bun.sleep(0);
+
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toBe(lookupErr);
   });
 });

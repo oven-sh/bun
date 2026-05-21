@@ -450,9 +450,9 @@ function onconnection(err, clientHandle) {
   const options = self[bunSocketServerOptions];
   const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
   // Propagate the server's half-open/highWaterMark settings to the accepted
-  // socket. The native layer is always half-open, so the Duplex's allowHalfOpen
-  // is what decides whether the writable side auto-ends when the peer FINs;
-  // without this, net.createServer({ allowHalfOpen: true }) would be ignored.
+  // socket so the Duplex's allowHalfOpen matches what the native layer was
+  // configured with in kRealListen; without this, net.createServer({
+  // allowHalfOpen: true }) would be ignored on accepted connections.
   // Matches Node's onconnection:
   // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L2349
   const _socket = new SClass({
@@ -679,10 +679,10 @@ function kConnectTcp(self, addressType, req, address, port) {
     hostname: address,
     port,
     ipv6Only: addressType === 6,
-    // The native socket is kept half-open so it never auto-closes on peer FIN;
-    // the JS Duplex's allowHalfOpen drives whether the writable side ends and
-    // the socket is destroyed (matches Node, where libuv sockets are half-open
-    // and the stream layer decides).
+    // The native socket's half-open flag follows the Duplex's allowHalfOpen
+    // (default false closes on peer FIN so 'close' fires; true keeps the
+    // writable side open and lets the JS stream drive auto-end), matching
+    // Node where libuv sockets are half-open and the stream layer decides.
     allowHalfOpen: self.allowHalfOpen,
     tls: req.tls,
     data: { self, req },
@@ -2144,14 +2144,21 @@ function Server(options?, connectionListener?) {
   }
 
   // https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener
-  const {
+  let {
     allowHalfOpen = false,
     keepAlive = false,
-    keepAliveInitialDelay = 0,
+    keepAliveInitialDelay,
     highWaterMark = getDefaultHighWaterMark(),
     pauseOnConnect = false,
     noDelay = false,
   } = options;
+
+  if (keepAliveInitialDelay !== undefined) {
+    validateNumber(keepAliveInitialDelay, "options.keepAliveInitialDelay");
+    if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
+  } else {
+    keepAliveInitialDelay = 0;
+  }
 
   this._connections = 0;
 
@@ -2445,9 +2452,8 @@ Server.prototype[kRealListen] = function (
     this._handle = Bun.listen({
       unix: path,
       tls,
-      // Native sockets are kept half-open; the per-connection Duplex's
-      // allowHalfOpen (propagated from the server in onconnection) drives the
-      // auto-end/destroy in JS.
+      // The native socket's half-open flag follows the server's allowHalfOpen
+      // and is also propagated to the per-connection Duplex in onconnection.
       allowHalfOpen: this.allowHalfOpen,
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,

@@ -2290,6 +2290,9 @@ mod spawn_process_body {
             pub use_execve_on_macos: bool,
             pub argv0: Option<*const c_char>,
 
+            #[cfg(unix)]
+            pub forward_signals: bool,
+
             #[cfg(windows)]
             pub windows: WindowsOptions,
             #[cfg(not(windows))]
@@ -2357,6 +2360,8 @@ mod spawn_process_body {
                     envp: None,
                     use_execve_on_macos: false,
                     argv0: None,
+                    #[cfg(unix)]
+                    forward_signals: true,
                     #[cfg(windows)]
                     windows: Default::default(),
                     #[cfg(not(windows))]
@@ -3135,8 +3140,12 @@ mod spawn_process_body {
                 }
             }
 
-            Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
-            let _signals = SignalForwarding::register();
+            let _signals = if options.forward_signals {
+                Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::Relaxed);
+                Some(SignalForwarding::register())
+            } else {
+                None
+            };
 
             // SAFETY: caller-built argv/envp are null-terminated C-string
             // arrays with argv[0] non-null; valid for this call.
@@ -3146,17 +3155,19 @@ mod spawn_process_body {
                 Err(err) => return Ok(Err(err)),
                 Ok(proces) => proces,
             };
-            // Negative → kill() in the C++ signal forwarder targets the pgroup, so
-            // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
-            // that hasn't `setsid()`-escaped.
-            Bun__currentSyncPID.store(
-                if no_orphans {
-                    -i64::from(process.pid)
-                } else {
-                    i64::from(process.pid)
-                },
-                core::sync::atomic::Ordering::Relaxed,
-            );
+            if options.forward_signals {
+                // Negative → kill() in the C++ signal forwarder targets the pgroup, so
+                // a SIGTERM/SIGINT delivered to `bun run` reaches every descendant
+                // that hasn't `setsid()`-escaped.
+                Bun__currentSyncPID.store(
+                    if no_orphans {
+                        -i64::from(process.pid)
+                    } else {
+                        i64::from(process.pid)
+                    },
+                    core::sync::atomic::Ordering::Relaxed,
+                );
+            }
 
             let mut jc = JobControl {
                 prev: 0,
@@ -3216,7 +3227,9 @@ mod spawn_process_body {
             // `siblings` by reference while still mutated below. Restructure into a single
             // RAII state struct (or run cleanup inline at each return).
 
-            Bun__sendPendingSignalIfNecessary();
+            if options.forward_signals {
+                Bun__sendPendingSignalIfNecessary();
+            }
 
             let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
             let mut out_fds: [Fd; 2] = [

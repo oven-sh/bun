@@ -1079,16 +1079,24 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
-    // Do not check for pending exceptions here. This matches Node.js behavior
-    // where napi_create_error and friends only create error values without
-    // checking the VM exception state. The inputs are already validated as
-    // strings above; getString() does not check VM exception state.
+    // napi_create_error-like functions should succeed even when a VM-level
+    // exception is already pending (matching Node.js behavior). We remember
+    // whether an exception was already present on entry so we only report
+    // NEW exceptions that may be raised by our own operations below.
+    bool hadPreexistingException = vm.hasExceptionsAfterHandlingTraps();
+
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
     auto wtf_message = js_message.getString(globalObject);
 
     *result = toNapi(
         createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
         globalObject);
+
+    // Surface new exceptions originating from getString() / createErrorWithCode(),
+    // but ignore any exception that was already pending before we entered.
+    if (!hadPreexistingException && vm.hasExceptionsAfterHandlingTraps()) {
+        return napi_set_last_error(env, napi_pending_exception);
+    }
     return napi_set_last_error(env, napi_ok);
 }
 

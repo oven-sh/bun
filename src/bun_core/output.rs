@@ -646,9 +646,12 @@ pub mod windows_stdio {
         #[cfg(debug_assertions)]
         fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
-        // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
+        // SAFETY: BUFFERED_STDIN is a static initialized at startup before
+        // use; this single-threaded startup write happens-before any reader.
+        // Unsync — readers (`prompt()`) may later run on any thread (see
+        // `buffered_stdin`).
         unsafe {
-            (*BUFFERED_STDIN.get()).fd = Fd::stdin();
+            (*BUFFERED_STDIN.get_unsync()).fd = Fd::stdin();
         }
 
         // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
@@ -2941,11 +2944,18 @@ pub fn stdin_reader() -> StdinReader {
 /// `&mut` at the use site. Matches the other self-ref escapes in this module
 /// (`writer()`, `error_writer()`, …).
 ///
-/// SAFETY: the static is single-threaded by construction (only ever touched
-/// from the main JS/CLI thread while blocked on user input).
+/// SAFETY: the static is single-threaded *by convention* (touched from the
+/// main JS/CLI thread while blocked on user input), but `prompt()` is exposed
+/// on `Worker` global scopes too, so the pointer can be requested from more
+/// than one thread. Unsync — concurrent `prompt()` calls already interleave
+/// reads of this one shared buffer (a pre-existing race documented in the
+/// RacyCell audit); the owner check would turn that into a panic on a path
+/// that is expected to "work".
 #[inline]
 pub fn buffered_stdin() -> *mut BufferedStdin {
-    BUFFERED_STDIN.get()
+    // SAFETY: see the doc comment above — only the address is produced here;
+    // the caller's deref carries the aliasing obligation.
+    unsafe { BUFFERED_STDIN.get_unsync() }
     // TODO(port): self-ref pointer escape — see error_writer()
 }
 

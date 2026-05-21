@@ -29,8 +29,9 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
     `,
   });
   // Second absolute path to the same binary so alternating calls take the
-  // `!eql_long(prev_name, ...)` branch in open_in_editor.
-  const sleep2 = join(String(dir), "sleep2");
+  // `!eql_long(prev_name, ...)` branch in open_in_editor. Keep the basename
+  // `sleep` so BusyBox (Alpine) resolves the multi-call applet from argv[0].
+  const sleep2 = join(String(dir), "sleep");
   symlinkSync(sleep!, sleep2);
 
   const runs = Array.from({ length: 5 }, async () => {

@@ -49,7 +49,7 @@ bun audit --ignore CVE-2022-25883 --ignore CVE-2023-26136
 
 ### `--json`
 
-Use the `--json` flag to print the raw JSON response from the registry instead of the formatted report:
+Use the `--json` flag to print the audit report as JSON instead of the formatted output. `--audit-level` and `--ignore` apply to the JSON output as well:
 
 ```bash terminal icon="terminal"
 bun audit --json

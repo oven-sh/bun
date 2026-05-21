@@ -4,17 +4,26 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use bun_alloc::AllocError;
 use bun_collections::{StringHashMap, VecExt};
 use bun_core::Error;
-use bun_core::{ZStr, w};
+use bun_core::ZStr;
+#[cfg(windows)]
+use bun_core::w;
+#[cfg(not(windows))]
+use bun_paths::MAX_PATH_BYTES;
+#[cfg(windows)]
+use bun_paths::WPathBuffer;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_paths::resolve_path;
 use bun_paths::strings;
-use bun_paths::{self as path, AbsPath, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, WPathBuffer};
+use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{ExternalString, String};
-use bun_sys::{self as sys, Fd, FdExt as _, Mode};
+#[cfg(not(windows))]
+use bun_sys::Mode;
+use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};
-use crate::install::{self as Install, DependencyID, ExternalStringList};
+use crate::install::{DependencyID, ExternalStringList};
+#[cfg(windows)]
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
 use crate::windows_shim::Shebang as WinShimShebang;
@@ -383,9 +392,9 @@ impl Bin {
                     writer.write_str("{\n")?;
                     *indent += 1;
                     write_indent(writer, indent)?;
-                    write!(
+                    writeln!(
                         writer,
-                        "{}: {},\n",
+                        "{}: {},",
                         self.value.named_file[0].fmt_json(buf, Default::default()),
                         self.value.named_file[1].fmt_json(buf, Default::default()),
                     )?;
@@ -413,9 +422,9 @@ impl Bin {
                             writer.write_char('\n')?;
                         }
                         write_indent(writer, indent)?;
-                        write!(
+                        writeln!(
                             writer,
-                            "{}: {},\n",
+                            "{}: {},",
                             list[i].value.fmt_json(buf, Default::default()),
                             list[i + 1].value.fmt_json(buf, Default::default()),
                         )?;
@@ -731,11 +740,18 @@ pub type Context = PriorityQueueContext;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 pub fn normalized_bin_name(name: &[u8]) -> &[u8] {
-    if let Some(i) = name
+    let name = match name
         .iter()
         .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
     {
-        return &name[i + 1..];
+        Some(i) => &name[i + 1..],
+        None => name,
+    };
+
+    // npm's `join('/', key).slice(1)` collapses `.`/`..` to empty; do the same
+    // so the `.bin/<name>` destination cannot resolve outside `.bin/`.
+    if name == b"." || name == b".." {
+        return b"";
     }
 
     name
@@ -890,6 +906,7 @@ impl<'a> Linker<'a> {
         }
     }
 
+    #[cfg(not(windows))]
     fn try_normalize_shebang(abs_target: &ZStr) {
         let mut shebang_buf = [0u8; 2048];
 
@@ -1209,7 +1226,7 @@ impl<'a> Linker<'a> {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
                     self.err = Some(err.to_zig_err());
-                    Self::chmod_on_ok(&self.err, abs_target);
+                    Self::chmod_on_ok(self.err, abs_target);
                     return;
                 }
 
@@ -1217,7 +1234,7 @@ impl<'a> Linker<'a> {
                 if err.get_errno() == sys::Errno::ENOENT {
                     if global {
                         self.err = Some(err.to_zig_err());
-                        Self::chmod_on_ok(&self.err, abs_target);
+                        Self::chmod_on_ok(self.err, abs_target);
                         return;
                     }
 
@@ -1234,11 +1251,11 @@ impl<'a> Linker<'a> {
                         sys::Result::Err(real_error) => {
                             // It was just created, no need to delete destination and symlink again
                             self.err = Some(real_error.to_zig_err());
-                            Self::chmod_on_ok(&self.err, abs_target);
+                            Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
                         sys::Result::Ok(()) => {
-                            Self::chmod_on_ok(&self.err, abs_target);
+                            Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
                     }
@@ -1250,7 +1267,7 @@ impl<'a> Linker<'a> {
                 debug_assert!(err.get_errno() == sys::Errno::EEXIST);
             }
             sys::Result::Ok(()) => {
-                Self::chmod_on_ok(&self.err, abs_target);
+                Self::chmod_on_ok(self.err, abs_target);
                 return;
             }
         }
@@ -1261,11 +1278,11 @@ impl<'a> Linker<'a> {
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
             self.err = Some(err.to_zig_err());
         }
-        Self::chmod_on_ok(&self.err, abs_target);
+        Self::chmod_on_ok(self.err, abs_target);
     }
 
     #[cfg(not(windows))]
-    fn chmod_on_ok(err: &Option<Error>, abs_target: &ZStr) {
+    fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
             let _ = sys::chmod(abs_target, 0o777 & !(UMASK.load(Ordering::Acquire) as Mode));
@@ -1655,7 +1672,7 @@ impl<'a> Linker<'a> {
                     dest_off += unscoped_package_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                    let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                     Self::unlink_bin_or_shim(abs_dest);
                 }
@@ -1676,7 +1693,7 @@ impl<'a> Linker<'a> {
                     dest_off += normalized_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                    let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                     Self::unlink_bin_or_shim(abs_dest);
                 }
@@ -1706,7 +1723,7 @@ impl<'a> Linker<'a> {
                         dest_off += normalized_bin_dest.len();
                         self.abs_dest_buf[dest_off] = 0;
                         let abs_dest_len = dest_off;
-                        let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                        let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                         Self::unlink_bin_or_shim(abs_dest);
 
@@ -1753,7 +1770,7 @@ impl<'a> Linker<'a> {
                                 dest_off += entry_name.len();
                                 self.abs_dest_buf[dest_off] = 0;
                                 let abs_dest_len = dest_off;
-                                let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                                let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                                 Self::unlink_bin_or_shim(abs_dest);
                             }

@@ -16,6 +16,7 @@
 //! data that we expect to be cloned multiple times. Such as Blob in FormData.
 
 use core::ffi::c_void;
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::{Alignment, AllocatorVTable, StdAllocator};
@@ -57,6 +58,7 @@ impl LinuxMemFdAllocator {
 
 pub type Ref = bun_ptr::IntrusiveArc<LinuxMemFdAllocator>;
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 static MEMFD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl LinuxMemFdAllocator {
@@ -163,8 +165,7 @@ impl LinuxMemFdAllocator {
             let flags_mut = (flags & !MAP_TYPE) | libc::MAP_SHARED;
 
             // SAFETY: `this` is live per caller contract; we only read scalar fields.
-            let self_size = unsafe { (*this).size };
-            let self_fd = unsafe { (*this).fd };
+            let (self_size, self_fd) = unsafe { ((*this).size, (*this).fd) };
 
             let map_len = size.min(self_size);
             match sys::mmap(
@@ -209,7 +210,7 @@ impl LinuxMemFdAllocator {
             }
 
             if crate::jsc::VirtualMachine::is_smol_mode() {
-                return bytes.len() >= 1024 * 1024 * 1;
+                return bytes.len() >= 1024 * 1024;
             }
 
             // This is a net 2x - 4x slowdown to new Blob([huge])

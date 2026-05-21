@@ -136,9 +136,7 @@ impl KnownGlobal {
         // lifetime of the symbol table (set at declaration time, never freed
         // before `P` teardown).
         let original_name = symbol.original_name.slice();
-        let Some(constructor) = lookup(original_name) else {
-            return None;
-        };
+        let constructor = lookup(original_name)?;
 
         match constructor {
             // Error constructors can be called without 'new' with identical behavior

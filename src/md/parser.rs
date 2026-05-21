@@ -1,6 +1,6 @@
 // Sub-modules
 
-use core::ffi::c_void as _; // (no FFI here; placeholder to mirror import block shape)
+use core::ffi::c_void;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
@@ -13,17 +13,10 @@ use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 pub type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
 use bun_core::StackCheck;
 
-use super::blocks as blocks_mod;
-use super::containers as containers_mod;
 use super::helpers;
 use super::html_renderer::HtmlRenderer;
-use super::inlines as inlines_mod;
-use super::line_analysis as line_analysis_mod;
-use super::links as links_mod;
-use super::ref_defs as ref_defs_mod;
-use super::render_blocks as render_blocks_mod;
 use super::types::{
-    self, Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
+    Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
     TABLE_MAXCOLCOUNT, VerbatimLine,
 };
 use crate::RenderOptions; // Zig: `root.RenderOptions` (root.zig → crate lib.rs)
@@ -93,7 +86,7 @@ pub struct Parser<'a> {
 
     // Ref defs
     pub ref_defs: Vec<RefDef>,
-    pub ref_def_labels: std::collections::HashSet<Box<[u8]>>,
+    pub ref_def_labels: bun_collections::StringSet,
 
     // State
     pub last_line_has_list_loosening_effect: bool,
@@ -151,11 +144,22 @@ impl From<ParserError> for bun_core::Error {
 
 impl<'a> Parser<'a> {
     pub fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
-        // SAFETY: off is an aligned offset into block_bytes produced by start_new_block /
-        // push_container_bytes; the buffer holds a valid BlockHeader at that offset.
+        // SAFETY: `off` is produced by start_new_block / push_container_bytes which pad it
+        // to a multiple of `align_of::<BlockHeader>()`, and the global allocator returns
+        // blocks aligned to at least `align_of::<usize>()`, so the resulting pointer is
+        // 4-byte aligned (asserted below). The buffer holds an initialized BlockHeader there.
         // TODO(port): borrowck — this returns &mut into self.block_bytes while other
         // &mut self borrows may be live at call sites; may need raw *mut.
-        unsafe { &mut *(self.block_bytes.as_mut_ptr().add(off).cast::<BlockHeader>()) }
+        unsafe {
+            let ptr = self
+                .block_bytes
+                .as_mut_ptr()
+                .add(off)
+                .cast::<c_void>()
+                .cast::<BlockHeader>();
+            debug_assert!(ptr.is_aligned());
+            &mut *ptr
+        }
     }
 
     #[inline]
@@ -197,7 +201,7 @@ impl<'a> Parser<'a> {
             table_col_count: 0,
             table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
             ref_defs: Vec::new(),
-            ref_def_labels: std::collections::HashSet::new(),
+            ref_def_labels: bun_collections::StringSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
             max_ref_def_output: (16 * (size as u64)).min(1024 * 1024).min(u32::MAX as u64),
@@ -307,11 +311,6 @@ impl<'a> Parser<'a> {
 
 // Silence unused-import warnings for the sibling modules referenced only in
 // the doc-comment above.
-#[allow(unused_imports)]
-use {
-    blocks_mod as _, containers_mod as _, inlines_mod as _, line_analysis_mod as _, links_mod as _,
-    ref_defs_mod as _, render_blocks_mod as _, types as _,
-};
 
 // ========================================
 // Public API

@@ -18,6 +18,9 @@ use crate::shell::states::pipeline::Pipeline;
 /// up the node and matches on its kind (hoisted dispatch — see
 /// `Interpreter::next_node`).
 #[derive(strum::IntoStaticStr)]
+// OnIoWriterChunk's `err` is constructed inline at several sites in IOWriter.rs;
+// boxing it would add an allocation to the synchronous-write fast path for no win.
+#[allow(clippy::large_enum_variant)]
 pub enum Yield {
     /// Step the node at this id (`Interpreter::next_node`).
     Next(NodeId),

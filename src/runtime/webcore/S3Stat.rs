@@ -55,12 +55,15 @@ impl S3Stat {
     pub fn get_last_modified(&self, global: &JSGlobalObject) -> JSValue {
         JSValue::from_date_number(global, self.last_modified)
     }
+}
 
-    pub fn finalize(self: Box<Self>) {
+impl Drop for S3Stat {
+    fn drop(&mut self) {
         // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl
         // (src/string/lib.rs), so dropping the Box alone would leak the +1
         // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them
         // explicitly, mirroring Zig's `this.etag.deref(); this.contentType.deref();`.
+        // The default `JsFinalize::finalize` (`drop(self)`) runs this on GC.
         self.etag.deref();
         self.content_type.deref();
     }

@@ -11,7 +11,6 @@
     allocator_api
 )]
 #![allow(incomplete_features, internal_features)]
-#![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use, unreachable_pub)]
 
 extern crate self as bun_collections;

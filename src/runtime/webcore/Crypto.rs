@@ -1,205 +1,18 @@
 use bun_core::String as BunString;
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsError, JsResult, StringJsc,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsResult, StringJsc};
 
 use crate::node::Encoding;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Local extension for `JSGlobalObject` methods whose canonical impls live in
-// `src/jsc/JSGlobalObject.rs` on a parallel `JSGlobalObject` struct (that
-// module defines its own opaque type, so its inherent impls don't attach to
-// `bun_jsc::JSGlobalObject`). Bodies here are full ports of the matching Zig
-// (`JSGlobalObject.zig` `throwDOMException` / `validateIntegerRange` /
-// `throwInvalidPropertyTypeValue`). Remove once upstream collapses the two
-// `JSGlobalObject` definitions.
-// ──────────────────────────────────────────────────────────────────────────
-trait JSGlobalObjectCryptoExt {
-    fn throw_dom_exception(
-        &self,
-        code: bun_jsc::DOMExceptionCode,
-        args: core::fmt::Arguments<'_>,
-    ) -> JsError;
-    fn throw_invalid_property_type_value(
-        &self,
-        field: &[u8],
-        typename: &[u8],
-        value: JSValue,
-    ) -> JsError;
-    fn validate_integer_range<T: bun_core::Integer>(
-        &self,
-        value: JSValue,
-        default: T,
-        range: bun_jsc::IntegerRange,
-    ) -> JsResult<T>;
-}
-
-impl JSGlobalObjectCryptoExt for JSGlobalObject {
-    fn throw_dom_exception(
-        &self,
-        code: bun_jsc::DOMExceptionCode,
-        args: core::fmt::Arguments<'_>,
-    ) -> JsError {
-        unsafe extern "C" {
-            // C++ reads `*this` by value and never writes through it, so a
-            // plain `&ZigString` (readonly) is sound here.
-            safe fn ZigString__toDOMExceptionInstance(
-                this: &bun_core::ZigString,
-                global: &JSGlobalObject,
-                code: u8,
-            ) -> JSValue;
-        }
-        // PERF(port): Zig used a 4 KiB stack-fallback + MutableString.init2048;
-        // here we heap-format. The argument-free fast path (`@sizeOf(args)==0`)
-        // is recovered via `Arguments::as_str`.
-        let instance = if let Some(s) = args.as_str() {
-            let zs = bun_core::ZigString::init_utf8(s.as_bytes());
-            ZigString__toDOMExceptionInstance(&zs, self, code as u8)
-        } else {
-            let buf = std::fmt::format(args);
-            let zs = bun_core::ZigString::init_utf8(buf.as_bytes());
-            ZigString__toDOMExceptionInstance(&zs, self, code as u8)
-        };
-        self.throw_value(instance)
-    }
-
-    fn throw_invalid_property_type_value(
-        &self,
-        field: &[u8],
-        typename: &[u8],
-        value: JSValue,
-    ) -> JsError {
-        let ty_str = value.js_type_string(self).to_slice(self);
-        // `defer ty_str.deinit()` — ZigStringSlice's Drop handles cleanup.
-        self.err(
-            bun_jsc::ErrorCode::INVALID_ARG_TYPE,
-            format_args!(
-                "The \"{}\" property must be of type {}. Received {}",
-                bstr::BStr::new(field),
-                bstr::BStr::new(typename),
-                bstr::BStr::new(ty_str.slice()),
-            ),
-        )
-        .throw()
-    }
-
-    fn validate_integer_range<T: bun_core::Integer>(
-        &self,
-        value: JSValue,
-        default: T,
-        range: bun_jsc::IntegerRange,
-    ) -> JsResult<T> {
-        if value.is_undefined() || value.is_empty() {
-            return Ok(default);
-        }
-
-        let min_t: i128 = range
-            .min
-            .max(T::MIN_I128)
-            .max(i128::from(bun_jsc::MIN_SAFE_INTEGER));
-        let max_t: i128 = range
-            .max
-            .min(T::MAX_I128)
-            .min(i128::from(bun_jsc::MAX_SAFE_INTEGER));
-        // Zig: `comptime { if (min_t > max_t) @compileError(...) }` → debug_assert.
-        debug_assert!(min_t <= max_t, "max must be less than min");
-
-        let field_name = range.field_name;
-        // Zig: `comptime if (field_name.len == 0) @compileError(...)`.
-        debug_assert!(!field_name.is_empty(), "field_name must not be empty");
-        let always_allow_zero = range.always_allow_zero;
-        // min_t/max_t are clamped to ±MAX_SAFE_INTEGER above, so i64 fits.
-        let min_i64 = min_t as i64;
-        let max_i64 = max_t as i64;
-
-        if value.is_int32() {
-            let int = value.to_int32();
-            if always_allow_zero && int == 0 {
-                return Ok(T::ZERO);
-            }
-            if i128::from(int) < min_t || i128::from(int) > max_t {
-                return Err(self.throw_range_error(
-                    i64::from(int),
-                    bun_jsc::RangeErrorOptions {
-                        field_name,
-                        min: min_i64,
-                        max: max_i64,
-                        ..Default::default()
-                    },
-                ));
-            }
-            return Ok(T::from_i32(int));
-        }
-
-        if !value.is_number() {
-            return Err(self.throw_invalid_property_type_value(field_name, b"number", value));
-        }
-        let f64_val = value.as_number();
-        if always_allow_zero && f64_val == 0.0 {
-            return Ok(T::ZERO);
-        }
-
-        if f64_val.is_nan() {
-            // node treats NaN as default
-            return Ok(default);
-        }
-        if f64_val.floor() != f64_val {
-            return Err(self.throw_invalid_property_type_value(field_name, b"integer", value));
-        }
-        // @floatFromInt — i128→f64 (rounds beyond 2^53; bounds are already clamped to safe-integer range).
-        if f64_val < (min_t as f64) || f64_val > (max_t as f64) {
-            return Err(self.throw_range_error(
-                f64_val,
-                bun_jsc::RangeErrorOptions {
-                    field_name,
-                    min: min_i64,
-                    max: max_i64,
-                    ..Default::default()
-                },
-            ));
-        }
-
-        Ok(T::from_f64(f64_val))
-    }
-}
 
 // `.classes.ts`-backed type: the C++ JSCell wrapper stays generated C++.
 // This struct is the `m_ctx` payload. `toJS`/`fromJS`/`fromJSDirect` are
 // provided by the attribute macro — do not hand-port the `pub const js = jsc.Codegen.JSCrypto`
 // alias block.
 #[bun_jsc::JsClass]
-pub struct Crypto {
-    garbage: i32,
-}
-
-impl Default for Crypto {
-    fn default() -> Self {
-        Self { garbage: 0 }
-    }
-}
+#[derive(Default)]
+pub struct Crypto {}
 
 // Zig: `comptime { _ = CryptoObject__create; }` — force-reference block, dropped.
-
-fn throw_invalid_parameter(global: &JSGlobalObject) -> JsError {
-    global
-        .err(
-            bun_jsc::ErrorCode::CRYPTO_SCRYPT_INVALID_PARAMETER,
-            format_args!("Invalid scrypt parameters"),
-        )
-        .throw()
-}
-
-// Zig: `comptime error_type: @Type(.enum_literal)` is compile-time checked to be `.RangeError`;
-// no other variant is supported (`@compileError`). In Rust we drop the param and hard-code
-// the RangeError path. `message` was `[:0]const u8` comptime + `fmt: anytype` → fold into
-// `core::fmt::Arguments`.
-fn throw_invalid_params(global: &JSGlobalObject, args: core::fmt::Arguments<'_>) -> JsError {
-    bun_boringssl_sys::ERR_clear_error();
-    global
-        .err(bun_jsc::ErrorCode::CRYPTO_INVALID_SCRYPT_PARAMS, args)
-        .throw()
-}
 
 impl Crypto {
     #[bun_jsc::host_fn(method)]
@@ -242,8 +55,12 @@ impl Crypto {
         // SAFETY: a_ptr/b_ptr are valid for `len` bytes (just obtained from JSUint8Array;
         // `JSUint8Array::slice()` needs `&mut self`, so reconstruct the slices here).
         // `ffi::slice` tolerates `(null, 0)` for detached/empty arrays.
-        let a = unsafe { bun_core::ffi::slice(a_ptr, len) };
-        let b = unsafe { bun_core::ffi::slice(b_ptr, len) };
+        let (a, b) = unsafe {
+            (
+                bun_core::ffi::slice(a_ptr, len),
+                bun_core::ffi::slice(b_ptr, len),
+            )
+        };
         JSValue::from(bun_boringssl_sys::constant_time_eq(a, b))
     }
 
@@ -336,8 +153,6 @@ impl Crypto {
     pub fn constructor(global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<*mut Crypto> {
         Err(global.throw_illegal_constructor("Crypto"))
     }
-
-    pub fn finalize(self: Box<Self>) {}
 }
 
 fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
@@ -426,7 +241,7 @@ pub fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
     let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(8);
 
-    let uuid = UUID7::init(timestamp, &<[u8; 8]>::try_from(&entropy[0..8]).unwrap());
+    let uuid = UUID7::init(timestamp, <[u8; 8]>::try_from(&entropy[0..8]).unwrap());
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);

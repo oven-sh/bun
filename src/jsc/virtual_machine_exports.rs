@@ -233,7 +233,10 @@ pub fn get_tls_reject_unauthorized_value() -> i32 {
 }
 
 // HOST_EXPORT(Bun__isNoProxy, c)
-pub fn is_no_proxy(
+/// # Safety
+/// `hostname_ptr[..hostname_len]` and `host_ptr[..host_len]` must each be valid
+/// for reads for the duration of the call (or the corresponding len must be 0).
+pub unsafe fn is_no_proxy(
     hostname_ptr: *const u8,
     hostname_len: usize,
     host_ptr: *const u8,
@@ -241,14 +244,14 @@ pub fn is_no_proxy(
 ) -> bool {
     // SAFETY: VM singleton is process-lifetime.
     let vm = VirtualMachine::get();
-    // SAFETY: caller (C++) guarantees `hostname_ptr[..hostname_len]` is valid for reads.
     let hostname: Option<&[u8]> = if hostname_len > 0 {
+        // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
         Some(unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) })
     } else {
         None
     };
-    // SAFETY: caller (C++) guarantees `host_ptr[..host_len]` is valid for reads.
     let host: Option<&[u8]> = if host_len > 0 {
+        // SAFETY: caller guarantees `host_ptr[..host_len]` is valid for reads.
         Some(unsafe { bun_core::ffi::slice(host_ptr, host_len) })
     } else {
         None

@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use crate as css;
 
@@ -6,7 +5,6 @@ use css::css_properties::Property;
 use css::{PrintErr, Printer, PropertyHandlerContext, SmallList};
 
 use css::css_values::color::CssColor;
-#[allow(unused_imports)]
 use css::css_values::ident::DashedIdent;
 use css::css_values::number::CSSNumber;
 use css::css_values::url::Url;
@@ -68,8 +66,8 @@ impl ColorScheme {
         Ok(res)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if *self == ColorScheme::empty() {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+        if self == ColorScheme::empty() {
             return dest.write_str("normal");
         }
 
@@ -91,9 +89,9 @@ impl ColorScheme {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _arena: &Arena) -> Self {
+    pub fn deep_clone(self, _arena: &Arena) -> Self {
         // PORT NOTE: bitflags is Copy.
-        *self
+        self
     }
 }
 

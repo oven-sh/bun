@@ -1,6 +1,4 @@
-#![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
-use crate as css;
 use crate::compat::Feature;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::logical::PropertyCategory;
@@ -853,7 +851,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         if category != self.category
             || (self.physical_slot_is_some(field)
                 && context.targets.browsers.is_some()
-                && !val.is_compatible(context.targets.browsers.unwrap()))
+                && !val.is_compatible(&context.targets.browsers.unwrap()))
         {
             self.flush(dest, context);
         }
@@ -875,7 +873,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         if category != self.category
             || (self.logical_slot_is_some(field)
                 && context.targets.browsers.is_some()
-                && !val.is_compatible(context.targets.browsers.unwrap()))
+                && !val.is_compatible(&context.targets.browsers.unwrap()))
         {
             self.flush(dest, context);
         }
@@ -933,30 +931,25 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             None => true,
         };
 
-        if (S::SHORTHAND_CATEGORY != PropertyCategory::Logical || logical_supported)
-            && top.is_some()
-            && bottom.is_some()
-            && left.is_some()
-            && right.is_some()
-        {
-            dest.push(S::make_shorthand(
-                top.unwrap(),
-                bottom.unwrap(),
-                left.unwrap(),
-                right.unwrap(),
-            ));
-        } else {
-            if let Some(t) = top {
-                dest.push(S::make_top(t));
+        match (top, bottom, left, right) {
+            (Some(top), Some(bottom), Some(left), Some(right))
+                if S::SHORTHAND_CATEGORY != PropertyCategory::Logical || logical_supported =>
+            {
+                dest.push(S::make_shorthand(top, bottom, left, right));
             }
-            if let Some(b) = bottom {
-                dest.push(S::make_bottom(b));
-            }
-            if let Some(b) = left {
-                dest.push(S::make_left(b));
-            }
-            if let Some(b) = right {
-                dest.push(S::make_right(b));
+            (top, bottom, left, right) => {
+                if let Some(t) = top {
+                    dest.push(S::make_top(t));
+                }
+                if let Some(b) = bottom {
+                    dest.push(S::make_bottom(b));
+                }
+                if let Some(b) = left {
+                    dest.push(S::make_left(b));
+                }
+                if let Some(b) = right {
+                    dest.push(S::make_right(b));
+                }
             }
         }
 

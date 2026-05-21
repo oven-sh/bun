@@ -1,6 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen

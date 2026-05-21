@@ -15,13 +15,12 @@ use core::ptr::NonNull;
 use bun_boringssl as boringssl;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
-use bun_core::Output;
 use bun_core::{ZigString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
-use bun_ptr::{IntrusiveRc, ThisPtr};
+use bun_ptr::ThisPtr;
 use bun_uws::{self as uws, NewSocketHandler, SslCtx, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
@@ -53,9 +52,11 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
-/// DEFLATE overhead
-const COMPRESSION_OVERHEAD: usize = 4;
-
+/// Maximum buffered inbound message size (128 MB). A server that declares a
+/// larger frame, or whose continuation fragments accumulate past this, fails
+/// the connection with close code 1009 instead of growing `receive_buffer`
+/// without bound.
+const MAX_RECEIVE_MESSAGE_LENGTH: usize = 128 * 1024 * 1024;
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
@@ -137,7 +138,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // laundered through a shared-ref `*const _ as *mut` hop — the vtable
         // slots (`file_polls`, `set_after_event_loop_callback`) write through
         // it.
-        jsc::virtual_machine::VirtualMachine::event_loop_ctx(global_this.bun_vm_ptr())
+        unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(global_this.bun_vm_ptr()) }
     }
 
     fn should_compress(&self, data_len: usize, opcode: Opcode) -> bool {
@@ -220,6 +221,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn cancel(this_ptr: *mut Self) {
         log!("cancel");
         // clear_data() may drop the tunnel's I/O-layer ref; keep `*this_ptr`
@@ -302,19 +305,27 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let ssl_ptr: *mut boringssl::c::SSL = socket
                     .get_native_handle()
                     .map_or(core::ptr::null_mut(), |p| p.cast());
+                // Fail closed: with reject_unauthorized=true we cannot verify
+                // the peer without the SSL handle, so a missing handle is a
+                // connection failure rather than a silent skip.
+                if ssl_ptr.is_null() {
+                    self.fail(ErrorCode::FailedToConnect);
+                    return;
+                }
                 // `TLSEXT_NAMETYPE_host_name` is 0 per RFC 6066 / `<openssl/tls1.h>`.
                 const TLSEXT_NAMETYPE_HOST_NAME: c_int = 0;
-                // SAFETY: ssl_ptr is valid for the lifetime of the socket; passing
-                // null is well-defined (BoringSSL returns null).
+                // SAFETY: ssl_ptr is non-null (checked above) and is the live
+                // `SSL*` native handle of the connected socket; the socket
+                // outlives this call.
                 let servername =
                     unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
                 if !servername.is_null() {
                     // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
                     let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                    // SAFETY: ssl_ptr is non-null (connected SSL socket on the handshake path).
-                    if !ssl_ptr.is_null()
-                        && !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
-                    {
+                    // SAFETY: `ssl_ptr` is non-null (checked above) and no other
+                    // Rust borrow of the `SSL` object exists.
+                    let ssl = unsafe { &mut *ssl_ptr };
+                    if !boringssl::check_server_identity(ssl, hostname) {
                         self.fail(ErrorCode::FailedToConnect);
                         return;
                     }
@@ -415,19 +426,19 @@ impl<const SSL: bool> WebSocket<SSL> {
                         return;
                     }
                 };
-                let mut outstring = ZigString::EMPTY;
+                let mut outstring;
                 if let Some(utf16) = utf16_bytes {
-                    outstring = ZigString::from16_slice(&utf16);
-                    outstring.mark_global();
-                    jsc::mark_binding!();
-                    out.did_receive_text(false, &outstring);
                     // Ownership of the UTF-16 buffer transfers to C++: with
                     // `clone=false` and the global tag set, `Zig::toString`
                     // adopts the allocation into a `WTF::ExternalStringImpl`
                     // which `mi_free`s it later. Dropping the Vec here would
                     // be a UAF + double-free. Mirrors websocket_client.zig
                     // which never frees `utf16` locally.
-                    core::mem::forget(utf16);
+                    let utf16 = core::mem::ManuallyDrop::new(utf16);
+                    outstring = ZigString::from16_slice(&utf16);
+                    outstring.mark_global();
+                    jsc::mark_binding!();
+                    out.did_receive_text(false, &outstring);
                 } else {
                     outstring = ZigString::init(data);
                     jsc::mark_binding!();
@@ -940,6 +951,16 @@ impl<const SSL: bool> WebSocket<SSL> {
                     }
                 }
                 ReceiveState::NeedBody => {
+                    if self
+                        .receive_buffer
+                        .readable_length()
+                        .saturating_add(receive_body_remain)
+                        > MAX_RECEIVE_MESSAGE_LENGTH
+                    {
+                        self.terminate(ErrorCode::MessageTooBig);
+                        terminated = true;
+                        break;
+                    }
                     let to_consume = receive_body_remain.min(data.len());
 
                     let consumed = self.consume(
@@ -978,7 +999,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                         self.ping_frame_bytes[6 + receive_body_remain..][..to_copy]
                             .copy_from_slice(&data[..to_copy]);
                         receive_body_remain += to_copy;
-                        data = &data[to_copy..];
                         if receive_body_remain < self.ping_len as usize {
                             break;
                         }
@@ -1098,7 +1118,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if should_compress {
             // For compressed messages, we need to compress the content first
-            let mut temp_buffer: Option<Vec<u8>> = None;
+            let temp_buffer: Option<Vec<u8>>;
             // PORT NOTE: Zig used deflate.rare_data.arena(); in Rust we use global mimalloc.
             // PERF(port): was rare_data arena allocator
             let content_to_compress: &[u8] = match bytes {
@@ -1287,7 +1307,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         header.set_opcode(Opcode::Pong);
 
         header.set_mask(true);
-        header.set_len((self.ping_len & 0x7F) as u8); // @truncate to u7
+        header.set_len(self.ping_len & 0x7F); // @truncate to u7
         let header_slice = header.slice();
         self.ping_frame_bytes[0] = header_slice[0];
         self.ping_frame_bytes[1] = header_slice[1];
@@ -1423,6 +1443,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         false
     }
 
+    // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn write_binary_data(this_ptr: *mut Self, ptr: *const u8, len: usize, op: u8) {
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
@@ -1469,6 +1491,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         !self.tcp.is_closed() && !self.tcp.is_shutdown()
     }
 
+    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn write_blob(this_ptr: *mut Self, blob_value: JSValue, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
@@ -1526,6 +1550,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    // `extern "C"` entrypoint; pointers are valid by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn write_string(this_ptr: *mut Self, str_: *const ZigString, op: u8) {
         // See write_binary_data() — tunnel.write() can re-enter fail().
         // SAFETY: called from C++ with a valid `heap::alloc` pointer; ScopedRef
@@ -1615,6 +1641,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         unsafe { Self::deref(self) };
     }
 
+    // `extern "C"` entrypoint; pointers are valid (or null where checked) by C++ contract.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn close(this_ptr: *mut Self, code: u16, reason: *const ZigString) {
         // In tunnel mode, SSLWrapper.writeData() (via send_close_with_body →
         // enqueue_encoded_bytes → tunnel.write) can synchronously fire
@@ -1673,9 +1701,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 if wrote_len > 123 {
                     break 'inner;
                 }
-                // SAFETY: close_reason_buf has 128 bytes; reinterpret first 125 as fixed array
-                let buf_ptr = close_reason_buf.as_mut_ptr().cast::<[u8; 125]>();
-                this.send_close_with_body(code, Some(unsafe { &mut *buf_ptr }), wrote_len);
+                // SAFETY: `close_reason_buf` is a 128-byte stack array, so its
+                // first 125 bytes form a valid `[u8; 125]` (align 1); `cursor`
+                // (the only other borrow) ended at `wrote_len` above, so this
+                // `&mut` is unique.
+                let buf = unsafe { &mut *close_reason_buf.as_mut_ptr().cast::<[u8; 125]>() };
+                this.send_close_with_body(code, Some(buf), wrote_len);
                 return;
             }
         }
@@ -1793,7 +1824,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // The Rust global allocator is also mimalloc, so `heap::take`
             // adopts the original allocation (no copy) and `Drop` will `mi_free` it.
             let buffered_slice: Box<[u8]> = unsafe {
-                bun_core::heap::take(core::slice::from_raw_parts_mut(
+                bun_core::heap::take(std::ptr::slice_from_raw_parts_mut(
                     buffered_data,
                     buffered_data_len,
                 ))
@@ -1912,7 +1943,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: see `init()` — adopt the C++ mimalloc-owned buffer
             // directly so it is freed (not leaked) when the handler drops.
             let buffered_slice: Box<[u8]> = unsafe {
-                bun_core::heap::take(core::slice::from_raw_parts_mut(
+                bun_core::heap::take(std::ptr::slice_from_raw_parts_mut(
                     buffered_data,
                     buffered_data_len,
                 ))
@@ -1980,6 +2011,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         let _ = unsafe { (*this.as_ptr()).send_buffer_out() };
     }
 
+    // `extern "C"` entrypoint; `this_ptr` is non-null by C++ contract (see SAFETY comments below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn finalize(this_ptr: *mut Self) {
         log!("finalize");
         // clear_data() may drop the tunnel's I/O-layer ref and the block
@@ -2038,6 +2071,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
+    // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn memory_cost(this: *const Self) -> usize {
         // SAFETY: called from C++ with a valid pointer
         let this = unsafe { &*this };

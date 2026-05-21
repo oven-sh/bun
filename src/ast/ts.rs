@@ -153,8 +153,9 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum Metadata {
+    #[default]
     MNone,
 
     MNever,
@@ -177,12 +178,6 @@ pub enum Metadata {
     // if this list is arena-backed in practice, switch to
     // `bun_alloc::ArenaVec<'bump, Ref>`.
     MDot(Vec<Ref>),
-}
-
-impl Default for Metadata {
-    fn default() -> Self {
-        Metadata::MNone
-    }
 }
 
 impl Metadata {

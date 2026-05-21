@@ -2,10 +2,12 @@ use core::cell::RefCell;
 use core::fmt;
 
 use bun_core::fmt::s;
-use bun_core::{self as bun, Output, fmt as bun_fmt};
+use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, ZStr};
+#[cfg(windows)]
+use bun_paths::WPathBuffer;
 use bun_paths::strings;
-use bun_paths::{self as path, PathBuffer, WPathBuffer};
+use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as Semver, Version};
 use bun_sys::{self as sys, Dir, Fd};
 
@@ -17,6 +19,7 @@ use bun_install::package_manager_real::directories;
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
 use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
+#[cfg(windows)]
 use bun_sys::FdDirExt;
 
 // TODO(port): narrow error set
@@ -196,7 +199,7 @@ impl ExtractTarball {
         } else {
             // Not sure where this case hits yet.
             // BUN-2WQ
-            Output::warn(&format_args!(
+            Output::warn(format_args!(
                 "Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.",
             ));
             debug_assert!(false);

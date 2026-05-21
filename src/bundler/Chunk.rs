@@ -22,12 +22,12 @@ use crate::bun_css;
 use crate::bun_fs;
 use crate::bun_renamer;
 
-use crate::Graph::{Graph, InputFileColumns as _};
+use crate::Graph::Graph;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, CrossChunkImport, LinkerContext, LinkerGraph, PartRange,
-    PathTemplate, cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerContext, LinkerGraph, PartRange, PathTemplate,
+    cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -131,6 +131,16 @@ impl Default for Content {
 // so the per-chunk renamer is reborrowed mutably from each part-range task;
 // the printer never writes through it, but the borrow should become `&'r`.
 unsafe impl Send for Chunk {}
+// SAFETY: shared `&Chunk` access during the worker fan-out touches only
+// `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
+// `files_with_parts_in_chunk` atomic counters; the remaining fields are
+// frozen before fan-out and read single-threaded after the pool join —
+// **except** `renamer`, which the per-part-range printer reborrows `&mut`
+// from each worker (read-only in practice). See `TODO(ub-audit)` above:
+// once `Renamer<'r>` borrows `&'r` instead of `&'r mut`, this caveat (and
+// the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
+// away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
+// the Zig single-pointer fan-out it ports.
 unsafe impl Sync for Chunk {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
@@ -356,6 +366,7 @@ impl Order {
 /// This implementation is just slow.
 /// Can we make the JSPrinter itself track this without increasing
 /// complexity a lot?
+#[derive(Default)]
 pub enum IntermediateOutput {
     /// If the chunk has references to other chunks, then "pieces" contains
     /// the contents of the chunk. Another joiner will have to be
@@ -369,6 +380,7 @@ pub enum IntermediateOutput {
     /// because it avoids doing a join operation twice.
     Joiner(StringJoiner),
 
+    #[default]
     Empty,
 }
 
@@ -415,12 +427,6 @@ impl OutputPieces {
     }
 }
 
-impl Default for IntermediateOutput {
-    fn default() -> Self {
-        IntermediateOutput::Empty
-    }
-}
-
 pub struct CodeResult {
     pub buffer: Box<[u8]>,
     pub shifts: Vec<source_map::SourceMapShifts>,
@@ -439,7 +445,7 @@ type DynAlloc = ();
 /// `n >= 512KiB`; mimalloc handles large allocations via mmap already so this
 /// is a behavior match in practice.
 #[inline]
-fn alloc_buf(_arena: &DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
+fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Box<[u8]>, AllocError> {
     // Zero-fill is required for soundness: `set_len` over uninit bytes violates
     // `Vec`'s safety contract, and `into_boxed_slice` may shrink-realloc (memcpy
     // of uninit). The memset cost is negligible next to the subsequent memcpy
@@ -802,7 +808,7 @@ impl IntermediateOutput {
                 };
 
                 let arena = allocator_to_use.unwrap_or_else(|| Self::allocator_for_size(count));
-                let mut total_buf = alloc_buf(arena, count + debug_id_len)?;
+                let mut total_buf = alloc_buf(*arena, count + debug_id_len)?;
                 let mut remain: &mut [u8] = &mut total_buf;
 
                 for piece in pieces.slice() {
@@ -1350,7 +1356,7 @@ impl Drop for CssImportOrder {
         // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
         // freeing here would double-free. The slab is allocated from the
         // `LinkerGraph` arena and is bulk-freed with it.
-        core::mem::forget(core::mem::take(&mut self.conditions));
+        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.conditions));
         // `condition_import_records`: every populated value is uniquely owned
         // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
         // drop is a no-op). Normal drop frees the owned buffers; no
@@ -1439,7 +1445,7 @@ impl CssImportOrder {
             CssImportOrderKind::ExternalPath(_) => 1,
             CssImportOrderKind::SourceIndex(_) => 2,
         };
-        bun_core::write_any_to_hasher(hasher, &tag);
+        bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
             CssImportOrderKind::Layers(layers) => {
                 for layer in layers.inner().slice() {
@@ -1460,7 +1466,7 @@ impl CssImportOrder {
             // doesn't impl `AsBytes`; hash the inner u32 (Zig hashed the
             // `Index.Int` bytes directly).
             CssImportOrderKind::SourceIndex(idx) => {
-                bun_core::write_any_to_hasher(hasher, &idx.get())
+                bun_core::write_any_to_hasher(hasher, idx.get())
             }
         }
     }
@@ -1518,7 +1524,9 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
 
 pub type ImportsFromOtherChunks = ArrayHashMap<IndexInt, crate::cross_chunk_import::ItemList>;
 // TODO(port): CrossChunkImport.Item.List — assuming exported as ItemList from cross_chunk_import module
-
+// `Chunk` is bump-arena-allocated (no Drop on free); boxing the large arm
+// would leak. The CSS/JS chunk size diff is acceptable.
+#[allow(clippy::large_enum_variant)]
 pub enum Content {
     Javascript(JavaScriptChunk),
     Css(CssChunk),

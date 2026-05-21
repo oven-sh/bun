@@ -128,7 +128,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // PORT NOTE: reshaped for borrowck — gpe borrows self.module_scope while
             // self.new_symbol needs &mut self. Drop gpe, allocate, then re-insert.
-            drop(gpe);
             let new_ref = self
                 .new_symbol(js_ast::symbol::Kind::Unbound, name)
                 .expect("unreachable");

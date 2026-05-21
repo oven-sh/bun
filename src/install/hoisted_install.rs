@@ -14,7 +14,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
 use crate::lockfile::tree;
-use crate::{self as install, DependencyID, ExtractData, PackageID};
+use crate::{DependencyID, ExtractData, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope (Zig: `slice.items(.field)`).
 use crate::PackageManager;
@@ -82,8 +82,11 @@ pub fn install_hoisted_packages(
     // by-value copy of the ArrayList header (ptr/len/cap), leaving the buffer
     // live. Rust `Vec` can't alias like that, so the rollback below restores
     // the *taken* originals; `filter()` repopulates the live ones in-place.
-    this.lockfile.buffers.trees = original_trees.clone();
-    this.lockfile.buffers.hoisted_dependencies = original_tree_dep_ids.clone();
+    this.lockfile.buffers.trees.clone_from(&original_trees);
+    this.lockfile
+        .buffers
+        .hoisted_dependencies
+        .clone_from(&original_tree_dep_ids);
 
     {
         // PORT NOTE: reshaped for borrowck — Zig passes `this.log, this` (two
@@ -112,6 +115,9 @@ pub fn install_hoisted_packages(
     // setup through the install loop) is a fresh child of `mgr_ptr` under
     // Stacked Borrows — `&mut *mgr_ptr` inside the block above popped the
     // line-77 reborrow's tag.
+    // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
+    // fn param; the line-77 reborrow's tag was popped by `&mut *mgr_ptr` in the
+    // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
 
     let _restore_buffers = scopeguard::guard(
@@ -126,9 +132,9 @@ pub fn install_hoisted_packages(
         },
     );
 
-    let mut download_node: ProgressNode = ProgressNode::default();
+    let mut download_node: ProgressNode;
     let mut install_node: ProgressNode = ProgressNode::default();
-    let mut scripts_node: ProgressNode = ProgressNode::default();
+    let mut scripts_node: ProgressNode;
 
     if log_level.show_progress() {
         // Hoist before the `&mut this.progress` borrow so the disjoint
@@ -280,7 +286,7 @@ pub fn install_hoisted_packages(
             let (completed_trees, tree_ids_to_trees_the_id_depends_on) = 'trees: {
                 let trees = this.lockfile.buffers.trees.as_slice();
                 let completed_trees = Bitset::init_empty(trees.len())?;
-                let mut tree_ids_to_trees_the_id_depends_on =
+                let tree_ids_to_trees_the_id_depends_on =
                     DynamicBitSetList::init_empty(trees.len(), trees.len())?;
 
                 {

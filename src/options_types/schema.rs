@@ -29,6 +29,9 @@ impl<'a> Writer<'a> {
     /// Zig: `writeInt` — `std.mem.asBytes(&int)` is native-endian raw bytes.
     #[inline]
     pub fn write_int<I: Copy>(&mut self, int: I) {
+        // SAFETY: `int` is a live stack local, so `&raw const int` is valid for reads of
+        // `size_of::<I>()` initialized bytes; `u8` has align 1 so the cast pointer is always
+        // aligned; the slice is consumed by `extend_from_slice` before `int` leaves scope.
         let bytes = unsafe {
             core::slice::from_raw_parts((&raw const int).cast::<u8>(), core::mem::size_of::<I>())
         };
@@ -710,7 +713,7 @@ pub mod api {
         // `msgs: []Message` — omitted until `Message` is ported.
     }
     impl Log {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
+        pub fn encode(self, w: &mut super::Writer<'_>) {
             w.write_int(self.warnings);
             w.write_int(self.errors);
             w.write_int(0u32); // msgs.len

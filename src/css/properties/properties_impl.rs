@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate as css;
 
 use css::PrintErr;

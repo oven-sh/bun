@@ -1,11 +1,14 @@
 use bun_alloc::AllocError;
+#[cfg(not(windows))]
+use bun_sys::FdDirExt;
 use bun_sys::walker_skippable::Walker;
-use bun_sys::{self as sys, EntryKind, Fd, FdDirExt, FdExt};
+use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 // `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(.{ .sep = .auto, .unit = .os })`
 // take a comptime config struct in Zig. `.unit = .os` means u8 on POSIX, u16
 // on Windows — encoded here via the `OSPathChar` type alias so the struct's
 // `slice()`/`slice_z()` produce the platform-native width without per-field
 // `#[cfg]` divergence.
+#[cfg(windows)]
 use bun_paths::path_options::AssumeOk as _;
 use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 

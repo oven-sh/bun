@@ -71,7 +71,7 @@ impl<'a> ObjectIterator<'a> {
             // TODO(port): verify `get_own_by_value` return type — Zig site treats it
             // as `?JSValue` (compares against `.zero` and `null` separately).
             let value: Option<JSValue> = self.current_row.get_own_by_value(global_object, property);
-            if value == Some(JSValue::ZERO) || value.map_or(false, |v| v.is_undefined()) {
+            if value == Some(JSValue::ZERO) || value.is_some_and(|v| v.is_undefined()) {
                 if !global_object.has_exception() {
                     break 'out Err(global_object.throw(format_args!(
                         "Expected a value at index {} in row {}",

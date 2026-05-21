@@ -14,13 +14,7 @@
 //! have been moved up into `bun_runtime`, and the few that only need an opaque
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
-#![allow(
-    dead_code,
-    unused_imports,
-    unused_variables,
-    deprecated,
-    non_snake_case
-)]
+#![allow(deprecated, non_snake_case)]
 #![allow(unexpected_cfgs)]
 // `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag` to
 // preserve Zig's comptime monomorphization (zig:2210). `Tag` is a fieldless
@@ -33,7 +27,6 @@
 // accessor inlining (every `VirtualMachine::get_or_null()` ≥3×/run_callback).
 // Precedent: 064951400fa4 did this for `bun_alloc`/`bun_ast`.
 #![feature(thread_local)]
-#![feature(allocator_api)]
 #![allow(incomplete_features)]
 
 extern crate alloc;
@@ -42,7 +35,6 @@ extern crate alloc;
 extern crate self as bun_jsc;
 
 use core::ffi::{c_char, c_void};
-use core::marker::PhantomData;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Proc-macro re-exports. `#[bun_jsc::host_fn]` / `#[bun_jsc::JsClass]` /
@@ -984,13 +976,11 @@ mod __macro_smoke {
 
     #[crate::JsClass(no_construct)]
     pub struct Smoke {
-        #[allow(dead_code)]
         n: u32,
     }
     impl Smoke {
         // Required by the `construct` hook when `no_construct` is omitted; kept
         // here so a future flip exercises it.
-        #[allow(dead_code)]
         pub fn constructor(_g: &JSGlobalObject, _f: &CallFrame) -> JsResult<*mut Smoke> {
             Err(super::JsError::Thrown)
         }
@@ -1593,11 +1583,25 @@ impl FromJsEnum for bun_sys::SignalCode {
         s.deref();
         match hit {
             Some(code) => Ok(code),
-            // Zig builds the `'SIGHUP', 'SIGINT' or ...` list at comptime; at
-            // 31 variants the runtime port keeps the message terse.
-            None => Err(global.throw_invalid_arguments(format_args!(
-                "{property_name} must be one of the SignalCode names"
-            ))),
+            None => {
+                // Mirror Zig's comptime `toEnumFromMap` list
+                // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
+                // canonical signal X-macro so names are never re-spelled.
+                let names = &bun_core::SIGNAL_NAMES[1..];
+                let mut one_of = std::string::String::from("'");
+                for (i, entry) in names.iter().enumerate() {
+                    one_of.push_str(entry);
+                    one_of.push('\'');
+                    if i < names.len() - 2 {
+                        one_of.push_str(", '");
+                    } else if i == names.len() - 2 {
+                        one_of.push_str(" or '");
+                    }
+                }
+                Err(global.throw_invalid_arguments(format_args!(
+                    "{property_name} must be one of {one_of}"
+                )))
+            }
         }
     }
 }
@@ -1963,7 +1967,11 @@ pub trait ZigStringJsc: Sized {
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
     /// `ZigString.external` — like `to_external_value` but with a caller-supplied
     /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
-    fn external(
+    ///
+    /// # Safety
+    /// `ctx` and the string's backing buffer must satisfy `callback`'s contract;
+    /// ownership of both transfers to JSC, which invokes `callback` exactly once.
+    unsafe fn external(
         &self,
         global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
@@ -2039,7 +2047,7 @@ impl ZigStringJsc for bun_core::ZigString {
         ZigString__toJSONObject(self, global)
     }
     #[inline]
-    fn external(
+    unsafe fn external(
         &self,
         global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
@@ -2079,9 +2087,17 @@ impl ZigStringJsc for bun_core::ZigString {
 
 /// Free-function form of `ZigString.toExternalU16` for callers that import
 /// `bun_core::ZigString`. Forwards to the canonical impl in [`zig_string`].
+///
+/// # Safety
+/// See [`zig_string::to_external_u16`].
 #[inline]
-pub fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
-    crate::zig_string::to_external_u16(ptr, len, global)
+pub unsafe fn zig_string_to_external_u16(
+    ptr: *const u16,
+    len: usize,
+    global: &JSGlobalObject,
+) -> JSValue {
+    // SAFETY: caller upholds `to_external_u16`'s contract.
+    unsafe { crate::zig_string::to_external_u16(ptr, len, global) }
 }
 
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).
@@ -2306,8 +2322,6 @@ unsafe extern "C" {
         one_shot_startup: bool,
     );
 }
-
-pub(crate) use bun_ast::math;
 
 // TODO(port): generated module — re-run bindgen with .rs output. Hand-stubbed
 // in `generated.rs` until `src/codegen/generate-classes.ts` grows a `.rs`

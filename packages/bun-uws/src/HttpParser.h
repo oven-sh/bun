@@ -750,6 +750,12 @@ namespace uWS
                     /* Error: invalid chars in field name */
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
                 }
+                /* RFC 9112 5.1: field-name is a non-empty token. An empty name would also
+                 * collide with the end-of-headers sentinel and hide later headers from the
+                 * Content-Length / Transfer-Encoding request-smuggling checks. */
+                if (headers->key.length() == 0) {
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
+                }
                 postPaddedBuffer++;
 
                 preliminaryValue = postPaddedBuffer;

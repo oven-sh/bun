@@ -4,20 +4,19 @@ use std::cell::Cell;
 use std::io::Write as _;
 
 use crate::api::bun_process::sync as spawn_sync;
-use bun_ast as js_ast;
 use bun_clap as clap;
 use bun_core::Progress::{Node as ProgressNode, Progress};
 use bun_core::{Global, Output, pretty, pretty_error, pretty_errorln};
 use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
-use bun_http::Headers;
 use bun_js_printer as JSPrinter;
 use bun_libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
-use bun_paths::{self as resolve_path, OSPathSlice, PathBuffer};
+use bun_paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
+#[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
 use bun_threading::Futex;
 use bun_url::URL;
@@ -37,8 +36,6 @@ pub mod SourceFileProjectGenerator;
 // RacyCell. Touched on the main thread for `--open` *and* the spawned git
 // thread (sequenced — git thread writes after main is done with it).
 static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-
-const TARGET_NEXTJS_VERSION: &[u8] = b"12.2.3";
 
 // PORT NOTE: bun.OSPathLiteral — `bun_paths` does not (yet) export an
 // `os_path_literal!` macro from this crate's POV. `OSPathSlice` is `[u8]` on
@@ -61,51 +58,6 @@ const SKIP_FILES: &[&OSPathSlice] = &[
 const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b".git/"];
 
 const NPM_TASK_ARGS: &[&[u8]] = &[b"run"];
-
-#[derive(Default)]
-struct UnsupportedPackages {
-    styled_jsx: bool,
-}
-
-impl UnsupportedPackages {
-    pub fn update(&mut self, expr: bun_ast::Expr) {
-        for prop in expr
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            // inline for over field names — only one field: "styled-jsx"
-            if prop
-                .key
-                .expect("infallible: prop has key")
-                .data
-                .e_string()
-                .expect("infallible: variant checked")
-                .data
-                == b"styled-jsx"
-            {
-                self.styled_jsx = true;
-            }
-        }
-    }
-
-    pub fn print(&self) {
-        if self.styled_jsx {
-            pretty_errorln!(
-                "<r><yellow>warn<r><d>:<r> <b>\"{}\"<r> won't work in bun yet\n",
-                "styled-jsx",
-            );
-        }
-    }
-}
-
-// PORTING.md §Global mutable state: single-threaded CLI usage; currently
-// write-once / never read (Zig parity placeholder). RacyCell.
-#[allow(dead_code)]
-static BUN_PATH: bun_core::RacyCell<Option<&'static bun_core::ZStr>> =
-    bun_core::RacyCell::new(None);
 
 fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClient>) {
     let task = strings::trim(task_, b" \n\r\t");
@@ -223,7 +175,6 @@ impl ProgressBuf {
 
 #[derive(Default)]
 struct CreateOptions {
-    npm_client: Option<crate::cli::which_npm_client::Tag>,
     skip_install: bool,
     overwrite: bool,
     skip_git: bool,
@@ -348,8 +299,10 @@ impl CreateCommand {
                     bun_paths::platform::Loose,
                 >(filesystem.top_level_dir, dirname))?;
 
-        let mut progress = Progress::default();
-        progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+        let mut progress = Progress {
+            supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
+            ..Default::default()
+        };
         // PORT NOTE: reshaped for borrowck — `Progress::start` returns
         // `&mut Node` borrowing `progress` exclusively for the node's lifetime.
         // Convert to `*mut` immediately so `progress` and `node` can be used
@@ -396,7 +349,7 @@ impl CreateCommand {
 
         match example_tag {
             ExampleTag::JslikeFile => {
-                return run_on_entry_point(ctx, example_tag, template, &mut progress, node);
+                return run_on_entry_point(ctx, example_tag, template, node);
             }
             ExampleTag::GithubRepository | ExampleTag::Official => {
                 let tarball_bytes: MutableString = match example_tag {
@@ -809,7 +762,7 @@ impl CreateCommand {
                 package_json_file = None;
             }
 
-            if package_json_file.is_some() {
+            if let Some(package_json_file) = &package_json_file {
                 bun_ast::initialize_store();
 
                 let source = bun_ast::Source::init_path_string(
@@ -817,18 +770,18 @@ impl CreateCommand {
                     package_json_contents.list.as_slice(),
                 );
 
+                // SAFETY: single-threaded CLI dispatch; no other borrow of the
+                // process-static `Cli::LOG_` is live across this scope.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
                 let bump = bun_alloc::Arena::new();
                 let mut package_json_expr = match JSON::parse_utf8(&source, log, &bump) {
                     Ok(e) => e,
                     Err(_) => {
-                        package_json_file = None;
                         break 'process_package_json;
                     }
                 };
 
                 if package_json_expr.data.e_object().is_none() {
-                    package_json_file = None;
                     break 'process_package_json;
                 }
 
@@ -844,7 +797,6 @@ impl CreateCommand {
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
 
-                    package_json_file = None;
                     break 'process_package_json;
                 }
 
@@ -1054,8 +1006,6 @@ impl CreateCommand {
                 //     try properties_list.ensureUnusedCapacity(new_properties_count);
                 // }
 
-                use bun_ast::E;
-
                 // TODO(port): InjectionPrefill — large block of mutable static AST nodes used to
                 // inject "bun"/"macros"/dependency properties into package.json. The Zig code builds
                 // a tree of `E.String`/`E.Object`/`G.Property` values stored in `pub var` statics
@@ -1067,13 +1017,6 @@ impl CreateCommand {
                 // code), we stub the module here and leave the full structure as a comment for
                 // reference.
                 mod injection_prefill {
-                    use super::*;
-                    pub const DEPENDENCIES_STRING: &[u8] = b"dependencies";
-                    pub const DEV_DEPENDENCIES_STRING: &[u8] = b"devDependencies";
-                    pub const BUN_STRING: &[u8] = b"bun";
-                    pub const MACROS_STRING: &[u8] = b"macros";
-                    pub const BUN_MACROS_RELAY_PATH: &[u8] = b"bun-macro-relay";
-
                     // pub var dependencies_e_string = E.String.init(dependencies_string);
                     // pub var devDependencies_e_string = E.String.init(dev_dependencies_string);
                     // pub var bun_e_string = E.String.init(bun_string);
@@ -1137,8 +1080,6 @@ impl CreateCommand {
                     //
                     // pub var dev_dependencies_key = js_ast.Expr{ .data = .{ .e_string = &devDependencies_e_string }, .loc = logger.Loc.Empty };
                     // pub var dependencies_key     = js_ast.Expr{ .data = .{ .e_string = &dependencies_e_string },    .loc = logger.Loc.Empty };
-
-                    pub const BUN_BUN_FOR_NEXTJS_TASK: &[u8] = b"bun bun --use next";
 
                     // TODO(port): these wire up the static objects above; only feeds dead code
                     pub fn wire() {
@@ -1372,10 +1313,10 @@ impl CreateCommand {
                         // `&'static [u8]`. Erase the local borrow lifetime via
                         // raw-pointer round-trip so the task slices can outlive
                         // the temporary `Query`.
-                        // SAFETY: `s` always points into the JSON arena
-                        // (initialized via `initialize_store()`), which lives
-                        // for the rest of `exec`.
                         let arena_str = |s: &[u8]| -> &'static [u8] {
+                            // SAFETY: `s` always points into the JSON arena
+                            // (initialized via `initialize_store()`), which
+                            // lives for the rest of `exec`.
                             unsafe { &*std::ptr::from_ref::<[u8]>(s) }
                         };
                         if let Some(postinstall) = value.as_property(b"postinstall") {
@@ -1439,7 +1380,7 @@ impl CreateCommand {
                     props.shrink_retaining_capacity(property_i);
                 }
 
-                let file: bun_sys::Fd = package_json_file.as_ref().unwrap().handle;
+                let file: bun_sys::Fd = package_json_file.handle;
 
                 let mut buffer_writer = JSPrinter::BufferWriter::init();
                 buffer_writer.append_newline = true;
@@ -1459,7 +1400,6 @@ impl CreateCommand {
                         "package.json failed to write due to error {}",
                         err,
                     ));
-                    package_json_file = None;
                     break 'process_package_json;
                 }
                 let written = package_json_writer.ctx.get_written();
@@ -1470,7 +1410,6 @@ impl CreateCommand {
                         "package.json failed to write due to error {}",
                         bstr::BStr::new(err.name()),
                     ));
-                    package_json_file = None;
                     break 'process_package_json;
                 }
                 if let Err(err) = bun_sys::ftruncate(file, written.len() as i64) {
@@ -1478,7 +1417,6 @@ impl CreateCommand {
                         "package.json failed to write due to error {}",
                         bstr::BStr::new(err.name()),
                     ));
-                    package_json_file = None;
                     break 'process_package_json;
                 }
             }
@@ -1686,13 +1624,7 @@ impl CreateCommand {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 // Zig used `std.process.Child`; PORTING.md bans std::process — route through
                 // bun.spawnSync (`crate::api::bun_process::sync::spawn`).
-                // SAFETY: literal is NUL-terminated; len excludes the sentinel.
-                crate::cli::open::open_url(unsafe {
-                    bun_core::ZStr::from_raw(
-                        b"http://localhost:3000/\0".as_ptr(),
-                        b"http://localhost:3000/".len(),
-                    )
-                });
+                crate::cli::open::open_url(bun_core::zstr!("http://localhost:3000/"));
 
                 let _ = spawn_sync::spawn(&spawn_sync::Options {
                     argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
@@ -1720,7 +1652,7 @@ impl CreateCommand {
     }
 
     pub fn extract_info(ctx: &Command::Context<'_>) -> Result<ExtractedInfo, bun_core::Error> {
-        let mut example_tag = ExampleTag::Unknown;
+        let example_tag;
         // SAFETY: process-lifetime singleton; init returns *mut.
         let filesystem = unsafe { &*fs::FileSystem::init(None)? };
 
@@ -1815,8 +1747,7 @@ impl CreateCommand {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"HOME") {
                         let parts = [home_dir, BUN_CREATE_DIR, positional];
-                        // SAFETY: `filesystem` is the process-global FileSystem singleton (non-null after init).
-                        let outdir_path = unsafe { &*filesystem }.abs_buf(&parts, home_dir_buf);
+                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
@@ -2082,7 +2013,6 @@ struct Analyzer<'a> {
     example_tag: ExampleTag,
     entry_point: &'a [u8],
     node: &'a mut ProgressNode,
-    progress: &'a mut Progress,
 }
 
 impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
@@ -2101,22 +2031,20 @@ fn run_on_entry_point(
     ctx: &Command::Context,
     example_tag: ExampleTag,
     entry_point: &[u8],
-    progress: &mut Progress,
     node: &mut ProgressNode,
 ) -> Result<(), bun_core::Error> {
     let mut analyzer = Analyzer {
         ctx,
         example_tag,
         entry_point,
-        progress,
         node,
     };
 
-    let mut fetcher = bun_bundler::bundle_v2::DependenciesScanner::new(
+    let fetcher = bun_bundler::bundle_v2::DependenciesScanner::new(
         &mut analyzer,
         vec![Box::<[u8]>::from(entry_point)].into_boxed_slice(),
     );
-    crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&mut fetcher))
+    crate::cli::build_command::BuildCommand::exec(crate::cli::Command::get(), Some(&fetcher))
 }
 
 // `Commands` was a Zig anonymous tuple of three single-element string arrays, used only to
@@ -2241,21 +2169,21 @@ impl Example {
                 let parts = [home_dir];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                 folders[0] = bun_sys::Dir::open(outdir_path)
-                    .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
+                    .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             {
                 let parts = [filesystem.top_level_dir, BUN_CREATE_DIR];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                 folders[1] = bun_sys::Dir::open(outdir_path)
-                    .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
+                    .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             if let Some(home_dir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
                 let parts = [home_dir, BUN_CREATE_DIR];
                 let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
                 folders[2] = bun_sys::Dir::open(outdir_path)
-                    .unwrap_or(bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
+                    .unwrap_or_else(|_| bun_sys::Dir::from_fd(bun_sys::Fd::invalid()));
             }
 
             // subfolders with package.json
@@ -2315,7 +2243,7 @@ impl Example {
     }
 
     pub fn fetch_from_github(
-        ctx: &Command::Context,
+        _ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
         name: &[u8],
         refresher: &mut Progress,
@@ -2524,6 +2452,8 @@ impl Example {
         refresher.refresh();
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
+        // SAFETY: single-threaded CLI dispatch; no other borrow of the
+        // process-static `Cli::LOG_` is live across this scope.
         let log = unsafe { ctx.log_mut() };
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
@@ -2688,6 +2618,8 @@ impl Example {
         // field (global mimalloc) — use the process-lifetime CLI arena (examples
         // slices borrow from it and the CLI exits shortly after).
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        // SAFETY: single-threaded CLI dispatch; no other borrow of the
+        // process-static `Cli::LOG_` is live across this scope.
         let log = unsafe { ctx.log_mut() };
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
@@ -2792,8 +2724,10 @@ impl CreateListExamplesCommand {
 
         env_loader.load_process()?;
 
-        let mut progress = Progress::default();
-        progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+        let mut progress = Progress {
+            supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
+            ..Default::default()
+        };
         // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `progress`; detach
         // via raw pointer so `progress.refresh()` can re-borrow below (mirrors Zig where
         // both held independent `*Node`/`*Progress` pointers).
@@ -2856,6 +2790,7 @@ impl GitHandler {
         // SAFETY: `destination` lives in `filesystem.dirname_store` and `path` in env loader;
         // both are 'static for the CLI process. Extend lifetimes to satisfy `spawn`.
         let destination: &'static [u8] = unsafe { bun_ptr::detach_lifetime(destination) };
+        // SAFETY: `path` is owned by the process-lifetime env loader; valid for `'static`.
         let path: &'static [u8] = unsafe { bun_ptr::detach_lifetime(path) };
         let thread = match std::thread::Builder::new()
             .spawn(move || Self::spawn_thread(destination, path, verbose))

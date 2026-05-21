@@ -81,12 +81,6 @@ unsafe extern "C" {
         arg2: &JSGlobalObject,
     ) -> bool;
     safe fn WebCore__FetchHeaders__isEmpty(arg0: &FetchHeaders) -> bool;
-    safe fn WebCore__FetchHeaders__put_(
-        arg0: &FetchHeaders,
-        arg1: &ZigString,
-        arg2: &ZigString,
-        arg3: &JSGlobalObject,
-    );
     safe fn WebCore__FetchHeaders__remove(
         arg0: &FetchHeaders,
         arg1: &ZigString,
@@ -122,6 +116,10 @@ struct PicoHeaders {
     len: usize,
 }
 
+// The 4 forwarding wrappers below pass *mut StringPointer/*mut u8 straight to
+// C++ without dereferencing; clippy::not_unsafe_ptr_arg_deref is a false
+// positive on opaque-token forwarding through an unsafe extern call.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl FetchHeaders {
     pub fn create_value(
         global: &JSGlobalObject,

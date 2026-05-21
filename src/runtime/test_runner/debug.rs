@@ -170,7 +170,7 @@ pub mod group {
             let mut buf: Vec<u8> = Vec::new();
             print_indent(&mut buf);
             let _ = write!(&mut buf, "\x1b[32m++ \x1b[0m");
-            let _ = write!(&mut buf, "{}\n", args);
+            let _ = writeln!(&mut buf, "{}", args);
             let _ = std::io::stdout().write_all(buf.as_slice());
 
             INDENT.fetch_add(1, Ordering::Relaxed);
@@ -195,9 +195,9 @@ pub mod group {
 
         let mut buf: Vec<u8> = Vec::new();
         print_indent(&mut buf);
-        let _ = write!(
+        let _ = writeln!(
             &mut buf,
-            "\x1b[32m{}\x1b[m\n",
+            "\x1b[32m{}\x1b[m",
             if last_was_start { "+-" } else { "--" },
         );
         let _ = std::io::stdout().write_all(buf.as_slice());
@@ -211,7 +211,7 @@ pub mod group {
         }
         let mut buf: Vec<u8> = Vec::new();
         print_indent(&mut buf);
-        let _ = write!(&mut buf, "{}\n", args);
+        let _ = writeln!(&mut buf, "{}", args);
         let _ = std::io::stdout().write_all(buf.as_slice());
         LAST_WAS_START.store(false, Ordering::Relaxed);
     }

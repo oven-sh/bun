@@ -5,7 +5,6 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::ArrayHashMap;
 
 use crate as css;
-use crate::PrintErr;
 // TODO(port): narrow error set
 pub use crate::Error;
 
@@ -115,7 +114,7 @@ impl<'a> CssModule<'a> {
         &mut self,
         bump: &'a Bump,
         name: &'a [u8],
-        from: &Option<css::css_properties::css_modules::Specifier>,
+        from: Option<css::css_properties::css_modules::Specifier>,
         specifier_path: Option<&'a [u8]>,
         source_index: u32,
     ) -> Option<&'a [u8]> {
@@ -369,7 +368,7 @@ impl Pattern {
 
     pub fn write_to_string<'a>(
         &self,
-        #[allow(unused)] bump: &'a Bump,
+        _bump: &'a Bump,
         res_: BumpVec<'a, u8>,
         hash_: &[u8],
         path: &[u8],

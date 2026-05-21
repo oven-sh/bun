@@ -38,7 +38,7 @@ pub enum ParseError {
     Clear,
 }
 impl From<ParseError> for bun_core::Error {
-    fn from(e: ParseError) -> Self {
+    fn from(_: ParseError) -> Self {
         bun_core::err!("Clear")
     }
 }

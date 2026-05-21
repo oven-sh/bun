@@ -4,16 +4,11 @@
 //! It enqueues a task to be run on the JS thread which resolves the promise
 //! for every onLoad callback which called `.defer()`.
 
-use core::mem::offset_of;
-
 use crate::BundleV2;
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, task_tag};
-
-use bun_ast::Index;
-use bun_ast::Ref;
 
 /// Re-export for callers that previously named
 /// `crate::DeferredBatchTask::CompletionDispatch` — the struct now lives in

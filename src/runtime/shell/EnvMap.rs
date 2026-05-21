@@ -59,8 +59,8 @@ impl EnvMap {
 
     pub fn memory_cost(&self) -> usize {
         let mut size: usize = core::mem::size_of::<EnvMap>();
-        size += self.map.keys().len() * core::mem::size_of::<EnvStr>();
-        size += self.map.values().len() * core::mem::size_of::<EnvStr>();
+        size += core::mem::size_of_val(self.map.keys());
+        size += core::mem::size_of_val(self.map.values());
         debug_assert_eq!(self.map.keys().len(), self.map.values().len());
         for (key, value) in self.map.keys().iter().zip(self.map.values()) {
             size += key.memory_cost();

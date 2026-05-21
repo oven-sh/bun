@@ -16,7 +16,6 @@
 //! `src/runtime/api/bun/spawn.zig`,
 //! `src/runtime/api/bun/subprocess/StaticPipeWriter.zig`.
 
-#![allow(dead_code)]
 #![warn(unreachable_pub)]
 
 use core::ffi::c_char;
@@ -90,7 +89,7 @@ bun_dispatch::link_interface! {
         HostProcess,
         SyncWindows,
     ] {
-        fn on_process_exit(process: *mut Process, status: Status, rusage: *const Rusage);
+        fn on_process_exit(process: &mut Process, status: Status, rusage: &Rusage);
     }
 }
 
@@ -269,6 +268,7 @@ pub enum Term {
 
 /// Options for [`run`] — port of `std.process.Child.RunOptions` (subset used
 /// by `repository.zig`).
+#[derive(Clone, Copy)]
 pub struct RunOptions<'a> {
     pub argv: &'a [&'a [u8]],
     pub env_map: &'a bun_sys::EnvMap,
@@ -357,7 +357,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
         };
         // Only PATH-search bare names — Zig's expandArg0 expands only when no
         // separator is present.
-        if first.iter().any(|&b| b == b'/') {
+        if first.contains(&b'/') {
             break 'argv0;
         }
         #[cfg(windows)]
@@ -434,10 +434,7 @@ pub fn run(opts: RunOptions<'_>) -> core::result::Result<RunResult, bun_core::Er
 
     // `!Maybe(Result)` → outer `Result<_, bun_core::Error>` for the Zig `try`,
     // inner `Maybe` for the syscall error.
-    let result = match process::sync::spawn(&sync_opts)? {
-        Ok(r) => r,
-        Err(sys_err) => return Err(sys_err.into()),
-    };
+    let result = process::sync::spawn(&sync_opts)??;
 
     // Keep envp backing storage alive until the child has been waited on.
     drop(envp);

@@ -136,7 +136,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
     let bpp_bytes: u32 = (h.bpp / 8) as u32;
     // Rows are padded to 4-byte boundaries — DWORD alignment is the one
     // BMP rule everyone implements.
-    let stride: usize = ((h.width as usize * bpp_bytes as usize + 3) / 4) * 4;
+    let stride: usize = (h.width as usize * bpp_bytes as usize).div_ceil(4) * 4;
     let need = h.pix_off as usize + stride * h.height as usize;
     if need > bytes.len() {
         return Err(codecs::Error::DecodeFailed);
@@ -172,7 +172,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
                         .expect("infallible: size matches"),
                 )
             };
-            dst[xs * 4 + 0] = to8((pix >> rs) & (1u32 << rw).wrapping_sub(1), rw);
+            dst[xs * 4] = to8((pix >> rs) & (1u32 << rw).wrapping_sub(1), rw);
             dst[xs * 4 + 1] = to8((pix >> gs) & (1u32 << gw).wrapping_sub(1), gw);
             dst[xs * 4 + 2] = to8((pix >> bs) & (1u32 << bw).wrapping_sub(1), bw);
             dst[xs * 4 + 3] = if h.a_mask == 0 {

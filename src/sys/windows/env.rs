@@ -69,9 +69,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     loop {
         let remaining = &wtf8_buf[len..];
         let str_len = bun_core::slice_to_nul(remaining).len();
-        // PORT NOTE: Zig used `defer len += str_len + 1;` which also runs on `break`.
         if str_len == 0 {
-            len += str_len + 1; // each string is null-terminated
             break; // array ends with empty null-terminated string
         }
         // `cast_mut()` is a type-only cast for `char**` ABI compat; the pointee is never

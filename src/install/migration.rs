@@ -20,8 +20,8 @@ use crate::lockfile::{
     self, Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile,
     Migrated, PackageListEntry,
 };
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
-use crate::lockfile_real::package::{PackageColumns as _, PackageField};
 use crate::npm::{self as Npm};
 use crate::pnpm;
 use crate::pnpm::MigratePnpmLockfileError;
@@ -216,6 +216,7 @@ struct IdMapValue {
 const PACKAGE_ID_IS_LINK: u32 = u32::MAX;
 const PACKAGE_ID_IS_BUNDLED: u32 = u32::MAX - 1;
 
+#[cfg(debug_assertions)]
 const UNSET_PACKAGE_ID: PackageID = Install::INVALID_PACKAGE_ID - 1;
 
 use bun_install_types::DependencyGroup;
@@ -412,7 +413,7 @@ pub fn migrate_npm_lockfile<'a>(
                 let ExprData::EObject(deps_obj) = &deps.data else {
                     return Err(err!("InvalidNPMLockfile"));
                 };
-                num_deps = num_deps.saturating_add(deps_obj.properties.len_u32() as u32);
+                num_deps = num_deps.saturating_add(deps_obj.properties.len_u32());
             }
         }
 
@@ -424,7 +425,7 @@ pub fn migrate_npm_lockfile<'a>(
                 0 => return Err(err!("InvalidNPMLockfile")),
                 1 => {}
                 n => {
-                    num_extern_strings += (n * 2) as u32;
+                    num_extern_strings += n * 2;
                 }
             }
         }
@@ -432,7 +433,9 @@ pub fn migrate_npm_lockfile<'a>(
         if pkg.get(b"resolved").is_none() {
             let version_prop = pkg.get(b"version");
             let pkg_name = package_name_from_path(pkg_path);
-            if version_prop.is_some() && !pkg_name.is_empty() {
+            if let Some(version_prop) = version_prop
+                && !pkg_name.is_empty()
+            {
                 // construct registry url
                 let href: &[u8] = manager.scope_for_package_name(pkg_name).url.href();
                 let mut count: usize = 0;
@@ -450,7 +453,7 @@ pub fn migrate_npm_lockfile<'a>(
                 } else {
                     count += pkg_name.len();
                 }
-                let Some(version_str) = version_prop.unwrap().as_string(&arena) else {
+                let Some(version_str) = version_prop.as_string(&arena) else {
                     return Err(err!("InvalidNPMLockfile"));
                 };
                 count += b"-.tgz".len() + version_str.len();
@@ -663,13 +666,13 @@ pub fn migrate_npm_lockfile<'a>(
                         .as_ref()
                         .expect("infallible: prop has key")
                         .as_string(&arena)
-                        .ok_or(err!("InvalidNPMLockfile"))?;
+                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                     let script_value = prop
                         .value
                         .as_ref()
                         .expect("infallible: prop has value")
                         .as_string(&arena)
-                        .ok_or(err!("InvalidNPMLockfile"))?;
+                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
 
                     if strings::eql(key, pkg_name) {
                         break 'bin Bin {
@@ -698,13 +701,13 @@ pub fn migrate_npm_lockfile<'a>(
                         .as_ref()
                         .expect("infallible: prop has key")
                         .as_string(&arena)
-                        .ok_or(err!("InvalidNPMLockfile"))?;
+                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                     let script_value = bin_entry
                         .value
                         .as_ref()
                         .expect("infallible: prop has value")
                         .as_string(&arena)
-                        .ok_or(err!("InvalidNPMLockfile"))?;
+                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                     let ek = sb.append_external(key)?;
                     let ev = sb.append_external(script_value)?;
                     this.buffers.extern_strings.push(ek);
@@ -800,7 +803,7 @@ pub fn migrate_npm_lockfile<'a>(
                 Integrity::parse(
                     integrity
                         .as_string(&arena)
-                        .ok_or(err!("InvalidNPMLockfile"))?,
+                        .ok_or_else(|| err!("InvalidNPMLockfile"))?,
                 )
             } else {
                 Integrity::default()
@@ -981,7 +984,9 @@ pub fn migrate_npm_lockfile<'a>(
                 };
                 let mut map = StringArrayHashMap::<()>::with_capacity(arr.items.len_u32() as usize);
                 for item in arr.items.slice() {
-                    let s = item.as_string(&arena).ok_or(err!("InvalidNPMLockfile"))?;
+                    let s = item
+                        .as_string(&arena)
+                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                     map.put_assume_capacity(s, ());
                 }
                 break 'deps Some(map);
@@ -998,7 +1003,7 @@ pub fn migrate_npm_lockfile<'a>(
                     let entry1 = id_map
                         .get(key.as_ref())
                         .copied()
-                        .ok_or(err!("InvalidNPMLockfile"))?;
+                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                     let name_hash = string_hash(&value.name);
                     let mut sb = this.string_buf();
                     let wksp_name = sb.append(&value.name)?;
@@ -1067,7 +1072,7 @@ pub fn migrate_npm_lockfile<'a>(
                         .as_ref()
                         .expect("infallible: prop has value")
                         .as_string(&arena)
-                        .ok_or(err!("InvalidNPMLockfile"))?;
+                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                     let name_hash = string_hash(name_bytes);
                     let mut sb = this.string_buf();
                     let dep_name = sb.append_with_hash(name_bytes, name_hash)?;
@@ -1141,14 +1146,14 @@ pub fn migrate_npm_lockfile<'a>(
                                 // the `else` here is technically possible to hit
                                 let resolved_v = ref_pkg
                                     .get(b"resolved")
-                                    .ok_or(err!("LockfileWorkspaceMissingResolved"))?;
+                                    .ok_or_else(|| err!("LockfileWorkspaceMissingResolved"))?;
                                 let resolved = resolved_v
                                     .as_string(&arena)
-                                    .ok_or(err!("InvalidNPMLockfile"))?;
+                                    .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                                 found = id_map
                                     .get(resolved)
                                     .copied()
-                                    .ok_or(err!("InvalidNPMLockfile"))?;
+                                    .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                             } else if found.new_package_id == PACKAGE_ID_IS_BUNDLED {
                                 debug!(
                                     "skipping bundled dependency {}",
@@ -1216,7 +1221,7 @@ pub fn migrate_npm_lockfile<'a>(
                                         if let Some(resolved) = dep_pkg.get(b"resolved") {
                                             let dep_resolved = resolved
                                                 .as_string(&arena)
-                                                .ok_or(err!("InvalidNPMLockfile"))?;
+                                                .ok_or_else(|| err!("InvalidNPMLockfile"))?;
                                             match DepTag::infer(dep_resolved) {
                                                 tag @ (DepTag::Git | DepTag::Github) => {
                                                     let mut sb = this.string_buf();
@@ -1232,7 +1237,7 @@ pub fn migrate_npm_lockfile<'a>(
                                                         &dep_resolved_sliced,
                                                         Some(&mut *log),
                                                         Some(&mut *manager as &mut dyn dependency::NpmAliasRegistry),
-                                                    ).ok_or(err!("InvalidNPMLockfile"))?;
+                                                    ).ok_or_else(|| err!("InvalidNPMLockfile"))?;
                                                     res_version_tag = parsed.tag;
                                                     res_version_git_owner =
                                                         if parsed.tag == DepTag::Git {
@@ -1289,9 +1294,9 @@ pub fn migrate_npm_lockfile<'a>(
                                             // If it is a workspace package, then this branch will not be hit as the resolution was already set earlier.
                                             let dep_actual_version = dep_pkg
                                                 .get(b"version")
-                                                .ok_or(err!("InvalidNPMLockfile"))?
+                                                .ok_or_else(|| err!("InvalidNPMLockfile"))?
                                                 .as_string(&arena)
-                                                .ok_or(err!("InvalidNPMLockfile"))?;
+                                                .ok_or_else(|| err!("InvalidNPMLockfile"))?;
 
                                             let dep_actual_version_str =
                                                 sb.append(dep_actual_version)?;
@@ -1347,7 +1352,7 @@ pub fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or(err!("InvalidNPMLockfile"))?;
+                                                    .ok_or_else(|| err!("InvalidNPMLockfile"))?;
 
                                             let commit =
                                                 str.sub(&str.slice[hash_index + 1..]).value();
@@ -1369,7 +1374,7 @@ pub fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or(err!("InvalidNPMLockfile"))?;
+                                                    .ok_or_else(|| err!("InvalidNPMLockfile"))?;
 
                                             let commit =
                                                 str.sub(&str.slice[hash_index + 1..]).value();

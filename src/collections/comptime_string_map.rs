@@ -235,13 +235,7 @@ where
         // This benchmarked faster for both small and large lists of strings than using a big switch statement
         // But only so long as the keys are a sorted list.
         // PERF(port): was `inline for` over comptime range.
-        for i in start..end {
-            if str == self.kvs[i].key {
-                return Some(i);
-            }
-        }
-
-        None
+        (start..end).find(|&i| str == self.kvs[i].key)
     }
 
     // TODO(port): move to *_jsc — `fromJS` / `fromJSCaseInsensitive` were thin shims to

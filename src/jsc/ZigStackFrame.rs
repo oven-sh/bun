@@ -196,11 +196,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
         }
 
         if self.enable_color {
-            if self.position.line.is_valid() || self.position.column.is_valid() {
-                f.write_str(Output::pretty_fmt!("<r>", true))?;
-            } else {
-                f.write_str(Output::pretty_fmt!("<r>", true))?;
-            }
+            f.write_str(Output::pretty_fmt!("<r>", true))?;
         }
 
         if !self.exclude_line_column {

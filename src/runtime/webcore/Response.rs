@@ -14,7 +14,6 @@ use bun_core::{
     OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice,
 };
 use bun_http_types::Method::Method;
-use bun_jsc::StringJsc as _;
 
 use super::blob::Internal as InternalBlob;
 use super::body::{Body, BodyMixin, Value as BodyValue};
@@ -67,9 +66,7 @@ impl HeadersRef {
     /// Relinquish ownership without decrementing the ref. Inverse of `adopt`.
     #[inline]
     pub fn into_raw(self) -> NonNull<FetchHeaders> {
-        let p = self.0;
-        core::mem::forget(self);
-        p
+        core::mem::ManuallyDrop::new(self).0
     }
 
     #[inline]
@@ -711,9 +708,9 @@ impl Response {
         // `fmt::Error` (Zig's `anyerror!void` carried no payload either).
         let js_err = |_: JsError| core::fmt::Error;
 
-        write!(
+        writeln!(
             writer,
-            "Response ({}) {{\n",
+            "Response ({}) {{",
             bun_core::fmt::size(self.get_body_len(), Default::default())
         )?;
 
@@ -843,13 +840,18 @@ impl Response {
         let this_value = callframe.this();
         let cloned = this.clone(global_this)?;
 
+        // SAFETY: `cloned` is a freshly-boxed Response from `clone()`.
         let js_wrapper = Response::make_maybe_pooled(global_this, cloned);
         this.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
         Ok(js_wrapper)
     }
 
-    pub fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
-        // SAFETY: ptr is a freshly-boxed Response from clone()
+    /// # Safety
+    /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
+    /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
+    /// JS wrapper.
+    pub(crate) fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
+        // SAFETY: caller contract — `ptr` is live and uniquely owned.
         unsafe { (*ptr).to_js(global_object) }
     }
 
@@ -914,16 +916,23 @@ impl Response {
         }
     }
 
-    pub fn ref_(this: *mut Response) -> *mut Response {
-        // SAFETY: intrusive refcount; caller holds a live reference
+    /// # Safety
+    /// `this` must point to a live `Response` on which the caller already holds
+    /// at least one intrusive ref.
+    pub(crate) fn ref_(this: *mut Response) -> *mut Response {
+        // SAFETY: caller contract — `this` is live.
         unsafe {
             (*this).ref_count.set((*this).ref_count.get() + 1);
         }
         this
     }
 
-    pub fn unref(this: *mut Response) {
-        // SAFETY: intrusive refcount; caller holds a live reference
+    /// # Safety
+    /// `this` must point to a live `Response` on which the caller holds one
+    /// intrusive ref; that ref is released (and the allocation destroyed if it
+    /// was the last).
+    pub(crate) fn unref(this: *mut Response) {
+        // SAFETY: caller contract — `this` is live.
         unsafe {
             let rc = (*this).ref_count.get();
             debug_assert!(rc > 0);
@@ -940,6 +949,8 @@ impl Response {
         // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
         let this = bun_core::heap::release(self);
         this.js_ref.with_mut(JsRef::finalize);
+        // SAFETY: `heap::release` returned the live raw pointer for the +1 we
+        // just reclaimed from the JS wrapper.
         Self::unref(this);
     }
 
@@ -1047,7 +1058,7 @@ impl Response {
                 match Init::init(global_this, arg_init) {
                     Ok(Some(init)) => response.init.set(init),
                     Ok(None) => {}
-                    Err(e) if e == bun_jsc::JsError::Thrown => return Ok(JSValue::ZERO),
+                    Err(bun_jsc::JsError::Thrown) => return Ok(JSValue::ZERO),
                     Err(_) => {}
                 }
             }
@@ -1104,7 +1115,7 @@ impl Response {
         let mut args =
             bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
 
-        let mut url_string_slice = ZigStringSlice::empty();
+        let url_string_slice;
         // url_string_slice drops at scope exit
         let response: Response = 'brk: {
             let response = Response {
@@ -1220,7 +1231,7 @@ impl Response {
                     let credentials = s3.get_credentials();
 
                     let result = match credentials.sign_request::<false>(
-                        bun_s3_signing::SignOptions {
+                        &bun_s3_signing::SignOptions {
                             path: s3.path(),
                             method: Method::GET,
                             content_hash: None,
@@ -1427,9 +1438,11 @@ impl Init {
                 // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                 let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
                 if !orig.is_empty() {
-                    result.headers = orig
-                        .clone_this(global_this)?
-                        .map(|p| unsafe { HeadersRef::adopt(p) });
+                    result.headers = orig.clone_this(global_this)?.map(|p| {
+                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
+                        // ownership of that ref is transferred into the `HeadersRef`.
+                        unsafe { HeadersRef::adopt(p) }
+                    });
                 }
             } else {
                 result.headers = HeadersRef::create_from_js(global_this, headers)?;

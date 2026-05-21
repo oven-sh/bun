@@ -66,7 +66,7 @@ impl Query {
     }
 
     pub fn eql(&self, rhs: &Query) -> bool {
-        if !self.range.eql(rhs.range) {
+        if !self.range.eql(&rhs.range) {
             return false;
         }
 
@@ -129,6 +129,8 @@ pub struct List {
 // across the lockfile thread pool. Auto-`!Send` from `NonNull` is overly
 // conservative here.
 unsafe impl Send for List {}
+// SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range`);
+// `&List` exposes no unsynchronized interior mutability.
 unsafe impl Sync for List {}
 
 impl Clone for List {
@@ -226,19 +228,22 @@ impl List {
         lhs_next.eql(rhs_next)
     }
 
-    pub fn and_range(&mut self, range: Range) -> Result<(), AllocError> {
+    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if !self.head.range.has_left() && !self.head.range.has_right() {
-            self.head.range = range;
+            self.head.range = *range;
             return Ok(());
         }
 
-        let mut tail = Box::new(Query { range, next: None });
-        tail.range = range;
+        let mut tail = Box::new(Query {
+            range: *range,
+            next: None,
+        });
+        tail.range = *range;
 
         let tail_ptr = NonNull::from(&mut *tail);
 
-        // SAFETY: self.tail aliases a Query owned by self.head.next chain; we hold &mut self.
         let last_tail: &mut Query = match self.tail {
+            // SAFETY: self.tail aliases a Query owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
@@ -278,6 +283,8 @@ pub struct Group {
 // pointers and freely sends `Group` across the lockfile/resolver thread pool;
 // auto-`!Send` from `NonNull`/`*const` is overly conservative here.
 unsafe impl Send for Group {}
+// SAFETY: `tail` is only dereferenced through `&mut self` and `input` points
+// to immutable bytes; `&Group` exposes no unsynchronized interior mutability.
 unsafe impl Sync for Group {}
 
 impl Clone for Group {
@@ -442,8 +449,8 @@ impl Group {
 
         let new_tail_ptr = NonNull::from(&mut *new_tail);
 
-        // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
         let prev_tail: &mut List = match self.tail {
+            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
@@ -452,28 +459,28 @@ impl Group {
         Ok(())
     }
 
-    pub fn and_range(&mut self, range: Range) -> Result<(), AllocError> {
-        // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
+    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         let tail: &mut List = match self.tail {
+            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
         tail.and_range(range)
     }
 
-    pub fn or_range(&mut self, range: Range) -> Result<(), AllocError> {
+    pub fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if self.tail.is_none() && self.head.tail.is_none() && !self.head.head.range.has_left() {
-            self.head.head.range = range;
+            self.head.head.range = *range;
             return Ok(());
         }
 
         let mut new_tail = Box::new(List::default());
-        new_tail.head.range = range;
+        new_tail.head.range = *range;
 
         let new_tail_ptr = NonNull::from(&mut *new_tail);
 
-        // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
         let prev_tail: &mut List = match self.tail {
+            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
@@ -521,7 +528,7 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub fn to_range(self, version: version::Partial<u64>) -> Range {
+    pub fn to_range(self, version: &version::Partial<u64>) -> Range {
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -748,7 +755,6 @@ impl Token {
     }
 }
 
-#[allow(unused_variables, unused_assignments)] // prev_token is dead in upstream Zig too
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
@@ -759,7 +765,6 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     };
 
     let mut token = Token::default();
-    let mut prev_token = Token::default();
 
     let mut count: u32 = 0;
     let mut skip_round;
@@ -984,9 +989,9 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 };
 
                 if is_or {
-                    list.or_range(range)?;
+                    list.or_range(&range)?;
                 } else {
-                    list.and_range(range)?;
+                    list.and_range(&range)?;
                 }
 
                 i += second_parsed.len as usize + 1;
@@ -996,7 +1001,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         list.or_version(version)?;
                     }
                     _ => {
-                        list.or_range(token.to_range(parse_result.version))?;
+                        list.or_range(&token.to_range(&parse_result.version))?;
                     }
                 }
             } else if count == 0 {
@@ -1006,20 +1011,18 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 if token.tag == TokenTag::None {
                     is_or = false;
                     token.wildcard = Wildcard::None;
-                    prev_token.tag = TokenTag::None;
                     continue;
                 }
-                list.and_range(token.to_range(parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result.version))?;
             } else if is_or {
-                list.or_range(token.to_range(parse_result.version))?;
+                list.or_range(&token.to_range(&parse_result.version))?;
             } else {
-                list.and_range(token.to_range(parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result.version))?;
             }
 
             is_or = false;
             count += 1;
             token.wildcard = Wildcard::None;
-            prev_token.tag = token.tag;
         }
     }
 

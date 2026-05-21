@@ -1,11 +1,9 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena as Bump;
-use bun_ast as js_ast;
 use bun_core::{self, Global, Output, ZStr, feature_flags};
 use bun_core::{MutableString, strings};
 use bun_js_parser as js_parser;
-use bun_parsers::json_parser;
 use bun_resolver::fs as fs_mod;
 use bun_sys::{self, Fd};
 
@@ -516,7 +514,7 @@ impl JavaScript {
     ) -> Result<Option<js_parser::Result<'a>>, bun_core::Error> {
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
-        let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
+        let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
                 let _ = temp_log.append_to_maybe_recycled(log, source);

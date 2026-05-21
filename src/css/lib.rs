@@ -1,11 +1,5 @@
 #![feature(allocator_api)]
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 // Allow `use bun_css as css;` from inside the crate — the ported submodules
 // were translated against the crate's public surface and refer to it by name.
@@ -206,7 +200,7 @@ pub enum PrintErr {
 }
 impl PrintErr {
     #[inline]
-    pub fn name(&self) -> &'static str {
+    pub fn name(self) -> &'static str {
         "CSSPrintError"
     }
 }

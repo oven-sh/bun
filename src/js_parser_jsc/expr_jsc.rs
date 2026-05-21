@@ -56,7 +56,7 @@ pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, T
         } else {
             JSValue::FALSE
         }),
-        ExprData::ENumber(e) => Ok(number_to_js(e)),
+        ExprData::ENumber(e) => Ok(number_to_js(*e)),
         // ExprData::EBigInt(e) => e.to_js(ctx, exception),
         ExprData::EInlinedEnum(inlined) => data_to_js(&inlined.value.data, global),
 
@@ -82,7 +82,7 @@ pub fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, 
     Ok(array)
 }
 
-pub fn bool_to_js(this: &E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
+pub fn bool_to_js(this: E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
     // Zig returns `jsc.C.JSValueRef` via `JSValueMakeBoolean`; the Rust C-API
     // shim is `#[deprecated]` in favour of `JSValue`. `JSValue::js_boolean`
     // yields the same encoded immediate (`ValueTrue`/`ValueFalse`) without the
@@ -90,7 +90,7 @@ pub fn bool_to_js(this: &E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
     JSValue::js_boolean(this.value)
 }
 
-pub fn number_to_js(this: &E::Number) -> JSValue {
+pub fn number_to_js(this: E::Number) -> JSValue {
     JSValue::js_number(this.value)
 }
 

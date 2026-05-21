@@ -13,7 +13,7 @@ use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
 use crate::http_context::ActiveSocketExt;
 use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h2, h3};
+use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h3};
 
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
@@ -29,7 +29,7 @@ struct SslContextCacheEntry {
     ctx: NonNull<NewHttpContext<true>>,
     last_used_ns: u64,
     /// Strong ref held by the cache entry (released on eviction).
-    config_ref: ssl_config::SharedPtr,
+    _config_ref: ssl_config::SharedPtr,
 }
 
 impl SslContextCacheEntry {
@@ -199,13 +199,13 @@ pub struct HeapRequestBodyBuffer {
     pub cursor: usize,
 }
 
+// SAFETY: `[u8; N]` and `usize` are both valid at the all-zero bit pattern.
+unsafe impl bun_core::Zeroable for HeapRequestBodyBuffer {}
+
 impl HeapRequestBodyBuffer {
     pub fn init() -> Box<Self> {
         // TODO(port): self-referential init; FixedBufferAllocator borrows this.buffer.
-        Box::new(HeapRequestBodyBuffer {
-            buffer: [0u8; 512 * 1024],
-            cursor: 0,
-        })
+        bun_core::boxed_zeroed()
     }
 
     pub fn put(mut self: Box<Self>) {
@@ -282,6 +282,9 @@ pub struct LibdeflateState {
     pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
     pub shared_buffer: [u8; 512 * 1024],
 }
+
+// SAFETY: `*mut T` (null) and `[u8; N]` are both valid at the all-zero bit pattern.
+unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
     /// Mutable access to the libdeflate decompressor handle.
@@ -430,10 +433,9 @@ impl HttpThread {
             if decompressor.is_null() {
                 bun_core::out_of_memory();
             }
-            self.lazy_libdeflater = Some(Box::new(LibdeflateState {
-                decompressor,
-                shared_buffer: [0u8; 512 * 1024],
-            }));
+            let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
+            state.decompressor = decompressor;
+            self.lazy_libdeflater = Some(state);
         }
 
         self.lazy_libdeflater.as_deref_mut().unwrap()
@@ -460,14 +462,14 @@ impl HttpThread {
     #[inline]
     fn ensure_https_context_init(&mut self) {
         if let Some(opts) = self.lazy_https_init.take() {
-            self.init_https_context_cold(opts);
+            self.init_https_context_cold(&opts);
         }
     }
 
     #[cold]
-    fn init_https_context_cold(&mut self, opts: InitOpts) {
-        if let Err(err) = self.https_context.init_with_thread_opts(&opts) {
-            (opts.on_init_error)(err, &opts);
+    fn init_https_context_cold(&mut self, opts: &InitOpts) {
+        if let Err(err) = self.https_context.init_with_thread_opts(opts) {
+            (opts.on_init_error)(err, opts);
         }
     }
 
@@ -566,7 +568,7 @@ impl HttpThread {
                         ctx: ctx_nn,
                         last_used_ns: now,
                         // Strong ref for the cache entry; client.tls_props keeps its own.
-                        config_ref: tls,
+                        _config_ref: tls,
                     },
                 );
 
@@ -1059,6 +1061,8 @@ impl HttpThread {
                 // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
                 let http: *mut AsyncHttp =
                     unsafe { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
+                // SAFETY: `http` recovered from a live batch node (non-null); valid until popped.
+                let http = unsafe { core::ptr::NonNull::new_unchecked(http) };
                 this.queued_tasks.push(http);
             }
         }
@@ -1125,7 +1129,6 @@ use core::cell::Cell;
 
 mod _event_loop_draft {
     use super::*;
-    use bun_core::Global;
     use std::sync::Once;
 
     static INIT_ONCE: Once = Once::new();
@@ -1226,7 +1229,7 @@ mod _event_loop_draft {
                     "The %SystemRoot% environment variable is not set. Bun needs this set in order for network requests to work.",
                     (),
                 );
-                Global::crash();
+                bun_core::Global::crash();
             }
         }
 
@@ -1279,7 +1282,7 @@ mod _event_loop_draft {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
                     self.dealloc_in_flight_for_exit();
                     {
-                        let mut done = SHUTDOWN_DONE.0.lock().unwrap();
+                        let mut done = SHUTDOWN_DONE.0.lock();
                         *done = true;
                         SHUTDOWN_DONE.1.notify_all();
                     }
@@ -1307,8 +1310,10 @@ mod _event_loop_draft {
 }
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
-static SHUTDOWN_DONE: (std::sync::Mutex<bool>, std::sync::Condvar) =
-    (std::sync::Mutex::new(false), std::sync::Condvar::new());
+static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
+    bun_threading::Guarded::new(false),
+    bun_threading::Condvar::new(),
+);
 
 struct ShutdownReclaim {
     ctx: *mut c_void,
@@ -1319,8 +1324,8 @@ struct ShutdownReclaim {
 // between the two.
 unsafe impl Send for ShutdownReclaim {}
 
-static SHUTDOWN_RECLAIMS: std::sync::Mutex<Vec<ShutdownReclaim>> =
-    std::sync::Mutex::new(Vec::new());
+static SHUTDOWN_RECLAIMS: bun_threading::Guarded<Vec<ShutdownReclaim>> =
+    bun_threading::Guarded::new(Vec::new());
 
 /// Park `(ctx, drop_fn)` until [`shutdown_for_exit`] has waited the HTTP
 /// thread out of its loop. The drop is applied on the JS thread once the
@@ -1329,7 +1334,6 @@ static SHUTDOWN_RECLAIMS: std::sync::Mutex<Vec<ShutdownReclaim>> =
 pub fn defer_shutdown_reclaim(ctx: *mut c_void, drop_fn: unsafe fn(*mut c_void)) {
     SHUTDOWN_RECLAIMS
         .lock()
-        .unwrap()
         .push(ShutdownReclaim { ctx, drop_fn });
 }
 
@@ -1358,16 +1362,34 @@ pub fn shutdown_for_exit() {
     }
     SHUTDOWN_REQUESTED.store(true, Ordering::Release);
     thread.wakeup();
-    let done = SHUTDOWN_DONE.0.lock().unwrap();
+    let mut done = SHUTDOWN_DONE.0.lock();
     // 1s upper bound: a stuck HTTP thread shouldn't deadlock process exit.
-    let _ = SHUTDOWN_DONE
-        .1
-        .wait_timeout_while(done, std::time::Duration::from_secs(1), |d| !*d);
+    let deadline = Instant::now() + std::time::Duration::from_secs(1);
+    while !*done {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        if SHUTDOWN_DONE
+            .1
+            .timed_wait_guarded(&mut done, remaining.as_nanos() as u64)
+            .is_err()
+        {
+            break;
+        }
+    }
+    let acked = *done;
+    drop(done);
+    if !acked {
+        // Timed out without an ack: the HTTP thread may still be inside
+        // `tick()` and could touch parked allocations. Leak them — the
+        // process is exiting and a leak beats a use-after-free.
+        return;
+    }
 
-    // The daemon is parked (or timed out); no further callbacks will fire.
-    // Reclaim boxes that result-callback handlers parked here while the
-    // calling stack still aliased their contents.
-    for r in core::mem::take(&mut *SHUTDOWN_RECLAIMS.lock().unwrap()) {
+    // The daemon is parked; no further callbacks will fire. Reclaim boxes
+    // that result-callback handlers parked here while the calling stack
+    // still aliased their contents.
+    for r in core::mem::take(&mut *SHUTDOWN_RECLAIMS.lock()) {
         // SAFETY: `drop_fn` is paired with `ctx` by `defer_shutdown_reclaim`;
         // each entry is pushed exactly once and drained exactly once here.
         unsafe { (r.drop_fn)(r.ctx) };

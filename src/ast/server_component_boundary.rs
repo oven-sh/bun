@@ -79,8 +79,8 @@ impl List {
         // `m.list.slice()` while also borrowing `m.map` mutably. Here we hand
         // the adapter just the `source_index` column it needs.
         let gop = self.map.get_or_put_adapted(
-            source_index,
-            Adapter {
+            &source_index,
+            &Adapter {
                 source_indices: self.list.items::<"source_index", IndexInt>(),
             },
         )?;
@@ -92,7 +92,7 @@ impl List {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
             &real_source_index,
-            Adapter {
+            &Adapter {
                 source_indices: self.list.items::<"source_index", IndexInt>(),
             },
         )
@@ -117,7 +117,7 @@ impl<'a> Slice<'a> {
     pub fn get_index(&self, real_source_index: IndexInt) -> Option<usize> {
         self.map.get_index_adapted(
             &real_source_index,
-            Adapter {
+            &Adapter {
                 source_indices: self.list.items::<"source_index", IndexInt>(),
             },
         )
@@ -126,7 +126,7 @@ impl<'a> Slice<'a> {
     pub fn get_reference_source_index(&self, real_source_index: IndexInt) -> Option<u32> {
         let i = self.map.get_index_adapted(
             &real_source_index,
-            Adapter {
+            &Adapter {
                 source_indices: self.list.items::<"source_index", IndexInt>(),
             },
         )?;

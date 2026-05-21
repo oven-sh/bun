@@ -5,9 +5,6 @@ use std::io::Write as _;
 use bun_collections::AutoBitSet;
 use bun_collections::StringArrayHashMap;
 use bun_collections::StringHashMap;
-use bun_collections::VecExt;
-use bun_core::Environment;
-use bun_core::Output;
 // PORT NOTE: Zig `bun.threading.ThreadPool` is the *module*; `Batch`/`Task`
 // are free types in that module, not associated types on the struct.
 use bun_core::String as BunString;
@@ -24,9 +21,7 @@ use crate::analyze_transpiled_module::StringIDExt as _;
 use crate::cheap_prefix_normalizer;
 use crate::options;
 use crate::options::Loader;
-use crate::options::OutputFile;
 
-use crate::CompileResult;
 use crate::LinkerContext;
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
 use crate::linker_context::generate_compile_result_for_html_chunk::generate_compile_result_for_html_chunk;
@@ -192,11 +187,10 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug_assert_eq!(chunks.len(), chunk_contexts.len());
 
             debug!(" START {} compiling part ranges", total_count);
-            // PERF(port): was c.arena().alloc — using Vec on global mimalloc
+            // PERF(port): was c.arena().alloc — using Vec on global mimalloc.
+            // Pre-reserved to `total_count` so pushes never reallocate; the
+            // batch holds raw pointers into this buffer.
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
-            // SAFETY: every slot is written via remaining_part_ranges[0] below.
-            unsafe { combined_part_ranges.set_len(total_count) };
-            let mut remaining_part_ranges: &mut [PendingPartRange] = &mut combined_part_ranges[..];
             let mut batch = ThreadPoolLib::Batch::default();
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
                 match &chunk.content {
@@ -223,7 +217,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 );
                             }
 
-                            remaining_part_ranges[0] = PendingPartRange {
+                            combined_part_ranges.push(PendingPartRange {
                                 part_range: *part_range,
                                 i: u32::try_from(i).expect("int cast"),
                                 task: ThreadPoolLib::Task {
@@ -238,19 +232,15 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 ctx: unsafe {
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
-                            };
+                            });
                             batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut remaining_part_ranges[0].task,
+                                &raw mut combined_part_ranges.last_mut().unwrap().task,
                             ));
-
-                            // PORT NOTE: reshaped for borrowck — Zig reslices `remaining_part_ranges[1..]`
-                            remaining_part_ranges =
-                                &mut core::mem::take(&mut remaining_part_ranges)[1..];
                         }
                     }
                     crate::chunk::Content::Css(css) => {
                         for i in 0..css.imports_in_chunk_in_order.len() as usize {
-                            remaining_part_ranges[0] = PendingPartRange {
+                            combined_part_ranges.push(PendingPartRange {
                                 part_range: Default::default(),
                                 i: u32::try_from(i).expect("int cast"),
                                 task: ThreadPoolLib::Task {
@@ -265,17 +255,14 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 ctx: unsafe {
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
-                            };
+                            });
                             batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut remaining_part_ranges[0].task,
+                                &raw mut combined_part_ranges.last_mut().unwrap().task,
                             ));
-
-                            remaining_part_ranges =
-                                &mut core::mem::take(&mut remaining_part_ranges)[1..];
                         }
                     }
                     crate::chunk::Content::Html => {
-                        remaining_part_ranges[0] = PendingPartRange {
+                        combined_part_ranges.push(PendingPartRange {
                             part_range: Default::default(),
                             i: 0,
                             task: ThreadPoolLib::Task {
@@ -290,16 +277,14 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             ctx: unsafe {
                                 bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                             },
-                        };
-
+                        });
                         batch.push(ThreadPoolLib::Batch::from(
-                            &raw mut remaining_part_ranges[0].task,
+                            &raw mut combined_part_ranges.last_mut().unwrap().task,
                         ));
-                        remaining_part_ranges =
-                            &mut core::mem::take(&mut remaining_part_ranges)[1..];
                     }
                 }
             }
+            debug_assert_eq!(combined_part_ranges.len(), total_count);
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
             let worker_pool = c.worker_pool();
@@ -427,7 +412,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let mut chunk_naming: Option<&[u8]> = None;
             let mut asset_naming: Option<&[u8]> = None;
 
-            write!(&mut msg, "Multiple files share the same output path\n")?;
+            writeln!(&mut msg, "Multiple files share the same output path")?;
 
             let kinds = c.graph.files.items_entry_point_kind();
 
@@ -436,7 +421,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .iter()
                 .zip(duplicates_map.values().iter())
             {
-                write!(&mut msg, "  {}:\n", bstr::BStr::new(key))?;
+                writeln!(&mut msg, "  {}:", bstr::BStr::new(key))?;
                 for chunk in dup.sources.iter() {
                     if chunk.entry_point.is_entry_point() {
                         if kinds[chunk.entry_point.source_index() as usize]
@@ -453,9 +438,9 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     let source_index = chunk.entry_point.source_index();
                     let file: &bun_ast::Source =
                         &c.parse_graph().input_files.items_source()[source_index as usize];
-                    write!(
+                    writeln!(
                         &mut msg,
-                        "    from input {}\n",
+                        "    from input {}",
                         bstr::BStr::new(&file.path.pretty)
                     )?;
                 }
@@ -518,13 +503,13 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         .options
                         .public_path
                 } else {
-                    &c.options.public_path
+                    c.options.public_path
                 };
                 let normalizer = cheap_prefix_normalizer(public_path, &ch.final_rel_path);
                 let mut resolved: Vec<u8> = Vec::new();
                 resolved.extend_from_slice(normalizer[0]);
                 resolved.extend_from_slice(normalizer[1]);
-                let _ = unique_key_to_path.put(&ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result (Zig: catch unreachable)
+                let _ = unique_key_to_path.put(ch.unique_key, resolved.into_boxed_slice()); // OOM-only Result (Zig: catch unreachable)
             }
         }
 
@@ -663,7 +648,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     None,
                     c.parse_graph(),
                     &c.graph,
-                    &c.options.public_path,
+                    c.options.public_path,
                     &chunks[ci],
                     chunks,
                     &mut ds,
@@ -741,7 +726,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     .options
                     .public_path
             } else {
-                &c.options.public_path
+                c.options.public_path
             };
 
             // Take `intermediate_output` by value so the `&mut self` it provides
@@ -798,7 +783,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     [chunk.entry_point.source_index() as usize]
                     .path
                     .text
-                    .as_ref()
             } else {
                 chunk.final_rel_path.as_ref()
             });
@@ -1145,10 +1129,12 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             break 'brk BakeExtra::default();
                         }
 
-                        let mut extra = BakeExtra::default();
-                        extra.bake_is_runtime = chunk
-                            .files_with_parts_in_chunk
-                            .contains(&Index::RUNTIME.get());
+                        let mut extra = BakeExtra {
+                            bake_is_runtime: chunk
+                                .files_with_parts_in_chunk
+                                .contains(&Index::RUNTIME.get()),
+                            ..Default::default()
+                        };
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
                         {

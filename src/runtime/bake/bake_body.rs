@@ -10,7 +10,7 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
 // {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
 // Alias as `bun_schema` so existing field paths resolve unchanged.
@@ -285,7 +285,7 @@ impl StringRefList {
     pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
-        // SAFETY (`Interned::assume` — Population B, holder-backed): the
+        // SAFETY: (`Interned::assume` — Population B, holder-backed) the
         // `ZigStringSlice` is now owned by `self.strings` and lives exactly as
         // long as the `StringRefList`, which is owned by `UserOptions` and
         // dropped only when bake teardown runs (`UserOptions::deinit`). The
@@ -624,8 +624,8 @@ impl Framework {
         Framework {
             is_built_in_react: self.is_built_in_react,
             file_system_router_types: self.file_system_router_types.clone(),
-            server_components: self.server_components.clone(),
-            react_fast_refresh: self.react_fast_refresh.clone(),
+            server_components: self.server_components,
+            react_fast_refresh: self.react_fast_refresh,
             built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
         }
     }
@@ -1195,8 +1195,6 @@ impl Framework {
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
     ) -> Result<(), bun_core::Error> {
-        use bun_js_parser as ast;
-
         // PORT NOTE: Zig built `ASTMemoryAllocator.Scope` by hand and called
         // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
         // returning the RAII `Scope`. `defer ast_scope.exit()` is the explicit
@@ -1312,7 +1310,7 @@ impl Framework {
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
             );
-            use bun_bundler::{DefineDataExt, DefineExt};
+            use bun_bundler::DefineDataExt;
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -1508,7 +1506,7 @@ pub fn add_import_meta_defines(
     side: Side,
 ) -> Result<(), bun_core::Error> {
     use bun_ast::E::EString;
-    use bun_bundler::DefineExt;
+
     use bun_bundler::defines::DefineData;
 
     static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
@@ -1545,48 +1543,6 @@ pub fn add_import_meta_defines(
     )?;
 
     Ok(())
-}
-
-// PORT NOTE: `bun_paths::fs::Path<'static>` (the minimal type `bun_ast::Source` actually
-// stores) has no `init_for_kit_built_in`; that constructor lives on the
-// richer `bun_resolver::fs::Path` (a different nominal type) and is not
-// `const fn`. Mirror what `bun_bundler::bundle_v2` does and build the
-// virtual sources lazily.
-// TODO(port): once the two `fs::Path` types are unified, restore the static
-// initializers from bake.zig:976-984.
-pub fn server_virtual_source() -> bun_ast::Source {
-    bun_ast::Source {
-        // = bun.fs.Path.initForKitBuiltIn("bun", "bake/server")
-        path: bun_paths::fs::Path {
-            pretty: b"bun:bake/server",
-            text: b"_bun/bake/server",
-            namespace: b"bun",
-            is_symlink: true,
-            is_disabled: false,
-        },
-        contents: bun_ptr::Cow::Borrowed(b""), // Virtual
-        // = bun.ast.Index.bake_server_data (=1). bundle_v2 asserts on this; the
-        // `..Default::default()` would silently zero it.
-        index: bun_ast::Index::source(1),
-        ..Default::default()
-    }
-}
-
-pub fn client_virtual_source() -> bun_ast::Source {
-    bun_ast::Source {
-        // = bun.fs.Path.initForKitBuiltIn("bun", "bake/client")
-        path: bun_paths::fs::Path {
-            pretty: b"bun:bake/client",
-            text: b"_bun/bake/client",
-            namespace: b"bun",
-            is_symlink: true,
-            is_disabled: false,
-        },
-        contents: bun_ptr::Cow::Borrowed(b""), // Virtual
-        // = bun.ast.Index.bake_client_data (=2).
-        index: bun_ast::Index::source(2),
-        ..Default::default()
-    }
 }
 
 /// Stack-allocated structure that is written to from end to start.

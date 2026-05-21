@@ -92,9 +92,7 @@ impl Dir {
     /// the descriptor's lifecycle.
     #[inline]
     pub fn into_raw(self) -> Fd {
-        let fd = self.fd;
-        core::mem::forget(self);
-        fd
+        core::mem::ManuallyDrop::new(self).fd
     }
     /// Non-owning `&Dir` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
     #[inline]

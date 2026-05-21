@@ -10,7 +10,7 @@ use bun_install::bin as stub_bin;
 use bun_install::bin_real as bin;
 use bun_install::lockfile_real::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
-    self as pm, CommandLineArguments, PackageManager, Subcommand, attempt_to_create_package_json,
+    self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json,
     global_link_dir_path, options::LogLevel, package_manager_options, setup_global_dir,
 };
 

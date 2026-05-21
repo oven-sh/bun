@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use crate::VirtualMachineRef as VirtualMachine;
@@ -105,10 +104,10 @@ impl Route {
 impl Drop for Route {
     fn drop(&mut self) {
         if !self.param_names.is_null() {
+            let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
             // SAFETY: param_names was allocated via the global (mimalloc) allocator as a
             // contiguous [BunString; param_names_len]. Reconstructing the Box drops each
             // element (deref) and frees the backing storage.
-            let slice = core::ptr::slice_from_raw_parts_mut(self.param_names, self.param_names_len);
             drop(unsafe { bun_core::heap::take(slice) });
             self.param_names = core::ptr::null_mut();
             self.param_names_len = 0;
@@ -188,7 +187,10 @@ unsafe extern "C" {
 }
 
 impl InspectorHTTPServerAgent {
-    pub fn notify_server_started(
+    /// # Safety
+    /// `server_instance` is forwarded to C++ as an opaque token; caller must
+    /// ensure it remains valid for the duration of the FFI call.
+    pub unsafe fn notify_server_started(
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,

@@ -6,11 +6,9 @@
 use crate::jsc::{
     ArrayBuffer, Error as JscError, JSGlobalObject, JSValue, JsError, JsResult, bun_string_jsc,
 };
-use bun_core::String as BunString;
-use bun_valkey::valkey_protocol::{self as protocol, RESPValue, RedisError};
+use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
-#[allow(unused_imports)]
-use protocol as _; // keep `protocol` referenced for sibling drafts
+// keep `protocol` referenced for sibling drafts
 
 /// Zig: `valkeyErrorToJS(global, message: ?[]const u8, err)`.
 /// All Rust callers always provide a message (never `None`), so the parameter
@@ -77,7 +75,7 @@ pub struct ToJSOptions {
 fn valkey_str_to_js_value(
     global: &JSGlobalObject,
     str: &[u8],
-    options: &ToJSOptions,
+    options: ToJSOptions,
 ) -> JsResult<JSValue> {
     if options.return_as_buffer {
         // TODO: handle values > 4.7 GB
@@ -93,7 +91,7 @@ pub fn resp_value_to_js_with_options(
     options: ToJSOptions,
 ) -> JsResult<JSValue> {
     match this {
-        RESPValue::SimpleString(str) => valkey_str_to_js_value(global, str, &options),
+        RESPValue::SimpleString(str) => valkey_str_to_js_value(global, str, options),
         RESPValue::Error(str) => Ok(valkey_error_to_js(
             global,
             &**str,
@@ -102,7 +100,7 @@ pub fn resp_value_to_js_with_options(
         RESPValue::Integer(int) => Ok(JSValue::js_number(*int as f64)),
         RESPValue::BulkString(maybe_str) => {
             if let Some(str) = maybe_str {
-                valkey_str_to_js_value(global, str, &options)
+                valkey_str_to_js_value(global, str, options)
             } else {
                 Ok(JSValue::NULL)
             }
@@ -121,7 +119,7 @@ pub fn resp_value_to_js_with_options(
             RedisError::InvalidBlobError,
         )),
         RESPValue::VerbatimString(verbatim) => {
-            valkey_str_to_js_value(global, &verbatim.content, &options)
+            valkey_str_to_js_value(global, &verbatim.content, options)
         }
         RESPValue::Map(entries) => {
             let js_obj = JSValue::create_empty_object_with_null_prototype(global);

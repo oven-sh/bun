@@ -85,7 +85,7 @@ impl Clone for OutputFile {
                 ..fs::Path::init(text)
             }
         } else {
-            self.src_path.clone()
+            self.src_path
         };
         OutputFile {
             loader: self.loader,
@@ -407,7 +407,7 @@ pub struct Options {
 
 impl OutputFile {
     pub fn init(options: Options) -> OutputFile {
-        let size = options.size.unwrap_or_else(|| match &options.data {
+        let size = options.size.unwrap_or(match &options.data {
             OptionsData::Buffer { data } => data.len(),
             OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,
@@ -469,7 +469,7 @@ impl OutputFile {
                 let mut path_buf = PathBuffer::uninit();
                 let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
-                    bun_sys::WriteFileArgs {
+                    &bun_sys::WriteFileArgs {
                         data: bun_sys::WriteFileData::Buffer {
                             // Zig built a JSC ArrayBuffer view over `bytes` via
                             // `@constCast`; the Rust side just borrows the slice.
@@ -521,8 +521,6 @@ impl OutputFile {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        #[allow(unused_mut)]
-        let mut do_close = false;
         let mut in_buf = PathBuffer::uninit();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
@@ -533,20 +531,15 @@ impl OutputFile {
 
         #[cfg(windows)]
         {
-            // SAFETY: `FileSystem::instance()` is initialized before any bundler
-            // output is produced.
-            do_close = crate::bun_fs::FileSystem::get().fs.need_to_close_files();
-
+            let _ = (fd_out, fd_in);
             // use paths instead of bun.getFdPathW()
             panic!("TODO windows");
         }
-
-        let _close_out = do_close.then(|| bun_sys::CloseOnDrop::new(fd_out));
-        let _close_in = do_close.then(|| bun_sys::CloseOnDrop::new(fd_in));
-
-        bun_sys::copy_file(fd_in, fd_out)?;
-
-        Ok(())
+        #[cfg(not(windows))]
+        {
+            bun_sys::copy_file(fd_in, fd_out)?;
+            Ok(())
+        }
     }
 }
 

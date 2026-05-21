@@ -114,7 +114,7 @@ impl SecureContext {
             }
         }
 
-        let sc = Self::create_with_digest(global, ctx_opts, d)?;
+        let sc = Self::create_with_digest(global, &ctx_opts, d)?;
         // `sc` is a fresh Box from `create_with_digest`; ownership transfers to the GC wrapper.
         let value = Self::to_js_boxed(sc, global);
         cpp::Bun__SecureContextCache__set(global, key, value);
@@ -131,12 +131,12 @@ impl SecureContext {
     /// `us_ssl_ctx_from_options` so that override has roots to validate against.
     pub fn create(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<Box<SecureContext>> {
         let ctx_opts = config.as_usockets();
-        Self::create_with_digest(global, ctx_opts, ctx_opts.digest())
+        Self::create_with_digest(global, &ctx_opts, ctx_opts.digest())
     }
 
     fn create_with_digest(
         global: &JSGlobalObject,
-        ctx_opts: uws::socket_context::BunSocketContextOptions,
+        ctx_opts: &uws::socket_context::BunSocketContextOptions,
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
         let mut err = uws::create_bun_socket_error_t::none;
@@ -186,6 +186,10 @@ impl SecureContext {
         self.ctx
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| SecureContext::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         // SAFETY: `ctx` was created by `SSL_CTX_new`; freed exactly once here.
         unsafe { boringssl::SSL_CTX_free(self.ctx) };

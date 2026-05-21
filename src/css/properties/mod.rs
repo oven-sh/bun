@@ -2,9 +2,7 @@
 //!
 //! Ported from `src/css/properties/properties.zig`.
 
-#![allow(unused_imports)]
 #![warn(unused_must_use)]
-use crate as css;
 
 // `properties_generated.rs` carries the 249-variant `Property` /
 // `PropertyId` / `PropertyIdTag` enums referenced by `declaration.rs`,
@@ -27,30 +25,6 @@ use crate as css;
 /// `finalize(*Self, *DeclarationList, *PropertyHandlerContext) void`. Same
 /// shape here; lifetimes on `DeclarationList<'bump>` / context are erased
 /// behind anonymous lifetimes since the stub bodies touch neither.
-macro_rules! handler_stub {
-    ($($Handler:ident),+ $(,)?) => {$(
-        #[derive(Default)]
-        pub struct $Handler;
-        impl $Handler {
-            #[inline]
-            pub fn handle_property(
-                &mut self,
-                _property: &crate::properties::Property,
-                _dest: &mut crate::DeclarationList<'_>,
-                _context: &mut crate::PropertyHandlerContext<'_>,
-            ) -> bool {
-                false
-            }
-            #[inline]
-            pub fn finalize(
-                &mut self,
-                _dest: &mut crate::DeclarationList<'_>,
-                _context: &mut crate::PropertyHandlerContext<'_>,
-            ) {
-            }
-        }
-    )+};
-}
 
 // ─── Rect / Size shorthand impl + define macros ────────────────────────────
 // Shared by `border.rs` and `margin_padding.rs`. These are the Rust port of
@@ -153,7 +127,6 @@ macro_rules! impl_size_shorthand {
                 &self,
                 dest: &mut $crate::printer::Printer,
             ) -> ::core::result::Result<(), $crate::PrintErr> {
-                use $crate::generic::ToCss as _;
                 self.$start.to_css(dest)?;
                 if self.$start != self.$end {
                     dest.write_str(b" ")?;

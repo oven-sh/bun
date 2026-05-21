@@ -402,11 +402,11 @@ pub fn encode_header(
 ) -> Result<(), bun_core::Error> {
     let required = encoded.len() + name.len() + value.len() + 32;
     encoded.reserve(required.saturating_sub(encoded.len()));
+    let len = encoded.len();
     // Zig passed `encoded.allocatedSlice()` (ptr[0..capacity]) + current len as
     // offset; mirror with the raw buffer and set_len after.
     // SAFETY: `hpack.encode` writes only into `[len..len+written]`, which is
     // within the just-reserved capacity; bytes in `[0..len]` are initialized.
-    let len = encoded.len();
     let buf = unsafe { bun_core::vec::allocated_bytes_mut(encoded) };
     let written = session
         .hpack

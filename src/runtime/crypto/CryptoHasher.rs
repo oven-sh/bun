@@ -68,7 +68,8 @@ fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
 pub enum CryptoHasher {
     // HMAC_CTX contains 3 EVP_CTX, so let's store it as a pointer.
     Hmac(JsCell<Option<Box<HMAC>>>),
-    Evp(JsCell<EVP>),
+    // EVP_CTX is ~280 bytes; box it so the enum stays small.
+    Evp(Box<JsCell<EVP>>),
     Zig(JsCell<CryptoHasherZig>),
 }
 
@@ -95,9 +96,7 @@ impl CryptoHasher {
             return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(inner))));
         }
 
-        let Some(algorithm) = evp::lookup(name) else {
-            return None;
-        };
+        let algorithm = evp::lookup(name)?;
 
         match algorithm {
             evp::Algorithm::Ripemd160
@@ -108,13 +107,13 @@ impl CryptoHasher {
                     // `Algorithm::md()` lives in `bun_sha_hmac` and
                     // returns that crate's opaque `EVP_MD`; cast to the boringssl-sys
                     // opaque (same underlying C `struct env_md_st`).
-                    return Some(CryptoHasher::new(CryptoHasher::Evp(JsCell::new(
+                    return Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(JsCell::new(
                         EVP::init(
                             algorithm,
                             md.cast::<boring_ssl::EVP_MD>(),
                             boring_engine(global),
                         ),
-                    ))));
+                    )))));
                 }
             }
             _ => {
@@ -140,17 +139,23 @@ impl CryptoHasher {
                     Ok(e) => e,
                     Err(_) => return None,
                 };
-                Some(CryptoHasher::new(CryptoHasher::Evp(JsCell::new(evp))))
+                Some(CryptoHasher::new(CryptoHasher::Evp(Box::new(JsCell::new(
+                    evp,
+                )))))
             }
             _ => None,
         }
     }
 
+    /// # Safety
+    /// `handle` must be a `Box<CryptoHasher>` raw pointer previously returned by
+    /// `Bun__CryptoHasherExtern__getByName` / `getFromOther`, with ownership
+    /// being returned to Rust (not yet destroyed).
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
-        // SAFETY: `handle` was produced by heap::alloc via getByName/getFromOther
-        // and ownership is being returned to us.
-        CryptoHasher::finalize(unsafe { Box::from_raw(handle) });
+    pub unsafe extern "C" fn Bun__CryptoHasherExtern__destroy(handle: *mut CryptoHasher) {
+        // SAFETY: caller transfers ownership of a valid `Box<CryptoHasher>` raw
+        // pointer previously returned to C++ (see `# Safety` above).
+        drop(unsafe { Box::from_raw(handle) });
     }
 
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__update")]
@@ -286,7 +291,7 @@ impl CryptoHasher {
             None => None,
         };
 
-        Self::hash_(global, algorithm, input, output)
+        Self::hash_(global, algorithm, &input, output)
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
@@ -335,13 +340,13 @@ impl CryptoHasher {
     fn hash_to_encoding(
         global: &JSGlobalObject,
         evp: &mut EVP,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         encoding: Encoding,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         // `defer input.deinit()` — handled by Drop on `input`.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -364,14 +369,14 @@ impl CryptoHasher {
     fn hash_to_bytes(
         global: &JSGlobalObject,
         evp: &mut EVP,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         let mut output_digest_slice: &mut [u8] = &mut output_digest_buf;
         // `defer input.deinit()` — handled by Drop on `input`.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -412,7 +417,7 @@ impl CryptoHasher {
     pub fn hash_(
         global: &JSGlobalObject,
         algorithm: ZigString,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         let mut evp = match EVP::by_name(&algorithm, global) {
@@ -534,18 +539,20 @@ impl CryptoHasher {
                 )));
             }
 
-            break 'brk CryptoHasher::Evp(JsCell::new(match EVP::by_name(&algorithm, global) {
-                Some(e) => e,
-                None => match CryptoHasherZig::constructor(&algorithm) {
-                    Some(h) => return Ok(h),
-                    None => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "Unsupported algorithm {}",
-                            algorithm
-                        )));
-                    }
+            break 'brk CryptoHasher::Evp(Box::new(JsCell::new(
+                match EVP::by_name(&algorithm, global) {
+                    Some(e) => e,
+                    None => match CryptoHasherZig::constructor(&algorithm) {
+                        Some(h) => return Ok(h),
+                        None => {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "Unsupported algorithm {}",
+                                algorithm
+                            )));
+                        }
+                    },
                 },
-            }));
+            )));
         };
         Ok(CryptoHasher::new(init))
     }
@@ -625,13 +632,13 @@ impl CryptoHasher {
     #[bun_jsc::host_fn(method)]
     pub fn copy(this: &Self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let copied: CryptoHasher = match this {
-            CryptoHasher::Evp(inner) => CryptoHasher::Evp(JsCell::new(
+            CryptoHasher::Evp(inner) => CryptoHasher::Evp(Box::new(JsCell::new(
                 inner
                     .get()
                     .copy(boring_engine(global))
                     // bun.handleOom → unwrap (abort on OOM)
                     .expect("OOM"),
-            )),
+            ))),
             CryptoHasher::Hmac(inner) => 'brk: {
                 // R-2: `HMAC::copy` takes `&mut self` (writes nothing — Zig
                 // legacy signature). Project a short `&mut` via `with_mut`;
@@ -768,22 +775,11 @@ impl CryptoHasher {
         }
     }
 
-    /// `.classes.ts` finalize — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
-        match *self {
-            CryptoHasher::Evp(_inner) => {
-                // https://github.com/oven-sh/bun/issues/3250
-                // `inner.deinit()` — handled by Drop on EVP.
-            }
-            CryptoHasher::Zig(_inner) => {
-                // `inner.deinit()` — handled by Drop on CryptoHasherZig.
-            }
-            CryptoHasher::Hmac(_inner) => {
-                // `if (inner) |hmac| hmac.deinit();` — handled by Drop on Option<Box<HMAC>>.
-            }
-        }
-        // `bun.destroy(this)` — handled by Drop on Box at scope end.
-    }
+    // `.classes.ts` finalize — runs on mutator thread during lazy sweep. Each
+    // variant's cleanup (`inner.deinit()` in the Zig original, see
+    // https://github.com/oven-sh/bun/issues/3250) is handled by `Drop` on the
+    // variant payloads, so the `JsFinalize` trait default (`drop(self)`) is
+    // exactly what's needed; no inherent override.
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -896,7 +892,7 @@ impl CryptoHasherZig {
     pub fn hash_by_name(
         global: &JSGlobalObject,
         algorithm: &ZigString,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<Option<JSValue>> {
         macro_rules! arm {
@@ -912,7 +908,7 @@ impl CryptoHasherZig {
 
     fn hash_by_name_inner<A: ZigHashAlgo>(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         if let Some(string_or_buffer) = output {
@@ -943,12 +939,12 @@ impl CryptoHasherZig {
 
     fn hash_by_name_inner_to_string<A: ZigHashAlgo>(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         encoding: Encoding,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -969,12 +965,12 @@ impl CryptoHasherZig {
 
     fn hash_by_name_inner_to_bytes<A: ZigHashAlgo>(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -1119,7 +1115,9 @@ pub trait StaticHasher: 'static {
     fn new_digest() -> Self::Digest;
     fn update(&mut self, bytes: &[u8]);
     fn final_(&mut self, out: &mut Self::Digest);
-    fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
+    /// # Safety
+    /// `engine` must be null (default engine) or a live `ENGINE*`.
+    unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE);
     /// `@field(jsc.Codegen, "JS" ++ name).getConstructor` — per-monomorphization
     /// codegen module (`bun_jsc::generated::JS${NAME}`). Replaces the Zig
     /// `comptime "JS" ++ name` token paste; each `impl_static_hasher!` arm binds
@@ -1155,10 +1153,11 @@ macro_rules! impl_static_hasher {
                 <$ty>::r#final(self, out)
             }
             #[inline]
-            fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE) {
+            unsafe fn hash(input: &[u8], out: &mut Self::Digest, engine: *mut boring_ssl::ENGINE) {
                 // `bun_sha_hmac::sha::ffi::ENGINE` re-exports `bun_boringssl_sys::ENGINE`,
                 // so the VM-owned engine pointer threads through without a cast.
-                <$ty>::hash(input, out, engine)
+                // SAFETY: caller upholds `engine` validity (forwarded).
+                unsafe { <$ty>::hash(input, out, engine) }
             }
             #[inline]
             fn get_constructor(global: &JSGlobalObject) -> JSValue {
@@ -1283,7 +1282,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             None => None,
         };
 
-        Self::hash_(global, input, output)
+        Self::hash_(global, &input, output)
     }
 
     pub fn get_byte_length(_this: &Self, _: &JSGlobalObject) -> JSValue {
@@ -1307,10 +1306,14 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             )));
         }
 
-        if H::HAS_ENGINE {
-            H::hash(input.slice(), &mut output_digest_buf, boring_engine(global));
-        } else {
-            H::hash(input.slice(), &mut output_digest_buf, core::ptr::null_mut());
+        // SAFETY: `boring_engine` returns the VM-owned engine (live for the
+        // process) or null; the else arm passes null.
+        unsafe {
+            if H::HAS_ENGINE {
+                H::hash(input.slice(), &mut output_digest_buf, boring_engine(global));
+            } else {
+                H::hash(input.slice(), &mut output_digest_buf, core::ptr::null_mut());
+            }
         }
 
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_buf.as_ref())
@@ -1342,10 +1345,14 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             output_digest_slice = &mut output_digest_buf;
         }
 
-        if H::HAS_ENGINE {
-            H::hash(input.slice(), output_digest_slice, boring_engine(global));
-        } else {
-            H::hash(input.slice(), output_digest_slice, core::ptr::null_mut());
+        // SAFETY: `boring_engine` returns the VM-owned engine (live for the
+        // process) or null; the else arm passes null.
+        unsafe {
+            if H::HAS_ENGINE {
+                H::hash(input.slice(), output_digest_slice, boring_engine(global));
+            } else {
+                H::hash(input.slice(), output_digest_slice, core::ptr::null_mut());
+            }
         }
 
         if let Some(output_buf) = output {
@@ -1357,12 +1364,12 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
 
     pub fn hash_(
         global: &JSGlobalObject,
-        input: BlobOrStringOrBuffer,
+        input: &BlobOrStringOrBuffer,
         output: Option<StringOrBuffer>,
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&input) {
+        if is_bun_file_blob(input) {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
@@ -1371,7 +1378,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
                 let ab = buffer.buffer;
-                return Self::hash_to_bytes(global, &input, Some(ab));
+                return Self::hash_to_bytes(global, input, Some(ab));
             }
             let Some(encoding) = Encoding::from(string_or_buffer.slice()) else {
                 return Err(global
@@ -1385,9 +1392,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                     .throw());
             };
 
-            Self::hash_to_encoding(global, &input, encoding)
+            Self::hash_to_encoding(global, input, encoding)
         } else {
-            Self::hash_to_bytes(global, &input, None)
+            Self::hash_to_bytes(global, input, None)
         }
     }
 

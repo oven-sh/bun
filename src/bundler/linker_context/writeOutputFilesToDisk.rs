@@ -1,6 +1,4 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
-use core::mem::offset_of;
 use std::io::Write as _;
 
 use bun_alloc::MaxHeapAllocator;
@@ -364,7 +362,7 @@ pub fn write_output_files_to_disk(
                             .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
                         match write_file_with_path_buffer(
                             &mut pathbuf,
-                            WriteFileArgs {
+                            &WriteFileArgs {
                                 data: WriteFileData::Buffer { buffer: &bytecode },
                                 encoding: WriteFileEncoding::Buffer,
                                 mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
@@ -435,7 +433,7 @@ pub fn write_output_files_to_disk(
 
         match write_file_with_path_buffer(
             &mut pathbuf,
-            WriteFileArgs {
+            &WriteFileArgs {
                 data: WriteFileData::Buffer {
                     buffer: &code_result.buffer,
                 },
@@ -509,8 +507,9 @@ pub fn write_output_files_to_disk(
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                 // TODO(port): `bake_types::Framework` is missing
                 // `server_components`; once it lands, restore the
-                // `if fw.server_components.is_some() { 3 } else { 1 }` branch.
-                let offset: u32 = if c.framework.is_some() { 1 } else { 1 };
+                // `if c.framework.is_some_and(|fw| fw.server_components.is_some()) { 3 } else { 1 }`
+                // branch.
+                let offset: u32 = 1;
                 Some(chunk.entry_point.source_index() - offset)
             } else {
                 None

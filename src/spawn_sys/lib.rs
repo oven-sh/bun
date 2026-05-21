@@ -19,8 +19,6 @@
 //!
 //! See `docs/SPAWN_SYS_PROPOSAL.md` for the full crate-graph rationale.
 
-#![allow(dead_code)]
-
 use core::ffi::c_char;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -159,6 +157,7 @@ pub mod pdeathsig {
         DEFAULT_PDEATHSIG_ON_LINUX.store(enabled, Ordering::Release);
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub(crate) fn should_default() -> bool {
         DEFAULT_PDEATHSIG_ON_LINUX.load(Ordering::Acquire) && is_arming_thread()

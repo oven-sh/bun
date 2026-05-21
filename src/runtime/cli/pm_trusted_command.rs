@@ -70,10 +70,10 @@ impl UntrustedCommand {
         // `load_lockfile` borrows but is never dereferenced via `load_lockfile`
         // here.
         unsafe { update_lockfile_if_needed(&mut *pm_raw, &load_lockfile)? };
-        drop(load_lockfile);
 
-        // SAFETY: `load_lockfile` dropped above; `pm_raw` is the only path to
-        // the singleton for the rest of this fn (same as the original `pm`).
+        // SAFETY: `load_lockfile` is not used past this point; `pm_raw` is the
+        // only path to the singleton for the rest of this fn (same as the
+        // original `pm`).
         let pm: &mut PackageManager = unsafe { &mut *pm_raw };
         let log: &mut bun_ast::Log = pm.log_mut();
         let lockfile: &Lockfile = &pm.lockfile;
@@ -296,8 +296,8 @@ impl TrustCommand {
         }
 
         // SAFETY: `pm_raw` is the singleton; `pm.log` set at init, non-null.
-        // Read-only `lockfile` borrow for the discovery phase.
         let log: *mut bun_ast::Log = unsafe { (*pm_raw).log };
+        // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow for the discovery phase.
         let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };
 
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -353,7 +353,7 @@ impl TrustCommand {
             let nm_saved = node_modules_path.len();
             let _ = node_modules_path.append(node_modules.relative_path.as_bytes());
 
-            let node_modules_dir = match bun_sys::Dir::cwd()
+            let _node_modules_dir = match bun_sys::Dir::cwd()
                 .open_at(node_modules.relative_path.as_bytes())
                 .map_err(bun_core::Error::from)
             {
@@ -443,10 +443,6 @@ impl TrustCommand {
             Global::crash();
         }
 
-        // Drop the read-only lockfile borrow before the run-scripts phase
-        // (which needs `&mut PackageManager`).
-        drop(tree_iter);
-
         let mut scripts_node: Progress::Node;
         // SAFETY: `pm_raw` singleton; `progress` is owned inline.
         let show_progress = unsafe { (*pm_raw).options.log_level.show_progress() };
@@ -475,10 +471,12 @@ impl TrustCommand {
                     continue;
                 }
 
-                // SAFETY: `pm_raw` singleton; reads atomics + `options`.
+                // SAFETY: `pm_raw` singleton; `options` is CLI config set at init.
+                let max_concurrent = unsafe { (*pm_raw).options.max_concurrent_lifecycle_scripts };
                 while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
-                    >= unsafe { (*pm_raw).options.max_concurrent_lifecycle_scripts }
+                    >= max_concurrent
                 {
+                    // SAFETY: `pm_raw` singleton; `options.log_level` is CLI config set at init.
                     if unsafe { (*pm_raw).options.log_level.is_verbose() }
                         && PackageManager::has_enough_time_passed_between_waiting_messages()
                     {
@@ -505,6 +503,7 @@ impl TrustCommand {
                     )?;
                 }
 
+                // SAFETY: `pm_raw` singleton; `options.log_level` is CLI config set at init.
                 if unsafe { (*pm_raw).options.log_level.show_progress() } {
                     // SAFETY: `scripts_node` initialized above when
                     // `show_progress` was true at the same `log_level`.
@@ -512,6 +511,7 @@ impl TrustCommand {
                         // SAFETY: points at our stack-local `scripts_node`.
                         unsafe { sn.as_ptr().as_mut().unwrap().activate() };
                     }
+                    // SAFETY: `pm_raw` singleton; `progress` owned inline by `pm`.
                     unsafe { (*pm_raw).progress.refresh() };
                 }
             }
@@ -523,6 +523,7 @@ impl TrustCommand {
                     .load(Ordering::Relaxed)
             } > 0
             {
+                // SAFETY: `pm_raw` singleton; `sleep()` ticks the event loop on the CLI thread.
                 unsafe { (*pm_raw).sleep() };
             }
         }
@@ -646,7 +647,6 @@ impl TrustCommand {
             let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
         }
-        drop(load_lockfile);
 
         let mut buffer_writer = bun_js_printer::BufferWriter::init();
         buffer_writer.buffer.list.reserve(

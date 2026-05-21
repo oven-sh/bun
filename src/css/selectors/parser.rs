@@ -16,7 +16,6 @@ use bun_wyhash::Wyhash;
 
 use super::impl_;
 
-use super::builder as selector_builder;
 use super::builder::SelectorBuilder;
 
 pub use bun_css::Printer as PrinterRe; // re-export parity (Printer/PrintErr were `pub const` aliases)
@@ -260,7 +259,7 @@ pub mod attrs {
                 (Some(a), Some(b)) => a.eql(b),
                 _ => return false,
             }
-            .then(|| ())
+            .then_some(())
             .is_some()
                 && self.local_name.eql(&rhs.local_name)
                 && self.local_name_lower.eql(&rhs.local_name_lower)
@@ -319,7 +318,7 @@ pub mod attrs {
         }
     }
 
-    #[derive(Clone, PartialEq)]
+    #[derive(Clone, PartialEq, Eq)]
     pub enum ParsedAttrSelectorOperation<AttrValue> {
         Exists,
         WithValue {
@@ -387,7 +386,7 @@ pub mod attrs {
     }
 
     impl AttrSelectorOperator {
-        pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
             // https://drafts.csswg.org/cssom/#serializing-selectors
             // See "attribute selector".
             dest.write_str(match self {
@@ -736,7 +735,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
         empty = false;
     }
 
-    if let Ok(_) = parse_type_selector::<Impl>(parser, input, *state, builder) {
+    if parse_type_selector::<Impl>(parser, input, *state, builder).is_ok() {
         // Note: Zig `.asValue()` here means "if Ok"; the bool result is unused.
         // TODO(port): the Zig only sets `empty = false` on Ok(true|false) — but
         // `asValue()` returns Some on .result regardless of bool value, so this matches.
@@ -1111,7 +1110,7 @@ impl PseudoClass {
         }
     }
 
-    pub fn get_necessary_prefixes(&mut self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub fn get_necessary_prefixes(&mut self, targets: &css::targets::Targets) -> css::VendorPrefix {
         use PseudoClass as P;
         use css::prefixes::Feature as F;
         let (p, feature): (&mut css::VendorPrefix, F) = match self {
@@ -1196,8 +1195,8 @@ pub enum WebKitScrollbarPseudoElement {
 
 impl WebKitScrollbarPseudoElement {
     #[inline]
-    pub fn eql(&self, rhs: &Self) -> bool {
-        *self == *rhs
+    pub fn eql(self, rhs: Self) -> bool {
+        self == rhs
     }
     // hash — via `#[derive(CssHash)]`.
 }
@@ -1311,7 +1310,7 @@ impl<'a> SelectorParser<'a> {
         }
         if !strings::starts_with(name, b"-") {
             self.options.warn(
-                input.new_custom_error(
+                &input.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)
                         .into_default_parser_error(),
                 ),
@@ -1330,19 +1329,6 @@ impl<'a> SelectorParser<'a> {
                 name,
                 arguments: TokenList { v: args },
             });
-        }
-        {
-            // Spec (parser.zig:1088-1094) calls `TokenList.parseRaw(input, ...)`
-            // which consumes the function-argument tokens. Until
-            // `TokenList::parse_raw` un-gates, drain the nested block so the
-            // caller's `parse_nested_block` → `expect_exhausted` passes and the
-            // selector grammar accepts the same inputs as the spec.
-            // TODO(port): un-gate `TokenList::parse_raw` and store the args.
-            while input.next().is_ok() {}
-            Ok(PseudoElement::CustomFunction {
-                name,
-                arguments: TokenList::default(),
-            })
         }
     }
 
@@ -1374,7 +1360,7 @@ impl<'a> SelectorParser<'a> {
                 break 'pseudo_class pseudo;
             }
             if strings::starts_with_char(name, b'_') {
-                self.options.warn(loc.new_custom_error(
+                self.options.warn(&loc.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
                 ));
             } else if (self.options.css_modules.is_some()
@@ -1428,7 +1414,7 @@ impl<'a> SelectorParser<'a> {
             _ => {
                 if !strings::starts_with_char(name, b'-') {
                     self.options.warn(
-                        parser.new_custom_error(
+                        &parser.new_custom_error(
                             SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name)
                                 .into_default_parser_error(),
                         ),
@@ -1485,7 +1471,7 @@ impl<'a> SelectorParser<'a> {
         // TODO(port): phf custom hasher — Zig used `ComptimeStringMap.getCaseInsensitiveWithEql`.
         let pseudo_element = lookup_pseudo_element(name).unwrap_or_else(|| {
             if !strings::starts_with_char(name, b'-') {
-                self.options.warn(loc.new_custom_error(
+                self.options.warn(&loc.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
                 ));
             }
@@ -1670,16 +1656,16 @@ impl<'a, Impl: BunSelectorImpl> fmt::Display for SelectorListDebugFmt<'a, Impl> 
         if !cfg!(debug_assertions) {
             return Ok(());
         }
-        write!(f, "SelectorList[\n")?;
+        writeln!(f, "SelectorList[")?;
         let last = (self.0.v.len() as usize).saturating_sub(1);
         for (i, sel) in self.0.v.slice().iter().enumerate() {
             if i != last {
-                write!(f, " {}\n", sel.debug())?;
+                writeln!(f, " {}", sel.debug())?;
             } else {
-                write!(f, " {},\n", sel.debug())?;
+                writeln!(f, " {},", sel.debug())?;
             }
         }
-        write!(f, "]\n")
+        writeln!(f, "]")
     }
 }
 
@@ -1811,16 +1797,14 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
                 },
             }
 
-            loop {
-                if let Ok(tok) = input.next() {
-                    if matches!(tok, Token::Comma) {
-                        break;
-                    }
-                    // Shouldn't have got a selector if getting here.
-                    debug_assert!(!was_ok);
+            if let Ok(tok) = input.next() {
+                if matches!(tok, Token::Comma) {
+                    continue;
                 }
-                return Ok(Self { v: values });
+                // Shouldn't have got a selector if getting here.
+                debug_assert!(!was_ok);
             }
+            return Ok(Self { v: values });
         }
     }
 
@@ -1870,16 +1854,14 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
                 },
             }
 
-            loop {
-                if let Ok(tok) = input.next() {
-                    if matches!(tok, Token::Comma) {
-                        break;
-                    }
-                    // Shouldn't have got a selector if getting here.
-                    debug_assert!(!was_ok);
+            if let Ok(tok) = input.next() {
+                if matches!(tok, Token::Comma) {
+                    continue;
                 }
-                return Ok(Self { v: values });
+                // Shouldn't have got a selector if getting here.
+                debug_assert!(!was_ok);
             }
+            return Ok(Self { v: values });
         }
     }
 
@@ -2871,15 +2853,15 @@ pub struct SpecificityAndFlags {
 }
 
 impl SpecificityAndFlags {
-    pub fn has_pseudo_element(&self) -> bool {
+    pub fn has_pseudo_element(self) -> bool {
         self.flags.contains(SelectorFlags::HAS_PSEUDO)
     }
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub fn hash(self, hasher: &mut Wyhash) {
         hasher.update(&self.specificity.to_ne_bytes());
         hasher.update(&[self.flags.bits()]);
     }
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
 }
 
@@ -2949,11 +2931,11 @@ impl Combinator {
     /// Do not call this! Use `serializer::serialize_combinator()` or
     /// `tocss_servo::to_css_combinator()` instead.
     #[deprecated = "use serializer::serialize_combinator()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, _dest: &mut Printer) -> Result<(), PrintErr> {
         unreachable!("use serializer::serialize_combinator()");
     }
 
-    pub fn is_tree_combinator(&self) -> bool {
+    pub fn is_tree_combinator(self) -> bool {
         matches!(
             self,
             Self::Child | Self::Descendant | Self::NextSibling | Self::LaterSibling
@@ -3160,7 +3142,7 @@ impl PseudoElement {
         self.clone()
     }
 
-    pub fn get_necessary_prefixes(&mut self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub fn get_necessary_prefixes(&mut self, targets: &css::targets::Targets) -> css::VendorPrefix {
         use PseudoElement as PE;
         use css::prefixes::Feature as F;
         let (p, feature): (&mut css::VendorPrefix, F) = match self {
@@ -4093,14 +4075,10 @@ pub fn parse_qualified_name<Impl: BunSelectorImpl>(
                 let result_cloned = result.cloned();
                 input.reset(&after_star);
                 if in_attr_selector {
-                    match result_cloned {
-                        Ok(t) => {
-                            return Err(after_star
-                                .source_location()
-                                .new_custom_error(SelectorParseErrorKind::ExpectedBarInAttr(t)));
-                        }
-                        Err(e) => return Err(e),
-                    }
+                    let t = result_cloned?;
+                    return Err(after_star
+                        .source_location()
+                        .new_custom_error(SelectorParseErrorKind::ExpectedBarInAttr(t)));
                 } else {
                     return Ok(parse_qualified_name_default_namespace_helper::<Impl>(
                         parser, None,

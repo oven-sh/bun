@@ -1,4 +1,3 @@
-use core::cmp::Ordering;
 use core::fmt;
 use std::sync::OnceLock;
 
@@ -8,11 +7,7 @@ use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_core::{self, Error, Output, err};
 use bun_paths::{self as Path, PathBuffer};
-use bun_semver::String;
-use bun_semver::StringBuilder as StringBuilderLike;
 use bun_semver::string::Buf as StringBuf;
-#[allow(unused_imports)]
-use bun_sys::File;
 
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
@@ -304,6 +299,22 @@ pub fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
         9 if host == b"bitbucket" => Some(b".org"),
         _ => None,
     }
+}
+
+/// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
+/// `git`, or `<owner>-<repo>-<sha>` for `github`). It is concatenated into a cache
+/// directory name and passed to `git checkout`, so it must be a single safe path
+/// component: no separators, no NUL, and no leading `-` that git would parse as an
+/// option.
+pub fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
+    !resolved.is_empty()
+        && resolved.len() <= 256
+        && resolved[0] != b'-'
+        && resolved != b"."
+        && resolved != b".."
+        && resolved
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
 /// Install-tier `Repository` behaviour (parsing, formatting, git CLI exec,
@@ -831,6 +842,20 @@ impl RepositoryExt for Repository {
         // `cache_dir`/`repo_dir` are borrowed views; only `package_dir` is owned.
         bun_analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        if !is_safe_resolved_tag(resolved) {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "invalid git commit \"{}\" for \"{}\"",
+                    BStr::new(resolved),
+                    BStr::new(name)
+                ),
+            );
+            return Err(err!("InstallFailed"));
+        }
+
         let folder_name_buf = TlBufs::folder_name_buf();
         let folder_name = crate::package_manager_real::cached_git_folder_name_print(
             &mut folder_name_buf[..],
@@ -889,6 +914,8 @@ impl RepositoryExt for Repository {
 
                 if let Err(err) = exec(
                     env,
+                    // `is_safe_resolved_tag` above rejects a leading `-`, so
+                    // `resolved` cannot be parsed as a git option.
                     &[b"git", b"-C", folder, b"checkout", b"--quiet", resolved],
                 ) {
                     log.add_error_fmt(

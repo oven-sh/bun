@@ -163,7 +163,7 @@ pub fn s3_error_to_js(
     global_object: &JSGlobalObject,
     path: Option<&[u8]>,
 ) -> JSValue {
-    let value = JSS3Error::init(&err.code, &err.message, path).to_error_instance(global_object);
+    let value = JSS3Error::init(err.code, err.message, path).to_error_instance(global_object);
     debug_assert!(!global_object.has_exception());
     value
 }

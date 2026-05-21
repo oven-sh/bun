@@ -9,7 +9,7 @@
 //! of the bundler type — the bundler depends on this crate and re-exports them.
 
 pub use crate::tsconfig_json::options::jsx;
-pub(crate) use bun_ast::{Loader, LoaderHashTable, Target};
+pub(crate) use bun_ast::{Loader, Target};
 pub use bun_options_types::bundle_enums::ModuleType;
 
 /// Port of `bundler/options.zig` `Packages`.

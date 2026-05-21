@@ -1,15 +1,10 @@
 use core::ptr::NonNull;
 
-use enumset::{EnumSet, EnumSetType};
-
 use bun_alloc as allocators;
-#[allow(unused_imports)]
 use bun_core::Generation;
-#[allow(unused_imports)]
 use bun_core::feature_flags as FeatureFlags;
 use bun_sys::Fd;
 
-#[allow(unused_imports)]
 use crate::fs;
 use crate::package_json::PackageJSON;
 use crate::tsconfig_json::TSConfigJSON;
@@ -287,9 +282,10 @@ impl DirInfo {
     }
 
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        // SAFETY: read-only path; no other live `&mut EntriesOption` for this index
-        // exists in this scope (resolver invariant).
-        let entries_ptr = unsafe { fs::FileSystem::instance().fs.entries.at_index(self.entries) }?;
+        let entries_ptr = fs::FileSystem::instance()
+            .fs
+            .entries
+            .at_index(self.entries)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(&**entries),
             fs::EntriesOption::Err(_) => None,
@@ -455,7 +451,7 @@ impl HashMapExt for HashMap {
         // TODO(port): derive via `addr_of_mut!` from the raw singleton (SharedReadWrite
         // provenance) so slot pointers survive sibling retags outright.
         self.put(result, value)
-            .map(|v| std::ptr::from_mut::<DirInfo>(v))
+            .map(std::ptr::from_mut::<DirInfo>)
             .map_err(Into::into)
     }
     #[inline]

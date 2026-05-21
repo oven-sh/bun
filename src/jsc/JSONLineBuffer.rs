@@ -87,11 +87,7 @@ impl JSONLineBuffer {
         self.head = self.head.saturating_add(bytes);
 
         // Adjust scanned_pos (subtract consumed bytes, but don't go negative)
-        self.scanned_pos = if bytes >= self.scanned_pos {
-            0
-        } else {
-            self.scanned_pos - bytes
-        };
+        self.scanned_pos = self.scanned_pos.saturating_sub(bytes);
 
         // Adjust newline_pos
         if let Some(pos) = self.newline_pos {

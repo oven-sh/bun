@@ -3,7 +3,7 @@ use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_core::StackCheck;
 use bun_core::{String as BunString, ZigString};
-use bun_js_parser::{self as ast, lexer};
+use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
 use bun_parsers::json5;
 
@@ -119,7 +119,7 @@ impl Space {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
             // toInt32() wraps large values and Infinity to 0, which is wrong.
             let num_f = space.as_number();
-            if !(num_f >= 1.0) {
+            if num_f.is_nan() || num_f < 1.0 {
                 // handles NaN, -Infinity, 0, negatives
                 return Ok(Space::Minified);
             }

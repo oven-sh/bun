@@ -1,16 +1,13 @@
 use crate::mal_prelude::*;
-#[allow(unused_imports)]
 use bun_collections::VecExt as _VecExt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
 use bun_alloc::Arena;
-use bun_ast::ImportRecord;
 use bun_ast::Ref;
-use bun_ast::Symbol;
-use bun_ast::{self as js_ast, B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
+use bun_ast::{B, Binding, E, Expr, ExprData, G, Part, S, Stmt, StmtData};
 use bun_ast::{Loc, Log, Source};
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::ArrayHashMap;
 use bun_core::fmt as bun_fmt;
 use bun_js_parser::js_lexer;
 
@@ -28,7 +25,7 @@ impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for Slic
     fn hash(&self, key: &[u8]) -> u32 {
         // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`.
         use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-        AutoContext::default().hash(key)
+        AutoContext.hash(key)
     }
     fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
         a == &**b
@@ -169,7 +166,7 @@ pub fn generate_code_for_lazy_export(
                     let name: &[u8] = syms[css_ref.inner_index() as usize].original_name.slice();
                     let loc = ast
                         .local_scope
-                        .get_adapted(name, SliceBoxAdapter)
+                        .get_adapted(name, &SliceBoxAdapter)
                         .unwrap()
                         .loc;
 
@@ -221,7 +218,7 @@ pub fn generate_code_for_lazy_export(
                                                 format_args!(
                                                     "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
                                                     bun_fmt::quote(
-                                                        &self.all_sources
+                                                        self.all_sources
                                                             [import_record.source_index.get() as usize]
                                                             .path
                                                             .pretty
@@ -234,7 +231,7 @@ pub fn generate_code_for_lazy_export(
                                             let name_v = name.v();
                                             let Some(other_name_entry) = other_file
                                                 .local_scope
-                                                .get_adapted(name_v, SliceBoxAdapter)
+                                                .get_adapted(name_v, &SliceBoxAdapter)
                                             else {
                                                 continue;
                                             };
@@ -277,7 +274,7 @@ pub fn generate_code_for_lazy_export(
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
                                         let Some(name_entry) =
-                                            ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                            ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
                                         else {
                                             self.log.add_error_fmt(
                                                 &self.all_sources[idx as usize],
@@ -285,7 +282,7 @@ pub fn generate_code_for_lazy_export(
                                                 format_args!(
                                                     "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                                     bun_fmt::quote(name_v),
-                                                    bun_fmt::quote(&self.all_sources[idx as usize].path.pretty),
+                                                    bun_fmt::quote(self.all_sources[idx as usize].path.pretty),
                                                 ),
                                             );
                                             continue;

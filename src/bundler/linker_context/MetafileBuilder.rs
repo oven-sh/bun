@@ -457,7 +457,7 @@ enum JsonValue {
     Null,
     Bool(bool),
     Integer(i64),
-    Float(f64),
+    Float(#[expect(dead_code)] f64),
     String(Box<[u8]>),
     Array(Vec<JsonValue>),
     Object(JsonObject),
@@ -962,37 +962,37 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
     // Summary table
     md.extend_from_slice(b"| Metric | Value |\n");
     md.extend_from_slice(b"|--------|-------|\n");
-    write!(
+    writeln!(
         md,
-        "| Total output size | {} |\n",
+        "| Total output size | {} |",
         fmt_size(total_output_bytes)
     )?;
-    write!(md, "| Input modules | {} |\n", inputs_obj.count())?;
+    writeln!(md, "| Input modules | {} |", inputs_obj.count())?;
     if entry_point_count > 0 {
-        write!(md, "| Entry points | {} |\n", entry_point_count)?;
+        writeln!(md, "| Entry points | {} |", entry_point_count)?;
     }
     if chunk_count > 0 {
-        write!(md, "| Code-split chunks | {} |\n", chunk_count)?;
+        writeln!(md, "| Code-split chunks | {} |", chunk_count)?;
     }
     if node_modules_count > 0 {
-        write!(
+        writeln!(
             md,
-            "| node_modules contribution | {} files ({}) |\n",
+            "| node_modules contribution | {} files ({}) |",
             node_modules_count,
             fmt_size(node_modules_bytes)
         )?;
     }
     if esm_count > 0 {
-        write!(md, "| ESM modules | {} |\n", esm_count)?;
+        writeln!(md, "| ESM modules | {} |", esm_count)?;
     }
     if cjs_count > 0 {
-        write!(md, "| CommonJS modules | {} |\n", cjs_count)?;
+        writeln!(md, "| CommonJS modules | {} |", cjs_count)?;
     }
     if json_count > 0 {
-        write!(md, "| JSON files | {} |\n", json_count)?;
+        writeln!(md, "| JSON files | {} |", json_count)?;
     }
     if external_count > 0 {
-        write!(md, "| External imports | {} |\n", external_count)?;
+        writeln!(md, "| External imports | {} |", external_count)?;
     }
 
     // ==================== LARGEST MODULES (BLOAT ANALYSIS) ====================
@@ -1000,7 +1000,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
     md.extend_from_slice(b"Modules sorted by bytes contributed to the output bundle. Large modules may indicate bloat.\n\n");
 
     // Sort by bytes_in_output descending
-    input_files.sort_by(|a, b| b.bytes_in_output.cmp(&a.bytes_in_output));
+    input_files.sort_by_key(|b| std::cmp::Reverse(b.bytes_in_output));
 
     md.extend_from_slice(b"| Output Bytes | % of Total | Module | Format |\n");
     md.extend_from_slice(b"|--------------|------------|--------|--------|\n");
@@ -1018,9 +1018,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         } else {
             0.0
         };
-        write!(
+        writeln!(
             md,
-            "| {} | {:.1}% | `{}` | {} |\n",
+            "| {} | {:.1}% | `{}` | {} |",
             fmt_size(info.bytes_in_output),
             pct,
             BStr::new(info.path),
@@ -1070,13 +1070,13 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         write!(md, "### Entry: `{}`\n\n", BStr::new(entry_point_str))?;
 
         // Output file info
-        write!(md, "**Output file**: `{}`\n", BStr::new(output_path))?;
+        writeln!(md, "**Output file**: `{}`", BStr::new(output_path))?;
 
         if let Some(bytes) = output.get(b"bytes") {
             if let JsonValue::Integer(bytes_int) = bytes {
-                write!(
+                writeln!(
                     md,
-                    "**Bundle size**: {}\n",
+                    "**Bundle size**: {}",
                     fmt_size(u64::try_from(*bytes_int).expect("int cast"))
                 )?;
             }
@@ -1085,7 +1085,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         // CSS bundle
         if let Some(css_bundle) = output.get(b"cssBundle") {
             if let JsonValue::String(css_str) = css_bundle {
-                write!(md, "**CSS bundle**: `{}`\n", BStr::new(css_str))?;
+                writeln!(md, "**CSS bundle**: `{}`", BStr::new(css_str))?;
             }
         }
 
@@ -1135,9 +1135,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                     if let JsonValue::Object(chunk_obj) = chunk {
                                         if let Some(bytes) = chunk_obj.get(b"bytes") {
                                             if let JsonValue::Integer(bytes_int) = bytes {
-                                                write!(
+                                                writeln!(
                                                     md,
-                                                    "- `{}` ({}, {})\n",
+                                                    "- `{}` ({}, {})",
                                                     BStr::new(path_str),
                                                     fmt_size(
                                                         u64::try_from(*bytes_int)
@@ -1150,9 +1150,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                         }
                                     }
                                 }
-                                write!(
+                                writeln!(
                                     md,
-                                    "- `{}` ({})\n",
+                                    "- `{}` ({})",
                                     BStr::new(path_str),
                                     BStr::new(kind_str)
                                 )?;
@@ -1187,19 +1187,14 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                         }
                     }
 
-                    module_sizes.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+                    module_sizes.sort_by_key(|b| std::cmp::Reverse(b.bytes));
 
                     let max_modules: usize = 15;
                     for (i, ms) in module_sizes.iter().enumerate() {
                         if i >= max_modules {
                             break;
                         }
-                        write!(
-                            md,
-                            "| {} | `{}` |\n",
-                            fmt_size(ms.bytes),
-                            BStr::new(ms.path)
-                        )?;
+                        writeln!(md, "| {} | `{}` |", fmt_size(ms.bytes), BStr::new(ms.path))?;
                     }
                     if module_sizes.len() > max_modules {
                         write!(
@@ -1229,7 +1224,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         });
     }
 
-    highly_imported.sort_by(|a, b| b.count.cmp(&a.count));
+    highly_imported.sort_by_key(|b| std::cmp::Reverse(b.count));
 
     // Show most commonly imported modules
     if !highly_imported.is_empty() {
@@ -1296,13 +1291,13 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         // Show bytes contributed to output
         if let Some(contrib) = bytes_in_output.get(input_path) {
             if *contrib > 0 {
-                write!(md, "- **Output contribution**: {}\n", fmt_size(*contrib))?;
+                writeln!(md, "- **Output contribution**: {}", fmt_size(*contrib))?;
             }
         }
 
         if let Some(format) = input_obj.get(b"format") {
             if let JsonValue::String(format_str) = format {
-                write!(md, "- **Format**: {}\n", BStr::new(format_str))?;
+                writeln!(md, "- **Format**: {}", BStr::new(format_str))?;
             }
         }
 
@@ -1371,17 +1366,17 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
 
                             if is_external {
                                 if let Some(orig) = original {
-                                    write!(
+                                    writeln!(
                                         md,
-                                        "  - `{}` ({}, **external**, specifier: `{}`)\n",
+                                        "  - `{}` ({}, **external**, specifier: `{}`)",
                                         BStr::new(path_str),
                                         BStr::new(kind_str),
                                         BStr::new(orig)
                                     )?;
                                 } else {
-                                    write!(
+                                    writeln!(
                                         md,
-                                        "  - `{}` ({}, **external**)\n",
+                                        "  - `{}` ({}, **external**)",
                                         BStr::new(path_str),
                                         BStr::new(kind_str)
                                     )?;
@@ -1389,18 +1384,18 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                             } else if let Some(contrib) = imported_contrib {
                                 if contrib > 0 {
                                     if let Some(orig) = original {
-                                        write!(
+                                        writeln!(
                                             md,
-                                            "  - `{}` ({}, contributes {}, specifier: `{}`)\n",
+                                            "  - `{}` ({}, contributes {}, specifier: `{}`)",
                                             BStr::new(path_str),
                                             BStr::new(kind_str),
                                             fmt_size(contrib),
                                             BStr::new(orig)
                                         )?;
                                     } else {
-                                        write!(
+                                        writeln!(
                                             md,
-                                            "  - `{}` ({}, contributes {})\n",
+                                            "  - `{}` ({}, contributes {})",
                                             BStr::new(path_str),
                                             BStr::new(kind_str),
                                             fmt_size(contrib)
@@ -1408,17 +1403,17 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                     }
                                 } else {
                                     if let Some(orig) = original {
-                                        write!(
+                                        writeln!(
                                             md,
-                                            "  - `{}` ({}, specifier: `{}`)\n",
+                                            "  - `{}` ({}, specifier: `{}`)",
                                             BStr::new(path_str),
                                             BStr::new(kind_str),
                                             BStr::new(orig)
                                         )?;
                                     } else {
-                                        write!(
+                                        writeln!(
                                             md,
-                                            "  - `{}` ({})\n",
+                                            "  - `{}` ({})",
                                             BStr::new(path_str),
                                             BStr::new(kind_str)
                                         )?;
@@ -1426,17 +1421,17 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                 }
                             } else {
                                 if let Some(orig) = original {
-                                    write!(
+                                    writeln!(
                                         md,
-                                        "  - `{}` ({}, specifier: `{}`)\n",
+                                        "  - `{}` ({}, specifier: `{}`)",
                                         BStr::new(path_str),
                                         BStr::new(kind_str),
                                         BStr::new(orig)
                                     )?;
                                 } else {
-                                    write!(
+                                    writeln!(
                                         md,
-                                        "  - `{}` ({})\n",
+                                        "  - `{}` ({})",
                                         BStr::new(path_str),
                                         BStr::new(kind_str)
                                     )?;
@@ -1448,9 +1443,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                                 if let JsonValue::Object(with_obj) = with {
                                     if let Some(type_val) = with_obj.get(b"type") {
                                         if let JsonValue::String(type_str) = type_val {
-                                            write!(
+                                            writeln!(
                                                 md,
-                                                "    - with type: `{}`\n",
+                                                "    - with type: `{}`",
                                                 BStr::new(type_str)
                                             )?;
                                         }
@@ -1481,25 +1476,25 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
     md.extend_from_slice(b"### All Modules\n\n");
     md.extend_from_slice(b"```\n");
     for info in input_files.iter() {
-        write!(md, "[MODULE: {}]\n", BStr::new(info.path))?;
+        writeln!(md, "[MODULE: {}]", BStr::new(info.path))?;
         if info.bytes_in_output > 0 {
-            write!(
+            writeln!(
                 md,
-                "[OUTPUT_BYTES: {} = {} bytes]\n",
+                "[OUTPUT_BYTES: {} = {} bytes]",
                 BStr::new(info.path),
                 info.bytes_in_output
             )?;
         }
         if !info.format.is_empty() {
-            write!(
+            writeln!(
                 md,
-                "[FORMAT: {} = {}]\n",
+                "[FORMAT: {} = {}]",
                 BStr::new(info.path),
                 BStr::new(info.format)
             )?;
         }
         if info.is_node_modules {
-            write!(md, "[NODE_MODULES: {}]\n", BStr::new(info.path))?;
+            writeln!(md, "[NODE_MODULES: {}]", BStr::new(info.path))?;
         }
     }
     md.extend_from_slice(b"```\n\n");
@@ -1528,16 +1523,16 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                         if let Some(imp_path) = imp_obj.get(b"path") {
                             if let JsonValue::String(imp_path_str) = imp_path {
                                 if is_ext {
-                                    write!(
+                                    writeln!(
                                         md,
-                                        "[EXTERNAL: {} imports {}]\n",
+                                        "[EXTERNAL: {} imports {}]",
                                         BStr::new(source_path),
                                         BStr::new(imp_path_str)
                                     )?;
                                 } else {
-                                    write!(
+                                    writeln!(
                                         md,
-                                        "[IMPORT: {} -> {}]\n",
+                                        "[IMPORT: {} -> {}]",
                                         BStr::new(source_path),
                                         BStr::new(imp_path_str)
                                     )?;
@@ -1556,9 +1551,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
     md.extend_from_slice(b"```\n");
     for (target, importers) in imported_by.iter() {
         for importer in importers.iter() {
-            write!(
+            writeln!(
                 md,
-                "[IMPORTED_BY: {} <- {}]\n",
+                "[IMPORTED_BY: {} <- {}]",
                 BStr::new(target),
                 BStr::new(importer)
             )?;
@@ -1582,9 +1577,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                         size = u64::try_from(*bytes_int).expect("int cast");
                     }
                 }
-                write!(
+                writeln!(
                     md,
-                    "[ENTRY: {} -> {} ({} bytes)]\n",
+                    "[ENTRY: {} -> {} ({} bytes)]",
                     BStr::new(ep_str),
                     BStr::new(output_path2),
                     size
@@ -1600,9 +1595,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         md.extend_from_slice(b"```\n");
         for info in input_files.iter() {
             if info.is_node_modules && info.bytes_in_output > 0 {
-                write!(
+                writeln!(
                     md,
-                    "[NODE_MODULES: {} (contributes {} bytes)]\n",
+                    "[NODE_MODULES: {} (contributes {} bytes)]",
                     BStr::new(info.path),
                     info.bytes_in_output
                 )?;

@@ -2,7 +2,6 @@
 //! collection. This type implies there is always a valid value held.
 //! For a strong that may be empty (to reuse allocation), use `Optional`.
 
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JSValue};
@@ -69,14 +68,9 @@ impl Drop for Strong {
 // `#[repr(transparent)]` matches the Zig layout (`?*Impl` — single nullable
 // pointer) so it stays FFI-safe when embedded in `extern "C"` structs.
 #[repr(transparent)]
+#[derive(Default)]
 pub struct Optional {
     handle: Option<NonNull<Impl>>,
-}
-
-impl Default for Optional {
-    fn default() -> Self {
-        Self { handle: None }
-    }
 }
 
 impl Optional {
@@ -246,6 +240,8 @@ impl Impl {
                 this.as_ptr(),
             );
         }
+        // SAFETY: caller contract guarantees `this` is a live handle from
+        // `Bun__StrongRef__new`; ownership is transferred to C++ which frees it.
         unsafe { Bun__StrongRef__delete(this.as_ptr()) };
     }
 }

@@ -20,7 +20,11 @@ impl ManagedTask {
         Task::new(crate::task_tag::ManagedTask, this.cast())
     }
 
-    pub fn run(this: *mut ManagedTask) -> JsResult<()> {
+    /// # Safety
+    /// `this` must be the live `*mut ManagedTask` returned by `heap::alloc` in
+    /// `new()`; ownership transfers — `this` is freed (via `heap::take`) before
+    /// return on both Ok and Err paths.
+    pub unsafe fn run(this: *mut ManagedTask) -> JsResult<()> {
         // Zig: @setRuntimeSafety(false) — no Rust equivalent; bounds/overflow checks
         // are already off in release and there is nothing to elide here.
 

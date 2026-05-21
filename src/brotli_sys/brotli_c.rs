@@ -2,9 +2,7 @@
 
 #![allow(non_camel_case_types, non_snake_case)]
 
-use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 pub type brotli_alloc_func =
     Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize) -> *mut c_void>;
@@ -72,20 +70,6 @@ bun_opaque::opaque_ffi! {
     pub struct BrotliDecoder;
 }
 
-#[allow(dead_code)]
-type BrotliDecoderSetMetadataCallbacks = unsafe extern "C" fn(
-    state: *mut BrotliDecoder,
-    start_func: brotli_decoder_metadata_start_func,
-    chunk_func: brotli_decoder_metadata_chunk_func,
-    opaque: *mut c_void,
-);
-#[allow(dead_code)]
-type brotli_decoder_metadata_start_func =
-    Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize)>;
-#[allow(dead_code)]
-type brotli_decoder_metadata_chunk_func =
-    Option<unsafe extern "C" fn(opaque: *mut c_void, data: *const u8, size: usize)>;
-
 impl BrotliDecoder {
     pub fn set_parameter(
         state: &mut BrotliDecoder,
@@ -104,7 +88,11 @@ impl BrotliDecoder {
         unsafe { BrotliDecoderAttachDictionary(state, type_, data.len(), data.as_ptr()) }
     }
 
-    pub fn create_instance(
+    /// # Safety
+    /// `opaque` is forwarded to brotli's allocator hooks; it must be valid for
+    /// every `alloc_func`/`free_func` invocation for the lifetime of the
+    /// returned decoder (or null when the default allocator is used).
+    pub unsafe fn create_instance(
         alloc_func: brotli_alloc_func,
         free_func: brotli_free_func,
         opaque: *mut c_void,
@@ -153,7 +141,7 @@ impl BrotliDecoder {
                 available_out,
                 next_out,
                 total_out
-                    .map(|p| std::ptr::from_mut::<usize>(p))
+                    .map(std::ptr::from_mut::<usize>)
                     .unwrap_or(core::ptr::null_mut()),
             )
         }
@@ -273,21 +261,6 @@ pub type BrotliSharedDictionaryStruct = struct_BrotliSharedDictionaryStruct;
 bun_opaque::opaque_ffi! { pub struct struct_BrotliEncoderPreparedDictionaryStruct; }
 pub type BrotliEncoderPreparedDictionary = struct_BrotliEncoderPreparedDictionaryStruct;
 
-unsafe extern "C" {
-    fn BrotliSharedDictionaryCreateInstance(
-        alloc_func: brotli_alloc_func,
-        free_func: brotli_free_func,
-        opaque: *mut c_void,
-    ) -> *mut BrotliSharedDictionary;
-    fn BrotliSharedDictionaryDestroyInstance(dict: *mut BrotliSharedDictionary);
-    fn BrotliSharedDictionaryAttach(
-        dict: *mut BrotliSharedDictionary,
-        type_: BrotliSharedDictionaryType,
-        data_size: usize,
-        data: *const u8,
-    ) -> c_int;
-}
-
 pub const BROTLI_MODE_GENERIC: c_int = 0;
 pub const BROTLI_MODE_TEXT: c_int = 1;
 pub const BROTLI_MODE_FONT: c_int = 2;
@@ -393,9 +366,11 @@ unsafe extern "C" {
     pub safe fn BrotliEncoderVersion() -> u32;
 }
 
-/// Opaque brotli encoder state. `UnsafeCell` makes the type `!Freeze` so a
-/// `&BrotliEncoder` does not assert immutability of the C-owned state.
-bun_opaque::opaque_ffi! { pub struct BrotliEncoder; }
+bun_opaque::opaque_ffi! {
+    /// Opaque brotli encoder state. `UnsafeCell` makes the type `!Freeze` so a
+    /// `&BrotliEncoder` does not assert immutability of the C-owned state.
+    pub struct BrotliEncoder;
+}
 
 #[repr(u32)] // Zig: enum(c_uint)
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -428,7 +403,11 @@ impl<'a> Default for CompressionResult<'a> {
 pub type Operation = BrotliEncoderOperation;
 
 impl BrotliEncoder {
-    pub fn create_instance(
+    /// # Safety
+    /// `opaque` is forwarded to brotli's allocator hooks; it must be valid for
+    /// every `alloc_func`/`free_func` invocation for the lifetime of the
+    /// returned encoder (or null when the default allocator is used).
+    pub unsafe fn create_instance(
         alloc_func: brotli_alloc_func,
         free_func: brotli_free_func,
         opaque: *mut c_void,
@@ -469,11 +448,9 @@ impl BrotliEncoder {
 
         let mut available_out: usize = 0;
 
-        let mut result = CompressionResult::default();
-
         // SAFETY: state is a valid &mut BrotliEncoder; in/out pointers are valid;
         // next_out is null (we use take_output below); total_out is null (unused)
-        result.success = unsafe {
+        let success = unsafe {
             BrotliEncoderCompressStream(
                 state,
                 op,
@@ -485,19 +462,22 @@ impl BrotliEncoder {
             ) > 0
         };
 
-        if result.success {
+        let mut output: &'a [u8] = &[];
+        if success {
             let mut size: usize = 0;
             let ptr = BrotliEncoderTakeOutput(state, &mut size);
             if !ptr.is_null() {
                 // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
                 // valid until the next encoder call (bounded by 'a)
-                result.output = unsafe { core::slice::from_raw_parts::<'a>(ptr, size) };
+                output = unsafe { core::slice::from_raw_parts::<'a>(ptr, size) };
             }
         }
 
-        result.has_more = BrotliEncoderHasMoreOutput(state) > 0;
-
-        result
+        CompressionResult {
+            success,
+            output,
+            has_more: BrotliEncoderHasMoreOutput(state) > 0,
+        }
     }
 
     pub fn set_parameter(

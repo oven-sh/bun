@@ -976,7 +976,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
 
     /// Look up by `key` using `adapter` for hash/eql, without constructing a `K`.
     #[inline]
-    pub fn get_index_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: Ad) -> Option<usize>
+    pub fn get_index_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> Option<usize>
     where
         Ad: ArrayHashAdapter<Q, K>,
     {
@@ -985,7 +985,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     #[inline]
-    pub fn get_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: Ad) -> Option<&V>
+    pub fn get_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> Option<&V>
     where
         Ad: ArrayHashAdapter<Q, K>,
     {
@@ -996,7 +996,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// Zig `getPtrContext` / `getPtrAdapted` — mutable value lookup using an
     /// externally-supplied hash/eql adapter.
     #[inline]
-    pub fn get_ptr_adapted<Q: ?Sized, Ad>(&mut self, key: &Q, adapter: Ad) -> Option<&mut V>
+    pub fn get_ptr_adapted<Q: ?Sized, Ad>(&mut self, key: &Q, adapter: &Ad) -> Option<&mut V>
     where
         Ad: ArrayHashAdapter<Q, K>,
     {
@@ -1005,7 +1005,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     #[inline]
-    pub fn contains_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: Ad) -> bool
+    pub fn contains_adapted<Q: ?Sized, Ad>(&self, key: &Q, adapter: &Ad) -> bool
     where
         Ad: ArrayHashAdapter<Q, K>,
     {
@@ -1275,7 +1275,6 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
         // branch above without NLL gymnastics; recompute via index.
         let i = gop.index;
         let found = gop.found_existing;
-        drop(gop);
         Ok(self.gop_at(i, found))
     }
 }
@@ -1284,16 +1283,16 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// Zig `getOrPutAdapted`: look up by `key` using `adapter` for hash/eql;
     /// on miss, append a *defaulted* `K`/`V` pair — caller fills both via
     /// `key_ptr` / `value_ptr`.
-    pub fn get_or_put_adapted<Q, Ad>(
+    pub fn get_or_put_adapted<Q: ?Sized, Ad>(
         &mut self,
-        key: Q,
-        adapter: Ad,
+        key: &Q,
+        adapter: &Ad,
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError>
     where
         Ad: ArrayHashAdapter<Q, K>,
     {
-        let h = adapter.hash(&key);
-        if let Some(i) = self.find_hash(h, |k, idx| adapter.eql(&key, k, idx)) {
+        let h = adapter.hash(key);
+        if let Some(i) = self.find_hash(h, |k, idx| adapter.eql(key, k, idx)) {
             return Ok(self.gop_at(i, true));
         }
         let i = self.push_entry(K::default(), V::default(), h);
@@ -1304,10 +1303,10 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// explicit `ctx` for the *stored* key type. This port does not need `ctx`
     /// for the index header (none yet), so it is accepted and ignored.
     #[inline]
-    pub fn get_or_put_context_adapted<Q, Ad>(
+    pub fn get_or_put_context_adapted<Q: ?Sized, Ad>(
         &mut self,
-        key: Q,
-        adapter: Ad,
+        key: &Q,
+        adapter: &Ad,
         _ctx: C,
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError>
     where
@@ -1604,9 +1603,12 @@ const _: () = assert!(
     core::mem::size_of::<StringHashMapKey<DefaultAlloc>>() == 2 * core::mem::size_of::<usize>()
 );
 
-// `NonNull<u8>` is `!Send`/`!Sync`; restore the auto-traits the enum had
-// (both payloads were `Send + Sync` for any sendable/syncable `A`).
+// SAFETY: `NonNull<u8>` strips the auto-trait, but the pointee is logically
+// either `&'static [u8]` (borrowed) or `Box<[u8], A>` (owned) — both `Send`
+// when `A: Send`, so transferring the packed pointer between threads is sound.
 unsafe impl<A: Allocator + Default + Send> Send for StringHashMapKey<A> {}
+// SAFETY: same logical payloads as above; both are `Sync` when `A: Sync` and
+// the type exposes no interior mutability through the raw pointer.
 unsafe impl<A: Allocator + Default + Sync> Sync for StringHashMapKey<A> {}
 
 impl<A: Allocator + Default> StringHashMapKey<A> {
@@ -1626,7 +1628,7 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     pub const fn borrowed(s: &'static [u8]) -> Self {
         // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
         // SAFETY: `as_ptr()` on a slice reference is never null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr() as *mut u8) };
+        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         Self {
             ptr,
             len_tag: s.len(),
@@ -1884,10 +1886,8 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// one insert into the new one, same (lowercased) basename bytes.
     #[inline]
     pub fn hash_key(&self, key: &[u8]) -> u64 {
-        use core::hash::{BuildHasher, Hash, Hasher};
-        let mut state = self.inner.hasher().build_hasher();
-        key.hash(&mut state);
-        state.finish()
+        use core::hash::BuildHasher;
+        self.inner.hasher().hash_one(key)
     }
 
     /// `get` with a caller-supplied hash. `hash` MUST equal `self.hash_key(key)`
@@ -1947,7 +1947,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         // SAFETY: caller contract above. Erase the borrow's lifetime so it can
         // be stored as `Static` without a heap copy; the map never inspects the
         // lifetime, only the (ptr, len) pair.
-        let key: &'static [u8] = unsafe { &*(key as *const [u8]) };
+        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
         self.inner.insert(StringHashMapKey::borrowed(key), value);
         Ok(())
     }
@@ -2058,7 +2058,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
     pub unsafe fn get_or_put_borrowed(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
         use hashbrown::hash_map::EntryRef;
         // SAFETY: caller contract above; see `put_borrowed`.
-        let key: &'static [u8] = unsafe { &*(key as *const [u8]) };
+        let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
         match self.inner.entry_ref(key) {
             EntryRef::Occupied(o) => StringHashMapGetOrPut {
                 found_existing: true,
@@ -2283,11 +2283,11 @@ pub mod string_hash_map_unowned {
 
     impl Adapter {
         #[inline]
-        pub fn hash(&self, key: &Key) -> u64 {
+        pub fn hash(self, key: &Key) -> u64 {
             key.hash
         }
         #[inline]
-        pub fn eql(&self, a: &Key, b: &Key) -> bool {
+        pub fn eql(self, a: &Key, b: &Key) -> bool {
             a.hash == b.hash && a.len == b.len
         }
     }

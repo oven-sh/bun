@@ -1,16 +1,12 @@
 //! Port of src/cli/init_command.zig
 
-use core::ffi::c_char;
-
 use bun_ast::StoreRef;
 use bun_collections::IntegerBitSet;
-use bun_collections::bit_set::Range as BitRange;
 use bun_core::{self as bun, Environment, Error, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{MutableString, ZStr, strings};
-use bun_js_parser as js_ast;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self, PathBuffer, path_buffer_pool};
+use bun_paths::{self, path_buffer_pool};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
@@ -634,13 +630,11 @@ impl InitCommand {
 
         struct Steps {
             write_gitignore: bool,
-            write_package_json: bool,
             write_tsconfig: bool,
             write_readme: bool,
         }
 
         let mut steps = Steps {
-            write_package_json: true,
             write_tsconfig: true,
             write_gitignore: !minimal,
             write_readme: !minimal,
@@ -693,7 +687,7 @@ impl InitCommand {
             }
         }
 
-        let mut need_run_bun_install = !did_load_package_json;
+        let need_run_bun_install;
         {
             let all_dependencies = template.dependencies();
             let dependencies = all_dependencies.dependencies;
@@ -1422,17 +1416,14 @@ impl TemplateFile {
 
 impl Template {
     pub fn should_use_source_file_project_generator(self) -> bool {
-        match self {
-            Template::Blank | Template::TypescriptLibrary => false,
-            _ => true,
-        }
+        !matches!(self, Template::Blank | Template::TypescriptLibrary)
     }
 
     pub fn is_react(self) -> bool {
-        match self {
-            Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Template::ReactBlank | Template::ReactTailwind | Template::ReactTailwindShadcn
+        )
     }
 
     pub fn write_to_package_json(
@@ -1511,11 +1502,11 @@ impl Template {
         b".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc",
         Self::AGENT_RULE,
     );
+    #[cfg(not(windows))]
     const CURSOR_RULE_PATH_TO_CLAUDE_MD: &'static [u8] = b"../../CLAUDE.md";
 
     fn is_claude_code_installed() -> bool {
-        #[cfg(windows)]
-        {
+        if cfg!(windows) {
             // Claude code is not available on Windows, at the time of writing.
             return false;
         }
@@ -1545,8 +1536,6 @@ impl Template {
             && !exists(b"CLAUDE.md");
 
         if let Some(template_file) = Self::get_cursor_rule() {
-            let mut did_create_agent_rule = false;
-
             // If both Cursor & Claude is installed, make the cursor rule a
             // symlink to ../../CLAUDE.md
             let asset_path: &[u8] = if create_claude_md {
@@ -1565,9 +1554,7 @@ impl Template {
                 // SAFETY: asset_path_z[len-1] == 0 written above
                 template_file.contents,
             );
-            did_create_agent_rule = true;
             if result.is_err() {
-                did_create_agent_rule = false;
                 if create_claude_md {
                     create_claude_md = false;
                     // If installing the CLAUDE.md fails for some reason, fall back to installing the cursor rule.
@@ -1588,7 +1575,7 @@ impl Template {
                 // sync if you change it locally. we use a symlink for the cursor
                 // rule in this case so that the github UI for CLAUDE.md (which may
                 // appear prominently in repos) doesn't show a file path.
-                if did_create_agent_rule && create_claude_md {
+                if result.is_ok() && create_claude_md {
                     'symlink_cursor_rule: {
                         create_claude_md = false;
                         let _ = bun_sys::Dir::cwd().make_path(b".cursor/rules");

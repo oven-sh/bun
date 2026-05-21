@@ -5,9 +5,9 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
-use bun_paths::{self as Path, AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
-use bun_sys::{self as Syscall, Dir, Fd, FdExt};
+use bun_sys::{self as Syscall, Dir, Fd};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
@@ -238,9 +238,9 @@ impl NodeModulesFolder {
             // PORT NOTE: std.posix.toPosixPath — copies into a NUL-terminated PathBuffer
             let mut path_buf = PathBuffer::uninit();
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
-            return Ok(root
+            return root
                 .open_at_with(path_z.as_bytes(), 0)
-                .map_err(|e| e.to_zig_err())?);
+                .map_err(|e| e.to_zig_err());
         }
 
         #[cfg(not(unix))]
@@ -521,7 +521,7 @@ impl<'a> PackageInstaller<'a> {
             let package_name_ = strings::StringOrTinyString::init(alias);
             let mut target_package_name = package_name_;
             let mut can_retry_without_native_binlink_optimization = false;
-            let mut target_node_modules_path_opt: Option<AbsPath> = None;
+            let target_node_modules_path_opt: Option<AbsPath> = None;
             // PORT NOTE: `defer if (target_node_modules_path_opt) |*path| path.deinit()` — Option<AbsPath> drops.
 
             'native_binlink_optimization: {
@@ -533,7 +533,7 @@ impl<'a> PackageInstaller<'a> {
                 if let Some(optimizer) =
                     manager
                         .postinstall_optimizer
-                        .get(postinstall_optimizer::PkgInfo {
+                        .get(&postinstall_optimizer::PkgInfo {
                             name_hash,
                             ..Default::default()
                         })
@@ -571,9 +571,7 @@ impl<'a> PackageInstaller<'a> {
             }
             // globally linked packages shouls always belong to the root
             // tree (0).
-            let global = if !manager.options.global {
-                false
-            } else if tree_id != 0 {
+            let global = if !manager.options.global || tree_id != 0 {
                 false
             } else {
                 'global: {
@@ -606,8 +604,11 @@ impl<'a> PackageInstaller<'a> {
                     seen: Some(&mut self.seen_bin_links),
                     target_node_modules_path: target_node_modules_path_opt
                         .as_ref()
-                        .map(|p| std::ptr::from_ref::<AbsPath>(p))
-                        .unwrap_or(nm_ptr.cast_const()),
+                        .map(std::ptr::from_ref::<AbsPath>)
+                        .unwrap_or_else(|| nm_ptr.cast_const()),
+                    // SAFETY: `nm_ptr` = `&raw mut node_modules_path` (live local); the only
+                    // other pointer derived from it is the read-only `target_node_modules_path`
+                    // above, which `bin::Linker::link` never writes through.
                     node_modules_path: unsafe { &mut *nm_ptr },
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
@@ -998,7 +999,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        if let Some(removed) = self.manager_mut().task_queue.fetch_remove(task_id) {
+        if let Some(removed) = self.manager_mut().task_queue.fetch_remove(&task_id) {
             let callbacks = removed.value;
             // PORT NOTE: `defer callbacks.deinit(this.manager.allocator)` — Vec drops.
 
@@ -1030,7 +1031,7 @@ impl<'a> PackageInstaller<'a> {
                 self.node_modules.tree_id = context.tree_id;
                 // PORT NOTE: zig assigns `context.path` (ArrayList struct copy).
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
-                self.node_modules.path = context.path.clone();
+                self.node_modules.path.clone_from(&context.path);
                 self.current_tree_id = context.tree_id;
                 const NEEDS_VERIFY: bool = false;
                 const IS_PENDING_PACKAGE_INSTALL: bool = false;
@@ -1132,12 +1133,6 @@ impl<'a> PackageInstaller<'a> {
         }
 
         count
-    }
-
-    fn get_patchfile_hash(patchfile_path: &[u8]) -> Option<u64> {
-        let _ = patchfile_path; // autofix
-        // TODO(port): zig body has no return statement (relies on lazy compilation / dead code).
-        None
     }
 
     pub fn install_package_with_name_and_resolution<
@@ -1277,6 +1272,9 @@ impl<'a> PackageInstaller<'a> {
             },
             cache_dir: Fd::INVALID, // assigned below
             destination_dir_subpath,
+            // SAFETY: `subpath_buf_ptr` = `&raw mut self.destination_dir_subpath_buf`; the
+            // field outlives `installer`. `destination_dir_subpath` above derives from the
+            // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             // PORT NOTE: zig `arena: this.lockfile.allocator` dropped — global mimalloc.
             package_name: pkg_name,
@@ -1577,7 +1575,9 @@ impl<'a> PackageInstaller<'a> {
                             path: self.node_modules.path.clone(),
                         });
                     }
-                    package_manager::enqueue_patch_task(self.manager_mut(), task);
+                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
+                    // ownership transfers to the patch-task fifo here.
+                    unsafe { package_manager::enqueue_patch_task(self.manager_mut(), task) };
                     return;
                 }
             }
@@ -1629,6 +1629,7 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
+            #[cfg(not(windows))]
             let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir.fd());
 
             let install_result: package_install::InstallResult = match resolution.tag {
@@ -1754,7 +1755,7 @@ impl<'a> PackageInstaller<'a> {
                                 .manager()
                                 .postinstall_optimizer
                                 .should_ignore_lifecycle_scripts(
-                                    postinstall_optimizer::PkgInfo {
+                                    &postinstall_optimizer::PkgInfo {
                                         name_hash: pkg_name_hash,
                                         version: if resolution.tag == resolution::Tag::Npm {
                                             Some(resolution.npm().version)
@@ -1950,11 +1951,11 @@ impl<'a> PackageInstaller<'a> {
                                 // `st_mode` is u16 on FreeBSD, u32 elsewhere; widen.
                                 let st_mode = stat.st_mode as u32;
                                 let is_writable = if stat.st_uid == bun_sys::c::getuid() {
-                                    st_mode & bun_sys::S::IWUSR as u32 > 0
+                                    st_mode & bun_sys::S::IWUSR > 0
                                 } else if stat.st_gid == bun_sys::c::getgid() {
-                                    st_mode & bun_sys::S::IWGRP as u32 > 0
+                                    st_mode & bun_sys::S::IWGRP > 0
                                 } else {
-                                    st_mode & bun_sys::S::IWOTH as u32 > 0
+                                    st_mode & bun_sys::S::IWOTH > 0
                                 };
 
                                 if !is_writable {
@@ -1994,7 +1995,7 @@ impl<'a> PackageInstaller<'a> {
                         );
                         #[cfg(debug_assertions)]
                         {
-                            let mut t = cause.debug_trace;
+                            let t = cause.debug_trace;
                             bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());
                         }
                         self.summary.fail += 1;
@@ -2059,7 +2060,7 @@ impl<'a> PackageInstaller<'a> {
                         .manager()
                         .postinstall_optimizer
                         .should_ignore_lifecycle_scripts(
-                            postinstall_optimizer::PkgInfo {
+                            &postinstall_optimizer::PkgInfo {
                                 name_hash: pkg_name_hash,
                                 version: if resolution.tag == resolution::Tag::Npm {
                                     Some(resolution.npm().version)

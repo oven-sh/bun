@@ -291,7 +291,7 @@ impl<'a> ValkeyReader<'a> {
 
     pub fn read_verbatim_string(&mut self) -> Result<VerbatimString, RedisError> {
         let len = self.read_integer()?;
-        if len < 0 {
+        if !(0..=Self::MAX_BULK_LEN).contains(&len) {
             return Err(RedisError::InvalidVerbatimString);
         }
         let len = usize::try_from(len).expect("int cast");
@@ -324,6 +324,13 @@ impl<'a> ValkeyReader<'a> {
     /// deeply nested responses.
     const MAX_NESTING_DEPTH: usize = 128;
 
+    /// Maximum accepted length for a single RESP blob (`$`, `=`, `!`).
+    /// Matches the Redis/Valkey server default `proto-max-bulk-len` of 512 MB.
+    /// Declared lengths above this fail the parse so the connection state
+    /// machine stops buffering instead of growing the read buffer toward an
+    /// attacker-chosen size.
+    const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
+
     pub fn read_value(&mut self) -> Result<RESPValue, RedisError> {
         self.read_value_with_depth(0)
     }
@@ -351,6 +358,9 @@ impl<'a> ValkeyReader<'a> {
                 let len = self.read_integer()?;
                 if len < 0 {
                     return Ok(RESPValue::BulkString(None));
+                }
+                if len > Self::MAX_BULK_LEN {
+                    return Err(RedisError::InvalidBulkString);
                 }
                 let len = usize::try_from(len).expect("int cast");
                 if self.pos + len > self.buffer.len() {
@@ -399,7 +409,7 @@ impl<'a> ValkeyReader<'a> {
             }
             RESPType::BlobError => {
                 let len = self.read_integer()?;
-                if len < 0 {
+                if !(0..=Self::MAX_BULK_LEN).contains(&len) {
                     return Err(RedisError::InvalidBlobError);
                 }
                 let len = usize::try_from(len).expect("int cast");
@@ -491,7 +501,7 @@ impl<'a> ValkeyReader<'a> {
                     return Err(RedisError::NestingDepthExceeded);
                 }
                 let len = self.read_integer()?;
-                if len < 0 || len == 0 {
+                if len <= 0 {
                     return Err(RedisError::InvalidPush);
                 }
 

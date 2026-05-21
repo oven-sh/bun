@@ -8,8 +8,6 @@
 //! `FIRE_TIMER` dispatch path (Timeout/Immediate arms). `init()` backs the
 //! `TimeoutObject::init` / `ImmediateObject::init` constructors.
 
-use core::mem::offset_of;
-
 use bun_core::{Timespec, TimespecMockMode};
 
 use crate::jsc::JsCell;
@@ -391,7 +389,7 @@ impl TimerObjectInternals {
         let Some(timer) = s.this_value.get().try_get() else {
             #[cfg(debug_assertions)]
             panic!("TimerObjectInternals.runImmediateTask: this_object is null");
-            #[allow(unreachable_code)]
+            #[cfg(not(debug_assertions))]
             {
                 s.set_enable_keeping_event_loop_alive(vm, false);
                 s.deref();
@@ -510,7 +508,6 @@ impl TimerObjectInternals {
             return;
         };
 
-        #[allow(unused_assignments)]
         let (callback, arguments, mut idle_timeout, mut repeat): (
             JSValue,
             JSValue,

@@ -135,11 +135,19 @@ macro_rules! us_dispatch_shims {
         fn $name:ident($recv:ident: *mut $Recv:ty $(, $a:ident: $t:ty)* $(,)?) -> $ret:ty
             = $lookup:ident.$field:ident($($call:expr),* $(,)?) or $default:expr;
     )*) => {$(
+        /// # Safety
+        /// `loop.c` must pass a live, non-null socket pointer (and any data/len
+        /// buffer must be valid for the duration of the call).
         #[unsafe(no_mangle)]
         #[allow(clippy::unused_unit)]
-        pub extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
+        pub unsafe extern "C" fn $name($recv: *mut $Recv $(, $a: $t)*) -> $ret {
             match $lookup($recv).$field {
-                Some(f) => unsafe { f($($call),*) },
+                Some(f) => {
+                    // SAFETY: `f` is the vtable callback for this socket kind; loop.c
+                    // guarantees `$recv` and any data/len buffers are live for the call,
+                    // and the vtable entry's signature matches this shim's C ABI exactly.
+                    unsafe { f($($call),*) }
+                }
                 None => $default,
             }
         }
@@ -174,8 +182,12 @@ us_dispatch_shims! {
 /// Ciphertext tap for `socket.upgradeTLS()` — fires on the `[raw, _]` half of
 /// the returned pair before decryption. Only `bun_socket_tls` ever sets the
 /// `ssl_raw_tap` bit, so this isn't part of the per-kind vtable.
+///
+/// # Safety
+/// `loop.c` must pass a live, non-null `s` whose ext slot holds a valid
+/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn us_dispatch_ssl_raw_tap(
+pub unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s: *mut us_socket_t,
     data: *mut u8,
     len: c_int,
@@ -186,10 +198,10 @@ pub extern "C" fn us_dispatch_ssl_raw_tap(
     debug_assert!(s_ref.kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
     type TLSSocket = super::NewSocket<true>;
-    // SAFETY: ext slot for BunSocketTls always holds a non-null *mut TLSSocket
-    // (stamped at construction); the slot read is safe via `opaque_mut`, only
-    // the final `&*tls_ptr` needs the deref invariant.
     let tls_ptr: *mut TLSSocket = *s_ref.ext::<*mut TLSSocket>();
+    // SAFETY: ext slot for BunSocketTls always holds a non-null *mut TLSSocket
+    // (stamped at construction); dispatch is single-threaded so no `&mut`
+    // alias exists for the lifetime of this shared borrow.
     let tls: &TLSSocket = unsafe { &*tls_ptr };
     if let Some(raw) = tls.twin.get().as_ref() {
         // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);

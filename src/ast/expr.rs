@@ -386,7 +386,6 @@ impl Expr {
         }
 
         if let Some(idx) = bun_core::index_of_any(name, b"[.") {
-            let idx = idx as usize;
             match name[idx] {
                 b'[' => {
                     let end_idx = bun_core::index_of_char(name, b']')? as usize;
@@ -768,14 +767,6 @@ impl Expr {
 pub enum EFlags {
     None,
     TsDecorator,
-}
-
-#[allow(dead_code)] // see gated `json_stringify` below
-struct Serializable {
-    type_: Tag,
-    object: &'static [u8],
-    value: Data,
-    loc: Loc,
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.

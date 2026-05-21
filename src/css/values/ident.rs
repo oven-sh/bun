@@ -1,7 +1,6 @@
 use crate::SmallList;
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
-use bun_collections::VecExt;
 
 use bun_ast::Ref;
 use bun_core::strings;
@@ -165,7 +164,7 @@ impl DashedIdentReference {
             let name = dest.css_module.as_mut().unwrap().reference_dashed(
                 bump,
                 ident_v,
-                &self.from,
+                self.from,
                 specifier_path,
                 source_index,
             );
@@ -246,14 +245,8 @@ impl Ident {
 /// In debug mode, if it is a `Ref` we will also set the `__ptrbits` to point to the original
 /// []const u8 so we can debug the string. This should be fine since we use arena
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct IdentOrRef(u128);
-
-impl Default for IdentOrRef {
-    fn default() -> Self {
-        IdentOrRef(0)
-    }
-}
 
 // Zig packed struct(u128) field layout, LSB-first:
 //   __ptrbits: u63  -> bits  0..63
@@ -261,12 +254,6 @@ impl Default for IdentOrRef {
 //   __len:     u64  -> bits 64..128
 const PTRBITS_MASK: u128 = (1u128 << 63) - 1;
 const REF_BIT: u128 = 1u128 << 63;
-
-#[allow(dead_code)]
-enum Tag {
-    Ident,
-    Ref,
-}
 
 #[cfg(debug_assertions)]
 pub type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
@@ -318,8 +305,9 @@ impl IdentOrRef {
     pub fn debug_ident(self) -> &'static [u8] {
         // TODO(port): lifetime — returns arena-borrowed slice; `'static` is a placeholder.
         if self.ref_bit() {
-            // SAFETY: in debug builds, ptrbits stores a heap pointer to a *const [u8] written by from_ref
             let ptr = self.ptrbits() as usize as *const *const [u8];
+            // SAFETY: in debug builds, `ptrbits` stores a valid arena-allocated `*const *const [u8]`
+            // written by `from_ref`; the pointee is an arena-owned slice (see `DashedIdent::v`).
             unsafe { crate::arena_str(*ptr) }
         } else {
             // SAFETY: as_ident reconstructs the arena slice this was packed from
@@ -342,18 +330,18 @@ impl IdentOrRef {
 
     pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
         let len: u64 = r.to_raw_bits();
-        #[allow(unused_mut)]
-        let mut this = Self::pack(0, true, len);
+        #[cfg(not(debug_assertions))]
+        let this = Self::pack(0, true, len);
 
         #[cfg(debug_assertions)]
-        {
+        let this = {
             let (slice, bump) = debug_ident;
             // bun.handleOom(arena.create(...)) → arena alloc; OOM aborts
             let heap_ptr: &mut *const [u8] = bump.alloc(std::ptr::from_ref::<[u8]>(slice));
             let addr = std::ptr::from_mut::<*const [u8]>(heap_ptr) as usize as u64;
             debug_assert!(addr & (1u64 << 63) == 0);
-            this = Self::pack(addr, true, len);
-        }
+            Self::pack(addr, true, len)
+        };
         #[cfg(not(debug_assertions))]
         {
             let _ = debug_ident;
@@ -412,7 +400,7 @@ impl IdentOrRef {
         local_names
             .unwrap()
             .get(&final_ref)
-            .map(|p| unsafe { crate::arena_str(&**p) })
+            .map(|p| unsafe { crate::arena_str(&raw const **p) })
     }
 
     pub fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {

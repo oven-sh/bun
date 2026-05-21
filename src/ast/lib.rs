@@ -23,7 +23,6 @@ use std::borrow::Cow;
 
 // `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
-#[allow(unused_imports)]
 use bun_core::Output;
 
 // TODO(port): swap to `bun_core::StringBuilder` once `clone_with_builder` is
@@ -31,7 +30,6 @@ use bun_core::Output;
 // breaks the `'static` slice pass-through this stub fakes).
 #[derive(Default)]
 pub struct StringBuilder;
-#[allow(unused_variables)]
 impl StringBuilder {
     pub fn count(&mut self, s: &[u8]) {
         let _ = s;
@@ -431,16 +429,14 @@ impl fmt::Debug for Ref {
 // Local mirror so init_file / init_recycled_file resolve until paths' move-in lands.
 // `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
 // `Source::init_recycled_file` (transpiler.zig:852).
-#[allow(dead_code)]
 /// A [`Source`]'s path paired with its raw bytes (used by virtual-module
 /// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
+#[derive(Clone, Copy)]
 pub struct PathContentsPair {
     pub path: bun_paths::fs::Path<'static>,
     pub contents: &'static [u8],
 }
 // TODO(port): bun_schema::api — `to_api` methods gated behind .
-#[allow(unused_imports)]
-use bun_core::strings;
 
 // In Zig: `const string = []const u8;`
 type Str = &'static [u8];
@@ -698,12 +694,12 @@ impl Loc {
 
     // Zig: `pub const toUsize = i;`
     #[inline]
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.i()
     }
 
     #[inline]
-    pub fn i(&self) -> usize {
+    pub fn i(self) -> usize {
         usize::try_from(self.start.max(0)).expect("int cast")
     }
 
@@ -717,7 +713,7 @@ impl Loc {
         self.eql(Self::EMPTY)
     }
 
-    pub fn json_stringify(&self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
+    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         writer.write_i32(self.start)
     }
@@ -1107,9 +1103,9 @@ impl Data {
                             bun_core::fmt::digit_count(location.line) + " | ".len();
                     }
 
-                    write!(
+                    writeln!(
                         to,
-                        "{}\n",
+                        "{}",
                         bun_core::fmt::fmt_javascript(
                             line_text,
                             bun_core::fmt::HighlighterOptions {
@@ -1507,22 +1503,22 @@ impl Range {
         k >= self.loc.start && k < self.loc.start + self.len
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub fn is_empty(self) -> bool {
         self.len == 0 && self.loc.start == Loc::EMPTY.start
     }
 
-    pub fn end(&self) -> Loc {
+    pub fn end(self) -> Loc {
         Loc {
             start: self.loc.start + self.len,
         }
     }
 
-    pub fn end_i(&self) -> usize {
+    pub fn end_i(self) -> usize {
         // std.math.lossyCast(usize, ...) — saturates negatives to 0.
         (self.loc.start + self.len).max(0) as usize
     }
 
-    pub fn json_stringify(&self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
+    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
         writer.write_i32_pair([self.loc.start, self.len + self.loc.start])
     }
 }
@@ -1611,14 +1607,13 @@ impl Level {
     // Zig: `pub const label: std.EnumArray(Level, string)`
     pub const LABEL: std::sync::LazyLock<enum_map::EnumMap<Level, &'static [u8]>> =
         std::sync::LazyLock::new(|| {
-            use enum_map::enum_map;
-            enum_map! {
+            enum_map::EnumMap::from_fn(|k| match k {
                 Level::Verbose => b"verbose" as &[u8],
                 Level::Debug => b"debug",
                 Level::Info => b"info",
                 Level::Warn => b"warn",
                 Level::Err => b"error",
-            }
+            })
         });
 
     // Zig: `pub const Map = bun.ComptimeStringMap(Level, ...)`
@@ -1785,7 +1780,7 @@ impl Log {
         other.errors += self.errors;
 
         if recycled {
-            let mut string_builder = StringBuilder::default();
+            let mut string_builder = StringBuilder;
             let mut notes_count: usize = 0;
             for msg in &self.msgs {
                 msg.count(&mut string_builder);
@@ -2492,7 +2487,7 @@ impl Log {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct AddErrorOptions<'a> {
     pub source: Option<&'a Source>,
     pub loc: Loc,
@@ -2723,7 +2718,7 @@ impl Source {
         }
     }
 
-    pub fn init_file(file: PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_file(file: &PathContentsPair) -> Result<Source, bun_core::Error> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
@@ -2733,7 +2728,7 @@ impl Source {
         Ok(source)
     }
 
-    pub fn init_recycled_file(file: PathContentsPair) -> Result<Source, bun_core::Error> {
+    pub fn init_recycled_file(file: &PathContentsPair) -> Result<Source, bun_core::Error> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
@@ -3003,10 +2998,7 @@ pub fn source_from_file_at(
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
 ) -> bun_sys::Maybe<Source> {
-    let mut bytes = match bun_sys::file::File::read_from(dir_fd, path) {
-        Err(err) => return Err(err),
-        Ok(bytes) => bytes,
-    };
+    let mut bytes = bun_sys::file::File::read_from(dir_fd, path)?;
     if opts.convert_bom {
         if let Some(bom) = bun_core::immutable::BOM::detect(&bytes) {
             bytes = bom.remove_and_convert_to_utf8_and_free(bytes);
@@ -3260,7 +3252,7 @@ pub mod store_ast_alloc_heap {
     }
 
     pub fn enter() {
-        if std::env::var_os("BUN_DISABLE_STORE_AST_HEAP").is_some() {
+        if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
             return;
         }
         let arena = match arena_mut() {

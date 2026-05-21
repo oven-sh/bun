@@ -268,7 +268,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn resolve(&self, queries_array: JSValue, result: MySQLQueryResult) {
+    pub fn resolve(&self, queries_array: JSValue, result: &MySQLQueryResult) {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
         let _guard = self.ref_guard();

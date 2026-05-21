@@ -1,23 +1,11 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    unreachable_code
-)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
-use bun_core::strings;
 
-use crate::lexer as js_lexer;
 use crate::p::P;
-use crate::parser::{
-    self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode, SideEffects,
-};
-use bun_ast::G::{Decl, Property};
+use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
-use bun_ast::{self as js_ast, B, Binding, E, Expr, Flags, G, LocRef, S, Stmt, Symbol};
+use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
 // ── local EString shims ────────────────────────────────────────────────────
 // E.rs currently carries two `impl EString` blocks (live + round-C draft) with
@@ -495,25 +483,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 && !identifier_opts.is_call_target()
                             {
                                 let prop: &G::Property = &obj.properties.slice()[0];
-                                if prop.value.is_some()
-                                    && prop.flags.len() == 0
-                                    && prop.key.is_some()
-                                    && matches!(
-                                        prop.key.expect("infallible: prop has key").data,
-                                        js_ast::ExprData::EString(_)
-                                    )
-                                    && e_string_eql_bytes(
-                                        &prop
-                                            .key
-                                            .expect("infallible: prop has key")
-                                            .data
-                                            .e_string()
-                                            .expect("infallible: variant checked"),
-                                        name,
-                                    )
-                                    && name != b"__proto__"
-                                {
-                                    return Some(prop.value.expect("infallible: prop has value"));
+                                if let (Some(value), Some(key)) = (prop.value, prop.key) {
+                                    if prop.flags.len() == 0
+                                        && matches!(key.data, js_ast::ExprData::EString(_))
+                                        && e_string_eql_bytes(
+                                            &key.data
+                                                .e_string()
+                                                .expect("infallible: variant checked"),
+                                            name,
+                                        )
+                                        && name != b"__proto__"
+                                    {
+                                        return Some(value);
+                                    }
                                 }
                             }
                         }
@@ -809,27 +791,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // but with the namespace member data associated with it so that
                     // more property accesses off of this property access are recognized.
                     let name_static = E::Str::new(name);
-                    let expr = if js_lexer::is_identifier(name) {
-                        p.new_expr(
-                            E::Dot {
-                                target: *target,
-                                name: name_static,
-                                name_loc,
-                                ..Default::default()
-                            },
-                            loc,
-                        )
-                    } else {
-                        p.new_expr(
-                            E::Dot {
-                                target: *target,
-                                name: name_static,
-                                name_loc,
-                                ..Default::default()
-                            },
-                            loc,
-                        )
-                    };
+                    let expr = p.new_expr(
+                        E::Dot {
+                            target: *target,
+                            name: name_static,
+                            name_loc,
+                            ..Default::default()
+                        },
+                        loc,
+                    );
 
                     p.ts_namespace = crate::p::RecentlyVisitedTSNamespace {
                         expr: expr.data,

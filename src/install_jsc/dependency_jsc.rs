@@ -11,7 +11,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 /// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
 #[inline]
 fn semver_string_to_js(
-    s: &bun_semver::String,
+    s: bun_semver::String,
     buf: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -39,69 +39,61 @@ pub fn version_to_js(
     match dep.tag {
         Tag::DistTag => {
             let v = dep.dist_tag();
-            object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
-            object.put(global, b"tag", semver_string_to_js(&v.tag, buf, global)?);
+            object.put(global, b"name", semver_string_to_js(v.name, buf, global)?);
+            object.put(global, b"tag", semver_string_to_js(v.tag, buf, global)?);
         }
         Tag::Folder => {
             let v = dep.folder();
-            object.put(global, b"folder", semver_string_to_js(v, buf, global)?);
+            object.put(global, b"folder", semver_string_to_js(*v, buf, global)?);
         }
         Tag::Git => {
             let v = dep.git();
-            object.put(
-                global,
-                b"owner",
-                semver_string_to_js(&v.owner, buf, global)?,
-            );
-            object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
+            object.put(global, b"owner", semver_string_to_js(v.owner, buf, global)?);
+            object.put(global, b"repo", semver_string_to_js(v.repo, buf, global)?);
             object.put(
                 global,
                 b"ref",
-                semver_string_to_js(&v.committish, buf, global)?,
+                semver_string_to_js(v.committish, buf, global)?,
             );
         }
         Tag::Github => {
             let v = dep.github();
-            object.put(
-                global,
-                b"owner",
-                semver_string_to_js(&v.owner, buf, global)?,
-            );
-            object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
+            object.put(global, b"owner", semver_string_to_js(v.owner, buf, global)?);
+            object.put(global, b"repo", semver_string_to_js(v.repo, buf, global)?);
             object.put(
                 global,
                 b"ref",
-                semver_string_to_js(&v.committish, buf, global)?,
+                semver_string_to_js(v.committish, buf, global)?,
             );
         }
         Tag::Npm => {
             let v = dep.npm();
-            object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
+            object.put(global, b"name", semver_string_to_js(v.name, buf, global)?);
             let mut version_str = BunString::create_format(format_args!("{}", v.version.fmt(buf)));
             object.put(global, b"version", version_str.transfer_to_js(global)?);
             object.put(global, b"alias", JSValue::js_boolean(v.is_alias));
         }
         Tag::Symlink => {
             let v = dep.symlink();
-            object.put(global, b"path", semver_string_to_js(v, buf, global)?);
+            object.put(global, b"path", semver_string_to_js(*v, buf, global)?);
         }
         Tag::Workspace => {
             let v = dep.workspace();
-            object.put(global, b"name", semver_string_to_js(v, buf, global)?);
+            object.put(global, b"name", semver_string_to_js(*v, buf, global)?);
         }
         Tag::Tarball => {
             let v = dep.tarball();
             object.put(
                 global,
                 b"name",
-                semver_string_to_js(&v.package_name, buf, global)?,
+                semver_string_to_js(v.package_name, buf, global)?,
             );
             match &v.uri {
                 dependency::tarball::Uri::Local(local) => {
-                    object.put(global, b"path", semver_string_to_js(local, buf, global)?);
+                    object.put(global, b"path", semver_string_to_js(*local, buf, global)?);
                 }
                 dependency::tarball::Uri::Remote(remote) => {
-                    object.put(global, b"url", semver_string_to_js(remote, buf, global)?);
+                    object.put(global, b"url", semver_string_to_js(*remote, buf, global)?);
                 }
             }
         }

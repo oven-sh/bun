@@ -10,14 +10,11 @@
 //! ESM-to-CJS __export emission path, `print_dev_server_module`, the source-map
 //! self-borrow in `init`, and the `print_ast` minify-renamer driver / `print_json`.
 
-#![allow(unused, nonstandard_style, clippy::all)]
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
-#![feature(allocator_api)]
 
 use bun_collections::VecExt;
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, ImportRecord};
@@ -82,7 +79,7 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
-    use bun_collections::{ArrayHashMap, HashMap, VecExt};
+    use bun_collections::HashMap;
     use bun_core::slice_as_bytes;
 
     #[repr(u8)]
@@ -314,7 +311,6 @@ pub mod analyze_transpiled_module {
     /// Owns a duplicated byte buffer and exposes a `ModuleInfoDeserialized` view into it.
     /// Replaces Zig's `.owner = .allocated_slice` arm.
     pub struct ModuleInfoDeserializedOwned {
-        #[allow(dead_code)]
         backing: AlignedBytes,
         // `RecordKind` is a `#[repr(u8)]` enum (not all bit patterns valid), so
         // the validated discriminants are decoded once in `create()` and owned
@@ -450,21 +446,12 @@ pub mod analyze_transpiled_module {
     /// which appends one entry per unique pair — so the same specifier can be
     /// requested at both Evaluation and Defer phase.
     // PERF(port): three allocations + a side HashMap; revisit with a real IndexMap.
+    #[derive(Default)]
     struct RequestedModules {
         keys: Vec<StringID>,
         values: Vec<FetchParameters>,
         phases: Vec<ModulePhase>,
         index: HashMap<(StringID, ModulePhase), usize>,
-    }
-    impl Default for RequestedModules {
-        fn default() -> Self {
-            Self {
-                keys: Vec::new(),
-                values: Vec::new(),
-                phases: Vec::new(),
-                index: HashMap::default(),
-            }
-        }
     }
     impl RequestedModules {
         fn keys(&self) -> &[StringID] {
@@ -954,7 +941,7 @@ pub fn estimate_length_for_utf8(input: &[u8], ascii_only: bool, quote_char: u8) 
             4 => [remaining[0], remaining[1], remaining[2], remaining[3]],
             _ => unreachable!(),
         };
-        let c = strings::decode_wtf8_rune_t::<i32>(&bytes, char_len, 0);
+        let c = strings::decode_wtf8_rune_t::<i32>(bytes, char_len, 0);
         if can_print_without_escape(c, ascii_only) {
             len += char_len as usize;
         } else if c <= 0xFFFF {
@@ -1061,7 +1048,7 @@ where
                     4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
                     _ => unreachable!(),
                 };
-                strings::decode_wtf8_rune_t::<i32>(&bytes, width, 0)
+                strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
             }
             Encoding::Ascii => {
                 debug_assert!(text[i] <= 0x7F);
@@ -1088,7 +1075,6 @@ where
                         i += clamped_width + j;
                     } else {
                         writer.write_all(&text[i..])?;
-                        i = n;
                         break;
                     }
                 }
@@ -1429,7 +1415,7 @@ use bun_ast::{Indentation, IndentationCharacter};
 /// Downstream-compat: `print_json` callers pass this. The Zig spec passes the
 /// full `Options` struct; only the fields any caller actually sets are surfaced
 /// here and forwarded into `Options { .. }` inside `print_json`.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
@@ -1702,7 +1688,7 @@ pub mod __gated_printer {
     use bun_ast::ImportRecordTag;
     use bun_ptr::BackRef;
     use js_ast::Symbol;
-    use js_ast::binding::{Binding, Data as BindingData, Tag as BindingTag};
+    use js_ast::binding::{Binding, Data as BindingData};
     use js_ast::expr::{Data as ExprData, Expr};
     use js_ast::op::{Level, Op as OpInfo};
     use js_ast::stmt::{Data as StmtData, Stmt, Tag as StmtTag};
@@ -2021,15 +2007,6 @@ pub mod __gated_printer {
 
         pub fn print_buffer(&mut self, str: &[u8]) {
             self.writer.print_slice(str);
-        }
-
-        /// Fixed-size raw write into pre-reserved space (mirrors Zig's
-        /// `p.writer.reserve(N) ...; p.writer.advance(N)` open-code on the
-        /// number/identifier hot path). Skips the short-write/error bookkeeping
-        /// in `print_slice`.
-        #[inline(always)]
-        fn print_reserved_n<const N: usize>(&mut self, bytes: &[u8; N]) {
-            self.writer.write_reserved(bytes).expect("unreachable");
         }
 
         /// Polymorphic print: bytes or single char.
@@ -3028,7 +3005,7 @@ pub mod __gated_printer {
                             .flags
                             .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                     {
-                        self.print_require_error(&record.path.text);
+                        self.print_require_error(record.path.text);
                         if wrap {
                             self.print(b")");
                         }
@@ -3055,7 +3032,7 @@ pub mod __gated_printer {
                         self.print(b".require(");
                     }
                     let path = &record.path;
-                    self.print_string_literal_utf8(&path.pretty, false);
+                    self.print_string_literal_utf8(path.pretty, false);
                     self.print(b")");
                     if wrap {
                         self.print(b")");
@@ -3102,7 +3079,7 @@ pub mod __gated_printer {
                 self.print_symbol(self.options.hmr_ref);
                 self.print(b".dynamicImport(");
                 let path = &record.path;
-                self.print_string_literal_utf8(&path.pretty, false);
+                self.print_string_literal_utf8(path.pretty, false);
             }
 
             if !import_options.is_missing() {
@@ -3244,7 +3221,7 @@ pub mod __gated_printer {
             //
             let mut ascii_start: usize = 0;
             let mut is_ascii = false;
-            let mut iter = CodepointIterator::init(bytes);
+            let iter = CodepointIterator::init(bytes);
             let mut cursor = strings::Cursor::default();
 
             while iter.next(&mut cursor) {
@@ -3252,7 +3229,7 @@ pub mod __gated_printer {
                     // unlike other versions, we only want to mutate > 0x7F
                     0..=LAST_ASCII => {
                         if !is_ascii {
-                            ascii_start = (cursor.i as usize);
+                            ascii_start = cursor.i as usize;
                             is_ascii = true;
                         }
                     }
@@ -3589,7 +3566,7 @@ pub mod __gated_printer {
                         }
                     }
                     // We only want to generate an unbound eval() in CommonJS
-                    self.call_target = Some(e.target.data.clone());
+                    self.call_target = Some(e.target.data);
 
                     let is_unbound_eval = !e.is_direct_eval
                         && self.is_unbound_eval_identifier(e.target)
@@ -3698,7 +3675,7 @@ pub mod __gated_printer {
 
                     self.print(b"(");
                     self.print_string_literal_utf8(
-                        &self.import_record(e.import_record_index as usize).path.text,
+                        self.import_record(e.import_record_index as usize).path.text,
                         true,
                     );
                     self.print(b")");
@@ -3970,7 +3947,7 @@ pub mod __gated_printer {
                             ))
                         }));
                     }
-                    self.print_class(&e);
+                    self.print_class(e);
                     if wrap {
                         self.print(b")");
                     }
@@ -4185,7 +4162,7 @@ pub mod __gated_printer {
                         // Convert no-substitution template literals into strings if it's smaller
                         if e.parts().is_empty() {
                             self.add_source_mapping(expr.loc);
-                            self.print_string_characters_e_string(&e.head.cooked(), b'`');
+                            self.print_string_characters_e_string(e.head.cooked(), b'`');
                             return;
                         }
                     }
@@ -4326,7 +4303,7 @@ pub mod __gated_printer {
                                     .flags
                                     .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                                 {
-                                    self.print_require_error(&import_record.path.text);
+                                    self.print_require_error(import_record.path.text);
                                 } else {
                                     self.print_disabled_import();
                                 }
@@ -4633,13 +4610,13 @@ pub mod __gated_printer {
                 // Translate any non-ASCII to unicode escape sequences
                 let mut ascii_start: usize = 0;
                 let mut is_ascii = false;
-                let mut iter = CodepointIterator::init(&e.value);
+                let iter = CodepointIterator::init(&e.value);
                 let mut cursor = strings::Cursor::default();
                 while iter.next(&mut cursor) {
                     match cursor.c as u32 {
                         FIRST_ASCII..=LAST_ASCII => {
                             if !is_ascii {
-                                ascii_start = (cursor.i as usize);
+                                ascii_start = cursor.i as usize;
                                 is_ascii = true;
                             }
                         }
@@ -6001,7 +5978,7 @@ pub mod __gated_printer {
 
                     if IS_BUN_PLATFORM {
                         if record.tag == ImportRecordTag::Bun {
-                            self.print_global_bun_import_statement(&s);
+                            self.print_global_bun_import_statement(s);
                             self.prev_stmt_tag = new_tag;
                             return Ok(());
                         }
@@ -6426,25 +6403,25 @@ pub mod __gated_printer {
                 unreachable!();
             }
 
-            let quote = best_quote_char_for_string(&import_record.path.text, false);
+            let quote = best_quote_char_for_string(import_record.path.text, false);
             if import_record
                 .flags
                 .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
                 && !import_record.path.is_file()
             {
                 self.print(quote);
-                self.print_string_characters_utf8(&import_record.path.namespace, quote);
+                self.print_string_characters_utf8(import_record.path.namespace, quote);
                 self.print(b":");
-                self.print_string_characters_utf8(&import_record.path.text, quote);
+                self.print_string_characters_utf8(import_record.path.text, quote);
                 self.print(quote);
             } else {
                 self.print(quote);
-                self.print_string_characters_utf8(&import_record.path.text, quote);
+                self.print_string_characters_utf8(import_record.path.text, quote);
                 self.print(quote);
             }
         }
 
-        pub fn print_bundled_import(&mut self, record: ImportRecord, s: &S::Import) {
+        pub fn print_bundled_import(&mut self, record: &ImportRecord, s: &S::Import) {
             if record.flags.contains(ImportRecordFlags::IS_INTERNAL) {
                 return;
             }
@@ -6460,7 +6437,7 @@ pub mod __gated_printer {
                 }
             }
 
-            match ImportVariant::determine(&record, s) {
+            match ImportVariant::determine(record, s) {
                 ImportVariant::PathOnly => {
                     if !is_disabled {
                         self.print_call_module_id(module_id);
@@ -6920,13 +6897,13 @@ pub mod __gated_printer {
 
             let mut ascii_start: usize = 0;
             let mut is_ascii = false;
-            let mut iter = CodepointIterator::init(identifier);
+            let iter = CodepointIterator::init(identifier);
             let mut cursor = strings::Cursor::default();
             while iter.next(&mut cursor) {
                 match cursor.c as u32 {
                     FIRST_ASCII..=LAST_ASCII => {
                         if !is_ascii {
-                            ascii_start = (cursor.i as usize);
+                            ascii_start = cursor.i as usize;
                             is_ascii = true;
                         }
                     }
@@ -7080,7 +7057,7 @@ pub mod __gated_printer {
             renamer: rename::Renamer<'a, 'a>,
             source_map_builder: SourceMap::chunk::Builder,
         ) -> Self {
-            let mut printer = Self {
+            let printer = Self {
                 bump,
                 import_records,
                 needs_semicolon: false,
@@ -7180,7 +7157,7 @@ pub mod __gated_printer {
                         self.print_indent();
                         let import = stmt.data.s_import().unwrap();
                         let record = self.import_record(import.import_record_index as usize);
-                        self.print_string_literal_utf8(&record.path.pretty, false);
+                        self.print_string_literal_utf8(record.path.pretty, false);
 
                         let item_count = u32::from(import.default_name.is_some())
                             + u32::try_from(slice_of(import.items).len()).expect("int cast");
@@ -7242,7 +7219,7 @@ pub mod __gated_printer {
                     had_any_stars = true;
                     self.print_newline();
                     self.print_indent();
-                    self.print_string_literal_utf8(&record.path.pretty, false);
+                    self.print_string_literal_utf8(record.path.pretty, false);
                     self.print(b",");
                 }
                 self.unindent();
@@ -8022,11 +7999,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         }
 
         rename::compute_reserved_names_for_scope(module_scope, &symbols, &mut reserved_names);
-        minify_renamer = rename::MinifyRenamer::init(
-            symbols,
-            tree.nested_scope_slot_counts.clone(),
-            reserved_names,
-        )?;
+        minify_renamer =
+            rename::MinifyRenamer::init(symbols, &tree.nested_scope_slot_counts, reserved_names)?;
         // `symbols` is owned here (transpiler path) — let Drop free it.
         minify_renamer.owns_symbols = true;
 
@@ -8090,8 +8064,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         top_level_symbols.sort_unstable_by(rename::StableSymbolCount::less_than);
 
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols)?;
-        let mut minifier = tree.char_freq.as_ref().unwrap().compile();
-        minify_renamer.assign_names_by_frequency(&mut minifier)?;
+        let minifier = tree.char_freq.as_ref().unwrap().compile();
+        minify_renamer.assign_names_by_frequency(&minifier)?;
 
         renamer = rename::Renamer::MinifyRenamer(&mut *minify_renamer);
     } else {

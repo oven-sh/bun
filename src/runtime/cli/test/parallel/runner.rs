@@ -210,9 +210,9 @@ pub fn run_as_coordinator(
         // SAFETY: see vm_ptr note above.
         vm: unsafe { &*vm_ptr },
         // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
-        event_loop_handle: bun_jsc::EventLoopHandle::init(
-            unsafe { (*vm_ptr).event_loop() }.cast::<()>(),
-        ),
+        event_loop_handle: unsafe {
+            bun_jsc::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
+        },
         reporter,
         files: sorted,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
@@ -223,7 +223,7 @@ pub fn run_as_coordinator(
         worker_tmpdir: worker_tmpdir.path(),
         parallel_limit: k,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
-            i64::try_from(d).unwrap()
+            i64::from(d)
         } else if let Some(s) = env.get(b"BUN_TEST_PARALLEL_SCALE_MS") {
             bun_core::fmt::parse_int::<i64>(s, 10)
                 .unwrap_or(DEFAULT_SCALE_UP_AFTER_MS)
@@ -653,6 +653,15 @@ impl<'a> WorkerLoop<'a> {
 
 /// Worker side: read framed commands from the IPC channel via the event loop,
 /// run each file with isolation, stream per-test events back. Never returns.
+///
+/// # Safety
+/// `vm` must be a valid, exclusively-accessed pointer to a live `VirtualMachine`
+/// for the entire duration of the call (i.e. for the rest of the process, since
+/// this never returns).
+// `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
+// while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
+// would alias. The `# Safety` contract above documents the caller's obligation.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
@@ -706,8 +715,10 @@ pub fn run_as_worker(
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;
     vm_ref.is_shutting_down = true;
-    vm_ref.run_with_api_lock(|| unsafe { (*vm).global_exit() });
-    #[allow(unreachable_code)]
+    vm_ref.run_with_api_lock(|| {
+        // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
+        unsafe { (*vm).global_exit() }
+    });
     {
         Global::exit(0);
     }

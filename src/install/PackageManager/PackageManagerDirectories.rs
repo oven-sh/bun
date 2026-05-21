@@ -6,13 +6,13 @@ use bun_alloc::AllocError;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
+use bun_core::ZStr;
 use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
-use bun_core::{ZStr, strings};
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::lockfile::{self, Format as LockfileFormat, LoadResult, Lockfile};
+use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
-use bun_paths::{self as path, AbsPath, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
 
@@ -160,6 +160,8 @@ pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     if let Some(d) = unsafe { (*this).cache_directory_.as_ref() } {
         return d.fd();
     }
+    // SAFETY: caller contract — `this` is valid and no live borrow overlaps
+    // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
     let d = unsafe { ensure_cache_directory(this) };
     let fd = d.fd();
     // SAFETY: as above; single writer.
@@ -429,8 +431,6 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             }
         }
     }
-    #[allow(unreachable_code)]
-    unreachable!()
 }
 
 pub struct CacheDir {
@@ -940,6 +940,7 @@ pub fn path_for_cached_npm_path<'a>(
 
     #[cfg(windows)]
     {
+        let _ = cache_dir;
         let mut path_buf = PathBuffer::uninit();
         let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
@@ -974,7 +975,7 @@ pub fn path_for_cached_npm_path<'a>(
 pub fn path_for_resolution<'a>(
     this: &mut PackageManager,
     package_id: PackageID,
-    resolution: Resolution,
+    resolution: &Resolution,
     buf: &'a mut PathBuffer,
 ) -> Result<&'a mut [u8], Error> {
     // TODO(port): narrow error set

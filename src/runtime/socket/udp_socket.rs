@@ -7,10 +7,10 @@ use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsRef, JsResult, MarkedArgumentBuffer,
-    Ref as JscRef, StringJsc, SysErrorJsc, SystemError,
+    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, Ref as JscRef,
+    StringJsc, SysErrorJsc, SystemError,
 };
-use bun_ptr::{AsCtxPtr, BackRef};
+use bun_ptr::BackRef;
 
 use crate::node::validators;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -71,12 +71,10 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
 
 use bun_core::immutable::ares_inet_pton as inet_pton;
 
-#[allow(dead_code)]
 unsafe extern "C" {
     // libc byte-order conversions are pure on the integer argument — no
     // pointer/aliasing/thread preconditions — so declare them `safe fn`.
     safe fn ntohs(nshort: u16) -> u16;
-    safe fn htonl(hlong: u32) -> u32;
     safe fn htons(hshort: u16) -> u16;
 }
 
@@ -149,8 +147,8 @@ extern "C" fn on_data(
         let peer = buf.get_peer(i);
 
         let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
-        let mut hostname: Option<&[u8]> = None;
-        let mut port: u16 = 0;
+        let hostname: Option<&[u8]>;
+        let port: u16;
         let mut scope_id: Option<u32> = None;
 
         // SAFETY: peer points to a sockaddr_storage; family discriminates the cast.
@@ -1141,9 +1139,11 @@ impl UDPSocket {
             result: JsResult<JSValue>,
         }
         extern "C" fn run(ctx: *mut Ctx<'_>, payload_roots: *mut MarkedArgumentBuffer) {
-            // SAFETY: ctx points to a stack-local Ctx; payload_roots provided by
-            // MarkedArgumentBuffer::run for the duration of this call.
+            // SAFETY: ctx points to the stack-local Ctx passed to
+            // MarkedArgumentBuffer::run below; exclusive for this call.
             let ctx = unsafe { &mut *ctx };
+            // SAFETY: payload_roots is the stack MarkedArgumentBuffer that
+            // MarkedArgumentBuffer::run lends exclusively to this callback.
             let payload_roots = unsafe { &mut *payload_roots };
             ctx.result =
                 UDPSocket::send_many_impl(ctx.this, ctx.global_this, ctx.callframe, payload_roots);
@@ -1194,7 +1194,7 @@ impl UDPSocket {
         let connected = this.connect_info.get().is_some();
 
         let array_len = arg.get_length(global_this)? as usize;
-        if !connected && array_len % 3 != 0 {
+        if !connected && !array_len.is_multiple_of(3) {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected 3 arguments for each packet")));
         }
@@ -1231,7 +1231,7 @@ impl UDPSocket {
             } else {
                 (i / 3) as usize
             };
-            if connected || i % 3 == 0 {
+            if connected || i.is_multiple_of(3) {
                 let payload_val: JSValue = 'blk: {
                     if val.as_array_buffer(global_this).is_some() {
                         break 'blk val;
@@ -1615,8 +1615,7 @@ impl UDPSocket {
         };
         let config = UDPSocketConfig::from_js(global_this, options, this_value)?;
 
-        let previous_config = this.config.replace(config);
-        drop(previous_config);
+        let _ = this.config.replace(config);
 
         Ok(JSValue::UNDEFINED)
     }

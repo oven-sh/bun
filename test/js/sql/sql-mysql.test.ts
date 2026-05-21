@@ -44,6 +44,7 @@ if (isDockerEnabled()) {
         const getOptions = (): Bun.SQL.Options => ({
           url: `mysql://root:${password}@${container.host}:${container.port}/bun_sql_test`,
           max: 1,
+          allowPublicKeyRetrieval: true,
           tls:
             image.name === "MySQL with TLS"
               ? Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem"))

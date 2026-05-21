@@ -154,8 +154,6 @@ mod k32 {
     pub use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
     pub use w::kernel32::GetLastError;
-    /// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-sethandleinformation
-    pub use w::kernel32::SetHandleInformation;
 
     // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
     // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
@@ -1420,7 +1418,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     debug!("CreateProcessW failed: {}", spawn_err);
                     debug!("attempt number: {}", attempt_number);
                 }
-                return match w::Win32Error(spawn_err as u16) {
+                match w::Win32Error(spawn_err as u16) {
                     w::Win32Error::FILE_NOT_FOUND => {
                         if flags.has_shebang() {
                             if attempt_number == 0 {

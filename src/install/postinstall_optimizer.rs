@@ -186,7 +186,7 @@ impl List {
 
     pub fn should_ignore_lifecycle_scripts(
         &self,
-        pkg_info: PkgInfo<'_>,
+        pkg_info: &PkgInfo<'_>,
         resolutions: &[PackageID],
         metas: &[Meta],
         target_cpu: npm::Architecture,
@@ -229,7 +229,7 @@ impl List {
         }
     }
 
-    fn from_default(pkg_info: PkgInfo<'_>) -> Option<PostinstallOptimizer> {
+    fn from_default(pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         for &hash in DEFAULT_NATIVE_BINLINKS_NAME_HASHES.iter() {
             if hash == pkg_info.name_hash {
                 return Some(PostinstallOptimizer::NativeBinlink);
@@ -255,14 +255,12 @@ impl List {
         None
     }
 
-    pub fn get(&self, pkg_info: PkgInfo<'_>) -> Option<PostinstallOptimizer> {
+    pub fn get(&self, pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         if let Some(optimize) = self.dynamic.get(&pkg_info.name_hash) {
             return Some(*optimize);
         }
 
-        let Some(default) = Self::from_default(pkg_info) else {
-            return None;
-        };
+        let default = Self::from_default(pkg_info)?;
 
         match default {
             PostinstallOptimizer::NativeBinlink => {

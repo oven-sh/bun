@@ -31,7 +31,7 @@ impl From<PerfEvent> for &'static str {
 impl PerfEvent {
     /// NUL-terminated tag name, mirroring Zig's `@tagName(this.event).ptr` which yields
     /// `[*:0]const u8`. Required for FFI to `Bun__linux_trace_emit` (expects C string).
-    pub fn as_cstr(&self) -> &'static core::ffi::CStr {
+    pub fn as_cstr(self) -> &'static core::ffi::CStr {
         match self {
             PerfEvent::_Stub => c"_Stub",
             PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace => {

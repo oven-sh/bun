@@ -41,7 +41,6 @@ pub(crate) mod jsc {
     pub use crate::api::js_bundler::Plugin;
     pub use crate::jsc::*;
     pub use bun_jsc::debugger::DebuggerId;
-    pub use bun_jsc::virtual_machine::VirtualMachine;
 }
 
 /// export default { app: ... };
@@ -295,6 +294,8 @@ impl Framework {
         // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
         let framework_view: *mut bun_bundler::bake_types::Framework =
             arena.alloc(self.as_bundler_view());
+        // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
+        // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
         out.options.framework = Some(unsafe { &*framework_view });
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
@@ -337,7 +338,7 @@ impl Framework {
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
             );
-            use bun_bundler::{DefineDataExt, DefineExt};
+            use bun_bundler::DefineDataExt;
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -491,6 +492,7 @@ impl Framework {
 }
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
+#[derive(Default)]
 pub struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
@@ -498,16 +500,6 @@ pub struct SplitBundlerOptions {
     pub client: BuildConfigSubset,
     pub server: BuildConfigSubset,
     pub ssr: BuildConfigSubset,
-}
-impl Default for SplitBundlerOptions {
-    fn default() -> Self {
-        Self {
-            plugin: None,
-            client: Default::default(),
-            server: Default::default(),
-            ssr: Default::default(),
-        }
-    }
 }
 
 // ─── bake_body → keystone bridges ────────────────────────────────────────────

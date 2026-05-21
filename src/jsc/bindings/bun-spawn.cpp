@@ -229,6 +229,18 @@ extern "C" ssize_t posix_spawn_bun(
 
         const auto& actions = request->actions;
 
+        // No file actions means "inherit stdio". Clear CLOEXEC on 0/1/2 (in case
+        // the parent set it) and keep them out of the close-range below — without
+        // this the close-range starts at fd 1 and the child execs with closed
+        // stdout/stderr.
+        if (actions.len == 0) {
+            for (int fd = 0; fd <= 2; fd++) {
+                int mask = fcntl(fd, F_GETFD);
+                if (mask >= 0) fcntl(fd, F_SETFD, mask & ~FD_CLOEXEC);
+            }
+            current_max_fd = 2;
+        }
+
         for (size_t i = 0; i < actions.len; i++) {
             const bun_spawn_request_file_action_t& action = actions.ptr[i];
             switch (action.type) {

@@ -916,9 +916,10 @@ impl Options {
                 if !registry_.is_empty()
                     && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
                 {
-                    let mut api_registry = Api::NpmRegistry::default();
-                    api_registry.url = registry_.into();
-                    forced = Some(api_registry);
+                    forced = Some(Api::NpmRegistry {
+                        url: registry_.into(),
+                        ..Default::default()
+                    });
                 }
             }
 
@@ -945,7 +946,7 @@ impl Options {
                     && force_registry.username.is_empty()
                     && force_registry.password.is_empty()
                 {
-                    force_registry.token = self.scope.token.clone();
+                    force_registry.token.clone_from(&self.scope.token);
                 }
                 let prev_url_hash = self.scope.url_hash;
                 let had_scoped_registries = self.registries.count() > 0;

@@ -635,7 +635,15 @@ pub fn LowerDecorators(
                     }
                     pre_eval_stmts.append(varDecl(p, dec_ref, p.newExpr(E.Array{ .items = prop.ts_decorators }, loc), loc)) catch unreachable;
                 }
-                if (prop.flags.contains(.is_computed) and prop.key != null and prop.ts_decorators.len > 0) {
+                // Hoist computed keys for decorated props AND for undecorated
+                // auto-accessors. An undecorated `accessor [k()] = 1` lowers to
+                // a `get [k()]` / `set [k()]` pair that duplicates `prop.key`;
+                // the runtime would evaluate `k()` twice and install the
+                // getter/setter under different keys (TC39 auto-accessor spec
+                // requires exactly one evaluation).
+                if (prop.flags.contains(.is_computed) and prop.key != null and
+                    (prop.ts_decorators.len > 0 or prop.kind == .auto_accessor))
+                {
                     computed_key_counter += 1;
                     const key_name = if (computed_key_counter == 1)
                         "_computedKey"

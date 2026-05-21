@@ -231,3 +231,31 @@ test.concurrent("anonymous `export default class` with a static accessor does no
   expect(stdout).toBe("x= 1\nx= 42\n");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("accessor with a computed key evaluates the key exactly once", async () => {
+  // TC39 auto-accessor spec requires the PropertyName to be evaluated
+  // once. An undecorated `accessor [k()] = 1` lowers through
+  // `lower_decorators` into a `get [k()]` / `set [k()]` pair that shares
+  // `prop.key`; without the computed-key hoist (gated in older code on
+  // `ts_decorators.len > 0`), `k()` runs twice — breaking the spec and
+  // installing the getter/setter under different keys for a non-idempotent
+  // key. Widened the hoist gate to include `AutoAccessor`.
+  using dir = tempDir("issue-29197-computed-key", {
+    "main.ts": `let calls = 0;
+const k = () => (calls++, "x");
+class C {
+  accessor [k()] = 42;
+}
+const c = new C() as any;
+console.log("calls=", calls);
+console.log("x=", c.x);
+c.x = 99;
+console.log("x=", c.x);
+console.log("calls=", calls);
+`,
+  });
+
+  const [stdout, , exitCode] = await runBun(String(dir), "main.ts");
+  expect(stdout).toBe("calls= 1\nx= 42\nx= 99\ncalls= 1\n");
+  expect(exitCode).toBe(0);
+});

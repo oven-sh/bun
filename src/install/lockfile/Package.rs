@@ -1000,6 +1000,15 @@ pub struct DiffSummary {
         ArrayHashMap<TruncatedPackageNameHash, bool, ArrayIdentityContext>,
     pub removed_trusted_dependencies: TrustedDependenciesSet,
 
+    /// Flags a `None → Some(empty)` transition on `trusted_dependencies`
+    /// (i.e. the user just added `"trustedDependencies": []` to package.json
+    /// on an existing project). Case 2/3/case-4-with-entries already flow
+    /// into `added_` / `removed_trusted_dependencies` so `has_diffs()`
+    /// reports them; the one remaining transition that has no elements to
+    /// put in either set is `None → Some({})`, which still needs a save so
+    /// the lockfile persists the empty array.
+    pub trusted_dependencies_changed: bool,
+
     pub patched_dependencies_changed: bool,
 }
 
@@ -1020,6 +1029,7 @@ impl DiffSummary {
             || self.catalogs_changed
             || self.added_trusted_dependencies.count() > 0
             || self.removed_trusted_dependencies.count() > 0
+            || self.trusted_dependencies_changed
             || self.patched_dependencies_changed
     }
 }
@@ -1310,11 +1320,15 @@ impl Diff {
                     summary.added_trusted_dependencies.put(to_trusted, true)?;
                 }
 
-                {
-                    // removed
-                    // none
-                }
+                // Transitioning from "use defaults" (None) to an explicit set
+                // — even an empty one — is itself a semantic diff: the user
+                // just opted out of the default allow list. With an empty
+                // `to`, the loop above records zero additions, so flag the
+                // transition here so `has_diffs()` returns true and the
+                // lockfile is rewritten to persist the `[]`.
+                summary.trusted_dependencies_changed = true;
 
+                // removed: none
                 break 'trusted_dependencies;
             }
         }

@@ -6,6 +6,7 @@ use bun_alloc::AllocError;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
+use bun_core::UnwrapOrOom;
 use bun_core::ZStr;
 use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
@@ -1055,7 +1056,7 @@ pub fn populate_linked_names_cache(this: &mut PackageManager) {
                     full.extend_from_slice(name);
                     full.push(b'/');
                     full.extend_from_slice(sub_name);
-                    let _ = this.linked_names.put(&full, ());
+                    this.linked_names.put(&full, ()).unwrap_or_oom();
                 }
                 continue;
             }
@@ -1078,7 +1079,7 @@ pub fn populate_linked_names_cache(this: &mut PackageManager) {
             if !is_linked_entry(entry.kind, root_fd, entry.name.as_zstr()) {
                 continue;
             }
-            let _ = this.linked_names.put(name, ());
+            this.linked_names.put(name, ()).unwrap_or_oom();
         }
     }
 }

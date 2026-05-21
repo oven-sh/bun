@@ -1540,6 +1540,30 @@ var require_wasi = __commonJS({
                     throw e;
                   }
                 }
+                // RESOLVE_PATH is a lexical check on the guest-supplied path;
+                // realpathSync above follows symlinks on disk, so a symlink
+                // inside the directory can still point the resolved path
+                // outside of it. Re-check containment before the path is
+                // opened or recorded as a new directory base in FD_MAP. The
+                // resolved path must stay under the directory's lexical
+                // location or its own resolved location (the latter matters
+                // when the preopened directory is itself reached via a
+                // symlink).
+                {
+                  const contained = base => {
+                    if (full === base) return true;
+                    const rel = path.relative(base, full);
+                    return rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+                  };
+                  const lexicalBase = path.resolve(stats.path);
+                  let realBase = lexicalBase;
+                  try {
+                    realBase = fs.realpathSync(lexicalBase);
+                  } catch {}
+                  if (!contained(lexicalBase) && !contained(realBase)) {
+                    throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
+                  }
+                }
                 let isDirectory;
                 if (write) {
                   try {

@@ -257,6 +257,13 @@ fn get_argv(
         cmds_array.next()?.unwrap(),
     )?;
 
+    // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
+    // re-tokenizes the command line with shell metacharacter rules
+    // (BatBadBut, CVE-2024-24576 / CVE-2024-27980). libuv's MSVCRT-style
+    // quoting cannot make that safe, so reject arguments that cmd.exe would
+    // reinterpret.
+    let is_batch_file = cfg!(windows) && bun_which::is_batch_file(argv0_result.argv0.as_bytes());
+
     *argv0 = Some(argv0_result.argv0.as_ptr());
     argv.push(argv0_result.arg0.as_ptr());
     // Transfer ownership to the caller's backing store so the pointers above
@@ -283,6 +290,18 @@ fn get_argv(
         }
 
         let owned = arg.to_owned_slice_z();
+        if is_batch_file && bun_which::batch_arg_has_cmd_metachars(owned.as_bytes()) {
+            return Err(global_this
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The argument 'args[{}]' contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received {}",
+                        arg_index,
+                        bun_fmt::quote(owned.as_bytes())
+                    ),
+                )
+                .throw());
+        }
         argv.push(owned.as_ptr());
         storage.push(owned);
         arg_index += 1;

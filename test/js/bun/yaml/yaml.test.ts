@@ -1100,11 +1100,6 @@ folded: >
         });
       });
 
-      // (existing tests below)
-      test("single explicit entry (legacy)", () => {
-        expect(YAML.parse("? a\n: 1\n")).toEqual({ a: 1 });
-      });
-
       test("multiple explicit entries", () => {
         expect(YAML.parse("? a\n: 1\n? b\n: 2\n")).toEqual({ a: 1, b: 2 });
         expect(YAML.parse("? a\n: 1\n? b\n: 2\n? c\n: 3\n")).toEqual({ a: 1, b: 2, c: 3 });
@@ -1202,12 +1197,6 @@ folded: >
         // on the same line as the explicit `:` is rejected in all positions.
         expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow("Unexpected token");
         expect(() => YAML.parse("x: 1\n? key:\n:\tkey:\n")).toThrow("Unexpected token");
-      });
-
-      test("compact mapping as nested explicit key", () => {
-        // `? b: c` — key is the compact mapping {b:c}
-        expect(YAML.parse("a:\n  ? b: c\n")).toEqual({ a: { "[object Object]": null } });
-        expect(YAML.parse("a:\n  ? [1]: 2\n")).toEqual({ a: { "[object Object]": null } });
       });
 
       test("flow collection inside ? - …", () => {

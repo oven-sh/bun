@@ -1812,8 +1812,9 @@ impl Terminal {
         v.extend_from_slice(chunk);
         // MarkedArrayBuffer::from_owned_bytes takes ownership of the allocation
         // (freed via mimalloc on the C++ side).
-        let data = MarkedArrayBuffer::from_owned_bytes(v.into_boxed_slice(), jsc::JSType::Uint8Array)
-            .to_node_buffer(global_this);
+        let data =
+            MarkedArrayBuffer::from_owned_bytes(v.into_boxed_slice(), jsc::JSType::Uint8Array)
+                .to_node_buffer(global_this);
 
         global_this.bun_vm().event_loop_mut().run_callback(
             callback,

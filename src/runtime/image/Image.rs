@@ -1758,10 +1758,9 @@ impl<'a> PipelineTask<'a> {
                         // ownership transfers to JSC; `out.free` (installed below)
                         // is the sole release path now that the codec `Drop` is
                         // suppressed via ManuallyDrop.
-                        let v = unsafe {
-                            ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
-                        }
-                        .to_js_with_context(global, core::ptr::null_mut(), Some(out.free));
+                        let v =
+                            unsafe { ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array) }
+                                .to_js_with_context(global, core::ptr::null_mut(), Some(out.free));
                         match v {
                             Ok(v) => promise.resolve(global, v)?,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),

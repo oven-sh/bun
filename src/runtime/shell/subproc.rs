@@ -2365,11 +2365,8 @@ impl PipeReader {
             PipeReaderState::Done(bytes) => {
                 // `MarkedArrayBuffer::from_owned_bytes` adopts the allocation
                 // (freed by the JSC ArrayBuffer destructor).
-                MarkedArrayBuffer::from_owned_bytes(
-                    core::mem::take(bytes),
-                    jsc::JSType::Uint8Array,
-                )
-                .to_node_buffer(global_this)
+                MarkedArrayBuffer::from_owned_bytes(core::mem::take(bytes), jsc::JSType::Uint8Array)
+                    .to_node_buffer(global_this)
             }
             _ => JSValue::UNDEFINED,
         }

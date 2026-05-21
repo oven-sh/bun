@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -277,6 +277,37 @@ it("start() without path/fd on an already-open writer does not crash", async () 
   writer.write("hello");
   await writer.end();
   expect(await Bun.file(path).text()).toBe("hello");
+});
+
+it("start() with arbitrary objects does not hit the invalid-fd debug assertion", async () => {
+  // Fuzzilli drove FileSink.start() with the Bun global and other objects that have
+  // no path/fd, routing Fd::INVALID into sys::dup → Error::with_fd. The placeholder fd
+  // should be treated as "no fd attached" rather than asserting in debug builds.
+  // Run in a subprocess so a debug assertion (which aborts the process) fails the test.
+  const path = join(tmpdirSync(), "filesink-start-args.txt");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const writer = Bun.file(${JSON.stringify(path)}).writer();
+        for (const arg of [Bun, globalThis, Set, class extends Buffer {}, { fd: undefined }, { path: undefined }, []]) {
+          try { writer.start(arg); } catch {}
+        }
+        Bun.gc(true);
+        writer.write("ok");
+        await writer.end();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("panic");
+  expect(stderr).not.toContain("Fd::INVALID");
+  expect(exitCode).toBe(0);
+  expect(await Bun.file(path).text()).toBe("ok");
 });
 
 it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {

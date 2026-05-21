@@ -4643,14 +4643,15 @@ private:
                 return JSValue();
             }
 
-            BIO* bio = nullptr;
-            if (!read(&bio, pemSize)) {
+            BIO* rawBio = nullptr;
+            if (!read(&rawBio, pemSize)) {
                 fail();
                 return JSValue();
             }
+            ncrypto::BIOPointer bio(rawBio);
 
             if (keyType == CryptoKeyType::Public) {
-                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr);
                 if (!pkey) {
                     fail();
                     return JSValue();
@@ -4660,7 +4661,7 @@ private:
                 return JSPublicKeyObject::create(vm, structure, m_globalObject, WTF::move(keyObject));
             }
 
-            EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+            EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr);
             if (!pkey) {
                 fail();
                 return JSValue();

@@ -1993,7 +1993,7 @@ impl Archiver {
                             #[cfg(not(windows))]
                             let mode: bun_sys::Mode = bun_sys::Mode::try_from(
                                 // SAFETY: entry valid
-                                lib::Entry::opaque_ref(entry).perm() | 0o666,
+                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
                             )
                             .unwrap();
 

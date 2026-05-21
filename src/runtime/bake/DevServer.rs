@@ -1458,17 +1458,24 @@ pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
 }
 
 /// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).
+/// Malformed authorities (missing `]`, non-numeric port, trailing garbage)
+/// yield an empty slice so callers fail closed.
 fn host_without_port(host: &[u8]) -> &[u8] {
-    if host.first() == Some(&b'[') {
+    let (host, rest) = if host.first() == Some(&b'[') {
         match strings::index_of_scalar(host, b']') {
-            Some(end) => &host[..=end],
-            None => host,
+            Some(end) => (&host[..=end], &host[end + 1..]),
+            None => return b"",
         }
     } else {
         match strings::last_index_of_char(host, b':') {
-            Some(colon) => &host[..colon],
-            None => host,
+            Some(colon) => (&host[..colon], &host[colon..]),
+            None => (host, &host[host.len()..]),
         }
+    };
+    match rest {
+        [] => host,
+        [b':', port @ ..] if port.iter().all(u8::is_ascii_digit) => host,
+        _ => b"",
     }
 }
 

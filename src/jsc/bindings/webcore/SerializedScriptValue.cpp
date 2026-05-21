@@ -4067,6 +4067,12 @@ private:
         if (primeCount < 2)
             return false;
 
+        // Each additional prime is encoded as three length-prefixed byte vectors, so it
+        // requires at least 3 * sizeof(uint32_t) bytes of remaining input. Reject counts
+        // that could not possibly be satisfied to avoid a huge up-front allocation.
+        if (static_cast<uint64_t>(primeCount - 2) > static_cast<uint64_t>(m_end - m_ptr) / (3 * sizeof(uint32_t)))
+            return false;
+
         CryptoKeyRSAComponents::PrimeInfo firstPrimeInfo;
         CryptoKeyRSAComponents::PrimeInfo secondPrimeInfo;
         Vector<CryptoKeyRSAComponents::PrimeInfo> otherPrimeInfos(primeCount - 2);

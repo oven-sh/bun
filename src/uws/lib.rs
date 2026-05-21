@@ -36,6 +36,8 @@ pub use bun_uws_sys::response::State;
 pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
 pub type Socket = us_socket_t;
 
+pub mod shared_handler;
+
 // Upward refs into `bun_runtime` (higher tier) — kept as empty namespace stubs.
 // TODO(port): bun_runtime::socket::{uws_dispatch, windows_named_pipe, upgraded_duplex}
 pub mod dispatch {}

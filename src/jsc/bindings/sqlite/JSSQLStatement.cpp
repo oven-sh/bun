@@ -1225,14 +1225,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
 
     status = sqlite3_deserialize(db, "main", reinterpret_cast<unsigned char*>(data), byteLength, byteLength, deserializeFlags);
+    // SQLITE_DESERIALIZE_FREEONCLOSE transfers ownership of `data` to SQLite,
+    // which frees it itself when deserialization fails. Do not free it again here.
     if (status == SQLITE_BUSY) {
-        sqlite3_free(data);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLITE_BUSY"_s));
         return {};
     }
 
     if (status != SQLITE_OK) {
-        sqlite3_free(data);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, status == SQLITE_ERROR ? "unable to deserialize database"_s : sqliteString(sqlite3_errstr(status))));
         return {};
     }

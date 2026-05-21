@@ -33,6 +33,17 @@ pub struct Query {
     pub next: Option<Box<Query>>,
 }
 
+impl Drop for Query {
+    fn drop(&mut self) {
+        // Unlink the chain iteratively so the derived recursive drop glue
+        // can't overflow the stack on very long AND chains.
+        let mut next = self.next.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+        }
+    }
+}
+
 pub struct QueryFormatter<'a> {
     query: &'a Query,
     buffer: &'a [u8],
@@ -132,6 +143,17 @@ unsafe impl Send for List {}
 // SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range`);
 // `&List` exposes no unsynchronized interior mutability.
 unsafe impl Sync for List {}
+
+impl Drop for List {
+    fn drop(&mut self) {
+        // Unlink the chain iteratively so the derived recursive drop glue
+        // can't overflow the stack on very long OR chains.
+        let mut next = self.next.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+        }
+    }
+}
 
 impl Clone for List {
     fn clone(&self) -> Self {
@@ -369,8 +391,8 @@ impl Group {
         writer.write_str("\"")
     }
 
-    // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by Drop.
-    // PERF(port): recursive Box drop could overflow stack on very long chains.
+    // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
+    // iterative `Drop` impls on `Query` and `List`.
 
     pub fn get_exact_version(&self) -> Option<Version> {
         let range = &self.head.head.range;
@@ -402,7 +424,8 @@ impl Group {
                     },
                     next: None,
                 },
-                ..Default::default()
+                tail: None,
+                next: None,
             },
             ..Default::default()
         }

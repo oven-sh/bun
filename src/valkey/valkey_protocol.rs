@@ -215,11 +215,18 @@ impl fmt::Display for RESPValue {
 pub struct ValkeyReader<'a> {
     buffer: &'a [u8],
     pos: usize,
+    /// Bytes of aggregate `Vec` preallocation still allowed for the current
+    /// `read_value` call. See `take_prealloc_budget`.
+    prealloc_budget: usize,
 }
 
 impl<'a> ValkeyReader<'a> {
     pub fn init(buffer: &'a [u8]) -> ValkeyReader<'a> {
-        ValkeyReader { buffer, pos: 0 }
+        ValkeyReader {
+            buffer,
+            pos: 0,
+            prealloc_budget: buffer.len(),
+        }
     }
 
     /// Current read offset into the underlying buffer.
@@ -331,7 +338,20 @@ impl<'a> ValkeyReader<'a> {
     /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
 
+    /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
+    /// across the whole parse — every nesting level combined — never exceed
+    /// the input buffer's size. Re-applying a per-level "remaining buffer"
+    /// cap at each of up to `MAX_NESTING_DEPTH` levels would let a hostile
+    /// server amplify a few KB of nested aggregate headers carrying huge
+    /// declared lengths into gigabytes of reserved capacity.
+    fn take_prealloc_budget(&mut self, len: usize, element_size: usize) -> usize {
+        let cap = len.min(self.prealloc_budget / element_size.max(1));
+        self.prealloc_budget -= cap * element_size;
+        cap
+    }
+
     pub fn read_value(&mut self) -> Result<RESPValue, RedisError> {
+        self.prealloc_budget = self.buffer.len() - self.pos;
         self.read_value_with_depth(0)
     }
 
@@ -384,7 +404,8 @@ impl<'a> ValkeyReader<'a> {
                     return Ok(RESPValue::Array(Vec::new()));
                 }
                 let len = usize::try_from(len).expect("int cast");
-                let mut array = Vec::with_capacity(len.min(self.buffer.len() - self.pos));
+                let mut array =
+                    Vec::with_capacity(self.take_prealloc_budget(len, size_of::<RESPValue>()));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
@@ -436,7 +457,8 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
 
-                let mut entries = Vec::with_capacity(len.min(self.buffer.len() - self.pos));
+                let mut entries =
+                    Vec::with_capacity(self.take_prealloc_budget(len, size_of::<MapEntry>()));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
@@ -458,7 +480,8 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
 
-                let mut set = Vec::with_capacity(len.min(self.buffer.len() - self.pos));
+                let mut set =
+                    Vec::with_capacity(self.take_prealloc_budget(len, size_of::<RESPValue>()));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
@@ -477,7 +500,8 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
 
-                let mut attrs = Vec::with_capacity(len.min(self.buffer.len() - self.pos));
+                let mut attrs =
+                    Vec::with_capacity(self.take_prealloc_budget(len, size_of::<MapEntry>()));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < len {
@@ -526,7 +550,9 @@ impl<'a> ValkeyReader<'a> {
 
                 // Read the rest of the data
                 let data_len = usize::try_from(len - 1).expect("int cast");
-                let mut data = Vec::with_capacity(data_len.min(self.buffer.len() - self.pos));
+                let mut data = Vec::with_capacity(
+                    self.take_prealloc_budget(data_len, size_of::<RESPValue>()),
+                );
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < data_len {
@@ -594,6 +620,7 @@ impl ReplyScanner {
             let mut reader = ValkeyReader {
                 buffer,
                 pos: self.pos,
+                prealloc_budget: 0,
             };
             let children = match Self::scan_one(&mut reader, self.stack.len()) {
                 Ok(children) => children,

@@ -328,4 +328,92 @@ describe("http.request options.signal", () => {
     expect(errors[0].name).toBe("AbortError");
     expect((errors[0] as any).code).toBe("ABORT_ERR");
   });
+
+  it("does not double-emit when a pre-aborted signal races a synchronous options.lookup throw", async () => {
+    // Pre-aborted signal + sync-throwing lookup: the constructor queues
+    // `abortHandler` on nextTick, and `startFetch` later catches the sync
+    // throw and queues its own 'error'. The `errorEmitted` latch suppresses
+    // whichever loses the race so the user only sees one terminal error.
+    const controller = new AbortController();
+    controller.abort();
+    const lookupErr = new Error("sync boom");
+    const errors: Error[] = [];
+
+    const req = request({
+      hostname: "x.invalid",
+      port: 80,
+      signal: controller.signal,
+      lookup: () => {
+        throw lookupErr;
+      },
+    });
+    const firstError = new Promise<void>(resolve => {
+      req.on("error", err => {
+        errors.push(err);
+        resolve();
+      });
+    });
+    req.end();
+
+    await firstError;
+    await Bun.sleep(0);
+
+    expect(errors.length).toBe(1);
+  });
+
+  it("does not double-emit when signal aborts while an async options.lookup is pending", async () => {
+    // Signal fires while a genuinely async `options.lookup` is still
+    // pending, and the lookup then calls back with an error. Without the
+    // `errorEmitted` latch, the lookup error landed as a second 'error'
+    // on top of the AbortError already claimed by `emitSignalAbortNT`.
+    const controller = new AbortController();
+    const errors: Error[] = [];
+
+    const req = request("http://example.invalid/", {
+      signal: controller.signal,
+      lookup: (_host, _opts, cb) => setImmediate(() => cb(new Error("resolver down"))),
+    });
+    const firstError = new Promise<void>(resolve => {
+      req.on("error", err => {
+        errors.push(err);
+        resolve();
+      });
+    });
+    req.end();
+    queueMicrotask(() => controller.abort());
+
+    await firstError;
+    await Bun.sleep(0);
+
+    expect(errors.length).toBe(1);
+    expect(errors[0].name).toBe("AbortError");
+    expect((errors[0] as any).code).toBe("ABORT_ERR");
+  });
+
+  it("does not double-emit when the last happy-eyeballs candidate fails (no signal)", async () => {
+    // Pre-existing: `go()` returns the raw fetch promise (not the
+    // `.catch`-chained one) and the `!softFail` branch attaches its own
+    // `.catch` as a side branch. When the last candidate's fetch rejects,
+    // both consumers see it and without the `errorEmitted` latch the user
+    // gets two ECONNREFUSEDs for one request.
+    const errors: Error[] = [];
+    const req = request({
+      hostname: "x",
+      port: 1,
+      lookup: (_h, _o, cb) => cb(null, [{ address: "127.0.0.1", family: 4 }]),
+    });
+    const firstError = new Promise<void>(resolve => {
+      req.on("error", err => {
+        errors.push(err);
+        resolve();
+      });
+    });
+    req.end();
+
+    await firstError;
+    await Bun.sleep(0);
+
+    expect(errors.length).toBe(1);
+    expect((errors[0] as any).code).toBe("ECONNREFUSED");
+  });
 });

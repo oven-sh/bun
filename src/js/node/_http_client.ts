@@ -223,6 +223,15 @@ function ClientRequest(input, options, cb) {
   // paths can call it unconditionally.
   let removeSignalListener: () => void = () => {};
 
+  // Latches true once the request has emitted a terminal `'error'` (or is
+  // about to, via a scheduled nextTick). Every error-emission path checks
+  // this so that a single request only ever surfaces one terminal error to
+  // the user — any subsequent source (late signal abort, happy-eyeballs
+  // `fail()`, dual-catch on the fetch rejection, async lookup error that
+  // races the signal, …) is silently dropped once someone else has claimed
+  // the terminal event.
+  let errorEmitted = false;
+
   this.destroy = function (err?: Error) {
     if (this.destroyed) return this;
     this.destroyed = true;
@@ -301,7 +310,10 @@ function ClientRequest(input, options, cb) {
     // `req.on('error', …)` still observes the abort; only
     // `stream.finished(req)` / `pipeline` consumers (which settle on
     // `'close'`) will miss it.
-    this.emit("error", err);
+    if (!errorEmitted) {
+      errorEmitted = true;
+      this.emit("error", err);
+    }
     socketCloseListener();
     this.emit("abort");
   };
@@ -563,6 +575,8 @@ function ClientRequest(input, options, cb) {
             // (an AbortError) on top of this one.
             removeSignalListener();
 
+            if (errorEmitted) return;
+            errorEmitted = true;
             try {
               this.emit("error", err);
             } catch (_err) {
@@ -592,6 +606,8 @@ function ClientRequest(input, options, cb) {
       options.lookup(host, { all: true }, (err, results) => {
         if (err) {
           if (!!$debug) globalReportError(err);
+          if (errorEmitted) return;
+          errorEmitted = true;
           // Drop the signal listener so a later abort doesn't double-emit.
           removeSignalListener();
           process.nextTick((self, err) => self.emit("error", err), this, err);
@@ -606,7 +622,8 @@ function ClientRequest(input, options, cb) {
           // iteration, or req.abort() was called), swallow this error
           // rather than firing a second 'error' event on top of the
           // AbortError that `emitSignalAbortNT` has already scheduled.
-          if (this[abortedSymbol] || this.destroyed) return;
+          if (this[abortedSymbol] || this.destroyed || errorEmitted) return;
+          errorEmitted = true;
           const error = new Error(message);
           error.name = name;
           error.code = code;
@@ -653,8 +670,11 @@ function ClientRequest(input, options, cb) {
       return true;
     } catch (err) {
       if (!!$debug) globalReportError(err);
-      removeSignalListener();
-      process.nextTick((self, err) => self.emit("error", err), this, err);
+      if (!errorEmitted) {
+        errorEmitted = true;
+        removeSignalListener();
+        process.nextTick((self, err) => self.emit("error", err), this, err);
+      }
       return false;
     }
   };
@@ -686,8 +706,11 @@ function ClientRequest(input, options, cb) {
       };
     } catch (err) {
       if (!!$debug) globalReportError(err);
-      removeSignalListener();
-      this.emit("error", err);
+      if (!errorEmitted) {
+        errorEmitted = true;
+        removeSignalListener();
+        this.emit("error", err);
+      }
     } finally {
       process.nextTick(emitFinishAndDeferredCloseNT);
     }

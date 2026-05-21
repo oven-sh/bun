@@ -589,7 +589,7 @@ forceRegistry = { url = "https://npm.corp.example.com/", token = "$CORP_NPM_TOKE
 
 Once set in the global bunfig, a project-level `bunfig.toml` cannot change or unset it.
 
-For device-wide enforcement, **prefer the `BUN_CONFIG_FORCE_REGISTRY` environment variable** over the global bunfig. `bun run` / `bun <file>` do not read the global `~/.bunfig.toml` (see [`[run]`](#run) below), so the runtime auto-installer — which triggers when a script imports a package that isn't on disk — only sees the project bunfig on that path. The environment variable is read inside the package manager itself and covers every code path, including auto-install.
+For device-wide enforcement, **prefer the `BUN_CONFIG_FORCE_REGISTRY` environment variable** over the global bunfig. `bun run` / `bun <file>` do not read the global `~/.bunfig.toml` (see [`[run]`](#bun-run) below), so the runtime auto-installer — which triggers when a script imports a package that isn't on disk — only sees the project bunfig on that path. The environment variable is read inside the package manager itself and covers every code path, including auto-install.
 
 `forceRegistry` governs where package manifests and tarballs are resolved from. It does not rewrite non-registry dependency specifiers (e.g. `git:` / `github:` / direct-URL dependencies), nor tarball URLs already baked into an existing `bun.lock` — delete the lockfile to regenerate it against the forced registry.
 

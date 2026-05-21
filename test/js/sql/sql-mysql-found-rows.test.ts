@@ -142,8 +142,7 @@ function startMockMysql(affectedRows: number): Promise<{
             // HandshakeResponse41. First 4 bytes of its payload are the
             // client's negotiated capability flags (u32 LE).
             sawHandshakeResponse = true;
-            const caps =
-              payload[0]! | (payload[1]! << 8) | (payload[2]! << 16) | (payload[3]! << 24);
+            const caps = payload[0]! | (payload[1]! << 8) | (payload[2]! << 16) | (payload[3]! << 24);
             captured.resolve({ capabilityFlags: caps >>> 0 });
             // Complete auth with OK packet so the connection is usable.
             socket.write(okPacket(seq + 1, 0));

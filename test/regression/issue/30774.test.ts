@@ -17,21 +17,16 @@
 // tests in `src/threading/ThreadPool.rs` (`batch_tests`) cover the functional
 // behavior of `Batch::pop` / `Batch::push`.
 
+import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
 
 test("Batch::pop does not cast &self.len to *const AtomicUsize for the zero check", () => {
-  const src = readFileSync(
-    join(import.meta.dir, "../../../src/threading/ThreadPool.rs"),
-    "utf8",
-  );
+  const src = readFileSync(join(import.meta.dir, "../../../src/threading/ThreadPool.rs"), "utf8");
 
   // Narrow to the `Batch::pop` function body. `pub struct Batch` precedes
   // `impl Batch`; `pub fn pop` is the first fn inside.
-  const popMatch = src.match(
-    /impl Batch\s*\{[\s\S]*?pub fn pop\([^)]*\)[^{]*\{([\s\S]*?)^    \}/m,
-  );
+  const popMatch = src.match(/impl Batch\s*\{[\s\S]*?pub fn pop\([^)]*\)[^{]*\{([\s\S]*?)^    \}/m);
   expect(popMatch, "could not locate Batch::pop in ThreadPool.rs").not.toBeNull();
   const popBody = popMatch![1];
 

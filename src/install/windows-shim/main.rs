@@ -199,43 +199,48 @@ pub mod bun_core {
     // Re-export under the path the shared source uses (`bun_core::w!`).
     pub use crate::w_lit as w;
     /// Mirrors `bun_core::RacyCell` (src/bun_core/util.rs) — `static`-safe
-    /// interior-mutability cell with no synchronization. The shim is
-    /// single-threaded (Zig built it `single_threaded = true`), so the
-    /// unconditional `Sync` is trivially upheld.
-    ///
-    /// Internally backed by `Cell<T>` (not `UnsafeCell<T>`): `Cell` is
-    /// `#[repr(transparent)]` over `UnsafeCell` with identical `Send`/`!Sync`
-    /// auto-traits, but gives `.get()/.set()` for `T: Copy` without a raw
-    /// deref. The only remaining `unsafe` is the `impl Sync` below — the
-    /// irreducible single-thread invariant.
+    /// interior-mutability cell. The shim is single-threaded (Zig built it
+    /// `single_threaded = true`) and a freestanding ntdll-only PE, so the
+    /// owner-thread runtime check the real `RacyCell` performs is neither
+    /// available nor needed here: no second thread ever exists, so the `Sync`
+    /// impl is never exercised across threads, and every payload access goes
+    /// through `unsafe` (a raw-pointer deref via `get()`, or the `unsafe fn`
+    /// `read`/`write`) — no combination of safe calls can touch the payload.
     #[repr(transparent)]
-    pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
-    // SAFETY: standalone shim is single-threaded.
+    pub struct RacyCell<T: ?Sized>(core::cell::UnsafeCell<T>);
+    // SAFETY: the standalone shim never spawns a thread, so `&RacyCell<T>` is
+    // never shared across threads; all payload access requires `unsafe`.
     unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
     impl<T> RacyCell<T> {
         #[inline]
         pub const fn new(value: T) -> Self {
-            Self(core::cell::Cell::new(value))
+            Self(core::cell::UnsafeCell::new(value))
         }
         #[inline]
         pub const fn get(&self) -> *mut T {
-            self.0.as_ptr()
+            self.0.get()
         }
-        /// Body is safe `Cell::get()`; the single-thread invariant is
-        /// discharged by the `Sync` impl above, not by the caller.
-        /// `bun_shim_impl.rs` only uses `.new()`/`.get()`, so signature
-        /// parity with `bun_core::RacyCell::read` is unneeded here.
+        /// `bun_shim_impl.rs` only uses `.new()`/`.get()`; `read`/`write`
+        /// exist for signature parity with `bun_core::RacyCell`.
+        ///
+        /// # Safety
+        /// No live `&mut T` derived from [`get`](Self::get) across this call.
         #[inline]
-        pub fn read(&self) -> T
+        pub unsafe fn read(&self) -> T
         where
             T: Copy,
         {
-            self.0.get()
+            // SAFETY: caller contract; the shim is single-threaded.
+            unsafe { *self.0.get() }
         }
-        /// Body is safe `Cell::set()`; see [`Self::read`].
+        /// See [`Self::read`].
+        ///
+        /// # Safety
+        /// No live reference to the payload across this call.
         #[inline]
-        pub fn write(&self, value: T) {
-            self.0.set(value)
+        pub unsafe fn write(&self, value: T) {
+            // SAFETY: caller contract; the shim is single-threaded.
+            unsafe { *self.0.get() = value }
         }
     }
 

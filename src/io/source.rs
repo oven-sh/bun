@@ -454,7 +454,11 @@ pub mod stdin_tty {
 
     #[inline]
     pub fn value() -> *mut uv::uv_tty_t {
-        DATA.get().cast::<uv::uv_tty_t>()
+        // SAFETY: only the address is produced here. The single write into the
+        // storage (`uv_tty_init` in `get_stdin_tty`) is serialized by `LOCK` +
+        // `INITIALIZED`; afterwards the bytes are owned by uv on the loop
+        // thread. Callers like `is_stdin_tty` only compare the address.
+        unsafe { DATA.get_unsync() }.cast::<uv::uv_tty_t>()
     }
 
     pub fn is_stdin_tty(tty: *const Tty) -> bool {

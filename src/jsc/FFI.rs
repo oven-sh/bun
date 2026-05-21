@@ -51,20 +51,28 @@ impl union_EncodedJSValue {
 
 // PORTING.md §Global mutable state: never mutated → would be `const`, but kept
 // as `#[no_mangle] static` to preserve the exported symbol for TinyCC-compiled
-// FFI stubs. `RacyCell` is `repr(transparent)` so the symbol's bytes are
-// identical to a bare `EncodedJSValue`; the wrapper only satisfies `Sync`
-// (the union contains `*mut c_void`).
+// FFI stubs. `ImmutableJSValue` is `repr(transparent)` so the symbol's bytes
+// are identical to a bare `EncodedJSValue`; the wrapper only satisfies `Sync`
+// (the union contains `*mut c_void`, which is `!Sync` by auto-trait only).
+#[repr(transparent)]
+pub struct ImmutableJSValue(EncodedJSValue);
+// SAFETY: the payload is never mutated after static initialization (Rust has
+// no accessor for it; only the linker symbol is consumed, by TinyCC-compiled
+// read-only stubs), so sharing `&ImmutableJSValue` across threads is a shared
+// reference to plain immutable POD.
+unsafe impl Sync for ImmutableJSValue {}
+
 #[unsafe(no_mangle)]
-pub static ValueUndefined: bun_core::RacyCell<EncodedJSValue> =
-    bun_core::RacyCell::new(EncodedJSValue {
-        as_int64: (2 | 8) as i64,
-    });
+pub static ValueUndefined: ImmutableJSValue = ImmutableJSValue(EncodedJSValue {
+    as_int64: (2 | 8) as i64,
+});
 
 pub const TRUE_I64: i64 = ((2 | 4) | 1) as i64;
 
 #[unsafe(no_mangle)]
-pub static ValueTrue: bun_core::RacyCell<EncodedJSValue> =
-    bun_core::RacyCell::new(EncodedJSValue { as_int64: TRUE_I64 });
+pub static ValueTrue: ImmutableJSValue = ImmutableJSValue(EncodedJSValue {
+    as_int64: TRUE_I64,
+});
 
 pub type JSContext = *mut c_void;
 

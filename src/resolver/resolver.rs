@@ -4037,8 +4037,10 @@ impl<'a> Resolver<'a> {
             return &[];
         }
         // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites;
-        // `BIN_FOLDERS_LOADED` (acquire) guarantees init.
-        unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
+        // `BIN_FOLDERS_LOADED` (acquire) guarantees init. Unsync — readers and
+        // writers are on different resolver threads; the lock + acquire flag
+        // are the synchronization.
+        unsafe { (*BIN_FOLDERS.get_unsync()).assume_init_ref().const_slice() }
     }
 
     pub fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
@@ -6078,7 +6080,7 @@ impl<'a> Resolver<'a> {
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
                         if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                             // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                            unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
+                            unsafe { (*BIN_FOLDERS.get_unsync()).write(BinFolderArray::default()) };
                             BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
                         }
 
@@ -6099,7 +6101,7 @@ impl<'a> Resolver<'a> {
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                         unsafe {
                             for existing_folder in
-                                (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
+                                (*BIN_FOLDERS.get_unsync()).assume_init_ref().const_slice()
                             {
                                 if *existing_folder == bin_path {
                                     break 'append_bin_dir;
@@ -6110,7 +6112,7 @@ impl<'a> Resolver<'a> {
                             else {
                                 break 'append_bin_dir;
                             };
-                            let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
+                            let _ = (*BIN_FOLDERS.get_unsync()).assume_init_mut().append(stored);
                         }
                     }
                 }
@@ -6124,7 +6126,7 @@ impl<'a> Resolver<'a> {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
                             if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
                                 // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                                unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
+                                unsafe { (*BIN_FOLDERS.get_unsync()).write(BinFolderArray::default()) };
                                 BIN_FOLDERS_LOADED
                                     .store(true, core::sync::atomic::Ordering::Release);
                             }
@@ -6143,7 +6145,7 @@ impl<'a> Resolver<'a> {
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                             unsafe {
                                 for existing_folder in
-                                    (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
+                                    (*BIN_FOLDERS.get_unsync()).assume_init_ref().const_slice()
                                 {
                                     if *existing_folder == bin_path {
                                         break 'append_bin_dir;
@@ -6154,7 +6156,7 @@ impl<'a> Resolver<'a> {
                                 else {
                                     break 'append_bin_dir;
                                 };
-                                let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
+                                let _ = (*BIN_FOLDERS.get_unsync()).assume_init_mut().append(stored);
                             }
                         }
                     }

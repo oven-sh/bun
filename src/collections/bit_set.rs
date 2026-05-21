@@ -810,8 +810,11 @@ static EMPTY_MASKS_DATA: bun_core::RacyCell<[usize; 2]> = bun_core::RacyCell::ne
 #[inline(always)]
 fn empty_masks_ptr() -> *mut usize {
     // SAFETY: pointer arithmetic into a static array; index 1 is in-bounds.
-    // The `*mut` is never written through while pointing at this static.
-    unsafe { EMPTY_MASKS_DATA.get().cast::<usize>().add(1) }
+    // The `*mut` is never written through while pointing at this static (see
+    // the comment above), so handing the address to any thread is sound —
+    // hence `get_unsync` (a `Default::default()` bit set may be constructed
+    // on any thread).
+    unsafe { EMPTY_MASKS_DATA.get_unsync().cast::<usize>().add(1) }
 }
 
 impl Default for DynamicBitSetUnmanaged {

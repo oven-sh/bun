@@ -208,7 +208,9 @@ pub mod fs {
 
     // Global mutable singleton; Zig used `var instance: FileSystem = undefined`.
     // `RacyCell` is the alias-safe static cell — `init()` is the only writer,
-    // serialized at startup; readers go through `instance()`.
+    // serialized at startup; readers go through `instance()`. All access is
+    // via `get_unsync` because readers run on resolver worker threads; the
+    // `INSTANCE_LOADED` Release/Acquire pair publishes the one-time write.
     pub static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
     pub static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
@@ -256,8 +258,10 @@ pub mod fs {
 
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
-            // SAFETY: caller guarantees init() was called (matches Zig global singleton).
-            unsafe { (*INSTANCE.get()).assume_init_mut() }
+            // SAFETY: caller guarantees init() was called (matches Zig global
+            // singleton). Unsync — the singleton is written once at startup
+            // and reached from resolver worker threads afterwards.
+            unsafe { (*INSTANCE.get_unsync()).assume_init_mut() }
         }
 
         /// Shared-ref accessor for the process-lifetime singleton. Prefer this
@@ -277,7 +281,8 @@ pub mod fs {
             // SAFETY: `INSTANCE` is written exactly once by `init()` during
             // single-threaded startup (Release-paired with the Acquire above)
             // and never freed; shared `&` aliases freely across threads.
-            unsafe { (*INSTANCE.get()).assume_init_ref() }
+            // Unsync — readers are on resolver worker threads.
+            unsafe { (*INSTANCE.get_unsync()).assume_init_ref() }
         }
 
         /// Port of `FileSystem.init` (fs.zig:90-108). First call writes the
@@ -303,7 +308,7 @@ pub mod fs {
             // `Transpiler::init` before any worker spawn.
             unsafe {
                 if INSTANCE_LOADED.load(Ordering::Acquire) && !FORCE {
-                    return Ok((*INSTANCE.get()).as_mut_ptr());
+                    return Ok((*INSTANCE.get_unsync()).as_mut_ptr());
                 }
             }
             let cwd: &'static [u8] = match top_level_dir {
@@ -331,7 +336,7 @@ pub mod fs {
             bun_paths::fs::FileSystem::init(cwd);
             // SAFETY: see above.
             unsafe {
-                (*INSTANCE.get()).write(FileSystem {
+                (*INSTANCE.get_unsync()).write(FileSystem {
                     top_level_dir: cwd,
                     top_level_dir_buf: bun_paths::PathBuffer::uninit(),
                     fs: Implementation::init(cwd),
@@ -343,7 +348,7 @@ pub mod fs {
                 // touch the singleton so it's initialized before any resolver
                 // worker hits it.
                 let _ = dir_entry::EntryStore::instance();
-                Ok((*INSTANCE.get()).as_mut_ptr())
+                Ok((*INSTANCE.get_unsync()).as_mut_ptr())
             }
         }
 

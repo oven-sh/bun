@@ -333,8 +333,10 @@ pub mod debug {
     pub fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
         // SAFETY: Zig's `var self_debug_info: ?SelfInfo = null` is also a plain
         // mutable global; this is debug-only and invoked from a stopped process.
+        // Unsync: the accessing thread is whichever thread crashed, and the
+        // crash handler's `panicking` latch already serializes entry.
         unsafe {
-            let slot = &mut *SELF_DEBUG_INFO.get();
+            let slot = &mut *SELF_DEBUG_INFO.get_unsync();
             if let Some(info) = slot {
                 return Ok(std::ptr::from_mut(info));
             }
@@ -1696,8 +1698,12 @@ mod draft {
                 let stack = libc::stack_t {
                     ss_flags: 0,
                     ss_size: 512 * 1024,
-                    // SAFETY: SIGALTSTACK is a process-lifetime static byte buffer; the kernel only writes to it during signal delivery (no Rust aliasing)
-                    ss_sp: SIGALTSTACK.get().cast(),
+                    // SAFETY: SIGALTSTACK is a process-lifetime static byte
+                    // buffer; only the address is taken here and the kernel
+                    // alone writes the bytes during signal delivery (Rust
+                    // never reads or writes them), so no synchronization is
+                    // required.
+                    ss_sp: unsafe { SIGALTSTACK.get_unsync() }.cast(),
                 };
 
                 // SAFETY: stack points to a valid static buffer

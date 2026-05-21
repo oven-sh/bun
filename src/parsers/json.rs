@@ -846,15 +846,23 @@ static EMPTY_STRING: bun_core::RacyCell<E::String> = bun_core::RacyCell::new(E::
 fn empty_string_data() -> js_ast::expr::Data {
     // EMPTY_STRING is a never-mutated static; `StoreRef::from_raw` checks
     // non-null and the static trivially outlives any Store reset.
-    js_ast::expr::Data::EString(js_ast::StoreRef::from_raw(EMPTY_STRING.get()))
+    // SAFETY: only the address is taken and the pointee is never written
+    // through (see the comment above the statics), so handing the pointer to
+    // any parser thread is sound — hence `get_unsync`.
+    let ptr = unsafe { EMPTY_STRING.get_unsync() };
+    js_ast::expr::Data::EString(js_ast::StoreRef::from_raw(ptr))
 }
 #[inline]
 fn empty_object_data() -> js_ast::expr::Data {
-    js_ast::expr::Data::EObject(js_ast::StoreRef::from_raw(EMPTY_OBJECT.get()))
+    // SAFETY: as `empty_string_data` — address-only, never written through.
+    let ptr = unsafe { EMPTY_OBJECT.get_unsync() };
+    js_ast::expr::Data::EObject(js_ast::StoreRef::from_raw(ptr))
 }
 #[inline]
 fn empty_array_data() -> js_ast::expr::Data {
-    js_ast::expr::Data::EArray(js_ast::StoreRef::from_raw(EMPTY_ARRAY.get()))
+    // SAFETY: as `empty_string_data` — address-only, never written through.
+    let ptr = unsafe { EMPTY_ARRAY.get_unsync() };
+    js_ast::expr::Data::EArray(js_ast::StoreRef::from_raw(ptr))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

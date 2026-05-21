@@ -275,7 +275,10 @@ thread_local! {
 }
 
 // These are not threadlocal so we avoid opening stdout/stderr for every thread
-// Guarded by STDOUT_STREAM_SET (write-once at startup before threads).
+// Guarded by STDOUT_STREAM_SET (write-once at startup before threads). Read
+// from every spawned thread in `configure_thread`, so all access is via the
+// `*_unsync` accessors with the spawn happens-before edge as the SAFETY
+// argument.
 static STDERR_STREAM: crate::RacyCell<StreamType> = crate::RacyCell::new(StreamType::ZEROED);
 static STDOUT_STREAM: crate::RacyCell<StreamType> = crate::RacyCell::new(StreamType::ZEROED);
 static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
@@ -414,9 +417,11 @@ impl Source {
             return;
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
-        // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
+        // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread
+        // calls this (thread spawn is the happens-before edge); read-only here.
+        // Unsync because every spawned thread runs this.
         SOURCE.with_borrow_mut(|s| unsafe {
-            Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
+            Source::init(s, STDOUT_STREAM.read_unsync(), STDERR_STREAM.read_unsync())
         });
         crate::StackCheck::configure_thread();
     }
@@ -442,9 +447,11 @@ impl Source {
             return;
         }
         debug_assert!(STDOUT_STREAM_SET.load(Ordering::Relaxed));
-        // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread calls this.
+        // SAFETY: STDOUT_STREAM/STDERR_STREAM are write-once before any thread
+        // calls this (thread spawn is the happens-before edge); read-only here.
+        // Unsync because every spawned thread runs this.
         SOURCE.with_borrow_mut(|s| unsafe {
-            Source::init(s, STDOUT_STREAM.read(), STDERR_STREAM.read())
+            Source::init(s, STDOUT_STREAM.read_unsync(), STDERR_STREAM.read_unsync())
         });
         // Intentionally NOT calling `crate::StackCheck::configure_thread()`.
     }
@@ -531,10 +538,13 @@ impl Source {
                     .store(enable_color.unwrap_or(is_stderr_tty), Ordering::Relaxed);
             }
 
-            // SAFETY: write-once init guarded by STDOUT_STREAM_SET above.
+            // SAFETY: write-once init guarded by STDOUT_STREAM_SET above,
+            // during single-threaded startup before any thread that calls
+            // `configure_thread` is spawned. Unsync because the readers in
+            // `configure_thread` run on every spawned thread.
             unsafe {
-                STDOUT_STREAM.write(stdout);
-                STDERR_STREAM.write(stderr);
+                STDOUT_STREAM.write_unsync(stdout);
+                STDERR_STREAM.write_unsync(stderr);
             }
         }
     }
@@ -2172,7 +2182,9 @@ pub fn _scoped_use_ansi() -> bool {
     ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) && SOURCE_SET.get() && {
         // SAFETY: `SCOPED_FILE_WRITER` is `QuietWriter::ZEROED` until startup
         // init; `QuietWriter` is Copy POD so reading it is always sound.
-        let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() };
+        // Unsync because scoped logging may run on any thread; the write-once
+        // init happens before worker threads spawn.
+        let sw = unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read_unsync() };
         sw.context_handle() == raw_writer().handle()
     }
 }
@@ -2720,19 +2732,21 @@ pub fn init_scoped_debug_writer_at_startup() {
             // `create_file` above already opens for writing with truncate, so the explicit
             // `fd.truncate(0)` from Zig is a no-op here until the vtable entry lands.
             let _ = &fd; // windows
-            // SAFETY: single-threaded startup.
+            // SAFETY: single-threaded startup, before any reader thread is
+            // spawned (unsync because readers may later be on any thread).
             unsafe {
                 scoped_debug_writer::SCOPED_FILE_WRITER
-                    .write(output_sink().quiet_writer_from_fd(fd));
+                    .write_unsync(output_sink().quiet_writer_from_fd(fd));
             }
             return;
         }
     }
 
-    // SAFETY: single-threaded startup.
+    // SAFETY: single-threaded startup, before any reader thread is spawned
+    // (unsync because readers may later be on any thread).
     unsafe {
         scoped_debug_writer::SCOPED_FILE_WRITER
-            .write(output_sink().quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0));
+            .write_unsync(output_sink().quiet_writer_from_fd(SOURCE.with_borrow(|s| s.raw_stream).0));
     }
 }
 
@@ -2746,8 +2760,9 @@ fn scoped_writer() -> QuietWriter {
     if !Environment::ENABLE_LOGS {
         unreachable!("scopedWriter() should only be called in debug mode");
     }
-    // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter is Copy POD.
-    unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() }
+    // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter
+    // is Copy POD. Unsync because scoped logging may run on any thread.
+    unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read_unsync() }
 }
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`

@@ -2293,72 +2293,236 @@ impl Version {
 }
 
 // ─── RacyCell ─────────────────────────────────────────────────────────────
-/// Stable equivalent of `core::cell::SyncUnsafeCell<T>` (nightly-only as of
-/// 1.79). A `static`-safe interior-mutability cell with **no** synchronization.
+/// A `static`-safe interior-mutability cell whose **safe** accessors are
+/// confined to a single owning thread, checked at runtime in release builds.
 ///
 /// This exists to replace `static mut` (banned per docs/PORTING.md §Global
 /// mutable state). Unlike `static mut`, taking `&RACY` does not assert
 /// uniqueness; callers stay in raw-ptr land via `.get()` and only deref for
 /// the duration of a single statement.
 ///
-/// **Invariant the caller upholds:** all access is either single-threaded
-/// (e.g. HTTP-thread-only buffers, main-thread-only CLI state) or externally
-/// synchronized. For anything actually shared across threads, use
-/// `Atomic*` / `OnceLock` / `Mutex` instead — `RacyCell` is the last resort
-/// for scratch buffers and FFI-shaped globals where the Zig already proved
-/// thread-affinity.
-#[repr(transparent)]
-pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
-// SAFETY: by construction, callers promise external synchronization or
-// single-thread access. Unlike std's nightly `SyncUnsafeCell` (which gates
-// `Sync` on `T: Sync`), this impl is intentionally unconditional: many
-// payloads ported from `static mut` are `!Sync` only by auto-trait inference
-// (raw pointers, `MaybeUninit<T>` over FFI handles) yet are sound to share
-// because all access is single-threaded or externally synchronized — the
-// exact contract `static mut` already imposed. **Do not** wrap *payloads*
-// whose `!Sync` is load-bearing (`Cell<U>`, `Rc<U>`, `RefCell<U>`); use
-// `thread_local!` or a real lock for those. (The inner storage here is
-// `Cell<T>` purely so `read`/`write` bodies are safe code — the cross-thread
-// hazard is fully accounted for by this `unsafe impl Sync`.)
+/// The first thread to call [`get`](Self::get) / [`read`](Self::read) /
+/// [`write`](Self::write) becomes the owner; any later call from a different
+/// thread panics — in release builds too. That check is what makes the
+/// `unsafe impl Sync` below sound: a `&RacyCell<T>` may be reachable from any
+/// thread, but only the owning thread can ever obtain a payload pointer
+/// through the checked accessors, so a cross-thread data race is downgraded
+/// to a deterministic panic.
+///
+/// State that genuinely crosses threads must use `Atomic*` / `OnceLock` /
+/// `Mutex` / [`AtomicCell`](crate::AtomicCell) — or, where the
+/// synchronization is external and cannot be expressed in the type system,
+/// the `unsafe` [`get_unsync`](Self::get_unsync) escape hatch, whose call
+/// site documents the happens-before edge.
+///
+/// Cost of the checked accessors: one TLS read + one relaxed atomic load +
+/// compare per access (plus a one-time CAS on the first access).
+pub struct RacyCell<T: ?Sized> {
+    /// OS thread id of the owning thread. `0` = not yet claimed (kernel TIDs,
+    /// `pthread_threadid_np` ids and Win32 thread ids are all nonzero — see
+    /// [`crate::thread_id`]).
+    owner: core::sync::atomic::AtomicU64,
+    value: core::cell::UnsafeCell<T>,
+}
+// SAFETY: the payload is only reachable through (a) the checked accessors,
+// which panic unless the calling thread is the unique owner — so safe code
+// can never observe the payload from two threads — or (b) the `*_unsync`
+// accessors, which are `unsafe fn`s whose callers assert external
+// synchronization. Sharing `&RacyCell<T>` across threads therefore cannot
+// cause a data race without an `unsafe` block taking responsibility for it.
 unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
-// SAFETY: `RacyCell<T>` owns a `T` by value via `Cell<T>`; sending the cell to
-// another thread is sound exactly when sending `T` itself is (`T: Send`).
+// SAFETY: `RacyCell<T>` owns a `T` by value; sending the cell to another
+// thread is sound exactly when sending `T` itself is (`T: Send`). `owner` is
+// an atomic and carries no thread affinity of its own.
 unsafe impl<T: ?Sized + Send> Send for RacyCell<T> {}
 
 impl<T> RacyCell<T> {
     #[inline]
     pub const fn new(value: T) -> Self {
-        Self(core::cell::Cell::new(value))
+        Self {
+            owner: core::sync::atomic::AtomicU64::new(0),
+            value: core::cell::UnsafeCell::new(value),
+        }
     }
-    /// Raw pointer to the contained value. Never produces a reference; callers
-    /// deref per-access (`unsafe { *X.get() }` / `unsafe { (*X.get()).field }`).
-    #[inline]
-    pub const fn get(&self) -> *mut T {
-        self.0.as_ptr()
-    }
-    /// Convenience: read a `Copy` value. Single load, no aliasing assertion.
+    /// Convenience: read a `Copy` value (owner-thread checked).
     ///
     /// # Safety
-    /// Caller guarantees no concurrent writer on another thread.
+    /// No `&mut T` derived from [`get`](Self::get) / [`get_unsync`](Self::get_unsync)
+    /// may be live across this call.
     #[inline]
     pub unsafe fn read(&self) -> T
     where
         T: Copy,
     {
-        self.0.get()
+        // SAFETY: `get()` confines access to the owning thread; the caller
+        // upholds the no-live-`&mut` contract above.
+        unsafe { *self.get() }
     }
-    /// Convenience: overwrite the value.
+    /// Convenience: overwrite the value (owner-thread checked). Drops the
+    /// previous value in place.
     ///
     /// # Safety
-    /// Caller guarantees no concurrent reader/writer on another thread.
+    /// No reference to the payload derived from [`get`](Self::get) /
+    /// [`get_unsync`](Self::get_unsync) may be live across this call.
     #[inline]
     pub unsafe fn write(&self, value: T) {
-        self.0.set(value)
+        // SAFETY: `get()` confines access to the owning thread; the caller
+        // upholds the no-live-reference contract above.
+        unsafe { *self.get() = value }
+    }
+    /// [`read`](Self::read) without the owner-thread check.
+    ///
+    /// # Safety
+    /// As [`get_unsync`](Self::get_unsync), plus the [`read`](Self::read)
+    /// aliasing contract: the caller guarantees a happens-before edge with
+    /// every writer and no live `&mut` to the payload.
+    #[inline]
+    pub unsafe fn read_unsync(&self) -> T
+    where
+        T: Copy,
+    {
+        // SAFETY: caller contract above.
+        unsafe { *self.get_unsync() }
+    }
+    /// [`write`](Self::write) without the owner-thread check.
+    ///
+    /// # Safety
+    /// As [`get_unsync`](Self::get_unsync), plus the [`write`](Self::write)
+    /// aliasing contract: the caller guarantees a happens-before edge with
+    /// every other reader/writer and no live reference to the payload.
+    #[inline]
+    pub unsafe fn write_unsync(&self, value: T) {
+        // SAFETY: caller contract above.
+        unsafe { *self.get_unsync() = value }
+    }
+}
+impl<T: ?Sized> RacyCell<T> {
+    /// Raw pointer to the contained value, restricted to the owning thread
+    /// (the first thread to call a checked accessor; any other thread
+    /// panics). Never produces a reference; callers deref per-access
+    /// (`unsafe { *X.get() }` / `unsafe { (*X.get()).field }`).
+    #[inline]
+    pub fn get(&self) -> *mut T {
+        self.check_owner();
+        self.value.get()
+    }
+    /// Raw pointer to the contained value with **no** thread check.
+    ///
+    /// # Safety
+    /// The caller guarantees that every access to the payload (through this
+    /// pointer or any other) is externally synchronized: either the value is
+    /// written before other threads can reach it and only read afterwards
+    /// (happens-before via thread spawn / `Once` / lock release), or all
+    /// access is serialized by a lock the caller holds, or the payload bytes
+    /// are never accessed from Rust at all (FFI-owned storage).
+    #[inline]
+    pub unsafe fn get_unsync(&self) -> *mut T {
+        self.value.get()
+    }
+    #[inline]
+    fn check_owner(&self) {
+        let me = crate::thread_id::current() as u64;
+        if self.owner.load(core::sync::atomic::Ordering::Relaxed) != me {
+            self.claim_slow(me);
+        }
+    }
+    /// Claim ownership for `me`, or panic if another thread already owns the
+    /// cell. The total modification order on `owner` guarantees exactly one
+    /// CAS succeeds, so at most one thread ever gets a payload pointer from
+    /// the checked accessors. `Relaxed` suffices: the latch publishes no
+    /// data — it only elects the single thread allowed past the check.
+    #[cold]
+    #[inline(never)]
+    fn claim_slow(&self, me: u64) {
+        match self.owner.compare_exchange(
+            0,
+            me,
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+        ) {
+            Ok(_) => {}
+            Err(owner) => panic!(
+                "RacyCell: accessed from thread {me}, but thread {owner} owns it. \
+                 Cross-thread state needs an atomic, a lock, or `get_unsync` with \
+                 documented external synchronization."
+            ),
+        }
     }
 }
 impl<T: Default> Default for RacyCell<T> {
     fn default() -> Self {
         Self::new(T::default())
+    }
+}
+
+#[cfg(test)]
+mod racy_cell_tests {
+    use super::RacyCell;
+
+    #[test]
+    fn same_thread_get_read_write() {
+        static CELL: RacyCell<u32> = RacyCell::new(7);
+        assert_eq!(unsafe { CELL.read() }, 7);
+        unsafe { CELL.write(9) };
+        assert_eq!(unsafe { *CELL.get() }, 9);
+        // Repeated access from the owner thread keeps working.
+        assert_eq!(unsafe { CELL.read() }, 9);
+    }
+
+    #[test]
+    fn cross_thread_checked_access_panics() {
+        static CELL: RacyCell<u32> = RacyCell::new(0);
+        // Claim from this thread.
+        let _ = CELL.get();
+        let panicked = std::thread::spawn(|| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = CELL.get();
+            }))
+            .is_err()
+        })
+        .join()
+        .unwrap();
+        assert!(panicked, "second thread must not pass the owner check");
+        // The owning thread is unaffected.
+        assert_eq!(unsafe { CELL.read() }, 0);
+    }
+
+    #[test]
+    fn cross_thread_unsync_access_is_not_checked() {
+        static CELL: RacyCell<u32> = RacyCell::new(41);
+        // SAFETY: written below before the reader thread is spawned
+        // (happens-before via `thread::spawn`), then only read.
+        unsafe { CELL.write_unsync(42) };
+        let v = std::thread::spawn(|| {
+            // SAFETY: see above — spawn establishes the happens-before edge.
+            unsafe { CELL.read_unsync() }
+        })
+        .join()
+        .unwrap();
+        assert_eq!(v, 42);
+    }
+
+    #[test]
+    fn first_accessor_becomes_owner_regardless_of_thread() {
+        static CELL: RacyCell<u32> = RacyCell::new(1);
+        // A spawned thread claims first; the spawning thread is then locked out.
+        std::thread::spawn(|| {
+            let _ = CELL.get();
+        })
+        .join()
+        .unwrap();
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { CELL.get() })).is_err()
+        );
+    }
+
+    #[test]
+    fn default_and_new_are_unclaimed() {
+        let a: RacyCell<i64> = RacyCell::default();
+        assert_eq!(unsafe { a.read() }, 0);
+        let b = RacyCell::new(5_i64);
+        unsafe { b.write(6) };
+        assert_eq!(unsafe { b.read() }, 6);
     }
 }
 
@@ -4308,16 +4472,19 @@ fn argv_view_init() {
         set_bun_options_argc(view.len() - original_len);
     }
     let view: &'static [&'static ZStr] = ARGV_VIEW.get_or_init(move || view);
-    // SAFETY: single-threaded lazy init guarded by Once.
-    unsafe { ARGV.write(view) };
+    // SAFETY: lazy init guarded by `ARGV_INIT` (the `Once` establishes the
+    // happens-before edge for every reader in `argv_view`); no reader runs
+    // until `call_once` returns. Unsync because readers may be on any thread.
+    unsafe { ARGV.write_unsync(view) };
 }
 
 #[inline]
 fn argv_view() -> &'static [&'static ZStr] {
     ARGV_INIT.call_once(argv_view_init);
     // SAFETY: ARGV is a Copy fat-pointer; only mutated via `set_argv` during
-    // single-threaded startup or by the Once above.
-    unsafe { ARGV.read() }
+    // single-threaded startup or by the Once above, which both happen-before
+    // this read. Unsync because `argv()` is called from any thread.
+    unsafe { ARGV.read_unsync() }
 }
 
 #[derive(Clone, Copy)]
@@ -4583,8 +4750,9 @@ pub fn append_options_env<A: OptionsEnvArg>(env: &[u8], args: &mut Vec<A>) {
 pub unsafe fn set_argv(v: &'static [&'static ZStr]) {
     // Prevent the lazy OS-argv init from later clobbering a manually-set view.
     ARGV_INIT.call_once(|| {});
-    // SAFETY: see fn doc — single-threaded startup.
-    unsafe { ARGV.write(v) };
+    // SAFETY: see fn doc — single-threaded startup, before any cross-thread
+    // reader exists. Unsync because readers may later be on any thread.
+    unsafe { ARGV.write_unsync(v) };
 }
 
 /// Park an owned argv `Vec` in process-static storage and return the

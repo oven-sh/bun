@@ -118,10 +118,11 @@ fn init_modules() {
 
     let mut m = bun_collections::StringHashMap::<FallbackModule>::default();
     // SAFETY: `init_modules` runs exactly once under `Once::call_once`; no other
-    // thread observes `MODULES`/`MAP` until this returns.
+    // thread observes `MODULES`/`MAP` until this returns. Unsync — the `Once`
+    // is the happens-before edge for readers on other resolver threads.
     unsafe {
-        *MODULES.get() = Some(modules);
-        let modules_ref: &'static [FallbackEntry] = (*MODULES.get()).as_deref().unwrap();
+        *MODULES.get_unsync() = Some(modules);
+        let modules_ref: &'static [FallbackEntry] = (*MODULES.get_unsync()).as_deref().unwrap();
         for (name, pkg, path, code) in modules_ref.iter() {
             m.put_assume_capacity(
                 name,
@@ -132,7 +133,7 @@ fn init_modules() {
                 },
             );
         }
-        *MAP.get() = Some(m);
+        *MAP.get_unsync() = Some(m);
     }
 }
 
@@ -140,7 +141,9 @@ fn init_modules() {
 pub fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
-    unsafe { (*MAP.get()).as_ref().unwrap() }
+    // Unsync — `map()` is called from any resolver thread; the `Once` is the
+    // happens-before edge with the single write above.
+    unsafe { (*MAP.get_unsync()).as_ref().unwrap() }
 }
 
 pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {

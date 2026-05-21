@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { existsSync } from "node:fs";
 

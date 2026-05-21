@@ -4,7 +4,7 @@
 // directory because `UpdateCommand` parsed `--cwd` once itself and then
 // re-entered a helper that parsed `--cwd` again — the second relative
 // `chdir` ran from inside the already-resolved dir and hit ENOENT.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test.concurrent("bun --cwd=<relative> update succeeds in a workspace child", async () => {
@@ -28,11 +28,7 @@ test.concurrent("bun --cwd=<relative> update succeeds in a workspace child", asy
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("failed to change directory");
   expect(stderr).not.toContain("ENOENT");
@@ -75,11 +71,7 @@ test.concurrent("bun --cwd=<relative> update -i succeeds in a workspace child", 
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("failed to change directory");
   expect(stderr).not.toContain("ENOENT");

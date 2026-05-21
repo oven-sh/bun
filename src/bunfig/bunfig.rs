@@ -20,13 +20,13 @@ use bun_parsers::toml::TOML;
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 
-use bun_paths::PathBuffer;
-use bun_paths::resolve_path::{self, platform};
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
+use bun_paths::PathBuffer;
+use bun_paths::resolve_path::{self, platform};
 
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
@@ -336,9 +336,8 @@ impl<'a> Parser<'a> {
         }
         let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [bunfig_dir, &entry];
-        let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
-            bunfig_dir, &mut *buf, &parts,
-        );
+        let joined =
+            resolve_path::join_abs_string_buf::<platform::Auto>(bunfig_dir, &mut *buf, &parts);
         Box::<[u8]>::from(joined)
     }
 

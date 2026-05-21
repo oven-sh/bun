@@ -1316,36 +1316,48 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
             cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10).ok();
         }
 
+        // Only apply `--cwd` once per process. Some subcommands (e.g.
+        // `bun update [-i]`) re-enter `parse` after the first call already
+        // moved the process into the target directory; a second `chdir` with
+        // the same relative path would resolve against the already-changed
+        // cwd and hit ENOENT (or walk into a wrong absolute path). After the
+        // first successful chdir the process cwd IS the requested target, so
+        // the subsequent parse can safely skip.
+        static CWD_APPLIED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
         if let Some(cwd_) = args.option(b"--cwd") {
-            let mut buf = PathBuffer::uninit();
-            let mut buf2 = PathBuffer::uninit();
-            let final_path: &mut bun_core::ZStr;
-            if !cwd_.is_empty() && cwd_[0] == b'.' {
-                let cwd_len = bun_sys::getcwd(&mut buf[..])?;
-                let cwd = &buf[..cwd_len];
-                let parts: [&[u8]; 1] = [cwd_];
-                let len = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                    cwd,
-                    &mut buf2[..],
-                    &parts,
-                )
-                .len();
-                buf2[len] = 0;
-                final_path = bun_core::ZStr::from_buf_mut(&mut buf2[..], len);
-            } else {
-                buf[..cwd_.len()].copy_from_slice(cwd_);
-                buf[cwd_.len()] = 0;
-                final_path = bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len());
-            }
-            if let Err(err) = bun_sys::chdir(final_path) {
-                Output::err_generic(
-                    "failed to change directory to \"{}\": {}\n",
-                    (
-                        bstr::BStr::new(final_path.as_bytes()),
-                        bstr::BStr::new(err.name()),
-                    ),
-                );
-                Global::crash();
+            if !CWD_APPLIED.load(std::sync::atomic::Ordering::Relaxed) {
+                let mut buf = PathBuffer::uninit();
+                let mut buf2 = PathBuffer::uninit();
+                let final_path: &mut bun_core::ZStr;
+                if !cwd_.is_empty() && cwd_[0] == b'.' {
+                    let cwd_len = bun_sys::getcwd(&mut buf[..])?;
+                    let cwd = &buf[..cwd_len];
+                    let parts: [&[u8]; 1] = [cwd_];
+                    let len = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                        cwd,
+                        &mut buf2[..],
+                        &parts,
+                    )
+                    .len();
+                    buf2[len] = 0;
+                    final_path = bun_core::ZStr::from_buf_mut(&mut buf2[..], len);
+                } else {
+                    buf[..cwd_.len()].copy_from_slice(cwd_);
+                    buf[cwd_.len()] = 0;
+                    final_path = bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len());
+                }
+                if let Err(err) = bun_sys::chdir(final_path) {
+                    Output::err_generic(
+                        "failed to change directory to \"{}\": {}\n",
+                        (
+                            bstr::BStr::new(final_path.as_bytes()),
+                            bstr::BStr::new(err.name()),
+                        ),
+                    );
+                    Global::crash();
+                }
+                CWD_APPLIED.store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }
 

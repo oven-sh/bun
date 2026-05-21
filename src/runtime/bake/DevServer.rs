@@ -3210,6 +3210,22 @@ impl DevServer {
         // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
         let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
             heap.alloc(bun_ast::ASTMemoryAllocator::default());
+        // The arena-allocated `ASTMemoryAllocator` above never runs `Drop`
+        // (its bytes are bulk-freed with the bundle heap), so the
+        // `AstAllocState` the `Scope` hands back to it on exit would be
+        // stranded — one 16 KB box per dev-server bundle. Recycle it
+        // explicitly once the scope has exited. Declared *before* `_ast_scope`
+        // so it drops after it on every return path.
+        struct ReleaseAstState(*mut bun_ast::ASTMemoryAllocator);
+        impl Drop for ReleaseAstState {
+            fn drop(&mut self) {
+                // SAFETY: `0` points at the arena-allocated allocator in
+                // `heap`, which outlives this guard; the `Scope` (declared
+                // after, dropped before) has already returned the state to it.
+                unsafe { (*self.0).release_ast_state() };
+            }
+        }
+        let _release_ast_state = ReleaseAstState(ast_memory_store);
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
         // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
         // and `_ast_scope` is dropped before `bv2` at end of this fn.

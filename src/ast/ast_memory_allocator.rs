@@ -228,6 +228,23 @@ impl ASTMemoryAllocator {
         }
     }
 
+    /// Take this allocator's `AstAlloc` state (if any) and recycle it into the
+    /// per-thread spare slot. For owners that are arena-allocated and never
+    /// run `Drop` (the dev server's bundle-setup allocator) — without this the
+    /// 16 KB state box is stranded in the owner's bump chunk when the bundle
+    /// heap is bulk-freed. The AST-node arena is unaffected; only the `AstVec`
+    /// inline chunk is recycled, so call this only once nothing reads `AstVec`s
+    /// allocated under this allocator's scope.
+    pub fn release_ast_state(&mut self) {
+        debug_assert!(
+            !self.ast_pushed,
+            "release_ast_state while the AstAllocState is still installed"
+        );
+        if let Some(state) = self.ast_state.take() {
+            ast_alloc::release_state(state);
+        }
+    }
+
     /// Debug-only: is the installed `AST_ALLOC` state the one this allocator
     /// pushed? Only meaningful while `ast_pushed`.
     fn ast_state_is_active(&self) -> bool {

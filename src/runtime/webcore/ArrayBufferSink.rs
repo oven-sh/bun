@@ -223,7 +223,10 @@ impl ArrayBufferSink {
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<ArrayBuffer> {
         if self.done {
-            return Ok(ArrayBuffer::from_bytes(&mut [], JSType::ArrayBuffer));
+            return Ok(ArrayBuffer::from_owned_bytes(
+                Box::default(),
+                JSType::ArrayBuffer,
+            ));
         }
 
         debug_assert!(self.next.is_none());

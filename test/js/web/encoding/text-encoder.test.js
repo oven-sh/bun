@@ -479,6 +479,31 @@ describe("TextEncoder", () => {
     });
   });
 
+  it("should round-trip large heap-allocated encode results", () => {
+    // Strings longer than the 2048-byte stack buffer take the heap path in
+    // TextEncoder__encode8/__encode16, where the encoder allocates a Vec and
+    // transfers ownership of the allocation to the returned Uint8Array.
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    // Latin-1 (8-bit) source with non-ASCII so the UTF-8 output grows past
+    // the input length.
+    const latin1 = "héllo wörld å ".repeat(200);
+    const encoded8 = encoder.encode(latin1);
+    expect(encoded8.length).toBe(getByteLength(latin1));
+    expect(decoder.decode(encoded8)).toBe(latin1);
+
+    // UTF-16 source.
+    const utf16 = "❤️ Red Heart ✨ Sparkles 🔥 Fire ".repeat(100);
+    const encoded16 = encoder.encode(utf16);
+    expect(encoded16.length).toBe(getByteLength(utf16));
+    expect(decoder.decode(encoded16)).toBe(utf16);
+
+    Bun.gc(true);
+    expect(decoder.decode(encoded8)).toBe(latin1);
+    expect(decoder.decode(encoded16)).toBe(utf16);
+  });
+
   it("should encode utf-16 rope text", () => {
     gcTrace(true);
     var textReal = `❤️ Red Heart ✨ Sparkles 🔥 Fire`;

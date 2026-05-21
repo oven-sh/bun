@@ -2630,12 +2630,10 @@ pub mod JSZlib {
                 list.shrink_to_fit();
                 // Ownership of the allocation transfers to JSC; freed via
                 // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
+                let array_buffer = ArrayBuffer::from_owned_vec(list, jsc::JSType::Uint8Array);
                 array_buffer.to_js_with_context(
                     global_this,
-                    ptr.cast::<c_void>(),
+                    array_buffer.ptr.cast::<c_void>(),
                     Some(global_deallocator),
                 )
             }
@@ -2680,12 +2678,10 @@ pub mod JSZlib {
 
                 // Ownership of the allocation transfers to JSC; freed via
                 // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
+                let array_buffer = ArrayBuffer::from_owned_vec(list, jsc::JSType::Uint8Array);
                 array_buffer.to_js_with_context(
                     global_this,
-                    ptr.cast::<c_void>(),
+                    array_buffer.ptr.cast::<c_void>(),
                     Some(global_deallocator),
                 )
             }
@@ -2781,12 +2777,10 @@ pub mod JSZlib {
                 list.shrink_to_fit();
                 // Ownership of the allocation transfers to JSC; freed via
                 // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
+                let array_buffer = ArrayBuffer::from_owned_vec(list, jsc::JSType::Uint8Array);
                 array_buffer.to_js_with_context(
                     global_this,
-                    ptr.cast::<c_void>(),
+                    array_buffer.ptr.cast::<c_void>(),
                     Some(global_deallocator),
                 )
             }
@@ -2824,12 +2818,10 @@ pub mod JSZlib {
 
                 // Ownership of the allocation transfers to JSC; freed via
                 // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
+                let array_buffer = ArrayBuffer::from_owned_vec(list, jsc::JSType::Uint8Array);
                 array_buffer.to_js_with_context(
                     global_this,
-                    ptr.cast::<c_void>(),
+                    array_buffer.ptr.cast::<c_void>(),
                     Some(global_deallocator),
                 )
             }

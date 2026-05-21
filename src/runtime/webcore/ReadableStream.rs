@@ -6,7 +6,6 @@ use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
-use bun_collections::VecExt;
 use bun_sys as syscall;
 
 use crate::webcore::streams;
@@ -1218,14 +1217,12 @@ impl<C: SourceContext> NewSource<C> {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         self.this_jsvalue = call_frame.this();
-        let mut list = self.drain();
+        let list = self.drain();
         if list.len() > 0 {
             // Ownership of the buffer transfers to JSC: `to_js` installs
-            // `MarkedArrayBuffer_deallocator` which `mi_free`s on GC. Suppress
-            // `Vec::Drop` so the same allocation isn't freed twice (once
-            // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
-            let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
-            let _ = core::mem::ManuallyDrop::new(list);
+            // `MarkedArrayBuffer_deallocator` which `mi_free`s on GC.
+            // Mirrors `streams::Start::to_js`.
+            let ab = jsc::ArrayBuffer::from_owned_vec(list, jsc::JSType::Uint8Array);
             return ab.to_js(global_this);
         }
         Ok(JSValue::UNDEFINED)

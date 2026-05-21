@@ -837,9 +837,16 @@ impl TarballStream {
             FileKind::File => {
                 #[cfg(windows)]
                 let mode: Mode = 0;
+                // Mask to permission bits so setuid/setgid/sticky bits from the
+                // archive never reach `openat`'s mode argument.
                 #[cfg(not(windows))]
-                let mode: Mode = Mode::try_from(entry.perm() | 0o666).expect("int cast");
-                let fd = open_output_file(dest, path, path_slice, mode)?;
+                let mode: Mode =
+                    Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
+                #[cfg(unix)]
+                let nofollow = !self.created_symlinks.is_empty();
+                #[cfg(not(unix))]
+                let nofollow = false;
+                let fd = open_output_file(dest, path, path_slice, mode, nofollow)?;
                 self.entry_count += 1;
 
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1286,8 +1293,20 @@ fn open_output_file(
     path: OSPathZ,
     path_slice: &[OSPathChar],
     mode: Mode,
+    nofollow: bool,
 ) -> Result<Fd, bun_core::Error> {
-    let flags = O::WRONLY | O::CREAT | O::TRUNC;
+    // `path_traverses_created_symlink` is a lexical check: on filesystems that
+    // alias differently-encoded names (Unicode NFC/NFD normalization on
+    // APFS/HFS+), a path component can reach a created symlink without
+    // byte-matching its recorded path. Once this extraction has created any
+    // symlink, ask the kernel to refuse to follow symlinks while opening file
+    // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets. Same defense as the
+    // buffered extractor in `Archiver::extract_to_dir`.
+    let flags = if nofollow {
+        O::WRONLY | O::CREAT | O::TRUNC | O::NOFOLLOW_ANY
+    } else {
+        O::WRONLY | O::CREAT | O::TRUNC
+    };
     #[cfg(windows)]
     {
         let _ = mode;

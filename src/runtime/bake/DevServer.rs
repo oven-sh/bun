@@ -259,6 +259,9 @@ pub struct CurrentBundle {
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
     /// boxed allocation's stable address; same erasure as `bv2` above).
     pub heap: Box<bun_alloc::MimallocArena>,
+    /// Backs the small `AstVec`s built during bundle setup
+    /// (`start_async_bundle`'s AST scope); dropped with the bundle.
+    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -3207,12 +3210,12 @@ impl DevServer {
         // borrows it (self-ref via `CurrentBundle`, see PORT NOTE on
         // `CurrentBundle.bv2`).
         let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
-        // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
+        // Borrows `heap` (Zig parity), so AST nodes built during bundle setup
+        // live exactly as long as the bundle. The arena-allocated allocator
+        // never runs `Drop`; the `AstAllocState` is taken into `CurrentBundle`
+        // on success and recycled by the guard below on error paths.
         let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
-            heap.alloc(bun_ast::ASTMemoryAllocator::default());
-        // The arena-allocated `ASTMemoryAllocator` never runs `Drop`, so
-        // recycle its `AstAllocState` once the scope exits (declared before
-        // `_ast_scope` so it drops after it).
+            heap.alloc(bun_ast::ASTMemoryAllocator::borrowing(&heap));
         struct ReleaseAstState(*mut bun_ast::ASTMemoryAllocator);
         impl Drop for ReleaseAstState {
             fn drop(&mut self) {
@@ -3224,8 +3227,9 @@ impl DevServer {
         let _release_ast_state = ReleaseAstState(ast_memory_store);
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
         // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
-        // and `_ast_scope` is dropped before `bv2` at end of this fn.
-        let _ast_scope = unsafe { &mut *ast_memory_store }.enter();
+        // and `ast_scope` is dropped before `bv2` is moved into
+        // `current_bundle` below.
+        let ast_scope = unsafe { &mut *ast_memory_store }.enter();
 
         // Zig: `.{ .js = dev.vm.eventLoop() }` constructed an `AnyEventLoop`
         // by value; the Rust bundler instead stores
@@ -3303,9 +3307,16 @@ impl DevServer {
             bt
         })?;
         drop(entry_points);
+        // End the AST scope and move its state into the bundle so the small
+        // `AstVec`s built during setup stay alive until the bundle completes.
+        drop(ast_scope);
+        // SAFETY: `ast_memory_store` lives in `heap`; the scope above has
+        // exited, so no `&mut` to the allocator is live.
+        let ast_alloc_state = unsafe { (*ast_memory_store).take_ast_state() };
         self.current_bundle = Some(CurrentBundle {
             bv2,
             heap,
+            ast_alloc_state,
             timer,
             start_data,
             had_reload_event,

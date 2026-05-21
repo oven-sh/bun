@@ -209,6 +209,17 @@ impl ASTMemoryAllocator {
         }
     }
 
+    /// Take this allocator's `AstAlloc` state without recycling it. The caller
+    /// keeps the box alive for as long as `AstVec`s allocated under this
+    /// allocator's scope are read, then drops it.
+    pub fn take_ast_state(&mut self) -> Option<Box<AstAllocState>> {
+        debug_assert!(
+            !self.ast_pushed,
+            "take_ast_state while the AstAllocState is still installed"
+        );
+        self.ast_state.take()
+    }
+
     /// Debug-only: is the installed `AST_ALLOC` state the one this allocator
     /// pushed? Only meaningful while `ast_pushed`.
     fn ast_state_is_active(&self) -> bool {

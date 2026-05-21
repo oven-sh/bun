@@ -2917,24 +2917,25 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     TokenData::MappingValue => 'value: {
                         first_entry_end_line = mapping_value_line;
-                        // [191] explicit `:` is on a new line at mapping_indent;
-                        // a same-line `- ` after it is a compact sequence whose
-                        // indent is column-based, not line-based. [185] requires
-                        // s-indent (spaces only), so a tab after `:` does not
-                        // get the compact-construct treatment.
+                        // [191] l-block-map-explicit-value(n) ::= s-indent(n) ':' …
+                        // The `:` must be at exactly the `?` indent (block ctx).
+                        if mapping_value_line != mapping_line
+                            && !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
+                            && self.token.indent != mapping_indent
+                        {
+                            if self.token.indent.is_less_than(mapping_indent) {
+                                // [189] e-node — `:` belongs to an outer
+                                // construct; this entry has no value.
+                                break 'value Expr::init(E::Null {}, mapping_value_start.loc());
+                            }
+                            return Err(Self::unexpected_token());
+                        }
+                        // [185] same-line compact construct after `:` requires
+                        // s-indent (spaces only); a tab after `:` does not get
+                        // the compact-construct treatment.
                         let parent_indent = if mapping_value_line != mapping_line
                             && Enc::wide(self.next()) != 0x09
                         {
-                            if !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
-                                && self.token.indent != mapping_indent
-                            {
-                                if self.token.indent.is_less_than(mapping_indent) {
-                                    // [189] e-node — `:` belongs to an outer
-                                    // construct; this entry has no value.
-                                    break 'value Expr::init(E::Null {}, mapping_value_start.loc());
-                                }
-                                return Err(Self::unexpected_token());
-                            }
                             Some(mapping_indent.add(1))
                         } else {
                             None
@@ -3726,8 +3727,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Err(Self::unexpected_token());
                     }
 
-                    let key = if parent_indent.is_some()
-                        && self.token.line != mapping_line
+                    let key = if !matches!(
+                        self.context.get(),
+                        Context::FlowIn | Context::FlowKey
+                    ) && self.token.line != mapping_line
                         && self.token.indent.is_less_than_or_equal(mapping_indent)
                         && !(self.token.indent == mapping_indent
                             && matches!(self.token.data, TokenData::SequenceEntry))

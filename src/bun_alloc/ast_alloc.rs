@@ -296,7 +296,10 @@ impl Drop for ScopedAstAlloc {
     fn drop(&mut self) {
         match swap_state(self.prev.take()) {
             Some(state) => release_state(state),
-            None => debug_assert!(false, "ScopedAstAlloc state was uninstalled by someone else"),
+            None => debug_assert!(
+                false,
+                "ScopedAstAlloc state was uninstalled by someone else"
+            ),
         }
     }
 }

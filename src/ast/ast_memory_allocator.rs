@@ -247,7 +247,10 @@ impl ASTMemoryAllocator {
         expr::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
         crate::set_data_store_override(arena);
         if !self.ast_pushed {
-            let state = self.ast_state.take().unwrap_or_else(ast_alloc::acquire_state);
+            let state = self
+                .ast_state
+                .take()
+                .unwrap_or_else(ast_alloc::acquire_state);
             self.previous_ast_state = ast_alloc::swap_state(Some(state));
             self.ast_pushed = true;
         }
@@ -351,10 +354,7 @@ impl<'a> Scope<'a> {
             Some(r) => {
                 let arena: *const Arena = &raw const r.arena;
                 // Install this allocator's `AstAlloc` state for the scope.
-                let state = r
-                    .ast_state
-                    .take()
-                    .unwrap_or_else(ast_alloc::acquire_state);
+                let state = r.ast_state.take().unwrap_or_else(ast_alloc::acquire_state);
                 self.previous_ast_state = ast_alloc::swap_state(Some(state));
                 r.ast_pushed = true;
                 (std::ptr::from_mut::<ASTMemoryAllocator>(*r), arena)

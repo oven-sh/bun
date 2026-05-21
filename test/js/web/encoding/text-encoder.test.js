@@ -488,13 +488,15 @@ describe("TextEncoder", () => {
 
     // Latin-1 (8-bit) source with non-ASCII so the UTF-8 output grows past
     // the input length.
-    const latin1 = "héllo wörld å ".repeat(200);
+    const latin1Seed = "héllo wörld å ";
+    const latin1 = Buffer.alloc(Buffer.byteLength(latin1Seed) * 200, latin1Seed).toString();
     const encoded8 = encoder.encode(latin1);
     expect(encoded8.length).toBe(getByteLength(latin1));
     expect(decoder.decode(encoded8)).toBe(latin1);
 
     // UTF-16 source.
-    const utf16 = "❤️ Red Heart ✨ Sparkles 🔥 Fire ".repeat(100);
+    const utf16Seed = "❤️ Red Heart ✨ Sparkles 🔥 Fire ";
+    const utf16 = Buffer.alloc(Buffer.byteLength(utf16Seed) * 100, utf16Seed).toString();
     const encoded16 = encoder.encode(utf16);
     expect(encoded16.length).toBe(getByteLength(utf16));
     expect(decoder.decode(encoded16)).toBe(utf16);

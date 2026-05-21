@@ -1229,10 +1229,14 @@ pub fn readable_stream(
                         .store(true, core::sync::atomic::Ordering::Relaxed);
                     // Setting the signal alone isn't enough — the HTTP thread is blocked
                     // waiting on the socket and won't observe it. Actively schedule a
-                    // shutdown (same as FetchTasklet::abort_task) so the connection is
-                    // closed now and the final callback fires promptly instead of
-                    // whenever the server happens to hang up.
+                    // shutdown so the connection is closed now and the final callback
+                    // fires promptly instead of whenever the server happens to hang up.
+                    // Lock `task.mutex` while reading `task.http`: the HTTP thread's
+                    // `update_state` does a whole-struct `ptr::write` over it under the
+                    // same lock, so an unlocked `&AsyncHTTP` here would be a data race.
+                    (*task).mutex.lock();
                     bun_http::http_thread().schedule_shutdown((*task).http.assume_init_ref());
+                    (*task).mutex.unlock();
                 }
             }
         }

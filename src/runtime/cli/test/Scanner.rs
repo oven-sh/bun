@@ -178,7 +178,7 @@ impl<'a> Scanner<'a> {
                     // SAFETY: all entries in DEFAULT_PATH_IGNORE_PATTERNS are
                     // &'static [u8] byte-string literals; the `_are_defaults`
                     // flag guarantees that's the slice we're iterating.
-                    kept.push(unsafe { &*(pattern as *const [u8]) });
+                    kept.push(unsafe { &*core::ptr::from_ref::<[u8]>(pattern) });
                 }
             }
             Some(kept.into_boxed_slice())
@@ -203,7 +203,7 @@ impl<'a> Scanner<'a> {
             }
         }
         let _restore: RestorePatterns<'_, 'a> = RestorePatterns {
-            scanner: self as *mut _,
+            scanner: core::ptr::from_mut(self),
             saved: saved_patterns,
             active: narrowed.is_some(),
             _m: core::marker::PhantomData,

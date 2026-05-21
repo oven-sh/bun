@@ -68,6 +68,9 @@ pub use bun_core_macros::{Anchored, CellRefCounted, RefCounted, ThreadSafeRefCou
 
 pub mod parent_ref;
 pub use parent_ref::{Anchored, LiveMarker, ParentRef};
+
+pub mod reentrant_cell;
+pub use reentrant_cell::ReentrantCell;
 // Compat aliases for callers that use the pointer-typedef names.
 pub type IntrusiveRc<T> = RefPtr<T>;
 pub type IntrusiveArc<T> = RefPtr<T>;

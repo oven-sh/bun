@@ -5786,21 +5786,34 @@ pub mod form_data {
 
     /// `FormData.getBoundary` — borrow the `boundary=` value out of a
     /// `Content-Type` header. Returns `None` on malformed quoting.
+    ///
+    /// Parameters are `;`-delimited per RFC 7231 and the parameter *name* must
+    /// be exactly `boundary`, so a different parameter (`xboundary=FAKE`) or a
+    /// `boundary=` substring inside another parameter's value is not picked up
+    /// by an unanchored substring search.
     pub fn get_boundary(content_type: &[u8]) -> Option<&[u8]> {
-        let idx = ::bstr::ByteSlice::find(content_type, b"boundary=")?;
-        let begin = &content_type[idx + b"boundary=".len()..];
-        if begin.is_empty() {
-            return None;
-        }
-        let end = crate::strings_impl::index_of_char(begin, b';').unwrap_or(begin.len());
-        if begin[0] == b'"' {
-            if end > 1 && begin[end - 1] == b'"' {
-                return Some(&begin[1..end - 1]);
+        let mut rest = content_type;
+        loop {
+            let semi = crate::strings_impl::index_of_char(rest, b';')?;
+            rest = &rest[semi + 1..];
+            let Some(begin) =
+                crate::strings_impl::trim_left(rest, b" \t").strip_prefix(b"boundary=")
+            else {
+                continue;
+            };
+            if begin.is_empty() {
+                return None;
             }
-            // Opening quote with no matching closing quote — malformed.
-            return None;
+            let end = crate::strings_impl::index_of_char(begin, b';').unwrap_or(begin.len());
+            if begin[0] == b'"' {
+                if end > 1 && begin[end - 1] == b'"' {
+                    return Some(&begin[1..end - 1]);
+                }
+                // Opening quote with no matching closing quote — malformed.
+                return None;
+            }
+            return Some(&begin[..end]);
         }
-        Some(&begin[..end])
     }
 
     /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.

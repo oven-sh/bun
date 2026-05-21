@@ -390,6 +390,29 @@ describe("http.request options.signal", () => {
     expect((errors[0] as any).code).toBe("ABORT_ERR");
   });
 
+  it("does not emit 'error' on a destroyed request when a late async options.lookup errors", async () => {
+    // User calls req.destroy() while an async `options.lookup` is still
+    // pending, and the lookup then calls back with an error. Emitting
+    // 'error' on a request the user already tore down contradicts the
+    // ClientRequest lifecycle; the sibling `fail()` path has guarded
+    // against this since 3a997a9c, the err-first callback should too.
+    const errors: Error[] = [];
+    const closed = Promise.withResolvers<void>();
+
+    const req = request("http://example.invalid/", {
+      lookup: (_host, _opts, cb) => setImmediate(() => cb(new Error("resolver down"))),
+    });
+    req.on("error", err => errors.push(err));
+    req.on("close", () => closed.resolve());
+    req.end();
+    req.destroy();
+
+    await closed.promise;
+    await Bun.sleep(10);
+
+    expect(errors.length).toBe(0);
+  });
+
   it("does not double-emit when the last happy-eyeballs candidate fails (no signal)", async () => {
     // Pre-existing: `go()` returns the raw fetch promise (not the
     // `.catch`-chained one) and the `!softFail` branch attaches its own

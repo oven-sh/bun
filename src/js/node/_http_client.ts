@@ -606,7 +606,11 @@ function ClientRequest(input, options, cb) {
       options.lookup(host, { all: true }, (err, results) => {
         if (err) {
           if (!!$debug) globalReportError(err);
-          if (errorEmitted) return;
+          // Mirror fail()'s guard: skip if the request has already been
+          // torn down (user-driven destroy()/abort() or a prior terminal
+          // error) so late-arriving lookup errors don't emit on a closed
+          // request.
+          if (this[abortedSymbol] || this.destroyed || errorEmitted) return;
           errorEmitted = true;
           // Drop the signal listener so a later abort doesn't double-emit.
           removeSignalListener();

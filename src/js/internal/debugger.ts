@@ -349,6 +349,12 @@ class Debugger {
       });
     }
 
+    if (!isOriginAllowed(headers.get("Origin"))) {
+      return new Response(null, {
+        status: 403, // Forbidden
+      });
+    }
+
     const data: Connection = {
       refEventLoop: headers.get("Ref-Event-Loop") === "0",
     };
@@ -589,6 +595,34 @@ function parseUrl(input: string): URL {
     }
   }
   return url;
+}
+
+// Browsers always send an `Origin` header on WebSocket handshakes, so rejecting
+// unexpected web origins prevents a malicious website from connecting to the
+// inspector and evaluating code. This matters most when the user passes an
+// explicit pathname to --inspect, which replaces the random UUID pathname that
+// otherwise acts as a bearer token. Non-browser clients (IDEs, CLI tools) do
+// not send an `Origin` header and are unaffected.
+function isOriginAllowed(origin: string | null): boolean {
+  if (!origin) {
+    return true;
+  }
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    // Includes the opaque "null" origin sent by sandboxed iframes and file://.
+    return false;
+  }
+  const { protocol, hostname } = url;
+  if (protocol !== "http:" && protocol !== "https:") {
+    // Privileged schemes (e.g. devtools://) cannot be claimed by a web page.
+    return true;
+  }
+  if (origin === "https://debug.bun.sh") {
+    return true;
+  }
+  return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);
 }
 
 function randomId() {

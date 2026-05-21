@@ -1051,14 +1051,15 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                             )));
                         } else if edit.name.as_ptr() == edit.path.as_ptr() {
                             // `detect_editor` aliased `path` to `name` (absolute
-                            // editor path). Re-backing `name_storage` frees the
-                            // old buffer, so repoint both `name` and `path` at
-                            // the new storage.
-                            slot.name_storage = edit.path.to_vec();
-                            // SAFETY: see above.
-                            edit.name =
-                                unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
-                            edit.path = edit.name;
+                            // editor path). `name` is backed by `slot.name_storage`,
+                            // which a later call may drop while the detached editor
+                            // thread is still reading argv[0]. Give `path`
+                            // process-lifetime storage, matching every other
+                            // `detect_editor` branch.
+                            edit.path = bun_resolver::fs::FileSystem::instance()
+                                .dirname_store
+                                .append_slice(edit.path)
+                                .expect("unreachable");
                         }
                     }
                 }

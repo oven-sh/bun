@@ -3727,10 +3727,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Err(Self::unexpected_token());
                     }
 
-                    let key = if !matches!(
-                        self.context.get(),
-                        Context::FlowIn | Context::FlowKey
-                    ) && self.token.line != mapping_line
+                    let key = if !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
+                        && self.token.line != mapping_line
                         && self.token.indent.is_less_than_or_equal(mapping_indent)
                         && !(self.token.indent == mapping_indent
                             && matches!(self.token.data, TokenData::SequenceEntry))

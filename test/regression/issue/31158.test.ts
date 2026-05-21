@@ -23,8 +23,10 @@ import { bunEnv, bunExe, isGlibc } from "harness";
 // dlopens `libc.so.6` directly so it needs glibc; musl names its libc
 // differently and static-musl builds of Bun don't even have a dynamic
 // loader in the room.
-test.skipIf(!isGlibc)("event loop survives SA_ONSTACK on SIGPWR + WASM (oven-sh/bun#31158)", async () => {
-  const script = /* ts */ `
+test.skipIf(!isGlibc)(
+  "event loop survives SA_ONSTACK on SIGPWR + WASM (oven-sh/bun#31158)",
+  async () => {
+    const script = /* ts */ `
       import { dlopen, FFIType, ptr } from "bun:ffi";
 
       // 1. Open libc so we can flip SA_ONSTACK on SIGPWR the same way Go's
@@ -67,19 +69,21 @@ test.skipIf(!isGlibc)("event loop survives SA_ONSTACK on SIGPWR + WASM (oven-sh/
       console.log("EVENT_LOOP_ALIVE");
     `;
 
-  // `await using` scopes the child to this block — if the test-runner
-  // timeout fires because the bug reproduced, `Bun.spawn`'s disposer
-  // kills the child on the way out, no harness-side watchdog needed.
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    // `await using` scopes the child to this block — if the test-runner
+    // timeout fires because the bug reproduced, `Bun.spawn`'s disposer
+    // kills the child on the way out, no harness-side watchdog needed.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toContain("EVENT_LOOP_ALIVE");
-  expect(exitCode).toBe(0);
-}, 15_000);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("EVENT_LOOP_ALIVE");
+    expect(exitCode).toBe(0);
+  },
+  15_000,
+);

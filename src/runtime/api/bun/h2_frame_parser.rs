@@ -4442,6 +4442,20 @@ impl H2FrameParser {
         if stream_identifier & 1 == 0 {
             return None;
         }
+        // Bound per-connection stream state before allocating: a peer flooding
+        // tiny HEADERS frames with fresh stream ids would otherwise grow
+        // `streams` (and the JS objects pinned by `streamStart`) without limit.
+        // Mirrors the maxSessionMemory check on the PING and request() paths.
+        if self.get_session_memory_usage() > self.max_session_memory.get() as usize {
+            self.send_go_away(
+                stream_identifier,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                b"ENHANCE_YOUR_CALM",
+                self.last_stream_id.get(),
+                true,
+            );
+            return None;
+        }
         self.handle_received_stream_id(stream_identifier)
     }
 
@@ -5518,7 +5532,9 @@ impl H2FrameParser {
 impl H2FrameParser {
     // get memory usage in MB
     fn get_session_memory_usage(&self) -> usize {
-        (self.write_buffer.get().len_u32() as usize + self.queued_data_size.get() as usize)
+        (self.write_buffer.get().len_u32() as usize
+            + self.queued_data_size.get() as usize
+            + self.streams.get().len() * core::mem::size_of::<Stream>())
             / 1024
             / 1024
     }

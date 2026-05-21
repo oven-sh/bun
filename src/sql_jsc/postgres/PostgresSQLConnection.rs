@@ -2863,6 +2863,19 @@ impl PostgresSQLConnection {
                         }
                     }
                     protocol::Authentication::Ok => {
+                        // RFC 5802 §5: once a SCRAM exchange has begun, the
+                        // server must prove itself via SASLFinal (whose
+                        // signature check above resets the state to `None`)
+                        // before AuthenticationOk is acceptable. Accepting Ok
+                        // mid-exchange would let a MITM skip the
+                        // server-signature verification.
+                        if matches!(
+                            self.authentication_state.get(),
+                            AuthenticationState::Sasl(_)
+                        ) {
+                            debug!("AuthenticationOk before SASL exchange completed");
+                            return Err(AnyPostgresError::UnexpectedMessage);
+                        }
                         debug!("Authentication OK");
                         self.authentication_state.with_mut(|s| s.zero());
                         self.authentication_state.set(AuthenticationState::Ok);

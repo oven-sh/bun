@@ -7139,6 +7139,29 @@ impl H2FrameParser {
         Ok(JSValue::js_number(stream_id as f64))
     }
 
+    /// RFC 7540 Section 6.6: Send a PUSH_PROMISE frame from the server.
+    /// Takes: original_stream_id, headers, sensitiveHeaders
+    /// Returns: the promised stream ID, or a negative sentinel on error:
+    ///   -1 = peer disabled push via SETTINGS
+    ///   -2 = stream ID space exhausted
+    ///   -3 = parent stream state invalid
+    ///   -4 = header block exceeds maxSendHeaderBlockLength
+    ///
+    /// NOTE: this is a stub for the Rust port — full implementation still
+    /// lives in the Zig version. Returns -1 (push disabled) so the JS
+    /// layer surfaces ERR_HTTP2_PUSH_DISABLED to the user instead of a
+    /// type error or silent failure.
+    #[bun_jsc::host_fn(method)]
+    pub fn send_push_promise(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let _ = this;
+        bun_output::scoped_log!(H2FrameParser, "sendPushPromise (stub)");
+        Ok(JSValue::js_number(-1.0))
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn read(
         this: &Self,

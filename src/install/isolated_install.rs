@@ -1305,7 +1305,11 @@ pub fn install_isolated_packages(
                                         pkg_name_hashes[pkg_id as usize],
                                     )
                                 };
-                                if lockfile.has_trusted_dependency(dep_name, pkg_res)
+                                if lockfile.has_trusted_dependency(
+                                    dep_name,
+                                    pkg_names[pkg_id as usize].slice(string_buf),
+                                    pkg_res,
+                                )
                                     || trusted_from_update.contains(
                                         &(dep_name_hash as crate::TruncatedPackageNameHash),
                                     )

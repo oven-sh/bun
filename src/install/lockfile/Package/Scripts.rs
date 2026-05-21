@@ -310,7 +310,7 @@ impl Scripts {
         // TODO(port): narrow error set
         if self.has_any() {
             let add_node_gyp_rebuild_script = if lockfile
-                .has_trusted_dependency(folder_name, resolution)
+                .has_trusted_dependency(folder_name, folder_name, resolution)
                 && self.install.is_empty()
                 && self.preinstall.is_empty()
             {

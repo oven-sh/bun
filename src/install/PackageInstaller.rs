@@ -1776,10 +1776,11 @@ impl<'a> PackageInstaller<'a> {
                         {
                             break 'brk (true, true);
                         }
-                        if self
-                            .lockfile()
-                            .has_trusted_dependency(alias.slice(string_buf!()), resolution)
-                        {
+                        if self.lockfile().has_trusted_dependency(
+                            alias.slice(string_buf!()),
+                            pkg_name.slice(string_buf!()),
+                            resolution,
+                        ) {
                             break 'brk (true, false);
                         }
                         break 'brk (false, false);

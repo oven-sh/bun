@@ -548,6 +548,161 @@ impl<'a> ValkeyReader<'a> {
     }
 }
 
+/// Outcome of an incremental [`ReplyScanner::scan`] pass.
+pub enum ScanResult {
+    /// A complete top-level reply is buffered and safe to hand to
+    /// [`ValkeyReader::read_value`].
+    Complete,
+    /// The buffer does not yet contain a complete reply.
+    NeedMoreData,
+}
+
+/// Incrementally locates the end of the next complete RESP reply without
+/// materializing any values.
+///
+/// `on_data` re-runs the tree parser over the accumulated read buffer on every
+/// socket callback. Without this scanner, an aggregate reply (`*N`, `%N`, `~N`,
+/// `>N`, `|N`) whose elements arrive in separate TCP segments is re-parsed from
+/// its header each time — O(N^2) element parses for an N-element reply, which a
+/// hostile server can use to pin the JS thread. The scanner persists its byte
+/// offset and the stack of in-progress aggregates across calls so each buffered
+/// byte is examined a bounded number of times; the allocating parser only runs
+/// once a full reply is known to be present.
+#[derive(Default)]
+pub struct ReplyScanner {
+    /// Byte offset of the next unscanned element, relative to the start of the
+    /// buffer passed to [`ReplyScanner::scan`].
+    pos: usize,
+    /// Remaining child-value count for each in-progress aggregate, outermost
+    /// first.
+    stack: Vec<u64>,
+}
+
+impl ReplyScanner {
+    /// Discard all progress. Must be called whenever the underlying buffer is
+    /// consumed or replaced.
+    pub fn reset(&mut self) {
+        self.pos = 0;
+        self.stack.clear();
+    }
+
+    /// Resume scanning `buffer` (the connection's accumulated, unconsumed read
+    /// buffer) for the end of the next complete reply. `buffer` must be the
+    /// same byte stream as the previous call with zero or more bytes appended.
+    pub fn scan(&mut self, buffer: &[u8]) -> Result<ScanResult, RedisError> {
+        loop {
+            let mut reader = ValkeyReader {
+                buffer,
+                pos: self.pos,
+            };
+            let children = match Self::scan_one(&mut reader, self.stack.len()) {
+                Ok(children) => children,
+                // `InvalidResponse` is the parser's "ran out of bytes" sentinel.
+                Err(RedisError::InvalidResponse) => return Ok(ScanResult::NeedMoreData),
+                Err(err) => return Err(err),
+            };
+            self.pos = reader.pos;
+            if let Some(children) = children
+                && children > 0
+            {
+                self.stack.push(children);
+                continue;
+            }
+            // A scalar or empty aggregate finished; unwind every aggregate it
+            // completes.
+            while let Some(remaining) = self.stack.last_mut() {
+                *remaining -= 1;
+                if *remaining > 0 {
+                    break;
+                }
+                self.stack.pop();
+            }
+            if self.stack.is_empty() {
+                return Ok(ScanResult::Complete);
+            }
+        }
+    }
+
+    /// Skip a single element starting at `reader.pos`. Returns `Some(n)` for an
+    /// aggregate expecting `n` further child values, or `None` for a
+    /// fully-skipped scalar. `InvalidResponse` means the element is not yet
+    /// fully buffered.
+    fn scan_one(reader: &mut ValkeyReader<'_>, depth: usize) -> Result<Option<u64>, RedisError> {
+        let type_byte = reader.read_byte()?;
+        let ty = RESPType::from_byte(type_byte).ok_or(RedisError::InvalidResponseType)?;
+        match ty {
+            RESPType::SimpleString
+            | RESPType::Error
+            | RESPType::Integer
+            | RESPType::Null
+            | RESPType::Double
+            | RESPType::Boolean
+            | RESPType::BigNumber => {
+                let _ = reader.read_until_crlf()?;
+                Ok(None)
+            }
+            RESPType::BulkString | RESPType::BlobError | RESPType::VerbatimString => {
+                let invalid = match ty {
+                    RESPType::BlobError => RedisError::InvalidBlobError,
+                    RESPType::VerbatimString => RedisError::InvalidVerbatimString,
+                    _ => RedisError::InvalidBulkString,
+                };
+                let len = reader.read_integer()?;
+                if len < 0 {
+                    // Only `$-1` (RESP2 null bulk string) is legal; the tree
+                    // parser rejects negative `!`/`=` lengths.
+                    return if ty == RESPType::BulkString {
+                        Ok(None)
+                    } else {
+                        Err(invalid)
+                    };
+                }
+                if len > ValkeyReader::MAX_BULK_LEN {
+                    return Err(invalid);
+                }
+                let len = usize::try_from(len).expect("int cast");
+                // The payload plus its trailing CRLF must be fully buffered.
+                if reader.buffer.len() - reader.pos < len + 2 {
+                    return Err(RedisError::InvalidResponse);
+                }
+                if reader.buffer[reader.pos + len] != b'\r'
+                    || reader.buffer[reader.pos + len + 1] != b'\n'
+                {
+                    return Err(invalid);
+                }
+                reader.pos += len + 2;
+                Ok(None)
+            }
+            RESPType::Array | RESPType::Set | RESPType::Push => {
+                if depth >= ValkeyReader::MAX_NESTING_DEPTH {
+                    return Err(RedisError::NestingDepthExceeded);
+                }
+                let len = reader.read_integer()?;
+                Ok(Some(u64::try_from(len).unwrap_or(0)))
+            }
+            RESPType::Map => {
+                if depth >= ValkeyReader::MAX_NESTING_DEPTH {
+                    return Err(RedisError::NestingDepthExceeded);
+                }
+                let len = reader.read_integer()?;
+                Ok(Some(u64::try_from(len).unwrap_or(0).saturating_mul(2)))
+            }
+            RESPType::Attribute => {
+                if depth >= ValkeyReader::MAX_NESTING_DEPTH {
+                    return Err(RedisError::NestingDepthExceeded);
+                }
+                let len = reader.read_integer()?;
+                Ok(Some(
+                    u64::try_from(len)
+                        .unwrap_or(0)
+                        .saturating_mul(2)
+                        .saturating_add(1),
+                ))
+            }
+        }
+    }
+}
+
 pub struct MapEntry {
     pub key: RESPValue,
     pub value: RESPValue,

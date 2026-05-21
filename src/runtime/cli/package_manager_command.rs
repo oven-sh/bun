@@ -310,12 +310,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 'warner: {
                     if Output::enable_ansi_colors_stderr() {
                         if let Some(path) = env_var::PATH.get() {
-                            // skip empty segments
+                            // Compare path entries tolerantly: trailing `/` and
+                            // `\` are ignored on every platform, and on Windows
+                            // slashes and ASCII case are normalized too.
+                            // Skip empty segments.
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
                             for entry in &mut path_iter {
-                                if strings::eql(entry, output_path) {
+                                if path_entries_equal(entry, output_path) {
                                     break 'warner;
                                 }
                             }
@@ -690,6 +693,42 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else {
             Global::exit(0);
         }
+    }
+}
+
+/// Trim trailing `/` and `\` characters from a PATH entry so that e.g.
+/// "/home/user/.bun/bin/" matches "/home/user/.bun/bin".
+fn trim_trailing_path_separators(s: &[u8]) -> &[u8] {
+    let mut end = s.len();
+    while end > 0 && (s[end - 1] == b'/' || s[end - 1] == b'\\') {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Compare two path slices for equality, tolerant of the differences that
+/// show up between a canonical `output_path` and a raw `$PATH` entry:
+/// - trailing `/` and `\` are ignored;
+/// - on Windows, `/` and `\` are interchangeable and ASCII case is ignored.
+///
+/// We deliberately do *not* fall back to `std::fs::canonicalize` here: every
+/// PATH entry gets compared on every `bun pm bin -g`, and canonicalize on
+/// Windows issues `CreateFileW` + `GetFinalPathNameByHandleW` — which blocks
+/// for the SMB timeout (~20–60s) on a disconnected mapped drive or
+/// unreachable UNC share. The byte-level fast path (plus the case/slash
+/// normalization on Windows) covers the case #28771 actually reported.
+fn path_entries_equal(a: &[u8], b: &[u8]) -> bool {
+    let a = trim_trailing_path_separators(a);
+    let b = trim_trailing_path_separators(b);
+    if cfg!(windows) {
+        a.len() == b.len()
+            && a.iter().zip(b.iter()).all(|(&x, &y)| {
+                let nx = if x == b'/' { b'\\' } else { x.to_ascii_lowercase() };
+                let ny = if y == b'/' { b'\\' } else { y.to_ascii_lowercase() };
+                nx == ny
+            })
+    } else {
+        strings::eql(a, b)
     }
 }
 

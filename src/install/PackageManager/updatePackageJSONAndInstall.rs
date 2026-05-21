@@ -889,6 +889,11 @@ struct ShellPathFormatter<'a> {
 
 impl fmt::Display for ShellPathFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // On Windows, backslashes are native path separators and should not be
+        // escaped/doubled in display output. Spaces inside quoted strings are
+        // literal on Windows shells (cmd/PowerShell) so no backslash-space
+        // escape is needed there either.
+        let escape_backslashes = !cfg!(windows);
         let mut remaining = self.folder;
         while let Some(space) = strings::index_of_char(remaining, b' ') {
             write!(
@@ -897,7 +902,7 @@ impl fmt::Display for ShellPathFormatter<'_> {
                 bun_core::fmt::fmt_path_u8(
                     &remaining[..space as usize],
                     bun_core::fmt::PathFormatOptions {
-                        escape_backslashes: true,
+                        escape_backslashes,
                         path_sep: if cfg!(windows) {
                             bun_core::fmt::PathSep::Windows
                         } else {
@@ -906,7 +911,7 @@ impl fmt::Display for ShellPathFormatter<'_> {
                     },
                 ),
             )?;
-            writer.write_str("\\ ")?;
+            writer.write_str(if cfg!(windows) { " " } else { "\\ " })?;
             remaining = &remaining[(space as usize + 1).min(remaining.len())..];
         }
 
@@ -916,7 +921,7 @@ impl fmt::Display for ShellPathFormatter<'_> {
             bun_core::fmt::fmt_path_u8(
                 remaining,
                 bun_core::fmt::PathFormatOptions {
-                    escape_backslashes: true,
+                    escape_backslashes,
                     path_sep: if cfg!(windows) {
                         bun_core::fmt::PathSep::Windows
                     } else {

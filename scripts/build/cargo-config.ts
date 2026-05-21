@@ -84,6 +84,15 @@ export function generateCargoConfig(cfg: Config): string {
     lines.push("");
     lines.push(`[target.${triple}]${triple === host ? "  # host" : ""}`);
     lines.push(`linker = ${JSON.stringify(linkerFor(triple, cfg))}`);
+    // `-fuse-ld=lld` forces clang++ to drive lld instead of the default `cc`
+    // link. Skipped on darwin: macOS uses `ld64` / the system linker (not lld)
+    // and a Homebrew `clang++` without the `lld` driver alias rejects the flag
+    // with "invalid linker name in argument '-fuse-ld=lld'", breaking plain
+    // `cargo check` / rust-analyzer. The ninja build sets its own linker via
+    // `CARGO_TARGET_<T>_LINKER` + `CARGO_ENCODED_RUSTFLAGS` (rust.ts), so this
+    // file only matters for raw cargo invocations — which on darwin just want
+    // the driver's default linker.
+    if (tripleOs(triple) === "darwin") continue;
     lines.push(`rustflags = ["-C", "link-arg=-fuse-ld=lld"]`);
   }
   lines.push("");

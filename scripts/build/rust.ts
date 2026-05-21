@@ -540,7 +540,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // `-fuse-ld=`. RUSTFLAGS only reach *target* crates when `--target` is given,
   // and the `bun_bin` staticlib has no link step, so it's normally dead — but
   // if a target cdylib ever appears it'd fail with "could not open '-fuse-ld=lld'".
-  if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
+  //
+  // Not on darwin (unless under cross-lang LTO, below): macOS uses `ld64` /
+  // the system linker — `cfg.ld` is empty by default (see config.ts) and the
+  // C++ side doesn't pass `--ld-path=` either (flags.ts). Forcing lld here
+  // also trips Homebrew `clang++` builds that lack the `lld` driver alias
+  // ("invalid linker name in argument '-fuse-ld=lld'"), breaking plain
+  // `cargo check` / `bun bd` on contributors' macs. Parity with the C++ side
+  // — let the driver pick its default linker — is what we want.
+  if (!cfg.windows && !cfg.darwin) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   if (cfg.crossLangLto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
     // so the final lld LTO link sees through Rust↔C++ call edges. The shape
@@ -580,10 +588,6 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //     rust_lto_fix step's `opt --module-summary` copies into the
     //     regular-LTO summary it bolts onto the merged module — see
     //     rust-lto-fix-cli.ts.)
-    //
-    // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
-    // it doubles as making rustc's bitcode link go through the LTO-aware
-    // linker our final link uses, not BFD `/usr/bin/ld`.)
     if (!cfg.darwin && !cfg.windows) {
       rustflags.push("-Zsplit-lto-unit");
 
@@ -600,6 +604,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       // uwtable attrs; this only stops our crates from spreading them.)
       rustflags.push("-Cforce-unwind-tables=no");
     }
+    // Cross-lang LTO on darwin needs its own `-fuse-ld=lld` push because the
+    // "not on darwin" guard above skipped it. The darwin LTO path isn't the
+    // default config — it's only reached when a user explicitly sets `--lto`
+    // — and if it's used, the clang++ must have an `lld` driver alias (same
+    // requirement as linux LTO). Under LTO this flag makes rustc's bitcode
+    // link go through the LTO-aware linker our final link uses, rather than
+    // the default `cc` driver (which picks BFD / `ld64` and can't read
+    // bitcode).
+    if (cfg.darwin) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   }
 
   // ─── Environment ───

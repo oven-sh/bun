@@ -21,8 +21,12 @@ function checkIsHttpToken(val) {
   This regex validates any string surrounded by angle brackets
   (not necessarily a valid URI reference) followed by zero or more
   link-params separated by semicolons.
+
+  The parameter name excludes "=" so it cannot overlap with the optional
+  "=value" suffix; otherwise inputs like "<>;a=b;a=b;...;a=b " trigger
+  catastrophic backtracking.
 */
-const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s]+(?:=(")?[^;"\s]*\1)?)*$/;
+const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s=]+(?:=(")?[^;"\s]*\1)?)*$/;
 function validateLinkHeaderFormat(value, name) {
   if (typeof value === "undefined" || !RegExpPrototypeExec.$call(linkValueRegExp, value)) {
     throw $ERR_INVALID_ARG_VALUE(

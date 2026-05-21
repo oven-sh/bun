@@ -164,20 +164,30 @@ impl AstAllocState {
 /// `#[thread_local]` (not `thread_local!`) so this is a bare `__thread` slot
 /// like Zig's `threadlocal var`: every `AstAlloc` allocation reads this, and
 /// the macro form's `LocalKey::__getit` wrapper showed up under
-/// `pthread_getspecific` in next-lint profiles. The destructor never runs for
-/// `#[thread_local]` statics; a state still installed at thread exit is
-/// reclaimed by the OS with the rest of the thread's pages (scopes are
-/// balanced, so this only happens for process-lifetime installs like the
-/// package manager's `MiniStore`).
+/// `pthread_getspecific` in next-lint profiles. `#[thread_local]` statics run
+/// no destructor, but scopes are balanced, so this slot is `None` by the time
+/// a thread exits — except for process-lifetime installs (the package
+/// manager's `MiniStore`, the main thread's `store_ast_alloc_heap`), whose
+/// threads live until process exit anyway.
 #[thread_local]
 static AST_ALLOC: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
 
-/// One-slot recycler so a per-job `acquire_state`/`release_state` pair doesn't
-/// pay a 16 KB global malloc each time. Holds a clean state (cursor 0, no
-/// heap) — an idle worker thread therefore retains 16 KB of buffer and **zero**
-/// live `mi_heap_t`s between jobs.
-#[thread_local]
-static AST_ALLOC_SPARE: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
+// One-slot recycler so a per-job `acquire_state`/`release_state` pair doesn't
+// pay a 16 KB global malloc each time. Holds a clean state (cursor 0, no
+// heap) — an idle worker thread therefore retains 16 KB of buffer and **zero**
+// live `mi_heap_t`s between jobs.
+//
+// Unlike `AST_ALLOC` this is the `thread_local!` macro, which registers a
+// destructor: the parked box is a global-heap allocation (only the 8-byte
+// pointer lives in TLS), so without a destructor every exiting thread that
+// ever parsed JS — e.g. a terminated Web Worker — would leak ~16 KB. The
+// `LocalKey` access overhead doesn't matter here: the slot is only touched on
+// scope entry/exit, never on the per-allocation hot path. The destructor is
+// just a `free` of the box (a released state never holds a spill heap), so it
+// is safe at any point during thread teardown.
+std::thread_local! {
+    static AST_ALLOC_SPARE: Cell<Option<Box<AstAllocState>>> = const { Cell::new(None) };
+}
 
 /// Mutable access to the installed state without moving the box out of the
 /// thread-local.
@@ -199,17 +209,24 @@ fn active_state<'a>() -> Option<&'a mut AstAllocState> {
 #[inline]
 pub fn acquire_state() -> Box<AstAllocState> {
     AST_ALLOC_SPARE
-        .take()
+        .try_with(Cell::take)
+        .ok()
+        .flatten()
         .unwrap_or_else(AstAllocState::new_boxed)
 }
 
 /// Bulk-free `state`'s allocations ([`AstAllocState::reset`]) and park the
 /// clean box in the one-slot recycler for the next [`acquire_state`] on this
-/// thread. If the slot is already occupied the surplus box is freed.
+/// thread. If the slot is already occupied (or the thread is tearing down and
+/// the recycler's destructor has already run) the box is freed instead.
 #[inline]
 pub fn release_state(mut state: Box<AstAllocState>) {
     state.reset();
-    drop(AST_ALLOC_SPARE.replace(Some(state)));
+    let displaced = AST_ALLOC_SPARE.try_with(|slot| slot.replace(Some(state)));
+    // `Err` ⇒ the TLS destructor already ran; `state` was not moved into the
+    // slot and is dropped here. `Ok(Some(_))` ⇒ the previous occupant is
+    // dropped here.
+    drop(displaced);
 }
 
 /// Replace the active allocation state, returning the previous occupant.

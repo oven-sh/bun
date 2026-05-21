@@ -2069,13 +2069,10 @@ fn transpile_source_code_inner(
             unsafe { (*jsc_vm).transpiled_count += 1 };
             // Spec :122 — `Transpiler::reset_store`.
             // Inline only the block-store half and SKIP
-            // `store_ast_alloc_heap::reset()`: we bind `AST_HEAP` to
-            // `arena.heap_ptr()` below so `AstAlloc` and the parser scratch
-            // share ONE `mi_heap_t*` for this transpile. The two have
-            // identical lifetime — both reclaimed at the give-back
-            // `arena.reset_retain_with_limit` — so unifying is semantically
-            // equivalent and also drops the per-file `mi_heap_destroy`/
-            // `mi_heap_new` pair the side-arena reset paid.
+            // `store_ast_alloc_heap::reset()`: the `ScopedAstAlloc` installed
+            // below gives `AstAlloc` a per-transpile state with the same
+            // lifetime as the parser scratch arena, so the side module's
+            // long-lived state is neither needed nor touched here.
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
 

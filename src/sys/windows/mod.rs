@@ -4863,10 +4863,8 @@ pub fn move_opened_file_at(
                 )
             };
             if src == win32::INVALID_HANDLE_VALUE {
-                return bun_sys::Result::errno(
-                    win32::NTSTATUS(kernel32::GetLastError()),
-                    bun_sys::Tag::NtSetInformationFile,
-                );
+                let e = SystemErrno::init(kernel32::GetLastError() as i64).unwrap_or(SystemErrno::EUNKNOWN);
+                return bun_sys::Result::errno(e, bun_sys::Tag::NtSetInformationFile);
             }
 
             // Reuse buf for dst path. Mirrors FileRenameInformationEx:
@@ -4908,12 +4906,9 @@ pub fn move_opened_file_at(
                 )
             };
             if dst == win32::INVALID_HANDLE_VALUE {
-                let err = kernel32::GetLastError();
+                let e = SystemErrno::init(kernel32::GetLastError() as i64).unwrap_or(SystemErrno::EUNKNOWN);
                 let _ = unsafe { externs::CloseHandle(src) };
-                return bun_sys::Result::errno(
-                    win32::NTSTATUS(err),
-                    bun_sys::Tag::NtSetInformationFile,
-                );
+                return bun_sys::Result::errno(e, bun_sys::Tag::NtSetInformationFile);
             }
             let mut copy_ok = true;
             let mut last_err: u32 = 0;
@@ -4944,10 +4939,8 @@ pub fn move_opened_file_at(
             if copy_ok {
                 bun_sys::Result::success()
             } else {
-                bun_sys::Result::errno(
-                    win32::NTSTATUS(last_err),
-                    bun_sys::Tag::NtSetInformationFile,
-                )
+                let e = SystemErrno::init(last_err as i64).unwrap_or(SystemErrno::EUNKNOWN);
+                bun_sys::Result::errno(e, bun_sys::Tag::NtSetInformationFile)
             }
         } else {
             bun_sys::Result::errno(fallback_rc, bun_sys::Tag::NtSetInformationFile)

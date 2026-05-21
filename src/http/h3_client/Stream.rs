@@ -24,11 +24,11 @@ pub struct Stream {
     // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.
     pub qstream: Option<NonNull<quic::Stream>>,
 
-    /// Slices into the lsquic-owned hset buffer; valid only for the duration
-    /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
-    /// deep-copies synchronously inside that callback, so nothing reads these
-    /// after they go stale.
-    pub decoded_headers: Vec<picohttp::Header>,
+    /// Slices into the lsquic-owned hset buffer (lifetime-erased to
+    /// `'static`); valid only for the duration of the `onStreamHeaders`
+    /// callback that populated it. `cloneMetadata` deep-copies synchronously
+    /// inside that callback, so nothing reads these after they go stale.
+    pub decoded_headers: Vec<picohttp::Header<'static>>,
     pub body_buffer: Vec<u8>,
     pub status_code: u16,
 

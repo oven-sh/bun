@@ -216,8 +216,15 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             i += 1;
             continue;
         };
-        let name = h.name_bytes();
-        let value = h.value_bytes();
+        // SAFETY: `name`/`value` point into the lsquic-owned hset buffer,
+        // which stays alive for the duration of this callback;
+        // `decoded_headers` is documented as valid only within this callback
+        // and is deep-copied (`cloneMetadata`) before the callback returns.
+        // Widened to `'static` so the headers can be stored in
+        // `Stream::decoded_headers`.
+        let name: &'static [u8] = unsafe { bun_ptr::detach_lifetime(h.name_bytes()) };
+        // SAFETY: same hset-buffer invariant as `name` above.
+        let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(h.value_bytes()) };
         if name.first() == Some(&b':') {
             if name == b":status" {
                 status = bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0);

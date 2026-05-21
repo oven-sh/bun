@@ -105,7 +105,11 @@ pub struct HTTPClient<const SSL: bool> {
     // suffix of `input_body_buf`; stored here as the suffix length so we don't
     // hold a self-referential slice.
     to_send_len: usize,
-    headers_buf: [picohttp::Header; 128],
+    /// Scratch storage for `Response::parse`. The parsed headers point into
+    /// the response bytes (`data` / `self.body`), are lifetime-erased to
+    /// `'static`, and are only read synchronously inside the receive callback
+    /// that parsed them.
+    headers_buf: [picohttp::Header<'static>; 128],
     body: Vec<u8>,
     /// Owned NUL-terminated hostname for SNI; empty when unset.
     hostname: ZBox,
@@ -952,7 +956,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         }
 
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
+        // SAFETY: `body` aliases `data` (live for this callback) or `me.body`;
+        // the parsed response (and `me.headers_buf`, which its headers point
+        // into alongside `body`) is only read synchronously below, before
+        // either buffer is mutated or freed. Widened to `'static` to match the
+        // `'static` element type of the `me.headers_buf` scratch array.
+        let parse_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(body) };
+        let response = match picohttp::Response::parse(parse_buf, &mut me.headers_buf) {
             Ok(r) => r,
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
@@ -1011,7 +1021,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // Parse the response to find the end of headers
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
+        // SAFETY: same invariant as the `handle_data` parse — `body` and
+        // `me.headers_buf` are only read synchronously below, before either is
+        // mutated or freed.
+        let parse_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(body) };
+        let response = match picohttp::Response::parse(parse_buf, &mut me.headers_buf) {
             Ok(r) => r,
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
@@ -1248,7 +1262,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             }
         }
 
-        let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
+        // SAFETY: same invariant as the `handle_data` parse — `body` and
+        // `me.headers_buf` are only read synchronously below, before either is
+        // mutated or freed.
+        let parse_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(body) };
+        let response = match picohttp::Response::parse(parse_buf, &mut me.headers_buf) {
             Ok(r) => r,
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                 // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.

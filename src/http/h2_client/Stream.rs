@@ -35,7 +35,9 @@ pub struct Stream {
     /// consistent across multiple HEADERS in one read; the resulting strings
     /// land here until `deliverStream` hands them to handleResponseMetadata.
     pub decoded_bytes: Vec<u8>,
-    pub decoded_headers: Vec<picohttp::Header>,
+    /// Self-referential: each `Header`'s name/value point into `decoded_bytes`
+    /// (lifetime-erased to `'static`); valid until `decoded_bytes` is mutated.
+    pub decoded_headers: Vec<picohttp::Header<'static>>,
     /// Final (non-1xx) status code; 0 until the response HEADERS arrive.
     pub status_code: u32,
 

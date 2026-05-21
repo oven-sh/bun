@@ -53,7 +53,7 @@ impl<'a, T> BabyVec<'a, T> {
     pub fn with_capacity_in(cap: usize, alloc: &'a MimallocArena) -> Self {
         let mut v = Self::new_in(alloc);
         if cap > 0 {
-            v.grow_to(cap);
+            v.grow_exact(cap);
         }
         v
     }

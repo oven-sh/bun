@@ -279,6 +279,20 @@ pub fn install_with_manager(
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
+
+                    // Refresh `trustedDependencies` from the latest package.json
+                    // even when no deps changed. The diff loop only compares
+                    // dependency lists; editing `trustedDependencies` (including
+                    // adding or removing entries) would otherwise get ignored
+                    // until a dep also changed. Carry `None` through unchanged so
+                    // "key absent from package.json" still means "use Bun's
+                    // default list".
+                    // PORT NOTE: `ArrayHashMap::clone()` is an inherent fallible
+                    // method, so map by hand (same as the had-diffs branch).
+                    *lf.trusted_dependencies = match &lockfile.trusted_dependencies {
+                        Some(td) => Some(td.clone()?),
+                        None => None,
+                    };
                 } else {
                     // If you changed packages, we will copy over the new package from the new lockfile
                     let new_dependencies =

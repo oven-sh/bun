@@ -1915,10 +1915,7 @@ impl<'bump> Parser<'bump> {
 
         Ok(match atoms.len() {
             0 => None,
-            1 => {
-                debug_assert!(atoms.capacity() == 1);
-                Some(ast::Atom::new_simple(atoms.into_iter().next().unwrap()))
-            }
+            1 => Some(ast::Atom::new_simple(atoms.into_iter().next().unwrap())),
             _ => Some(ast::Atom::Compound(ast::CompoundAtom {
                 atoms: atoms.into_bump_slice(),
                 brace_expansion_hint: has_brace_open && has_brace_close && has_comma,

@@ -146,10 +146,17 @@ pub fn ends_with_extension(str: &[u8]) -> bool {
 /// CVE-2024-24576 / CVE-2024-27980). Spawn paths must not pass untrusted
 /// arguments to one without checking [`batch_arg_has_cmd_metachars`].
 pub fn is_batch_file(path: &[u8]) -> bool {
-    if path.len() < 4 || path[path.len() - 4] != b'.' {
+    // Windows strips trailing ASCII spaces and periods from the final path
+    // component, so `foo.cmd.` / `foo.cmd ` still run `foo.cmd` through
+    // cmd.exe (CVE-2024-43402). Trim them before checking the extension.
+    let mut end = path.len();
+    while end > 0 && matches!(path[end - 1], b' ' | b'.') {
+        end -= 1;
+    }
+    if end < 4 || path[end - 4] != b'.' {
         return false;
     }
-    let file_ext = &path[path.len() - 3..];
+    let file_ext = &path[end - 3..end];
     strings::eql_case_insensitive_asciii_check_length(file_ext, b"cmd")
         || strings::eql_case_insensitive_asciii_check_length(file_ext, b"bat")
 }

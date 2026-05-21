@@ -357,6 +357,32 @@ impl<'a> LazyPackageDestinationDir<'a> {
     }
 }
 
+/// A dependency alias becomes the install destination inside `node_modules`
+/// (the existing entry is renamed aside, deleted, and re-created). Reject
+/// anything that could escape `node_modules`: empty names, `.`/`..`
+/// components, absolute paths, drive letters, backslashes, NUL bytes, and any
+/// separator other than the single `/` in a scoped name (`@scope/name`).
+fn alias_is_safe_install_target(alias: &[u8]) -> bool {
+    if alias.is_empty()
+        || alias.len() >= MAX_PATH_BYTES
+        || alias.contains(&b'\\')
+        || alias.contains(&b':')
+        || alias.contains(&0)
+    {
+        return false;
+    }
+
+    let mut component_count = 0usize;
+    for component in alias.split(|&c| c == b'/') {
+        component_count += 1;
+        if component.is_empty() || component == b"." || component == b".." {
+            return false;
+        }
+    }
+
+    component_count == 1 || (component_count == 2 && alias[0] == b'@')
+}
+
 impl<'a> PackageInstaller<'a> {
     // ──────────────────────────────────────────────────────────────────────
     // BACKREF accessors
@@ -1164,6 +1190,25 @@ impl<'a> PackageInstaller<'a> {
         }
 
         let alias = self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize].name;
+
+        // The alias is used as a path relative to `node_modules` for delete,
+        // rename, and create operations. Refuse anything that could escape it.
+        if !alias_is_safe_install_target(alias.slice(string_buf!())) {
+            if log_level != Options::LogLevel::Silent {
+                Output::pretty_errorln(format_args!(
+                    "<r><red>error<r>: refusing to install dependency with unsafe name <b>{}<r>",
+                    bstr::BStr::new(alias.slice(string_buf!())),
+                ));
+            }
+            self.summary.fail += 1;
+            self.increment_tree_install_count(
+                !IS_PENDING_PACKAGE_INSTALL,
+                self.current_tree_id,
+                log_level,
+            );
+            return;
+        }
+
         // PORT NOTE: `PackageInstall` stores both `destination_dir_subpath: &mut ZStr`
         // and `destination_dir_subpath_buf: &mut [u8]` aliasing the same bytes (Zig
         // slices don't enforce noalias). Derive BOTH from a single `*mut PathBuffer`

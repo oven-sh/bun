@@ -3491,10 +3491,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         // flush them as a quoted-text token so the parser does not re-interpret
         // a leading `~` as tilde expansion.
         if self.chars.state == CharState::Normal {
-            self.tokens.push(Token::DoubleQuotedText(TextRange {
-                start,
-                end: self.j,
-            }));
+            self.tokens
+                .push(Token::DoubleQuotedText(TextRange { start, end: self.j }));
             self.word_start = self.j;
         }
         Ok(())

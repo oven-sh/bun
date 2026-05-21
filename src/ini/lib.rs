@@ -787,8 +787,7 @@ mod draft {
                                 did_any_escape = true;
                             }
                             b'.' => {
-                                if usage == Usage::Section
-                                    && rope_parts < MAX_SECTION_ROPE_SEGMENTS
+                                if usage == Usage::Section && rope_parts < MAX_SECTION_ROPE_SEGMENTS
                                 {
                                     self.commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
                                     rope_parts += 1;

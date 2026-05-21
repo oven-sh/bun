@@ -550,9 +550,8 @@ impl<'a> ValkeyReader<'a> {
 
                 // Read the rest of the data
                 let data_len = usize::try_from(len - 1).expect("int cast");
-                let mut data = Vec::with_capacity(
-                    self.take_prealloc_budget(data_len, size_of::<RESPValue>()),
-                );
+                let mut data =
+                    Vec::with_capacity(self.take_prealloc_budget(data_len, size_of::<RESPValue>()));
                 // errdefer cleanup handled by Vec Drop on `?`
                 let mut i: usize = 0;
                 while i < data_len {

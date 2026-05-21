@@ -309,20 +309,20 @@ impl Scripts {
     ) -> Result<Option<List>, bun_core::Error> {
         // TODO(port): narrow error set
         if self.has_any() {
-            let add_node_gyp_rebuild_script = if lockfile
-                .has_trusted_dependency(folder_name, folder_name, resolution)
-                && self.install.is_empty()
-                && self.preinstall.is_empty()
-            {
-                // `defer save.restore()` — `save()` returns an RAII guard that
-                // restores the path length on Drop and derefs to the path.
-                let mut save = folder_path.save();
-                let _ = save.append(b"binding.gyp"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let add_node_gyp_rebuild_script =
+                if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
+                    && self.install.is_empty()
+                    && self.preinstall.is_empty()
+                {
+                    // `defer save.restore()` — `save()` returns an RAII guard that
+                    // restores the path length on Drop and derefs to the path.
+                    let mut save = folder_path.save();
+                    let _ = save.append(b"binding.gyp"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
-                bun_sys::exists(save.slice())
-            } else {
-                false
-            };
+                    bun_sys::exists(save.slice())
+                } else {
+                    false
+                };
 
             return Ok(self.create_list(
                 lockfile,

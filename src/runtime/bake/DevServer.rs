@@ -1521,7 +1521,10 @@ fn host_forbidden(resp: AnyResponse) {
 fn origin_forbidden(resp: AnyResponse) {
     resp.corked(move || {
         resp.write_status(b"403 Forbidden");
-        resp.end(b"Blocked: Origin header does not match the dev server", false);
+        resp.end(
+            b"Blocked: Origin header does not match the dev server",
+            false,
+        );
     });
 }
 

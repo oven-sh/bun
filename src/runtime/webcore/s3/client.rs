@@ -1227,6 +1227,12 @@ pub fn readable_stream(
                         .signal_store
                         .aborted
                         .store(true, core::sync::atomic::Ordering::Relaxed);
+                    // Setting the signal alone isn't enough — the HTTP thread is blocked
+                    // waiting on the socket and won't observe it. Actively schedule a
+                    // shutdown (same as FetchTasklet::abort_task) so the connection is
+                    // closed now and the final callback fires promptly instead of
+                    // whenever the server happens to hang up.
+                    bun_http::http_thread().schedule_shutdown((*task).http.assume_init_ref());
                 }
             }
         }

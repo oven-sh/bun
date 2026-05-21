@@ -1415,11 +1415,12 @@ pub enum DevHandlerId {
     MemoryVisualizer,
 }
 
-/// DNS-rebinding guard for `/_bun/...` internal routes. A rebound origin
+/// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
+/// DevTools `/.well-known/...` route. A rebound origin
 /// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
 /// non-loopback / non-IP / non-configured hostnames prevents the attacker's
 /// page from reading bundled source via same-origin fetch.
-fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
+pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
     let Some(host) = req.header(b"host") else {
         return false;
     };

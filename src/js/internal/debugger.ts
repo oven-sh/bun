@@ -619,7 +619,7 @@ function isOriginAllowed(origin: string | null): boolean {
     // Privileged schemes (e.g. devtools://) cannot be claimed by a web page.
     return true;
   }
-  if (origin === "https://debug.bun.sh") {
+  if (url.origin === "https://debug.bun.sh") {
     return true;
   }
   return hostname === "localhost" || hostname === "[::1]" || /^127(\.\d{1,3}){3}$/.test(hostname);

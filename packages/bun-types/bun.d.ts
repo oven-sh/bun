@@ -2437,6 +2437,17 @@ declare module "bun" {
 
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;
+    /**
+     * Enable React Fast Refresh transform.
+     *
+     * Injects `$RefreshReg$` and `$RefreshSig$` calls for component
+     * registration and hook signature tracking. The consumer is
+     * responsible for providing these globals at runtime (e.g. via
+     * `react-refresh/runtime`).
+     *
+     * @default false
+     */
+    reactFastRefresh?: boolean;
     exports?: {
       eliminate?: string[];
       replace?: Record<string, string>;

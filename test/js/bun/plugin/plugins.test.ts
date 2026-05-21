@@ -366,6 +366,19 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  it("propagates exceptions thrown from 'target' toString", () => {
+    expect(() => {
+      plugin({
+        setup: () => {},
+        target: {
+          toString() {
+            throw new Error("boom");
+          },
+        },
+      } as any);
+    }).toThrow("boom");
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];

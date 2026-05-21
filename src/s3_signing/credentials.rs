@@ -895,8 +895,7 @@ impl S3Credentials {
         // dropped. None of those fields are mutated after the header is written.
         //
         // SAFETY: see block comment above.
-        result._headers[0] =
-            unsafe { pico_header_new(b"x-amz-content-sha256", aws_content_hash) };
+        result._headers[0] = unsafe { pico_header_new(b"x-amz-content-sha256", aws_content_hash) };
         // SAFETY: see block comment above.
         result._headers[1] = unsafe { pico_header_new(b"x-amz-date", &result.amz_date) };
         // SAFETY: see block comment above.

@@ -871,10 +871,7 @@ mod tests {
             list.get_if_other_is_absent(b"content-type", b"etag"),
             Some(&b"text/html"[..])
         );
-        assert_eq!(
-            list.get_if_other_is_absent(b"etag", b"content-type"),
-            None
-        );
+        assert_eq!(list.get_if_other_is_absent(b"etag", b"content-type"), None);
     }
 
     #[test]

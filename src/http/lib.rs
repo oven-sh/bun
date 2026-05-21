@@ -2087,8 +2087,9 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(b"Content-Length") => {
                     // Content-Length is always consumed (never written to the buffer).
                     // SAFETY: same `header_buf` widening as `name` above.
-                    original_content_length =
-                        Some(unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) });
+                    original_content_length = Some(unsafe {
+                        bun_ptr::detach_lifetime(self.header_str(header_values[i]))
+                    });
                     continue;
                 }
                 h if h == hash_header_const(b"Connection") => {

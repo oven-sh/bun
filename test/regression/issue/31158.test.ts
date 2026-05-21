@@ -67,6 +67,9 @@ test.skipIf(!isGlibc)("event loop survives SA_ONSTACK on SIGPWR + WASM (oven-sh/
       console.log("EVENT_LOOP_ALIVE");
     `;
 
+  // `await using` scopes the child to this block — if the test-runner
+  // timeout fires because the bug reproduced, `Bun.spawn`'s disposer
+  // kills the child on the way out, no harness-side watchdog needed.
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
     env: bunEnv,
@@ -74,14 +77,9 @@ test.skipIf(!isGlibc)("event loop survives SA_ONSTACK on SIGPWR + WASM (oven-sh/
     stderr: "pipe",
   });
 
-  // Kill the child after 10 s so a regression shows up as "hung, no output"
-  // rather than a stuck test harness.
-  const watchdog = setTimeout(() => proc.kill("SIGKILL"), 10_000);
-
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  clearTimeout(watchdog);
 
   expect(stderr).toBe("");
   expect(stdout).toContain("EVENT_LOOP_ALIVE");
   expect(exitCode).toBe(0);
-});
+}, 15_000);

@@ -134,6 +134,8 @@ This prevents compiled copies of test files (for example, from `tsc` writing to 
 pathIgnorePatterns = []
 ```
 
+The defaults only affect auto-discovery. Explicit file or directory arguments on the CLI (for example, `bun test ./build/foo.test.ts` or `bun test ./build`) still run the specified tests even when the defaults are active -- if you point at a path, Bun trusts you. Any patterns you configure yourself still apply to explicit arguments, so `pathIgnorePatterns = ["**/build/**"]` will filter the file out whether auto-discovered or named on the CLI.
+
 #### Common Use Cases
 
 ```toml title="bunfig.toml" icon="settings"

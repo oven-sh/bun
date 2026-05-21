@@ -201,7 +201,7 @@ pathIgnorePatterns = ["vendor/**", "submodules/**", "fixtures/**"]
 
 Equivalent CLI flag: `--path-ignore-patterns`. CLI flags override the `bunfig.toml` value entirely.
 
-When `pathIgnorePatterns` is not set, Bun falls back to a built-in default list (`**/dist/**`, `**/build/**`) so compiled copies of test files under conventional output directories aren't discovered twice. Providing any value -- including an empty array `pathIgnorePatterns = []` -- disables the defaults.
+When `pathIgnorePatterns` is not set, Bun falls back to a built-in default list (`**/dist/**`, `**/build/**`) so compiled copies of test files under conventional output directories aren't discovered twice. Providing any value -- including an empty array `pathIgnorePatterns = []` -- disables the defaults. The defaults only affect auto-discovery: explicit CLI paths like `bun test ./build/foo.test.ts` still run. User-configured patterns apply to explicit arguments too.
 
 ### `test.smol`
 

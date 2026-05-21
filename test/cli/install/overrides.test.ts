@@ -254,10 +254,10 @@ test("nested override applies only under matching parent", async () => {
     join(String(tmp), "package.json"),
     JSON.stringify({
       dependencies: {
-        express: "4.18.2",
+        "raw-body": "2.5.2",
       },
       overrides: {
-        express: {
+        "raw-body": {
           bytes: "1.0.0",
         },
       },
@@ -275,7 +275,7 @@ test("nested override does not apply under different parent", async () => {
     JSON.stringify({
       dependencies: {
         lodash: "4.17.21",
-        express: "4.18.2",
+        "raw-body": "2.5.2",
       },
       overrides: {
         lodash: {
@@ -295,11 +295,11 @@ test("nested override with dot and child handles both rules", async () => {
     join(String(tmp), "package.json"),
     JSON.stringify({
       dependencies: {
-        express: "4.18.2",
+        "raw-body": "2.5.2",
       },
       overrides: {
-        express: {
-          ".": "4.18.2",
+        "raw-body": {
+          ".": "2.5.2",
           bytes: "1.0.0",
         },
       },
@@ -307,7 +307,7 @@ test("nested override with dot and child handles both rules", async () => {
   );
   install(String(tmp), ["install"]);
   expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
-  expect(versionOf(String(tmp), "node_modules/express/package.json")).toBe("4.18.2");
+  expect(versionOf(String(tmp), "node_modules/raw-body/package.json")).toBe("2.5.2");
   ensureLockfileDoesntChangeOnBunI(String(tmp));
 });
 
@@ -317,10 +317,10 @@ test("Yarn-style nested resolution applies only under matching parent", async ()
     join(String(tmp), "package.json"),
     JSON.stringify({
       dependencies: {
-        express: "4.18.2",
+        "raw-body": "2.5.2",
       },
       resolutions: {
-        "express/bytes": "1.0.0",
+        "raw-body/bytes": "1.0.0",
       },
     }),
   );

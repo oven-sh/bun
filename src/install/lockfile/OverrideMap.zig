@@ -306,21 +306,26 @@ pub fn parseFromOverrides(
                     try log.addWarningFmt(source, child_prop.key.?.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
                     continue;
                 }
-                if (try parseOverrideValue(
-                    "override",
-                    lockfile,
-                    pm,
-                    root_package,
-                    source,
-                    child_prop.value.?.loc,
-                    log,
-                    child_key_str,
-                    child_version_str,
-                    builder,
-                )) |child_dep| {
+            if (try parseOverrideValue(
+                "override",
+                lockfile,
+                pm,
+                root_package,
+                source,
+                child_prop.value.?.loc,
+                log,
+                child_key_str,
+                child_version_str,
+                builder,
+            )) |child_dep| {
                     const child_name_hash = String.Builder.stringHash(child_key_str);
+                    // Strip version qualifier from parent key so the hash matches
+                    // what get() looks up from the installed package's name_hash.
+                    // e.g. "foo@1.0.0" -> hash("foo"), not hash("foo@1.0.0")
+                    const stripped_parent = stripVersionSuffix(k);
+                    const scoped_parent_hash = String.Builder.stringHash(stripped_parent);
                     this.scoped.putAssumeCapacity(.{
-                        .parent_name_hash = name_hash,
+                        .parent_name_hash = scoped_parent_hash,
                         .child_name_hash = child_name_hash,
                         .parent_name = builder.append(String, k),
                     }, child_dep);
@@ -416,7 +421,8 @@ pub fn parseFromResolutions(
                     try log.addWarningFmt(source, key.loc, lockfile.allocator, "Deeply nested resolution \"{s}\" is not supported", .{k});
                     continue;
                 }
-                const parent_name_hash = String.Builder.stringHash(pc.parent);
+                const stripped_parent = stripVersionSuffix(pc.parent);
+                const parent_name_hash = String.Builder.stringHash(stripped_parent);
                 this.scoped.putAssumeCapacity(.{
                     .parent_name_hash = parent_name_hash,
                     .child_name_hash = dep.name_hash,
@@ -488,6 +494,28 @@ pub fn parseOverrideValue(
             return null;
         },
     };
+}
+
+/// Strip a version qualifier from a package name so the hash matches what
+/// get() looks up from the installed package's name_hash. For example:
+/// "foo@1.0.0" -> "foo", "@scope/pkg" -> "@scope/pkg" (no version).
+/// This allows version-qualified parent keys in npm overrides and Yarn
+/// resolutions to match the installed parent package by name alone.
+fn stripVersionSuffix(name: []const u8) []const u8 {
+    // For scoped packages: @scope/pkg -> no version to strip
+    if (name.len > 0 and name[0] == '@') {
+        const first_slash = strings.indexOfChar(name, '/') orelse return name;
+        // Look for @ after the scope slash: @scope/pkg@1.0.0
+        if (strings.indexOfChar(name[first_slash + 1 ..], '@')) |at_idx| {
+            return name[0 .. first_slash + 1 + at_idx];
+        }
+        return name;
+    }
+    // For unscoped packages: look for the last @ that introduces a version
+    if (strings.indexOfChar(name, '@')) |at_idx| {
+        return name[0..at_idx];
+    }
+    return name;
 }
 
 const string = []const u8;

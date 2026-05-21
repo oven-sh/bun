@@ -493,5 +493,39 @@ test("explicit test", () => {
       expect(stderr).not.toContain("1 pass");
       expect(result.exitCode).not.toBe(0);
     });
+
+    test("explicit dir still prunes nested default-ignored directories", () => {
+      // Narrowing behavior: `bun test ./packages/foo` drops only the default
+      // patterns that match the scan root itself (none, in this case) — the
+      // other defaults keep pruning nested `dist/`/`build/`, so a duplicate
+      // `packages/foo/dist/foo.test.ts` is NOT discovered alongside the
+      // original in `packages/foo/src/`.
+      const dir = tempDirWithFiles("path-ignore-narrow-nested", {
+        "packages/foo/src/foo.test.ts": `
+import { test, expect } from "bun:test";
+test("original test", () => {
+  expect(1).toBe(1);
+});
+`,
+        "packages/foo/dist/foo.test.ts": `
+import { test, expect } from "bun:test";
+test("duplicate test", () => {
+  expect(1).toBe(1);
+});
+`,
+      });
+
+      const result = Bun.spawnSync([bunExe(), "test", "./packages/foo"], {
+        cwd: dir,
+        env: bunEnv,
+        stdio: [null, null, "pipe"],
+      });
+
+      const stderr = result.stderr.toString("utf-8");
+      expect(stderr).toContain("original test");
+      expect(stderr).not.toContain("duplicate test");
+      expect(stderr).toContain("1 pass");
+      expect(result.exitCode).toBe(0);
+    });
   });
 });

@@ -9,7 +9,7 @@ use std::io::Write as _;
 
 use bun_core::env::{Architecture, OperatingSystem};
 use bun_core::{Environment, Global, env_var, fmt as bun_fmt};
-use bun_core::{MutableString, ZStr, strings};
+use bun_core::{ZStr, strings};
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{SlicedString, Version};
 use bun_sys::Fd;
@@ -62,21 +62,18 @@ pub enum Libc {
 
 impl Libc {
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub fn npm_name(self) -> &'static [u8] {
+    pub const fn npm_name(self) -> &'static str {
         match self {
-            Libc::Default => b"",
-            Libc::Musl => b"-musl",
-            Libc::Android => b"-android",
+            Libc::Default => "",
+            Libc::Musl => "-musl",
+            Libc::Android => "-android",
         }
     }
 }
 
 impl fmt::Display for Libc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(
-            // SAFETY: npm_name() returns ASCII literals
-            unsafe { core::str::from_utf8_unchecked(self.npm_name()) },
-        )
+        f.write_str(self.npm_name())
     }
 }
 
@@ -139,7 +136,7 @@ impl CompileTarget {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
                 // TODO(port): lifetime — Zig returns the env var slice directly (`return url;`),
-                // which is not tied to `buf`. Phase B: change return type to allow returning a
+                // which is not tied to `buf`. Could change the return type to allow returning a
                 // non-buf slice (e.g. Cow<'_, [u8]>). For now copy into buf without truncation.
                 if url.len() > buf.len() {
                     return Err(bun_core::err!("BufferTooSmall"));
@@ -179,14 +176,14 @@ impl CompileTarget {
             cursor.write_all(b"/@oven/bun-")?;
             cursor.write_all(os)?;
             cursor.write_all(b"-")?;
-            cursor.write_all(arch)?;
-            cursor.write_all(libc)?;
+            cursor.write_all(arch.as_bytes())?;
+            cursor.write_all(libc.as_bytes())?;
             cursor.write_all(baseline)?;
             cursor.write_all(b"/-/bun-")?;
             cursor.write_all(os)?;
             cursor.write_all(b"-")?;
-            cursor.write_all(arch)?;
-            cursor.write_all(libc)?;
+            cursor.write_all(arch.as_bytes())?;
+            cursor.write_all(libc.as_bytes())?;
             cursor.write_all(baseline)?;
             write!(
                 cursor,
@@ -447,7 +444,7 @@ impl CompileTarget {
 
     pub fn define_values(&self) -> &'static [&'static [u8]] {
         // PERF(port): was comptime monomorphization (inline else over os/arch/libc returning
-        // anonymous struct const). Phase B: generate static tables via macro_rules! or
+        // anonymous struct const). Could generate static tables via macro_rules! or
         // const_format::concatcp! over OperatingSystem::name_string().
         // TODO(port): this needs a static [&[u8]; 3] per (os, arch, libc) combo — the os
         // string is `"\"" ++ os.nameString() ++ "\""` and the version is
@@ -501,7 +498,7 @@ impl fmt::Display for CompileTarget {
             f,
             "bun-{}-{}{}{}-v{}.{}.{}",
             self.os.npm_name(),
-            bstr::BStr::new(self.arch.npm_name()),
+            self.arch.npm_name(),
             self.libc,
             BaselineFormatter {
                 baseline: self.baseline

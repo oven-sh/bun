@@ -13,7 +13,7 @@ use crate::AllocError;
 #[inline]
 pub fn create<T>(value: T) -> Result<Box<T>, AllocError> {
     // PERF(port): Zig `allocator.create` is fallible; Rust `Box::new` aborts on OOM.
-    // If fallible allocation is required in Phase B, swap to `Box::try_new` (nightly
+    // If fallible allocation is required, swap to `Box::try_new` (nightly
     // `allocator_api`) or a manual `alloc::alloc` + `ptr::write` pair.
     Ok(Box::new(value))
 }

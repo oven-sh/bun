@@ -4,17 +4,26 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use bun_alloc::AllocError;
 use bun_collections::{StringHashMap, VecExt};
 use bun_core::Error;
-use bun_core::{ZStr, w};
+use bun_core::ZStr;
+#[cfg(windows)]
+use bun_core::w;
+#[cfg(not(windows))]
+use bun_paths::MAX_PATH_BYTES;
+#[cfg(windows)]
+use bun_paths::WPathBuffer;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_paths::resolve_path;
 use bun_paths::strings;
-use bun_paths::{self as path, AbsPath, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, WPathBuffer};
+use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{ExternalString, String};
-use bun_sys::{self as sys, Fd, FdExt as _, Mode};
+#[cfg(not(windows))]
+use bun_sys::Mode;
+use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};
-use crate::install::{self as Install, DependencyID, ExternalStringList};
+use crate::install::{DependencyID, ExternalStringList};
+#[cfg(windows)]
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
 use crate::windows_shim::Shebang as WinShimShebang;
@@ -383,9 +392,9 @@ impl Bin {
                     writer.write_str("{\n")?;
                     *indent += 1;
                     write_indent(writer, indent)?;
-                    write!(
+                    writeln!(
                         writer,
-                        "{}: {},\n",
+                        "{}: {},",
                         self.value.named_file[0].fmt_json(buf, Default::default()),
                         self.value.named_file[1].fmt_json(buf, Default::default()),
                     )?;
@@ -413,9 +422,9 @@ impl Bin {
                             writer.write_char('\n')?;
                         }
                         write_indent(writer, indent)?;
-                        write!(
+                        writeln!(
                             writer,
-                            "{}: {},\n",
+                            "{}: {},",
                             list[i].value.fmt_json(buf, Default::default()),
                             list[i + 1].value.fmt_json(buf, Default::default()),
                         )?;
@@ -586,8 +595,10 @@ pub struct NamesIterator<'a> {
     // TODO(port): std.fs.Dir.Iterator → bun_sys directory iterator type
     pub dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
     pub package_name: String,
-    // TODO(port): std.fs.Dir → bun_sys::Dir; default was bun.invalid_fd.stdDir()
-    pub destination_node_modules: sys::Dir,
+    /// Borrowed view of the destination `node_modules` directory fd; the
+    /// caller owns the underlying `Dir`. Default is `Fd::INVALID` (Zig:
+    /// `bun.invalid_fd.stdDir()`), which `next_in_dir()` never reaches.
+    pub destination_node_modules: Fd,
     pub buf: PathBuffer,
     pub string_buffer: &'a [u8],
     pub extern_string_buf: &'a [ExternalString],
@@ -612,9 +623,11 @@ impl<'a> NamesIterator<'a> {
             let joined_len = joined.len();
             self.buf[joined_len] = 0;
             let joined_ = ZStr::from_buf_mut(&mut self.buf, joined_len);
-            // TODO(port): bun.openDir(dir, path) → bun_sys equivalent
-            let child_dir = sys::open_dir(dir, joined_)?;
-            self.dir_iterator = Some(sys::iterate_dir(child_dir.fd));
+            let child_dir = sys::Dir::borrow(&dir)
+                .open_at(joined_)
+                .map_err(Error::from)?
+                .into_raw();
+            self.dir_iterator = Some(sys::iterate_dir(child_dir));
         }
 
         let iter = self.dir_iterator.as_mut().unwrap();
@@ -727,11 +740,18 @@ pub type Context = PriorityQueueContext;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 pub fn normalized_bin_name(name: &[u8]) -> &[u8] {
-    if let Some(i) = name
+    let name = match name
         .iter()
         .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
     {
-        return &name[i + 1..];
+        Some(i) => &name[i + 1..],
+        None => name,
+    };
+
+    // npm's `join('/', key).slice(1)` collapses `.`/`..` to empty; do the same
+    // so the `.bin/<name>` destination cannot resolve outside `.bin/`.
+    if name == b"." || name == b".." {
+        return b"";
     }
 
     name
@@ -781,9 +801,16 @@ static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
 
 impl<'a> Linker<'a> {
     pub fn ensure_umask() {
-        if !HAS_SET_UMASK.load(Ordering::Acquire) {
-            HAS_SET_UMASK.store(true, Ordering::Release);
-            UMASK.store(sys::umask(0) as u32, Ordering::Release);
+        // Single-winner gate: only the thread that flips false->true performs
+        // the temporary umask(0)/umask(prev) probe. A bare load+store would let
+        // two threads interleave the probe and leave the process umask wrong.
+        if HAS_SET_UMASK
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            let prev = sys::umask(0);
+            sys::umask(prev);
+            UMASK.store(prev as u32, Ordering::Release);
         }
     }
 
@@ -864,7 +891,6 @@ impl<'a> Linker<'a> {
                     return;
                 }
             };
-            let _close = sys::CloseOnDrop::file(&target);
             self.create_windows_shim(&target, abs_target, abs_dest, global);
         }
 
@@ -880,6 +906,7 @@ impl<'a> Linker<'a> {
         }
     }
 
+    #[cfg(not(windows))]
     fn try_normalize_shebang(abs_target: &ZStr) {
         let mut shebang_buf = [0u8; 2048];
 
@@ -889,10 +916,6 @@ impl<'a> Linker<'a> {
             else {
                 return;
             };
-            let bin_for_reading = scopeguard::guard(bin_for_reading, |f| {
-                let _ = f.close();
-            });
-
             let Ok(read) = bin_for_reading.read_all(&mut shebang_buf) else {
                 return;
             };
@@ -958,7 +981,7 @@ impl<'a> Linker<'a> {
             content_to_free = Box::default();
             chunk
         };
-        let _ = &content_to_free; // freed on drop
+        let _ = &content_to_free;
 
         // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
         let Ok(original_stat) = sys::fstatat(Fd::cwd(), abs_target) else {
@@ -990,10 +1013,6 @@ impl<'a> Linker<'a> {
             ) else {
                 return;
             };
-            let tmpfile = scopeguard::guard(tmpfile, |f| {
-                let _ = f.close();
-            });
-
             // Write the corrected shebang (without \r)
             if tmpfile
                 .write_all(&chunk_without_newline[0..chunk_without_newline.len() - 1])
@@ -1091,8 +1110,7 @@ impl<'a> Linker<'a> {
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
                     // TODO(port): bun.makePath(std.fs.cwd(), ...)
-                    let _ =
-                        sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
+                    let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::File::openat_os_path(
@@ -1110,7 +1128,6 @@ impl<'a> Linker<'a> {
                 }
             }
         };
-        let _close = sys::CloseOnDrop::file(&bunx_file);
 
         let rel_target = resolve_path::relative_buf_z(
             self.rel_buf,
@@ -1209,7 +1226,7 @@ impl<'a> Linker<'a> {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
                     self.err = Some(err.to_zig_err());
-                    Self::chmod_on_ok(&self.err, abs_target);
+                    Self::chmod_on_ok(self.err, abs_target);
                     return;
                 }
 
@@ -1217,7 +1234,7 @@ impl<'a> Linker<'a> {
                 if err.get_errno() == sys::Errno::ENOENT {
                     if global {
                         self.err = Some(err.to_zig_err());
-                        Self::chmod_on_ok(&self.err, abs_target);
+                        Self::chmod_on_ok(self.err, abs_target);
                         return;
                     }
 
@@ -1227,19 +1244,18 @@ impl<'a> Linker<'a> {
                     // can be re-borrowed for `append`/`slice` in between.
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
-                    let _ =
-                        sys::make_path(sys::Dir { fd: Fd::cwd() }, self.node_modules_path.slice());
+                    let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
                     match sys::symlink_running_executable(rel_target, abs_dest) {
                         sys::Result::Err(real_error) => {
                             // It was just created, no need to delete destination and symlink again
                             self.err = Some(real_error.to_zig_err());
-                            Self::chmod_on_ok(&self.err, abs_target);
+                            Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
                         sys::Result::Ok(()) => {
-                            Self::chmod_on_ok(&self.err, abs_target);
+                            Self::chmod_on_ok(self.err, abs_target);
                             return;
                         }
                     }
@@ -1251,7 +1267,7 @@ impl<'a> Linker<'a> {
                 debug_assert!(err.get_errno() == sys::Errno::EEXIST);
             }
             sys::Result::Ok(()) => {
-                Self::chmod_on_ok(&self.err, abs_target);
+                Self::chmod_on_ok(self.err, abs_target);
                 return;
             }
         }
@@ -1262,14 +1278,14 @@ impl<'a> Linker<'a> {
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
             self.err = Some(err.to_zig_err());
         }
-        Self::chmod_on_ok(&self.err, abs_target);
+        Self::chmod_on_ok(self.err, abs_target);
     }
 
     #[cfg(not(windows))]
-    fn chmod_on_ok(err: &Option<Error>, abs_target: &ZStr) {
+    fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
-            let _ = sys::chmod(abs_target, UMASK.load(Ordering::Acquire) as Mode | 0o777);
+            let _ = sys::chmod(abs_target, 0o777 & !(UMASK.load(Ordering::Acquire) as Mode));
         }
     }
 
@@ -1444,6 +1460,12 @@ impl<'a> Linker<'a> {
                         ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                     };
 
+                    if unscoped_package_name.len()
+                        >= self.abs_dest_buf.len().saturating_sub(dest_off)
+                    {
+                        self.err = Some(bun_core::err!("NameTooLong"));
+                        return;
+                    }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
                         .copy_from_slice(unscoped_package_name);
                     dest_off += unscoped_package_name.len();
@@ -1596,6 +1618,12 @@ impl<'a> Linker<'a> {
                                     ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                                 };
 
+                                if entry_name.len()
+                                    >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
+                                {
+                                    self.err = Some(bun_core::err!("NameTooLong"));
+                                    return;
+                                }
                                 dest_off = abs_dest_dir_end;
                                 self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
                                     .copy_from_slice(entry_name);
@@ -1633,12 +1661,18 @@ impl<'a> Linker<'a> {
                 Tag::File => {
                     let unscoped_package_name =
                         Dependency::unscoped_package_name(self.package_name.slice());
+                    if unscoped_package_name.len()
+                        >= self.abs_dest_buf.len().saturating_sub(dest_off)
+                    {
+                        self.err = Some(bun_core::err!("NameTooLong"));
+                        return;
+                    }
                     self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
                         .copy_from_slice(unscoped_package_name);
                     dest_off += unscoped_package_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                    let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                     Self::unlink_bin_or_shim(abs_dest);
                 }
@@ -1649,13 +1683,17 @@ impl<'a> Linker<'a> {
                     if normalized_name.is_empty() {
                         return;
                     }
+                    if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
+                        self.err = Some(bun_core::err!("NameTooLong"));
+                        return;
+                    }
 
                     self.abs_dest_buf[dest_off..dest_off + normalized_name.len()]
                         .copy_from_slice(normalized_name);
                     dest_off += normalized_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                    let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                     Self::unlink_bin_or_shim(abs_dest);
                 }
@@ -1672,6 +1710,12 @@ impl<'a> Linker<'a> {
                             i += 2;
                             continue;
                         }
+                        if normalized_bin_dest.len()
+                            >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
+                        {
+                            self.err = Some(bun_core::err!("NameTooLong"));
+                            return;
+                        }
 
                         dest_off = abs_dest_dir_end;
                         self.abs_dest_buf[dest_off..dest_off + normalized_bin_dest.len()]
@@ -1679,7 +1723,7 @@ impl<'a> Linker<'a> {
                         dest_off += normalized_bin_dest.len();
                         self.abs_dest_buf[dest_off] = 0;
                         let abs_dest_len = dest_off;
-                        let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                        let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                         Self::unlink_bin_or_shim(abs_dest);
 
@@ -1714,13 +1758,19 @@ impl<'a> Linker<'a> {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
                                 let entry_name = entry.name.slice_u8();
+                                if entry_name.len()
+                                    >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
+                                {
+                                    self.err = Some(bun_core::err!("NameTooLong"));
+                                    return;
+                                }
                                 dest_off = abs_dest_dir_end;
                                 self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
                                     .copy_from_slice(entry_name);
                                 dest_off += entry_name.len();
                                 self.abs_dest_buf[dest_off] = 0;
                                 let abs_dest_len = dest_off;
-                                let abs_dest = ZStr::from_buf(&self.abs_dest_buf, abs_dest_len);
+                                let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
 
                                 Self::unlink_bin_or_shim(abs_dest);
                             }

@@ -1,5 +1,4 @@
-use bun_jsc::{CallFrame, ConsoleObject, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
 use super::mock;
@@ -116,7 +115,7 @@ pub fn to_have_been_called_with(
     // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
     // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
     // Re-expand to `if b { throw::<true>() } else { throw::<false>() }` once `bun_core::pretty_fmt!` exists.
-    // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+    // PERF(port): was comptime bool dispatch (`switch inline else`) — profile if hot.
     this.throw(
         global,
         signature,

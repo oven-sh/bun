@@ -48,6 +48,7 @@
 
 #[cfg(not(windows))]
 use core::sync::atomic::AtomicU32;
+#[cfg(any(not(windows), debug_assertions))]
 use core::sync::atomic::Ordering;
 
 #[cfg(not(windows))]

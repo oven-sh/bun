@@ -1,8 +1,6 @@
 use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
-#[cfg(windows)]
-use std::sync::Arc;
 
 use bun_sys::{self as sys, Fd};
 
@@ -35,7 +33,7 @@ use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`is_closed` are default trait methods; bring traits into
 // scope so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
+use bun_sys::windows::libuv::UvHandle as _;
 
 // PipeReader.zig declares no `Output.scoped(.PipeReader, …)` scope; all logging
 // goes through `bun.sys.syslog` (the `SYS` scope) or `libuv::log!`.
@@ -332,17 +330,16 @@ impl PosixBufferedReader {
         if self.flags.contains(PosixFlags::MEMFD) {
             if let PollOrFd::Fd(fd) = self.handle {
                 // PORT NOTE: Zig `defer this.handle.close(null, {})` — close after
-                // the read regardless of result.
-                let result = sys::File { handle: fd }
+                // the read regardless of result. `self.handle` owns the fd;
+                // borrow a non-owning `File` view so the temporary doesn't
+                // close it on drop (handle.close() below does).
+                let result = sys::File::borrow(&fd)
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
                 self.handle.close(None, None::<fn(*mut c_void)>);
                 if let Err(err) = result {
-                    // TODO(b2-blocked): bun_core::debug_warn — macro form is
+                    // TODO(port): bun_core::debug_warn — macro form is
                     // broken (concat! into $fmt:literal); use the fn for now.
-                    bun_core::output::debug_warn(&format_args!(
-                        "error reading from memfd\n{}",
-                        err
-                    ));
+                    bun_core::output::debug_warn(format_args!("error reading from memfd\n{}", err));
                     return self.buffer();
                 }
             }
@@ -555,12 +552,6 @@ impl PosixBufferedReader {
         }
 
         false
-    }
-
-    fn wrap_read_fn(
-        func: fn(Fd, &mut [u8]) -> sys::Result<usize>,
-    ) -> impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize> {
-        move |fd, buf, _offset| func(fd, buf)
     }
 
     fn read_file(parent: &mut PosixBufferedReader, fd: Fd, size_hint: isize, received_hup: bool) {
@@ -802,7 +793,7 @@ impl PosixBufferedReader {
 
     // PERF(port): `file_type` and `sys_fn` were comptime in Zig (monomorphization).
     // adt_const_params is unstable, so `file_type` is a runtime arg; `sys_fn` is
-    // generic so it still monomorphizes — profile in Phase B.
+    // generic so it still monomorphizes — profile if hot.
     fn read_with_fn(
         parent: &mut PosixBufferedReader,
         file_type: FileType,
@@ -1084,7 +1075,6 @@ impl PosixBufferedReader {
 impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        // _buffer freed by Vec Drop.
         self.close_without_reporting();
     }
 }
@@ -1920,7 +1910,6 @@ impl WindowsBufferedReader {
 impl Drop for WindowsBufferedReader {
     fn drop(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
-        // _buffer freed by Vec Drop.
         // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
         // live uv handles registered with the loop. Let close_impl perform the
         // take + into_raw hand-off so the uv close callback reclaims them.

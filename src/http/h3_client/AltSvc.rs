@@ -38,7 +38,7 @@ pub enum ParseError {
     Clear,
 }
 impl From<ParseError> for bun_core::Error {
-    fn from(e: ParseError) -> Self {
+    fn from(_: ParseError) -> Self {
         bun_core::err!("Clear")
     }
 }
@@ -131,9 +131,8 @@ struct Record {
     expires_at: i64,
 }
 
-// TODO(port): module-level mutable state. Zig used a plain `var`; safe because
-// every access is on the single HTTP thread (see module doc). Phase B may want
-// a `SyncUnsafeCell` / thread-local instead of `static mut`.
+// PORT NOTE: module-level mutable state. Zig used a plain `var`; safe because
+// every access is on the single HTTP thread (see module doc).
 // PORTING.md §Global mutable state: HTTP-thread-only map → RacyCell.
 static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::RacyCell::new(None);
 

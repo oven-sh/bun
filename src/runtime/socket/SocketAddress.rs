@@ -9,7 +9,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem;
 
-use bun_core::{OwnedString, String as BunString, ZStr, strings};
+use bun_core::{OwnedString, String as BunString, ZStr};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
 // TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
 use bun_cares_sys::c_ares as ares;
@@ -53,6 +53,7 @@ impl SocketAddress {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct Options {
     pub family: AF,
     /// When `None`, default is determined by address family.
@@ -194,7 +195,7 @@ impl SocketAddress {
         };
 
         const PREFIX: &str = "http://";
-        // PERF(port): was comptime bool dispatch (`switch (input.is8Bit()) { inline else => |is_8_bit| ... }`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (`switch (input.is8Bit()) { inline else => |is_8_bit| ... }`) — profile if it shows up on a hot path.
         // `defer url_str.deref()` → OwnedString releases the +1 from create_uninitialized_*
         let url_str: OwnedString = if input.is_8bit() {
             let from_chars = input.latin1();
@@ -387,8 +388,7 @@ impl SocketAddress {
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
-        // PERF(port): was stack-fallback — profile in Phase B
-        // (Zig used std.heap.stackFallback(64, bun.default_allocator))
+        // PERF(port): was stack-fallback — Zig used std.heap.stackFallback(64, bun.default_allocator).
 
         // NOTE: `zig translate-c` creates semantically invalid code for `C.ntohs`.
         // Switch back to `htons(options.port)` when this issue gets resolved:
@@ -734,7 +734,7 @@ impl SocketAddress {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime af: c_int`) — profile in Phase B
+// PERF(port): was comptime monomorphization (`comptime af: c_int`) — profile if it shows up on a hot path.
 fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
     // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
     match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
@@ -777,34 +777,7 @@ fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
     unsafe { ares::ares_inet_pton(af, buf.as_ptr().cast(), dst) == 1 }
 }
 
-impl SocketAddress {
-    #[inline]
-    fn as_v4(&self) -> &inet::sockaddr_in {
-        self._addr.as_sin().expect("family() == INET")
-    }
-
-    #[inline]
-    fn as_v6(&self) -> &inet::sockaddr_in6 {
-        self._addr.as_sin6().expect("family() == INET6")
-    }
-}
-
 // =============================================================================
-
-// WTF::StringImpl and WTF::StaticStringImpl have the same shape
-// (StringImplShape) so this is fine. We should probably add StaticStringImpl
-// bindings though.
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    // C++-side `WTF::StaticStringImpl` constants — initialized at load time,
-    // immutable, immortal refcount. Reading the pointer value has no
-    // precondition, so declare them `safe static`.
-    safe static IPv4: bun_core::WTFStringImpl;
-    safe static IPv6: bun_core::WTFStringImpl;
-}
-// TODO(port): const bun.String construction from extern static — needs runtime init or const-fn wrapper
-// const ipv4: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv4 } };
-// const ipv6: BunString = BunString { tag: .WTFStringImpl, value: .{ .WTFStringImpl = IPv6 } };
 
 // FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 #[repr(u16)]
@@ -1056,27 +1029,6 @@ impl sockaddr {
     // pub const in = inet::sockaddr_in;
     // pub const in6 = inet::sockaddr_in6;
     // → use inet::sockaddr_in / inet::sockaddr_in6 directly (Rust has no associated type aliases on inherent impls)
-}
-
-#[allow(non_snake_case)]
-mod WellKnownAddress {
-    use super::*;
-    // TODO(port): move to <area>_sys
-    unsafe extern "C" {
-        // C++-side `WTF::StaticStringImpl` constants — initialized at load time,
-        // immutable, immortal refcount. Reading the pointer value has no
-        // precondition, so declare them `safe static`.
-        safe static INET_LOOPBACK: bun_core::WTFStringImpl;
-        safe static INET6_ANY: bun_core::WTFStringImpl;
-    }
-    #[inline]
-    pub fn loopback_v4() -> BunString {
-        BunString::adopt_wtf_impl(INET_LOOPBACK)
-    }
-    #[inline]
-    pub fn any_v6() -> BunString {
-        BunString::adopt_wtf_impl(INET6_ANY)
-    }
 }
 
 // =============================================================================

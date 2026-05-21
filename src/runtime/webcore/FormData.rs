@@ -1,7 +1,7 @@
 //! HTML `FormData` parsing + JS bridge. Moved from `url/url.zig` because the
 //! struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
 
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::ArrayHashMap;
 use bun_core::{self, declare_scope, err, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
@@ -18,14 +18,14 @@ declare_scope!(FormData, visible);
 
 pub struct FormData {
     pub fields: Map,
-    // TODO(port): lifetime — borrows into caller-owned input; Phase B may lift
+    // TODO(port): lifetime — borrows into caller-owned input; could lift
     // to `&'a [u8]` once borrowck threads through callers.
     pub buffer: *const [u8],
 }
 
 pub type Map = ArrayHashMap<bun_semver::String, FieldEntry>;
 // PORT NOTE: Zig used `bun.Semver.String.ArrayHashContext` + store_hash=false;
-// `bun_collections::ArrayHashMap` is wyhash-keyed — Phase B confirm context match.
+// `bun_collections::ArrayHashMap` is wyhash-keyed — TODO(port): confirm context match.
 
 // `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
 // lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
@@ -40,7 +40,7 @@ pub trait AsyncFormDataExt {
 }
 
 impl AsyncFormDataExt for AsyncFormData {
-    // TODO(port): `bun.JSTerminated!void` — mapped to `JsResult<()>`; Phase B
+    // TODO(port): `bun.JSTerminated!void` — mapped to `JsResult<()>`; could
     // narrow to a `Terminated`-only error set if one exists.
     fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
@@ -78,7 +78,7 @@ impl AsyncFormDataExt for AsyncFormData {
 /// Semver.String's inline storage treats as terminators.
 pub struct Field {
     // TODO(port): lifetime — borrows into caller-owned input buffer (binary
-    // body slice, never freed here); Phase B may lift to `&'a [u8]`.
+    // body slice, never freed here); could lift to `&'a [u8]`.
     pub value: *const [u8],
     pub filename: bun_semver::String,
     pub content_type: bun_semver::String,
@@ -147,7 +147,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     let args = frame.arguments_old::<2>();
     let input_value = args.ptr[0];
     let boundary_value = args.ptr[1];
-    let mut boundary_slice = ZigStringSlice::default();
+    let boundary_slice: ZigStringSlice;
     // PORT NOTE: `defer boundary_slice.deinit()` — handled by `Drop`.
 
     let mut encoding = Encoding::URLEncoded;
@@ -172,7 +172,7 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
             )));
         }
     }
-    let mut input_slice = ZigStringSlice::default();
+    let input_slice: ZigStringSlice;
     // PORT NOTE: `defer input_slice.deinit()` — handled by `Drop`.
     // Keep the `ArrayBuffer` view alive for the duration of `input`'s borrow.
     let input_array_buffer;
@@ -218,7 +218,7 @@ pub fn to_js_from_multipart_data(
     }
 
     impl<'a> Wrapper<'a> {
-        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: Field, buf: &[u8]) {
+        fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field, buf: &[u8]) {
             // SAFETY: `field.value` points into `buf` (caller-owned input), valid for this call.
             let value_str: &[u8] = unsafe { &*field.value };
             let key = ZigString::init_utf8(name.slice(buf));
@@ -316,7 +316,7 @@ pub fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,
-    mut iterator: impl FnMut(&mut C, bun_semver::String, Field, &[u8]),
+    mut iterator: impl FnMut(&mut C, bun_semver::String, &Field, &[u8]),
 ) -> Result<(), bun_core::Error> {
     let mut slice = input;
     let subslicer = SlicedString::init(input, input);
@@ -354,7 +354,7 @@ pub fn for_each_multipart_entry<C>(
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
         let header_end =
-            strings::index_of(remain, b"\r\n\r\n").ok_or(err!("is missing header end"))?;
+            strings::index_of(remain, b"\r\n\r\n").ok_or_else(|| err!("is missing header end"))?;
         let header = &remain[..header_end + 2];
         remain = &remain[header_end + 4..];
 
@@ -365,11 +365,11 @@ pub fn for_each_multipart_entry<C>(
         let mut is_file = false;
         while !header_chunk.is_empty() && (filename.is_none() || name.len() == 0) {
             let line_end = strings::index_of(header_chunk, b"\r\n")
-                .ok_or(err!("is missing header line end"))?;
+                .ok_or_else(|| err!("is missing header line end"))?;
             let line = &header_chunk[..line_end];
             header_chunk = &header_chunk[line_end + 2..];
-            let colon =
-                strings::index_of(line, b":").ok_or(err!("is missing header colon separator"))?;
+            let colon = strings::index_of(line, b":")
+                .ok_or_else(|| err!("is missing header colon separator"))?;
 
             let key = &line[..colon];
             let mut value: &[u8] = if line.len() > colon + 1 {
@@ -449,7 +449,7 @@ pub fn for_each_multipart_entry<C>(
         field.filename = filename.unwrap_or_default();
         field.is_file = is_file;
 
-        iterator(ctx, name, field, input);
+        iterator(ctx, name, &field, input);
     }
 
     Ok(())

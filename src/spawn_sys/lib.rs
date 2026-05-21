@@ -19,8 +19,6 @@
 //!
 //! See `docs/SPAWN_SYS_PROPOSAL.md` for the full crate-graph rationale.
 
-#![allow(dead_code)]
-
 use core::ffi::c_char;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -159,10 +157,21 @@ pub mod pdeathsig {
         DEFAULT_PDEATHSIG_ON_LINUX.store(enabled, Ordering::Release);
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub(crate) fn should_default() -> bool {
-        DEFAULT_PDEATHSIG_ON_LINUX.load(Ordering::Acquire)
-            && INSTALL_THREAD.get().copied() == Some(std::thread::current().id())
+        DEFAULT_PDEATHSIG_ON_LINUX.load(Ordering::Acquire) && is_arming_thread()
+    }
+
+    /// True iff the calling thread is the one that called `set_default(true)`
+    /// (i.e. the main thread that ran `ParentDeathWatchdog::enable()`). The
+    /// no-orphans `spawnSync` machinery — `PR_SET_CHILD_SUBREAPER`,
+    /// signalfd(SIGCHLD), `wait4(-1)` orphan-reaping — is only sound from that
+    /// thread; off-thread callers (install's threadpool `git` clones) would
+    /// race the process-wide subreaper flag and reap each other's children.
+    #[inline]
+    pub fn is_arming_thread() -> bool {
+        INSTALL_THREAD.get().copied() == Some(std::thread::current().id())
     }
 }
 

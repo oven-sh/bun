@@ -1,14 +1,14 @@
 //! Port of `src/jsc/ModuleLoader.zig`.
 //!
-//! B-2 un-gate: real `ModuleLoader` struct, `FetchFlags`, and the
-//! `HardcodedModule` re-export compile against the `lib.rs` stub surface.
+//! The `ModuleLoader` struct, `FetchFlags`, and the `HardcodedModule`
+//! re-export compile against the `lib.rs` stub surface.
 //! `transpile_source_code` / `fetch_builtin_module` / `resolve_embedded_file`
-//! and the `Bun__*` extern entry points are preserved verbatim from the
-//! Phase-A draft inside `` blocks below — every body reaches into
-//! `bun_runtime::node::fs` / `bun_transpiler` internals / gated bundler types
-//! (forward-dep cycle on `bun_jsc`).
+//! and the `Bun__*` extern entry points reach into `bun_runtime::node::fs` /
+//! `bun_transpiler` internals / gated bundler types (forward-dep cycle on
+//! `bun_jsc`).
 
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_options_types::LoaderExt as _;
@@ -301,7 +301,7 @@ pub fn transpile_source_code(
 /// `ModuleLoader.fetchBuiltinModule(jsc_vm, specifier)`.
 pub fn fetch_builtin_module(
     jsc_vm: &mut VirtualMachine,
-    global: *mut JSGlobalObject,
+    global: NonNull<JSGlobalObject>,
     specifier: &bun_core::String,
     referrer: &bun_core::String,
     out: &mut ErrorableResolvedSource,
@@ -310,8 +310,9 @@ pub fn fetch_builtin_module(
         return FetchBuiltinResult::NotFound;
     };
     // SAFETY: hook contract — `jsc_vm` is the live per-thread VM; `out` is a
-    // valid out-param.
-    unsafe { (hooks.fetch_builtin_module)(jsc_vm, global, specifier, referrer, out) }
+    // valid out-param; `global` is the live JS-thread global passed through
+    // opaquely to the §Dispatch hook.
+    unsafe { (hooks.fetch_builtin_module)(jsc_vm, global.as_ptr(), specifier, referrer, out) }
 }
 
 /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(...)` — thin shim over the
@@ -326,7 +327,7 @@ pub fn fetch_builtin_module(
 /// `import` / `require.resolve`, dominated by the resolver's dir-cache walk.
 pub fn resolve_maybe_needs_trailing_slash(
     res: &mut ErrorableString,
-    global: *mut JSGlobalObject,
+    global: &mut JSGlobalObject,
     specifier: bun_core::String,
     source: bun_core::String,
     query_string: Option<&mut bun_core::String>,
@@ -341,7 +342,7 @@ pub fn resolve_maybe_needs_trailing_slash(
         return Ok(());
     };
     let qs = query_string
-        .map(|q| std::ptr::from_mut::<bun_core::String>(q))
+        .map(std::ptr::from_mut::<bun_core::String>)
         .unwrap_or(core::ptr::null_mut());
     // SAFETY: hook contract — `global` is the live JS-thread global (Zig
     // `*JSGlobalObject`, mutable: hook may throw on it); `res`/`qs` are valid
@@ -368,7 +369,7 @@ pub fn resolve_maybe_needs_trailing_slash(
 #[inline]
 pub fn resolve(
     res: &mut ErrorableString,
-    global: *mut JSGlobalObject,
+    global: &mut JSGlobalObject,
     specifier: bun_core::String,
     source: bun_core::String,
     query_string: Option<&mut bun_core::String>,
@@ -413,7 +414,7 @@ pub fn process_fetch_log(
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__transpileFile(
+pub unsafe extern "C" fn Bun__transpileFile(
     jsc_vm: *mut VirtualMachine,
     global_object: *mut JSGlobalObject,
     specifier_ptr: *mut bun_core::String,
@@ -451,7 +452,7 @@ pub extern "C" fn Bun__transpileFile(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__fetchBuiltinModule(
+pub unsafe extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
     global_object: *mut JSGlobalObject,
     specifier: *const bun_core::String,
@@ -459,9 +460,17 @@ pub extern "C" fn Bun__fetchBuiltinModule(
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
-    // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
-    let (jsc_vm, specifier, referrer, ret) =
-        unsafe { (&mut *jsc_vm, &*specifier, &*referrer, &mut *ret) };
+    // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM and
+    // `global_object` is the live JS-thread global. JSC never passes null.
+    let (jsc_vm, global_object, specifier, referrer, ret) = unsafe {
+        (
+            &mut *jsc_vm,
+            NonNull::new_unchecked(global_object),
+            &*specifier,
+            &*referrer,
+            &mut *ret,
+        )
+    };
     // PORT NOTE: spec ModuleLoader.zig:861-876 — when `fetchBuiltinModule`
     // ERRORS, it calls `VirtualMachine.processFetchLog(..., ret, err)` and
     // returns **true** (so C++ surfaces the error instead of falling through to
@@ -473,7 +482,7 @@ pub extern "C" fn Bun__fetchBuiltinModule(
 }
 
 /// `HardcodedModule.Alias.bun_aliases.get(str)` — linear scan over the
-/// `BUN_ALIASES` const tables (PERF(port): Phase B replaces with phf).
+/// `BUN_ALIASES` const tables (PERF(port): could replace with phf).
 #[inline]
 fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     for table in bun_resolve_builtins::HardcodedModule::BUN_ALIASES {
@@ -488,7 +497,7 @@ fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
 
 /// Spec ModuleLoader.zig:828-848.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
+pub unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
     jsc_vm: *mut VirtualMachine,
     specifier: *mut bun_core::String,
     ret: *mut ErrorableResolvedSource,
@@ -520,7 +529,7 @@ pub extern "C" fn Bun__resolveAndFetchBuiltinModule(
 
 /// Spec ModuleLoader.zig:1332-1342. Support embedded .node files.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__resolveEmbeddedNodeFile(
+pub unsafe extern "C" fn Bun__resolveEmbeddedNodeFile(
     vm: *mut VirtualMachine,
     in_out_str: *mut bun_core::String,
 ) -> bool {
@@ -545,7 +554,7 @@ pub extern "C" fn Bun__resolveEmbeddedNodeFile(
 
 /// Spec ModuleLoader.zig:1344-1347.
 #[unsafe(no_mangle)]
-pub extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
+pub unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
     bun_aliases_get(str).is_some()
@@ -594,7 +603,7 @@ pub extern "C" fn Bun__getDefaultLoader(
 
 /// Spec ModuleLoader.zig:1234-1304.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__transpileVirtualModule(
+pub unsafe extern "C" fn Bun__transpileVirtualModule(
     global: *mut JSGlobalObject,
     specifier: *const bun_core::String,
     referrer: *const bun_core::String,
@@ -624,7 +633,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
 
 /// Spec ModuleLoader.zig:1122-1143.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__runVirtualModule(
+pub unsafe extern "C" fn Bun__runVirtualModule(
     global: &JSGlobalObject,
     specifier_ptr: *const bun_core::String,
 ) -> JSValue {

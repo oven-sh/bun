@@ -191,7 +191,7 @@ pub fn decode_utf8(text: &[u8], off: usize) -> Utf8DecodeResult {
     let n = seq_len as usize;
     buf[..n].copy_from_slice(&text[off..][..n]);
 
-    let cp = bun_core::strings::decode_wtf8_rune_t::<u32>(&buf, seq_len, 0xFFFD);
+    let cp = bun_core::strings::decode_wtf8_rune_t::<u32>(buf, seq_len, 0xFFFD);
     Utf8DecodeResult {
         codepoint: cp,
         len: seq_len,

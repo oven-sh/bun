@@ -350,10 +350,9 @@ fn case_fold_from_map<const N: u8>(
     };
 
     // Copy the base codepoints from the data table.
-    // PERF(port): was `inline for` (compile-time unrolled) — profile in Phase B
-    for k in 0..(N as usize) {
-        result.codepoints[k] = data[data_offset + k];
-    }
+    // PERF(port): was `inline for` (compile-time unrolled) — profile if hot.
+    result.codepoints[..(N as usize)]
+        .copy_from_slice(&data[data_offset..data_offset + (N as usize)]);
 
     // If the codepoint doesn't exactly match the map entry, we are
     // inside a range and need to adjust the first output codepoint.

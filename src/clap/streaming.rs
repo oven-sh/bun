@@ -3,7 +3,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::Output;
 
 use crate as clap;
-use crate::args;
 use crate::args::ArgIter;
 
 // Disabled because not all CLI arguments are parsed with Clap.
@@ -160,7 +159,7 @@ where
                 // if flag else arg
                 if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
                     if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                        Output::warn(&format_args!(
+                        Output::warn(format_args!(
                             "unrecognized flag: {}{}\n",
                             if arg_info.kind == ArgKind::Long {
                                 "--"
@@ -177,7 +176,7 @@ where
                 }
 
                 if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                    Output::warn(&format_args!(
+                    Output::warn(format_args!(
                         "unrecognized argument: {}\n",
                         bstr::BStr::new(name)
                     ));
@@ -349,6 +348,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::args;
 
     fn test_no_err(
         params: &[clap::Param<u8>],
@@ -769,8 +769,9 @@ mod tests {
         ];
         test_err(&params, &[b"q"], b"Invalid argument 'q'\n");
         test_err(&params, &[b"-q"], b"Invalid argument '-q'\n");
-        test_err(&params, &[b"--q"], b"Invalid argument '--q'\n");
-        test_err(&params, &[b"--q=1"], b"Invalid argument '--q'\n");
+        // Unrecognized long flags are skipped (opt-in warning), not errors.
+        test_no_err(&params, &[b"--q"], &[]);
+        test_no_err(&params, &[b"--q=1"], &[]);
         test_err(
             &params,
             &[b"-a=1"],

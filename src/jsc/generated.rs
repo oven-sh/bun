@@ -25,12 +25,10 @@
 //!   `${T}Prototype__${name}SetCachedValue(JSValue, *JSGlobalObject, JSValue)`
 //!   `${T}__fromJS` / `${T}__fromJSDirect` / `${T}__create` / `${T}__getConstructor`
 
-#![allow(dead_code, unused_variables, non_snake_case)]
-
 use core::ffi::c_uint;
 use core::mem::MaybeUninit;
 
-use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::{JSCArrayBuffer, JSGlobalObject, JSValue, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Generic accessor wrappers.
@@ -95,7 +93,7 @@ pub type GenString = bun_core::String;
 /// `bun.bun_js.jsc.JSCArrayBuffer.Ref` — adopted `*mut JSC::ArrayBuffer` (refcount
 /// already +1 from C++); deref via `JSC__ArrayBuffer__deref` on drop.
 // TODO(port): wrap in `bun_ptr::ExternalShared<JSCArrayBuffer>` once that crate
-// exposes `adopt(*mut T)`. Raw ptr for now (Phase A — leak on drop).
+// exposes `adopt(*mut T)`. Raw ptr for now (leaks on drop).
 pub type GenArrayBuffer = *mut JSCArrayBuffer;
 
 /// `bun.bun_js.webcore.Blob.Ref` — adopted `*mut Blob` (the codegen `m_ctx`
@@ -230,7 +228,7 @@ unsafe extern "C" {
 }
 
 impl SocketConfigHandlers {
-    fn convert_from_extern(ext: ExternSocketConfigHandlers) -> Self {
+    fn convert_from_extern(ext: &ExternSocketConfigHandlers) -> Self {
         Self {
             on_open: ext.onOpen,
             on_close: ext.onClose,
@@ -255,7 +253,7 @@ impl SocketConfigHandlers {
             bindgenConvertJSToSocketConfigHandlers(global, value, &mut ext)
         })?;
         // SAFETY: success ⇒ C++ initialized `ext`.
-        Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
+        Ok(Self::convert_from_extern(unsafe { ext.assume_init_ref() }))
     }
 }
 
@@ -315,9 +313,9 @@ pub struct SSLConfig {
 // that here by deref-ing every owned string field from the container's `Drop`
 // (matches `bindgen_generated.SSLConfig.deinit` in ssl_config.zig).
 //
-// `GenArrayBuffer` / `GenBlob` raw-pointer payloads also carry an adopted +1
-// ref and are still leaked on drop — tracked by the `pub type` TODOs above;
-// out of scope here.
+// `GenArrayBuffer` / `GenBlob` raw-pointer payloads likewise carry an adopted
+// +1 ref (C++ `ExternTraits<RefPtr<T>>::convertToExtern` calls `leakRef()`);
+// released here via the matching `ExternalSharedDescriptor::ext_deref`.
 //
 // `.get()` on `GenOpt` / `GenVal` returns a *bitwise* `Clone` of the
 // `bun_core::String` (the derived `Clone`, not the inherent `clone()` which
@@ -338,28 +336,56 @@ fn release_gen_val_string(s: &GenVal<GenString>) {
     s.0.deref();
 }
 
+#[inline]
+fn release_gen_val_array_buffer(b: &GenVal<GenArrayBuffer>) {
+    if !b.0.is_null() {
+        // SAFETY: `b.0` is the `RefPtr<JSC::ArrayBuffer>::leakRef()` result from
+        // C++ `ExternTraits` — a live `JSC::ArrayBuffer*` carrying +1.
+        unsafe { <JSCArrayBuffer as bun_ptr::ExternalSharedDescriptor>::ext_deref(b.0) };
+    }
+}
+
+#[inline]
+fn release_gen_val_blob(b: &GenVal<GenBlob>) {
+    if !b.0.is_null() {
+        // SAFETY: `b.0` is the `RefPtr<BlobImpl>::leakRef()` result from C++
+        // `ExternTraits` — a live heap-allocated `Blob*` carrying +1.
+        unsafe {
+            <crate::webcore_types::Blob as bun_ptr::ExternalSharedDescriptor>::ext_deref(
+                b.0.cast::<crate::webcore_types::Blob>(),
+            )
+        };
+    }
+}
+
 impl Drop for SSLConfigAlpnProtocols {
     fn drop(&mut self) {
-        if let SSLConfigAlpnProtocols::String(v) = self {
-            release_gen_val_string(v);
+        match self {
+            SSLConfigAlpnProtocols::None => {}
+            SSLConfigAlpnProtocols::String(v) => release_gen_val_string(v),
+            SSLConfigAlpnProtocols::Buffer(v) => release_gen_val_array_buffer(v),
         }
     }
 }
 
 impl Drop for SSLConfigSingleFile {
     fn drop(&mut self) {
-        if let SSLConfigSingleFile::String(v) = self {
-            release_gen_val_string(v);
+        match self {
+            SSLConfigSingleFile::String(v) => release_gen_val_string(v),
+            SSLConfigSingleFile::Buffer(v) => release_gen_val_array_buffer(v),
+            SSLConfigSingleFile::File(v) => release_gen_val_blob(v),
         }
     }
 }
 
 impl Drop for SSLConfigFile {
     fn drop(&mut self) {
-        // `Array` recursively drops each `SSLConfigSingleFile`; `Buffer` / `File`
-        // are raw-ptr payloads (see module note above).
-        if let SSLConfigFile::String(v) = self {
-            release_gen_val_string(v);
+        // `Array` recursively drops each `SSLConfigSingleFile`.
+        match self {
+            SSLConfigFile::None | SSLConfigFile::Array(_) => {}
+            SSLConfigFile::String(v) => release_gen_val_string(v),
+            SSLConfigFile::Buffer(v) => release_gen_val_array_buffer(v),
+            SSLConfigFile::File(v) => release_gen_val_blob(v),
         }
     }
 }
@@ -402,8 +428,11 @@ impl SSLConfigSingleFile {
         // SAFETY: each arm reads the union field selected by `tag`, which C++
         // guarantees is the initialized one.
         match ext.tag {
+            // SAFETY: tag == 0 ⇒ `_0` is the initialized union arm.
             0 => Self::String(GenVal(adopt_string(unsafe { ext.data._0 }))),
+            // SAFETY: tag == 1 ⇒ `_1` is the initialized union arm.
             1 => Self::Buffer(GenVal(unsafe { ext.data._1 })),
+            // SAFETY: tag == 2 ⇒ `_2` is the initialized union arm.
             2 => Self::File(GenVal(unsafe { ext.data._2 })),
             // SAFETY: tag space is 0..=2 per bindgen contract.
             _ => unsafe { core::hint::unreachable_unchecked() },
@@ -435,8 +464,11 @@ impl SSLConfigFile {
         // SAFETY: each arm reads the union field selected by `tag`.
         match ext.tag {
             0 => Self::None,
+            // SAFETY: tag == 1 ⇒ `_1` is the initialized union arm.
             1 => Self::String(GenVal(adopt_string(unsafe { ext.data._1 }))),
+            // SAFETY: tag == 2 ⇒ `_2` is the initialized union arm.
             2 => Self::Buffer(GenVal(unsafe { ext.data._2 })),
+            // SAFETY: tag == 3 ⇒ `_3` is the initialized union arm.
             3 => Self::File(GenVal(unsafe { ext.data._3 })),
             4 => {
                 // SAFETY: tag == 4 ⇒ `_4` is the initialized arm.
@@ -451,12 +483,12 @@ impl SSLConfigFile {
                         out.push(SSLConfigSingleFile::convert_from_extern(elem));
                     }
                     // PORT NOTE: Zig `BindgenArray` reuses the allocation in-place
-                    // when `ZigType == ExternType`. Phase A copies-then-frees the
+                    // when `ZigType == ExternType`. This path copies-then-frees the
                     // source buffer; in-place reuse deferred.
-                    // PERF(port): was BindgenArray in-place convert — profile in Phase B
-                    // `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
+                    // PERF(port): was BindgenArray in-place convert — profile if it shows up on a hot path.
+                    // SAFETY: `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
                     // (per crate prereq); `mi_free` is size-agnostic.
-                    bun_alloc::basic::free_without_size(arr.data.cast());
+                    unsafe { bun_alloc::basic::free_without_size(arr.data.cast()) };
                 }
                 Self::Array(GenList(out))
             }
@@ -488,7 +520,9 @@ impl SSLConfigAlpnProtocols {
         // SAFETY: each arm reads the union field selected by `tag`.
         match ext.tag {
             0 => Self::None,
+            // SAFETY: tag == 1 ⇒ `_1` is the initialized union arm.
             1 => Self::String(GenVal(adopt_string(unsafe { ext.data._1 }))),
+            // SAFETY: tag == 2 ⇒ `_2` is the initialized union arm.
             2 => Self::Buffer(GenVal(unsafe { ext.data._2 })),
             // SAFETY: tag space is 0..=2 per bindgen contract.
             _ => unsafe { core::hint::unreachable_unchecked() },
@@ -529,7 +563,7 @@ unsafe extern "C" {
 }
 
 impl SSLConfig {
-    fn convert_from_extern(ext: ExternSSLConfig) -> Self {
+    fn convert_from_extern(ext: &ExternSSLConfig) -> Self {
         Self {
             passphrase: adopt_opt_string(ext.passphrase),
             dh_params_file: adopt_opt_string(ext.dh_params_file),
@@ -557,7 +591,7 @@ impl SSLConfig {
             bindgenConvertJSToSSLConfig(global, value, &mut ext)
         })?;
         // SAFETY: success ⇒ C++ initialized `ext`.
-        Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
+        Ok(Self::convert_from_extern(unsafe { ext.assume_init_ref() }))
     }
 }
 
@@ -568,7 +602,7 @@ impl SSLConfig {
 pub enum SocketConfigTls {
     None,
     Boolean(bool),
-    Object(SSLConfig),
+    Object(Box<SSLConfig>),
 }
 
 pub struct SocketConfig {
@@ -612,12 +646,16 @@ union ExternSocketConfigTLSData {
 }
 
 impl SocketConfigTls {
-    fn convert_from_extern(ext: ExternSocketConfigTLS) -> Self {
+    fn convert_from_extern(ext: &ExternSocketConfigTLS) -> Self {
         // SAFETY: each arm reads the union field selected by `tag`.
         match ext.tag {
             0 => Self::None,
+            // SAFETY: tag == 1 ⇒ `_1` is the initialized union arm.
             1 => Self::Boolean(unsafe { ext.data._1 }),
-            2 => Self::Object(SSLConfig::convert_from_extern(unsafe { ext.data._2 })),
+            // SAFETY: tag == 2 ⇒ `_2` is the initialized union arm.
+            2 => Self::Object(Box::new(SSLConfig::convert_from_extern(unsafe {
+                &ext.data._2
+            }))),
             // SAFETY: tag space is 0..=2 per bindgen contract.
             _ => unsafe { core::hint::unreachable_unchecked() },
         }
@@ -651,14 +689,14 @@ unsafe extern "C" {
 }
 
 impl SocketConfig {
-    fn convert_from_extern(ext: ExternSocketConfig) -> Self {
+    fn convert_from_extern(ext: &ExternSocketConfig) -> Self {
         Self {
-            handlers: SocketConfigHandlers::convert_from_extern(ext.handlers),
+            handlers: SocketConfigHandlers::convert_from_extern(&ext.handlers),
             data: ext.data,
             allow_half_open: ext.allow_half_open,
             hostname: adopt_opt_string(ext.hostname),
             port: ext.port.get(),
-            tls: SocketConfigTls::convert_from_extern(ext.tls),
+            tls: SocketConfigTls::convert_from_extern(&ext.tls),
             exclusive: ext.exclusive,
             reuse_port: ext.reuse_port,
             ipv6_only: ext.ipv6_only,
@@ -673,7 +711,7 @@ impl SocketConfig {
             bindgenConvertJSToSocketConfig(global, value, &mut ext)
         })?;
         // SAFETY: success ⇒ C++ initialized `ext`.
-        Ok(Self::convert_from_extern(unsafe { ext.assume_init() }))
+        Ok(Self::convert_from_extern(unsafe { ext.assume_init_ref() }))
     }
 }
 
@@ -973,8 +1011,8 @@ macro_rules! js_class_module {
             // to a non-null `*mut`). `__from_js*` only type-check the encoded
             // value and return the stored `m_ctx` pointer (or null) — the C++
             // side never dereferences `Payload`, so there is no Rust-side
-            // precondition. `__create`/`__dangerously_set_ptr` keep `unsafe`
-            // because they install `ptr` into a GC cell whose finalizer will
+            // precondition. `__dangerously_set_ptr` keeps `unsafe`
+            // because it installs `ptr` into a GC cell whose finalizer will
             // later free it (deferred deref → ownership precondition).
             $crate::jsc_abi_extern! {
                 #[allow(improper_ctypes)]
@@ -984,7 +1022,7 @@ macro_rules! js_class_module {
                     #[link_name = concat!($TypeName, "__fromJSDirect")]
                     safe fn __from_js_direct(value: JSValue) -> *mut Payload;
                     #[link_name = concat!($TypeName, "__create")]
-                    fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
+                    safe fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                     #[link_name = concat!($TypeName, "__getConstructor")]
                     safe fn __get_constructor(global: &JSGlobalObject) -> JSValue;
                     #[link_name = concat!($TypeName, "__dangerouslySetPtr")]
@@ -1025,11 +1063,7 @@ macro_rules! js_class_module {
             /// in `m_ctx`; ownership transfers to the GC (`finalize` frees it).
             #[inline]
             pub fn to_js(ptr: *mut Payload, global: &JSGlobalObject) -> JSValue {
-                // SAFETY: `global` is an opaque ZST FFI handle (see
-                // `JSGlobalObject::as_ptr`) — the `*mut` is passed across FFI
-                // only, never written through on the Rust side; `ptr` is a
-                // freshly boxed native payload (not yet owned by any wrapper).
-                unsafe { __create(global.as_ptr(), ptr) }
+                __create(global.as_ptr(), ptr)
             }
 
             /// Zig-compat alias for [`to_js`] with `(global, ptr)` argument

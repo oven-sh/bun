@@ -14,11 +14,11 @@ use bun_sys;
 // `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
+#[cfg(unix)]
+use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
-use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnResultExt as _, Status,
-};
+use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
@@ -27,7 +27,7 @@ use super::frame;
 
 pub struct Worker {
     // TODO(port): LIFETIMES.tsv classifies this BACKREF → *const, but the Zig
-    // mutates through it (live_workers, onWorkerExit, frame). Phase B: either
+    // mutates through it (live_workers, onWorkerExit, frame). Should use either
     // *mut or interior mutability on Coordinator.
     // PORT NOTE: `Coordinator<'a>` carries borrowed slices; the lifetime is
     // erased to `'static` here because this is a raw backref pointer that is
@@ -45,7 +45,7 @@ pub struct Worker {
     /// frames never truncates and the coordinator never blocks.
     // TODO(port): Zig `Channel(Worker, "ipc")` — second comptime arg is the
     // field name for `container_of` recovery. Rust side likely uses
-    // `offset_of!(Worker, ipc)` or an explicit owner-ptr; revisit in Phase B.
+    // `offset_of!(Worker, ipc)` or an explicit owner-ptr.
     pub ipc: Channel<Worker>,
     pub out: WorkerPipe,
     pub err: WorkerPipe,
@@ -142,11 +142,15 @@ impl Worker {
             };
             // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
             // anyerror, inner map for the bun_sys::Result.
-            let mut spawned = spawn::spawn_process(
-                &options,
-                coord.argv.as_ptr(),
-                coord.envps[this.idx as usize].as_ptr(),
-            )?
+            // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
+            // C-string arrays with argv[0] non-null; valid for this call.
+            let mut spawned = unsafe {
+                spawn::spawn_process(
+                    &options,
+                    coord.argv.as_ptr(),
+                    coord.envps[this.idx as usize].as_ptr(),
+                )
+            }?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 bun_core::err!("SpawnFailed")
@@ -219,7 +223,8 @@ impl Worker {
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
-                    loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
+                    // SAFETY: `coord.vm.event_loop()` is the live per-thread `jsc::EventLoop`.
+                    loop_: unsafe { jsc::EventLoopHandle::init(coord.vm.event_loop().cast()) },
                     ..Default::default()
                 },
                 stream: true,
@@ -227,11 +232,15 @@ impl Worker {
             };
             // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
             // anyerror, inner map for the bun_sys::Result.
-            let mut spawned = spawn::spawn_process(
-                &options,
-                coord.argv.as_ptr(),
-                coord.envps[this.idx as usize].as_ptr(),
-            )?
+            // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
+            // C-string arrays with argv[0] non-null; valid for this call.
+            let mut spawned = unsafe {
+                spawn::spawn_process(
+                    &options,
+                    coord.argv.as_ptr(),
+                    coord.envps[this.idx as usize].as_ptr(),
+                )
+            }?
             .map_err(|e| {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 bun_core::err!("SpawnFailed")
@@ -407,7 +416,7 @@ impl Worker {
 bun_spawn::link_impl_ProcessExit! {
     TestParallelWorker for Worker => |this| {
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&*process, status, &*rusage),
+            (*this).on_process_exit(&*process, status, rusage),
     }
 }
 
@@ -444,7 +453,7 @@ pub enum PipeRole {
 pub struct WorkerPipe {
     // TODO(port): Zig default `BufferedReader.init(WorkerPipe)` passes the
     // owner type for callback vtable wiring. Rust side likely a generic param
-    // or trait impl; revisit in Phase B.
+    // or trait impl.
     pub reader: bun_io::BufferedReader,
     pub worker: *const Worker,
     pub role: PipeRole,
@@ -465,7 +474,7 @@ impl WorkerPipe {
     pub fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
         // TODO(port): LIFETIMES.tsv says *const Worker but we mutate `captured`;
-        // Phase B may need *mut or Cell/UnsafeCell on Worker.captured.
+        // may need *mut or Cell/UnsafeCell on Worker.captured.
         unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
         true
     }

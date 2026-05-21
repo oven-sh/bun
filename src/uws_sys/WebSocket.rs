@@ -1,4 +1,4 @@
-use core::ffi::{c_int, c_uint, c_ushort, c_void};
+use core::ffi::{c_uint, c_ushort, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
 use crate as uws;
@@ -110,8 +110,8 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     /// monomorphized into an `extern "C"` trampoline. Rust cannot const-generic
     /// over a fn value, so we tunnel `(ctx, callback)` through the user-data
     /// pointer instead.
-    // TODO(port): comptime-callback monomorphization — Phase B may want a
-    // per-callsite `extern "C" fn` to avoid the indirect call.
+    // TODO(perf): comptime-callback monomorphization — a per-callsite
+    // `extern "C" fn` would avoid the indirect call.
     pub fn cork<C>(&mut self, ctx: &mut C, callback: fn(&mut C)) {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -119,7 +119,9 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
             // SAFETY: user_data is &mut (ptr, fn) on the caller's stack frame,
             // which outlives the synchronous uws_ws_cork call.
             let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
-            // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+            // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
+            // SAFETY: `data.0` was set from `&mut C` on the enclosing `cork`
+            // stack frame, which outlives this synchronous callback.
             (data.1)(unsafe { &mut *data.0 });
         }
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
@@ -188,7 +190,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     pub fn get_buffered_amount(&mut self) -> u32 {
         // TODO(port): C decl returns usize but Zig wrapper types this as u32 —
-        // verify which is correct in Phase B.
+        // verify which is correct.
         u32::try_from(c::uws_ws_get_buffered_amount(SSL_FLAG, self.raw())).unwrap()
     }
 
@@ -246,11 +248,11 @@ impl AnyWebSocket {
     /// Caller must guarantee the user data was set to a `*mut T` for this socket.
     #[inline]
     pub unsafe fn as_<T>(self) -> Option<&'static mut T> {
+        let (ssl, ws) = self.split();
         // SAFETY: see NewWebSocket::as_. Lifetime is tied to the C-owned socket
         // (effectively 'static from Rust's view; uWS frees on close).
         // TODO(port): lifetime — returning an unbounded `&mut` is a placeholder; Phase
         // B should scope this to the callback frame or return *mut T.
-        let (ssl, ws) = self.split();
         unsafe { c::uws_ws_get_user_data(ssl, ws).cast::<T>().as_mut() }
     }
 
@@ -335,7 +337,9 @@ impl AnyWebSocket {
             // SAFETY: user_data points at a stack tuple alive for the duration
             // of the synchronous uws_ws_cork call.
             let data = unsafe { bun_core::callback_ctx::<(*mut C, fn(&mut C))>(user_data) };
-            // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+            // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
+            // SAFETY: `data.0` was set from `&mut C` on the enclosing `cork`
+            // stack frame, which outlives this synchronous callback.
             (data.1)(unsafe { &mut *data.0 });
         }
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
@@ -592,7 +596,8 @@ where
         if this.is_null() {
             return;
         }
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
+        // SAFETY: user data was set to *mut T at upgrade time.
         unsafe { T::on_open(this, ws) };
     }
 
@@ -663,15 +668,15 @@ where
         context: *mut WebSocketUpgradeContext,
         id: usize,
     ) {
+        if ptr.is_null() {
+            return;
+        }
         // SAFETY: `ptr` is the user-data passed to `uws_ws()` at registration
         // time; uWS passes non-null req/context valid for the duration of the
         // upgrade callback. We forward `ptr` as a *raw* `*mut Server` without
         // creating a `&mut Server` — the actual pointee type is discriminated
         // by `id` inside the implementer (see trait docs), and materializing a
         // typed reference here would be UB when `id` selects a different type.
-        if ptr.is_null() {
-            return;
-        }
         unsafe {
             Server::on_websocket_upgrade(
                 ptr.cast::<Server>(),
@@ -683,7 +688,7 @@ where
         }
     }
 
-    pub fn apply(behavior: WebSocketBehavior) -> WebSocketBehavior {
+    pub fn apply(behavior: &WebSocketBehavior) -> WebSocketBehavior {
         WebSocketBehavior {
             compression: behavior.compression,
             max_payload_length: behavior.max_payload_length,

@@ -1,3 +1,5 @@
+//! TODO(port): correct this documentation comment post-rust port
+//!
 //! This program is a shim for node_modules/.bin scripts.
 //!
 //! This is needed because:
@@ -37,7 +39,7 @@
 //! The compiled binary is 13312 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 //!
-//! Questions about this file should be directed at @paperclover.
+//! Theorized and written by @paperclover during one of the most entranced all-nighters of her life.
 
 #![cfg(windows)]
 
@@ -152,8 +154,6 @@ mod k32 {
     pub use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
     pub use w::kernel32::GetLastError;
-    /// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-sethandleinformation
-    pub use w::kernel32::SetHandleInformation;
 
     // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
     // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
@@ -444,7 +444,7 @@ impl LauncherMode {
     // associate a return type with a const value. We unify on `LauncherRet` below; the
     // public wrappers (`try_startup_from_bun_js`, `read_without_launch`, `main`) narrow it.
 
-    // PERF(port): comptime mode/reason demoted to runtime args — profile in Phase B
+    // PERF(port): comptime mode/reason demoted to runtime args — profile if it shows up on a hot path.
     #[cold]
     #[inline(never)]
     fn fail(self, reason: FailReason) -> LauncherRet {
@@ -992,6 +992,13 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // BUF1: '\??"C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flag!!!!!'
             let argument_start_ptr: *mut u8 =
                 read_ptr.cast::<u8>().wrapping_sub(2 * 1 /* "\x00".len */);
+            if (argument_start_ptr as usize) - (buf1_u8 as usize)
+                + user_arguments_u8.len()
+                + 2 /* "\x00".len */
+                > BUF1_LEN * 2
+            {
+                return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+            }
             if !user_arguments_u8.is_empty() {
                 // SAFETY: argument_start_ptr is within buf1 with room for user_arguments_u8.
                 unsafe {
@@ -1055,7 +1062,15 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             const VALIDATION_LENGTH_OFFSET: u64 = 14;
 
             // very careful here to not overflow u32, so that we properly error if you hijack the file
+            //
+            // Both lengths are byte counts of UTF-16 data written by
+            // BinLinkingShim.zig and must be even. An odd value (corrupt or
+            // tampered shim) would later misalign `write_ptr` (used to store a
+            // u16 NUL terminator) and break the even-length invariant relied on
+            // by `bytemuck::cast_slice`. Reject up front.
             if shebang_arg_len_u8 == 0
+                || (shebang_arg_len_u8 & 1) != 0
+                || (shebang_bin_path_len_bytes & 1) != 0
                 || (shebang_arg_len_u8 as u64).saturating_add(shebang_bin_path_len_bytes as u64)
                     + VALIDATION_LENGTH_OFFSET
                     != read_len as u64
@@ -1114,7 +1129,29 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 .cast::<u8>()
                 .wrapping_sub(shebang_arg_len_u8 as usize)
                 .cast::<u16>();
-            // SAFETY: copying shebang_arg_len_u8 bytes from buf1 into buf2; both in bounds.
+
+            // Compute the filename length and perform the BUF2 capacity check
+            // *before* the first write into buf2 so a hostile metadata file can
+            // never overrun it (the lengths feeding `advance` below come from
+            // the untrusted shim, not from anything we control).
+            //
+            // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
+            //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
+            let length_of_filename_u8 = (read_ptr as usize)
+                - (buf1_u8 as usize)
+                - 2 * (NT_OBJECT_PREFIX.len() + 1/* "\x00".len */);
+            if shebang_arg_len_u8 as usize
+                + 2 /* "\"".len */
+                + length_of_filename_u8
+                + user_arguments_u8.len()
+                + 2 /* "\x00".len */
+                > BUF2_U16_LEN * 2
+            {
+                return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
+            }
+
+            // SAFETY: copying shebang_arg_len_u8 bytes from buf1 into buf2; both in bounds
+            // (capacity validated above).
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     read_ptr.cast::<u8>(),
@@ -1136,9 +1173,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             // BUF1: '\??\C:\Users\chloe\project\node_modules\my-cli\src\app.js"#node #####!!!!!!!!!!'
             //            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^ ^ read_ptr
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js"!!!!!!!!!!!!!!!!!!!!'
-            let length_of_filename_u8 = (read_ptr as usize)
-                - (buf1_u8 as usize)
-                - 2 * (NT_OBJECT_PREFIX.len() + 1/* "\x00".len */);
             // SAFETY: slice within buf1.
             let filename: &[u8] = unsafe {
                 bun_core::ffi::slice(
@@ -1218,8 +1252,11 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
             // BUF2: 'node "C:\Users\chloe\project\node_modules\my-cli\src\app.js" --flags#!!!!!!!!!!'
             //                                                                            ^ null terminator
-            // SAFETY: write_ptr is within buf2.
-            unsafe { *write_ptr = 0 };
+            // SAFETY: write_ptr is within buf2 (capacity validated above). Use an
+            // unaligned store as defense in depth: alignment is guaranteed by the
+            // even-parity metadata checks, but this avoids UB if that invariant
+            // ever regresses.
+            unsafe { write_ptr.write_unaligned(0) };
 
             break 'spawn_command_line buf2_u16;
         }
@@ -1339,7 +1376,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     // PERF(port): Zig used `inline for (.{ 0, 1 })` to unroll this loop with comptime
     // `attempt_number`. We use a runtime loop; the body is large enough that unrolling is
-    // unlikely to matter — profile in Phase B.
+    // unlikely to matter — profile if it shows up on a hot path.
     for attempt_number in [0u32, 1] {
         'iteration: {
             if DBG {
@@ -1381,7 +1418,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     debug!("CreateProcessW failed: {}", spawn_err);
                     debug!("attempt number: {}", attempt_number);
                 }
-                return match w::Win32Error(spawn_err as u16) {
+                match w::Win32Error(spawn_err as u16) {
                     w::Win32Error::FILE_NOT_FOUND => {
                         if flags.has_shebang() {
                             if attempt_number == 0 {

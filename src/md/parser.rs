@@ -1,6 +1,6 @@
 // Sub-modules
 
-use core::ffi::c_void as _; // (no FFI here; placeholder to mirror import block shape)
+use core::ffi::c_void;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
@@ -13,17 +13,10 @@ use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 pub type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
 use bun_core::StackCheck;
 
-use super::blocks as blocks_mod;
-use super::containers as containers_mod;
 use super::helpers;
 use super::html_renderer::HtmlRenderer;
-use super::inlines as inlines_mod;
-use super::line_analysis as line_analysis_mod;
-use super::links as links_mod;
-use super::ref_defs as ref_defs_mod;
-use super::render_blocks as render_blocks_mod;
 use super::types::{
-    self, Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
+    Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
     TABLE_MAXCOLCOUNT, VerbatimLine,
 };
 use crate::RenderOptions; // Zig: `root.RenderOptions` (root.zig → crate lib.rs)
@@ -34,9 +27,9 @@ pub use super::inlines::{EmphDelim, MAX_EMPH_MATCHES};
 pub use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
-// TODO(port): lifetime — `text` is a caller-owned borrow for the parser's
-// lifetime. PORTING.md says "no struct lifetimes in Phase A", but raw-ptr here
-// would obscure every `ch()` call; one obvious `'a` is the honest mapping.
+// PORT NOTE: `text` is a caller-owned borrow for the parser's lifetime.
+// PORTING.md's mechanical-port guidance was "no struct lifetimes", but raw-ptr
+// here would obscure every `ch()` call; one obvious `'a` is the honest mapping.
 pub struct Parser<'a> {
     // Zig field `std.mem.Allocator` param — dropped; global mimalloc.
     pub text: &'a [u8],
@@ -60,7 +53,7 @@ pub struct Parser<'a> {
     pub containers: Vec<Container>,
     // TODO(port): Zig uses `ArrayListAlignedUnmanaged(u8, .@"4")` — 4-byte
     // alignment is load-bearing for `BlockHeader` reinterpretation via
-    // `getBlockHeaderAt`. Phase B: wrap in an aligned-vec newtype or store
+    // `getBlockHeaderAt`. Wrap in an aligned-vec newtype or store
     // `Vec<u32>` and byte-view it.
     pub block_bytes: Vec<u8>,
     pub buffer: Vec<u8>,
@@ -93,7 +86,7 @@ pub struct Parser<'a> {
 
     // Ref defs
     pub ref_defs: Vec<RefDef>,
-    pub ref_def_labels: std::collections::HashSet<Box<[u8]>>,
+    pub ref_def_labels: bun_collections::StringSet,
 
     // State
     pub last_line_has_list_loosening_effect: bool,
@@ -128,8 +121,8 @@ impl Default for BlockHeader {
 /// `Parser.Error` in Zig is `bun.JSError || bun.StackOverflow`, i.e. the union
 /// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
 // TODO(port): narrow error set — `bun_jsc::JsError` already covers the first
-// three; Phase B may want `enum { Js(JsError), StackOverflow }` instead.
-// TODO(b1): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
+// three; could be `enum { Js(JsError), StackOverflow }` instead.
+// TODO(port): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
 pub type Error = ParserError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,18 +137,29 @@ bun_core::oom_from_alloc!(ParserError);
 
 impl From<ParserError> for bun_core::Error {
     fn from(_e: ParserError) -> Self {
-        // TODO(b1): wire IntoStaticStr → interned tag; bun_core::err! only accepts ident
+        // TODO(port): wire IntoStaticStr → interned tag; bun_core::err! only accepts ident
         bun_core::err!(ParserError)
     }
 }
 
 impl<'a> Parser<'a> {
     pub fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
-        // SAFETY: off is an aligned offset into block_bytes produced by start_new_block /
-        // push_container_bytes; the buffer holds a valid BlockHeader at that offset.
+        // SAFETY: `off` is produced by start_new_block / push_container_bytes which pad it
+        // to a multiple of `align_of::<BlockHeader>()`, and the global allocator returns
+        // blocks aligned to at least `align_of::<usize>()`, so the resulting pointer is
+        // 4-byte aligned (asserted below). The buffer holds an initialized BlockHeader there.
         // TODO(port): borrowck — this returns &mut into self.block_bytes while other
-        // &mut self borrows may be live at call sites; Phase B may need raw *mut.
-        unsafe { &mut *(self.block_bytes.as_mut_ptr().add(off).cast::<BlockHeader>()) }
+        // &mut self borrows may be live at call sites; may need raw *mut.
+        unsafe {
+            let ptr = self
+                .block_bytes
+                .as_mut_ptr()
+                .add(off)
+                .cast::<c_void>()
+                .cast::<BlockHeader>();
+            debug_assert!(ptr.is_aligned());
+            &mut *ptr
+        }
     }
 
     #[inline]
@@ -197,7 +201,7 @@ impl<'a> Parser<'a> {
             table_col_count: 0,
             table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
             ref_defs: Vec::new(),
-            ref_def_labels: std::collections::HashSet::new(),
+            ref_def_labels: bun_collections::StringSet::new(),
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
             max_ref_def_output: (16 * (size as u64)).min(1024 * 1024).min(u32::MAX as u64),
@@ -306,12 +310,7 @@ impl<'a> Parser<'a> {
 }
 
 // Silence unused-import warnings for the sibling modules referenced only in
-// the doc-comment above; Phase B removes once `impl Parser` blocks land.
-#[allow(unused_imports)]
-use {
-    blocks_mod as _, containers_mod as _, inlines_mod as _, line_analysis_mod as _, links_mod as _,
-    ref_defs_mod as _, render_blocks_mod as _, types as _,
-};
+// the doc-comment above.
 
 // ========================================
 // Public API

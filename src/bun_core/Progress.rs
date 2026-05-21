@@ -65,7 +65,6 @@ unsafe extern "system" {
 // stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`
 // from B-0 round 1 is removed; tty/ansi/winsize route through the new
 // `OutputSinkVTable` slots so `bun_core` stays T0 (no `bun_sys` dep).
-use crate::Fd;
 pub use crate::output::File;
 use crate::output::output_sink;
 
@@ -75,7 +74,7 @@ impl File {
     /// `Output.Source.init`). We route through the sink so the platform check
     /// lives in `bun_sys`.
     #[inline]
-    pub fn supports_ansi_escape_codes(&self) -> bool {
+    pub fn supports_ansi_escape_codes(self) -> bool {
         #[cfg(windows)]
         {
             // Zig std.fs.File.supportsAnsiEscapeCodes(): query the live console
@@ -96,7 +95,7 @@ impl File {
         }
     }
     #[inline]
-    pub fn is_tty(&self) -> bool {
+    pub fn is_tty(self) -> bool {
         output_sink().is_terminal(self.fd())
     }
     /// Windows console HANDLE for the legacy `SetConsoleCursorPosition` path.
@@ -106,7 +105,7 @@ impl File {
         self.fd().native()
     }
     #[inline]
-    pub fn winsize(&self) -> Option<crate::Winsize> {
+    pub fn winsize(self) -> Option<crate::Winsize> {
         output_sink().tty_winsize(self.fd())
     }
 }
@@ -203,7 +202,7 @@ pub struct Node {
     pub context: *mut Progress,
     pub parent: *mut Node,
     // TODO(port): lifetime — caller-borrowed slice, Zig is non-allocating; using
-    // 'static here as a Phase-A placeholder (callers in install/ pass string literals).
+    // 'static here as a placeholder (callers in install/ pass string literals).
     pub name: &'static [u8],
     pub unit: Unit,
     /// Must be handled atomically to be thread-safe.
@@ -418,7 +417,7 @@ impl Progress {
     /// `estimated_total_items` value of 0 means unknown.
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> &mut Node {
         // TODO(port): std.fs.File.stderr() / supportsAnsiEscapeCodes() / isTty() —
-        // map to bun_sys::File equivalents in Phase B.
+        // map to bun_sys::File equivalents.
         let stderr = File::stderr();
         self.terminal = None;
         if stderr.supports_ansi_escape_codes() {
@@ -605,6 +604,7 @@ impl Progress {
             let mut need_ellipse = false;
             let mut maybe_node: *mut Node = &raw mut self.root;
             while !maybe_node.is_null() {
+                let (name, unit, eti, completed_items);
                 // SAFETY: walking the recently_updated_child chain under
                 // update_mutex; nodes are caller-owned and outlive this call
                 // per API contract. Read every field through the raw pointer
@@ -614,7 +614,6 @@ impl Progress {
                 // tag derived from it under Stacked Borrows. (Zig has no
                 // aliasing model, so Progress.zig:313-345 holds `node: *Node`
                 // across `self.bufWrite` freely; Rust must not.)
-                let (name, unit, eti, completed_items);
                 unsafe {
                     name = (*maybe_node).name;
                     unit = (*maybe_node).unit;
@@ -649,7 +648,7 @@ impl Progress {
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
                             // TODO(port): Zig `{Bi:.2}` is std.fmt binary-bytes formatter (e.g. "1.50KiB").
-                            // Need a bun_core::fmt::BytesBi helper in Phase B.
+                            // Need a bun_core::fmt::BytesBi helper.
                             Unit::Bytes => self
                                 .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
                         }
@@ -695,7 +694,7 @@ impl Progress {
             eprint!("{}", args);
             return;
         };
-        // TODO(port): Zig `file.writerStreaming(&.{})` — map to bun_sys::File writer in Phase B.
+        // TODO(port): Zig `file.writerStreaming(&.{})` — map to bun_sys::File writer.
         self.refresh();
         if file.write_fmt(args).is_err() {
             self.terminal = None;

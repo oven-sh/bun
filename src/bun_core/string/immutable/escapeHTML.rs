@@ -7,7 +7,7 @@ use crate::string::w;
 
 // TODO(port): Environment.enableSIMD — Zig gates SIMD paths behind a comptime
 // build flag. Mirror with a cargo feature or a `const ENABLE_SIMD: bool` in
-// `crate::string::strings`. For now reference it as a const so Phase B can wire it.
+// `crate::string::strings`. For now it is referenced as a const.
 use crate::string::strings::ENABLE_SIMD;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ fn scalar_append(buf: *mut u8, ch: u8) -> usize {
 #[inline(always)]
 fn scalar_push<const LEN: usize>(chars: &[u8; LEN]) -> Escaped<u8> {
     // PERF(port): Zig used `inline while` to fully unroll this sum at comptime
-    // for each LEN in 3..=32 — profile in Phase B.
+    // for each LEN in 3..=32 — profile if it shows up on a hot path.
     let mut total: usize = 0;
     let mut i = 0;
     while i < LEN {
@@ -104,7 +104,7 @@ fn scalar_push<const LEN: usize>(chars: &[u8; LEN]) -> Escaped<u8> {
 
     let mut output = vec![0u8; total].into_boxed_slice();
     let mut head = output.as_mut_ptr();
-    // PERF(port): Zig used `inline for (comptime bun.range(0, len))` — profile in Phase B.
+    // PERF(port): Zig used `inline for (comptime bun.range(0, len))` — profile if hot.
     for i in 0..LEN {
         // SAFETY: `total` was computed from SCALAR_LENGTHS so `head` never
         // overruns `output`.
@@ -311,8 +311,8 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
             let mut remaining = latin1;
 
             const VEC_CHARS: &[u8; 5] = b"\"&'<>";
-            // TODO(port): `core::simd` (portable_simd) is nightly-only. Phase B:
-            // either gate behind `#![feature(portable_simd)]` or route through
+            // TODO(port): `core::simd` (portable_simd) is nightly-only. Either
+            // gate behind `#![feature(portable_simd)]` or route through
             // `bun_highway`. The Zig builds `[5]@Vector(N, u8)` via `@splat`.
             let vecs: [AsciiVector; 5] = [
                 AsciiVector::splat(VEC_CHARS[0]),
@@ -343,17 +343,17 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
 
                         buf = Vec::with_capacity(latin1.len() + 6);
                         let copy_len = latin1.len() - remaining.len();
-                        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+                        // PERF(port): was appendSliceAssumeCapacity — profile if hot.
                         buf.extend_from_slice(&latin1[..copy_len]);
                         any_needs_escape = true;
                         // PERF(port): Zig used `inline for (0..ascii_vector_size)` to
-                        // unroll this — profile in Phase B.
+                        // unroll this — profile if hot.
                         for i in 0..ASCII_VECTOR_SIZE {
                             match remaining[i] {
                                 b'"' => {
                                     buf.reserve((ASCII_VECTOR_SIZE - i) + b"&quot;".len());
                                     // PERF(port): Zig wrote into spare capacity then
-                                    // bumped `items.len` directly — profile in Phase B.
+                                    // bumped `items.len` directly — profile if hot.
                                     buf.extend_from_slice(b"&quot;");
                                 }
                                 b'&' => {
@@ -373,7 +373,7 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
                                     buf.extend_from_slice(b"&gt;");
                                 }
                                 c => {
-                                    // PERF(port): was appendAssumeCapacity — profile in Phase B
+                                    // PERF(port): was appendAssumeCapacity — profile if hot.
                                     buf.push(c);
                                 }
                             }
@@ -400,7 +400,7 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
                     .any()
                     {
                         buf.reserve(ASCII_VECTOR_SIZE + 6);
-                        // PERF(port): Zig used `inline for` here — profile in Phase B.
+                        // PERF(port): Zig used `inline for` here — profile if hot.
                         for i in 0..ASCII_VECTOR_SIZE {
                             match remaining[i] {
                                 b'"' => {
@@ -424,7 +424,7 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
                                     buf.extend_from_slice(b"&gt;");
                                 }
                                 c => {
-                                    // PERF(port): was appendAssumeCapacity — profile in Phase B
+                                    // PERF(port): was appendAssumeCapacity — profile if hot.
                                     buf.push(c);
                                 }
                             }
@@ -436,7 +436,7 @@ pub fn escape_html_for_latin1_input(latin1: &[u8]) -> Result<Escaped<u8>, AllocE
 
                     buf.reserve(ASCII_VECTOR_SIZE);
                     // PERF(port): Zig wrote into spare capacity then bumped
-                    // `items.len` directly — profile in Phase B.
+                    // `items.len` directly — profile if hot.
                     buf.extend_from_slice(&remaining[..ASCII_VECTOR_SIZE]);
                     remaining = &remaining[ASCII_VECTOR_SIZE..];
                 }
@@ -577,10 +577,7 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
                         'lazy: {
                             while (i as usize) < ASCII_U16_VECTOR_SIZE {
                                 match remaining[i as usize] {
-                                    c if matches!(
-                                        c,
-                                        0x22 /* " */ | 0x26 /* & */ | 0x27 /* ' */ | 0x3C /* < */ | 0x3E /* > */
-                                    ) =>
+                                    0x22 /* " */ | 0x26 /* & */ | 0x27 /* ' */ | 0x3C /* < */ | 0x3E /* > */ =>
                                     {
                                         any_needs_escape = true;
                                         break 'lazy;
@@ -706,7 +703,7 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
 
                         buf.reserve(ASCII_U16_VECTOR_SIZE);
                         // PERF(port): Zig wrote into spare capacity then bumped
-                        // `items.len` directly — profile in Phase B.
+                        // `items.len` directly — profile if hot.
                         buf.extend_from_slice(&remaining[..ASCII_U16_VECTOR_SIZE]);
                         remaining = &remaining[ASCII_U16_VECTOR_SIZE..];
                     }

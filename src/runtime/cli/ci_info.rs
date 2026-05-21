@@ -3,8 +3,8 @@
 // Main implementation is in src/codegen/ci_info.ts
 
 use bun_core::env_var;
-// TODO(port): `@import("ci_info")` is a build.zig-registered generated module (output of
-// src/codegen/ci_info.ts). Wire the actual Rust module path in Phase B.
+// PORT NOTE: `@import("ci_info")` was a build.zig-registered generated module (output of
+// src/codegen/ci_info.ts). The Rust build hand-ports the table as `cli::ci_info_generated`.
 use super::ci_info_generated as generated;
 
 // PORT NOTE: `bun.once(fn)` stores the fn at construction and `.call(.{})` invokes it once,
@@ -26,7 +26,7 @@ pub fn detect_ci_name() -> Option<&'static [u8]> {
 fn is_ci_uncached() -> bool {
     env_var::CI
         .get()
-        .unwrap_or_else(|| generated::is_ci_uncached_generated())
+        .unwrap_or_else(generated::is_ci_uncached_generated)
         || detect_ci_name().is_some()
 }
 

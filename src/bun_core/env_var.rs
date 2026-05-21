@@ -31,8 +31,8 @@
 // embedded `static` cache. Rust cannot parameterize a generic type on `&'static str` + a struct
 // value in stable, so this port models `New`/`PlatformSpecificNew` as `macro_rules!` that emit a
 // module per env var. In Zig the declarations come first and the type-generator fns come last;
-// here the macros must be defined (or `#[macro_use]`d) before the declarations. Phase B may move
-// the macro definitions into a sibling `env_var_impl.rs` and `#[macro_use]` it to restore Zig
+// here the macros must be defined (or `#[macro_use]`d) before the declarations. The macro
+// definitions could move into a sibling `env_var_impl.rs` and be `#[macro_use]`d to restore Zig
 // declaration order in this file.
 
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
@@ -49,42 +49,42 @@ new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default:
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });
-/// TODO(markovejnovic): Legacy usage had the default at 30, even though a the attached comment
-/// quoted: Amazon Web Services recommends 5 seconds:
-/// https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html
-///
-/// It's unclear why this was done.
+// TODO(markovejnovic): Legacy usage had the default at 30, even though a the attached comment
+// quoted: Amazon Web Services recommends 5 seconds:
+// https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html
+//
+// It's unclear why this was done.
 new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS", { default: 30 });
-/// Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
-/// The timer is armed when the socket opens and re-armed on every read/write;
-/// if it fires the request fails with `error.Timeout`. Covers the TLS
-/// handshake through the response body. 0 disables. See `src/http/lib.rs`.
+// Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
+// The timer is armed when the socket opens and re-armed on every read/write;
+// if it fires the request fails with `error.Timeout`. Covers the TLS
+// handshake through the response body. 0 disables. See `src/http/lib.rs`.
 new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT", { default: 300 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });
 new!(pub BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: boolean, "BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE", { default: false });
-/// Testing hook for `bun build --compile`: force `hostUsesNixStoreInterpreter()`
-/// to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
-/// `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.
+// Testing hook for `bun build --compile`: force `hostUsesNixStoreInterpreter()`
+// to return true without mutating `/etc/NIXOS` on the shared rootfs. Used by
+// `test/regression/issue/29290.test.ts` to exercise the Nix-host branch.
 new!(pub BUN_DEBUG_FORCE_NIX_HOST: boolean, "BUN_DEBUG_FORCE_NIX_HOST", { default: false });
 new!(pub BUN_DEBUG_HASH_RANDOM_SEED: unsigned, "BUN_DEBUG_HASH_RANDOM_SEED", { deser: { error_handling: NotSet } });
 new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
-/// Debug-only: when set, `NumberRenamer` dumps the symbol table before
-/// renaming (`src/js_printer/renamer.zig`). Presence-checked, value ignored.
+// Debug-only: when set, `NumberRenamer` dumps the symbol table before
+// renaming (`src/js_printer/renamer.zig`). Presence-checked, value ignored.
 new!(pub BUN_DUMP_SYMBOLS: string, "BUN_DUMP_SYMBOLS", {});
 new!(pub BUN_ENABLE_CRASH_REPORTING: boolean, "BUN_ENABLE_CRASH_REPORTING", {});
-/// Opt-in: when truthy, Bun watches its original parent pid and exits as soon
-/// as that process dies (even if the parent was SIGKILLed and couldn't forward
-/// a signal), and on its own clean exit recursively SIGKILLs every descendant
-/// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
+// Opt-in: when truthy, Bun watches its original parent pid and exits as soon
+// as that process dies (even if the parent was SIGKILLed and couldn't forward
+// a signal), and on its own clean exit recursively SIGKILLs every descendant
+// so nothing it spawned outlives it. See `src/ParentDeathWatchdog.zig`.
 new!(pub BUN_FEATURE_FLAG_NO_ORPHANS: boolean, "BUN_FEATURE_FLAG_NO_ORPHANS", { default: false });
 new!(pub BUN_FEATURE_FLAG_DUMP_CODE: string, "BUN_FEATURE_FLAG_DUMP_CODE", {});
-/// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
-/// so we'll keep it for now.
+// TODO(markovejnovic): It's unclear why the default here is 100_000, but this was legacy behavior
+// so we'll keep it for now.
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });
 new!(pub BUN_INSPECT: string, "BUN_INSPECT", { default: b"" });
 new!(pub BUN_INSPECT_CONNECT_TO: string, "BUN_INSPECT_CONNECT_TO", { default: b"" });
@@ -92,10 +92,10 @@ new!(pub BUN_INSPECT_PRELOAD: string, "BUN_INSPECT_PRELOAD", {});
 new!(pub BUN_INSTALL: string, "BUN_INSTALL", {});
 new!(pub BUN_INSTALL_BIN: string, "BUN_INSTALL_BIN", {});
 new!(pub BUN_INSTALL_GLOBAL_DIR: string, "BUN_INSTALL_GLOBAL_DIR", {});
-/// Minimum response `Content-Length` (in bytes) for `bun install` to
-/// stream a tarball directly into libarchive instead of buffering the
-/// whole body first. Smaller tarballs stay on the buffered path where
-/// the fixed overhead of the resumable state machine isn't worth it.
+// Minimum response `Content-Length` (in bytes) for `bun install` to
+// stream a tarball directly into libarchive instead of buffering the
+// whole body first. Smaller tarballs stay on the buffered path where
+// the fixed overhead of the resumable state machine isn't worth it.
 new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SIZE", { default: 2 * 1024 * 1024 });
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});
@@ -104,11 +104,11 @@ new!(pub BUN_POSTGRES_SOCKET_MONITOR_READER: string, "BUN_POSTGRES_SOCKET_MONITO
 new!(pub BUN_RUNTIME_TRANSPILER_CACHE_PATH: string, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", {});
 new!(pub BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR: boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", { default: false });
 new!(pub BUN_TCC_OPTIONS: string, "BUN_TCC_OPTIONS", {});
-/// Standard C compiler environment variable for include paths (colon-separated).
-/// Used by bun:ffi's TinyCC integration for systems like NixOS.
+// Standard C compiler environment variable for include paths (colon-separated).
+// Used by bun:ffi's TinyCC integration for systems like NixOS.
 platform_specific_new!(pub C_INCLUDE_PATH: string, posix = "C_INCLUDE_PATH", windows = None, {});
-/// Standard C compiler environment variable for library paths (colon-separated).
-/// Used by bun:ffi's TinyCC integration for systems like NixOS.
+// Standard C compiler environment variable for library paths (colon-separated).
+// Used by bun:ffi's TinyCC integration for systems like NixOS.
 platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows = None, {});
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
 new!(pub BUN_TRACK_LAST_FN_NAME: boolean, "BUN_TRACK_LAST_FN_NAME", { default: false });
@@ -124,8 +124,8 @@ new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { de
 new!(pub CURSOR_TRACE_ID: boolean, "CURSOR_TRACE_ID", { default: false });
 new!(pub DO_NOT_TRACK: boolean, "DO_NOT_TRACK", { default: false });
 platform_specific_new!(pub DYLD_ROOT_PATH: string, posix = "DYLD_ROOT_PATH", windows = None, {});
-/// TODO(markovejnovic): We should support enums in this library, and force_color's usage is,
-/// indeed, an enum. The 80-20 is to make it an unsigned value (which also works well).
+// TODO(markovejnovic): We should support enums in this library, and force_color's usage is,
+// indeed, an enum. The 80-20 is to make it an unsigned value (which also works well).
 new!(pub FORCE_COLOR: unsigned, "FORCE_COLOR", { deser: { error_handling: TruthyCast, empty_string_as: Value(1) } });
 platform_specific_new!(pub fpath: string, posix = "fpath", windows = None, {});
 new!(pub GIT_SHA: string, "GIT_SHA", {});
@@ -139,14 +139,14 @@ platform_specific_new!(pub HOME: string, posix = "HOME", windows = "USERPROFILE"
 new!(pub HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET: string, "HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET", {});
 new!(pub IS_BUN_AUTO_UPDATE: boolean, "IS_BUN_AUTO_UPDATE", { default: false });
 new!(pub JENKINS_URL: string, "JENKINS_URL", {});
-/// Dump mimalloc statistics at the end of the process. Note that this is not the same as
-/// `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
+// Dump mimalloc statistics at the end of the process. Note that this is not the same as
+// `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
-/// Set by HostProcess.zig when spawning the WebView host subprocess. The
-/// child's cli.zig checks this before anything else and hands off to C++
-/// Bun__WebView__hostMain. Never returns — no JSC, no VM.
+// Set by HostProcess.zig when spawning the WebView host subprocess. The
+// child's cli.zig checks this before anything else and hands off to C++
+// Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
@@ -156,8 +156,8 @@ new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });
 platform_specific_new!(pub SDKROOT: string, posix = "SDKROOT", windows = None, {});
 platform_specific_new!(pub SHELL: string, posix = "SHELL", windows = None, {});
-/// C:\Windows, for example.
-/// Note: Do not use this variable directly -- use os.zig's implementation instead.
+// C:\Windows, for example.
+// Note: Do not use this variable directly -- use os.zig's implementation instead.
 platform_specific_new!(pub SYSTEMROOT: string, posix = None, windows = "SYSTEMROOT", {});
 platform_specific_new!(pub TEMP: string, posix = "TEMP", windows = "TEMP", {});
 new!(pub TERM: string, "TERM", {});
@@ -168,14 +168,14 @@ new!(pub TMUX: string, "TMUX", {});
 new!(pub TODIUM: string, "TODIUM", {});
 platform_specific_new!(pub USER: string, posix = "USER", windows = "USERNAME", {});
 new!(pub WANTS_LOUD: boolean, "WANTS_LOUD", { default: false });
-/// The same as system_root.
-/// Note: Do not use this variable directly -- use os.zig's implementation instead.
-/// TODO(markovejnovic): Perhaps we could add support for aliases in the library, so you could
-///                      specify both WINDIR and SYSTEMROOT and the loader would check both?
+// The same as system_root.
+// Note: Do not use this variable directly -- use os.zig's implementation instead.
+// TODO(markovejnovic): Perhaps we could add support for aliases in the library, so you could
+//                      specify both WINDIR and SYSTEMROOT and the loader would check both?
 platform_specific_new!(pub WINDIR: string, posix = None, windows = "WINDIR", {});
-/// XDG Base Directory Specification variables.
-/// For some reason, legacy usage respected these even on Windows. To avoid compatibility issues,
-/// we respect them too.
+// XDG Base Directory Specification variables.
+// For some reason, legacy usage respected these even on Windows. To avoid compatibility issues,
+// we respect them too.
 new!(pub XDG_CACHE_HOME: string, "XDG_CACHE_HOME", {});
 new!(pub XDG_CONFIG_HOME: string, "XDG_CONFIG_HOME", {});
 new!(pub XDG_DATA_HOME: string, "XDG_DATA_HOME", {});
@@ -189,10 +189,10 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_DEBUG_NO_DUMP, "BUN_DEBUG_NO_DUMP", {});
     new_feature_flag!(pub BUN_DESTRUCT_VM_ON_EXIT, "BUN_DESTRUCT_VM_ON_EXIT", {});
 
-    /// Disable "nativeDependencies"
+    // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});
 
-    /// Disable "ignoreScripts" in package.json
+    // Disable "ignoreScripts" in package.json
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS, "BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS", {});
 
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG, "BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", {});
@@ -201,15 +201,15 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX, "BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX", {});
-    /// Disable streaming tarball extraction in `bun install`. When disabled,
-    /// the whole .tgz is buffered in memory before being decompressed and
-    /// extracted. Useful for bisecting streaming-specific bugs.
+    // Disable streaming tarball extraction in `bun install`. When disabled,
+    // the whole .tgz is buffered in memory before being decompressed and
+    // extracted. Useful for bisecting streaming-specific bugs.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL, "BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IO_POOL, "BUN_FEATURE_FLAG_DISABLE_IO_POOL", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IPV4, "BUN_FEATURE_FLAG_DISABLE_IPV4", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IPV6, "BUN_FEATURE_FLAG_DISABLE_IPV6", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_MEMFD, "BUN_FEATURE_FLAG_DISABLE_MEMFD", {});
-    /// The RedisClient supports auto-pipelining by default. This flag disables that behavior.
+    // The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK, "BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", {});
     new_feature_flag!(pub BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING, "BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING", {});
@@ -222,14 +222,14 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_DUMP_STATE_ON_CRASH, "BUN_DUMP_STATE_ON_CRASH", {});
     new_feature_flag!(pub BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS, "BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE, "BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE", {});
-    /// Offer "h2" in the fetch() TLS ALPN list and speak HTTP/2 when the
-    /// server selects it. Off by default while the client implementation
-    /// matures. `--experimental-http2-fetch` is the CLI equivalent.
+    // Offer "h2" in the fetch() TLS ALPN list and speak HTTP/2 when the
+    // server selects it. Off by default while the client implementation
+    // matures. `--experimental-http2-fetch` is the CLI equivalent.
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT, "BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT", {});
-    /// Honor `Alt-Svc: h3` from fetch() responses: subsequent requests to the
-    /// same origin go over QUIC/HTTP-3 instead of TCP. Off by default while
-    /// the client implementation matures. `--experimental-http3-fetch` is the
-    /// CLI equivalent.
+    // Honor `Alt-Svc: h3` from fetch() responses: subsequent requests to the
+    // same origin go over QUIC/HTTP-3 instead of TCP. Off by default while
+    // the client implementation matures. `--experimental-http3-fetch` is the
+    // CLI equivalent.
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT, "BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_IO_POOL, "BUN_FEATURE_FLAG_FORCE_IO_POOL", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
@@ -287,18 +287,7 @@ pub(crate) mod kind {
         use super::*;
 
         pub(crate) type ValueType = &'static [u8];
-        pub(crate) type Input = CacheConfiguration<CtorOptions>;
         pub(crate) type Output = CacheOutput<ValueType>;
-
-        #[derive(Clone, Copy)]
-        pub(crate) struct CtorOptions {
-            pub default: Option<ValueType>,
-        }
-        impl Default for CtorOptions {
-            fn default() -> Self {
-                Self { default: None }
-            }
-        }
 
         // Zig: `fn Cache(comptime ip: Input) type` — `ip` is unused (`_ = ip;`).
         // Rust: a single Cache struct; per-var uniqueness comes from each var owning its own
@@ -371,18 +360,7 @@ pub(crate) mod kind {
         use super::*;
 
         pub(crate) type ValueType = bool;
-        pub(crate) type Input = CacheConfiguration<CtorOptions>;
         pub(crate) type Output = CacheOutput<ValueType>;
-
-        #[derive(Clone, Copy)]
-        pub(crate) struct CtorOptions {
-            pub default: Option<ValueType>,
-        }
-        impl Default for CtorOptions {
-            fn default() -> Self {
-                Self { default: None }
-            }
-        }
 
         pub(crate) fn string_is_truthy(s: &[u8]) -> bool {
             // Most values are considered truthy, except for "", "0", "false", "no", and "off".
@@ -466,12 +444,10 @@ pub(crate) mod kind {
 
         #[derive(Clone, Copy)]
         pub(crate) struct CtorOptions {
-            pub default: Option<ValueType>,
             pub deser: DeserOpts,
         }
         impl CtorOptions {
             pub(crate) const DEFAULT: Self = Self {
-                default: None,
                 deser: DeserOpts::DEFAULT,
             };
         }
@@ -491,8 +467,6 @@ pub(crate) mod kind {
             DebugWarn,
             /// Ignore deserialization errors and treat the variable as not set.
             NotSet,
-            /// Fallback to default.
-            DefaultFallback,
             /// Formatting errors are treated as truthy values.
             ///
             /// If this library fails to parse the value as an integer and truthy cast is
@@ -613,7 +587,7 @@ pub(crate) mod kind {
                 // We pass `reason` as a third argument instead.
                 match self.ip.opts.deser.error_handling {
                     ErrorHandling::DebugWarn => {
-                        crate::output::debug_warn(&format_args!(
+                        crate::output::debug_warn(format_args!(
                             "Environment variable '{}' has value '{}' which {}.",
                             bstr::BStr::new(self.ip.var_name),
                             bstr::BStr::new(raw_env),
@@ -634,27 +608,6 @@ pub(crate) mod kind {
                             self.value.store(0, Ordering::Relaxed);
                             Some(0)
                         }
-                    }
-                    ErrorHandling::DefaultFallback => {
-                        // TODO(port): Zig branch was:
-                        //   if (comptime ip.opts.default) |d| return deserAndInvalidate(d);
-                        //   @compileError(missing_default_fmt, .{ ip.var_name, "default_fallback" });
-                        // Note: the Zig recurses into deserAndInvalidate with `d: u64` where a
-                        // `?[]const u8` is expected — that line looks like dead code (no var uses
-                        // .default_fallback) and would not have compiled if instantiated. We keep
-                        // the intent: store the default and return it.
-                        if let Some(d) = self.ip.opts.default {
-                            self.value.store(d, Ordering::Relaxed);
-                            return Some(d);
-                        }
-                        debug_assert!(
-                            false,
-                            "Environment variable '{}' is configured to fallback to default on \
-                             default_fallback, but no default is set.",
-                            bstr::BStr::new(self.ip.var_name),
-                        );
-                        self.value.store(NOT_SET_SENTINEL, Ordering::Relaxed);
-                        None
                     }
                 }
             }
@@ -695,7 +648,7 @@ macro_rules! platform_specific_new {
     // TODO(port): this macro is a draft of the Zig comptime type-generator. It expands to a
     // `pub mod $name { pub fn get() / key() / platform_get() / ... }` so call sites read
     // `env_var::HOME::get()` like Zig's `env_var.HOME.get()`. The opts-parsing arms below cover
-    // exactly the option shapes used in this file; Phase B should harden / generalize.
+    // exactly the option shapes used in this file; harden / generalize if new shapes appear.
     (
         $vis:vis $name:ident : $kind:ident,
         posix = $posix:tt, windows = $windows:tt,
@@ -711,15 +664,9 @@ macro_rules! platform_specific_new {
 
             // Zig: `const comptime_key: []const u8 = posix_key orelse windows_key orelse "<unknown>"`
             // (Compile-error when both null is enforced by having no matching macro arm.)
-            const POSIX_KEY: Option<&'static $crate::ZStr> =
-                $crate::env_var::__key_opt!($posix);
-            const WINDOWS_KEY: Option<&'static $crate::ZStr> =
-                $crate::env_var::__key_opt!($windows);
-            const COMPTIME_KEY: &'static [u8] = $crate::env_var::__first_key!($posix, $windows);
-
             // Zig: `var cache: VariantType.Cache(.{ .var_name = comptime_key, .opts = opts }) = .{};`
             static CACHE: K::Cache = $crate::env_var::__make_cache!(
-                $kind, COMPTIME_KEY, { $($opts)* }
+                $kind, $crate::env_var::__first_key!($posix, $windows), { $($opts)* }
             );
 
             // Zig computed `DefaultType`/`ReturnType` at comptime from whether `opts.default` is
@@ -733,16 +680,8 @@ macro_rules! platform_specific_new {
             /// the current platform has a supported definition. Returns None otherwise, unlike the
             /// other methods which will fail at compile time if the platform is unsupported.
             pub fn platform_get() -> Option<K::ValueType> {
-                // Get the platform-specific key
-                #[cfg(unix)]
-                let platform_key: Option<&'static ZStr> = POSIX_KEY;
-                #[cfg(windows)]
-                let platform_key: Option<&'static ZStr> = WINDOWS_KEY;
-                #[cfg(not(any(unix, windows)))]
-                let platform_key: Option<&'static ZStr> = None;
-
                 // If platform doesn't have a key, return None
-                let k = platform_key?;
+                let k = platform_key()?;
 
                 // Inline the logic from get() without calling assert_platform_supported()
                 match CACHE.get_cached() {
@@ -780,16 +719,16 @@ macro_rules! platform_specific_new {
             /// Retrieve the key of the environment variable for the current platform, if any.
             pub fn platform_key() -> Option<&'static ZStr> {
                 #[cfg(unix)]
-                { return POSIX_KEY; }
+                { return $crate::env_var::__key_opt!($posix); }
                 #[cfg(windows)]
-                { return WINDOWS_KEY; }
+                { return $crate::env_var::__key_opt!($windows); }
                 #[allow(unreachable_code)]
                 None
             }
 
             // TODO(port): `getNotEmpty` only makes sense for string-kind vars (it calls `.len`).
             // In Zig, lazy compilation means it simply isn't instantiated for non-string vars.
-            // Phase B: gate this fn on `$kind == string` via a separate macro arm.
+            // Could gate this fn on `$kind == string` via a separate macro arm.
             pub fn get_not_empty() -> Option<K::ValueType>
             where
                 K::ValueType: $crate::env_var::HasLen,
@@ -865,25 +804,15 @@ macro_rules! platform_specific_new {
             fn assert_platform_supported() {
                 // Zig: `@compileError` when the current platform's key is null.
                 // TODO(port): Rust cannot `compile_error!` from inside a const-evaluated `if cfg!`
-                // without separate macro arms per (posix=None / windows=None) combination. Phase B
-                // should split the macro so e.g. `posix = None` emits `#[cfg(unix)] compile_error!`.
-                #[cfg(windows)]
+                // without separate macro arms per (posix=None / windows=None) combination. Could
+                // split the macro so e.g. `posix = None` emits `#[cfg(unix)] compile_error!`.
                 debug_assert!(
-                    WINDOWS_KEY.is_some(),
+                    platform_key().is_some(),
                     concat!(
                         "Cannot retrieve the value of ",
                         // TODO(port): COMPTIME_KEY is &[u8]; concat! wants literals
                         "<env var>",
-                        " for Windows since no Windows key is associated with it."
-                    )
-                );
-                #[cfg(unix)]
-                debug_assert!(
-                    POSIX_KEY.is_some(),
-                    concat!(
-                        "Cannot retrieve the value of ",
-                        "<env var>",
-                        " for POSIX since no POSIX key is associated with it."
+                        " since no key is associated with it on this platform."
                     )
                 );
             }
@@ -893,7 +822,7 @@ macro_rules! platform_specific_new {
 pub(crate) use platform_specific_new;
 
 // ─── helper macros for platform_specific_new! ───
-// TODO(port): these are scaffolding for the draft macro; Phase B may replace with a cleaner
+// TODO(port): these are scaffolding for the draft macro; could be replaced with a cleaner
 // trait-based design once the call-site shape is settled.
 
 #[doc(hidden)]
@@ -943,14 +872,10 @@ macro_rules! __unsigned_opts {
         $crate::env_var::kind::unsigned::CtorOptions::DEFAULT
     };
     ({ default: $d:expr }) => {
-        $crate::env_var::kind::unsigned::CtorOptions {
-            default: Some($d),
-            deser: $crate::env_var::kind::unsigned::DeserOpts::DEFAULT,
-        }
+        $crate::env_var::kind::unsigned::CtorOptions::DEFAULT
     };
     ({ deser: { error_handling: $eh:ident } }) => {
         $crate::env_var::kind::unsigned::CtorOptions {
-            default: None,
             deser: $crate::env_var::kind::unsigned::DeserOpts {
                 error_handling: $crate::env_var::kind::unsigned::ErrorHandling::$eh,
                 empty_string_as: $crate::env_var::kind::unsigned::EmptyStringAs::Erroneous,
@@ -959,7 +884,6 @@ macro_rules! __unsigned_opts {
     };
     ({ deser: { error_handling: $eh:ident, empty_string_as: Value($v:expr) } }) => {
         $crate::env_var::kind::unsigned::CtorOptions {
-            default: None,
             deser: $crate::env_var::kind::unsigned::DeserOpts {
                 error_handling: $crate::env_var::kind::unsigned::ErrorHandling::$eh,
                 empty_string_as: $crate::env_var::kind::unsigned::EmptyStringAs::Value($v),
@@ -1019,18 +943,6 @@ impl HasLen for u64 {
     #[inline]
     fn len(&self) -> usize {
         1
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct FeatureFlagOpts {
-    pub default: Option<bool>,
-}
-impl Default for FeatureFlagOpts {
-    fn default() -> Self {
-        Self {
-            default: Some(false),
-        }
     }
 }
 

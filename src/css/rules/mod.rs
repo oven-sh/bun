@@ -1,23 +1,13 @@
 use crate as css;
-use bun_alloc::ArenaVecExt as _;
 
 use css::PrintErr;
 use css::Printer;
 use css::error::MinifyErr;
 
-// PERF(port): Phase-A shim — Zig used arena-backed `std.ArrayListUnmanaged`.
-// Phase B threads `'bump` and replaces this with `crate::generics::ArrayList<'bump, T>`
+// PERF(port): heap-backed shim — Zig used arena-backed `std.ArrayListUnmanaged`.
+// TODO(refactor): thread `'bump` and replace this with `crate::generics::ArrayList<'bump, T>`
 // (= `bun_alloc::ArenaVec`) crate-wide in one pass.
 pub(super) type ArrayList<T> = Vec<T>;
-
-// ─── B-2 round 6 status ────────────────────────────────────────────────────
-// Hub un-gated. `CssRule` / `CssRuleList` / `MinifyContext` are real and
-// `CssRuleList::{to_css,minify}` now compile so `StyleSheet::{minify,to_css}`
-// can call through. All leaf-rule `to_css` impls are now real — the
-// `to_css_shim!` ladder is gone. The heavy `.style` minify arm and
-// `merge_style_rules` body stay `` internally on
-// `StyleRule::{minify,is_compatible,update_prefix,hash_key,is_duplicate}` +
-// selector helpers.
 
 pub mod container;
 pub mod counter_style;
@@ -101,8 +91,8 @@ macro_rules! css_rule_variants {
             /// Zig: `css.implementDeepClone(@This(), this, arena)` — variant-wise
             /// dispatch to each leaf rule's `deep_clone`. Hand-written (not
             /// `#[derive(DeepClone)]`) because the leaf payloads expose `deep_clone`
-            /// as **inherent** methods rather than `DeepClone` trait impls during the
-            /// staggered Phase-B un-gate; method-syntax dispatch here picks up either.
+            /// as **inherent** methods rather than `DeepClone` trait impls;
+            /// method-syntax dispatch here picks up either.
             pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
             where
                 R: css::generics::DeepClone<'bump>,
@@ -171,6 +161,7 @@ css_rule_variants! {
 // hands the arena-backed AST between threads). Thread-safety therefore follows
 // `R`'s auto-traits.
 unsafe impl<R: Send> Send for CssRule<R> {}
+// SAFETY: see the `Send` impl above — uniquely-owned storage; `Sync` follows `R: Sync`.
 unsafe impl<R: Sync> Sync for CssRule<R> {}
 
 /// Zig: pub fn CssRuleList(comptime AtRule: type) type { return struct { ... } }
@@ -194,7 +185,6 @@ impl<R> Default for CssRuleList<R> {
 // dispatches straight through. (Shim macro deleted — last entry was
 // `StyleRule`, dropped once DeclarationBlock::to_css + selector serialize
 // landed.)
-use style::StyleRule;
 
 // ─── leaf-rule deep_clone ──────────────────────────────────────────────────
 // Every leaf module now owns a real inherent `deep_clone` body — the field-
@@ -295,9 +285,9 @@ pub(super) mod dc {
     pub fn decl_handler_static<'a>(
         h: &'a mut crate::DeclarationHandler<'_>,
     ) -> &'a mut crate::DeclarationHandler<'static> {
-        // Inner-lifetime variance cast via raw pointer — `DeclarationHandler<'_>`
-        // and `DeclarationHandler<'static>` share layout; only the borrowck tag
-        // on the arena handle differs. See SAFETY note above.
+        // SAFETY: inner-lifetime variance cast via raw pointer — `DeclarationHandler<'_>`
+        // and `DeclarationHandler<'static>` share layout; only the borrowck tag on the
+        // arena handle differs. See the fn doc SAFETY note above for the invariant.
         unsafe { &mut *core::ptr::from_mut(h).cast::<crate::DeclarationHandler<'static>>() }
     }
 
@@ -311,9 +301,8 @@ pub(super) mod dc {
         this.deep_clone(bump)
     }
 
-    /// `SelectorList::deep_clone` — selectors/parser.rs intentionally drops
-    /// the `&Arena` parameter (its slices are arena-static). Adapt the call
-    /// shape so leaf rules can stay uniform.
+    /// `SelectorList::deep_clone` re-derives the source `ArenaPtr` instead of
+    /// taking `bump`; intra-arena only (footgun if a cross-arena clone is added).
     #[inline]
     pub fn selector_list(
         this: &crate::selectors::SelectorList,
@@ -428,14 +417,11 @@ pub(super) fn custom_ident_to_css(
     // blocked_on: Printer::write_ident — css-module custom-ident scoping path
     // is gated; fall through to its unscoped tail.
 
-    {
-        let enabled = dest
-            .css_module
-            .as_ref()
-            .is_some_and(|m| m.config.custom_idents);
-        return dest.write_ident(v, enabled);
-    }
-    dest.serialize_identifier(v)
+    let enabled = dest
+        .css_module
+        .as_ref()
+        .is_some_and(|m| m.config.custom_idents);
+    dest.write_ident(v, enabled)
 }
 
 /// Port of `DashedIdentFns.toCss` → `Printer.writeDashedIdent`. The real
@@ -698,7 +684,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // we need to either wrap in :is() or split them into multiple rules.
     let mut incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
         && context.targets.should_compile_selectors()
-        && !sty.is_compatible(*context.targets)
+        && !sty.is_compatible(context.targets)
     {
         // The :is() selector accepts a forgiving selector list, so use that if possible.
         // Note that :is() does not allow pseudo elements, so we need to check for that.
@@ -723,7 +709,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             while i < sty.selectors.v.len() {
                 if selector::is_compatible(
                     &sty.selectors.v.slice()[i as usize..i as usize + 1],
-                    *context.targets,
+                    context.targets,
                 ) {
                     i += 1;
                 } else {
@@ -906,7 +892,7 @@ impl StyleRuleKey {
 /// raw pointer across `&mut rules` writes (see PORT NOTE on `StyleRuleKey`).
 #[derive(Default)]
 pub struct StyleRuleKeyMap {
-    buckets: std::collections::HashMap<u64, Vec<usize>>,
+    buckets: bun_collections::HashMap<u64, Vec<usize>>,
 }
 
 impl StyleRuleKeyMap {
@@ -955,8 +941,8 @@ pub fn merge_style_rules<R>(
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
     // Does not apply if css modules are enabled.
     if sty.selectors.eql(&last_style_rule.selectors)
-        && sty.is_compatible(*context.targets)
-        && last_style_rule.is_compatible(*context.targets)
+        && sty.is_compatible(context.targets)
+        && last_style_rule.is_compatible(context.targets)
         && sty.rules.v.is_empty()
         && last_style_rule.rules.v.is_empty()
         && (!context.css_modules || sty.loc.source_index == last_style_rule.loc.source_index)
@@ -999,7 +985,7 @@ pub fn merge_style_rules<R>(
         }
 
         // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
-        if sty.is_compatible(*context.targets) && last_style_rule.is_compatible(*context.targets) {
+        if sty.is_compatible(context.targets) && last_style_rule.is_compatible(context.targets) {
             let moved = core::mem::take(&mut sty.selectors.v);
             // `reserve` (not `ensure_total_capacity`) so capacity grows
             // super-linearly across repeated merges — matches .zig

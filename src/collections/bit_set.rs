@@ -144,7 +144,7 @@ pub struct IntegerBitSet<const SIZE: usize> {
 
 impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// The number of items in this bit set
-    pub const BIT_LENGTH: usize = SIZE as usize;
+    pub const BIT_LENGTH: usize = SIZE;
 
     /// The integer type used to represent a mask in this bit set
     // TODO(port): Zig: `pub const MaskInt = std.meta.Int(.unsigned, size);`
@@ -386,7 +386,7 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// ascending order.  Modifications to the underlying bit set may
     /// or may not be observed by the iterator.
     pub fn iterator<const KIND_SET: bool, const DIR_FWD: bool>(
-        &self,
+        self,
     ) -> SingleWordIterator<SIZE, DIR_FWD> {
         SingleWordIterator {
             bits_remain: if KIND_SET {
@@ -400,7 +400,7 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// Iterate indices of set bits in ascending order.
     /// Convenience wrapper for `iterator::<true, true>()` (Zig's `.iterator(.{ .kind = .set })`).
     #[inline]
-    pub fn iter_set(&self) -> SingleWordIterator<SIZE, true> {
+    pub fn iter_set(self) -> SingleWordIterator<SIZE, true> {
         self.iterator::<true, true>()
     }
 
@@ -445,7 +445,7 @@ impl<const SIZE: usize, const DIR_FWD: bool> SingleWordIterator<SIZE, DIR_FWD> {
 /// Number of `usize` masks needed to hold `bit_length` bits.
 #[inline(always)]
 pub const fn num_masks_for(bit_length: usize) -> usize {
-    (bit_length + (usize::BITS as usize - 1)) / (usize::BITS as usize)
+    bit_length.div_ceil(usize::BITS as usize)
 }
 
 /// A bit set with static size, which is backed by an array of usize.
@@ -823,6 +823,12 @@ impl Default for DynamicBitSetUnmanaged {
     }
 }
 
+impl Drop for DynamicBitSetUnmanaged {
+    fn drop(&mut self) {
+        self.deinit();
+    }
+}
+
 impl DynamicBitSetUnmanaged {
     pub const EMPTY: fn() -> Self = Self::default;
     // TODO(port): Zig has `pub const empty: Self = .{ ... }` as a const value.
@@ -912,6 +918,8 @@ impl DynamicBitSetUnmanaged {
         // start of EMPTY_MASKS_DATA), and `(self.masks - 1)[0]` holds its
         // length. Maintained by this function.
         let alloc_base = unsafe { self.masks.sub(1) };
+        // SAFETY: `alloc_base` points at the allocation-length header word (or
+        // `EMPTY_MASKS_DATA[0]`), which is always initialized.
         let old_alloc_len = unsafe { *alloc_base };
 
         if new_masks == 0 {
@@ -991,9 +999,7 @@ impl DynamicBitSetUnmanaged {
 
     /// deinitializes the array and releases its memory.
     /// The passed allocator must be the same one used for
-    /// init* or resize in the past.
-    // TODO(port): kept as an explicit method (not `Drop`) because `List` hands
-    // out non-owning `DynamicBitSetUnmanaged` views that must NOT free on drop.
+    /// init* or resize in the past. Idempotent.
     pub fn deinit(&mut self) {
         self.resize(0, false).expect("unreachable");
     }
@@ -1318,8 +1324,8 @@ impl DynamicBitSetList {
 
         let layout = core::alloc::Layout::array::<usize>(buf_len).map_err(|_| AllocError)?;
         // SAFETY: `buf_len > 0` so layout has nonzero size.
-        let raw = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<usize>();
-        let buf = ptr::NonNull::new(raw).ok_or(AllocError)?;
+        let raw = unsafe { std::alloc::alloc_zeroed(layout) };
+        let buf = ptr::NonNull::new(raw).ok_or(AllocError)?.cast::<usize>();
 
         for i in 0..n {
             // SAFETY: `i * single_bitset_buf_size < buf_len`; allocation is
@@ -1344,14 +1350,14 @@ impl DynamicBitSetList {
     /// live. All current callers (`hoisted_install`, `isolated_install`,
     /// `PackageInstaller::can_run_scripts`) satisfy this by keeping the list
     /// alive for the view's entire use. The view must not be `deinit`ed.
-    pub fn at(&self, i: usize) -> DynamicBitSetUnmanaged {
+    pub fn at(&self, i: usize) -> core::mem::ManuallyDrop<DynamicBitSetUnmanaged> {
         debug_assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
         let num_masks = DynamicBitSetUnmanaged::num_masks(self.bit_length);
         let single_bitset_buf_size = num_masks + 1;
 
         let offset = single_bitset_buf_size * i;
 
-        DynamicBitSetUnmanaged {
+        core::mem::ManuallyDrop::new(DynamicBitSetUnmanaged {
             bit_length: self.bit_length,
             // SAFETY: `i < n` (asserted), so `offset + 1 + num_masks <= buf_len`
             // and the pointer is in-bounds. `buf` is a raw allocation never
@@ -1361,7 +1367,7 @@ impl DynamicBitSetList {
             // hold `&self` here — `&self` freezes the pointer *value*, not the
             // pointee.
             masks: unsafe { self.buf.as_ptr().add(offset).add(1) },
-        }
+        })
     }
 
     pub fn set(&self, i: usize, j: usize) {
@@ -1387,8 +1393,8 @@ impl Drop for DynamicBitSetList {
     }
 }
 
-// `buf` is a uniquely-owned heap allocation of plain `usize`s; moving the
-// owning struct between threads is as safe as moving a `Box<[usize]>`.
+// SAFETY: `buf` is a uniquely-owned heap allocation of plain `usize`s; moving
+// the owning struct between threads is as safe as moving a `Box<[usize]>`.
 unsafe impl Send for DynamicBitSetList {}
 
 // Raw allocation helpers for DynamicBitSetUnmanaged. These mirror Zig's
@@ -1572,17 +1578,10 @@ impl Drop for AutoBitSet {
 // TODO(port): in Rust the managed/unmanaged split disappears (global
 // allocator). This wrapper is kept for diff parity; Phase B may collapse it
 // into `DynamicBitSetUnmanaged` and re-export under both names.
+#[derive(Default)]
 pub struct DynamicBitSet {
     /// The number of valid items in this bit set
     pub unmanaged: DynamicBitSetUnmanaged,
-}
-
-impl Default for DynamicBitSet {
-    fn default() -> Self {
-        Self {
-            unmanaged: DynamicBitSetUnmanaged::default(),
-        }
-    }
 }
 
 impl DynamicBitSet {
@@ -1739,12 +1738,6 @@ impl DynamicBitSet {
     }
 }
 
-impl Drop for DynamicBitSet {
-    fn drop(&mut self) {
-        self.unmanaged.deinit();
-    }
-}
-
 // ───────────────────────────── IteratorOptions ─────────────────────────────
 
 /// Options for configuring an iterator over a bit set
@@ -1885,42 +1878,8 @@ pub struct Range {
 
 // ───────────────────────────── Tests ─────────────────────────────
 
-// TODO(port): the Zig source defines test helper fns (`testEql`, `testBitSet`,
-// `testPureBitSet`, `testStaticBitSet`, ...) but no `test "..." {}` blocks
-// actually invoke them — dead code carried from the std fork. Ported as
-// `#[cfg(test)]` helpers; Phase B should add `#[test]` entry points or delete.
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // TODO(port): these helpers used `anytype` to accept Integer/Array/Dynamic
-    // bit sets uniformly. Rust would need a common trait. Stubbed pending
-    // Phase B trait extraction.
-
-    #[allow(dead_code)]
-    fn fill_even<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
-        for i in 0..len {
-            set.set_value(i, i & 1 == 0);
-        }
-    }
-
-    #[allow(dead_code)]
-    fn fill_odd<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
-        for i in 0..len {
-            set.set_value(i, i & 1 == 1);
-        }
-    }
-
-    // TODO(port): `testEql`, `testSubsetOf`, `testSupersetOf`, `testBitSet`,
-    // `testPureBitSet`, `testStaticBitSet` omitted — they rely on Zig
-    // `anytype` duck-typing across all bitset variants and `@hasField`
-    // reflection (`needs_ptr`). Re-author in Phase B against a `BitSet` trait.
-}
+// TODO(port): the Zig source's test helpers (`testEql`, `testBitSet`, …) are
+// dead code carried from the std fork — no `test` block invokes them. They
+// rely on `anytype` duck-typing; re-author against a trait when adding tests.
 
 // ported from: src/collections/bit_set.zig

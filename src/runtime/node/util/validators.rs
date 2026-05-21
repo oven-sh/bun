@@ -103,7 +103,7 @@ fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
 // PORT NOTE: Zig had `comptime min_value: ?i64, comptime max_value: ?i64` with a
 // `comptime { @compileError }` bounds check. `Option<i64>` is not a valid const-
 // generic type on stable, so demoted to runtime params + debug_assert.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// PERF(port): was comptime monomorphization.
 pub fn validate_integer(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -394,7 +394,7 @@ impl ValidateObjectOptions {
     }
 }
 
-// PERF(port): `options` was `comptime` in Zig (monomorphized per call site) — profile in Phase B.
+// PERF(port): `options` was `comptime` in Zig (monomorphized per call site).
 pub fn validate_object(
     global_this: &JSGlobalObject,
     value: JSValue,

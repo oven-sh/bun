@@ -1,4 +1,3 @@
-#![allow(unused, clippy::all)]
 #![warn(unused_must_use)]
 
 use core::ffi::c_int;
@@ -18,14 +17,14 @@ use bun_wyhash::Wyhash11 as Wyhash;
 mod sock {
     pub use libc::{
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
-        freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6, sockaddr_un,
+        freeaddrinfo, sockaddr_un,
     };
 }
 #[cfg(windows)]
 mod sock {
     pub use bun_windows_sys::ws2_32::{
         AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, addrinfo,
-        freeaddrinfo, in6_addr, sockaddr_in, sockaddr_in6,
+        freeaddrinfo,
     };
     // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
     // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
@@ -101,7 +100,7 @@ impl GetAddrInfo {
 // TODO(port): Zig is `packed struct(u64)` — bit layout: family:2, socktype:2,
 // protocol:2, backend:2, flags:32 (std.c.AI), _:24. Represented here as a plain
 // struct because every use site reads fields by name; only `hash()` cared about
-// the raw bytes (handled via `to_packed_bytes`). Phase B: decide if a true
+// the raw bytes (handled via `to_packed_bytes`). Decide if a true
 // `#[repr(transparent)] u64` newtype is needed.
 #[derive(Clone, Copy)]
 pub struct Options {
@@ -130,7 +129,7 @@ impl Default for Options {
 }
 
 impl Options {
-    pub fn to_libc(&self) -> Option<sock::addrinfo> {
+    pub fn to_libc(self) -> Option<sock::addrinfo> {
         if self.family == Family::Unspecified
             && self.socktype == SocketType::Unspecified
             && self.protocol == Protocol::Unspecified
@@ -149,7 +148,7 @@ impl Options {
     }
 
     /// Reconstructs the Zig `packed struct(u64)` byte layout for hashing.
-    fn to_packed_bytes(&self) -> [u8; 8] {
+    fn to_packed_bytes(self) -> [u8; 8] {
         let low: u8 = (self.family as u8 & 0b11)
             | ((self.socktype as u8 & 0b11) << 2)
             | ((self.protocol as u8 & 0b11) << 4)
@@ -163,8 +162,8 @@ impl Options {
 }
 
 // TODO(port): FromJSError types are only consumed by the *_jsc extension fns;
-// consider moving these to bun_runtime::dns_jsc in Phase B.
-// TODO(b1): thiserror not in deps — dropped Error derive
+// consider moving these to bun_runtime::dns_jsc.
+// TODO(port): thiserror not in deps — dropped Error derive
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum OptionsFromJsError {
     //     #[error("InvalidFamily")]
@@ -386,7 +385,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
         }
         sock::AF_INET6 => {
             let v6 = address.as_in6().unwrap(); // family() just checked
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
             // PORT NOTE: Zig formatted via std.net.Address Display ("[addr%scope]:port")
             // then sliced the brackets/port off ("TODO: this is a hack"). Here we
             // render the bare address directly via ares_inet_ntop, then re-append
@@ -450,20 +449,15 @@ pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Order {
     #[strum(serialize = "verbatim")]
+    #[default]
     Verbatim = 0,
     #[strum(serialize = "ipv4first")]
     Ipv4first = 4,
     #[strum(serialize = "ipv6first")]
     Ipv6first = 6,
-}
-
-impl Default for Order {
-    fn default() -> Self {
-        Order::Verbatim
-    }
 }
 
 pub static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {

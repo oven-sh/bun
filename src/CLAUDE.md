@@ -22,6 +22,9 @@ Conventions:
 - Don't `.unwrap()` a fallible path that user input or the OS can hit at runtime — return the error. `.unwrap()` is for invariants you can prove.
 - The C ABI / syscall boundary uses `bun_sys::Maybe<T>` (= `Result<T, bun_sys::Error>`); ordinary Rust code uses `Result<T, E>` with `?`.
 - `bun_core::Error` is a lightweight interned `NonZeroU16` error code; `bun_sys::Error` is the rich syscall error (errno + syscall tag + path). `From<bun_sys::Error> for bun_core::Error` exists.
+- NEVER add comments to deleted code blocks.
+- Do not add comments that reference context from the transcript.
+- Avoid adding comments where not necessary.
 
 ## Prefer `bun_core` / `bun_sys` over `std`
 
@@ -30,7 +33,7 @@ or don't match the cross-platform behavior the runtime needs.
 
 | Instead of                              | Use                                                                                  |
 | --------------------------------------- | ------------------------------------------------------------------------------------ |
-| `std::fs::File`                         | `bun_sys::File` (Copy, no `Drop`-close)                                              |
+| `std::fs::File`                         | `bun_sys::File` (owns the fd; closes on `Drop`)                                      |
 | `std::fs::read` / `write`               | `bun_sys::File::read_from` / `File::create` + `write_all`                            |
 | `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
 | `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
@@ -51,7 +54,7 @@ use bun_sys::{File, Fd, O};
 let file = File::openat(Fd::cwd(), b"path/to/file", O::RDONLY, 0)?;
 let mut buf = vec![0u8; 4096];
 let n = file.read_all(&mut buf)?;     // loops until EOF or full
-file.close();                          // File is Copy — no Drop close
+// `file` closes on Drop.
 ```
 
 Key types and functions:
@@ -189,8 +192,11 @@ Common constants: `JAVASCRIPT`, `JSON`, `HTML`, `CSS`, `TEXT`, `WASM`, `ICO`, `O
 
 ## Memory & Allocators
 
-The `#[global_allocator]` is mimalloc, so plain `Box`/`Vec`/`String`
-already use it.
+The `#[global_allocator]` is mimalloc (or `std::alloc::System` under
+`cfg(bun_asan)`), so plain `Box`/`Vec`/`String` already use it. When pairing
+with C/C++ that may free the bytes, route through `bun_alloc::default_alloc`
+rather than `mi_*` directly — under ASAN the global allocator is libc's, so a
+`mi_free`/`mi_usable_size` on `Box`-owned memory is an allocator mismatch.
 
 OOM handling: do not let a runtime OOM unwind into FFI. Use
 `bun_core::handle_oom` (or the `.unwrap_or_oom()` extension) to convert
@@ -321,7 +327,7 @@ canonical example of this bug class and its fix.
 ```rust
 // Read a file, return JS error on failure
 let contents = match bun_sys::File::openat(Fd::cwd(), path, O::RDONLY, 0)
-    .and_then(|f| { let r = f.read_to_end(); f.close(); r })
+    .and_then(|f| f.read_to_end())
 {
     Ok(bytes) => bytes,
     Err(err) => return Ok(err.to_js(global)?),

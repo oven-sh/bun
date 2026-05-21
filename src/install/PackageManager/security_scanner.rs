@@ -21,13 +21,16 @@ use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
 use bun_io::Loop as AsyncLoop;
+#[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
-use bun_ptr::{RefPtr, ThreadSafeRefCount};
+use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
+#[cfg(not(windows))]
+use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
-    SpawnResultExt as _, Status, Stdio,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status,
+    Stdio,
 };
 use bun_sys::{self, Fd, FdExt as _};
 
@@ -70,7 +73,7 @@ pub struct SecurityScanResults {
     pub packages_scanned: usize,
     pub duration_ms: i64,
     // TODO(port): Zig borrows this from manager.options.security_scanner; using Box<[u8]> to avoid
-    // a struct lifetime in Phase A. Revisit if the copy matters.
+    // a struct lifetime. Revisit if the copy matters.
     pub security_scanner: Box<[u8]>,
 }
 
@@ -228,7 +231,7 @@ pub fn perform_security_scan_after_resolution(
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
-    let Some(security_scanner) = manager.options.security_scanner.clone() else {
+    let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
     };
 
@@ -242,7 +245,7 @@ pub fn perform_security_scan_after_resolution(
         manager.subcommand == bun_install::Subcommand::Remove || manager.update_requests.is_empty();
     let result = attempt_security_scan(
         manager,
-        &security_scanner,
+        security_scanner,
         scan_all,
         command_ctx,
         original_cwd,
@@ -268,7 +271,7 @@ pub fn perform_security_scan_after_resolution(
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
-                &security_scanner,
+                security_scanner,
                 scan_all,
                 command_ctx,
                 original_cwd,
@@ -289,12 +292,11 @@ pub fn perform_security_scan_for_all(
     command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
-    let Some(security_scanner) = manager.options.security_scanner.clone() else {
+    let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
     };
 
-    let result =
-        attempt_security_scan(manager, &security_scanner, true, command_ctx, original_cwd)?;
+    let result = attempt_security_scan(manager, security_scanner, true, command_ctx, original_cwd)?;
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
@@ -315,7 +317,7 @@ pub fn perform_security_scan_for_all(
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
-                &security_scanner,
+                security_scanner,
                 true,
                 command_ctx,
                 original_cwd,
@@ -542,12 +544,9 @@ impl<'a> PackageCollector<'a> {
                 continue;
             }
 
-            let mut pkg_path_buf: Vec<PackageID> = Vec::new();
-            pkg_path_buf.push(root_pkg_id);
-            pkg_path_buf.push(dep_pkg_id);
+            let pkg_path_buf: Vec<PackageID> = vec![root_pkg_id, dep_pkg_id];
 
-            let mut dep_path_buf: Vec<DependencyID> = Vec::new();
-            dep_path_buf.push(dep_id);
+            let dep_path_buf: Vec<DependencyID> = vec![dep_id];
 
             self.queue.push_back(QueueItem {
                 pkg_id: dep_pkg_id,
@@ -582,12 +581,9 @@ impl<'a> PackageCollector<'a> {
                     continue;
                 }
 
-                let mut pkg_path_buf: Vec<PackageID> = Vec::new();
-                pkg_path_buf.push(pkg_id);
-                pkg_path_buf.push(dep_pkg_id);
+                let pkg_path_buf: Vec<PackageID> = vec![pkg_id, dep_pkg_id];
 
-                let mut dep_path_buf: Vec<DependencyID> = Vec::new();
-                dep_path_buf.push(dep_id);
+                let dep_path_buf: Vec<DependencyID> = vec![dep_id];
 
                 self.queue.push_back(QueueItem {
                     pkg_id: dep_pkg_id,
@@ -661,8 +657,7 @@ impl<'a> PackageCollector<'a> {
                 }
                 initial_pkg_path.push(update_pkg_id);
 
-                let mut initial_dep_path: Vec<DependencyID> = Vec::new();
-                initial_dep_path.push(update_dep_id);
+                let initial_dep_path: Vec<DependencyID> = vec![update_dep_id];
 
                 self.queue.push_back(QueueItem {
                     pkg_id: update_pkg_id,
@@ -955,10 +950,10 @@ fn attempt_security_scan_with_retry(
     fn scanner_is_done(scanner: &mut Box<SecurityScanSubprocess>) -> bool {
         scanner.is_done()
     }
+    let mgr: *mut PackageManager = scanner.manager;
     // SAFETY: `scanner.manager` is the live exclusive `&mut PackageManager`
     // borrow held by the subprocess; `sleep_until` + `tick_raw` hold no
     // `&mut PackageManager` across `scanner_is_done`.
-    let mgr: *mut PackageManager = scanner.manager;
     unsafe { PackageManager::sleep_until(mgr, &mut scanner, scanner_is_done) };
 
     scanner.handle_results(
@@ -1023,7 +1018,7 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
 bun_spawn::link_impl_ProcessExit! {
     SecurityScan for SecurityScanSubprocess => |this| {
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, &*rusage),
+            (*this).on_process_exit(&mut *process, status, rusage),
     }
 }
 
@@ -1099,8 +1094,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `Argv` interleaves discriminant words and EFAULTs in the kernel.
         let mut argv: [*const core::ffi::c_char; 5] = [
             argv0_buf.as_ptr().cast(),
-            b"--no-install\0".as_ptr().cast(),
-            b"-e\0".as_ptr().cast(),
+            c"--no-install".as_ptr(),
+            c"-e".as_ptr(),
             argv3_buf.as_ptr().cast(),
             core::ptr::null(),
         ];
@@ -1146,11 +1141,15 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
-        let mut spawned = spawn::spawn_process(
-            &spawn_options,
-            argv.as_mut_ptr().cast(),
-            bun_sys::environ_ptr(),
-        )?
+        // SAFETY: `argv` is a local null-terminated C-string array with a
+        // non-null argv[0]; `environ_ptr()` is the process environ block.
+        let mut spawned = unsafe {
+            spawn::spawn_process(
+                &spawn_options,
+                argv.as_mut_ptr().cast(),
+                bun_sys::environ_ptr(),
+            )
+        }?
         .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
@@ -1259,11 +1258,15 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
-        let mut spawned = spawn::spawn_process(
-            &spawn_options,
-            argv.as_mut_ptr().cast(),
-            bun_sys::environ_ptr(),
-        )?
+        // SAFETY: `argv` is a local null-terminated C-string array with a
+        // non-null argv[0]; `environ_ptr()` is the process environ block.
+        let mut spawned = unsafe {
+            spawn::spawn_process(
+                &spawn_options,
+                argv.as_mut_ptr().cast(),
+                bun_sys::environ_ptr(),
+            )
+        }?
         .map_err(|e| e.to_zig_err())?;
         // `defer spawned.extra_pipes.deinit()` — drops at scope exit.
 
@@ -1338,8 +1341,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
-        let mut spawned_owned = std::mem::take(spawned);
-        let process: *mut Process = spawned_owned.to_process(event_loop, false);
+        let process: *mut Process = std::mem::take(spawned).to_process(event_loop, false);
 
         // Derive the raw backref once and use it for all subsequent field
         // access. `start()`/`watch_or_reap()` below may re-enter
@@ -1384,9 +1386,15 @@ impl<'a> SecurityScanSubprocess<'a> {
             }
         });
 
+        let writer_ptr = writer_local.as_ptr();
         // SAFETY: `writer_local` holds a live ref; `start()` mutates the writer
         // in place (raw intrusive object — no Rust aliasing across the RefPtr).
-        match unsafe { (*writer_local.as_ptr()).start() } {
+        let start_result = unsafe { (*writer_ptr).start() };
+        // SAFETY: `writer_local` keeps `*writer_ptr` live; we own the `start()` ref.
+        unsafe { RefCount::<StaticPipeWriter>::deref(writer_ptr) };
+        // SAFETY: `writer_local` keeps `*writer_ptr` live.
+        unsafe { (*writer_ptr).started = false };
+        match start_result {
             Err(e) => {
                 writer_local.deref();
                 Output::err_generic(

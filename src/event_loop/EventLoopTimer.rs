@@ -9,8 +9,8 @@ use Timespec as timespec;
 pub use bun_core::Timespec;
 
 // Re-export so higher tiers see the *same* type they pass to
-// `bun_io::heap::Intrusive<EventLoopTimer, _>` (was a zero-sized local stub
-// in B-1, which made the real pairing-heap unusable — orphan rule blocked
+// `bun_io::heap::Intrusive<EventLoopTimer, _>` (a zero-sized local stub
+// would make the real pairing-heap unusable — orphan rule blocks
 // `impl HeapNode for EventLoopTimer` anywhere but here).
 pub use bun_io::heap::IntrusiveField;
 
@@ -27,7 +27,7 @@ const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 // in `bun_runtime`; the linker resolves them. No `AtomicPtr`, no registration.
 //
 // PERF(port): was inline switch — `__bun_js_timer_epoch` sits on the
-// heap-compare path. Phase B should denormalize `epoch` into `EventLoopTimer`
+// heap-compare path. Consider denormalizing `epoch` into `EventLoopTimer`
 // to drop the cross-crate call if profiling shows it matters.
 unsafe extern "Rust" {
     /// Runtime owns the tag→variant `match`; `vm` is an erased
@@ -147,10 +147,6 @@ impl EventLoopTimer {
         unsafe { __bun_js_timer_epoch(self.tag, self) }
     }
 
-    fn ns(&self) -> u64 {
-        self.next.ns()
-    }
-
     /// Fire the timer's callback.
     ///
     /// PORT NOTE (b0): the `match self.tag { … container_of … }` body was
@@ -212,7 +208,7 @@ pub enum Tag {
 impl Tag {
     // TODO(port): Zig `pub fn Type(comptime T: Tag) type` returns a type at comptime.
     // Rust has no value→type mapping. All call sites (`jsTimerInternalsFlags`, `fire`)
-    // have been manually expanded above. If a generic mapping is needed in Phase B,
+    // have been manually expanded above. If a generic mapping is ever needed,
     // consider a trait `TagType<const T: Tag> { type Out; }` with per-variant impls.
 
     pub fn allow_fake_timers(self) -> bool {
@@ -225,22 +221,6 @@ impl Tag {
             => false,
             _ => true,
         }
-    }
-}
-
-// PORT NOTE: `UnreachableTimer` in Zig only existed to give `Tag.Type()` a value for
-// `WindowsNamedPipe` on non-Windows. With `fire()` expanded by hand, the non-Windows
-// arm handles this inline (see above). Kept here for parity.
-struct UnreachableTimer {
-    event_loop_timer: EventLoopTimer,
-}
-impl UnreachableTimer {
-    #[allow(dead_code)]
-    fn callback(_: &mut UnreachableTimer, _: &mut UnreachableTimer) {
-        // PORT NOTE: `bun.Environment.ci_assert` → `debug_assertions` (no `ci_assert` Cargo
-        // feature in bun_event_loop; see ptr/ref_count.rs / runtime/timer/mod.rs for precedent).
-        #[cfg(debug_assertions)]
-        debug_assert!(false);
     }
 }
 

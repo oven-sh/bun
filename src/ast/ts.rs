@@ -1,5 +1,7 @@
 use crate::Loc;
+use bun_alloc::AstAlloc;
 use bun_collections::StringArrayHashMap;
+use bun_collections::array_hash_map::StringContext;
 
 use crate::base::Ref;
 use crate::e::String as EString;
@@ -35,8 +37,8 @@ use crate::e::String as EString;
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
 /// to search sibling scopes in addition to parent scopes. This is accomplished
 /// by sharing the map of exported members between all matching sibling scopes.
-// PORT NOTE: 'arena lifetime dropped — `EnumString` payload uses *const EString
-// (LIFETIMES.tsv ARENA → raw ptr in Phase A; Phase B threads 'bump crate-wide).
+// PORT NOTE: 'arena lifetime dropped — `EnumString` payload is a `StoreRef<EString>`
+// rather than an arena-borrowed reference (see the TODO on that variant).
 pub struct TSNamespaceScope {
     /// This is specific to this namespace block. It's the argument of the
     /// immediately-invoked function expression that the namespace block is
@@ -81,8 +83,7 @@ pub struct TSNamespaceScope {
     /// generated proxy symbols that represent the property access "x3.y". This
     /// map is unique per namespace block because "x3" is the argument symbol that
     /// is specific to that particular namespace block.
-    // Zig default: `= .{}` — callers should init with `StringArrayHashMap::default()`.
-    pub property_accesses: StringArrayHashMap<Ref>,
+    pub property_accesses: StringArrayHashMap<Ref, StringContext, AstAlloc>,
 
     /// Even though enums are like namespaces and both enums and namespaces allow
     /// implicit references to properties of sibling scopes, they behave like
@@ -112,7 +113,7 @@ pub struct TSNamespaceScope {
     pub is_enum_scope: bool,
 }
 
-pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember>;
+pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember, StringContext, AstAlloc>;
 
 pub struct TSNamespaceMember {
     pub loc: Loc,
@@ -152,8 +153,9 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum Metadata {
+    #[default]
     MNone,
 
     MNever,
@@ -176,12 +178,6 @@ pub enum Metadata {
     // if this list is arena-backed in practice, switch to
     // `bun_alloc::ArenaVec<'bump, Ref>`.
     MDot(Vec<Ref>),
-}
-
-impl Default for Metadata {
-    fn default() -> Self {
-        Metadata::MNone
-    }
 }
 
 impl Metadata {

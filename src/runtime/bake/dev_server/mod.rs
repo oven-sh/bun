@@ -1,35 +1,28 @@
 //! Instance of the development server. Attaches to an instance of `Bun.serve`,
 //! controlling bundler, routing, and hot module reloading.
 //!
-//! B-2 keystone L: struct + lifecycle un-gated. The 4.8 kL of request
-//! handling, hot-update tracing, and `finalize_bundle` remain in the gated
-//! Phase-A draft `../DevServer.rs` (preserved on disk via ``).
-//! What is real here:
-//!   - `DevServer` struct with all LIFETIMES.tsv-classified fields
+//! Request handling, hot-update tracing, and `finalize_bundle` live in
+//! `../DevServer.rs` (`dev_server_body`). This file holds:
+//!   - the `DevServer` struct definition
 //!   - leaf enums/newtypes (`FileKind`, `ChunkKind`, `Magic`, `MessageId`, …)
 //!   - submodule struct types (`Assets`, `RouteBundle`, `SourceMapStore`, …)
 //!   - `bun_bundler::dispatch::DevServerVTable` wiring (`DEV_SERVER_VTABLE`)
-//!   - `is_file_cached` (the one vtable slot whose body has no jsc/BundleV2 dep)
+//!   - `is_file_cached`
 
 #![allow(clippy::module_inception)]
 #![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
 
 use core::sync::atomic::Ordering;
 
-use core::ptr::NonNull;
-
 use bun_collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_sys::FdExt as _;
 
-use super::framework_router::{self, OpaqueFileId};
 use super::jsc;
 use super::{Graph, Side};
-use crate::server::StaticRoute;
 
-// ─── gated Phase-A submodule drafts (full bodies preserved) ──────────────────
-// Each draft is a faithful port of the `.zig` sibling but depends on
-// `bun_jsc` method surface and/or `bun_bundler::BundleV2` field access.
-// Assets body draft dissolved into `assets.rs`.
+// ─── submodule bodies ────────────────────────────────────────────────────────
+// Each is a faithful port of the `.zig` sibling. Assets body dissolved into
+// `assets.rs`.
 #[path = "../DevServer/DirectoryWatchStore.rs"]
 pub(crate) mod directory_watch_store_body;
 #[path = "../DevServer/ErrorReportRequest.rs"]
@@ -628,7 +621,7 @@ impl HotReloadEvent {
         }
 
         let ends_with_sep = bun_paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
-        // PERF(port): was ensureUnusedCapacity + appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was ensureUnusedCapacity + appendSliceAssumeCapacity — profile if hot.
         self.extra_files.extend_from_slice(if ends_with_sep {
             &dir_path[0..dir_path.len() - 1]
         } else {
@@ -669,6 +662,8 @@ impl HotReloadEvent {
         {
             // SAFETY: `first` is live and exclusively owned by this thread.
             debug_assert!(unsafe { (*first).debug_mutex.try_lock() });
+            // SAFETY: `first` is live (caller contract); atomic load needs no
+            // exclusivity and does not alias any `&mut` borrow.
             debug_assert!(unsafe { (*first).contention_indicator.load(Ordering::SeqCst) } == 0);
         }
 
@@ -680,7 +675,7 @@ impl HotReloadEvent {
             return;
         }
 
-        // PERF(port): was stack-fallback allocator (4096 bytes) — profile in Phase B
+        // PERF(port): was stack-fallback allocator (4096 bytes) — profile if hot.
         let mut entry_points = EntryPointList::default();
 
         // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
@@ -754,7 +749,7 @@ pub struct WatcherAtomics {
     /// `next_event: std.atomic.Value(NextEvent)` — encodes the `NextEvent`
     /// `enum(u8) { 0..3 = event index, .waiting, .done }`.
     // TODO(port): Zig had `align(std.atomic.cache_line)` on this field; Rust cannot align
-    // individual fields — wrap in a `#[repr(align(128))]` newtype in Phase B if false sharing
+    // individual fields — wrap in a `#[repr(align(128))]` newtype if false sharing
     // shows up in profiles.
     pub next_event: core::sync::atomic::AtomicU8,
     /// Watcher-thread-only; index into `events` currently being processed.
@@ -790,12 +785,16 @@ impl WatcherAtomics {
     /// so on, until this function returns `None`.
     ///
     /// Runs on dev server thread.
-    pub fn recycle_event_from_dev_server(
+    ///
+    /// # Safety
+    /// `old_event` must be a live `HotReloadEvent` previously submitted to the
+    /// dev server thread (a slot in `self.events`) and now exclusively owned by
+    /// the caller for reset.
+    pub(crate) fn recycle_event_from_dev_server(
         &mut self,
         old_event: *mut HotReloadEvent,
     ) -> Option<*mut HotReloadEvent> {
-        // SAFETY: `old_event` was previously submitted to the dev server thread and is now
-        // exclusively owned by it for reset.
+        // SAFETY: per this function's contract.
         unsafe { (*old_event).reset() };
 
         #[cfg(debug_assertions)]
@@ -901,9 +900,15 @@ impl WatcherAtomics {
     /// if it contains new files.
     ///
     /// Called from watcher thread.
-    pub fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
-        // SAFETY: `ev` was returned by `watcher_acquire_event` and points into `self.events`;
-        // the watcher thread has exclusive access until it is submitted below.
+    ///
+    /// # Safety
+    /// `ev` must be the pointer returned by the matching
+    /// `watcher_acquire_event` call (a slot in `self.events`), and the watcher
+    /// thread must still hold exclusive access to it.
+    // `&(...)` is deliberate — sidesteps dangerous_implicit_autorefs.
+    #[allow(clippy::needless_borrow)]
+    pub(crate) fn watcher_release_and_submit_event(&mut self, ev: *mut HotReloadEvent) {
+        // SAFETY: per this function's contract.
         let ev_ref = unsafe { &mut *ev };
 
         ev_ref.assert_watcher_thread_locked();
@@ -966,8 +971,9 @@ impl WatcherAtomics {
                 // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe
                 // Deref); `event_loop` points at a sibling field of `VirtualMachine`.
                 unsafe {
-                    (*(&(*ev_ref.owner).vm).event_loop)
-                        .enqueue_task_concurrent(&raw mut ev_ref.concurrent_task);
+                    (*(&(*ev_ref.owner).vm).event_loop).enqueue_task_concurrent(
+                        core::ptr::NonNull::from(&mut ev_ref.concurrent_task),
+                    );
                 }
             }
 
@@ -1284,11 +1290,17 @@ impl DirectoryWatchStore {
         let _g = unsafe { (*dev).graph_safety_lock.guard() };
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             Graph::Client => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `client_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).client_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
             }
             Graph::Server | Graph::Ssr => {
+                // SAFETY: `dev` is the live DevServer owning this store;
+                // `server_graph` is disjoint from `directory_watchers` so this
+                // `&mut` does not alias `&mut self`. `graph_safety_lock` is held.
                 unsafe { &mut (*dev).server_graph }
                     .insert_empty(import_source, FileKind::Unknown)?
                     .key
@@ -1326,7 +1338,7 @@ impl DirectoryWatchStore {
         );
 
         if self.dependencies_free_list.is_empty() {
-            // PERF(port): was ensureUnusedCapacity — profile in Phase B
+            // PERF(port): was ensureUnusedCapacity — profile if hot.
             self.dependencies.reserve(1);
         }
 
@@ -1423,18 +1435,18 @@ impl DirectoryWatchStore {
             }
         });
 
-        let dir_name: Box<[u8]> = Box::<[u8]>::from(dir_name_to_watch);
-        // errdefer free(dir_name) — handled by Drop.
-
-        // PORT NOTE: Zig sets `key_ptr` to a sub-slice of `dir_name` (trailing
-        // slash trimmed) sharing its allocation. `StringArrayHashMap` already
-        // boxed the trimmed key on insert above, so the reassignment is a
-        // no-op here; `dir_name` is kept solely for `add_directory`/`get_hash`.
-
-        let watch_index = match self.dev_bun_watcher().add_directory::<false>(
+        // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
+        // retains the path until eviction runs (deferred onto `evict_list` and
+        // drained later in `flush_evictions`), but `dir_name_to_watch` is a
+        // transient `dirname()` view of a thread-local path buffer. A borrowed
+        // (`::<false>`) `Cow` would dangle once `insert` returns — well before
+        // the watcher reads it on a file event. Owning the copy also lets the
+        // map keep its own boxed key independently, so no extra intermediate
+        // `Box` is needed here.
+        let watch_index = match self.dev_bun_watcher().add_directory::<true>(
             fd,
-            &dir_name,
-            bun_watcher::Watcher::get_hash(&dir_name),
+            dir_name_to_watch,
+            bun_watcher::Watcher::get_hash(dir_name_to_watch),
         ) {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),
             Ok(id) => id,
@@ -1455,7 +1467,6 @@ impl DirectoryWatchStore {
             first_dep: dep,
             watch_index,
         };
-        let _ = dir_name; // keep alive past add_directory; dropped here
         Ok(())
     }
 
@@ -1467,7 +1478,7 @@ impl DirectoryWatchStore {
             index
         } else {
             let index = u32::try_from(self.dependencies.len()).expect("int cast");
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity — profile if hot.
             self.dependencies.push(dep);
             index
         }

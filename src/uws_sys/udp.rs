@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::Loop;
 // `sockaddr_storage` is not in `libc` on Windows; route through the leaf

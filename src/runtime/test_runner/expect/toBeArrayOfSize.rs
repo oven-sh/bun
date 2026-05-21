@@ -1,6 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
 
@@ -49,7 +47,7 @@ pub fn to_be_array_of_size(
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        // PERF(port): was comptime getSignature — profile in Phase B
+        // PERF(port): was comptime getSignature.
         let signature = get_signature("toBeArrayOfSize", "", true);
         return this.throw_fmt(
             global,
@@ -59,7 +57,7 @@ pub fn to_be_array_of_size(
         );
     }
 
-    // PERF(port): was comptime getSignature — profile in Phase B
+    // PERF(port): was comptime getSignature.
     let signature = get_signature("toBeArrayOfSize", "", false);
     this.throw_fmt(
         global,

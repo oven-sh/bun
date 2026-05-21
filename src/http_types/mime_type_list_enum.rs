@@ -1,4 +1,4 @@
-//! Generated for B-2 from `mime_type_list.txt` (hand-rolled stand-in until
+//! Generated from `mime_type_list.txt` (hand-rolled stand-in until
 //! `src/codegen/generate-compact-string-table.ts` learns `.rs` output).
 //!
 //! PERF(port): Zig emits a packed `enum(u14)` (length-group:7 + position:7)

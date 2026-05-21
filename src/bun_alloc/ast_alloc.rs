@@ -97,14 +97,32 @@ static BUMP_CUR: Cell<*mut u8> = Cell::new(core::ptr::null_mut());
 /// One-past-the-end of the active bump chunk.
 #[thread_local]
 static BUMP_END: Cell<*mut u8> = Cell::new(core::ptr::null_mut());
+/// The `mi_heap_t*` that owns the active bump chunk (set in [`bump_refill`]).
+/// Lets [`set_thread_heap`] keep the cursor when re-entering the same heap so
+/// the bundler's per-task `push()`/`pop()` doesn't abandon a 16 KB chunk every
+/// task — that was ~70 K tasks × 16 KB ≈ 1.1 GB of mostly-empty chunks held in
+/// the never-reset worker `ast_memory_store` arenas.
+#[thread_local]
+static BUMP_HEAP: Cell<*mut mimalloc::Heap> = Cell::new(core::ptr::null_mut());
 
-/// Drop the bump cursor (the chunk itself is owned by `AST_HEAP` and reclaimed
-/// by `mi_heap_destroy`). Called on every [`set_thread_heap`] so a cursor never
-/// outlives the heap that backs its chunk.
+/// Drop the bump cursor (the chunk itself is owned by `BUMP_HEAP` and reclaimed
+/// by `mi_heap_destroy`).
 #[inline]
 fn bump_reset() {
     BUMP_CUR.set(core::ptr::null_mut());
     BUMP_END.set(core::ptr::null_mut());
+    BUMP_HEAP.set(core::ptr::null_mut());
+}
+
+/// Invalidate the bump cursor if it is backed by `heap`. Called from
+/// `MimallocArena::reset`/`Drop` immediately before `mi_heap_destroy(heap)` so
+/// a recycled `mi_heap_t*` slot can't ABA-match `BUMP_HEAP` and serve a stale
+/// (freed) chunk under [`set_thread_heap`].
+#[inline]
+pub(crate) fn bump_invalidate_heap(heap: *mut mimalloc::Heap) {
+    if BUMP_HEAP.get() == heap {
+        bump_reset();
+    }
 }
 
 /// Carve `size` bytes at `align` (a power of two `<= MI_MAX_ALIGN_SIZE`) from
@@ -125,9 +143,11 @@ fn bump_alloc(heap: *mut mimalloc::Heap, size: usize, align: usize) -> Option<*m
             // SAFETY: `pad + size <= remaining`, so `cur + pad` and
             // `cur + pad + size` stay within `[BUMP_CUR, BUMP_END]` — i.e. in
             // bounds of the chunk allocation (one-past-the-end at most).
-            let aligned = unsafe { cur.add(pad) };
-            BUMP_CUR.set(unsafe { aligned.add(size) });
-            return Some(aligned);
+            unsafe {
+                let aligned = cur.add(pad);
+                BUMP_CUR.set(aligned.add(size));
+                return Some(aligned);
+            }
         }
     }
     bump_refill(heap, size)
@@ -143,12 +163,15 @@ fn bump_refill(heap: *mut mimalloc::Heap, size: usize) -> Option<*mut u8> {
     if chunk.is_null() {
         return None;
     }
-    // `chunk` is `>= MI_MAX_ALIGN_SIZE`-aligned (mimalloc guarantee) and the
+    // SAFETY: `chunk` is `>= MI_MAX_ALIGN_SIZE`-aligned (mimalloc guarantee) and the
     // caller's `align <= MI_MAX_ALIGN_SIZE`, so carving from the front already
     // satisfies the request's alignment. `size <= BUMP_MAX < BUMP_CHUNK`, so
     // both `add`s are in bounds.
-    BUMP_CUR.set(unsafe { chunk.add(size) });
-    BUMP_END.set(unsafe { chunk.add(BUMP_CHUNK) });
+    unsafe {
+        BUMP_CUR.set(chunk.add(size));
+        BUMP_END.set(chunk.add(BUMP_CHUNK));
+    }
+    BUMP_HEAP.set(heap);
     Some(chunk)
 }
 
@@ -172,7 +195,16 @@ fn bump_refill(heap: *mut mimalloc::Heap, size: usize) -> Option<*mut u8> {
 #[inline]
 pub fn set_thread_heap(heap: *mut mimalloc::Heap) {
     AST_HEAP.set(heap);
-    bump_reset();
+    // Keep the cursor when re-entering the heap that owns it (the bundler's
+    // per-task `push()`/`pop()` always passes the same per-worker arena). Only
+    // discard when switching to a *different* non-null heap — the chunk then
+    // belongs to the wrong owner. Clearing to null is a no-op for the cursor
+    // (no allocs happen while `AST_HEAP` is null), so it survives the
+    // `pop()→push()` round-trip. Heap destruction must call [`bump_reset`]
+    // explicitly to defend against address reuse.
+    if !heap.is_null() && heap != BUMP_HEAP.get() {
+        bump_reset();
+    }
 }
 
 /// Current thread's AST heap, or null if no `ASTMemoryAllocator` scope is

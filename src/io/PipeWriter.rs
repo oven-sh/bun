@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::mem;
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::ByteVecExt;
 use bun_core::OOM;
 use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for all 4 writers
 #[cfg(windows)]
@@ -11,7 +11,7 @@ use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`ref_` are default trait methods; bring traits into scope
 // so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
+use bun_sys::windows::libuv::UvHandle as _;
 use bun_sys::{self as sys, Fd};
 
 use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
@@ -22,7 +22,7 @@ use crate::source::Source;
 
 bun_core::define_scoped_log!(log, PipeWriter, hidden);
 
-// TODO(b2-blocked): bun_sys::Error::oom — `oom()` is a private free fn in
+// TODO(port): bun_sys::Error::oom — `oom()` is a private free fn in
 // `bun_sys::error`; promote to assoc fn or re-export, then drop this shim.
 #[inline]
 fn oom_err() -> sys::Error {
@@ -78,7 +78,7 @@ pub trait PosixPipeWriter {
     /// `self.outgoing.slice()`) without raw-pointer aliasing escapes.
     fn try_write(&self, force_sync: bool, buf: &[u8]) -> WriteResult {
         // PERF(port): Zig used `switch { inline else }` to monomorphize
-        // try_write_with_write_fn per FileType — profile in Phase B.
+        // try_write_with_write_fn per FileType — profile if hot.
         let ft = if !force_sync {
             self.get_file_type()
         } else {
@@ -99,6 +99,9 @@ pub trait PosixPipeWriter {
         write_fn: fn(Fd, &[u8]) -> sys::Result<usize>,
     ) -> WriteResult {
         let fd = self.get_fd();
+        if fd == Fd::INVALID {
+            return WriteResult::Done(0);
+        }
 
         let mut offset: usize = 0;
 
@@ -286,7 +289,7 @@ pub trait PosixBufferedWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_writable(_this: *mut Self) {}
-    // TODO(port): Zig calls `parent.eventLoop()` (returns anytype). Phase B: pin concrete type.
+    // TODO(port): Zig calls `parent.eventLoop()` (returns anytype); pin a concrete type.
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
@@ -433,7 +436,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         // `self.close()` without reload. Launder so post-call accesses see
         // fresh state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        let was_done = Self::r(this).is_done == true;
+        let was_done = Self::r(this).is_done;
         let parent = Self::r(this).parent();
 
         if status == WriteStatus::EndOfFile && !was_done {
@@ -543,9 +546,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
-        // SAFETY: caller passes the owning `Parent` (BACKREF); the writer is an
-        // intrusive field of `*parent`, so the parent strictly outlives it.
-        self.parent = unsafe { bun_ptr::ParentRef::from_nullable_mut(parent) };
+        // Reject null up front: every dispatch path past this point assumes
+        // `self.parent` is set (see the type-invariant doc on `parent_event_loop`).
+        self.parent = Some(bun_ptr::ParentRef::from(
+            core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null"),
+        ));
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
@@ -568,7 +573,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     /// Zig accepts `bun.FD`, `*bun.MovableIfWindowsFd`, or `bun.MovableIfWindowsFd`.
-    // TODO(port): MovableIfWindowsFd overload — Phase B add Into<Fd> bound or separate fn.
+    // TODO(port): MovableIfWindowsFd overload — add an Into<Fd> bound or a separate fn.
     pub fn start(&mut self, rawfd: Fd, pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
         self.pollable = pollable;
@@ -1327,7 +1332,7 @@ pub trait BaseWindowsPipeWriter {
     }
 
     /// Zig accepts `bun.FD` or `*bun.MovableIfWindowsFd`.
-    // TODO(port): MovableIfWindowsFd overload — Phase B add a separate start_movable().
+    // TODO(port): MovableIfWindowsFd overload — add a separate start_movable().
     fn start(&mut self, rawfd: Fd, _pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
         debug_assert!(self.source().is_none());
@@ -1343,7 +1348,7 @@ pub trait BaseWindowsPipeWriter {
         // TODO: Change the type of the parameter and update all places to
         //       use MovableFD
         // TODO(port): Zig branch `if (source is pipe|tty) and FDType == *MovableIfWindowsFd { rawfd.take() }`
-        // dropped — Phase B handles via the MovableFd overload.
+        // dropped — handle via a MovableFd overload.
         let _ = matches!(source, Source::Pipe(_) | Source::Tty(_));
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
@@ -1792,7 +1797,7 @@ impl StreamBuffer {
     }
 
     pub fn maybe_shrink(&mut self) {
-        // TODO(port): std.heap.pageSize() — using 4096; Phase B: query actual page size.
+        // TODO(port): std.heap.pageSize() — using 4096; query the actual page size.
         let page = 4096usize;
         if self.list.capacity() > page {
             // Zig: expandToCapacity() then shrinkAndFree(page) — i.e. truncate the
@@ -1829,7 +1834,7 @@ impl StreamBuffer {
     }
 
     pub fn write_assume_capacity(&mut self, buffer: &[u8]) {
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was appendSliceAssumeCapacity — profile if hot.
         self.list.extend_from_slice(buffer);
     }
 
@@ -1856,7 +1861,7 @@ impl StreamBuffer {
         buffer_u16: Option<&[u16]>,
         kind: WriteKind,
     ) -> Result<&'a [u8], OOM> {
-        // TODO(port): comptime fn-ptr identity dispatch → enum tag; Phase B unify with write_internal.
+        // TODO(refactor): comptime fn-ptr identity dispatch → enum tag; consider unifying with write_internal.
         match kind {
             WriteKind::Latin1 => {
                 let buffer = buffer_u8.unwrap();
@@ -2095,11 +2100,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     pub fn has_pending_data(&self) -> bool {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
-    }
-
-    fn is_done_internal(&self) -> bool {
-        // done is flags and no more data queued? so we are done!
-        self.is_done && !self.has_pending_data()
     }
 
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
@@ -2795,7 +2795,7 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(err) };
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
@@ -2858,7 +2858,7 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(err) };
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]

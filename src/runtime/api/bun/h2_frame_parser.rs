@@ -16,7 +16,7 @@ use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::MutableString;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::String as BunString;
 use bun_http::lshpack;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
@@ -25,8 +25,7 @@ use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, Strong,
-    StrongOptional,
+    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
 };
 use bun_ptr::IntrusiveRc;
 
@@ -140,7 +139,6 @@ pub(crate) trait H2GlobalErrExt {
     fn err_http2_invalid_setting_value_range_error(&self, msg: &'static str) -> H2ErrBuilder<'_>;
     fn err_http2_invalid_setting_value(&self, msg: &'static str) -> H2ErrBuilder<'_>;
     fn err_http2_too_many_custom_settings(&self, msg: &'static str) -> H2ErrBuilder<'_>;
-    fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_>;
 }
 impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
@@ -164,14 +162,6 @@ impl H2GlobalErrExt for JSGlobalObject {
         H2ErrBuilder {
             global: self,
             code: JscErrorCode::HTTP2_TOO_MANY_CUSTOM_SETTINGS,
-            msg,
-        }
-    }
-    #[inline]
-    fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_> {
-        H2ErrBuilder {
-            global: self,
-            code: JscErrorCode::INVALID_ARG_TYPE,
             msg,
         }
     }
@@ -205,8 +195,6 @@ const MAX_FRAME_SIZE_F64: f64 = MAX_FRAME_SIZE as f64;
 const HPACK_ENTRY_OVERHEAD: usize = 32;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
-// Maximum custom setting ID (0xFFFF per RFC 7540)
-const MAX_CUSTOM_SETTING_ID: f64 = 0xFFFF as f64;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum PaddingStrategy {
@@ -224,7 +212,6 @@ enum FrameType {
     HTTP_FRAME_PRIORITY = 0x02,
     HTTP_FRAME_RST_STREAM = 0x03,
     HTTP_FRAME_SETTINGS = 0x04,
-    HTTP_FRAME_PUSH_PROMISE = 0x05,
     HTTP_FRAME_PING = 0x06,
     HTTP_FRAME_GOAWAY = 0x07,
     HTTP_FRAME_WINDOW_UPDATE = 0x08,
@@ -266,16 +253,11 @@ impl ErrorCode {
     const PROTOCOL_ERROR: Self = Self(0x1);
     const INTERNAL_ERROR: Self = Self(0x2);
     const FLOW_CONTROL_ERROR: Self = Self(0x3);
-    const SETTINGS_TIMEOUT: Self = Self(0x4);
-    const STREAM_CLOSED: Self = Self(0x5);
     const FRAME_SIZE_ERROR: Self = Self(0x6);
     const REFUSED_STREAM: Self = Self(0x7);
     const CANCEL: Self = Self(0x8);
     const COMPRESSION_ERROR: Self = Self(0x9);
-    const CONNECT_ERROR: Self = Self(0xa);
     const ENHANCE_YOUR_CALM: Self = Self(0xb);
-    const INADEQUATE_SECURITY: Self = Self(0xc);
-    const HTTP_1_1_REQUIRED: Self = Self(0xd);
     const MAX_PENDING_SETTINGS_ACK: Self = Self(0xe);
 }
 
@@ -292,7 +274,6 @@ impl SettingsType {
     const SETTINGS_MAX_HEADER_LIST_SIZE: Self = Self(0x6);
     // non standard extension settings here (we still dont support this ones)
     const SETTINGS_ENABLE_CONNECT_PROTOCOL: Self = Self(0x8);
-    const SETTINGS_NO_RFC7540_PRIORITIES: Self = Self(0x9);
 }
 
 #[inline]
@@ -367,8 +348,8 @@ const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::
 impl StreamPriority {
     pub const BYTE_SIZE: usize = 5;
     #[inline]
-    fn write(&self, writer: &mut impl WireWriter) -> bool {
-        let mut swap = *self;
+    fn write(self, writer: &mut impl WireWriter) -> bool {
+        let mut swap = self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
         writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
     }
@@ -949,7 +930,7 @@ pub fn js_get_packed_settings(
         if let Some(header_table_size) = options.get(global_object, "headerTableSize")? {
             if header_table_size.is_number() {
                 let v = header_table_size.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected headerTableSize to be a number between 0 and 2^32-1"
                     )));
@@ -975,7 +956,7 @@ pub fn js_get_packed_settings(
         if let Some(initial_window_size) = options.get(global_object, "initialWindowSize")? {
             if initial_window_size.is_number() {
                 let v = initial_window_size.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected initialWindowSize to be a number between 0 and 2^32-1"
                     )));
@@ -1007,7 +988,7 @@ pub fn js_get_packed_settings(
         if let Some(max_concurrent_streams) = options.get(global_object, "maxConcurrentStreams")? {
             if max_concurrent_streams.is_number() {
                 let v = max_concurrent_streams.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected maxConcurrentStreams to be a number between 0 and 2^32-1"
                     )));
@@ -1022,7 +1003,7 @@ pub fn js_get_packed_settings(
         if let Some(max_header_list_size) = options.get(global_object, "maxHeaderListSize")? {
             if max_header_list_size.is_number() {
                 let v = max_header_list_size.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected maxHeaderListSize to be a number between 0 and 2^32-1"
                     )));
@@ -1038,7 +1019,7 @@ pub fn js_get_packed_settings(
         if let Some(max_header_size) = options.get(global_object, "maxHeaderSize")? {
             if max_header_size.is_number() {
                 let v = max_header_size.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected maxHeaderSize to be a number between 0 and 2^32-1"
                     )));
@@ -1337,7 +1318,7 @@ impl H2FrameParser {
     /// match the C signature. All mutation goes through `Cell`/`JsCell` fields.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     pub fn ref_(&self) {
@@ -1412,8 +1393,6 @@ pub enum FlushState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamState {
     IDLE = 1,
-    RESERVED_LOCAL = 3,
-    RESERVED_REMOTE = 4,
     OPEN = 2,
     HALF_CLOSED_LOCAL = 5,
     HALF_CLOSED_REMOTE = 6,
@@ -1425,9 +1404,10 @@ pub struct Stream {
     state: StreamState,
     js_context: StrongOptional, // jsc.Strong.Optional
     wait_for_trailers: bool,
-    close_after_drain: bool,
     end_after_headers: bool,
     is_waiting_more_headers: bool,
+    header_block_size: usize,
+    header_block_count: usize,
     padding: Option<u8>,
     padding_strategy: PaddingStrategy,
     rst_code: u32,
@@ -1476,11 +1456,9 @@ impl SignalRef {
         self.signal.aborted()
     }
 
-    pub fn abort_listener(this: *mut SignalRef, reason: JSValue) {
+    pub fn abort_listener(this: &mut SignalRef, reason: JSValue) {
         bun_output::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
-        // SAFETY: this is a stable heap allocation owned by Stream.signal
-        let this = unsafe { &mut *this };
         // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
         // R-2: shared deref — `abort_stream` takes `&self`.
         let parser = this.parser.get();
@@ -1525,26 +1503,12 @@ impl PendingQueue {
         bun_output::scoped_log!(H2FrameParser, "PendingQueue.enqueue {}", self.len);
     }
 
-    pub fn peek(&mut self) -> Option<&mut PendingFrame> {
-        if self.len == 0 {
-            return None;
-        }
-        Some(&mut self.data[0])
-    }
-
     pub fn peek_last(&mut self) -> Option<&mut PendingFrame> {
         if self.len == 0 {
             return None;
         }
         let last = self.data.len() - 1;
         Some(&mut self.data[last])
-    }
-
-    pub fn slice(&mut self) -> &mut [PendingFrame] {
-        if self.len == 0 {
-            return &mut [];
-        }
-        &mut self.data[self.front..self.front + self.len]
     }
 
     pub fn peek_front(&mut self) -> Option<&mut PendingFrame> {
@@ -1635,7 +1599,7 @@ impl Stream {
 
             if frame.len == 0 {
                 // flush a zero payload frame
-                let mut data_header = FrameHeader {
+                let data_header = FrameHeader {
                     type_: FrameType::HTTP_FRAME_DATA as u8,
                     flags: if frame.end_stream && !self.wait_for_trailers {
                         DataFrameFlags::END_STREAM as u8
@@ -1668,7 +1632,6 @@ impl Stream {
                     )
                     .min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
                 if max_size == 0 {
-                    is_flow_control_limited = true;
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "dataFrame flow control limited {} {} {} {} {} {}",
@@ -1722,7 +1685,7 @@ impl Stream {
                     if padding != 0 {
                         flags |= DataFrameFlags::PADDED as u8;
                     }
-                    let mut data_header = FrameHeader {
+                    let data_header = FrameHeader {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
                         flags,
                         stream_identifier: self.id,
@@ -1779,7 +1742,7 @@ impl Stream {
                     if padding != 0 {
                         flags |= DataFrameFlags::PADDED as u8;
                     }
-                    let mut data_header = FrameHeader {
+                    let data_header = FrameHeader {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
                         flags,
                         stream_identifier: self.id,
@@ -1878,6 +1841,10 @@ impl Stream {
             // every access — see PORT NOTE above).
             macro_rules! lf {
                 () => {
+                    // SAFETY: `last_frame` points at the live tail slot of
+                    // `self.data_frame_queue`; provenance is re-laundered via
+                    // `black_box` before each post-dispatch expansion so no
+                    // other `&mut` to the slot is live here (see PORT NOTE).
                     unsafe { &mut *last_frame }
                 };
             }
@@ -1991,9 +1958,10 @@ impl Stream {
             state: StreamState::OPEN,
             js_context: StrongOptional::empty(),
             wait_for_trailers: false,
-            close_after_drain: false,
             end_after_headers: false,
             is_waiting_more_headers: false,
+            header_block_size: 0,
+            header_block_count: 0,
             padding: None,
             padding_strategy,
             rst_code: 0,
@@ -2018,22 +1986,14 @@ impl Stream {
     pub fn can_receive_data(&self) -> bool {
         matches!(
             self.state,
-            StreamState::IDLE
-                | StreamState::RESERVED_LOCAL
-                | StreamState::RESERVED_REMOTE
-                | StreamState::OPEN
-                | StreamState::HALF_CLOSED_LOCAL
+            StreamState::IDLE | StreamState::OPEN | StreamState::HALF_CLOSED_LOCAL
         )
     }
 
     pub fn can_send_data(&self) -> bool {
         matches!(
             self.state,
-            StreamState::IDLE
-                | StreamState::RESERVED_LOCAL
-                | StreamState::RESERVED_REMOTE
-                | StreamState::OPEN
-                | StreamState::HALF_CLOSED_REMOTE
+            StreamState::IDLE | StreamState::OPEN | StreamState::HALF_CLOSED_REMOTE
         )
     }
 
@@ -2123,7 +2083,7 @@ impl Stream {
 // fn pointer; `bun_jsc::abort_signal::listen` instead expects `*mut C: AbortListener`.
 impl AbortListener for SignalRef {
     fn on_abort(&mut self, reason: JSValue) {
-        SignalRef::abort_listener(std::ptr::from_mut::<SignalRef>(self), reason);
+        SignalRef::abort_listener(self, reason);
     }
 }
 
@@ -2132,7 +2092,7 @@ type HeaderValue = lshpack::DecodeResult;
 // PORT NOTE: `lshpack::HpackError` does not yet impl `From` for `bun_core::Error`
 // (see TODO in lshpack.rs). Map variants 1:1 to interned error names so Zig
 // callers that match on `error.UnableToDecode` etc. keep their semantics.
-fn hpack_error_to_core(e: lshpack::HpackError) -> bun_core::Error {
+fn hpack_error_to_core(e: &lshpack::HpackError) -> bun_core::Error {
     match e {
         lshpack::HpackError::UnableToDecode => bun_core::err!("UnableToDecode"),
         lshpack::HpackError::EmptyHeaderName => bun_core::err!("EmptyHeaderName"),
@@ -2186,7 +2146,9 @@ impl H2FrameParser {
     pub fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack.decode(src_buffer).map_err(hpack_error_to_core);
+                return hpack
+                    .decode(src_buffer)
+                    .map_err(|e| hpack_error_to_core(&e));
             }
             Err(bun_core::err!("UnableToDecode"))
         })
@@ -2205,7 +2167,7 @@ impl H2FrameParser {
                 // lets make sure the name is lowercase
                 return hpack
                     .encode(name, value, never_index, dst_buffer, dst_offset)
-                    .map_err(hpack_error_to_core);
+                    .map_err(|e| hpack_error_to_core(&e));
             }
             Err(bun_core::err!("UnableToEncode"))
         })
@@ -2318,7 +2280,7 @@ impl H2FrameParser {
 
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + FullSettingsPayload::BYTE_SIZE];
         let mut stream = FixedBufferStream::new(&mut buffer);
-        let mut settings_header = FrameHeader {
+        let settings_header = FrameHeader {
             type_: FrameType::HTTP_FRAME_SETTINGS as u8,
             flags: 0,
             stream_identifier: 0,
@@ -2346,7 +2308,7 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 4];
         let mut writer_stream = FixedBufferStream::new(&mut buffer);
 
-        let mut frame = FrameHeader {
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_RST_STREAM as u8,
             flags: 0,
             stream_identifier: stream.id,
@@ -2384,7 +2346,7 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 4];
         let mut writer_stream = FixedBufferStream::new(&mut buffer);
 
-        let mut frame = FrameHeader {
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_RST_STREAM as u8,
             flags: 0,
             stream_identifier: stream.id,
@@ -2436,7 +2398,7 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 8];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
-        let mut frame = FrameHeader {
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_GOAWAY as u8,
             flags: 0,
             stream_identifier,
@@ -2494,7 +2456,7 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
-        let mut frame = FrameHeader {
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_ALTSVC as u8,
             flags: 0,
             stream_identifier,
@@ -2529,7 +2491,7 @@ impl H2FrameParser {
             self.out_standing_pings
                 .set(self.out_standing_pings.get() + 1);
         }
-        let mut frame = FrameHeader {
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_PING as u8,
             flags: if ack { PingFrameFlags::ACK as u8 } else { 0 },
             stream_identifier: 0,
@@ -2547,7 +2509,7 @@ impl H2FrameParser {
             [0u8; 24 + FrameHeader::BYTE_SIZE + FullSettingsPayload::BYTE_SIZE];
         let mut preface_stream = FixedBufferStream::new(&mut preface_buffer);
         let _ = preface_stream.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
-        let mut settings_header = FrameHeader {
+        let settings_header = FrameHeader {
             type_: FrameType::HTTP_FRAME_SETTINGS as u8,
             flags: 0,
             stream_identifier: 0,
@@ -2564,7 +2526,7 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "send HTTP_FRAME_SETTINGS ack true");
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
         let mut stream = FixedBufferStream::new(&mut buffer);
-        let mut settings_header = FrameHeader {
+        let settings_header = FrameHeader {
             type_: FrameType::HTTP_FRAME_SETTINGS as u8,
             flags: SettingsFlags::ACK as u8,
             stream_identifier: 0,
@@ -2583,7 +2545,7 @@ impl H2FrameParser {
         );
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 4];
         let mut stream = FixedBufferStream::new(&mut buffer);
-        let mut settings_header = FrameHeader {
+        let settings_header = FrameHeader {
             type_: FrameType::HTTP_FRAME_WINDOW_UPDATE as u8,
             flags: 0,
             stream_identifier,
@@ -2696,7 +2658,7 @@ impl H2FrameParser {
 
     fn cork(&self) {
         if let Some(corked) = CORKED_H2.with(|c| c.get()) {
-            if corked as usize == self.as_ctx_ptr() as usize {
+            if std::ptr::eq(corked, self.as_ctx_ptr()) {
                 // already corked
                 return;
             }
@@ -3236,7 +3198,7 @@ impl H2FrameParser {
             if let Some(s) = stream {
                 // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
                 unsafe { (*s).remote_window_size += window_size_increment.uint31() as u64 };
-            } else {
+            } else if frame.stream_identifier == 0 {
                 self.remote_window_size
                     .set(self.remote_window_size.get() + window_size_increment.uint31() as u64);
             }
@@ -3277,9 +3239,6 @@ impl H2FrameParser {
         headers.ensure_still_alive();
 
         let mut sensitive_headers: JSValue = JSValue::UNDEFINED;
-        let mut count: usize = 0;
-        // RFC 7540 Section 6.5.2: Track cumulative header list size
-        let mut header_list_size: usize = 0;
 
         loop {
             let header = match self.decode(&payload[offset..]) {
@@ -3306,10 +3265,11 @@ impl H2FrameParser {
 
             // RFC 7540 Section 6.5.2: Calculate header list size
             // Size = name length + value length + HPACK entry overhead per header
-            header_list_size += header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
+            stream.header_block_size +=
+                header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
 
             // Check against maxHeaderListSize setting
-            if header_list_size > self.local_settings.get().max_header_list_size as usize {
+            if stream.header_block_size > self.local_settings.get().max_header_list_size as usize {
                 self.rejected_streams.set(self.rejected_streams.get() + 1);
                 if self.max_rejected_streams.get() <= self.rejected_streams.get() {
                     self.send_go_away(
@@ -3325,8 +3285,8 @@ impl H2FrameParser {
                 return Ok(self.streams.get().get(&stream_id).copied());
             }
 
-            count += 1;
-            if (self.max_header_list_pairs.get() as usize) < count {
+            stream.header_block_count += 1;
+            if (self.max_header_list_pairs.get() as usize) < stream.header_block_count {
                 self.rejected_streams.set(self.rejected_streams.get() + 1);
                 if self.max_rejected_streams.get() <= self.rejected_streams.get() {
                     self.send_go_away(
@@ -3428,12 +3388,7 @@ impl H2FrameParser {
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
-        let settings = self
-            .remote_settings
-            .get()
-            .unwrap_or(self.local_settings.get());
-
-        let max_frame_size = settings.max_frame_size;
+        let max_frame_size = self.local_settings.get().max_frame_size;
         if frame.length > max_frame_size {
             bun_output::scoped_log!(
                 H2FrameParser,
@@ -3590,7 +3545,7 @@ impl H2FrameParser {
         &self,
         frame: FrameHeader,
         data: &[u8],
-        stream_: Option<*mut Stream>,
+        _stream_: Option<*mut Stream>,
     ) -> usize {
         bun_output::scoped_log!(
             H2FrameParser,
@@ -3598,7 +3553,7 @@ impl H2FrameParser {
             frame.stream_identifier,
             BStr::new(data)
         );
-        if stream_.is_some() {
+        if frame.stream_identifier != 0 {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::PROTOCOL_ERROR,
@@ -3608,12 +3563,7 @@ impl H2FrameParser {
             );
             return data.len();
         }
-        let settings = self
-            .remote_settings
-            .get()
-            .unwrap_or(self.local_settings.get());
-
-        if frame.length < 8 || frame.length > settings.max_frame_size {
+        if frame.length < 8 || frame.length > self.local_settings.get().max_frame_size {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::FRAME_SIZE_ERROR,
@@ -3880,9 +3830,9 @@ impl H2FrameParser {
         &self,
         frame: FrameHeader,
         data: &[u8],
-        stream_: Option<*mut Stream>,
+        _stream_: Option<*mut Stream>,
     ) -> usize {
-        if stream_.is_some() {
+        if frame.stream_identifier != 0 {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::PROTOCOL_ERROR,
@@ -3916,6 +3866,16 @@ impl H2FrameParser {
 
             // if is not ACK send response
             if is_not_ack {
+                if self.get_session_memory_usage() > self.max_session_memory.get() as usize {
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::ENHANCE_YOUR_CALM,
+                        b"ENHANCE_YOUR_CALM",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return end;
+                }
                 self.send_ping(true, &payload_owned);
             } else {
                 self.out_standing_pings
@@ -3945,7 +3905,26 @@ impl H2FrameParser {
         data: &[u8],
         stream_: Option<*mut Stream>,
     ) -> usize {
+        if frame.length as usize != StreamPriority::BYTE_SIZE {
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"invalid Priority frame size",
+                self.last_stream_id.get(),
+                true,
+            );
+            return data.len();
+        }
         let Some(stream_ptr) = stream_ else {
+            if frame.stream_identifier != 0 {
+                // PRIORITY on an idle/closed stream is permitted (RFC 9113 §5.3.4); ignore it.
+                if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier)
+                {
+                    self.read_buffer.with_mut(|rb| rb.reset());
+                    return content.end;
+                }
+                return data.len();
+            }
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::PROTOCOL_ERROR,
@@ -3957,17 +3936,6 @@ impl H2FrameParser {
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
-
-        if frame.length as usize != StreamPriority::BYTE_SIZE {
-            self.send_go_away(
-                frame.stream_identifier,
-                ErrorCode::FRAME_SIZE_ERROR,
-                b"invalid Priority frame size",
-                self.last_stream_id.get(),
-                true,
-            );
-            return data.len();
-        }
 
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
             let payload = content.data();
@@ -4028,35 +3996,29 @@ impl H2FrameParser {
             );
             return Ok(data.len());
         }
+        if frame.length > self.local_settings.get().max_frame_size {
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"invalid Continuation frame size",
+                self.last_stream_id.get(),
+                true,
+            );
+            return Ok(data.len());
+        }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
             let payload = content.data();
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
-            stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
             stream = match self.decode_header_block(payload, stream, frame.flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end),
             };
-            if stream.end_after_headers {
-                stream.is_waiting_more_headers = false;
-                if frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0 {
-                    let identifier = stream.get_identifier();
-                    identifier.ensure_still_alive();
-                    if stream.state == StreamState::HALF_CLOSED_REMOTE {
-                        // no more continuation headers we can call it closed
-                        stream.state = StreamState::CLOSED;
-                        stream.free_resources::<false>(self);
-                    } else {
-                        stream.state = StreamState::HALF_CLOSED_LOCAL;
-                    }
-                    self.dispatch_with_extra(
-                        JSH2FrameParser::Gc::onStreamEnd,
-                        identifier,
-                        JSValue::js_number(stream.state as u8 as f64),
-                    );
-                }
-            }
+            // END_STREAM (end_after_headers) was already finalized by
+            // handle_headers_frame; only track END_HEADERS here.
+            stream.is_waiting_more_headers =
+                frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
             return Ok(end);
         }
 
@@ -4092,11 +4054,7 @@ impl H2FrameParser {
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
-        let settings = self
-            .remote_settings
-            .get()
-            .unwrap_or(self.local_settings.get());
-        if frame.length > settings.max_frame_size {
+        if frame.length > self.local_settings.get().max_frame_size {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::FRAME_SIZE_ERROR,
@@ -4166,6 +4124,8 @@ impl H2FrameParser {
             }
             let end = payload.len() - padding;
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
+            stream.header_block_size = 0;
+            stream.header_block_count = 0;
             stream = match self.decode_header_block(&payload[offset..end], stream, frame.flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
@@ -4229,7 +4189,7 @@ impl H2FrameParser {
 
         let setting_byte_size = SettingsPayloadUnit::BYTE_SIZE;
         if frame.length > 0 {
-            if is_ack || frame.length as usize % setting_byte_size != 0 {
+            if is_ack || !(frame.length as usize).is_multiple_of(setting_byte_size) {
                 bun_output::scoped_log!(H2FrameParser, "invalid settings frame size");
                 self.send_go_away(
                     frame.stream_identifier,
@@ -4465,6 +4425,26 @@ impl H2FrameParser {
         Some(stream)
     }
 
+    /// Stream lookup for inbound frames. Only a HEADERS frame may allocate new
+    /// stream state (RFC 9113 §5.1); any other frame type referencing an
+    /// unknown stream id is treated as idle/closed and does not allocate.
+    fn lookup_inbound_stream(&self, stream_identifier: u32, frame_type: u8) -> Option<*mut Stream> {
+        if stream_identifier == 0 {
+            return None;
+        }
+        if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
+            return Some(stream);
+        }
+        if frame_type != FrameType::HTTP_FRAME_HEADERS as u8 || !self.is_server.get() {
+            return None;
+        }
+        // Client-initiated streams must use odd identifiers (RFC 9113 §5.1.1).
+        if stream_identifier & 1 == 0 {
+            return None;
+        }
+        self.handle_received_stream_id(stream_identifier)
+    }
+
     fn read_bytes(&self, bytes: &[u8]) -> JsResult<usize> {
         bun_output::scoped_log!(H2FrameParser, "read {}", bytes.len());
         if self.is_server.get() && self.preface_received_len.get() < 24 {
@@ -4507,7 +4487,7 @@ impl H2FrameParser {
                 header.stream_identifier
             );
 
-            let stream = self.handle_received_stream_id(header.stream_identifier);
+            let stream = self.lookup_inbound_stream(header.stream_identifier, header.type_);
             return self.dispatch_frame(header, bytes, stream, 0);
         }
 
@@ -4554,7 +4534,7 @@ impl H2FrameParser {
                 header.flags,
                 header.stream_identifier
             );
-            let stream = self.handle_received_stream_id(header.stream_identifier);
+            let stream = self.lookup_inbound_stream(header.stream_identifier, header.type_);
 
             return self.dispatch_frame(header, &bytes[needed..], stream, needed);
         }
@@ -4589,7 +4569,7 @@ impl H2FrameParser {
         );
         self.current_frame.set(Some(header));
         self.remaining_length.set(header.length as i32);
-        let stream = self.handle_received_stream_id(header.stream_identifier);
+        let stream = self.lookup_inbound_stream(header.stream_identifier, header.type_);
         self.dispatch_frame(
             header,
             &bytes[FrameHeader::BYTE_SIZE..],
@@ -5029,9 +5009,6 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
         }
         let error_code = error_code_arg.to_int32();
-        if error_code < 1 && error_code > 13 {
-            return Err(global_object.throw(format_args!("invalid errorCode")));
-        }
 
         let mut last_stream_id = this.last_stream_id.get();
         if args_list.len >= 2 {
@@ -5112,7 +5089,7 @@ impl H2FrameParser {
             let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
             let mut stream = FixedBufferStream::new(&mut buffer);
 
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_ORIGIN as u8,
                 flags: 0,
                 stream_identifier: 0,
@@ -5137,7 +5114,7 @@ impl H2FrameParser {
             let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
             let mut stream = FixedBufferStream::new(&mut buffer);
 
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_ORIGIN as u8,
                 flags: 0,
                 stream_identifier: 0,
@@ -5185,7 +5162,7 @@ impl H2FrameParser {
             }
 
             let total_length: u32 = u32::try_from(stream.pos).expect("int cast");
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_ORIGIN as u8,
                 flags: 0,
                 stream_identifier: 0,
@@ -5477,11 +5454,11 @@ impl H2FrameParser {
             let stream_identifier =
                 UInt31WithReserved::init(stream.stream_dependency, stream.exclusive);
 
-            let mut priority = StreamPriority {
+            let priority = StreamPriority {
                 stream_identifier: stream_identifier.to_uint32(),
                 weight: stream.weight as u8,
             };
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_PRIORITY as u8,
                 flags: 0,
                 stream_identifier: stream.id,
@@ -5579,7 +5556,7 @@ impl H2FrameParser {
         let can_close = close && !stream.wait_for_trailers;
         if payload.is_empty() {
             // empty payload we still need to send a frame
-            let mut data_header = FrameHeader {
+            let data_header = FrameHeader {
                 type_: FrameType::HTTP_FRAME_DATA as u8,
                 flags: if can_close {
                     DataFrameFlags::END_STREAM as u8
@@ -5671,7 +5648,7 @@ impl H2FrameParser {
                     if padding != 0 {
                         flags |= DataFrameFlags::PADDED as u8;
                     }
-                    let mut data_header = FrameHeader {
+                    let data_header = FrameHeader {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
                         flags,
                         stream_identifier: stream_id,
@@ -6083,7 +6060,7 @@ impl H2FrameParser {
         let actual_max_frame_size = this
             .remote_settings
             .get()
-            .unwrap_or(this.local_settings.get())
+            .unwrap_or_else(|| this.local_settings.get())
             .max_frame_size as usize;
 
         bun_output::scoped_log!(H2FrameParser, "trailers encoded_size {}", encoded_size);
@@ -6092,7 +6069,7 @@ impl H2FrameParser {
 
         if encoded_size <= actual_max_frame_size {
             // Single HEADERS frame - header block fits in one frame
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: base_flags | HeadersFrameFlags::END_HEADERS as u8,
                 stream_identifier: stream.id,
@@ -6110,7 +6087,7 @@ impl H2FrameParser {
 
             let first_chunk_size = actual_max_frame_size;
 
-            let mut headers_frame = FrameHeader {
+            let headers_frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: base_flags, // END_STREAM but NOT END_HEADERS
                 stream_identifier: stream.id,
@@ -6125,7 +6102,7 @@ impl H2FrameParser {
                 let chunk_size = remaining.min(actual_max_frame_size);
                 let is_last = offset + chunk_size >= encoded_size;
 
-                let mut cont_frame = FrameHeader {
+                let cont_frame = FrameHeader {
                     type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
                     flags: if is_last {
                         HeadersFrameFlags::END_HEADERS as u8
@@ -6229,13 +6206,13 @@ impl H2FrameParser {
     fn get_next_stream_id(&self) -> u32 {
         let mut stream_id: u32 = self.last_stream_id.get();
         if self.is_server.get() {
-            if stream_id % 2 == 0 {
+            if stream_id.is_multiple_of(2) {
                 stream_id += 2;
             } else {
                 stream_id += 1;
             }
         } else {
-            if stream_id % 2 == 0 {
+            if stream_id.is_multiple_of(2) {
                 stream_id += 1;
             } else if stream_id == 0 {
                 stream_id = 1;
@@ -6258,13 +6235,13 @@ impl H2FrameParser {
         debug_assert!(stream_id_arg.is_number());
         let mut last_stream_id = stream_id_arg.to_u32();
         if this.is_server.get() {
-            if last_stream_id % 2 == 0 {
+            if last_stream_id.is_multiple_of(2) {
                 last_stream_id -= 2;
             } else {
                 last_stream_id -= 1;
             }
         } else {
-            if last_stream_id % 2 == 0 {
+            if last_stream_id.is_multiple_of(2) {
                 last_stream_id -= 1;
             } else if last_stream_id == 1 {
                 last_stream_id = 0;
@@ -7003,7 +6980,7 @@ impl H2FrameParser {
         let actual_max_frame_size = this
             .remote_settings
             .get()
-            .unwrap_or(this.local_settings.get())
+            .unwrap_or_else(|| this.local_settings.get())
             .max_frame_size as usize;
         let priority_overhead: usize = if has_priority {
             StreamPriority::BYTE_SIZE
@@ -7042,7 +7019,7 @@ impl H2FrameParser {
                 flags |= HeadersFrameFlags::PADDED as u8;
             }
 
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags,
                 stream_identifier: stream.id,
@@ -7054,7 +7031,7 @@ impl H2FrameParser {
             if has_priority {
                 let stream_identifier =
                     UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
-                let mut priority_data = StreamPriority {
+                let priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
                     weight: u8::try_from(weight).expect("int cast"),
                 };
@@ -7093,7 +7070,7 @@ impl H2FrameParser {
             let first_chunk_size = actual_max_frame_size - priority_overhead;
             let headers_flags = flags & !(HeadersFrameFlags::END_HEADERS as u8);
 
-            let mut headers_frame = FrameHeader {
+            let headers_frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: headers_flags
                     | (if has_priority {
@@ -7109,7 +7086,7 @@ impl H2FrameParser {
             if has_priority {
                 let stream_identifier =
                     UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
-                let mut priority_data = StreamPriority {
+                let priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
                     weight: u8::try_from(weight).expect("int cast"),
                 };
@@ -7125,7 +7102,7 @@ impl H2FrameParser {
                 let chunk_size = remaining.min(actual_max_frame_size);
                 let is_last = offset + chunk_size >= encoded_size;
 
-                let mut cont_frame = FrameHeader {
+                let cont_frame = FrameHeader {
                     type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
                     flags: if is_last {
                         HeadersFrameFlags::END_HEADERS as u8
@@ -7282,6 +7259,8 @@ impl H2FrameParser {
                 BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
             }
         } else {
+            // attach_native_callback failed: balance the init_ref taken above.
+            self.deref();
             socket_ref.ref_();
             if SSL {
                 BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
@@ -7371,13 +7350,13 @@ impl H2FrameParser {
         };
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
-                let pool = pool.get_or_insert_with(|| Box::new(H2FrameParserHiveAllocator::init()));
-                let slot = pool.try_get();
-                // SAFETY: `slot` is a freshly-claimed, uninitialised `*mut H2FrameParser`
-                // (HiveArray slot or fallback `Box<MaybeUninit<_>>`); `write` moves
-                // `init` in without dropping prior contents.
-                unsafe { slot.write(init) };
-                slot
+                let pool = pool.get_or_insert_with(|| {
+                    // SAFETY: `new_boxed` returns a `Box::leak`ed, fully
+                    // initialized allocation; `from_raw` reclaims that exact
+                    // pointer back into an owning `Box`.
+                    unsafe { Box::from_raw(H2FrameParserHiveAllocator::new_boxed().as_ptr()) }
+                });
+                pool.get_init(init).as_ptr()
             })
         } else {
             bun_core::heap::into_raw(Box::new(init))
@@ -7598,7 +7577,23 @@ impl H2FrameParser {
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
-        bun_ptr::finalize_js_box(self, |this| this.strong_this.set(JsRef::empty()));
+        bun_ptr::finalize_js_box(self, |this| {
+            this.strong_this.set(JsRef::empty());
+            // process.exit() never unwinds, so a stack-rooted ref can strand and deinit()
+            // never runs; free streams here. The map is emptied so deinit() won't double-free.
+            if VirtualMachine::get().is_shutting_down() {
+                let streams = this.streams.replace(BunHashMap::default());
+                for (_, item) in streams.iter() {
+                    let stream = *item;
+                    // SAFETY: map has been emptied; each entry is freed exactly once.
+                    unsafe {
+                        (*stream).free_resources::<true>(this);
+                        drop(bun_core::heap::take(stream));
+                    }
+                }
+                drop(streams);
+            }
+        });
     }
 }
 

@@ -3,7 +3,7 @@
 //!
 //! THIS IS THE ONE CANONICAL PORT of `src/uws_sys/socket.zig`. `bun_uws`
 //! re-exports everything here; do NOT add a parallel `InternalSocket` /
-//! `NewSocketHandler` in `bun_uws` again — the Phase-A "thin placeholder"
+//! `NewSocketHandler` in `bun_uws` again — the earlier "thin placeholder"
 //! that grew full bodies there has been deleted.
 //!
 //! Shape: `InternalSocket` is a `Copy` tagged raw pointer (Zig passed
@@ -537,7 +537,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Group this socket is linked into. `None` for non-uSockets transports.
     pub fn group(&self) -> Option<*mut SocketGroup> {
         match self.socket {
-            InternalSocket::Connected(s) => Some(sock(s).group() as *mut SocketGroup),
+            InternalSocket::Connected(s) => {
+                Some(std::ptr::from_mut::<SocketGroup>(sock(s).group()))
+            }
             InternalSocket::Connecting(s) => Some(conn(s).group()),
             _ => None,
         }
@@ -886,6 +888,7 @@ impl AnySocket {
     any_socket_forward! {
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;
+        fn is_established(&self) -> bool;
         fn close(&self, code: CloseCode);
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);

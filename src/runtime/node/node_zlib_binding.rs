@@ -26,8 +26,8 @@ bun_output::declare_scope!(zlib, hidden);
 /// (write_in_progress, pending_close, pending_reset, closed, stream, this_value,
 /// write_result, task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
 /// `T.ref()/deref()`.
-// PORT NOTE: Phase D — expressed as a marker struct + trait bound. Field
-// accesses on `T` go through the [`CompressionStreamImpl`] trait below.
+// PORT NOTE: expressed as a marker struct + trait bound. Field accesses on
+// `T` go through the [`CompressionStreamImpl`] trait below.
 pub struct CompressionStream<T>(PhantomData<T>);
 
 #[derive(Default)]
@@ -213,11 +213,9 @@ pub trait CompressionContext {
     fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32);
 }
 
-// R-2 Phase 2: every JS-exposed mixin method takes `&T`; per-field interior
-// mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
+// R-2 (host-fn re-entrancy): every JS-exposed mixin method takes `&T`; per-field
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Accessors return the
 // cell wrapper so the mixin can `.get()`/`.set()`/`.with_mut()` as needed.
-// The codegen `host_fn_this` shim still passes `&mut T` until Phase 1 lands —
-// `&mut T` auto-reborrows to `&T` so the impls below compile against either.
 pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     type Stream: CompressionContext;
 
@@ -300,13 +298,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
 
-        let mut in_off: u32 = 0;
-        let mut in_len: u32 = 0;
-        let out_off: u32;
-        let out_len: u32;
-        let flush: u32;
-        let mut in_: Option<&[u8]> = None;
-        let out: Option<&mut [u8]>;
+        let in_off: u32;
+        let in_len: u32;
+        let in_: Option<&[u8]>;
 
         let this_value = callframe.this();
 
@@ -318,7 +312,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        flush = jsv_to_u32(arguments[0]);
+        let flush: u32 = jsv_to_u32(arguments[0]);
         if !flush_value_is_valid(flush) {
             return Err(global_this
                 .err(
@@ -374,8 +368,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         };
-        out_off = jsv_to_u32(arguments[5]);
-        out_len = jsv_to_u32(arguments[6]);
+        let out_off: u32 = jsv_to_u32(arguments[5]);
+        let out_len: u32 = jsv_to_u32(arguments[6]);
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -390,7 +384,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
         // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
-        out = Some(
+        let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
         let _ = (in_off, in_len, out_off, out_len);
@@ -556,13 +550,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
 
-        let mut in_off: u32 = 0;
-        let mut in_len: u32 = 0;
-        let out_off: u32;
-        let out_len: u32;
-        let flush: u32;
-        let mut in_: Option<&[u8]> = None;
-        let out: Option<&mut [u8]>;
+        let in_off: u32;
+        let in_len: u32;
+        let in_: Option<&[u8]>;
 
         if arguments[0].is_undefined() {
             return Err(global_this
@@ -572,7 +562,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        flush = jsv_to_u32(arguments[0]);
+        let flush: u32 = jsv_to_u32(arguments[0]);
         if !flush_value_is_valid(flush) {
             return Err(global_this
                 .err(
@@ -628,8 +618,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         };
-        out_off = jsv_to_u32(arguments[5]);
-        out_len = jsv_to_u32(arguments[6]);
+        let out_off: u32 = jsv_to_u32(arguments[5]);
+        let out_len: u32 = jsv_to_u32(arguments[6]);
         if out_buf.byte_len < out_off as usize + out_len as usize {
             return Err(global_this
                 .err(
@@ -644,7 +634,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
         // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
-        out = Some(
+        let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
         let _ = (in_off, in_len, out_off, out_len);
@@ -681,7 +671,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // synchronously inside a host-fn invoked through that wrapper), so the
         // `(&T as *const T).cast_mut()` provenance is sufficient — only the
         // `Cell<u32>` refcount is touched.
-        unsafe { T::deref((this as *const T).cast_mut()) };
+        unsafe { T::deref(std::ptr::from_ref::<T>(this).cast_mut()) };
 
         Ok(JSValue::UNDEFINED)
     }
@@ -777,11 +767,11 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.write_in_progress().set(false);
 
         // Zig: `std.mem.sliceTo(err_.msg, 0) orelse ""`.
-        // SAFETY: when non-null, `msg`/`code` point at NUL-terminated bytes
-        // (static literals or zlib/zstd-owned buffers valid for this call).
         let msg_bytes: &[u8] = if err_.msg.is_null() {
             b""
         } else {
+            // SAFETY: `err_.msg` is non-null (checked above) and points at a NUL-terminated
+            // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes()
         };
         let mut msg_str = BunString::create_format(format_args!("{}", bstr::BStr::new(msg_bytes)));
@@ -793,6 +783,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let code_bytes: &[u8] = if err_.code.is_null() {
             b""
         } else {
+            // SAFETY: `err_.code` is non-null (checked above) and points at a NUL-terminated
+            // C string (static literal or zlib/zstd-owned buffer valid for this call).
             unsafe { bun_core::ffi::cstr(err_.code) }.to_bytes()
         };
         let mut code_str =
@@ -853,8 +845,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 macro_rules! __compression_stream_mixin_reexports {
     ($native:ty) => {
         impl $native {
-            // R-2: `this: &Self` — the codegen `host_fn_this` shim still
-            // passes `&mut Self` until Phase 1 lands; auto-reborrows to `&Self`.
+            // R-2: `this: &Self` — see CompressionStreamImpl note above.
             #[inline]
             pub fn write(
                 this: &Self,

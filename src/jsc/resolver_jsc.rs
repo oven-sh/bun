@@ -37,7 +37,7 @@ pub extern "C" fn node_module_paths_js_value(
     global: &JSGlobalObject,
     use_dirname: bool,
 ) -> JSValue {
-    // PERF(port): was ArenaAllocator + stackFallback(1024) bulk-free — profile in Phase B
+    // PERF(port): was ArenaAllocator + stackFallback(1024) bulk-free — profile if hot.
     let mut list: Vec<BunString> = Vec::new();
 
     let sliced = in_str.to_utf8();
@@ -128,6 +128,8 @@ impl StringArrayJsc for [BunString] {
                 len: usize,
             ) -> JSValue;
         }
+        // SAFETY: `self` is a live slice, so `self.as_ptr()` is valid for `self.len()`
+        // reads of `BunString` for the duration of the FFI call.
         crate::host_fn::from_js_host_call(global, || unsafe {
             BunString__createArray(global, self.as_ptr(), self.len())
         })

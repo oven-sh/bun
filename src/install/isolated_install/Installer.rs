@@ -5,9 +5,9 @@ use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath, Path, PathBuffer, RelPath};
+use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{Mutex, ThreadPool, UnboundedQueue, thread_pool};
+use bun_threading::{Mutex, UnboundedQueue, thread_pool};
 
 use bun_semver::String as SemverString;
 use bun_sys::{FdDirExt as _, FdExt as _};
@@ -15,17 +15,18 @@ use bun_sys::{FdDirExt as _, FdExt as _};
 use crate::bin_real;
 use crate::lockfile::package;
 use crate::lockfile_real::PackageIDSlice;
-use crate::package_install::{self, Method as InstallMethod, Summary as InstallSummary};
+use crate::package_install::{Method as InstallMethod, Summary as InstallSummary};
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::resolution;
 use crate::{
-    self as install, Bin, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
+    self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
     Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
 };
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>` (Zig: `.items(.field)`).
+#[cfg(target_os = "macos")]
 use super::file_cloner::FileCloner;
 use super::file_copier::FileCopier;
 use super::hardlinker::Hardlinker;
@@ -42,7 +43,6 @@ use crate::package_manager_real::package_manager_options::Do;
 type ResolutionTag = resolution::Tag;
 
 type Bitset = DynamicBitSet;
-type Progress = crate::bun_progress::Progress;
 type ProgressNode = crate::bun_progress::Node;
 
 // ── Store id aliases (Zig: `Store.Entry.Id` / `Store.Node.Id`) ────────────
@@ -213,13 +213,13 @@ impl<'a> Installer<'a> {
 
                 if let PatchInfo::Patch(patch) = &patch_info {
                     let mut log = Log::init();
-                    self.apply_package_patch(entry_id, &patch, &mut log);
+                    self.apply_package_patch(entry_id, patch, &mut log);
                     if log.has_errors() {
                         // monotonic is okay because we haven't started the task yet (it isn't running
                         // on another thread)
                         entry_steps[entry_id.get() as usize]
                             .store(Step::Done as u32, Ordering::Relaxed);
-                        self.on_task_fail(entry_id, TaskError::Patching(log));
+                        self.on_task_fail(entry_id, &TaskError::Patching(log));
                         continue;
                     }
                 }
@@ -255,7 +255,7 @@ impl<'a> Installer<'a> {
                 entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
                 self.on_task_fail(
                     entry_id,
-                    TaskError::Download(DownloadError {
+                    &TaskError::Download(DownloadError {
                         err,
                         url: url.into(),
                     }),
@@ -317,7 +317,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Called from main thread
-    pub fn on_task_fail(&mut self, entry_id: StoreEntryId, err: TaskError) {
+    pub fn on_task_fail(&mut self, entry_id: StoreEntryId, err: &TaskError) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
@@ -336,7 +336,7 @@ impl<'a> Installer<'a> {
         let pkg_name = pkg_names[pkg_id as usize];
         let pkg_res = pkg_resolutions[pkg_id as usize];
 
-        match &err {
+        match err {
             TaskError::LinkPackage(link_err) => {
                 Output::err(
                     link_err.clone(),
@@ -499,10 +499,9 @@ impl<'a> Installer<'a> {
         if Environment::CI_ASSERT {
             // .monotonic is okay because we should have already synchronized with the completed
             // task thread by virtue of popping from the `UnboundedQueue`.
-            bun_core::assert_with_location(
+            assert!(
                 self.store.entries.items_step()[entry_id.get() as usize].load(Ordering::Relaxed)
                     == Step::Done as u32,
-                core::panic::Location::caller(),
             );
         }
 
@@ -761,15 +760,13 @@ pub enum Yield {
 
 impl Yield {
     pub fn failure(e: TaskError) -> Yield {
-        // clone here in case a path is kept in a buffer that
-        // will be freed at the end of the current scope.
-        Yield::Fail(e.clone())
+        Yield::Fail(e)
     }
 }
 
 impl Task {
     /// Called from task thread
-    // PERF(port): was comptime enum monomorphization — profile in Phase B
+    // PERF(port): was comptime enum monomorphization — profile if hot.
     fn next_step(&self, current_step: Step) -> Step {
         let next_step: Step = match current_step {
             Step::LinkPackage => Step::SymlinkDependencies,
@@ -961,7 +958,10 @@ impl Task {
                                     }
 
                                     InstallMethod::Copyfile => {
+                                        #[cfg(windows)]
                                         let mut src_path = OsAutoAbsPath::init();
+                                        #[cfg(not(windows))]
+                                        let src_path = OsAutoAbsPath::init();
 
                                         #[cfg(windows)]
                                         {
@@ -1098,10 +1098,7 @@ impl Task {
 
                                 _ => {
                                     if Environment::CI_ASSERT {
-                                        bun_core::assert_with_location(
-                                            false,
-                                            core::panic::Location::caller(),
-                                        );
+                                        unreachable!();
                                     }
 
                                     step = self.next_step(current_step);
@@ -1110,7 +1107,11 @@ impl Task {
                             }
                         }
                     };
+                    #[cfg(target_os = "macos")]
                     let mut pkg_cache_dir_subpath =
+                        AutoRelPath::from(pkg_cache_dir_subpath_init).assume_ok();
+                    #[cfg(not(target_os = "macos"))]
+                    let pkg_cache_dir_subpath =
                         AutoRelPath::from(pkg_cache_dir_subpath_init).assume_ok();
 
                     // SAFETY: idempotent cache-dir initialization (once-init internally).
@@ -1151,10 +1152,8 @@ impl Task {
                             }
                             #[cfg(not(windows))]
                             {
-                                if let Some(st) = sys::lstat(local.slice_z()).ok() {
-                                    sys::posix::s_islnk(
-                                        u32::try_from(st.st_mode).expect("int cast"),
-                                    )
+                                if let Ok(st) = sys::lstat(local.slice_z()) {
+                                    sys::posix::s_islnk(st.st_mode as u32)
                                 } else {
                                     false
                                 }
@@ -1375,7 +1374,7 @@ impl Task {
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
                                                 bun_core::fmt::fmt_os_path(
-                                                    (&dest_subpath).slice(),
+                                                    dest_subpath.slice(),
                                                     bun_core::fmt::PathFormatOptions {
                                                         path_sep: bun_core::fmt::PathSep::Auto,
                                                         escape_backslashes: false
@@ -1655,7 +1654,7 @@ impl Task {
                             && manager
                                 .postinstall_optimizer
                                 .should_ignore_lifecycle_scripts(
-                                    postinstall_optimizer::PkgInfo {
+                                    &postinstall_optimizer::PkgInfo {
                                         name_hash: pkg_name_hash,
                                         version: if pkg_res.tag == ResolutionTag::Npm {
                                             Some(pkg_res.npm().version)
@@ -1851,8 +1850,6 @@ impl Task {
                     if target_node_modules_path.is_some()
                         && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
                     {
-                        target_node_modules_path = None;
-
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
                             strings::StringOrTinyString::init(dep_name);
@@ -1941,7 +1938,7 @@ impl Task {
     }
 
     /// Called from task thread
-    pub fn callback(task: *mut thread_pool::Task) {
+    pub unsafe fn callback(task: *mut thread_pool::Task) {
         // SAFETY: task points to Task.task field
         let this: &mut Task = unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) };
 
@@ -1968,60 +1965,64 @@ impl Task {
             Yield::Yield => {}
             Yield::RunScripts(list) => {
                 if Environment::CI_ASSERT {
-                    bun_core::assert_with_location(
+                    assert!(
                         // `Cell::get` on a `Copy` payload — read-only check.
                         installer.store.entries.items_scripts()[this.entry_id.get() as usize]
                             .get()
                             .is_some(),
-                        core::panic::Location::caller(),
                     );
                 }
                 this.result = Result::RunScripts(list);
-                installer.task_queue.push(this);
+                // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
+                installer.task_queue.push(core::ptr::NonNull::from(this));
+                // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Done => {
                 if Environment::CI_ASSERT {
                     // .monotonic is okay because this should have been set by this thread.
-                    bun_core::assert_with_location(
+                    assert!(
                         installer.store.entries.items_step()[this.entry_id.get() as usize]
                             .load(Ordering::Relaxed)
                             == Step::Done as u32,
-                        core::panic::Location::caller(),
                     );
                 }
                 this.result = Result::Done;
-                installer.task_queue.push(this);
+                // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
+                installer.task_queue.push(core::ptr::NonNull::from(this));
+                // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Blocked => {
                 if Environment::CI_ASSERT {
                     // .monotonic is okay because this should have been set by this thread.
-                    bun_core::assert_with_location(
+                    assert!(
                         installer.store.entries.items_step()[this.entry_id.get() as usize]
                             .load(Ordering::Relaxed)
                             == Step::CheckIfBlocked as u32,
-                        core::panic::Location::caller(),
                     );
                 }
                 this.result = Result::Blocked;
-                installer.task_queue.push(this);
+                // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
+                installer.task_queue.push(core::ptr::NonNull::from(this));
+                // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
             Yield::Fail(err) => {
                 if Environment::CI_ASSERT {
                     // .monotonic is okay because this should have been set by this thread.
-                    bun_core::assert_with_location(
+                    assert!(
                         installer.store.entries.items_step()[this.entry_id.get() as usize]
                             .load(Ordering::Relaxed)
                             != Step::Done as u32,
-                        core::panic::Location::caller(),
                     );
                 }
                 installer.store.entries.items_step()[this.entry_id.get() as usize]
                     .store(Step::Done as u32, Ordering::Release);
                 this.result = Result::Err(err);
-                installer.task_queue.push(this);
+                // SAFETY: `this` is a live `&mut Task`; ownership moves to the queue.
+                installer.task_queue.push(core::ptr::NonNull::from(this));
+                // SAFETY: `manager_ptr` is the non-null BACKREF; `PackageManager` outlives every `Task` (see fn-top SAFETY note).
                 unsafe { PackageManager::wake_raw(manager_ptr) };
             }
         }
@@ -2206,7 +2207,7 @@ impl<'a> Installer<'a> {
         }
         let name_hash = name_hashes[pkg_id as usize];
 
-        if let Some(optimizer) = postinstall_optimizer.get(postinstall_optimizer::PkgInfo {
+        if let Some(optimizer) = postinstall_optimizer.get(&postinstall_optimizer::PkgInfo {
             name_hash,
             ..postinstall_optimizer::PkgInfo::default()
         }) {
@@ -2355,8 +2356,6 @@ impl<'a> Installer<'a> {
             if target_node_modules_path.is_some()
                 && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
             {
-                target_node_modules_path = None;
-
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
 
@@ -2555,8 +2554,8 @@ impl<'a> Installer<'a> {
                         }
                         #[cfg(not(windows))]
                         {
-                            if let Some(st) = sys::lstat(dest.slice_z()).ok() {
-                                sys::posix::s_islnk(u32::try_from(st.st_mode).expect("int cast"))
+                            if let Ok(st) = sys::lstat(dest.slice_z()) {
+                                sys::posix::s_islnk(st.st_mode as u32)
                             } else {
                                 true
                             }

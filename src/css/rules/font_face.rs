@@ -200,13 +200,9 @@ impl UnicodeRange {
         //   u <number-token> <number-token> |
         //   u '+' '?'+
 
-        if let Err(e) = input.expect_ident_matching(b"u") {
-            return Err(e);
-        }
+        input.expect_ident_matching(b"u")?;
         let after_u = input.position();
-        if let Err(e) = Self::parse_tokens(input) {
-            return Err(e);
-        }
+        Self::parse_tokens(input)?;
 
         // This deviates from the spec in case there are CSS comments
         // between tokens in the middle of one <unicode-range>,
@@ -231,11 +227,8 @@ impl UnicodeRange {
     }
 
     fn parse_tokens(input: &mut css::Parser) -> css::Result<()> {
-        let tok = match input.next_including_whitespace() {
-            Ok(vv) => vv.clone(),
-            Err(e) => return Err(e),
-        };
-        // TODO(port): exact `Token` variant shapes (Dimension/Number payloads) may differ in Phase B.
+        let tok = input.next_including_whitespace()?.clone();
+        // TODO(port): verify exact `Token` variant shapes (Dimension/Number payloads).
         match tok {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
             css::Token::Number { .. } => {
@@ -258,10 +251,7 @@ impl UnicodeRange {
             }
             css::Token::Delim(c) => {
                 if c == '+' as u32 {
-                    let next = match input.next_including_whitespace() {
-                        Ok(vv) => vv.clone(),
-                        Err(e) => return Err(e),
-                    };
+                    let next = input.next_including_whitespace()?.clone();
                     if !(matches!(next, css::Token::Ident(_))
                         || matches!(next, css::Token::Delim(d) if d == '?' as u32))
                     {
@@ -291,7 +281,6 @@ impl UnicodeRange {
 
     // PORT NOTE: Zig `css.Maybe(UnicodeRange, void)` carries no error payload → `Option<UnicodeRange>`.
     fn parse_concatenated(text_: &[u8]) -> Option<UnicodeRange> {
-        use bun_core::strings;
         let mut text = if !text_.is_empty() && text_[0] == b'+' {
             &text_[1..]
         } else {
@@ -372,10 +361,7 @@ pub enum FontStyle {
 impl FontStyle {
     pub fn parse(input: &mut css::Parser) -> css::Result<FontStyle> {
         use crate::css_properties::font::FontStyle as FontStyleProperty;
-        let property = match FontStyleProperty::parse(input) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        let property = FontStyleProperty::parse(input)?;
         Ok(match property {
             FontStyleProperty::Normal => FontStyle::Normal,
             FontStyleProperty::Italic => FontStyle::Italic,
@@ -440,7 +426,7 @@ pub enum FontFormat {
     /// An SVG font.
     Svg,
     /// An unknown format.
-    // PORT NOTE: arena-owned slice from parser input; Phase B threads `'i`.
+    // PORT NOTE: arena-owned slice from parser input; TODO(refactor): thread `'i`.
     String(&'static [u8]),
 }
 
@@ -525,14 +511,9 @@ impl Source {
             }
         }
 
-        if let Err(e) = input.expect_function_matching(b"local") {
-            return Err(e);
-        }
+        input.expect_function_matching(b"local")?;
 
-        let local = match input.parse_nested_block(|i| fontprops::FontFamily::parse(i)) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        let local = input.parse_nested_block(fontprops::FontFamily::parse)?;
         Ok(Source::Local(local))
     }
 
@@ -615,19 +596,13 @@ pub struct UrlSource {
 
 impl UrlSource {
     pub fn parse(input: &mut css::Parser) -> css::Result<UrlSource> {
-        let url = match Url::parse(input) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        let url = Url::parse(input)?;
 
         let format = if input
             .try_parse(|i| i.expect_function_matching(b"format"))
             .is_ok()
         {
-            match input.parse_nested_block(FontFormat::parse) {
-                Ok(vv) => Some(vv),
-                Err(e) => return Err(e),
-            }
+            Some(input.parse_nested_block(FontFormat::parse)?)
         } else {
             None
         };
@@ -636,10 +611,7 @@ impl UrlSource {
             .try_parse(|i| i.expect_function_matching(b"tech"))
             .is_ok()
         {
-            match input.parse_nested_block(|i| i.parse_list(FontTechnology::parse)) {
-                Ok(vv) => vv,
-                Err(e) => return Err(e),
-            }
+            input.parse_nested_block(|i| i.parse_list(FontTechnology::parse))?
         } else {
             ArrayList::<FontTechnology>::default()
         };
@@ -841,12 +813,11 @@ const _: () = {
 
             input.reset(&state);
             let opts = ParserOptions::default(None);
-            Ok(FontFaceProperty::Custom(
-                match CustomProperty::parse(CustomPropertyName::from_str(name), input, &opts) {
-                    Ok(v) => v,
-                    Err(e) => return Err(e),
-                },
-            ))
+            Ok(FontFaceProperty::Custom(CustomProperty::parse(
+                CustomPropertyName::from_str(name),
+                input,
+                &opts,
+            )?))
         }
     }
 

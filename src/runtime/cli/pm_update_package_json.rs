@@ -43,7 +43,7 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
     // TODO(port): narrow error set
     // PERF(port): Zig used `switch (subcommand) { inline else => |cmd| ... }` to monomorphize
     // `CommandLineArguments.parse` per subcommand. Calling with runtime `subcommand` here; if
-    // `parse` requires `<const CMD: Subcommand>`, expand to a `match` in Phase B.
+    // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
     let mut cli = CommandLineArguments::parse(subcommand)?;
 
     // The way this works:
@@ -104,6 +104,10 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                 // here is exclusive for the remainder of the process.
                 let cli = unsafe { &mut *this.cli };
                 cli.positionals = positionals.as_slice();
+                // SAFETY: `this.ctx` points to the `ctx` stack local in
+                // `update_package_json_and_install`, whose frame outlives this
+                // callback; `Global::exit` below makes this `&mut` exclusive for
+                // the remainder of the process.
                 let ctx = unsafe { &mut *this.ctx };
 
                 update_package_json_and_install_and_cli(ctx, this.subcommand, cli.clone())?;
@@ -127,10 +131,10 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
             subcommand,
         };
 
-        let mut fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
+        let fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
 
         // This runs the bundler.
-        BuildCommand::exec(command::get(), Some(&mut fetcher))?;
+        BuildCommand::exec(command::get(), Some(&fetcher))?;
         return Ok(());
     }
 

@@ -1,4 +1,3 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 use core::cmp::Ordering;
@@ -8,7 +7,7 @@ use crate::parser::{ExprIn, float_to_int32, prefill};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
-    self as js_ast, E, Expr, ExprData, ExprTag, Op, StoreRef, Symbol,
+    self as js_ast, E, Expr, ExprData, Op, StoreRef, Symbol,
     expr::{Equality, LooseEql, StrictEql},
 };
 
@@ -16,7 +15,7 @@ use bun_ast::{
 // returned an anonymous namespace struct whose only public item was `BinaryExpressionVisitor`.
 // Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so `BinaryExpressionVisitor` carries
 // the parser generics directly.
-// Phase B diff readers should map:
+// Diff readers should map:
 //   Zig: CreateBinaryExpressionVisitor(TS, JSX, SCAN).BinaryExpressionVisitor
 //   Rust: BinaryExpressionVisitor<'arena, TS, J, SCAN>
 
@@ -537,7 +536,7 @@ impl BinaryExpressionVisitor {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(
-                            // TODO(b0): math arrives from move-in (was bun_jsc::math → js_parser)
+                            // TODO(port): math arrives from move-in (was bun_jsc::math → js_parser)
                             E::Number {
                                 value: bun_ast::math::pow(vals[0], vals[1]),
                             },

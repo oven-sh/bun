@@ -2,8 +2,8 @@ use crate::SendFile;
 use crate::ThreadSafeStreamBuffer;
 
 /// Request body payload. Parameterized over `'a` so callers can hand in
-/// stack-/arena-borrowed bytes without the `&'static` lifetime erasure the
-/// Phase-A port used at every `AsyncHTTP::init` call site.
+/// stack-/arena-borrowed bytes without erasing the lifetime to `&'static`
+/// at every `AsyncHTTP::init` call site.
 // PORT NOTE: no `Owned(Vec<u8>)` variant — the body is bitwise-copied across
 // threads via `core::ptr::read` in `start_queued_task`, so every arm must be
 // trivially-droppable. Zig has only `bytes` / `sendfile` / `stream`.
@@ -41,7 +41,9 @@ impl Stream {
     pub fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
             // matches Zig `buffer.deref()` — intrusive refcount decrement.
-            ThreadSafeStreamBuffer::deref(buffer.as_ptr());
+            // `buffer` is a live `ThreadSafeStreamBuffer::new` heap allocation;
+            // this side holds the intrusive ref taken at attach, released here.
+            ThreadSafeStreamBuffer::deref(buffer);
         }
     }
 }

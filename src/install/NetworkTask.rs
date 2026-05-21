@@ -1,4 +1,4 @@
-use core::mem::MaybeUninit;
+use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
@@ -180,7 +180,7 @@ impl NetworkTask {
     // PORT NOTE: signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
     // `fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>)` shape so it can be
     // installed directly without a separate trampoline.
-    pub fn notify(
+    fn notify(
         this: *mut NetworkTask,
         async_http: *mut AsyncHTTP<'static>,
         mut result: HTTPClientResult<'_>,
@@ -318,15 +318,17 @@ impl NetworkTask {
         if this.response.metadata.is_none() {
             this.response.metadata = saved_metadata;
         }
+        let this_ptr = ptr::NonNull::from(this);
         // SAFETY: `pm` is a live BACKREF; `async_network_task_queue` is
         // internally synchronized (`UnboundedQueue::push` takes `&self`).
         unsafe {
-            (*ptr::addr_of!((*pm).async_network_task_queue)).push(this);
+            (*ptr::addr_of!((*pm).async_network_task_queue)).push(this_ptr);
             PackageManager::wake_raw(pm);
         }
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Authorization {
     NoAuthorization,
     AllowAuthorization,
@@ -532,12 +534,12 @@ impl NetworkTask {
             header_builder.append("Accept", accept_header);
 
             if !last_modified.is_empty() && !etag.is_empty() {
-                // SAFETY (lifetime extension): the appended slice points into
+                let appended = header_builder.content.append(last_modified);
+                // SAFETY: lifetime extension — the appended slice points into
                 // `header_builder.content`'s heap buffer, which is moved into
                 // `self.unsafe_http_client.request_header_buf` below and
                 // outlives the request (Zig leaks it). Detach the borrow so
                 // `header_builder.content` can be read again for `headers_buf`.
-                let appended = header_builder.content.append(last_modified);
                 last_modified = unsafe { bun_ptr::detach_lifetime(appended) };
             }
         } else {
@@ -568,7 +570,7 @@ impl NetworkTask {
 
         self.response_buffer = MutableString::init(0)?;
 
-        // SAFETY (lifetime extension): `url_buf` and the header content buffer
+        // SAFETY: lifetime extension — `url_buf` and the header content buffer
         // are heap allocations owned by / leaked into `*self`, which outlives
         // the HTTP request. `AsyncHTTP::init` demands `'static` borrows
         // because the HTTP thread reads them concurrently; the Zig source
@@ -576,16 +578,16 @@ impl NetworkTask {
         // identical pattern in `s3/simple_request.rs`.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
-        // `written_slice()` is the safe (ptr,len) accessor; only the `'static`
-        // erasure remains unsafe — the buffer is leaked into the HTTP client
-        // below (`mem::forget`), so it genuinely outlives this frame.
+        // SAFETY: `written_slice()` is the safe (ptr,len) accessor; only the
+        // `'static` erasure remains unsafe — the buffer is leaked into the
+        // HTTP client below (`ManuallyDrop`), so it genuinely outlives this frame.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         // PORT NOTE: Zig has no destructors — `header_builder.content` is
         // intentionally leaked (ownership transfers to the HTTP client).
         // Forget it so `StringBuilder::drop` doesn't free the buffer that
         // `headers_buf` / `last_modified` now alias.
-        core::mem::forget(core::mem::take(&mut header_builder.content));
+        let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
         let completion_callback = self.get_completion_callback();
         // TODO(port): narrow error set
         // PORT NOTE: MaybeUninit overwrite — see field doc; old slot value is
@@ -632,7 +634,7 @@ impl NetworkTask {
                 .unwrap_or(false)
         {
             self.http_mut().client.flags.force_last_modified = true;
-            // SAFETY (lifetime extension): `last_modified` either points into
+            // SAFETY: lifetime extension — `last_modified` either points into
             // the leaked `header_builder.content` buffer (reassigned above) or
             // into the manifest's `string_buf`, which is the same allocation
             // referenced by the `PackageManifest` we just cloned into
@@ -771,7 +773,7 @@ impl NetworkTask {
                 append_auth(&mut header_builder, scope);
             }
 
-            // `written_slice()` is the safe (ptr,len) accessor; only the
+            // SAFETY: `written_slice()` is the safe (ptr,len) accessor; only the
             // `'static` erasure remains unsafe — buffer is leaked below.
             header_buf =
                 unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
@@ -780,9 +782,9 @@ impl NetworkTask {
         // intentionally leaked (ownership transfers to the HTTP client).
         // Forget it so `StringBuilder::drop` doesn't free the buffer that
         // `header_buf` now aliases.
-        core::mem::forget(core::mem::take(&mut header_builder.content));
+        let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
 
-        // SAFETY (lifetime extension): `url_buf` is a heap allocation owned by
+        // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by
         // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a
         // `'static` borrow because the HTTP thread reads it concurrently; the
         // Zig source passes a raw slice under the same ownership contract. See
@@ -911,6 +913,9 @@ impl NetworkTask {
         apply_patch_task: Option<Box<PatchTask>>,
     ) {
         use core::ptr::addr_of_mut;
+        // SAFETY: caller contract (see fn `# Safety`) — `slot` is the unique
+        // handle to a freshly-vended `HiveArrayFallback` slot whose prior
+        // contents are garbage; every field is written without dropping.
         unsafe {
             addr_of_mut!((*slot).task_id).write(task_id);
             // SAFETY: `package_manager` is the live owner of this task; write

@@ -117,9 +117,9 @@ impl SASL {
         debug_assert!(self.server_signature_len == 0);
 
         let server_key = hmac(self.salted_password(), b"Server Key")
-            .ok_or(bun_core::err!("InvalidServerKey"))?;
-        let server_signature_bytes =
-            hmac(&server_key, auth_string).ok_or(bun_core::err!("InvalidServerSignature"))?;
+            .ok_or_else(|| bun_core::err!("InvalidServerKey"))?;
+        let server_signature_bytes = hmac(&server_key, auth_string)
+            .ok_or_else(|| bun_core::err!("InvalidServerSignature"))?;
         self.server_signature_len = u8::try_from(bun_base64::encode(
             &mut self.server_signature_base64_bytes,
             &server_signature_bytes,
@@ -135,11 +135,12 @@ impl SASL {
     pub fn client_key_signature(&self, client_key: &[u8], auth_string: &[u8]) -> [u8; 32] {
         use bun_sha_hmac::SHA256;
         let mut sha_digest = [0u8; SHA256::DIGEST];
-        // TODO(b2-blocked): bun_jsc::VirtualMachine::get / RareData::boring_engine
+        // TODO(port): bun_jsc::VirtualMachine::get / RareData::boring_engine
         // Zig passes `jsc.VirtualMachine.get().rareData().boringEngine()` here;
         // `None` falls through to BoringSSL's default engine, which is
         // functionally equivalent for SHA256. Swap once bun_jsc compiles.
-        SHA256::hash(client_key, &mut sha_digest, core::ptr::null_mut());
+        // SAFETY: engine is null (default).
+        unsafe { SHA256::hash(client_key, &mut sha_digest, core::ptr::null_mut()) };
         hmac(&sha_digest, auth_string).unwrap()
     }
 

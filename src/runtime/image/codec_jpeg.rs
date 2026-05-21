@@ -1,7 +1,7 @@
 //! libjpeg-turbo (TurboJPEG 3 API) decode/encode for `Bun.Image`.
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use super::codecs;
@@ -40,8 +40,6 @@ unsafe extern "C" {
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
     fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
     pub fn tj3Free(ptr: *mut c_void);
-    #[allow(dead_code)]
-    fn tj3GetErrorStr(h: tjhandle) -> *const c_char;
     // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
     // colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
     // XYB / … explicit when present). tj3GetICCProfile reads the decoded
@@ -232,7 +230,7 @@ pub fn decode(
             },
         );
     }
-    // PERF(port): was uninitialized `allocator.alloc(u8, n)` — zero-init here; profile in Phase B
+    // PERF(port): was uninitialized `allocator.alloc(u8, n)` — zero-init here; profile if hot.
     let mut out = vec![0u8; w as usize * ht as usize * 4];
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is the
     // exclusive `out` buffer sized `w*ht*4` and the explicit pitch + cropping
@@ -251,9 +249,7 @@ pub fn decode(
         return Err(codecs::Error::DecodeFailed);
     }
     // SAFETY: `h` is live; tj3Get only reads handle state.
-    if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) } != rw
-        || unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) } != rh
-    {
+    if unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) != rw || tj3Get(h, TJPARAM_JPEGHEIGHT) != rh } {
         return Err(codecs::Error::DecodeFailed);
     }
 

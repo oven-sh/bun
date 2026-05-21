@@ -1,15 +1,9 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    clippy::needless_range_loop
-)]
+#![allow(clippy::needless_range_loop)]
 #![warn(unused_must_use)]
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;
 use crate::parser::{ImportItemForNamespaceMap, Ref};
-use bun_ast::{self as js_ast, Binding, Expr, G, LocRef, S, Stmt, Symbol};
+use bun_ast::{self as js_ast, Expr, G, LocRef, S, Stmt, Symbol};
 use bun_ast::{ImportRecord, import_record};
 use bun_collections::VecExt;
 use bun_core::strings;
@@ -33,10 +27,10 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
 
 impl<'a> ImportScanner<'a> {
     // TODO(port): narrow error set
-    // PORT NOTE: round-E un-gate — `<P>` unbounded generic → concrete `P<'a, TS, SCAN>`.
-    // TODO(b2-ast-E): the Zig also accepts `bun.bundle_v2.AstBuilder` as P (comptime
-    //   `P != AstBuilder` check). Round-E only handles the parser P; AstBuilder path
-    //   needs a `ParserLike` trait or a separate monomorphization.
+    // PORT NOTE: `<P>` unbounded generic → concrete `P<'a, TS, SCAN>`.
+    // TODO(port): the Zig also accepts `bun.bundle_v2.AstBuilder` as P (comptime
+    //   `P != AstBuilder` check). Only the parser P is handled here; the AstBuilder
+    //   path needs a `ParserLike` trait or a separate monomorphization.
     pub fn scan<
         'p,
         const TYPESCRIPT: bool,
@@ -80,10 +74,10 @@ impl<'a> ImportScanner<'a> {
                     // the pointer stays valid for this iteration).
                     let record: *mut ImportRecord =
                         &raw mut p.import_records.items_mut()[import_record_index as usize];
-                    // SAFETY: `record` points into `p.import_records`' backing storage;
-                    // nothing in this match arm reallocates that list.
                     macro_rules! record {
                         () => {
+                            // SAFETY: `record` points into `p.import_records`' backing storage;
+                            // nothing in this match arm reallocates that list.
                             unsafe { &mut *record }
                         };
                     }
@@ -198,8 +192,16 @@ impl<'a> ImportScanner<'a> {
                                 is_unused_in_typescript = false;
                             }
 
-                            // Remove the symbol if it's never used outside a dead code region
-                            if symbol.use_count_estimate == 0 {
+                            // Remove the symbol if it's never used outside a dead code region.
+                            //
+                            // Never strip the namespace binding from an `import defer`
+                            // statement: the grammar requires `* as ns`, so dropping
+                            // it would force the printer to emit a bare side-effect
+                            // import — eagerly evaluating a module the user asked to
+                            // defer. Keeping the binding preserves the intended
+                            // semantics (the module is linked but never evaluated,
+                            // since nothing touches `ns` at runtime).
+                            if symbol.use_count_estimate == 0 && !st.phase_defer {
                                 // Make sure we don't remove this if it was used for a property
                                 // access while bundling
                                 let mut has_any = false;
@@ -308,7 +310,11 @@ impl<'a> ImportScanner<'a> {
                     let _ = did_remove_star_loc;
 
                     let namespace_ref = st.namespace_ref;
+                    // `import defer * as ns` must keep its namespace binding
+                    // (see the matching guard above): converting it to a
+                    // clause import would lose the defer phase entirely.
                     let convert_star_to_clause = !p.options.bundle
+                        && !st.phase_defer
                         && (p.symbols[namespace_ref.inner_index() as usize].use_count_estimate
                             == 0);
 
@@ -361,7 +367,7 @@ impl<'a> ImportScanner<'a> {
                                         alias_loc: Some(item.loc),
                                         namespace_ref: Some(namespace_ref),
                                         import_record_index: st.import_record_index,
-                                        local_parts_with_uses: Default::default(),
+                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                         alias_is_star: false,
                                         is_exported: false,
                                     },
@@ -413,7 +419,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(loc),
                                     namespace_ref: Some(Ref::NONE),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     is_exported: false,
                                 },
                             );
@@ -431,7 +437,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(default.loc),
                                     namespace_ref: Some(namespace_ref),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -450,7 +456,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(name.loc),
                                     namespace_ref: Some(namespace_ref),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -481,7 +487,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_loc: Some(name.loc),
                                     namespace_ref: Some(namespace_ref),
                                     import_record_index: st.import_record_index,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
@@ -707,7 +713,7 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: Some(Ref::NONE),
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: Default::default(),
+                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                             },
                         )?;
                         let original: &'p [u8] = alias.original_name.slice();
@@ -744,7 +750,7 @@ impl<'a> ImportScanner<'a> {
                                 namespace_ref: Some(st.namespace_ref),
                                 import_record_index: st.import_record_index,
                                 is_exported: true,
-                                local_parts_with_uses: Default::default(),
+                                local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                             },
                         )?;
                         // SAFETY: arena-owned alias slice valid for 'p.

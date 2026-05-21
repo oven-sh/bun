@@ -119,8 +119,8 @@ impl<'a> DataURL<'a> {
 
     pub fn parse_without_check(url: &'a [u8]) -> Result<DataURL<'a>, bun_core::Error> {
         // TODO(port): narrow error set
-        let comma =
-            strings::index_of_char(url, b',').ok_or(bun_core::err!("InvalidDataURL"))? as usize;
+        let comma = strings::index_of_char(url, b',')
+            .ok_or_else(|| bun_core::err!("InvalidDataURL"))? as usize;
 
         let mut parsed = DataURL {
             url: bun_core::String::empty(),
@@ -192,7 +192,7 @@ impl<'a> DataURL<'a> {
         }
 
         // TODO(port): Zig source's `bufPrint` writes `text` raw with `{s}` here, not the
-        // base64-encoded form — ported faithfully; verify upstream intent in Phase B.
+        // base64-encoded form — ported faithfully; verify upstream intent.
         let mut base64buf = Vec::with_capacity(total_base64_encode_len);
         base64buf.extend_from_slice(b"data:");
         base64buf.extend_from_slice(mime_type);

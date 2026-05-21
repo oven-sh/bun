@@ -2,7 +2,7 @@
 //! `JSValue`/`JSGlobalObject`/`CallFrame` types — the original methods on
 //! each `struct_ares_*_reply` are aliased to the free fns here.
 
-use core::ffi::{CStr, c_int};
+use core::ffi::c_int;
 
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -25,7 +25,7 @@ fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
 pub fn hostent_to_js_response(
     this: &mut c_ares::struct_hostent,
     global_this: &JSGlobalObject,
-    lookup_name: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
+    lookup_name: &'static [u8], // PERF(port): was comptime monomorphization — profile if hot
 ) -> JsResult<JSValue> {
     if lookup_name == b"cname" {
         // A cname lookup always returns a single record but we follow the common API here.
@@ -69,7 +69,7 @@ pub fn hostent_to_js_response(
 pub fn hostent_with_ttls_to_js_response(
     this: &mut c_ares::hostent_with_ttls,
     global_this: &JSGlobalObject,
-    lookup_name: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
+    lookup_name: &'static [u8], // PERF(port): was comptime monomorphization — profile if hot
 ) -> JsResult<JSValue> {
     if lookup_name == b"a" || lookup_name == b"aaaa" {
         // SAFETY: this.hostent is a c-ares-owned hostent pointer (non-null on success path).
@@ -98,6 +98,7 @@ pub fn hostent_with_ttls_to_js_response(
             // so build a sockaddr_in/in6 on the stack and copy through that.
             let addr_string = {
                 // h_addrtype is c_short on Windows, c_int on POSIX; widen for the compare.
+                #[allow(clippy::useless_conversion)]
                 let address = if i32::from(hostent.h_addrtype) == c_ares::AF::INET6 {
                     // SAFETY: addr points to ≥16 bytes for AF_INET6.
                     let bytes: [u8; 16] = unsafe { *(addr as *const [u8; 16]) };
@@ -229,7 +230,7 @@ pub fn addr_info_to_js_array(
 // then `create_empty_array` + `put_index`) once per record type; here we do
 // it once generically. The trait is `unsafe` because impls promise `next()`
 // is either null or a valid pointer into the same c-ares-owned list.
-// PERF(port): each Zig caller used stack-fallback + arena bulk-free — profile in Phase B.
+// PERF(port): each Zig caller used stack-fallback + arena bulk-free — profile if hot.
 
 /// SAFETY: impls must return null or a valid pointer into the same
 /// c-ares-owned linked list.
@@ -456,7 +457,7 @@ pub fn soa_reply_to_js_response(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback + arena bulk-free — profile in Phase B
+    // PERF(port): was stack-fallback + arena bulk-free — profile if hot
     soa_reply_to_js(this, global_this)
 }
 
@@ -509,7 +510,7 @@ pub fn any_reply_to_js_response(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback + arena bulk-free — profile in Phase B
+    // PERF(port): was stack-fallback + arena bulk-free — profile if hot
     any_reply_to_js(this, global_this)
 }
 
@@ -531,7 +532,7 @@ fn any_reply_append(
         response
     };
 
-    // PERF(port): was comptime ASCII-uppercase of lookup_name — profile in Phase B
+    // PERF(port): was comptime ASCII-uppercase of lookup_name — profile if hot
     let mut upper = [0u8; 16];
     let upper = &mut upper[..lookup_name.len()];
     for (dst, &src) in upper.iter_mut().zip(lookup_name) {
@@ -673,7 +674,7 @@ impl ErrorDeferred {
         })
     }
 
-    pub fn reject(mut self: Box<Self>, global_this: &JSGlobalObject) -> JsResult<()> {
+    pub fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let code = self.errno.code();
         // TODO(port): bun.String.createFormat used Zig {f} spec for bun.String — verify Display impl
         let message = if let Some(hostname) = &self.hostname {

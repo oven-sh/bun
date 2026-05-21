@@ -1,5 +1,4 @@
-use core::ffi::{c_int, c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
+use core::ffi::{c_uint, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
@@ -7,14 +6,14 @@ use crate::Loop;
 
 bun_core::declare_scope!(uws, visible);
 
-/// **DEPRECATED**
-/// **DO NOT USE IN NEW CODE!**
-///
-/// Use `JSC.EventLoopTimer` instead.
-///
-/// This code will be deleted eventually! It is very inefficient on POSIX. On
-/// Linux, it holds an entire file descriptor for every single timer. On macOS,
-/// it's several system calls.
+// **DEPRECATED**
+// **DO NOT USE IN NEW CODE!**
+//
+// Use `JSC.EventLoopTimer` instead.
+//
+// This code will be deleted eventually! It is very inefficient on POSIX. On
+// Linux, it holds an entire file descriptor for every single timer. On macOS,
+// it's several system calls.
 bun_opaque::opaque_ffi! { pub struct Timer; }
 
 impl Timer {
@@ -67,11 +66,11 @@ impl Timer {
         ms: i32,
         repeat_ms: i32,
     ) {
+        // SAFETY: ext storage was allocated with size_of::<T>() in create();
+        // @setRuntimeSafety(false) in Zig — caller guarantees T matches.
         unsafe {
             us_timer_set(self, cb, ms, repeat_ms);
             let value_ptr = us_timer_ext(self);
-            // SAFETY: ext storage was allocated with size_of::<T>() in create();
-            // @setRuntimeSafety(false) in Zig — caller guarantees T matches.
             (value_ptr.cast::<T>()).write(ptr);
         }
     }

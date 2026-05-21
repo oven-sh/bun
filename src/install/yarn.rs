@@ -33,9 +33,8 @@ use bun_sys::Fd;
 
 // TODO(port): lifetime — Entry/YarnLock borrow from the input `data: &[u8]` passed to
 // `migrate_yarn_lockfile`. LIFETIMES.tsv had no rows for this file (no *T fields), so
-// `'a` here is the BORROW_PARAM classification applied to slice fields. Phase B should
-// verify the few owned slices (specs inner strings, file, git_repo_name) don't need
-// `Box<[u8]>` instead.
+// `'a` here is the BORROW_PARAM classification applied to slice fields. Verify the few
+// owned slices (specs inner strings, file, git_repo_name) don't need `Box<[u8]>` instead.
 
 pub struct YarnLock<'a> {
     pub entries: Vec<Entry<'a>>,
@@ -478,8 +477,8 @@ impl<'a> YarnLock<'a> {
                             // `github:` branch and stores that as `resolved`. Here
                             // `git_info.url` still borrows the stripped input slice and
                             // `owned_url` is discarded, so github: URLs resolve INCORRECTLY.
-                            // Phase B must change Entry.resolved to Cow<'a, [u8]> (or store
-                            // the owned buffer on Entry) so `owned_url` can be assigned here.
+                            // Fix: change Entry.resolved to Cow<'a, [u8]> (or store the
+                            // owned buffer on Entry) so `owned_url` can be assigned here.
                             entry.resolved = Some(git_info.url);
                             entry.commit = git_info.commit;
                             if let Some(repo_name) = git_info.repo {
@@ -604,7 +603,7 @@ fn process_deps(
     // TODO(port): narrow error set
     // PORT NOTE: returns count instead of slice to avoid borrowck conflict with caller's bufs
     let mut count: usize = 0;
-    // PERF(port): was stack-fallback alloc (1024 bytes) — profile in Phase B
+    // PERF(port): was stack-fallback alloc (1024 bytes) — profile if it shows up on a hot path
 
     for (dep_name_key, dep_version_ref) in deps.iter() {
         let dep_name: &[u8] = dep_name_key.as_ref();
@@ -630,7 +629,7 @@ fn process_deps(
                 dep_version
             };
 
-            deps_buf[count] = Dependency {
+            let dep = Dependency {
                 name: dep_name_str,
                 name_hash: dep_name_hash,
                 version: Dependency::parse(
@@ -655,6 +654,8 @@ fn process_deps(
             }
 
             if let Some(pkg_id) = found_package_id {
+                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
+                unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
                 res_buf[count] = pkg_id;
                 count += 1;
             }
@@ -673,7 +674,7 @@ struct RootDep {
 struct VersionInfo {
     version: Vec<u8>,
     // TODO(port): Zig stores `string` (borrow from input). Using Vec<u8> here to avoid
-    // a second lifetime on the local map; Phase B can switch to &'a [u8].
+    // a second lifetime on the local map; could switch to &'a [u8].
     package_id: PackageID,
     yarn_idx: usize,
 }
@@ -714,7 +715,7 @@ pub fn migrate_yarn_lockfile<'a>(
     }
 
     let mut num_deps: u32 = 0;
-    let mut root_dep_count: u32;
+    let root_dep_count: u32;
     let mut root_dep_count_from_package_json: u32 = 0;
 
     let mut root_dependencies: Vec<RootDep> = Vec::new();
@@ -726,11 +727,6 @@ pub fn migrate_yarn_lockfile<'a>(
         else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
-        // Zig: `defer package_json_fd.close()` — guard so every early-return
-        // below (read_to_end / get_fd_path failure) still closes the fd.
-        let package_json_fd = scopeguard::guard(package_json_fd, |f| {
-            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-        });
         let Ok(package_json_contents) = package_json_fd.read_to_end() else {
             return Err(bun_core::err!("InvalidPackageJSON"));
         };
@@ -947,8 +943,8 @@ pub fn migrate_yarn_lockfile<'a>(
             }
         }
 
-        let name: &[u8] = if is_npm_alias && entry.resolved.is_some() {
-            Entry::get_package_name_from_resolved_url(entry.resolved.unwrap())
+        let name: &[u8] = if let (true, Some(resolved)) = (is_npm_alias, entry.resolved) {
+            Entry::get_package_name_from_resolved_url(resolved)
                 .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
         } else if is_direct_url {
             Entry::get_name_from_spec(entry.specs[0])
@@ -1021,7 +1017,7 @@ pub fn migrate_yarn_lockfile<'a>(
 
     let mut package_id_to_yarn_idx: Vec<usize> = vec![usize::MAX; next_package_id as usize];
 
-    let mut created_packages: StringHashMap<bool> = StringHashMap::new();
+    let created_packages: StringHashMap<bool> = StringHashMap::new();
     let _ = &created_packages; // unused in Zig too (only init/deinit)
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
@@ -1043,8 +1039,8 @@ pub fn migrate_yarn_lockfile<'a>(
             }
         }
 
-        let base_name: &[u8] = if is_npm_alias && entry.resolved.is_some() {
-            Entry::get_package_name_from_resolved_url(entry.resolved.unwrap())
+        let base_name: &[u8] = if let (true, Some(resolved)) = (is_npm_alias, entry.resolved) {
+            Entry::get_package_name_from_resolved_url(resolved)
                 .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
         } else {
             Entry::get_name_from_spec(entry.specs[0])
@@ -1160,11 +1156,7 @@ pub fn migrate_yarn_lockfile<'a>(
                     ));
                 }
 
-                if Entry::is_remote_tarball(resolved) {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
-                } else if resolved.ends_with(b".tgz") {
+                if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,
                     ));
@@ -1271,20 +1263,28 @@ pub fn migrate_yarn_lockfile<'a>(
                 let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
                 let version_string = sbuf!().append(&dep.version)?;
 
-                dependencies_buf[actual_root_dep_count as usize] = Dependency {
-                    name: dep_name_string,
-                    name_hash,
-                    version: Dependency::parse(
-                        dep_name_string,
-                        Some(name_hash),
-                        version_string.slice(this.buffers.string_bytes.as_slice()),
-                        &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                        Some(&mut *log),
-                        Some(&mut *manager),
-                    )
-                    .unwrap_or_default(),
-                    behavior: behavior_for(dep.dep_type, false),
-                };
+                // SAFETY: `dependencies_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
+                unsafe {
+                    core::ptr::write(
+                        dependencies_buf
+                            .as_mut_ptr()
+                            .add(actual_root_dep_count as usize),
+                        Dependency {
+                            name: dep_name_string,
+                            name_hash,
+                            version: Dependency::parse(
+                                dep_name_string,
+                                Some(name_hash),
+                                version_string.slice(this.buffers.string_bytes.as_slice()),
+                                &version_string.sliced(this.buffers.string_bytes.as_slice()),
+                                Some(&mut *log),
+                                Some(&mut *manager),
+                            )
+                            .unwrap_or_default(),
+                            behavior: behavior_for(dep.dep_type, false),
+                        },
+                    );
+                }
 
                 resolutions_buf[actual_root_dep_count as usize] = yarn_entry_to_package_id[idx];
                 actual_root_dep_count += 1;
@@ -1427,58 +1427,56 @@ pub fn migrate_yarn_lockfile<'a>(
             entry.dev_dependencies.as_ref(),
         ];
 
-        for maybe_deps in dep_maps.iter() {
-            if let Some(deps) = maybe_deps {
-                for (dep_name_key, dep_version_ref) in deps.iter() {
-                    let dep_name: &[u8] = dep_name_key.as_ref();
-                    let dep_version: &[u8] = *dep_version_ref;
-                    let mut dep_spec = Vec::new();
-                    write!(
-                        &mut dep_spec,
-                        "{}@{}",
-                        bstr::BStr::new(dep_name),
-                        bstr::BStr::new(dep_version)
-                    )
-                    .expect("unreachable");
+        for deps in dep_maps.iter().flatten() {
+            for (dep_name_key, dep_version_ref) in deps.iter() {
+                let dep_name: &[u8] = dep_name_key.as_ref();
+                let dep_version: &[u8] = *dep_version_ref;
+                let mut dep_spec = Vec::new();
+                write!(
+                    &mut dep_spec,
+                    "{}@{}",
+                    bstr::BStr::new(dep_name),
+                    bstr::BStr::new(dep_version)
+                )
+                .expect("unreachable");
 
-                    // PORT NOTE: reshaped for borrowck — find_entry_by_spec via index search
-                    // instead of returning &mut to avoid overlapping borrow with the loop below.
-                    let dep_entry_specs: Option<Vec<&[u8]>> = {
-                        let mut found: Option<Vec<&[u8]>> = None;
-                        for e in yarn_lock.entries.iter() {
-                            for entry_spec in e.specs.iter() {
-                                if *entry_spec == dep_spec.as_slice() {
-                                    found = Some(e.specs.clone());
-                                    break;
-                                }
-                            }
-                            if found.is_some() {
+                // PORT NOTE: reshaped for borrowck — find_entry_by_spec via index search
+                // instead of returning &mut to avoid overlapping borrow with the loop below.
+                let dep_entry_specs: Option<Vec<&[u8]>> = {
+                    let mut found: Option<Vec<&[u8]>> = None;
+                    for e in yarn_lock.entries.iter() {
+                        for entry_spec in e.specs.iter() {
+                            if *entry_spec == dep_spec.as_slice() {
+                                found = Some(e.specs.clone());
                                 break;
                             }
                         }
-                        found
-                    };
+                        if found.is_some() {
+                            break;
+                        }
+                    }
+                    found
+                };
 
-                    if let Some(dep_entry_specs) = dep_entry_specs {
-                        for (idx, e) in yarn_lock.entries.iter().enumerate() {
-                            let mut found = false;
-                            for spec in e.specs.iter() {
-                                for dep_spec_item in dep_entry_specs.iter() {
-                                    if *spec == *dep_spec_item {
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                                if found {
+                if let Some(dep_entry_specs) = dep_entry_specs {
+                    for (idx, e) in yarn_lock.entries.iter().enumerate() {
+                        let mut found = false;
+                        for spec in e.specs.iter() {
+                            for dep_spec_item in dep_entry_specs.iter() {
+                                if *spec == *dep_spec_item {
+                                    found = true;
                                     break;
                                 }
                             }
-
                             if found {
-                                let dep_package_id = yarn_entry_to_package_id[idx];
-                                package_dependents[dep_package_id as usize].push(parent_package_id);
                                 break;
                             }
+                        }
+
+                        if found {
+                            let dep_package_id = yarn_entry_to_package_id[idx];
+                            package_dependents[dep_package_id as usize].push(parent_package_id);
+                            break;
                         }
                     }
                 }
@@ -1510,7 +1508,7 @@ pub fn migrate_yarn_lockfile<'a>(
     for (base_name, versions) in scoped_packages.iter_mut() {
         let base_name: &[u8] = base_name.as_ref();
 
-        versions.sort_by(|a, b| a.package_id.cmp(&b.package_id));
+        versions.sort_by_key(|a| a.package_id);
 
         let original_name_hash = string_hash(base_name);
         // PORT NOTE: reshaped for borrowck — Zig matches on the entry only to
@@ -2046,7 +2044,7 @@ pub fn migrate_yarn_lockfile<'a>(
 
     let result = LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,
-        // TODO(port): LoadResult.ok stores *Lockfile; lifetime/ownership to be resolved in Phase B
+        // TODO(port): LoadResult.ok stores *Lockfile; lifetime/ownership not yet resolved
         migrated: lockfile::Migrated::Yarn,
         loaded_from_binary_lockfile: false,
         serializer_result: Default::default(),

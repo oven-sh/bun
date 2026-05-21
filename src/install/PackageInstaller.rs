@@ -5,9 +5,9 @@ use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
-use bun_paths::{self as Path, AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
-use bun_sys::{self as Syscall, Dir, Fd, FdDirExt, FdExt};
+use bun_sys::{self as Syscall, Dir, Fd};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
@@ -126,44 +126,41 @@ impl NodeModulesFolder {
     #[inline(never)]
     fn directory_exists_at_without_opening_directories(
         &self,
-        root_node_modules_dir: Dir,
+        root_node_modules_dir: &Dir,
         file_path: &ZStr,
     ) -> bool {
         let mut path_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
         bun_sys::directory_exists_at(
-            Fd::from_std_dir(&root_node_modules_dir),
+            root_node_modules_dir.fd(),
             join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
         )
         .unwrap_or(false)
     }
 
-    pub fn directory_exists_at(&self, root_node_modules_dir: Dir, file_path: &ZStr) -> bool {
+    pub fn directory_exists_at(&self, root_node_modules_dir: &Dir, file_path: &ZStr) -> bool {
         if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
             return self
                 .directory_exists_at_without_opening_directories(root_node_modules_dir, file_path);
         }
 
         let dir = match self.open_dir(root_node_modules_dir) {
-            Ok(d) => Fd::from_std_dir(&d),
+            Ok(d) => d,
             Err(_) => return false,
         };
-        let res = bun_sys::directory_exists_at(dir, file_path).unwrap_or(false);
-        dir.close();
-        res
+        bun_sys::directory_exists_at(&dir, file_path).unwrap_or(false)
     }
 
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
     #[inline(never)]
     fn open_file_without_opening_directories(
         &self,
-        root_node_modules_dir: Dir,
+        root_node_modules_dir: &Dir,
         file_path: &ZStr,
     ) -> bun_sys::Result<bun_sys::File> {
         let mut path_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
-        bun_sys::File::openat(
-            Fd::from_std_dir(&root_node_modules_dir),
+        root_node_modules_dir.open_file(
             join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
             bun_sys::O::RDONLY,
             0,
@@ -172,7 +169,7 @@ impl NodeModulesFolder {
 
     pub fn read_file(
         &self,
-        root_node_modules_dir: Dir,
+        root_node_modules_dir: &Dir,
         file_path: &ZStr,
     ) -> Result<bun_sys::file::ReadToEndResult, bun_core::Error> {
         // TODO(port): narrow error set
@@ -190,7 +187,7 @@ impl NodeModulesFolder {
 
     pub fn read_small_file(
         &self,
-        root_node_modules_dir: Dir,
+        root_node_modules_dir: &Dir,
         file_path: &ZStr,
     ) -> Result<bun_sys::file::ReadToEndResult, bun_core::Error> {
         // TODO(port): narrow error set
@@ -208,7 +205,7 @@ impl NodeModulesFolder {
 
     pub fn open_file(
         &self,
-        root_node_modules_dir: Dir,
+        root_node_modules_dir: &Dir,
         file_path: &ZStr,
     ) -> Result<bun_sys::File, bun_core::Error> {
         // TODO(port): narrow error set
@@ -229,23 +226,21 @@ impl NodeModulesFolder {
             }
         }
 
-        let dir = Fd::from_std_dir(&self.open_dir(root_node_modules_dir)?);
-        let res = bun_sys::File::openat(dir, file_path, bun_sys::O::RDONLY, 0);
-        dir.close();
+        let dir = self.open_dir(root_node_modules_dir)?;
+        let res = dir.open_file(file_path, bun_sys::O::RDONLY, 0);
         res.map_err(|e| e.to_zig_err())
     }
 
-    pub fn open_dir(&self, root: Dir) -> Result<Dir, bun_core::Error> {
+    pub fn open_dir(&self, root: &Dir) -> Result<Dir, bun_core::Error> {
         // TODO(port): narrow error set
         #[cfg(unix)]
         {
             // PORT NOTE: std.posix.toPosixPath — copies into a NUL-terminated PathBuffer
             let mut path_buf = PathBuffer::uninit();
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
-            return Ok(Dir::from_fd(
-                bun_sys::openat(Fd::from_std_dir(&root), path_z, bun_sys::O::DIRECTORY, 0)
-                    .map_err(|e| e.to_zig_err())?,
-            ));
+            return root
+                .open_at_with(path_z.as_bytes(), 0)
+                .map_err(|e| e.to_zig_err());
         }
 
         #[cfg(not(unix))]
@@ -265,7 +260,7 @@ impl NodeModulesFolder {
         }
     }
 
-    pub fn make_and_open_dir(&mut self, root: Dir) -> Result<Dir, bun_core::Error> {
+    pub fn make_and_open_dir(&mut self, root: &Dir) -> Result<Dir, bun_core::Error> {
         // TODO(port): narrow error set
         let out = 'brk: {
             #[cfg(unix)]
@@ -323,26 +318,31 @@ pub type TreeContextId = lockfile::tree::Id;
 // PORT NOTE: TreeContext::deinit dropped — Vec and Bin::PriorityQueue impl Drop.
 
 pub enum LazyPackageDestinationDir<'a> {
-    Dir(Dir),
+    /// Non-owning view of a directory handle the caller owns.
+    Dir(Fd),
     NodeModulesPath {
         node_modules: &'a NodeModulesFolder,
-        root_node_modules_dir: Dir,
+        /// Non-owning view; the owning `Dir` lives on `PackageInstaller`.
+        root_node_modules_dir: Fd,
     },
+    Owned(Dir),
     Closed,
 }
 
 impl<'a> LazyPackageDestinationDir<'a> {
-    pub fn get_dir(&mut self) -> Result<Dir, bun_core::Error> {
+    pub fn get_dir(&mut self) -> Result<Fd, bun_core::Error> {
         // TODO(port): narrow error set
         match self {
-            LazyPackageDestinationDir::Dir(dir) => Ok(*dir),
+            LazyPackageDestinationDir::Dir(fd) => Ok(*fd),
+            LazyPackageDestinationDir::Owned(dir) => Ok(dir.fd()),
             LazyPackageDestinationDir::NodeModulesPath {
                 node_modules,
                 root_node_modules_dir,
             } => {
-                let dir = node_modules.open_dir(*root_node_modules_dir)?;
-                *self = LazyPackageDestinationDir::Dir(dir);
-                Ok(dir)
+                let dir = node_modules.open_dir(Dir::borrow(root_node_modules_dir))?;
+                let fd = dir.fd();
+                *self = LazyPackageDestinationDir::Owned(dir);
+                Ok(fd)
             }
             LazyPackageDestinationDir::Closed => {
                 panic!(
@@ -353,16 +353,6 @@ impl<'a> LazyPackageDestinationDir<'a> {
     }
 
     pub fn close(&mut self) {
-        match self {
-            LazyPackageDestinationDir::Dir(dir) => {
-                if dir.fd() != bun_sys::cwd().fd() {
-                    dir.close();
-                }
-            }
-            LazyPackageDestinationDir::NodeModulesPath { .. }
-            | LazyPackageDestinationDir::Closed => {}
-        }
-
         *self = LazyPackageDestinationDir::Closed;
     }
 }
@@ -531,7 +521,7 @@ impl<'a> PackageInstaller<'a> {
             let package_name_ = strings::StringOrTinyString::init(alias);
             let mut target_package_name = package_name_;
             let mut can_retry_without_native_binlink_optimization = false;
-            let mut target_node_modules_path_opt: Option<AbsPath> = None;
+            let target_node_modules_path_opt: Option<AbsPath> = None;
             // PORT NOTE: `defer if (target_node_modules_path_opt) |*path| path.deinit()` — Option<AbsPath> drops.
 
             'native_binlink_optimization: {
@@ -543,7 +533,7 @@ impl<'a> PackageInstaller<'a> {
                 if let Some(optimizer) =
                     manager
                         .postinstall_optimizer
-                        .get(postinstall_optimizer::PkgInfo {
+                        .get(&postinstall_optimizer::PkgInfo {
                             name_hash,
                             ..Default::default()
                         })
@@ -581,9 +571,7 @@ impl<'a> PackageInstaller<'a> {
             }
             // globally linked packages shouls always belong to the root
             // tree (0).
-            let global = if !manager.options.global {
-                false
-            } else if tree_id != 0 {
+            let global = if !manager.options.global || tree_id != 0 {
                 false
             } else {
                 'global: {
@@ -616,8 +604,11 @@ impl<'a> PackageInstaller<'a> {
                     seen: Some(&mut self.seen_bin_links),
                     target_node_modules_path: target_node_modules_path_opt
                         .as_ref()
-                        .map(|p| std::ptr::from_ref::<AbsPath>(p))
-                        .unwrap_or(nm_ptr.cast_const()),
+                        .map(std::ptr::from_ref::<AbsPath>)
+                        .unwrap_or_else(|| nm_ptr.cast_const()),
+                    // SAFETY: `nm_ptr` = `&raw mut node_modules_path` (live local); the only
+                    // other pointer derived from it is the read-only `target_node_modules_path`
+                    // above, which `bin::Linker::link` never writes through.
                     node_modules_path: unsafe { &mut *nm_ptr },
                     abs_target_buf: link_target_buf,
                     abs_dest_buf: link_dest_buf,
@@ -768,10 +759,10 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub fn install_available_packages<const FORCE: bool>(&mut self, log_level: Options::LogLevel) {
-        // TODO(port): defer save/restore of self.node_modules / self.current_tree_id.
+        // TODO(refactor): defer save/restore of self.node_modules / self.current_tree_id.
         // Zig does a struct-copy of NodeModulesFolder (ptr+len+cap) and restores on scope
         // exit. In Rust this needs `core::mem::take` + scopeguard, but scopeguard cannot
-        // capture `&mut self` alongside the loop body's `&mut self`. Phase B: hoist into
+        // capture `&mut self` alongside the loop body's `&mut self`. Could hoist into
         // a helper that takes the saved values by move and restores after the loop.
         let prev_node_modules = core::mem::take(&mut self.node_modules);
         let prev_tree_id = self.current_tree_id;
@@ -1008,7 +999,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        if let Some(removed) = self.manager_mut().task_queue.fetch_remove(task_id) {
+        if let Some(removed) = self.manager_mut().task_queue.fetch_remove(&task_id) {
             let callbacks = removed.value;
             // PORT NOTE: `defer callbacks.deinit(this.manager.allocator)` — Vec drops.
 
@@ -1040,7 +1031,7 @@ impl<'a> PackageInstaller<'a> {
                 self.node_modules.tree_id = context.tree_id;
                 // PORT NOTE: zig assigns `context.path` (ArrayList struct copy).
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
-                self.node_modules.path = context.path.clone();
+                self.node_modules.path.clone_from(&context.path);
                 self.current_tree_id = context.tree_id;
                 const NEEDS_VERIFY: bool = false;
                 const IS_PENDING_PACKAGE_INSTALL: bool = false;
@@ -1142,12 +1133,6 @@ impl<'a> PackageInstaller<'a> {
         }
 
         count
-    }
-
-    fn get_patchfile_hash(patchfile_path: &[u8]) -> Option<u64> {
-        let _ = patchfile_path; // autofix
-        // TODO(port): zig body has no return statement (relies on lazy compilation / dead code).
-        None
     }
 
     pub fn install_package_with_name_and_resolution<
@@ -1285,14 +1270,16 @@ impl<'a> PackageInstaller<'a> {
             } else {
                 None
             },
-            cache_dir: Dir::from_fd(Fd::INVALID), // assigned below
+            cache_dir: Fd::INVALID, // assigned below
             destination_dir_subpath,
+            // SAFETY: `subpath_buf_ptr` = `&raw mut self.destination_dir_subpath_buf`; the
+            // field outlives `installer`. `destination_dir_subpath` above derives from the
+            // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             // PORT NOTE: zig `arena: this.lockfile.allocator` dropped — global mimalloc.
             package_name: pkg_name,
-            patch: patch_patch.map(|p| package_install::Patch {
+            patch: patch_patch.map(|_| package_install::Patch {
                 contents_hash: patch_contents_hash.unwrap(),
-                path: Box::<[u8]>::from(p),
             }),
             package_version,
             node_modules: node_modules_ref.get(),
@@ -1352,7 +1339,7 @@ impl<'a> PackageInstaller<'a> {
                         installer.cache_dir_subpath =
                             ZStr::from_buf(&self.folder_path_buf, folder.len());
                     }
-                    installer.cache_dir = bun_sys::cwd();
+                    installer.cache_dir = Fd::cwd();
                 } else {
                     // transitive folder dependencies are relative to their parent. they are not hoisted
                     self.folder_path_buf[..folder.len()].copy_from_slice(folder);
@@ -1362,7 +1349,7 @@ impl<'a> PackageInstaller<'a> {
                         ZStr::from_buf(&self.folder_path_buf, folder.len());
 
                     // cache_dir might not be created yet (if it's in node_modules)
-                    installer.cache_dir = bun_sys::cwd();
+                    installer.cache_dir = Fd::cwd();
                 }
             }
             resolution::Tag::LocalTarball => {
@@ -1394,11 +1381,11 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir_subpath =
                         ZStr::from_buf(&self.folder_path_buf, folder.len());
                 }
-                installer.cache_dir = bun_sys::cwd();
+                installer.cache_dir = Fd::cwd();
             }
             resolution::Tag::Root => {
                 installer.cache_dir_subpath = ZStr::from_static(b".\0");
-                installer.cache_dir = bun_sys::cwd();
+                installer.cache_dir = Fd::cwd();
             }
             resolution::Tag::Symlink => {
                 let directory = package_manager::global_link_dir(self.manager_mut());
@@ -1408,7 +1395,7 @@ impl<'a> PackageInstaller<'a> {
 
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");
-                    installer.cache_dir = bun_sys::cwd();
+                    installer.cache_dir = Fd::cwd();
                 } else {
                     let global_link_dir = package_manager::global_link_dir_path(self.manager_mut());
                     let buf = self.folder_path_buf.as_mut_slice();
@@ -1444,7 +1431,7 @@ impl<'a> PackageInstaller<'a> {
             || self.skip_verify_installed_version_number
             || !NEEDS_VERIFY
             || remove_patch
-            || !installer.verify(resolution, self.root_node_modules_folder);
+            || !installer.verify(resolution, &self.root_node_modules_folder);
         self.summary.skipped += (!needs_install) as u32;
 
         if needs_install {
@@ -1588,7 +1575,9 @@ impl<'a> PackageInstaller<'a> {
                             path: self.node_modules.path.clone(),
                         });
                     }
-                    package_manager::enqueue_patch_task(self.manager_mut(), task);
+                    // SAFETY: `task` was just `heap::alloc`'d in `new_apply_patch_hash`;
+                    // ownership transfers to the patch-task fifo here.
+                    unsafe { package_manager::enqueue_patch_task(self.manager_mut(), task) };
                     return;
                 }
             }
@@ -1611,9 +1600,9 @@ impl<'a> PackageInstaller<'a> {
             }
 
             // creating this directory now, right before installing package
-            let mut destination_dir = match self
+            let destination_dir = match self
                 .node_modules
-                .make_and_open_dir(self.root_node_modules_folder)
+                .make_and_open_dir(&self.root_node_modules_folder)
             {
                 Ok(d) => d,
                 Err(err) => {
@@ -1640,20 +1629,12 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
-            // TODO(port): `defer { if (cwd().fd != destination_dir.fd) destination_dir.close(); }`
-            // — needs scopeguard since there are no early returns past this point in this branch,
-            // but the match arms below do not return early either. Manual close at end of branch.
-            let _close_destination_dir = scopeguard::guard(destination_dir, |mut d| {
-                if bun_sys::cwd().fd() != d.fd() {
-                    d.close();
-                }
-            });
-
-            let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir);
+            #[cfg(not(windows))]
+            let mut lazy_package_dir = LazyPackageDestinationDir::Dir(destination_dir.fd());
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {
-                    installer.install_from_link(self.skip_delete, destination_dir)
+                    installer.install_from_link(self.skip_delete, &destination_dir)
                 }
                 _ => 'result: {
                     if resolution.tag == resolution::Tag::Root
@@ -1671,7 +1652,7 @@ impl<'a> PackageInstaller<'a> {
                             }
                         };
 
-                        installer.cache_dir = match self.root_node_modules_folder.open_dir(
+                        let owned_cache_dir = match self.root_node_modules_folder.open_dir(
                             dir_name,
                             bun_sys::OpenDirOptions {
                                 iterate: true,
@@ -1688,13 +1669,14 @@ impl<'a> PackageInstaller<'a> {
                                 );
                             }
                         };
+                        installer.cache_dir = owned_cache_dir.fd();
 
                         let result = if resolution.tag == resolution::Tag::Root {
-                            installer.install_from_link(self.skip_delete, destination_dir)
+                            installer.install_from_link(self.skip_delete, &destination_dir)
                         } else {
                             installer.install(
                                 self.skip_delete,
-                                destination_dir,
+                                &destination_dir,
                                 installer.get_install_method(),
                                 resolution.tag,
                             )
@@ -1713,7 +1695,7 @@ impl<'a> PackageInstaller<'a> {
 
                     break 'result installer.install(
                         self.skip_delete,
-                        destination_dir,
+                        &destination_dir,
                         installer.get_install_method(),
                         resolution.tag,
                     );
@@ -1773,7 +1755,7 @@ impl<'a> PackageInstaller<'a> {
                                 .manager()
                                 .postinstall_optimizer
                                 .should_ignore_lifecycle_scripts(
-                                    postinstall_optimizer::PkgInfo {
+                                    &postinstall_optimizer::PkgInfo {
                                         name_hash: pkg_name_hash,
                                         version: if resolution.tag == resolution::Tag::Npm {
                                             Some(resolution.npm().version)
@@ -1939,7 +1921,7 @@ impl<'a> PackageInstaller<'a> {
                                         Global::exit(1);
                                     }
                                 };
-                                let stat = match bun_sys::fstat(Fd::from_std_dir(&dir)) {
+                                let stat = match bun_sys::fstat(dir) {
                                     Ok(s) => s,
                                     Err(err) => {
                                         Output::err_tag(
@@ -1969,11 +1951,11 @@ impl<'a> PackageInstaller<'a> {
                                 // `st_mode` is u16 on FreeBSD, u32 elsewhere; widen.
                                 let st_mode = stat.st_mode as u32;
                                 let is_writable = if stat.st_uid == bun_sys::c::getuid() {
-                                    st_mode & bun_sys::S::IWUSR as u32 > 0
+                                    st_mode & bun_sys::S::IWUSR > 0
                                 } else if stat.st_gid == bun_sys::c::getgid() {
-                                    st_mode & bun_sys::S::IWGRP as u32 > 0
+                                    st_mode & bun_sys::S::IWGRP > 0
                                 } else {
-                                    st_mode & bun_sys::S::IWOTH as u32 > 0
+                                    st_mode & bun_sys::S::IWOTH > 0
                                 };
 
                                 if !is_writable {
@@ -2013,7 +1995,7 @@ impl<'a> PackageInstaller<'a> {
                         );
                         #[cfg(debug_assertions)]
                         {
-                            let mut t = cause.debug_trace;
+                            let t = cause.debug_trace;
                             bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());
                         }
                         self.summary.fail += 1;
@@ -2035,7 +2017,7 @@ impl<'a> PackageInstaller<'a> {
             // BACKREF — `self.node_modules` is not moved/dropped in this branch.
             let mut destination_dir = LazyPackageDestinationDir::NodeModulesPath {
                 node_modules: node_modules_ref.get(),
-                root_node_modules_dir: self.root_node_modules_folder,
+                root_node_modules_dir: self.root_node_modules_folder.fd(),
             };
 
             // PORT NOTE: `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
@@ -2078,7 +2060,7 @@ impl<'a> PackageInstaller<'a> {
                         .manager()
                         .postinstall_optimizer
                         .should_ignore_lifecycle_scripts(
-                            postinstall_optimizer::PkgInfo {
+                            &postinstall_optimizer::PkgInfo {
                                 name_hash: pkg_name_hash,
                                 version: if resolution.tag == resolution::Tag::Npm {
                                     Some(resolution.npm().version)

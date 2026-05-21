@@ -17,21 +17,31 @@
 //! before any data); socketpair gives us a proper socket for the read path
 //! and the write path can share it.
 
-use core::ffi::{CStr, c_char};
+#[cfg(not(windows))]
+use core::ffi::CStr;
+use core::ffi::c_char;
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
-use bun_core::strings;
-use bun_core::{self, ZBox, ZStr, env_var, getenv_z, zstr};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_core::ZStr;
+use bun_core::{self, strings};
+#[cfg(not(windows))]
+use bun_core::{ZBox, env_var, getenv_z, zstr};
 use bun_jsc::JSGlobalObject;
+#[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, path_buffer_pool, platform, resolve_path};
+use bun_spawn::{self, Process};
+#[cfg(not(windows))]
 use bun_spawn::{
-    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
-    SpawnResultExt as _, Status, Stdio,
+    EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
 };
-use bun_sys::{self, Fd, FdExt as _, O};
+use bun_sys::{self, Fd};
+#[cfg(not(windows))]
+use bun_sys::{FdExt as _, O};
+#[cfg(not(windows))]
 use bun_which::which;
 
 declare_scope!(Chrome, hidden);
@@ -82,8 +92,13 @@ pub extern "C" fn Bun__Chrome__kill() {
 /// Windows TODO — fd.cast() returns a HANDLE there, and pipe() / fcntl
 /// nonblocking have no direct equivalents. The spawn would need to use
 /// named pipes or libuv. For now -1 and C++ throws not-implemented.
+///
+/// # Safety
+/// `user_data_dir` and `path` must each be null or point to a valid
+/// NUL-terminated string. `extra_argv` must be null or point to
+/// `extra_argv_len` valid NUL-terminated string pointers.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Chrome__ensure(
+pub unsafe extern "C" fn Bun__Chrome__ensure(
     global: &JSGlobalObject,
     user_data_dir: *const c_char,     // ?[*:0]const u8
     path: *const c_char,              // ?[*:0]const u8
@@ -121,16 +136,16 @@ pub extern "C" fn Bun__Chrome__ensure(
             unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
         let vm = global.bun_vm_ptr();
-        // SAFETY: caller passes valid NUL-terminated strings when non-null.
         let user_data_dir = if user_data_dir.is_null() {
             None
         } else {
+            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
             Some(unsafe { bun_core::ffi::cstr(user_data_dir) })
         };
-        // SAFETY: caller passes valid NUL-terminated strings when non-null.
         let path = if path.is_null() {
             None
         } else {
+            // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
             Some(unsafe { bun_core::ffi::cstr(path) })
         };
         let fd = match spawn(
@@ -177,6 +192,7 @@ bun_spawn::link_impl_ProcessExit! {
 ///   linux: ~/.cache/ms-playwright/chromium_headless_shell-<rev>/
 ///            chrome-headless-shell-linux64/chrome-headless-shell
 ///            (arm64 non-cft builds use chrome-linux/headless_shell instead)
+#[cfg(not(windows))]
 fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
     // Precedence: backend.path > BUN_CHROME_PATH > $PATH > hardcoded > playwright.
     // backend.path is per-Bun.WebView call (first wins — later views reuse
@@ -274,6 +290,7 @@ fn find_chrome(explicit_path: Option<&CStr>) -> Option<ZBox> {
 /// Scan the Playwright cache dir for chromium_headless_shell-<rev> entries,
 /// pick the highest rev, stat the binary inside. Returns null if no cache
 /// dir, no matching entries, or binary missing.
+#[cfg(not(windows))]
 fn find_playwright_shell() -> Option<ZBox> {
     let home = env_var::HOME.get()?;
 
@@ -376,6 +393,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     None
 }
 
+#[cfg(not(windows))]
 fn spawn(
     vm: *mut VirtualMachine,
     user_data_dir: Option<&CStr>,
@@ -384,23 +402,10 @@ fn spawn(
     stdout_inherit: bool,
     stderr_inherit: bool,
 ) -> Result<Fd, bun_core::Error> {
-    #[cfg(windows)]
-    {
-        let _ = (
-            vm,
-            user_data_dir,
-            explicit_path,
-            extra_argv,
-            stdout_inherit,
-            stderr_inherit,
-        );
-        return Err(bun_core::err!("Unsupported"));
-    }
-    #[cfg(not(windows))]
     {
         // PERF(port): was arena bulk-free — all temp strings now individually heap-allocated.
 
-        let chrome = find_chrome(explicit_path).ok_or(bun_core::err!("ChromeNotFound"))?;
+        let chrome = find_chrome(explicit_path).ok_or_else(|| bun_core::err!("ChromeNotFound"))?;
         scoped_log!(
             Chrome,
             "using chrome: {}",
@@ -456,32 +461,33 @@ fn spawn(
             ZBox::from_vec(v)
         };
 
-        let mut argv: Vec<*const c_char> = Vec::new();
-        argv.push(chrome.as_ptr());
-        argv.push(data_dir.as_ptr());
-        argv.push(c"--remote-debugging-pipe".as_ptr());
-        argv.push(c"--headless".as_ptr());
-        argv.push(c"--no-first-run".as_ptr());
-        argv.push(c"--no-default-browser-check".as_ptr());
-        argv.push(c"--disable-gpu".as_ptr()); // headless CI has no GPU context
-        // Enterprise policy can force-install extensions (webRequest spam on
-        // stderr). --disable-extensions is best-effort; mandatory extensions
-        // may still load. --disable-background-networking shuts up GCM/update.
-        argv.push(c"--disable-extensions".as_ptr());
-        argv.push(c"--disable-background-networking".as_ptr());
-        // Throttling suite (playwright's chromiumSwitches.ts subset). These
-        // gate rAF/setTimeout firing when the tab thinks it's backgrounded.
-        // A headless target is "occluded" by definition; without these Chrome
-        // throttles timers to 1 Hz and pauses rAF entirely.
-        argv.push(c"--disable-background-timer-throttling".as_ptr());
-        argv.push(c"--disable-backgrounding-occluded-windows".as_ptr());
-        argv.push(c"--disable-renderer-backgrounding".as_ptr());
-        // CDP message rate limiter — a burst of evaluates/clicks in a test
-        // loop hits it otherwise. Playwright and puppeteer both ship this.
-        argv.push(c"--disable-ipc-flooding-protection".as_ptr());
-        // No startup window — targets are Target.createTarget'd, not the
-        // default about:blank. Saves one tab and the visual-complete wait.
-        argv.push(c"--no-startup-window".as_ptr());
+        let mut argv: Vec<*const c_char> = vec![
+            chrome.as_ptr(),
+            data_dir.as_ptr(),
+            c"--remote-debugging-pipe".as_ptr(),
+            c"--headless".as_ptr(),
+            c"--no-first-run".as_ptr(),
+            c"--no-default-browser-check".as_ptr(),
+            c"--disable-gpu".as_ptr(), // headless CI has no GPU context
+            // Enterprise policy can force-install extensions (webRequest spam on
+            // stderr). --disable-extensions is best-effort; mandatory extensions
+            // may still load. --disable-background-networking shuts up GCM/update.
+            c"--disable-extensions".as_ptr(),
+            c"--disable-background-networking".as_ptr(),
+            // Throttling suite (playwright's chromiumSwitches.ts subset). These
+            // gate rAF/setTimeout firing when the tab thinks it's backgrounded.
+            // A headless target is "occluded" by definition; without these Chrome
+            // throttles timers to 1 Hz and pauses rAF entirely.
+            c"--disable-background-timer-throttling".as_ptr(),
+            c"--disable-backgrounding-occluded-windows".as_ptr(),
+            c"--disable-renderer-backgrounding".as_ptr(),
+            // CDP message rate limiter — a burst of evaluates/clicks in a test
+            // loop hits it otherwise. Playwright and puppeteer both ship this.
+            c"--disable-ipc-flooding-protection".as_ptr(),
+            // No startup window — targets are Target.createTarget'd, not the
+            // default about:blank. Saves one tab and the visual-complete wait.
+            c"--no-startup-window".as_ptr(),
+        ];
         // User extras last so they can override built-in flags (Chrome's
         // CommandLine last-wins for duplicate switches). Memory is the caller's
         // CString Vector — lives until Bun__Chrome__ensure returns, after which
@@ -517,7 +523,10 @@ fn spawn(
         };
 
         // TODO(port): narrow error set — outer Result + inner bun_sys::Result
-        let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast())??;
+        // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
+        // argv[0] non-null; valid for this call.
+        let spawned =
+            unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
 
         // PORT NOTE: reshaped for borrowck — Zig's errdefer stays armed past
         // this point (and would re-close fds on the WatchFailed path below);
@@ -530,8 +539,9 @@ fn spawn(
         // close our reference so Chrome's death EOF's our end.
         fds[1].close();
 
-        // SAFETY: vm is valid for the call.
-        let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
+        // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
+        // per-thread `jsc::EventLoop`.
+        let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
         let process =
             NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess { process }));
@@ -597,7 +607,7 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     // names come from each browser's installer — hardcoded, not
     // discoverable. Edge uses the same CDP + file format as Chrome.
     // NB: do NOT route Windows through bun_core::getenv_z — it is stubbed to
-    // None on cfg(windows) (TODO(b2-blocked) in bun_core/util.rs), which made
+    // None on cfg(windows) (TODO(port) in bun_core/util.rs), which made
     // this whole function dead on Windows. Zig's bun.getenvZ walks the env
     // block case-insensitively and returns a real value; std::env::var is the
     // working equivalent here (LOCALAPPDATA is always valid Unicode).
@@ -694,8 +704,11 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
 /// fails with a close code; C++ falls back to spawn in that case
 /// (m_wasAutoDetected gate in wsOnClose). We don't pre-validate here
 /// because that'd need a network round-trip which defeats the file.
+///
+/// # Safety
+/// `out_buf` must point to at least `out_cap` writable bytes.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> usize {
+pub unsafe extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_cap: usize) -> usize {
     let mut buf: Vec<u8> = Vec::new();
     if read_dev_tools_active_port(&mut buf).is_some() {
         if buf.len() > out_cap {

@@ -1,6 +1,5 @@
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use core::mem::offset_of;
 use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
@@ -42,7 +41,7 @@ pub fn compute_chunks(
 
     debug_assert!(this.dev_server.is_none()); // use
 
-    // PERF(port): was stack-fallback (std.heap.stackFallback(4096, ...)) — profile in Phase B
+    // PERF(port): was stack-fallback (std.heap.stackFallback(4096, ...)) — profile if hot.
     // PERF(port): was arena bulk-free — temp allocations freed at end of fn
     let arena = Arena::new();
     let temp = &arena;
@@ -67,13 +66,13 @@ pub fn compute_chunks(
     // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the link step.
     // Hoisted so the loop can hold disjoint &mut borrows into `this.graph`.
     // PORT NOTE: `BundlerStyleSheet::empty()` no longer takes an arena in Rust; kept for
-    // Phase B when arena threading lands.
+    // when arena threading lands.
     let _arena: &Arena = this.graph.arena();
 
     // PORT NOTE: borrowck escape hatch — the SoA column slices below hold disjoint
     // immutable borrows into `this.graph` while several helpers (and the BundleV2
     // back-pointer recovery) still want `&mut LinkerContext`. The Zig original
-    // freely aliases; Phase B should thread split borrows through `LinkerGraph`
+    // freely aliases; TODO(refactor): thread split borrows through `LinkerGraph`
     // instead of laundering through a raw pointer.
     let this_ptr: *mut LinkerContext = this;
 
@@ -505,7 +504,7 @@ pub fn compute_chunks(
 
         break 'sort_chunks sorted_chunks;
         // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
-        // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
+        // Confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
     };
     let chunks: &mut [Chunk] = sorted_chunks.slice_mut();
 
@@ -595,13 +594,16 @@ pub fn compute_chunks(
                     .flags
                     .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
                 {
-                    chunk.template.data = bv2
-                        .transpiler_for_target(Target::Browser)
-                        .options
-                        .entry_naming
-                        .clone();
+                    chunk.template.data.clone_from(
+                        &bv2.transpiler_for_target(Target::Browser)
+                            .options
+                            .entry_naming,
+                    );
                 } else {
-                    chunk.template.data = bv2.transpiler().options.entry_naming.clone();
+                    chunk
+                        .template
+                        .data
+                        .clone_from(&bv2.transpiler().options.entry_naming);
                 }
             }
         } else {
@@ -613,13 +615,16 @@ pub fn compute_chunks(
                     .flags
                     .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
                 {
-                    chunk.template.data = bv2
-                        .transpiler_for_target(Target::Browser)
-                        .options
-                        .chunk_naming
-                        .clone();
+                    chunk.template.data.clone_from(
+                        &bv2.transpiler_for_target(Target::Browser)
+                            .options
+                            .chunk_naming,
+                    );
                 } else {
-                    chunk.template.data = bv2.transpiler().options.chunk_naming.clone();
+                    chunk
+                        .template
+                        .data
+                        .clone_from(&bv2.transpiler().options.chunk_naming);
                 }
             }
         }
@@ -662,7 +667,6 @@ pub fn compute_chunks(
                         &mut real_path_buf.0,
                     );
                 };
-                let _close = bun_sys::CloseOnDrop::file(&dir_file);
 
                 match dir_file.get_path(&mut real_path_buf) {
                     Ok(p) => break 'dir p,
@@ -695,14 +699,14 @@ pub fn compute_chunks(
 
     Ok(sorted_chunks.to_owned_slice())
     // TODO(port): return type — Zig returns []Chunk allocated by this.arena(); here we return Box<[Chunk]>.
-    // Phase B: confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
+    // Confirm ownership of `chunks` slice (sorted_chunks Vec backing storage).
 }
 
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// Local type aliases referenced above (Phase B: verify exact module paths)
+// Local type aliases referenced above.
 use crate::chunk;
 use crate::options::{Loader, Target};
 

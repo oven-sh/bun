@@ -15,9 +15,6 @@ type BlobOrStringOrBuffer = crate::node::types::BlobOrStringOrBuffer;
 
 // PORT NOTE: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
 // borrow caller-owned data for the duration of serialization.
-// TODO(port): borrow-view struct — `<'a>` on a struct is disallowed in Phase A (no
-// LIFETIMES.tsv entry for ValkeyCommand.Command/Args); revisit in Phase B and either
-// add a TSV row or retype as raw `*const [u8]` per the UNKNOWN class.
 #[derive(Copy, Clone)]
 pub struct Command<'a> {
     pub command: &'a [u8],
@@ -112,7 +109,7 @@ impl<'a> Command<'a> {
 impl<'a> core::fmt::Display for Command<'a> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // TODO(port): RESP bytes may not be valid UTF-8; Zig used the byte-writer protocol.
-        // Phase B should route Display through a byte-writing adapter or drop Display entirely.
+        // Route Display through a byte-writing adapter or drop Display entirely.
         let mut buf: Vec<u8> = Vec::new();
         self.write(&mut buf).map_err(|_| core::fmt::Error)?;
         write!(f, "{}", bstr::BStr::new(&buf))

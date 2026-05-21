@@ -1,11 +1,3 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    unused_unsafe,
-    clippy::all
-)]
 #![warn(unused_must_use)]
 pub mod parse_entry;
 pub mod parse_fn;
@@ -19,7 +11,6 @@ pub mod parse_suffix;
 pub mod parse_typescript;
 
 use bun_collections::VecExt;
-use core::mem;
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 
@@ -28,7 +19,7 @@ use bun_core::{Error, err};
 
 use bun_ast::LexerLog as _;
 
-use crate::lexer::{self as js_lexer, T};
+use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
     AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
@@ -40,9 +31,7 @@ use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
-use bun_ast::{
-    B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt, Symbol,
-};
+use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
 
 // Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -152,7 +141,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         class_keyword: bun_ast::Range,
         name: Option<js_ast::LocRef>,
-        class_opts: ParseClassOptions<'a>,
+        class_opts: &ParseClassOptions<'a>,
     ) -> Result<G::Class, Error> {
         let p = self;
         let mut extends: Option<Expr> = None;
@@ -353,7 +342,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = true;
         // TODO(port): errdefer — restore `p.allow_in = old_allow_in` on error path
 
-        let mut args = BumpVec::<Expr>::new_in(p.arena);
+        let mut args: smallvec::SmallVec<[Expr; 4]> = smallvec::SmallVec::new();
         p.lexer.expect(T::TOpenParen)?;
 
         while p.lexer.token != T::TCloseParen {
@@ -377,7 +366,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TCloseParen)?;
         p.allow_in = old_allow_in;
         Ok(ExprListLoc {
-            list: ExprNodeList::from_bump_vec(args),
+            list: ExprNodeList::from_arena_slice(&args),
             loc: close_paren_loc,
         })
     }
@@ -729,7 +718,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_index = p
             .push_scope_for_parse_pass(js_ast::scope::Kind::ClassName, loc)
             .expect("unreachable");
-        let class = p.parse_class(class_keyword, name, class_opts)?;
+        let class = p.parse_class(class_keyword, name, &class_opts)?;
 
         if Self::IS_TYPESCRIPT_ENABLED {
             if opts.is_typescript_declare {
@@ -752,7 +741,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn parse_clause_alias(&mut self, kind: &[u8]) -> Result<&'a [u8], Error> {
+    pub fn parse_clause_alias(&mut self, _kind: &[u8]) -> Result<&'a [u8], Error> {
         let p = self;
         let loc = p.lexer.loc();
 
@@ -1253,7 +1242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         opts: &mut ParseStatementOptions<'a>,
     ) -> Result<G::DeclList, Error> {
         let p = self;
-        let mut decls = BumpVec::<G::Decl>::new_in(p.arena);
+        let mut decls: smallvec::SmallVec<[G::Decl; 4]> = smallvec::SmallVec::new();
 
         loop {
             // Forbid "let let" and "const let" but not "var let"
@@ -1306,7 +1295,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
         }
 
-        Ok(G::DeclList::from_bump_vec(decls))
+        Ok(G::DeclList::from_arena_slice(&decls))
     }
 
     pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {

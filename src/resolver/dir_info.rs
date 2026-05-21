@@ -1,15 +1,10 @@
 use core::ptr::NonNull;
 
-use enumset::{EnumSet, EnumSetType};
-
 use bun_alloc as allocators;
-#[allow(unused_imports)]
 use bun_core::Generation;
-#[allow(unused_imports)]
 use bun_core::feature_flags as FeatureFlags;
 use bun_sys::Fd;
 
-#[allow(unused_imports)]
 use crate::fs;
 use crate::package_json::PackageJSON;
 use crate::tsconfig_json::TSConfigJSON;
@@ -287,15 +282,17 @@ impl DirInfo {
     }
 
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        // SAFETY: read-only path; no other live `&mut EntriesOption` for this index
-        // exists in this scope (resolver invariant).
-        let entries_ptr = unsafe { fs::FileSystem::instance().fs.entries.at_index(self.entries) }?;
+        let entries_ptr = fs::FileSystem::instance()
+            .fs
+            .entries
+            .at_index(self.entries)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(&**entries),
             fs::EntriesOption::Err(_) => None,
         }
     }
 
+    #[inline]
     pub fn get_parent(&self) -> Option<DirInfoRef> {
         ref_at_index(self.parent)
     }
@@ -322,11 +319,17 @@ static DIR_INFO_MAP: bun_core::AtomicCell<Option<NonNull<HashMap>>> =
 
 /// Raw pointer to the lazy DirInfo BSSMap singleton. Callers reborrow
 /// per-access under the resolver mutex — PORTING.md §Global mutable state.
-#[inline]
+#[inline(always)]
 pub fn hash_map_instance() -> *mut HashMap {
     if let Some(p) = DIR_INFO_MAP.load() {
         return p.as_ptr();
     }
+    hash_map_instance_init()
+}
+
+#[cold]
+#[inline(never)]
+fn hash_map_instance_init() -> *mut HashMap {
     // First access: initialize and publish. Resolver init is single-threaded
     // in practice, but use CAS so a race (if it ever happens) doesn't tear
     // the pointer; the loser's `init()` result is leaked, which is fine for
@@ -413,13 +416,13 @@ pub trait HashMapExt {
     fn get_or_put(
         &mut self,
         key: &[u8],
-    ) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error>;
+    ) -> core::result::Result<allocators::Result, bun_core::Error>;
     fn put(
         &mut self,
-        result: &mut crate::__phase_a_body::allocators::Result,
+        result: &mut allocators::Result,
         value: DirInfo,
     ) -> core::result::Result<*mut DirInfo, bun_core::Error>;
-    fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result);
+    fn mark_not_found(&mut self, result: allocators::Result);
     fn remove(&mut self, key: &[u8]) -> bool;
     fn values_mut(&mut self) -> core::slice::IterMut<'_, DirInfo>;
 }
@@ -428,14 +431,14 @@ impl HashMapExt for HashMap {
     fn get_or_put(
         &mut self,
         key: &[u8],
-    ) -> core::result::Result<crate::__phase_a_body::allocators::Result, bun_core::Error> {
+    ) -> core::result::Result<allocators::Result, bun_core::Error> {
         // Dot-syntax picks inherent `BSSMapInner::get_or_put` (inherent > trait); not recursive.
         self.get_or_put(key).map_err(Into::into)
     }
     #[inline]
     fn put(
         &mut self,
-        result: &mut crate::__phase_a_body::allocators::Result,
+        result: &mut allocators::Result,
         value: DirInfo,
     ) -> core::result::Result<*mut DirInfo, bun_core::Error> {
         // Spec bun_alloc.zig:615 `put(self: *Self, result: *Result, value) !*ValueType` —
@@ -448,11 +451,11 @@ impl HashMapExt for HashMap {
         // TODO(port): derive via `addr_of_mut!` from the raw singleton (SharedReadWrite
         // provenance) so slot pointers survive sibling retags outright.
         self.put(result, value)
-            .map(|v| std::ptr::from_mut::<DirInfo>(v))
+            .map(std::ptr::from_mut::<DirInfo>)
             .map_err(Into::into)
     }
     #[inline]
-    fn mark_not_found(&mut self, result: crate::__phase_a_body::allocators::Result) {
+    fn mark_not_found(&mut self, result: allocators::Result) {
         // Inherent `BSSMapInner::mark_not_found` (inherent > trait); not recursive.
         self.mark_not_found(result)
     }

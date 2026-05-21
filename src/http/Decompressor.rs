@@ -38,7 +38,7 @@ pub enum Decompressor {
 /// overwrites `list_ptr`).
 #[inline(always)]
 unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'static mut Vec<u8>) {
-    // SAFETY (`Interned::assume` — Population B, holder-backed): `input` is
+    // SAFETY: (`Interned::assume` — Population B, holder-backed) `input` is
     // `InternalState::compressed_body` (or the caller's body chunk), owned by
     // the surrounding `HTTPClient` request and freed in `InternalState::deinit`
     // strictly after the `Decompressor` is dropped/reset. NOT process-lifetime;
@@ -105,7 +105,7 @@ impl Decompressor {
                         input,
                         out,
                         // PORT NOTE: Zig passed `body_out_str.allocator`; dropped per §Allocators.
-                        Default::default(),
+                        &Default::default(),
                     )?;
                     *self = Decompressor::Brotli(reader);
                     return Ok(());

@@ -10,7 +10,7 @@ use crate::node::node_zlib_binding::Error;
 // `#[bun_jsc::host_fn]`s; field types (`Strong`, `WorkPoolTask`) are not yet
 // exported with the expected shapes. The pure-FFI `Context` (zlib state
 // machine) is hoisted below as the non-JSC body.
-// TODO(b2-blocked): un-gate once bun_jsc Strong/JsClass + bun_threading::WorkPoolTask land.
+// TODO(port): un-gate once bun_jsc Strong/JsClass + bun_threading::WorkPoolTask land.
 
 mod _impl {
     use super::*;
@@ -88,8 +88,10 @@ mod _impl {
                 ));
             }
 
-            let mut stream = Context::default();
-            stream.mode = c::NodeMode::from_int(mode_int as u8);
+            let stream = Context {
+                mode: c::NodeMode::from_int(mode_int as u8),
+                ..Default::default()
+            };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 // JSC_BORROW backref — the global outlives this m_ctx payload.
@@ -276,7 +278,7 @@ impl Context {
             DEFLATE | INFLATE => window_bits,
             GZIP | GUNZIP => window_bits + 16,
             UNZIP => window_bits + 32,
-            DEFLATERAW | INFLATERAW => window_bits * -1,
+            DEFLATERAW | INFLATERAW => -window_bits,
             BROTLI_DECODE | BROTLI_ENCODE => unreachable!(),
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         };
@@ -287,10 +289,9 @@ impl Context {
             None => bun_ptr::RawSlice::EMPTY,
         };
 
-        // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion()
-        // returns a static C string.
         match self.mode {
             NONE => unreachable!(),
+            // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion() returns a static C string.
             DEFLATE | GZIP | DEFLATERAW => unsafe {
                 self.err = c::deflateInit2_(
                     &raw mut self.state,
@@ -303,6 +304,7 @@ impl Context {
                     c_int::try_from(mem::size_of::<c::z_stream>()).expect("int cast"),
                 );
             },
+            // SAFETY: FFI — `state` is a valid #[repr(C)] z_stream; zlibVersion() returns a static C string.
             INFLATE | GUNZIP | UNZIP | INFLATERAW => unsafe {
                 self.err = c::inflateInit2_(
                     &raw mut self.state,
@@ -334,11 +336,12 @@ impl Context {
             (dict.as_ptr(), u32::try_from(dict.len()).expect("int cast"))
         };
         self.err = c::ReturnCode::Ok;
-        // SAFETY: FFI — state is initialized; dict points into a rooted ArrayBuffer.
         match self.mode {
+            // SAFETY: FFI — state is an initialized deflate stream; dict_ptr/dict_len borrow a rooted ArrayBuffer.
             DEFLATE | DEFLATERAW => unsafe {
                 self.err = c::deflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
+            // SAFETY: FFI — state is an initialized inflate stream; dict_ptr/dict_len borrow a rooted ArrayBuffer.
             INFLATERAW => unsafe {
                 self.err = c::inflateSetDictionary(&raw mut self.state, dict_ptr, dict_len);
             },
@@ -353,8 +356,8 @@ impl Context {
     pub fn set_params(&mut self, level: c_int, strategy: c_int) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
-        // SAFETY: FFI — state is an initialized deflate stream.
         match self.mode {
+            // SAFETY: FFI — state is an initialized deflate stream.
             DEFLATE | DEFLATERAW => unsafe {
                 self.err = c::deflateParams(&raw mut self.state, level, strategy);
             },
@@ -392,11 +395,12 @@ impl Context {
     pub fn reset(&mut self) -> Error {
         use c::NodeMode::*;
         self.err = c::ReturnCode::Ok;
-        // SAFETY: FFI — state is an initialized stream for the given mode.
         match self.mode {
+            // SAFETY: FFI — state was initialized as a deflate stream by deflateInit2_.
             DEFLATE | DEFLATERAW | GZIP => unsafe {
                 self.err = c::deflateReset(&raw mut self.state);
             },
+            // SAFETY: FFI — state was initialized as an inflate stream by inflateInit2_.
             INFLATE | INFLATERAW | GUNZIP => unsafe {
                 self.err = c::inflateReset(&raw mut self.state);
             },
@@ -574,11 +578,12 @@ impl Context {
     pub fn close(&mut self) {
         use c::NodeMode::*;
         let mut status = c::ReturnCode::Ok;
-        // SAFETY: FFI — state is an initialized stream for the given mode.
         match self.mode {
+            // SAFETY: FFI — state was initialized as a deflate stream by deflateInit2_.
             DEFLATE | DEFLATERAW | GZIP => unsafe {
                 status = c::deflateEnd(&raw mut self.state);
             },
+            // SAFETY: FFI — state was initialized as an inflate stream by inflateInit2_.
             INFLATE | INFLATERAW | GUNZIP | UNZIP => unsafe {
                 status = c::inflateEnd(&raw mut self.state);
             },

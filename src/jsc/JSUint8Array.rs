@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::sizes;
 use crate::{JSGlobalObject, JSValue};

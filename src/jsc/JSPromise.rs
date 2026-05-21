@@ -1,16 +1,15 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
+#[cfg(debug_assertions)]
 use bun_core::String as BunString;
 
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // `jsc.Strong.Optional` and `jsc.Weak(T)` collide with this module's own `Strong`/`Weak`,
 // so import them under aliases.
+use crate::JsTerminated;
 use crate::strong::Optional as JscStrong;
-use crate::top_exception_scope::SourceLocation;
 use crate::virtual_machine::VirtualMachine;
 use crate::weak::{Weak as JscWeak, WeakRefType};
-use crate::{JsTerminated, TopExceptionScope};
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to a `JSC::JSPromise` cell. Always used by reference; never
@@ -63,7 +62,7 @@ unsafe extern "C" {
         call: extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue,
     ) -> JSValue;
 
-    // Referenced via `bun.cpp.*` in the Zig — declared here for Phase A.
+    // Referenced via `bun.cpp.*` in the Zig — declared directly here.
     safe fn JSC__JSPromise__status(this: &JSPromise) -> u32;
     safe fn JSC__JSPromise__result(this: &mut JSPromise, vm: &VM) -> JSValue;
     safe fn JSC__JSPromise__isHandled(this: &JSPromise) -> bool;
@@ -73,13 +72,6 @@ unsafe extern "C" {
     // `Bun__RETURN_IF_EXCEPTION(global)` to surface `error.JSError` — there is
     // no bool sentinel on the wire. Mirror that by checking `global.has_exception()`
     // after the call.
-    safe fn JSC__JSPromise__resolve(this: &mut JSPromise, global: &JSGlobalObject, value: JSValue);
-    safe fn JSC__JSPromise__reject(this: &mut JSPromise, global: &JSGlobalObject, value: JSValue);
-    safe fn JSC__JSPromise__rejectAsHandled(
-        this: &mut JSPromise,
-        global: &JSGlobalObject,
-        value: JSValue,
-    );
 }
 
 // ───────────────────────────── JSPromise.Weak(T) ─────────────────────────────
@@ -239,8 +231,8 @@ impl Strong {
 
     // Zig: `pub const rejectOnNextTick = @compileError("...")`
     // TODO(port): @compileError poison-decl has no direct Rust equivalent. Relying on
-    // the method simply not existing; callers will fail to compile. Phase B may add a
-    // `#[deprecated(note = "...")]` shim if needed for migration error messages.
+    // the method simply not existing; callers will fail to compile. A
+    // `#[deprecated(note = "...")]` shim could be added if migration error messages are needed.
 
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         self.swap().resolve(global, val)
@@ -347,7 +339,7 @@ impl JSPromise {
     /// host-fn reflection pattern — in Rust it collapses to a monomorphized closure
     /// + extern-C trampoline.
     // TODO(port): proc-macro — the Zig version threads `@src()` and uses
-    // `jsc.toJSHostCall` for exception-scope plumbing. Phase B should verify the
+    // `jsc.toJSHostCall` for exception-scope plumbing. Verify the
     // closure form below is ABI-equivalent or replace with `#[bun_jsc::host_fn]`.
     pub fn wrap<F>(global: &JSGlobalObject, f: F) -> Result<JSValue, JsTerminated>
     where

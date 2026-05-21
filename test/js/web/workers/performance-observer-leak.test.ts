@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 
 // Performance <-> PerformanceObserver RefPtr cycle: Performance holds
 // RefPtr<PerformanceObserver> in its registered-observer list, and each
@@ -53,7 +53,8 @@ test("PerformanceObserver without disconnect() does not leak Performance when Wo
       const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
       // Without fix: ~110+ MB (baseline ~30 MB + 20 * 4 MB leaked).
       // With fix: ~30 MB (just baseline worker/VM churn).
-      if (deltaMB > 65) {
+      // ASAN's quarantine retains freed allocations so widen the threshold there.
+      if (deltaMB > ${isASAN ? 256 : 65}) {
         console.error("FAIL: RSS grew by " + deltaMB.toFixed(1) + " MB over 20 worker terminations");
         process.exit(1);
       }

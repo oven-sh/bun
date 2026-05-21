@@ -19,8 +19,6 @@
 //! `bun_js_parser::js_lexer` remains the canonical lexer; this module is a
 //! sliced re-port and is NOT re-exported outside `bun_interchange`.
 
-#![allow(dead_code)]
-
 use bun_alloc::Arena as Bump;
 
 use bun_ast as js_ast;
@@ -131,7 +129,6 @@ impl T {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StringLiteralFormat {
     Ascii,
-    Utf16,
     NeedsDecode,
 }
 
@@ -207,6 +204,9 @@ impl<'a, 'bump> LexerLog<'a> for Lexer<'a, 'bump> {
     type Err = bun_core::Error;
     #[inline]
     fn log_mut(&mut self) -> &mut bun_ast::Log {
+        // SAFETY: `self.log` is the sole provenance chain to the `Log` for the
+        // lifetime of the parse (see struct doc); no other `&mut Log` is held,
+        // so this deref never overlaps another live borrow.
         unsafe { &mut *self.log }
     }
     #[inline]
@@ -326,6 +326,7 @@ where
     /// Single provenance chain to the `Log` — the parser routes its own log
     /// writes through here too (see struct doc).
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub fn log_mut(&self) -> &mut bun_ast::Log {
         // SAFETY: see struct doc — `log` is the only handle to the `Log` for
         // the lifetime of the parse; no `&mut Log` is held elsewhere, so this
@@ -568,18 +569,6 @@ where
             StringLiteralFormat::Ascii => {
                 Ok(js_ast::E::String::init(self.string_literal_raw_content))
             }
-            StringLiteralFormat::Utf16 => {
-                // SAFETY: when Utf16, the raw-content slice was produced from a
-                // `[]const u16` reinterpreted as bytes; len is the u16 count.
-                // (JSON path never sets Utf16 — only the JSX rescan does.)
-                let s16 = unsafe {
-                    core::slice::from_raw_parts(
-                        self.string_literal_raw_content.as_ptr().cast::<u16>(),
-                        self.string_literal_raw_content.len(),
-                    )
-                };
-                Ok(js_ast::E::String::init_utf16(s16))
-            }
             StringLiteralFormat::NeedsDecode => {
                 // Escape parsing may surface a syntax error.
                 let mut buf: Vec<u16> = Vec::with_capacity(self.string_literal_raw_content.len());
@@ -663,7 +652,7 @@ where
                                 }
                                 let c3 = iter.c;
                                 value = match hex_digit_value_u32(c3 as u32) {
-                                    Some(d) => value * 16 | d as CodePoint,
+                                    Some(d) => (value * 16) | d as CodePoint,
                                     None => return self.syntax_error(),
                                 };
                             }
@@ -770,7 +759,6 @@ where
                             self.syntax_error()?;
                         }
                         last_underscore_end = self.end;
-                        underscore_count += 1;
                     }
                     cp if cp == '0' as CodePoint || cp == '1' as CodePoint => {
                         self.number = self.number * base + (cp - '0' as CodePoint) as f64;

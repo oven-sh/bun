@@ -36,7 +36,7 @@ pub fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // See https://github.com/ziglang/zig/issues/21879
     // PORT NOTE: Zig used `useAllFields(DevServer, .{...})` to compile-time-assert that
     // every DevServer field is accounted for below. Rust has no equivalent; the field
-    // list is preserved as comments so Phase B can wire a proc-macro or static-assert.
+    // list is preserved as comments. A proc-macro or static-assert could re-add the check.
     // TODO(port): exhaustiveness check for DevServer fields (was bun.meta.useAllFields)
 
     // does not contain pointers
@@ -214,7 +214,7 @@ pub fn memory_cost_array_list<T>(slice: &Vec<T>) -> usize {
 }
 
 pub fn memory_cost_slice<T>(slice: &[T]) -> usize {
-    slice.len() * size_of::<T>()
+    std::mem::size_of_val(slice)
 }
 
 pub fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {

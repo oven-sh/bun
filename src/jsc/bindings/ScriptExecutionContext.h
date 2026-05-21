@@ -93,6 +93,7 @@ public:
 #endif
 
     WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, NOESCAPE const WTF::Function<void()>& betweenLookupAndEnqueue, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task);
 
@@ -138,6 +139,9 @@ private:
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
+    // Snapshot of the creating thread's UID; used by isContextThread() so the
+    // check stays valid after VM clientData / VMHolder are torn down on exit.
+    uint32_t m_contextThreadUID;
 
     UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
 

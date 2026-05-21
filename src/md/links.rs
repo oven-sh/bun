@@ -1,11 +1,10 @@
 use crate::helpers;
 use crate::inlines;
 use crate::parser::{self, Parser};
-use crate::ref_defs::RefDef;
 use crate::types::{OFF, SpanDetail, SpanType, TextType};
 
-// PORT NOTE: Phase-A draft used `Span` / `SpanAttrs`; real types are
-// `SpanType` / `SpanDetail`.
+// PORT NOTE: aliases for the real `SpanType` / `SpanDetail` types (the Zig
+// original named them `Span` / `SpanAttrs`).
 type Span = SpanType;
 type SpanAttrs<'a> = SpanDetail<'a>;
 type Off = OFF;
@@ -230,7 +229,6 @@ impl Parser<'_> {
 
         // Reference link: [text][ref] or [text][] or shortcut [text]
         if pos < content.len() && content[pos] == b'[' {
-            let bracket_pos = pos;
             pos += 1;
             let ref_start = pos;
             while pos < content.len() && content[pos] != b']' {
@@ -262,9 +260,6 @@ impl Parser<'_> {
                     self.render_ref_link(label, &dest, &title, is_image)?;
                     return Ok(Some(pos));
                 }
-            } else {
-                // Reset pos if we didn't find a valid ]
-                pos = bracket_pos;
             }
         }
 

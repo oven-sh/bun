@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
 use crate as css;
 use bun_alloc::ArenaVecExt as _;
@@ -7,7 +6,6 @@ use css::PrintErr;
 use css::Printer;
 
 use crate::properties::{Property, PropertyId, PropertyIdTag};
-use css::css_properties::custom::UnparsedProperty;
 
 use css::logical::PropertyCategory;
 
@@ -43,7 +41,7 @@ impl BoxSizing {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str(match self {
             BoxSizing::ContentBox => "content-box",
             BoxSizing::BorderBox => "border-box",
@@ -51,8 +49,8 @@ impl BoxSizing {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _bump: &Bump) -> Self {
-        *self
+    pub fn deep_clone(self, _bump: &Bump) -> Self {
+        self
     }
 }
 
@@ -160,10 +158,10 @@ impl Size {
     }
 }
 
-// PORT NOTE: split out of the gated `impl Size` above (B-2 round 15) — these
-// don't depend on `parse`/`to_css` surface and are needed by `SizeHandler`.
+// PORT NOTE: split out of `impl Size` above — these don't depend on
+// `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl Size {
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
             Size::LengthPercentage(l) => l.is_compatible(browsers),
@@ -298,10 +296,10 @@ impl MaxSize {
     }
 }
 
-// PORT NOTE: split out of the gated `impl MaxSize` above (B-2 round 15) — these
-// don't depend on `parse`/`to_css` surface and are needed by `SizeHandler`.
+// PORT NOTE: split out of `impl MaxSize` above — these don't depend on
+// `parse`/`to_css` surface and are needed by `SizeHandler`.
 impl MaxSize {
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         use css::compat::Feature as F;
         match self {
             MaxSize::LengthPercentage(l) => l.is_compatible(browsers),
@@ -340,7 +338,7 @@ impl MaxSize {
 }
 
 /// A value for the [aspect-ratio](https://drafts.csswg.org/css-sizing-4/#aspect-ratio) property.
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct AspectRatio {
     /// The `auto` keyword.
     pub auto: bool,
@@ -383,7 +381,7 @@ impl AspectRatio {
 
     pub fn deep_clone(&self, _bump: &Bump) -> Self {
         // PORT NOTE: css.implementDeepClone — `Ratio` is two `f32`s; #[derive(Clone)] is exact.
-        self.clone()
+        *self
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
@@ -456,9 +454,8 @@ pub struct SizeHandler {
     pub category: PropertyCategory,
 }
 
-// PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature +
-// UnparsedProperty surface are real now. `context.arena` was dropped from
-// PropertyHandlerContext; the arena is recovered via `dest.bump()`.
+// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext; the
+// arena is recovered via `dest.bump()`.
 use css::compat::Feature;
 
 // ─── helper macros (Zig used `inline fn` + `comptime []const u8` field names + @field/@unionInit) ───
@@ -467,7 +464,7 @@ use css::compat::Feature;
 // `flushPrefixHelper`, `flushPropertyHelper`, `flushLogicalHelper`. The Zig code passes field
 // names as comptime strings and uses @field/@unionInit/@tagName to splice them into struct/enum
 // accesses. Rust has no equivalent reflection — macro_rules! is the closest 1:1 mapping.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// PERF(port): was comptime monomorphization.
 
 macro_rules! property_helper {
     ($this:expr, $field:ident, $ty:ty, $value:expr, $category:expr, $dest:expr, $context:expr) => {{
@@ -477,7 +474,7 @@ macro_rules! property_helper {
         if $category != $this.category
             || ($this.$field.is_some()
                 && $context.targets.browsers.is_some()
-                && !$value.is_compatible($context.targets.browsers.unwrap()))
+                && !$value.is_compatible($context.targets.browsers.as_ref().unwrap()))
         {
             $this.flush($dest, $context);
         }

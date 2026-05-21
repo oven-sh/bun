@@ -47,7 +47,7 @@ pub fn convert_stmts_for_chunk(
     chunk: &mut Chunk,
     bump: &Bump,
     wrap: WrapKind,
-    ast: &JSAst,
+    ast: &JSAst<'_>,
 ) -> Result<(), bun_core::Error> {
     let _ = bump;
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
@@ -145,7 +145,7 @@ pub fn convert_stmts_for_chunk(
                     }
 
                     // "export * from 'path'"
-                    let record = ast.import_records.at(s.import_record_index as usize);
+                    let record = &ast.import_records[s.import_record_index as usize];
 
                     // Barrel optimization: deferred export * records should be dropped
                     if record.flags.contains(ImportRecordFlags::IS_UNUSED) {
@@ -196,7 +196,7 @@ pub fn convert_stmts_for_chunk(
                             ));
 
                             if let Some(mod_) = module_exports_for_export {
-                                // TODO(port): Zig writes args[3] which is out-of-bounds (len is 3); preserved as args[2] — verify intent in Phase B
+                                // TODO(port): Zig writes args[3] which is out-of-bounds (len is 3); preserved as args[2] — verify intent.
                                 args.push(mod_);
                             }
 

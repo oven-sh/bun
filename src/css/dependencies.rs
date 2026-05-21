@@ -1,5 +1,4 @@
 //! CSS dependency tracking — `@import` and `url()` references collected during printing.
-use bun_collections::VecExt;
 
 use crate::SourceLocation;
 // const Location = css.Location; — shadowed by the local `Location` below in Zig too.
@@ -43,7 +42,7 @@ impl Location {
 /// An `@import` dependency.
 pub struct ImportDependency {
     /// The url to import.
-    // TODO(port): lifetime — arena-borrowed from `rule.url` (CSS arena); Phase B may want `&'bump [u8]`.
+    // TODO(port): lifetime — arena-borrowed from `rule.url` (CSS arena); consider `&'bump [u8]`.
     pub url: *const [u8],
     /// The placeholder that the URL was replaced with.
     // TODO(port): lifetime — arena-allocated by `css_modules::hash`.
@@ -70,7 +69,7 @@ impl ImportDependency {
             let s = crate::to_css::string(
                 bump,
                 supports,
-                crate::PrinterOptions::default(),
+                &crate::PrinterOptions::default(),
                 None,
                 local_names,
                 symbols,
@@ -91,7 +90,7 @@ impl ImportDependency {
             let s = crate::to_css::string(
                 bump,
                 &rule.media,
-                crate::PrinterOptions::default(),
+                &crate::PrinterOptions::default(),
                 None,
                 local_names,
                 symbols,
@@ -155,14 +154,11 @@ impl UrlDependency {
         bump: &'bump bun_alloc::Arena,
         url: &crate::values::url::Url,
         filename: &[u8],
-        import_records: &Vec<bun_ast::ImportRecord>,
+        import_records: &[bun_ast::ImportRecord],
     ) -> UrlDependency {
         // TODO(port): `bun_paths::fs::Path::pretty` is currently `&'static str`;
         // should become `&[u8]` per PORTING.md §Strings. Until then, `.as_bytes()`.
-        let theurl: &[u8] = import_records
-            .at(url.import_record_idx as usize)
-            .path
-            .pretty;
+        let theurl: &[u8] = import_records[url.import_record_idx as usize].path.pretty;
         let placeholder = crate::css_modules::hash(
             bump,
             format_args!("{}_{}", bstr::BStr::new(filename), bstr::BStr::new(theurl)),

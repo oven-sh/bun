@@ -133,7 +133,7 @@ impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
 impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     /// DMP with default configuration options
     pub const DEFAULT: Self = Self {
-        // TODO(port): `Config::default()` is not const; Phase B may need a `Config::DEFAULT`.
+        // TODO(port): `Config::default()` is not const; consider adding a `Config::DEFAULT`.
         config: Config {
             diff_timeout: 1000,
             diff_edit_cost: 4,
@@ -263,24 +263,18 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     ) -> Result<DiffList<Unit>, DiffError> {
         if before.is_empty() {
             // Just add some text (speedup).
-            let mut diffs: DiffList<Unit> = Vec::with_capacity(1);
-            // PERF(port): was assume_capacity
-            diffs.push(Diff {
+            return Ok(vec![Diff {
                 operation: Operation::Insert,
                 text: dupe(after),
-            });
-            return Ok(diffs);
+            }]);
         }
 
         if after.is_empty() {
             // Just delete some text (speedup).
-            let mut diffs: DiffList<Unit> = Vec::with_capacity(1);
-            // PERF(port): was assume_capacity
-            diffs.push(Diff {
+            return Ok(vec![Diff {
                 operation: Operation::Delete,
                 text: dupe(before),
-            });
-            return Ok(diffs);
+            }]);
         }
 
         let long_text = if before.len() > after.len() {
@@ -321,17 +315,16 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         if short_text.len() == 1 {
             // Single character string.
             // After the previous speedup, the character can't be an equality.
-            let mut diffs: DiffList<Unit> = Vec::with_capacity(2);
-            // PERF(port): was assume_capacity
-            diffs.push(Diff {
-                operation: Operation::Delete,
-                text: dupe(before),
-            });
-            diffs.push(Diff {
-                operation: Operation::Insert,
-                text: dupe(after),
-            });
-            return Ok(diffs);
+            return Ok(vec![
+                Diff {
+                    operation: Operation::Delete,
+                    text: dupe(before),
+                },
+                Diff {
+                    operation: Operation::Insert,
+                    text: dupe(after),
+                },
+            ]);
         }
 
         // Check to see if the problem can be split in two.
@@ -405,28 +398,24 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
         // First check if the second quarter is the seed for a half-match.
         let half_match_1 =
-            self.diff_half_match_internal(long_text, short_text, (long_text.len() + 3) / 4)?;
+            self.diff_half_match_internal(long_text, short_text, long_text.len().div_ceil(4))?;
         // Check again based on the third quarter.
         let half_match_2 =
-            self.diff_half_match_internal(long_text, short_text, (long_text.len() + 1) / 2)?;
+            self.diff_half_match_internal(long_text, short_text, long_text.len().div_ceil(2))?;
 
-        let half_match: HalfMatchResult<Unit>;
-        if half_match_1.is_none() && half_match_2.is_none() {
-            return Ok(None);
-        } else if half_match_2.is_none() {
-            half_match = half_match_1.unwrap();
-        } else if half_match_1.is_none() {
-            half_match = half_match_2.unwrap();
-        } else {
-            // Both matched. Select the longest.
-            let hm1 = half_match_1.unwrap();
-            let hm2 = half_match_2.unwrap();
-            half_match = if hm1.common_middle.len() > hm2.common_middle.len() {
-                hm1
-            } else {
-                hm2
-            };
-        }
+        let half_match: HalfMatchResult<Unit> = match (half_match_1, half_match_2) {
+            (None, None) => return Ok(None),
+            (Some(hm1), None) => hm1,
+            (None, Some(hm2)) => hm2,
+            (Some(hm1), Some(hm2)) => {
+                // Both matched. Select the longest.
+                if hm1.common_middle.len() > hm2.common_middle.len() {
+                    hm1
+                } else {
+                    hm2
+                }
+            }
+        };
 
         // A half-match was found, sort out the return data.
         if before.len() > after.len() {
@@ -520,7 +509,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     ) -> Result<DiffList<Unit>, DiffError> {
         let before_length: isize = isize::try_from(before.len()).unwrap();
         let after_length: isize = isize::try_from(after.len()).unwrap();
-        let max_d: isize = isize::try_from((before.len() + after.len() + 1) / 2).unwrap();
+        let max_d: isize = isize::try_from((before.len() + after.len()).div_ceil(2)).unwrap();
         let v_offset = max_d;
         let v_length = 2 * max_d;
 
@@ -549,7 +538,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
             // Walk the front path one step.
             // PERF(port): @intCast — bare `as usize` kept for v1/v2/before/after indexing
-            // in this hot Myers inner loop; profile in Phase B.
+            // in this hot Myers inner loop.
             let mut k1 = -d + k1start;
             while k1 <= d - k1end {
                 let k1_offset = v_offset + k1;
@@ -592,7 +581,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
             // Walk the reverse path one step.
             // PERF(port): @intCast — bare `as usize` kept for v1/v2/before/after indexing
-            // in this hot Myers inner loop; profile in Phase B.
+            // in this hot Myers inner loop.
             let mut k2: isize = -d + k2start;
             while k2 <= d - k2end {
                 let k2_offset = v_offset + k2;
@@ -639,17 +628,16 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         }
         // Diff took too long and hit the deadline or
         // number of diffs equals number of characters, no commonality at all.
-        let mut diffs: DiffList<Unit> = Vec::with_capacity(2);
-        // PERF(port): was assume_capacity
-        diffs.push(Diff {
-            operation: Operation::Delete,
-            text: dupe(before),
-        });
-        diffs.push(Diff {
-            operation: Operation::Insert,
-            text: dupe(after),
-        });
-        Ok(diffs)
+        Ok(vec![
+            Diff {
+                operation: Operation::Delete,
+                text: dupe(before),
+            },
+            Diff {
+                operation: Operation::Insert,
+                text: dupe(after),
+            },
+        ])
     }
 
     /// Given the location of the 'middle snake', split the diff in two parts
@@ -754,7 +742,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                         let sub_len = sub_diff.len();
                         // PERF(port): was ensureUnusedCapacity + addManyAtAssumeCapacity + @memcpy
                         diffs.splice(pointer..pointer, sub_diff);
-                        pointer = pointer + sub_len;
+                        pointer += sub_len;
                     }
                     count_insert = 0;
                     count_delete = 0;
@@ -881,8 +869,8 @@ pub struct HalfMatchResult<Unit: DiffUnit> {
 pub struct LinesToCharsResult<Unit: DiffUnit> {
     pub chars_1: Box<[usize]>,
     pub chars_2: Box<[usize]>,
-    // TODO(port): lifetime — borrows slices from the input texts; raw ptr in Phase A
-    // (no struct lifetime params), Phase B may promote to BORROW_PARAM in LIFETIMES.tsv.
+    // TODO(port): lifetime — borrows slices from the input texts; raw ptr here
+    // (no struct lifetime params). May promote to BORROW_PARAM in LIFETIMES.tsv.
     pub line_array: Vec<*const [Unit]>,
 }
 // `deinit` → Drop handles all fields automatically.
@@ -1647,7 +1635,7 @@ mod tests {
     // diffLineMode, diffCleanupSemantic, diffCleanupEfficiency. They were
     // wrapped in `checkAllAllocationFailures` (Zig OOM-injection harness)
     // which has no Rust equivalent (global allocator aborts on OOM). Port
-    // the assertions directly in Phase B; the test data is preserved in the
+    // the assertions directly; the test data is preserved in the
     // .zig source.
 
     fn rebuildtexts(diffs: &DiffList<u8>) -> [Box<[u8]>; 2] {

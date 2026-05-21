@@ -1,5 +1,7 @@
 use bun_core::ZStr;
-use bun_sys::{self, Fd, FdExt, Mode};
+#[cfg(unix)]
+use bun_sys::FdExt;
+use bun_sys::{self, Fd, Mode};
 
 // PORT NOTE: Zig's `input_path: anytype` type-switches on `@TypeOf(input_path)` between
 // `bun.webcore.PathOrFileDescriptor` and `[:0]const u8` / `[:0]u8`. Rust has no type-switch,
@@ -65,7 +67,7 @@ impl OpenForWritingInput for &mut ZStr {
 
 pub fn open_for_writing<P, C>(
     dir: Fd,
-    input_path: P,
+    input_path: &P,
     input_flags: i32,
     mode: Mode,
     pollable: &mut bool,
@@ -97,7 +99,7 @@ where
 
 pub fn open_for_writing_impl<P, C>(
     dir: Fd,
-    input_path: P,
+    input_path: &P,
     input_flags: i32,
     mode: Mode,
     pollable: &mut bool,
@@ -112,15 +114,23 @@ pub fn open_for_writing_impl<P, C>(
 where
     P: OpenForWritingInput,
 {
+    #[cfg(windows)]
+    {
+        let _ = (
+            is_socket,
+            out_nonblocking,
+            ctx,
+            on_force_sync_or_isa_tty,
+            is_pollable,
+        );
+    }
     // TODO: this should be concurrent.
+    #[cfg(unix)]
     let mut isatty = false;
     let mut is_nonblocking = false;
     let result =
         input_path.open_for_writing_result(dir, input_flags, mode, &mut is_nonblocking, &openat);
-    let fd = match result {
-        Err(err) => return Err(err),
-        Ok(fd) => fd,
-    };
+    let fd = result?;
 
     #[cfg(unix)]
     {
@@ -140,7 +150,7 @@ where
                     *pollable = true;
                 }
 
-                *is_socket = bun_sys::S::ISSOCK(stat.st_mode as u32);
+                *is_socket = bun_sys::S::ISSOCK(stat.st_mode as Mode);
 
                 if force_sync || isatty {
                     // Prevents interleaved or dropped stdout/stderr output for terminals.
@@ -179,7 +189,7 @@ where
 
     #[cfg(windows)]
     {
-        // TODO(b2-blocked): bun_sys::windows::GetFileType
+        // TODO(port): bun_sys::windows::GetFileType
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;

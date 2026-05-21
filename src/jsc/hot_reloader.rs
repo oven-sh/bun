@@ -1,14 +1,16 @@
-#![allow(dead_code)]
-
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_collections::{StringHashMap, StringSet};
+use bun_core::Output;
 use bun_core::ZStr;
-use bun_core::{self as core_, Output};
+#[cfg(not(windows))]
+use bun_paths::SEP;
 use bun_paths::strings;
-use bun_paths::{self, PathBuffer, SEP};
-use bun_resolver::fs::{self as Fs, FileSystem, PathName};
+use bun_paths::{self, PathBuffer};
+#[cfg(not(windows))]
+use bun_resolver::fs::PathName;
+use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_sys::{self, Fd};
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
@@ -324,18 +326,17 @@ pub trait HotReloaderCtx {
 /// with a trait bound on the `EventLoopType` generic. The only concrete event
 /// loop ever instantiated is `crate::event_loop::EventLoop`.
 pub trait HotReloaderEventLoop {
-    /// Forward to the inherent `enqueue_task_concurrent` (safe `&self` method
-    /// on every concrete event loop). Takes `&Self` so the raw-pointer
-    /// dereference of the `Ctx`-owned `*mut EventLoopType` is narrowed to the
-    /// two call sites, not spread across the trait + impls.
-    fn enqueue_task_concurrent(this: &Self, task: *mut ConcurrentTask);
+    /// Forward to the inherent `enqueue_task_concurrent`. Takes `&Self` so
+    /// the raw-pointer dereference of the `Ctx`-owned `*mut EventLoopType` is
+    /// narrowed to the two call sites, not spread across the trait + impls.
+    fn enqueue_task_concurrent(this: &Self, task: core::ptr::NonNull<ConcurrentTask>);
 }
 
 impl HotReloaderEventLoop for EventLoop {
-    fn enqueue_task_concurrent(this: &Self, task: *mut ConcurrentTask) {
+    fn enqueue_task_concurrent(this: &Self, task: core::ptr::NonNull<ConcurrentTask>) {
         // Inherent `EventLoop::enqueue_task_concurrent(&self, ..)` — inherent
         // methods take precedence over trait methods, so this is not recursive.
-        this.enqueue_task_concurrent(task)
+        this.enqueue_task_concurrent(task);
     }
 }
 
@@ -346,7 +347,7 @@ impl HotReloaderEventLoop for EventLoop {
 /// `BundleV2` doesn't even define `eventLoop()` — Zig's lazy compilation never
 /// instantiates it. Match that here.
 impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
-    fn enqueue_task_concurrent(_this: &Self, _task: *mut ConcurrentTask) {
+    fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
     }
 }
@@ -419,6 +420,9 @@ impl WatchChangedPaths {
 // only the watcher thread dereferences it (see module docs above). The
 // allocation lives in the process-lifetime CLI arena.
 unsafe impl Send for WatchChangedPaths {}
+// SAFETY: `&WatchChangedPaths` is shared via `OnceLock`, but the only mutating
+// access (`get_mut`) is confined to the watcher thread after the init-once
+// publish, so no two threads ever hold `&mut StringSet` concurrently.
 unsafe impl Sync for WatchChangedPaths {}
 
 /// Absolute path of the temp file `flush_changed_paths_for_reload` writes
@@ -726,7 +730,10 @@ where
             // SAFETY: ctx outlives reloader (BACKREF); `event_loop()` returns
             // the live event-loop pointer owned by `Ctx`.
             let event_loop = &*(*ctx).event_loop();
-            EventLoopType::enqueue_task_concurrent(event_loop, std::ptr::from_mut(concurrent));
+            EventLoopType::enqueue_task_concurrent(
+                event_loop,
+                core::ptr::NonNull::from(concurrent),
+            );
         }
         self.count = 0;
     }
@@ -738,15 +745,18 @@ where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
     EventLoopType: HotReloaderEventLoop,
 {
-    pub fn init(
+    /// # Safety
+    /// `ctx` must point to a live `Ctx` that outlives the returned watcher and
+    /// the leaked `NewHotReloader` (BACKREF held for the process lifetime).
+    pub unsafe fn init(
         ctx: *mut Ctx,
         fs: &'static FileSystem,
         verbose: bool,
         clear_screen_flag: bool,
     ) -> Box<Watcher> {
-        // SAFETY: `ctx` is the live owning context; it outlives the reloader
-        // and every Task spawned from it (BACKREF).
         let reloader = bun_core::heap::into_raw(Box::new(Self {
+            // SAFETY: precondition — `ctx` is the live owning context; it
+            // outlives the reloader and every Task spawned from it (BACKREF).
             ctx: unsafe { bun_ptr::BackRef::from_raw(ctx) },
             verbose: cfg!(feature = "debug_logs") || verbose,
             pending_count: AtomicU32::new(0),
@@ -790,7 +800,7 @@ where
         self.ctx.event_loop()
     }
 
-    pub fn enqueue_task_concurrent(&self, task: *mut ConcurrentTask) {
+    pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTask>) {
         if RELOAD_IMMEDIATELY {
             unreachable!();
         }
@@ -801,9 +811,13 @@ where
         EventLoopType::enqueue_task_concurrent(self.ctx.event_loop_ref(), task);
     }
 
-    pub fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
-        // SAFETY: caller passes the live `Ctx` (VirtualMachine / DevServer)
-        // pointer; it outlives the reloader allocated below.
+    /// # Safety
+    /// `this` must point to a live `Ctx` (VirtualMachine / DevServer / BundleV2)
+    /// that outlives the leaked `NewHotReloader` allocated here — i.e. for the
+    /// process lifetime.
+    pub unsafe fn enable_hot_module_reloading(this: *mut Ctx, entry_path: Option<&'static [u8]>) {
+        // SAFETY: precondition — `this` is the live owning `Ctx`; it outlives
+        // the reloader allocated below.
         let ctx = unsafe { &mut *this };
 
         // Zig: `if (@TypeOf(this.bun_watcher) == ImportWatcher) { if (!= .none) return; }
@@ -845,20 +859,22 @@ where
         );
 
         // SAFETY: `watcher_ptr` was just installed into `ctx` and is live.
-        if let Err(_) = unsafe { (*watcher_ptr).start() } {
+        if unsafe { (*watcher_ptr).start() }.is_err() {
             panic!("Failed to start File Watcher");
         }
     }
 
+    #[cfg(not(windows))]
     fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::EntriesOption) {
         self.tombstones.put(key, value).expect("unreachable");
     }
 
+    #[cfg(not(windows))]
     fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::EntriesOption> {
         self.tombstones.get(key).copied()
     }
 
-    pub fn on_error(_: &mut Self, err: bun_sys::Error) {
+    pub fn on_error(_: &mut Self, err: &bun_sys::Error) {
         // Zig: `Output.err(@as(bun.sys.E, @enumFromInt(err.errno)), ...)`.
         // `bun_sys::Error::name()` does the same errno→tag-name lookup
         // (with the unchecked-@enumFromInt UB folded into a checked path).
@@ -943,6 +959,8 @@ where
 
         let fs: &mut FileSystem = FileSystem::instance();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
+        #[cfg(windows)]
+        let _ = (changed_files, parents, file_descriptors, rfs);
         let mut _on_file_update_path_buf = PathBuffer::uninit();
 
         for event in events.iter() {
@@ -1285,7 +1303,7 @@ where
                                             // index `len` (overlapping the just-written SEP)
                                             // and then slices `len + changed_name.len + 1`
                                             // bytes — this includes one byte past the copy.
-                                            // Porting verbatim; flag for Phase B review.
+                                            // Ported verbatim.
                                             // TODO(port): verify intended off-by-one in Zig source
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()
@@ -1362,7 +1380,7 @@ where
     }
 
     fn on_error(&mut self, err: bun_sys::Error) {
-        Self::on_error(self, err);
+        Self::on_error(self, &err);
     }
 }
 
@@ -1461,15 +1479,16 @@ type BundlerWatcher =
     NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop<'static>, true>;
 
 /// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
-/// `cli_watch_flag` is set (bundle_v2.zig:993). Erased via `*mut ()` because
-/// the bundler crate can't name `NewHotReloader`.
+/// `cli_watch_flag` is set (bundle_v2.zig:993). Defined here (not in
+/// `bun_bundler`) because the bundler crate can't name `NewHotReloader`.
 #[unsafe(no_mangle)]
-fn __bun_jsc_enable_hot_module_reloading_for_bundler(bv2: *mut ()) {
+fn __bun_jsc_enable_hot_module_reloading_for_bundler(
+    bv2: core::ptr::NonNull<bun_bundler::BundleV2<'static>>,
+) {
     // SAFETY: `bv2` is the `&mut *Box<BundleV2<'static>>` formed in
     // `BundleV2::init`; the lifetime is `'static` for the only caller (build
     // command leaks the CLI arena), and the box is leaked under --watch.
-    let bv2 = bv2.cast::<bun_bundler::BundleV2<'static>>();
-    BundlerWatcher::enable_hot_module_reloading(bv2, None);
+    unsafe { BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None) };
 }
 
 pub use crate::MarkedArrayBuffer as Buffer;

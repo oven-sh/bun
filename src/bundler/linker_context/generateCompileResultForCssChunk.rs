@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-use core::mem::offset_of;
 use core::sync::atomic::Ordering;
 
 use bun_ast::ImportRecord;
@@ -9,7 +8,7 @@ use bun_threading::thread_pool as ThreadPoolLib;
 use crate::bun_css::{BundlerStyleSheet, ImportInfo, LocalsResultsMap, PrinterOptions, Targets};
 
 use crate::chunk::{Content, CssImportOrderKind};
-use crate::linker_context_mod::{LinkerContext, PendingPartRange};
+use crate::linker_context_mod::LinkerContext;
 use crate::thread_pool::Worker;
 use crate::{Chunk, CompileResult, Index};
 
@@ -19,7 +18,15 @@ use crate::{Chunk, CompileResult, Index};
 // `&mut LinkerContext` — `c_ptr` stays raw; the CSS printer takes
 // `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
 // `PendingPartRange: Send` justification.
-pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
+//
+/// # Safety
+///
+/// `task` must be the intrusive `task` field of a live `PendingPartRange`
+/// scheduled by `generate_chunks_in_parallel`; see
+/// [`pending_part_range_prologue`](crate::linker_context_mod::pending_part_range_prologue)
+/// for the full contract. The signature matches `ThreadPoolLib::Task::callback`
+/// (`unsafe fn(*mut Task)`).
+pub unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
     // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
     let (part_range, c_ptr, chunk_ptr, mut worker) =
@@ -35,16 +42,19 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
         crate::linker_context_mod::crash_guard_for_part_range(c, chunk, &part_range.part_range)
     };
 
-    // SAFETY: `c_ptr` / `chunk_ptr` carry mutable provenance; the disjoint-write
-    // contract is documented on `pending_part_range_prologue`. The `&mut`
-    // borrows below are scoped to the impl call so they do not overlap the
-    // raw slot write that follows. (Peer tasks still hold their own `&mut`
-    // views into the same `LinkerContext`/`Chunk` for read-only printer use —
-    // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
+    // CONCURRENCY: the CSS impl is read-only over `c`/`chunk` (the
+    // `bytesInOutput` bump goes through `&AtomicUsize`), so form `&` — never
+    // `&mut` — to avoid aliased exclusive borrows across peer worker tasks.
+    // The `&` borrows are scoped to the impl call so they do not overlap the
+    // raw slot write that follows.
     let result = {
-        let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
-        let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
-        generate_compile_result_for_css_chunk_impl(&mut **worker, c_mut, chunk_mut, part_range.i)
+        // SAFETY: `c_ptr` is the live `LinkerContext` returned by
+        // `pending_part_range_prologue`; see its contract.
+        let c_ref: &LinkerContext = unsafe { &*c_ptr };
+        // SAFETY: `chunk_ptr` is the live `Chunk` from the same prologue; this
+        // `&` is scoped so it does not overlap the raw slot write below.
+        let chunk_ref: &Chunk = unsafe { &*chunk_ptr };
+        generate_compile_result_for_css_chunk_impl(&mut **worker, c_ref, chunk_ref, part_range.i)
     };
 
     // SAFETY: per-task unique `i`; see `Chunk::write_compile_result_slot`.
@@ -55,8 +65,8 @@ pub fn generate_compile_result_for_css_chunk(task: *mut ThreadPoolLib::Task) {
 
 fn generate_compile_result_for_css_chunk_impl(
     worker: &mut Worker,
-    c: &mut LinkerContext,
-    chunk: &mut Chunk,
+    c: &LinkerContext,
+    chunk: &Chunk,
     imports_in_chunk_index: u32,
 ) -> CompileResult {
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");
@@ -67,7 +77,7 @@ fn generate_compile_result_for_css_chunk_impl(
     // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
     // lifetime; see `Worker::arena`.
     let arena = worker.arena.get();
-    // PERF(port): was arena bulk-free (worker.temporary_arena.reset(.retain_capacity)) — profile in Phase B
+    // PERF(port): was arena bulk-free (worker.temporary_arena.reset(.retain_capacity)).
     let _arena_reset = scopeguard::guard(&mut worker.temporary_arena, |arena| {
         // temporary_arena is initialized in Worker::create before any task runs.
         if let Some(a) = arena.as_mut() {
@@ -85,7 +95,7 @@ fn generate_compile_result_for_css_chunk_impl(
         .at(imports_in_chunk_index as usize);
     let css: &BundlerStyleSheet = &css_content.asts[imports_in_chunk_index as usize];
     // const symbols: []const Symbol.List = c.graph.ast.items(.symbols);
-    // `to_css_with_writer` takes `&bun_ast::symbol::Map`, but
+    // SAFETY: `to_css_with_writer` takes `&bun_ast::symbol::Map`, but
     // `c.graph.symbols` is `bun_ast::symbol::Map`. Both are
     // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is `repr(transparent)`),
     // so layouts match — bridge by pointer cast.
@@ -116,7 +126,7 @@ fn generate_compile_result_for_css_chunk_impl(
             match css.to_css_with_writer(
                 arena,
                 &mut allocating_writer,
-                printer_options,
+                &printer_options,
                 Some(ImportInfo {
                     import_records: &css_import.condition_import_records,
                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
@@ -159,7 +169,7 @@ fn generate_compile_result_for_css_chunk_impl(
             match css.to_css_with_writer(
                 arena,
                 &mut allocating_writer,
-                printer_options,
+                &printer_options,
                 Some(ImportInfo {
                     import_records: &import_records,
                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
@@ -196,7 +206,7 @@ fn generate_compile_result_for_css_chunk_impl(
             match css.to_css_with_writer(
                 arena,
                 &mut allocating_writer,
-                printer_options,
+                &printer_options,
                 Some(ImportInfo {
                     import_records: &c.graph.ast.items_import_records()[idx.get() as usize],
                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),

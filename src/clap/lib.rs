@@ -1,4 +1,3 @@
-#![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 use core::fmt;
@@ -195,7 +194,7 @@ macro_rules! parse_params {
 }
 
 /// The names a `Param` can have.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Names {
     /// '-' prefix
     pub short: Option<u8>,
@@ -205,16 +204,6 @@ pub struct Names {
 
     /// Additional '--' prefixed aliases (e.g., --grep as alias for --test-name-pattern)
     pub long_aliases: &'static [&'static [u8]],
-}
-
-impl Default for Names {
-    fn default() -> Self {
-        Self {
-            short: None,
-            long: None,
-            long_aliases: &[],
-        }
-    }
 }
 
 impl Names {
@@ -379,7 +368,7 @@ impl Diagnostic {
         };
 
         let name = bstr::BStr::new(name);
-        // TODO(b2-blocked): bun_core::err! — `from_name` is a tier-0 stub returning a
+        // TODO(port): bun_core::err! — `from_name` is a tier-0 stub returning a
         // sentinel, so these equality checks all collapse. Restore once the interning
         // table lands; meanwhile the `else` arm covers all cases.
         if err == bun_core::err!("DoesntTakeValue") {
@@ -404,17 +393,6 @@ impl Diagnostic {
         bun_core::Output::flush();
         Ok(())
     }
-}
-
-#[cfg(test)]
-fn test_diag(diag: Diagnostic, err: bun_core::Error, expected: &[u8]) {
-    // TODO(port): std.io.fixedBufferStream — Diagnostic.report ignores the writer
-    // and goes through Output, so this helper cannot capture output the same way.
-    let mut buf = [0u8; 1024];
-    let _ = &mut buf;
-    diag.report((), err).expect("unreachable");
-    let _ = expected;
-    // TODO(port): assert against captured Output
 }
 
 #[derive(Clone, Copy)]
@@ -443,20 +421,12 @@ impl Default for Help {
 }
 
 /// Options that can be set to customize the behavior of parsing.
+#[derive(Default)]
 pub struct ParseOptions<'a> {
     // PORT NOTE: `mem.Allocator param` field deleted — non-AST crate uses
     // the global mimalloc.
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
-}
-
-impl<'a> Default for ParseOptions<'a> {
-    fn default() -> Self {
-        Self {
-            diagnostic: None,
-            stop_after_positional_at: 0,
-        }
-    }
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -499,12 +469,12 @@ fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
 }
 
 // TODO(port): `comptime params: []const Param(Id)` as a type parameter has no
-// stable-Rust equivalent. B-2 carries `params` at runtime; a Phase-B proc-macro
-// can restore the per-table monomorphization.
+// stable-Rust equivalent. `params` is carried at runtime; a proc-macro could
+// restore the per-table monomorphization.
 pub struct Args<Id: 'static> {
     // PORT NOTE: Zig stored `arena: bun.ArenaAllocator` here and `deinit` freed it.
     // Non-AST crate → arena removed; `ComptimeClap` owns its allocations.
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free — profile if hot.
     pub clap: ComptimeClap<Id>,
     pub exe_arg: Option<&'static [u8]>,
 }
@@ -656,7 +626,7 @@ where
                 stream.write_char(' ')?;
             }
             let ht2 = help_text(context, param).map_err(Into::into)?;
-            write!(stream, "\t{}\n", bstr::BStr::new(ht2))?;
+            writeln!(stream, "\t{}", bstr::BStr::new(ht2))?;
         }
     }
     Ok(())
@@ -875,7 +845,7 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
     // TODO(port): Zig evaluates `computed_max_spacing` at `comptime` and emits
     // `@compileError` on overflow, plus uses `inline for` + comptime string
     // concat (`space_buf[..n] ++ desc_text`). None of that is const-evaluable
-    // in Rust over a slice param. Runtime equivalent below; Phase B can macro-gen.
+    // in Rust over a slice param. Runtime equivalent below; could macro-gen.
     const MAX_SPACING: usize = 30;
     const SPACE_BUF: &[u8; MAX_SPACING] = b"                              ";
 
@@ -887,7 +857,7 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
         "a parameter is too long to be nicely printed in `bun --help`"
     );
 
-    // PERF(port): was `inline for` + comptime string concat — profile in Phase B
+    // PERF(port): was `inline for` + comptime string concat — profile if hot.
     for param in params {
         if !(param.names.short.is_none() && param.names.long.is_none()) {
             let desc_text = get_help_simple(param);
@@ -1035,14 +1005,6 @@ where
 #[inline(never)]
 pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
     usage_ex(stream, params, get_value_simple)
-}
-
-#[cfg(test)]
-fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::Error> {
-    let mut buf = Vec::<u8>::with_capacity(1024);
-    usage(&mut bun_core::fmt::VecWriter(&mut buf), params)?;
-    assert_eq!(expected, &buf[..]);
-    Ok(())
 }
 
 #[cfg(test)]

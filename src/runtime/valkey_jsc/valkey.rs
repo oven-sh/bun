@@ -1,12 +1,9 @@
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 // Entry point for Valkey client
 //
 // This file contains the core Valkey client implementation with protocol handling
 
-use core::mem::offset_of;
-
 use bun_collections::OffsetByteList;
-use bun_jsc::event_loop::EventLoop;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
@@ -29,7 +26,7 @@ pub use super::valkey_context as ValkeyContext;
 pub use super::js_valkey_body::JSValkeyClient as RedisClient;
 
 // TODO(port): narrow error set — Zig `bun.JSTerminated!T` is `error{ Terminated }!T`.
-// Using JsResult<T> (Thrown | OutOfMemory | Terminated) in Phase A.
+// Currently uses JsResult<T> (Thrown | OutOfMemory | Terminated).
 type JsTerminated<T> = bun_jsc::JsResult<T>;
 
 bun_output::define_scoped_log!(debug, Redis, visible);
@@ -95,7 +92,7 @@ impl Status {
 }
 // Free-fn spelling kept for parity with Zig's `valkey.isActive(&status)`.
 #[inline]
-pub fn is_active(this: &Status) -> bool {
+pub fn is_active(this: Status) -> bool {
     this.is_active()
 }
 
@@ -130,24 +127,20 @@ impl Protocol {
     };
 
     pub fn is_tls(self) -> bool {
-        match self {
-            Protocol::StandaloneTls | Protocol::StandaloneTlsUnix => true,
-            _ => false,
-        }
+        matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
     }
 
     pub fn is_unix(self) -> bool {
-        match self {
-            Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix => true,
-            _ => false,
-        }
+        matches!(self, Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix)
     }
 }
 
+#[derive(Default)]
 pub enum TLS {
+    #[default]
     None,
     Enabled,
-    Custom(crate::server::server_config::SSLConfig),
+    Custom(Box<crate::server::server_config::SSLConfig>),
 }
 
 impl TLS {
@@ -160,8 +153,7 @@ impl TLS {
     }
 
     // PORT NOTE: Zig `deinit` only called `ssl_config.deinit()`. SSLConfig should impl Drop,
-    // making this enum's Drop automatic. Kept for explicitness; Phase B may delete.
-    // (No explicit Drop impl needed if SSLConfig: Drop.)
+    // making this enum's Drop automatic. (No explicit Drop impl needed if SSLConfig: Drop.)
 
     pub fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
         match self {
@@ -169,12 +161,6 @@ impl TLS {
             TLS::Enabled => vm.get_tls_reject_unauthorized(),
             _ => false,
         }
-    }
-}
-
-impl Default for TLS {
-    fn default() -> Self {
-        TLS::None
     }
 }
 
@@ -217,7 +203,7 @@ impl Default for Options {
 
 pub enum Address {
     // TODO(port): in Zig these slices borrow from `ValkeyClient.connection_strings`
-    // (self-referential). Using owned Box<[u8]> in Phase A; Phase B may revisit.
+    // (self-referential). Uses owned Box<[u8]> instead; revisit if it shows up as hot.
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
 }
@@ -247,7 +233,7 @@ impl Address {
         // TODO(port): narrow error set
         // PORT NOTE: Zig used `switch (is_tls) { inline else => |tls| ... }` to comptime-dispatch
         // SocketTLS vs SocketTCP. Expanded to runtime if/else.
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+        // PERF(port): was comptime bool dispatch — profile if hot
         if is_tls {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
@@ -305,7 +291,7 @@ pub struct ValkeyClient {
 
     // Connection parameters
     // TODO(port): in Zig, password/username/address.hostname are views into `connection_strings`
-    // (self-referential). Using owned Box<[u8]> in Phase A; `connection_strings` retained for
+    // (self-referential). Uses owned Box<[u8]> instead; `connection_strings` retained for
     // structural parity but may be redundant.
     pub password: Box<[u8]>,
     pub username: Box<[u8]>,
@@ -348,10 +334,10 @@ pub struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    pub fn run(self: Box<Self>) -> JsTerminated<()> {
+    pub fn run(self) -> JsTerminated<()> {
         // PORT NOTE: Zig `defer { free(message); destroy(this) }` — both handled by Box<Self> drop.
         debug!("running deferred failure");
-        let mut this = *self;
+        let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
         ValkeyClient::reject_all_pending_commands(
             &mut this.in_flight,
@@ -370,7 +356,7 @@ impl DeferredFailure {
         fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
             // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
             let this = unsafe { bun_core::heap::take(ptr) };
-            DeferredFailure::run(this).map_err(Into::into)
+            DeferredFailure::run(*this).map_err(Into::into)
         }
         let managed_task =
             bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
@@ -397,7 +383,7 @@ impl ValkeyClient {
     /// Clean up resources used by the Valkey client
     // TODO(port): cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
     // Renamed from Zig `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`).
-    // Phase B: decide whether this becomes `finalize()` for the .classes.ts payload.
+    // TODO(refactor): decide whether this becomes `finalize()` for the .classes.ts payload.
     pub fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
         let mut pending =
             core::mem::replace(&mut self.in_flight, command::promise_pair::Queue::init());
@@ -466,10 +452,9 @@ impl ValkeyClient {
 
         self.ref_();
         // TODO(port): errdefer/defer pattern — `ref/deref` reshaped without scopeguard to
-        // satisfy borrowck (closure would alias `&mut self`). Phase B may revisit with raw-ptr.
+        // satisfy borrowck (closure would alias `&mut self`). Could revisit with a raw-ptr guard.
 
         // Start draining the command queue
-        let mut have_more = false;
         let mut total_bytelength: usize = 0;
 
         // PORT NOTE: reshaped for borrowck — Zig held `to_process` slice while mutating
@@ -510,7 +495,7 @@ impl ValkeyClient {
 
         let _ = self.flush_data();
 
-        have_more = self.queue.readable_length() > 0;
+        let have_more = self.queue.readable_length() > 0;
         self.auto_flusher.registered.set(have_more);
 
         self.deref();
@@ -598,8 +583,7 @@ impl ValkeyClient {
             self.write_buffer
                 .consume(u32::try_from(wrote).expect("int cast"));
         }
-        let has_remaining = self.write_buffer.len() > 0;
-        has_remaining
+        self.write_buffer.len() > 0
     }
 
     /// Mark the connection as failed with error message
@@ -664,7 +648,26 @@ impl ValkeyClient {
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
+        if socket.is_closed() {
+            return;
+        }
+        // usockets does not dispatch `on_close`/`on_connect_error` when an
+        // application explicitly closes a `us_socket_t` whose TCP connect
+        // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
+        // synchronously so `connect()` got a real `us_socket_t*` rather than
+        // a `us_connecting_socket_t*`). See `us_internal_socket_close_raw`.
+        // The valkey client relies on one of those callbacks (via
+        // `on_valkey_close`/`on_valkey_reconnect`) to release the `+1`
+        // keep-alive ref `connect()` took, so without one the
+        // `JSValkeyClient` box leaks. Detect a SEMI_SOCKET before closing
+        // and run the close path ourselves afterwards.
+        let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
+            && !socket.is_established();
         socket.close(uws::CloseCode::Normal);
+        if is_semi_socket {
+            self.status = Status::Disconnected;
+            let _ = self.on_close();
+        }
     }
 
     /// Handle connection closed event
@@ -777,7 +780,7 @@ impl ValkeyClient {
                 let mut reader = protocol::ValkeyReader::init(remaining_buffer);
                 let before_read_pos = reader_pos(&reader);
 
-                let mut value = match reader.read_value() {
+                let value = match reader.read_value() {
                     Ok(v) => v,
                     Err(err) => {
                         if err == RedisError::InvalidResponse {
@@ -827,7 +830,7 @@ impl ValkeyClient {
             let mut reader = protocol::ValkeyReader::init(current_data_slice);
             let before_read_pos = reader_pos(&reader);
 
-            let mut value = match reader.read_value() {
+            let value = match reader.read_value() {
                 Ok(v) => v,
                 Err(err) => {
                     if err == RedisError::InvalidResponse {
@@ -1041,8 +1044,8 @@ impl ValkeyClient {
     /// Handle Valkey protocol response
     fn handle_response(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
         // TODO(port): narrow error set — Zig return type was `!void` (inferred); body mixes
-        // JsError/JSTerminated (from `fail`/`handle_subscribe_response`). Unified to JsResult<()>
-        // in Phase A; callers no longer wrap in `fail()` (see on_data).
+        // JsError/JSTerminated (from `fail`/`handle_subscribe_response`). Unified to JsResult<()>;
+        // callers no longer wrap in `fail()` (see on_data).
         // Special handling for the initial HELLO response
         if !self.flags.is_authenticated {
             self.handle_hello_response(value)?;
@@ -1345,7 +1348,7 @@ impl ValkeyClient {
     pub fn on_writable(&mut self) {
         self.ref_();
         // TODO(port): borrowck — scopeguard capturing `&mut self` aliases `send_next_command`.
-        // Reshaped to plain ref/deref bracketing; Phase B may use raw-ptr guard.
+        // Reshaped to plain ref/deref bracketing; could use a raw-ptr guard instead.
         self.send_next_command();
         self.deref();
     }
@@ -1490,7 +1493,7 @@ impl ValkeyClient {
 
     /// Get a writer for the connected socket
     // TODO(port): Zig returned `std.Io.GenericWriter(*ValkeyClient, RedisError, write)`.
-    // In Rust, ValkeyClient itself can serve as the writer (see `write` below). Phase B:
+    // In Rust, ValkeyClient itself can serve as the writer (see `write` below). TODO(refactor):
     // decide whether to impl `bun_io::Write` directly or return a thin wrapper.
     pub fn writer(&mut self) -> &mut Self {
         self
@@ -1510,10 +1513,10 @@ impl ValkeyClient {
     }
 
     pub fn deref(&mut self) {
+        let parent = std::ptr::from_ref(self.parent()).cast_mut();
         // SAFETY: only called in balanced `ref_()`/`deref()` pairs
         // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
         // outer `&mut self` protector is never invalidated by deallocation.
-        let parent = std::ptr::from_ref(self.parent()).cast_mut();
         unsafe { JSValkeyClient::deref(parent) };
     }
 
@@ -1523,7 +1526,7 @@ impl ValkeyClient {
     }
 
     pub fn on_valkey_connect(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
-        Ok(self.parent().on_valkey_connect(value)?)
+        self.parent().on_valkey_connect(value)
     }
 
     pub fn on_valkey_subscribe(&mut self, value: &mut RESPValue) {
@@ -1543,7 +1546,7 @@ impl ValkeyClient {
     }
 
     pub fn on_valkey_close(&mut self) -> JsTerminated<()> {
-        Ok(self.parent().on_valkey_close()?)
+        self.parent().on_valkey_close()
     }
 
     pub fn on_valkey_timeout(&mut self) {
@@ -1559,7 +1562,7 @@ impl HasAutoFlusher for ValkeyClient {
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
     }
-    fn on_auto_flush(this: *mut Self) -> bool {
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: `this` was registered as `&ValkeyClient` cast to `*mut c_void`;
         // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread after
         // microtasks), so no aliasing across the call.

@@ -69,6 +69,7 @@ impl UpgradeClientUnion {
             UpgradeClientUnion::Http(client) => unsafe {
                 HttpUpgradeClient::handle_decrypted_data(*client, data)
             },
+            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
             UpgradeClientUnion::Https(client) => unsafe {
                 HttpsUpgradeClient::handle_decrypted_data(*client, data)
             },
@@ -82,6 +83,7 @@ impl UpgradeClientUnion {
             UpgradeClientUnion::Http(client) => unsafe {
                 HttpUpgradeClient::terminate(*client, code)
             },
+            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
             UpgradeClientUnion::Https(client) => unsafe {
                 HttpsUpgradeClient::terminate(*client, code)
             },
@@ -95,6 +97,7 @@ impl UpgradeClientUnion {
             UpgradeClientUnion::Http(client) => unsafe {
                 HttpUpgradeClient::on_proxy_tls_handshake_complete(*client)
             },
+            // SAFETY: BACKREF — caller (WebSocketUpgradeClient) outlives the tunnel during handshake phase
             UpgradeClientUnion::Https(client) => unsafe {
                 HttpsUpgradeClient::on_proxy_tls_handshake_complete(*client)
             },
@@ -190,7 +193,7 @@ impl WebSocketProxyTunnel {
     /// not hold a `&mut Self` across that call.
     pub unsafe fn start(
         this: *mut Self,
-        ssl_options: SslConfig,
+        ssl_options: &SslConfig,
         initial_data: &[u8],
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
@@ -203,7 +206,7 @@ impl WebSocketProxyTunnel {
         // `BunSocketContextOptions` (= what `SSLConfig.asUSockets()` produces);
         // the `SSLConfig`-taking `init` lives in bun_runtime.
         let wrapper = SslWrapperType::init_from_options(
-            options.as_usockets(),
+            &options.as_usockets(),
             true,
             SslHandlers {
                 // Store the Box-provenance pointer directly so callback derefs
@@ -250,8 +253,10 @@ impl WebSocketProxyTunnel {
                     // tier-neutral helper which does SNI + ALPN(h1) (no
                     // verify-hostname — that is checked manually in
                     // `on_handshake`, matching the Zig path).
+                    // `hostname_z` is a NUL-terminated owned buffer in scope.
                     bun_http::configure_http_client_with_alpn(
-                        ssl_ptr.as_ptr(),
+                        // SAFETY: `ssl_ptr` is the live SSL handle from the wrapper.
+                        unsafe { &mut *ssl_ptr.as_ptr() },
                         hostname_z.as_ptr(),
                         bun_http::AlpnOffer::H1,
                     );
@@ -606,13 +611,18 @@ impl Drop for WebSocketProxyTunnel {
 }
 
 /// C export for setting the connected WebSocket client from C++
+// `tunnel` must stay `*mut` for the C ABI; C++ guarantees it is live and
+// non-null, so the deref is sound — not_unsafe_ptr_arg_deref is a false
+// positive at this FFI boundary.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 #[unsafe(no_mangle)]
 pub extern "C" fn WebSocketProxyTunnel__setConnectedWebSocket(
     tunnel: *mut WebSocketProxyTunnel,
     ws: *mut WebSocketClient,
 ) {
-    // SAFETY: called from C++ with a live tunnel pointer
-    unsafe { (*tunnel).set_connected_web_socket(ws) };
+    // SAFETY: C++ guarantees a live, non-null tunnel pointer.
+    let tunnel = unsafe { &mut *tunnel };
+    tunnel.set_connected_web_socket(ws);
 }
 
 // ported from: src/http_jsc/websocket_client/WebSocketProxyTunnel.zig

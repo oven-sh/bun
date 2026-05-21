@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::mem::offset_of;
 
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_jsc::array_buffer::BinaryType;
@@ -7,9 +6,7 @@ use bun_jsc::generated::{
     SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
 };
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional as Strong,
-};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional as Strong};
 use bun_sys::Fd;
 use bun_uws as uws;
 
@@ -24,35 +21,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         callback: JSValue,
     ) -> JSValue;
-}
-
-/// `bun_jsc::AnyPromise` (the lib.rs stub enum) lacks `resolve`/`reject`; the
-/// full impl lives in the gated `bun_jsc::any_promise::AnyPromise`. Shim by
-/// dispatching to the underlying `JSPromise` (`JSInternalPromise` subclasses
-/// `JSPromise` in C++, so the pointer cast is sound).
-trait AnyPromiseExt {
-    fn resolve(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()>;
-    fn reject(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()>;
-}
-impl AnyPromiseExt for bun_jsc::AnyPromise {
-    fn resolve(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        let p: *mut bun_jsc::JSPromise = match self {
-            bun_jsc::AnyPromise::Normal(p) => p,
-            bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
-        };
-        // `JSPromise` is an `opaque_ffi!` ZST handle — `opaque_mut` is the
-        // const-asserted safe `*mut → &mut` accessor (variants hold a live
-        // JSC heap cell from `as_any_promise`).
-        Ok(bun_jsc::JSPromise::opaque_mut(p).resolve(global, value)?)
-    }
-    fn reject(self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
-        let p: *mut bun_jsc::JSPromise = match self {
-            bun_jsc::AnyPromise::Normal(p) => p,
-            bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
-        };
-        // See `resolve` — `opaque_mut` is the safe ZST-handle accessor.
-        Ok(bun_jsc::JSPromise::opaque_mut(p).reject(global, Ok(value))?)
-    }
 }
 
 bun_output::declare_scope!(Listener, visible);
@@ -84,8 +52,8 @@ pub struct Handlers {
     /// `Strong` is never borrowed across a reentrant call.
     pub promise: JsCell<Strong>, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
 
+    // Zig: gated on `bun.Environment.ci_assert`.
     #[cfg(debug_assertions)]
-    // TODO(port): Environment.ci_assert → using debug_assertions as the closest analogue
     pub protection_count: u32,
 }
 
@@ -233,10 +201,10 @@ impl Handlers {
     ///   dereference it and must null any stored copy.
     pub unsafe fn mark_inactive(this: *mut Self) -> bool {
         bun_output::scoped_log!(Listener, "markInactive");
-        // SAFETY: caller contract — `this` is live on entry. Shared reborrow
-        // scoped to this block so no `&Handlers` protector spans the
-        // `heap::take` in the client branch below.
         let (remaining, mode) = {
+            // SAFETY: caller contract — `this` is live on entry. Shared reborrow
+            // scoped to this block so no `&Handlers` protector spans the
+            // `heap::take` in the client branch below.
             let h = unsafe { &*this };
             let remaining = h.active_connections.get() - 1;
             h.active_connections.set(remaining);
@@ -437,7 +405,12 @@ impl Drop for Handlers {
     fn drop(&mut self) {
         // Zig deinit: unprotect() + promise.deinit() + this.* = undefined
         self.unprotect();
-        // `promise: Strong` drops itself.
+        if self.vm.is_shutting_down() {
+            // `~VM` may have already torn down the HandleSet that
+            // `Strong::drop` writes back into; the slot is bulk-freed by the
+            // VM destructor, so leaking it here is correct.
+            let _ = core::mem::ManuallyDrop::new(self.promise.replace(Strong::empty()));
+        }
     }
 }
 
@@ -520,7 +493,7 @@ impl SocketConfig {
     }
 
     pub fn from_generated(
-        vm: &'static VirtualMachine,
+        _vm: &'static VirtualMachine,
         global: &JSGlobalObject,
         generated: &GeneratedSocketConfig,
         is_server: bool,

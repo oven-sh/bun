@@ -564,9 +564,9 @@ pub mod ntdll {
 }
 pub use ntdll::NtClose;
 
-/// `std.os.windows.user32` (subset placeholder; Phase B fills as needed).
+/// `std.os.windows.user32` (subset placeholder; fill in as needed).
 pub mod user32 {}
-/// `std.os.windows.advapi32` (subset placeholder; Phase B fills as needed).
+/// `std.os.windows.advapi32` (subset placeholder; fill in as needed).
 pub mod advapi32 {}
 
 // `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
@@ -722,6 +722,8 @@ unsafe extern "system" {
 }
 /// SAFETY: `handle` must be a valid waitable kernel object.
 pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Win32Error> {
+    // SAFETY: caller contract guarantees `handle` is a valid waitable kernel
+    // object; `ms` is a by-value DWORD with no pointer preconditions.
     let rc = unsafe { WaitForSingleObject_raw(handle, ms) };
     if rc == WAIT_FAILED {
         Err(Win32Error::get())

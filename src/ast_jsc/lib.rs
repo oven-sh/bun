@@ -1,6 +1,5 @@
 //! JSC bridge for `bun.logger`. Keeps `src/logger/` free of JSC types.
 
-#![allow(unused, nonstandard_style)]
 #![warn(unused_must_use)]
 
 use std::borrow::Cow;
@@ -9,7 +8,7 @@ use bun_ast::{Data, Level, Location, Log, Metadata, Msg};
 use bun_core::ZigString;
 
 use bun_jsc::{
-    self as jsc, BuildMessage, JSGlobalObject, JSValue, JsError, JsResult, ResolveMessage,
+    self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage,
     comptime_string_map_jsc,
 };
 

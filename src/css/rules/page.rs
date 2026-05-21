@@ -11,8 +11,8 @@ use super::ArrayList;
 pub struct PageSelector {
     /// An optional named page type.
     // PORT NOTE: arena-owned slice borrowed from parser input; `&'static` per
-    // PORTING.md §AST crates / rules/mod.rs lifetime-erasure note. Phase B
-    // re-threads `'bump`.
+    // PORTING.md §AST crates / rules/mod.rs lifetime-erasure note.
+    // TODO(port): re-thread `'bump`.
     pub name: Option<&'static [u8]>,
     /// A list of page pseudo classes.
     pub pseudo_classes: ArrayList<PagePseudoClass>,
@@ -57,10 +57,7 @@ impl PageSelector {
         loop {
             // Whitespace is not allowed between pseudo classes
             let state = input.state();
-            let is_colon = match input.next_including_whitespace() {
-                Ok(tok) => matches!(*tok, css::Token::Colon),
-                Err(e) => return Err(e),
-            };
+            let is_colon = matches!(*input.next_including_whitespace()?, css::Token::Colon);
             if is_colon {
                 let vv = PagePseudoClass::parse(input)?;
                 pseudo_classes.push(vv);
@@ -225,7 +222,7 @@ impl PageRule {
         while let Some(decl) = parser.next() {
             if let Err(e) = decl {
                 if parser.parser.options.error_recovery {
-                    parser.parser.options.warn(e);
+                    parser.parser.options.warn(&e);
                     continue;
                 }
                 return Err(e);
@@ -260,9 +257,9 @@ pub enum PagePseudoClass {
 
 impl PagePseudoClass {
     #[inline]
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
         // `Copy` enum (generics.zig "simple copy types" → identity).
-        *self
+        self
     }
 }
 

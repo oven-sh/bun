@@ -6,8 +6,8 @@ use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
-    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, HTTPThread, Headers,
-    HeadersExt, Method,
+    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
+    Method,
 };
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -23,11 +23,10 @@ use crate::webcore::s3::list_objects;
 
 // PORT NOTE: result/options structs below carry borrowed slices that are valid only for the
 // duration of the callback invocation (Zig comments say "not owned and need to be copied if used
-// after this callback"). They get an explicit `<'a>` even though PORTING.md's []const u8 row says
-// "never put a lifetime param on a struct in Phase A" — these are ephemeral stack-only callback
-// payloads (never heap-stored), which falls under LIFETIMES.tsv class BORROW_PARAM (struct gets
-// `<'a>`). Phase B may swap to raw `*const [u8]` if borrowck reshaping proves cleaner.
-// TODO(port): revisit <'a> vs raw-ptr for callback payload structs in Phase B
+// after this callback"). They take an explicit `<'a>` because they are ephemeral stack-only
+// callback payloads (never heap-stored) — the borrow lifetime accurately models ownership.
+// TODO(port): revisit `<'a>` vs raw `*const [u8]` for callback payload structs if borrowck
+// reshaping proves cleaner.
 
 #[derive(Default)]
 pub struct S3StatSuccess<'a> {
@@ -90,7 +89,7 @@ pub enum S3DeleteResult<'a> {
 }
 
 pub enum S3ListObjectsResult<'a> {
-    Success(list_objects::S3ListObjectsV2Result<'a>),
+    Success(Box<list_objects::S3ListObjectsV2Result<'a>>),
     NotFound(S3Error<'a>),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -328,6 +327,14 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the task callback from the last task result and is always in the main thread
+    ///
+    /// # Safety
+    /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` whose ownership
+    /// is being transferred to this call (it is reclaimed and dropped here exactly once).
+    //
+    // ConcurrentTask dispatch entrypoint (see `runtime::dispatch`): `this` is the raw task
+    // pointer the queue hands back, non-null by the `ConcurrentTask::from` contract.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
         // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract. Dropping
@@ -373,7 +380,10 @@ impl S3HttpSimpleTask {
                         // failure modes abort in Rust), so the Zig `catch` arm is unreachable.
                         let success =
                             list_objects::parse_s3_list_objects_result(body.list.as_slice());
-                        callback(S3ListObjectsResult::Success(success), this.callback_context)?;
+                        callback(
+                            S3ListObjectsResult::Success(Box::new(success)),
+                            this.callback_context,
+                        )?;
                     } else {
                         this.error_with_body(ErrorType::Failure)?;
                     }
@@ -427,6 +437,15 @@ impl S3HttpSimpleTask {
     }
 
     /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
+    ///
+    /// # Safety
+    /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` and exclusively
+    /// owned by the HTTP thread for the duration of this call. `async_http` must be a valid
+    /// pointer to an initialised `AsyncHTTP` for the duration of this call.
+    //
+    // `HTTPClientResultCallback` entrypoint: invoked by the HTTP thread with the raw task and
+    // request pointers it captured at schedule time, both non-null by construction.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
@@ -459,12 +478,14 @@ impl S3HttpSimpleTask {
             // PORT NOTE: compute the raw self-pointer before borrowing `this.concurrent_task`
             // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
             let this_ptr = std::ptr::from_mut::<Self>(this);
-            let task = std::ptr::from_mut::<ConcurrentTask>(
+            let task = core::ptr::NonNull::from(
                 this.concurrent_task
                     .from(this_ptr, AutoDeinit::ManualDeinit),
             );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is set during VM init and outlives this task. `enqueue_task_concurrent` is `&self`.
+            // `task` is the inline `concurrent_task` field of this heap request;
+            // the queue takes ownership of its `next` link.
             this.vm
                 .expect("vm set at task creation")
                 .event_loop_shared()
@@ -491,7 +512,12 @@ impl Drop for S3HttpSimpleTask {
         // `execute_simple_s3_request`); `Drop` only runs via `on_response` after that point.
         // Zig's `deinit` calls only `http.clearData()` and never runs a full AsyncHTTP destructor,
         // so we intentionally do NOT `assume_init_drop` here.
-        unsafe { self.http.assume_init_mut() }.clear_data();
+        let http = unsafe { self.http.assume_init_mut() };
+        http.clear_data();
+        // Zig shared one EntryList allocation between task.headers / request_headers /
+        // client.header_entries; Rust `init` clones, so free the two copies clear_data() skips.
+        http.request_headers = Default::default();
+        http.client.header_entries = Default::default();
     }
 }
 
@@ -546,8 +572,8 @@ pub fn execute_simple_s3_request(
     callback: Callback,
     callback_context: *mut c_void,
 ) -> JsTerminatedResult<()> {
-    let mut result = match this.sign_request::<false>(
-        SignOptions {
+    let result = match this.sign_request::<false>(
+        &SignOptions {
             path: options.path,
             method: options.method,
             search_params: options.search_params,
@@ -623,15 +649,17 @@ pub fn execute_simple_s3_request(
     } else {
         Box::default()
     };
-    // SAFETY (lifetime extension): `url`, `headers_buf`, and `proxy_url` borrow from
+    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
     // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
     // concurrently; they remain valid until `task` is dropped in `on_response`. The Zig source
     // passed raw slices with the same ownership contract.
     let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is heap-owned
+    // by `*task` and outlives the AsyncHTTP request.
     let headers_buf: &'static [u8] =
         unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
-    // SAFETY (lifetime extension): unlike the borrows above, `body` is NOT stored in the task —
+    // SAFETY: lifetime extension — unlike the borrows above, `body` is NOT stored in the task —
     // it is caller-owned (e.g. multipart upload part data / multipart_upload_list). The Zig source
     // (.zig:431) passes the caller's slice directly with the same implicit contract: every call
     // site keeps `body` alive until the request completes. This is the PORTING.md-forbidden
@@ -640,6 +668,8 @@ pub fn execute_simple_s3_request(
     // task) to drop the `'static` pretence.
     let body: &'static [u8] = unsafe { bun_ptr::detach_lifetime(options.body) };
     let http_proxy = if !task.proxy_url.is_empty() {
+        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is a
+        // heap-owned `Box<[u8]>` field of `*task` and outlives the AsyncHTTP request.
         Some(URL::parse(unsafe {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))
@@ -658,6 +688,8 @@ pub fn execute_simple_s3_request(
         body,
         HTTPClientResultCallback::new::<S3HttpSimpleTask>(
             task_ptr,
+            // SAFETY: `task_ptr` was just heap-allocated above and `async_http` is supplied by
+            // the HTTP thread as a live pointer for the duration of the callback.
             S3HttpSimpleTask::http_callback,
         ),
         FetchRedirect::Follow,

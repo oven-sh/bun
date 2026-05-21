@@ -1,7 +1,6 @@
 use crate::SmallList;
 use crate::css_parser as css;
 use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
-use bun_collections::VecExt;
 
 use bun_ast::Ref;
 use bun_core::strings;
@@ -21,7 +20,8 @@ macro_rules! arena_slice_newtype {
         $(#[$meta])*
         #[derive(Debug, Clone, Copy)]
         pub struct $name {
-            // TODO(port): arena lifetime — CSS parser slices are arena-owned; Phase B threads `'bump`
+            // TODO(port): arena lifetime — CSS parser slices are arena-owned; thread a `'bump`
+            // lifetime through instead of erasing to a raw pointer.
             pub v: *const [u8],
         }
 
@@ -34,10 +34,10 @@ macro_rules! arena_slice_newtype {
             /// value produced from them, so handing out `&[u8]` is sound.
             ///
             /// NOTE: the borrow is tied to `&self`. Call sites that must return
-            /// the slice with the Phase-A `'static` placeholder lifetime (e.g.
+            /// the slice with the `'static` placeholder lifetime (e.g.
             /// `IdentOrRef::{debug_ident,as_str,as_original_string}`,
             /// `Printer::lookup_ident_or_ref`, `SelectorParser::namespace_for_prefix`)
-            /// still go through the raw `v` field directly until Phase B threads `'bump`.
+            /// still go through the raw `v` field directly until `'bump` is threaded.
             #[inline]
             pub fn v(&self) -> &[u8] {
                 // SAFETY: arena-owned, never null, immutable for the parse session
@@ -164,7 +164,7 @@ impl DashedIdentReference {
             let name = dest.css_module.as_mut().unwrap().reference_dashed(
                 bump,
                 ident_v,
-                &self.from,
+                self.from,
                 specifier_path,
                 source_index,
             );
@@ -190,8 +190,8 @@ arena_slice_newtype! {
 // TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
 // ArrayHashMapUnmanaged with a custom string-hash context. Inherent assoc
 // type aliases are unstable in Rust; expose as a free type alias instead.
-// bun_collections::ArrayHashMap is wyhash-keyed; Phase B must verify the
-// hasher matches std.array_hash_map.hashString or supply a custom Hash impl.
+// bun_collections::ArrayHashMap is wyhash-keyed; verify the hasher matches
+// std.array_hash_map.hashString or supply a custom Hash impl.
 // blocked_on: bun_collections::ArrayHashMap surface
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
 
@@ -245,14 +245,8 @@ impl Ident {
 /// In debug mode, if it is a `Ref` we will also set the `__ptrbits` to point to the original
 /// []const u8 so we can debug the string. This should be fine since we use arena
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct IdentOrRef(u128);
-
-impl Default for IdentOrRef {
-    fn default() -> Self {
-        IdentOrRef(0)
-    }
-}
 
 // Zig packed struct(u128) field layout, LSB-first:
 //   __ptrbits: u63  -> bits  0..63
@@ -260,12 +254,6 @@ impl Default for IdentOrRef {
 //   __len:     u64  -> bits 64..128
 const PTRBITS_MASK: u128 = (1u128 << 63) - 1;
 const REF_BIT: u128 = 1u128 << 63;
-
-#[allow(dead_code)]
-enum Tag {
-    Ident,
-    Ref,
-}
 
 #[cfg(debug_assertions)]
 pub type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
@@ -317,8 +305,9 @@ impl IdentOrRef {
     pub fn debug_ident(self) -> &'static [u8] {
         // TODO(port): lifetime — returns arena-borrowed slice; `'static` is a placeholder.
         if self.ref_bit() {
-            // SAFETY: in debug builds, ptrbits stores a heap pointer to a *const [u8] written by from_ref
             let ptr = self.ptrbits() as usize as *const *const [u8];
+            // SAFETY: in debug builds, `ptrbits` stores a valid arena-allocated `*const *const [u8]`
+            // written by `from_ref`; the pointee is an arena-owned slice (see `DashedIdent::v`).
             unsafe { crate::arena_str(*ptr) }
         } else {
             // SAFETY: as_ident reconstructs the arena slice this was packed from
@@ -341,18 +330,18 @@ impl IdentOrRef {
 
     pub fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
         let len: u64 = r.to_raw_bits();
-        #[allow(unused_mut)]
-        let mut this = Self::pack(0, true, len);
+        #[cfg(not(debug_assertions))]
+        let this = Self::pack(0, true, len);
 
         #[cfg(debug_assertions)]
-        {
+        let this = {
             let (slice, bump) = debug_ident;
             // bun.handleOom(arena.create(...)) → arena alloc; OOM aborts
             let heap_ptr: &mut *const [u8] = bump.alloc(std::ptr::from_ref::<[u8]>(slice));
             let addr = std::ptr::from_mut::<*const [u8]>(heap_ptr) as usize as u64;
             debug_assert!(addr & (1u64 << 63) == 0);
-            this = Self::pack(addr, true, len);
-        }
+            Self::pack(addr, true, len)
+        };
         #[cfg(not(debug_assertions))]
         {
             let _ = debug_ident;
@@ -411,16 +400,16 @@ impl IdentOrRef {
         local_names
             .unwrap()
             .get(&final_ref)
-            .map(|p| unsafe { crate::arena_str(&**p) })
+            .map(|p| unsafe { crate::arena_str(&raw const **p) })
     }
 
-    pub fn as_original_string(self, symbols: &bun_ast::symbol::List) -> &[u8] {
+    pub fn as_original_string(self, symbols: &[bun_ast::Symbol]) -> &[u8] {
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return unsafe { crate::arena_str(self.as_ident().unwrap().v) };
         }
         let r = self.as_ref().unwrap();
-        symbols.at(r.inner_index() as usize).original_name.slice()
+        symbols[r.inner_index() as usize].original_name.slice()
     }
 
     pub fn hash(&self, hasher: &mut Wyhash) {

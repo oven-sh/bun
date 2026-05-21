@@ -21,12 +21,11 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
-use bun_io::file_poll::{FilePoll, Store as FilePollStore};
+use bun_io::file_poll::Store as FilePollStore;
 use bun_sys::{self as sys, Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
@@ -251,7 +250,7 @@ impl<'a> MiniEventLoop<'a> {
         self
     }
 
-    pub fn throw_error(&mut self, err: sys::Error) {
+    pub fn throw_error(&mut self, err: &sys::Error) {
         bun_core::pretty_errorln!("{}", err);
         Output::flush();
     }
@@ -299,6 +298,8 @@ impl<'a> MiniEventLoop<'a> {
     /// `unsafe-fn-narrow`: every unsafe op below derefs the caller-supplied
     /// `this`; the body cannot discharge that precondition.)
     pub unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
+        // SAFETY: caller guarantees `this` points to a live `MiniEventLoop` (see fn `# Safety`);
+        // `addr_of_mut!` projects to `file_polls_` without forming `&mut Self`.
         unsafe {
             let slot = core::ptr::addr_of_mut!((*this).file_polls_);
             if (*slot).is_none() {
@@ -434,19 +435,18 @@ impl<'a> MiniEventLoop<'a> {
     /// decl). Zig's lazy analysis lets this compile because no caller exists. The
     /// faithful port writes to `self.tasks` (the local non-concurrent FIFO), which is
     /// the only plausible target for a `*JSCTask` push on a MiniEventLoop.
-    pub fn enqueue_task<C>(
+    ///
+    /// # Safety
+    /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,
+    /// and `ctx` is non-null and live for the task's duration.
+    pub unsafe fn enqueue_task<C>(
         &mut self,
         ctx: *mut C,
         callback: fn(*mut C, *mut ()),
         field_offset: usize,
     ) {
-        // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
-        // `<field>: AnyTaskWithExtraContext`, and `ctx` is live for the task's duration.
-        let task = unsafe {
-            ctx.cast::<u8>()
-                .add(field_offset)
-                .cast::<AnyTaskWithExtraContext>()
-        };
+        // SAFETY: caller contract — see fn `# Safety`.
+        let task = unsafe { ctx.byte_add(field_offset).cast::<AnyTaskWithExtraContext>() };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, ()>::init(ctx, callback)) };
@@ -454,7 +454,9 @@ impl<'a> MiniEventLoop<'a> {
         self.tasks.write_item(task).expect("unreachable");
     }
 
-    pub fn enqueue_task_concurrent(&mut self, task: *mut AnyTaskWithExtraContext) {
+    /// `task` must outlive the queued work item; ownership of the intrusive
+    /// node stays with the caller until the callback runs.
+    pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
         self.concurrent_tasks.push(task);
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
@@ -466,26 +468,27 @@ impl<'a> MiniEventLoop<'a> {
     /// `comptime field: std.meta.FieldEnum(Context)` + `@field(ctx, name)` is replaced
     /// per PORTING.md (§reflection) with a caller-supplied `field_offset =
     /// core::mem::offset_of!(C, <field>)` into the embedded `AnyTaskWithExtraContext`.
-    pub fn enqueue_task_concurrent_with_extra_ctx<C, P>(
+    ///
+    /// # Safety
+    /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,
+    /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
+    /// with caller).
+    pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
         &mut self,
         ctx: *mut C,
         callback: fn(*mut C, *mut P),
         field_offset: usize,
     ) {
         // Zig: jsc.markBinding(@src()) — debug-only source marker; no Rust equivalent needed.
-        // SAFETY: caller contract — `field_offset == offset_of!(C, <field>)` where
-        // `<field>: AnyTaskWithExtraContext`, and `ctx` outlives the queued task
-        // (intrusive node; ownership stays with caller).
-        let task = unsafe {
-            ctx.cast::<u8>()
-                .add(field_offset)
-                .cast::<AnyTaskWithExtraContext>()
-        };
+        // SAFETY: caller contract — see fn `# Safety`.
+        let task = unsafe { ctx.byte_add(field_offset).cast::<AnyTaskWithExtraContext>() };
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
-        self.concurrent_tasks.push(task);
+        // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
+        self.concurrent_tasks
+            .push(unsafe { NonNull::new_unchecked(task) });
 
         // SAFETY: see `loop_ptr()` invariant.
         unsafe { (*self.loop_ptr()).wakeup() };
@@ -551,17 +554,19 @@ bun_io::link_impl_EventLoopCtx! {
         after_event_loop_callback() => (*this).after_event_loop_callback,
         set_after_event_loop_callback(cb, ctx) => {
             (*this).after_event_loop_callback = cb;
-            (*this).after_event_loop_callback_ctx = NonNull::new(ctx);
+            (*this).after_event_loop_callback_ctx = ctx;
         },
         pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
     }
 }
 
 impl<'a> MiniEventLoop<'a> {
+    /// `this` is the per-thread `MiniEventLoop` singleton; the returned ctx
+    /// must not outlive it.
     #[inline]
-    pub fn as_event_loop_ctx(this: *mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
-        // SAFETY: `this` is the live per-thread MiniEventLoop singleton; it
-        // outlives every `EventLoopCtx` derived from it.
+    pub fn as_event_loop_ctx(this: &mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
+        // SAFETY: `this` is a live `&mut`, so the pointer handed to `new` is
+        // non-null and exclusively borrowed for the call's duration.
         unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
     }
 }

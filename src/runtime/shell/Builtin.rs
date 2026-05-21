@@ -3,8 +3,7 @@
 //! builtin stores the `NodeId` of its owning Cmd and every method takes
 //! `&Interpreter`.
 
-use bun_collections::{ByteVecExt, VecExt};
-use bun_ptr::AsCtxPtr;
+use bun_collections::VecExt;
 use core::ffi::c_char;
 use std::sync::Arc;
 
@@ -326,7 +325,7 @@ impl BuiltinIO {
             BuiltinIO::Fd(fd) => BuiltinIO::Fd(fd.clone()),
             BuiltinIO::Buf(target) => BuiltinIO::Buf(*target),
             BuiltinIO::Ignore => BuiltinIO::Ignore,
-            BuiltinIO::Blob(b) => BuiltinIO::Blob(b.clone()),
+            BuiltinIO::Blob(b) => BuiltinIO::Blob(Arc::clone(b)),
             BuiltinIO::ArrayBuf { .. } => {
                 unreachable!("duplicate_out precedes jsbuf redirects")
             }
@@ -443,7 +442,7 @@ impl BuiltinInput {
     fn from_in_kind(ik: &InKind) -> BuiltinInput {
         match ik {
             // `Arc::clone` IS the `dupeRef` (bumps the IOReader refcount).
-            InKind::Fd(r) => BuiltinInput::Fd(r.clone()),
+            InKind::Fd(r) => BuiltinInput::Fd(Arc::clone(r)),
             InKind::Ignore => BuiltinInput::Ignore,
         }
     }
@@ -544,9 +543,8 @@ impl Builtin {
     /// Spec: Builtin.zig `initRedirections` (lines 413-627). Opens redirect
     /// files / wires ArrayBuffer & Blob targets / handles `2>&1` (`duplicate_out`).
     fn init_redirections(interp: &Interpreter, cmd: NodeId, kind: Kind) -> Option<Yield> {
-        // SAFETY: `node` points into the AST arena which outlives every state
-        // node (see Cmd::next).
-        let node: &ast::Cmd = unsafe { &*interp.as_cmd(cmd).node };
+        // `node` points into the AST arena which outlives every state node (see Cmd::next).
+        let node: &ast::Cmd = &*interp.as_cmd(cmd).node;
         let redirect = node.redirect;
 
         match &node.redirect_file {
@@ -604,7 +602,7 @@ impl Builtin {
                 } else {
                     let result = bun_io::open_for_writing_impl(
                         cwd_fd,
-                        path,
+                        &path,
                         redirect.to_flags(),
                         perm,
                         &mut pollable,
@@ -691,20 +689,18 @@ impl Builtin {
                     evtloop,
                 );
                 redirect_writer.set_interp(interp_ptr);
-                // `defer redirect_writer.deref()` — `redirect_writer: Arc` drops
-                // here; each assigned slot holds its own clone.
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);
                     me.stdout = BuiltinIO::Fd(OutFd {
-                        writer: redirect_writer.clone(),
+                        writer: Arc::clone(&redirect_writer),
                         captured: None,
                     });
                 }
                 if redirect.stderr() {
                     let me = Self::of_mut(interp, cmd);
                     me.stderr = BuiltinIO::Fd(OutFd {
-                        writer: redirect_writer.clone(),
+                        writer: redirect_writer,
                         captured: None,
                     });
                 }
@@ -770,13 +766,13 @@ impl Builtin {
                     drop(original_blob);
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {
-                        me.stdin = BuiltinInput::Blob(blob.clone());
+                        me.stdin = BuiltinInput::Blob(Arc::clone(&blob));
                     }
                     if redirect.stdout() {
-                        me.stdout = BuiltinIO::Blob(blob.clone());
+                        me.stdout = BuiltinIO::Blob(Arc::clone(&blob));
                     }
                     if redirect.stderr() {
-                        me.stderr = BuiltinIO::Blob(blob.clone());
+                        me.stderr = BuiltinIO::Blob(blob);
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
                     if (redirect.stdout() || redirect.stderr()) && !blob_ref.needs_to_read_file() {
@@ -1111,10 +1107,10 @@ impl Builtin {
         interp: &Interpreter,
         cmd: NodeId,
         kind: Kind,
-        e: ParseError,
+        e: &ParseError,
         set_wait_err: impl FnOnce(),
     ) -> Yield {
-        let buf: Vec<u8> = match &e {
+        let buf: Vec<u8> = match e {
             ParseError::IllegalOption(_) => Self::fmt_error_arena(
                 interp,
                 cmd,

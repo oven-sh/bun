@@ -14,7 +14,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Error as BunError, Global, Output, err};
-use bun_paths::{self as Path, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -38,10 +38,10 @@ use crate::resolution_real::{self as resolution, Resolution};
 use crate::string_builder;
 use crate::update_request::UpdateRequest;
 use crate::{
-    self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageInstall,
-    PackageManager, PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash,
-    dependency, dependency::Dependency, initialize_store, invalid_dependency_id,
-    invalid_package_id, npm as Npm,
+    self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
+    PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
+    dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
+    npm as Npm,
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -276,8 +276,6 @@ pub struct Scripts {
 }
 
 impl Scripts {
-    const MAX_PARALLEL_PROCESSES: usize = 10;
-
     pub const NAMES: [&'static str; 6] = [
         "preinstall",
         "install",
@@ -478,9 +476,9 @@ impl<'a> LoadResult<'a> {
         }
     }
 
-    /// Zig: `load_lockfile.ok` field projection (src/install/lockfile.zig).
-    /// Callers reach this only after `handleLoadLockfileErrors` has exited on
-    /// the `NotFound`/`Err` arms, so the variant is known-`Ok`.
+    // Zig: `load_lockfile.ok` field projection (src/install/lockfile.zig).
+    // Callers reach this only after `handleLoadLockfileErrors` has exited on
+    // the `NotFound`/`Err` arms, so the variant is known-`Ok`.
     bun_core::enum_unwrap!(pub LoadResult, Ok => fn ok / ok_mut -> LoadResultOk<'a>);
 }
 
@@ -1054,7 +1052,7 @@ impl Lockfile {
         // Spec lockfile.zig:669: `var new = try old.allocator.create(Lockfile)` — caller owns
         // and later frees via `deinit`. PORTING.md §Forbidden patterns bans `Box::leak` to
         // satisfy a lifetime; return `Box<Lockfile>` so Drop reclaims it.
-        let mut new: Box<Lockfile> = Box::new(Lockfile::init_empty_value());
+        let mut new: Box<Lockfile> = Box::default();
         new.string_pool
             .ensure_total_capacity(old.string_pool.capacity())?;
         new.package_index
@@ -1089,7 +1087,7 @@ impl Lockfile {
         }
 
         // Step 1. Recreate the lockfile with only the packages that are still alive
-        let root = old.root_package().ok_or(err!("NoPackage"))?;
+        let root = old.root_package().ok_or_else(|| err!("NoPackage"))?;
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
@@ -1263,7 +1261,7 @@ impl Lockfile {
         }
 
         if log_level.is_verbose() {
-            clean_verbose_report_cold(old, &new, timer);
+            clean_verbose_report_cold(old, &new, timer.as_ref());
         }
 
         Ok(new)
@@ -1291,18 +1289,18 @@ fn clean_preprocess_update_requests_cold(
 #[cold]
 #[inline(never)]
 fn clean_verbose_timer_start() -> Result<Timer, BunError> {
-    Ok(Timer::start()?)
+    Timer::start()
 }
 
 #[cold]
 #[inline(never)]
-fn clean_verbose_report_cold(old: &Lockfile, new: &Lockfile, timer: Option<Timer>) {
+fn clean_verbose_report_cold(old: &Lockfile, new: &Lockfile, timer: Option<&Timer>) {
     Output::pretty_errorln(format_args!(
         "Clean lockfile: {} packages -> {} packages in {}\n",
         old.packages.len(),
         new.packages.len(),
         // SAFETY: only entered when `log_level.is_verbose()`, which set `timer = Some(..)`.
-        bun_core::fmt::fmt_duration_one_decimal(timer.as_ref().unwrap().read()),
+        bun_core::fmt::fmt_duration_one_decimal(timer.unwrap().read()),
     ));
 }
 
@@ -1449,7 +1447,7 @@ impl Lockfile {
     /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
     // TODO(port): Zig uses `comptime method` to make several params conditionally `void`.
     // Rust const-generic enums need #[derive(ConstParamTy)] on Tree::BuilderMethod and the
-    // value-level branching can't change param types. Phase B may want two monomorphized fns.
+    // value-level branching can't change param types. Consider two monomorphized fns.
     pub fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1485,7 +1483,7 @@ impl Lockfile {
             list: Default::default(),
             sort_buf: Default::default(),
         };
-        // TODO(port): Tree::Builder field set may differ; verify in Phase B.
+        // TODO(port): Tree::Builder field set may differ; verify against the Zig.
 
         Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
 
@@ -1538,10 +1536,12 @@ impl Lockfile {
         // PORT NOTE: heavy borrowck overlap — Zig calls
         // `manager.manifests.byNameHash(manager, …)` (manifests is a field of
         // manager) and then opens a `string_builder` on `manager.lockfile`
-        // while still holding `&manifest`. Route through a raw root so disjoint
-        // fields (`manifests`, `lockfile.{string_pool, buffers.*}`) can be
-        // split. BACKREF `mgr_ref` wraps the same root for the read-only
-        // `options` projection so it goes through safe `ParentRef::Deref`.
+        // while still holding `&manifest`. Route the `manifests` projection
+        // through a raw root so it can coexist with the lockfile borrows;
+        // lockfile fields are taken from `self` (== `manager.lockfile`), never
+        // re-derived via `manager_ptr`. BACKREF `mgr_ref` wraps the same root
+        // for the read-only `options` projection so it goes through safe
+        // `ParentRef::Deref`.
         let manager_ptr: *mut PackageManager = manager;
         let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
             core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
@@ -1598,8 +1598,14 @@ impl Lockfile {
                         continue;
                     };
 
-                    let lockfile = unsafe { &mut *(*manager_ptr).lockfile };
-                    let mut builder = string_builder!(lockfile);
+                    // PORT NOTE: Zig opens the builder on `manager.lockfile`,
+                    // which is the same `*Lockfile` as `this`/`self`. Re-deriving a
+                    // whole `&mut Lockfile` from `manager_ptr` here would create a
+                    // second mutable reference aliasing `self` (UB) — go through
+                    // `self` so the field-level borrows below stay disjoint from the
+                    // live `pkg_*` column views (those point into the columnar heap
+                    // allocation, not the `Lockfile` struct).
+                    let mut builder = string_builder!(self);
 
                     let mut bin_extern_strings_count: u32 = 0;
 
@@ -1613,7 +1619,7 @@ impl Lockfile {
                     // Spec: `defer builder.clamp()` — call explicitly at end of block (no `?`
                     // exits between here and the clamp below).
 
-                    let extern_strings_list = &mut lockfile.buffers.extern_strings;
+                    let extern_strings_list = &mut self.buffers.extern_strings;
                     // PERF(port): was ensureUnusedCapacity
                     let start = extern_strings_list.len();
                     // Default-fill the tail so it is valid before `bin.clone`
@@ -1815,11 +1821,10 @@ impl<'a> Printer<'a> {
         writer: W,
     ) -> Result<(), BunError> {
         // TODO(port): narrow error set
-        // SAFETY: `FileSystem::init` ran in the caller (`Printer::print`); this
-        // is the process-static singleton (Zig `&FileSystem.instance`). Form a
-        // short-lived `&mut` for the `read_directory` call only — single-threaded
+        // `FileSystem::init` ran in the caller (`Printer::print`); this is the
+        // process-static singleton (Zig `&FileSystem.instance`). Single-threaded
         // CLI path, no concurrent access.
-        let fs = unsafe { &mut *FileSystem::instance() };
+        let fs = FileSystem::instance();
         let mut options = PackageManagerOptions {
             max_concurrent_lifecycle_scripts: 1,
             ..Default::default()
@@ -1829,9 +1834,7 @@ impl<'a> Printer<'a> {
         // before borrowing `fs.fs` mutably.
         let top_level_dir = fs.top_level_dir;
         let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
-        // SAFETY: `read_directory` returns a `*mut EntriesOption` into the
-        // resolver's process-lifetime BSSMap; sole `&mut` on this CLI path.
-        let entries: &mut Fs::DirEntry = match unsafe { &mut *entries_option } {
+        let entries: &mut Fs::DirEntry = match entries_option {
             Fs::EntriesOption::Entries(e) => &mut **e,
             Fs::EntriesOption::Err(e) => return Err(e.canonical_error),
         };
@@ -1888,10 +1891,9 @@ impl Lockfile {
         let mut i: usize = 0;
         while i < self.packages.len() {
             let package: Package = *self.packages.get(i);
-            debug_assert!(self.str(&package.name).len() == package.name.len() as usize);
+            debug_assert!(self.str(&package.name).len() == package.name.len());
             debug_assert!(
-                SemverStringBuilder::string_hash(self.str(&package.name))
-                    == package.name_hash as u64
+                SemverStringBuilder::string_hash(self.str(&package.name)) == package.name_hash
             );
             debug_assert!(
                 package
@@ -1918,7 +1920,7 @@ impl Lockfile {
                 .dependencies
                 .get(self.buffers.dependencies.as_slice());
             for dependency in dependencies {
-                debug_assert!(self.str(&dependency.name).len() == dependency.name.len() as usize);
+                debug_assert!(self.str(&dependency.name).len() == dependency.name.len());
                 debug_assert!(
                     SemverStringBuilder::string_hash(self.str(&dependency.name))
                         == dependency.name_hash
@@ -2163,7 +2165,7 @@ impl Lockfile {
         name_hash: u64,
         // If non-null, attempt to use an existing package
         // that satisfies this version range.
-        version: Option<DependencyVersion>,
+        version: Option<&DependencyVersion>,
         resolution: &Resolution,
     ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
@@ -2171,7 +2173,7 @@ impl Lockfile {
         // Borrow the `npm` arm's `Semver::Group` (not `Copy` — owns a linked
         // list head). `version` is held by-value for the whole fn body so the
         // borrow is sound; Zig's by-value copy is replaced with a `&Group`.
-        let npm_version = match &version {
+        let npm_version = match version {
             Some(v) if v.tag == dependency::Tag::Npm => Some(&v.npm().version),
             _ => None,
         };
@@ -2416,21 +2418,21 @@ impl Lockfile {
         Ok(())
     }
 
-    pub fn append_package(&mut self, package_: Package) -> Result<Package, AllocError> {
+    pub fn append_package(&mut self, package_: &Package) -> Result<Package, AllocError> {
         let id: PackageID = self.packages.len() as PackageID; // @truncate
         self.append_package_with_id(package_, id)
     }
 
     pub fn append_package_with_id(
         &mut self,
-        package_: Package,
+        package_: &Package,
         id: PackageID,
     ) -> Result<Package, AllocError> {
         // Zig's `defer` reads `package_` (the original arg) for the assertion.
         let name_hash = package_.name_hash;
         let resolution = package_.resolution;
 
-        let mut package = package_;
+        let mut package = *package_;
         package.meta.id = id;
         self.packages.append(package)?;
         self.get_or_put_id(id, name_hash)?;
@@ -2640,7 +2642,7 @@ impl<'a> StringBuilder<'a> {
     fn _count_with_hash(&mut self, slice: &[u8], hash: u64) {
         self.assert_not_allocated();
 
-        if !self.string_pool.contains(&hash) {
+        if !self.string_pool.contains(hash) {
             self.cap += slice.len();
         }
     }
@@ -2680,6 +2682,8 @@ impl<'a> StringBuilder<'a> {
         // `grow_default` precedent at :1578.
         string_bytes.resize(prev_len + self.cap, 0);
         self.off = prev_len;
+        // SAFETY: `string_bytes` was just resized to `prev_len + self.cap`, so
+        // offsetting its base pointer by `prev_len` stays within the allocation.
         self.ptr = Some(unsafe { string_bytes.as_mut_ptr().add(prev_len) });
         self.len = 0;
         Ok(())
@@ -2870,7 +2874,7 @@ impl<'a> EqlSorter<'a> {
         strings::order(l_path, r_path).then_with(|| {
             let l_name = self.pkg_names[l.pkg_id as usize];
             let r_name = self.pkg_names[r.pkg_id as usize];
-            l_name.order(&r_name, self.string_buf, self.string_buf)
+            l_name.order(r_name, self.string_buf, self.string_buf)
         })
     }
 }
@@ -2894,11 +2898,6 @@ impl Lockfile {
         }
 
         let mut sort_buf: Vec<PathToId> = Vec::with_capacity(l_len + r_len);
-        // SAFETY: capacity reserved; we fill via indexed writes below up to i.
-        unsafe { sort_buf.set_len(l_len + r_len) };
-        let (l_buf_full, r_buf_full) = sort_buf.split_at_mut(l_len);
-        let mut l_buf = &mut l_buf_full[..];
-        let mut r_buf = &mut r_buf_full[..];
 
         let mut path_buf = PathBuffer::uninit();
         // Zig: `var depth_buf: Tree.DepthBuf = undefined;`
@@ -2907,7 +2906,6 @@ impl Lockfile {
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.
         let mut tree_paths: Vec<Box<[u8]>> = Vec::new();
 
-        let mut i: usize = 0;
         for l_tree in l.buffers.trees.iter() {
             let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
                 l.buffers.trees.as_slice(),
@@ -2928,16 +2926,14 @@ impl Lockfile {
                 if l_pkg_id == invalid_package_id || l_pkg_id as usize >= cut_off_pkg_id {
                     continue;
                 }
-                l_buf[i] = PathToId {
+                sort_buf.push(PathToId {
                     pkg_id: l_pkg_id,
                     tree_path: tree_path_ptr,
-                };
-                i += 1;
+                });
             }
         }
-        l_buf = &mut l_buf[..i];
+        let l_count = sort_buf.len();
 
-        i = 0;
         for r_tree in r.buffers.trees.iter() {
             let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
                 r.buffers.trees.as_slice(),
@@ -2958,14 +2954,13 @@ impl Lockfile {
                 if r_pkg_id == invalid_package_id || r_pkg_id as usize >= cut_off_pkg_id {
                     continue;
                 }
-                r_buf[i] = PathToId {
+                sort_buf.push(PathToId {
                     pkg_id: r_pkg_id,
                     tree_path: tree_path_ptr,
-                };
-                i += 1;
+                });
             }
         }
-        r_buf = &mut r_buf[..i];
+        let (l_buf, r_buf) = sort_buf.split_at_mut(l_count);
 
         if l_buf.len() != r_buf.len() {
             return Ok(false);
@@ -3088,7 +3083,7 @@ impl Lockfile {
 
             while i + 16 < packages_len {
                 // PORT NOTE: Zig used `inline while` to unroll 16 iterations. Plain loop here.
-                // PERF(port): was comptime-unrolled inner loop — profile in Phase B.
+                // PERF(port): was comptime-unrolled inner loop — profile if it shows up on a hot path.
                 for j in 0..16usize {
                     alphabetized_names[(i + j) - 1] = (i + j) as PackageID; // @truncate
                     // posix path separators because we only use posix in the lockfile
@@ -3185,11 +3180,14 @@ impl Lockfile {
         }
 
         let mut digest = ZERO_HASH;
-        Crypto::SHA512_256::hash(
-            alphabetized_name_version_string,
-            &mut digest,
-            core::ptr::null_mut(),
-        );
+        // SAFETY: engine is null (default).
+        unsafe {
+            Crypto::SHA512_256::hash(
+                alphabetized_name_version_string,
+                &mut digest,
+                core::ptr::null_mut(),
+            )
+        };
 
         Ok(digest)
     }
@@ -3197,7 +3195,7 @@ impl Lockfile {
     pub fn resolve_package_from_name_and_version(
         &self,
         package_name: &[u8],
-        version: DependencyVersion,
+        version: &DependencyVersion,
     ) -> Option<PackageID> {
         let name_hash = SemverStringBuilder::string_hash(package_name);
         let entry = self.package_index.get(&name_hash)?;
@@ -3393,9 +3391,10 @@ impl PatchedDep {
     /// the explicit-padding / private-hash fields make the `..Default::default()`
     /// struct-update form unusable from sibling modules.
     pub fn with_path(path: SemverString) -> Self {
-        let mut this = Self::default();
-        this.path = path;
-        this
+        Self {
+            path,
+            ..Default::default()
+        }
     }
 
     pub fn set_patchfile_hash(&mut self, val: Option<u64>) {

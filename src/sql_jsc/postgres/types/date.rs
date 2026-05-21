@@ -25,8 +25,9 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
     } else if value.is_number() {
         value.as_number()
     } else if value.is_string() {
-        // Zig: `catch @panic("unreachable")` → .expect; `defer str.deref()` → Drop on bun_core::String.
-        let mut str = value.to_bun_string(global_object).expect("unreachable");
+        // Zig: `catch @panic("unreachable")` → .expect.
+        let mut str =
+            bun_core::OwnedString::new(value.to_bun_string(global_object).expect("unreachable"));
         crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)?
     } else {
         return Ok(0);
@@ -52,7 +53,7 @@ impl DateToJs for i64 {
 
 impl DateToJs for Data {
     fn date_to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        to_js_data(global_object, self)
+        to_js_data(global_object, &self)
     }
 }
 
@@ -66,9 +67,7 @@ pub fn to_js_i64(global_object: &JSGlobalObject, value: i64) -> JSValue {
     JSValue::from_date_number(global_object, ms as f64)
 }
 
-pub fn to_js_data(global_object: &JSGlobalObject, value: Data) -> JSValue {
-    // Zig: `defer value.deinit()` on `*Data` — function consumes the Data.
-    // Taking `Data` by value lets Drop free it after we read the NUL-terminated slice.
+pub fn to_js_data(global_object: &JSGlobalObject, value: &Data) -> JSValue {
     let z = value.slice_z();
     // SAFETY: ZStr invariant guarantees a readable NUL terminator at `len`; Postgres
     // date payloads contain no interior NULs, satisfying CStr's contract.

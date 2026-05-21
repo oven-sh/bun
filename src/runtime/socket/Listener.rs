@@ -1,29 +1,22 @@
 //! This is the code for the object returned by Bun.listen().
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_boringssl as boringssl;
 use bun_boringssl_sys as boring_sys;
-use bun_core::{self as strings_mod, strings};
 use bun_io::KeepAlive;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
-use bun_jsc::{
-    self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsResult,
-};
-use bun_output::{declare_scope, scoped_log};
-use bun_paths::{self, PathBuffer};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
-use crate::node::path as node_path;
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
@@ -33,7 +26,17 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
+use crate::node::path as node_path;
+#[cfg(windows)]
+use bun_boringssl as boringssl;
+#[cfg(windows)]
+use bun_core::strings;
+#[cfg(windows)]
+use bun_jsc::GlobalRef;
+#[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
+#[cfg(windows)]
+use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
@@ -63,8 +66,8 @@ use crate::generated_classes::js_Listener;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut Listener` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either.
+// shim still emits `this: &mut Listener` — `&mut T` auto-derefs to `&T`
+// so the impls below compile against either.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct Listener {
     pub handlers: JsCell<Handlers>,
@@ -87,7 +90,7 @@ pub struct Listener {
     pub strong_self: JsCell<Strong>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub enum ListenerType {
     Uws(*mut uws_sys::ListenSocket),
     /// Raw heap pointer (not `Box`) to match .zig:31 `*WindowsNamedPipeListeningContext`.
@@ -97,13 +100,8 @@ pub enum ListenerType {
     /// would invalidate the pointer libuv holds under Stacked Borrows. Ownership
     /// is still unique; freed via `close_pipe_and_deinit` → `on_pipe_closed` → `deinit`.
     NamedPipe(NonNull<WindowsNamedPipeListeningContext>),
+    #[default]
     None,
-}
-
-impl Default for ListenerType {
-    fn default() -> Self {
-        ListenerType::None
-    }
 }
 
 impl Listener {
@@ -194,7 +192,9 @@ impl Listener {
         // SAFETY: VirtualMachine::get() returns the per-thread VM; valid for program lifetime.
         let vm = VirtualMachine::get().as_mut();
 
-        let mut socket_config = SocketConfig::from_js(vm, opts, global, true)?;
+        let socket_config = SocketConfig::from_js(vm, opts, global, true)?;
+        #[cfg(windows)]
+        let mut socket_config = socket_config;
         // PORT NOTE: `defer socket_config.deinitExcludingHandlers()` — handled by Drop on SocketConfig
         // (excluding handlers, which are moved out below). // TODO(port): verify SocketConfig Drop semantics
 
@@ -312,7 +312,8 @@ impl Listener {
         // `deinitExcludingHandlers()` on the original. Here we read the handlers
         // out by raw ptr and prevent double-drop by clearing the source via
         // `deinit_excluding_handlers` + `mem::forget`.
-        // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
+        let mut socket_config = core::mem::ManuallyDrop::new(socket_config);
+        // SAFETY: socket_config.handlers is valid; ManuallyDrop suppresses the second drop.
         let handlers_moved: Handlers =
             unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
@@ -324,8 +325,6 @@ impl Listener {
             .into_boxed_slice();
         let fd_opt = socket_config.fd;
         let ssl_cfg_taken = socket_config.ssl.take();
-        // Prevent double-drop of `handlers` (moved out above).
-        core::mem::forget(socket_config);
 
         let this: *mut Listener = bun_core::heap::into_raw(Box::new(Listener {
             handlers: JsCell::new(handlers_moved),
@@ -968,7 +967,7 @@ impl Listener {
 
         vm.event_loop_ref().ensure_waker();
 
-        let mut connection: UnixOrHost = 'blk: {
+        let connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(global, "fd")? {
                 if fd_.is_number() {
                     // TODO(port): `JSValue::as_file_descriptor` — using direct int decode for now.
@@ -1019,6 +1018,8 @@ impl Listener {
             }
         });
 
+        #[cfg(windows)]
+        let mut connection = connection;
         #[cfg(windows)]
         {
             use crate::socket::windows_named_pipe_context::SocketType as PipeSocketType;
@@ -1086,11 +1087,19 @@ impl Listener {
                         // SAFETY: caller passes a live TLSSocket
                         let prev = unsafe { &*prev_ptr };
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated
-                            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            // SAFETY: prev_handlers was heap-allocated; shared
+                            // reborrow is scoped to this expression.
+                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                                // SAFETY: prev_handlers was heap-allocated and unreferenced.
+                                unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            }
                         }
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.handlers.set(NonNull::new(handlers_ptr));
+                        // Same ownership rationale as `connect_finish`'s prev
+                        // branch — see the comment there.
+                        prev.flags
+                            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
                         debug_assert!(matches!(
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
@@ -1117,7 +1126,7 @@ impl Listener {
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
                             ),
                             owned_ssl_ctx: Cell::new(None),
-                            flags: Cell::new(SocketFlags::default()),
+                            flags: Cell::new(SocketFlags::default() | SocketFlags::OWNS_HANDLERS),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1175,10 +1184,18 @@ impl Listener {
                         let prev = unsafe { &*prev_ptr };
                         debug_assert!(!prev.this_value.get().is_empty());
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated
-                            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            // SAFETY: prev_handlers was heap-allocated; shared
+                            // reborrow is scoped to this expression.
+                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                                // SAFETY: prev_handlers was heap-allocated and unreferenced.
+                                unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+                            }
                         }
                         prev.handlers.set(NonNull::new(handlers_ptr));
+                        // Same ownership rationale as `connect_finish`'s prev
+                        // branch — see the comment there.
+                        prev.flags
+                            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
                         debug_assert!(matches!(
                             prev.socket.get().socket,
                             uws::InternalSocket::Detached
@@ -1200,7 +1217,7 @@ impl Listener {
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
                             owned_ssl_ctx: Cell::new(None),
-                            flags: Cell::new(SocketFlags::default()),
+                            flags: Cell::new(SocketFlags::default() | SocketFlags::OWNS_HANDLERS),
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
@@ -1284,12 +1301,12 @@ impl Listener {
         default_data.ensure_still_alive();
 
         // PORT NOTE: by-value move of Handlers. See `listen()` for rationale.
-        // SAFETY: socket_config.handlers is valid; we forget socket_config below to avoid double-drop.
+        let mut socket_config = core::mem::ManuallyDrop::new(socket_config);
+        // SAFETY: socket_config.handlers is valid; ManuallyDrop suppresses the second drop.
         let handlers_moved: Handlers =
             unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let allow_half_open = socket_config.allow_half_open;
         let mut ssl_taken = socket_config.ssl.take();
-        core::mem::forget(socket_config);
 
         let mut handlers_box = Box::new(handlers_moved);
         handlers_box.mode = SocketMode::Client;
@@ -1417,11 +1434,26 @@ fn connect_finish<const IS_SSL: bool>(
         let prev = unsafe { &*prev_ptr };
         // TODO(port): `JsRef::is_not_empty` — assert non-empty wrapper.
         if let Some(prev_handlers) = prev.handlers.get() {
-            // SAFETY: prev_handlers was heap-allocated
-            unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+            // Only free the previous Handlers when no callback scope is still
+            // holding it. If a `data`/`close` handler synchronously re-entered
+            // `connect`, `Scope::exit` (via `Handlers::mark_inactive`) frees it
+            // once the in-flight callback unwinds; freeing here would be a UAF.
+            // SAFETY: prev_handlers was heap-allocated; shared reborrow is
+            // scoped to this expression.
+            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                // SAFETY: prev_handlers was heap-allocated and unreferenced.
+                unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
+            }
         }
         prev.handlers.set(NonNull::new(handlers_ptr));
-        // TODO(port): debug_assert!(matches!(prev.socket.get().socket, InternalSocket::Detached))
+        // `handlers_ptr` is a fresh `heap::alloc` box from `connect_inner`;
+        // this socket now owns it. Without the flag, `deinit_and_destroy` and
+        // `mark_inactive`'s shutdown gate skip the free and the box leaks
+        // (`node:net`'s `new_detached_socket` creates `prev` with default
+        // flags and no handlers).
+        prev.flags
+            .set(prev.flags.get() | SocketFlags::OWNS_HANDLERS);
+        debug_assert!(prev.socket.get().is_detached());
         // Free old resources before reassignment to prevent memory leaks
         // when sockets are reused for reconnection (common with MongoDB driver)
         prev.connection.set(Some(connection));
@@ -1446,7 +1478,7 @@ fn connect_finish<const IS_SSL: bool>(
             protos: JsCell::new(ssl.as_mut().and_then(|s| s.take_protos())),
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
             owned_ssl_ctx: Cell::new(owned_ssl_ctx.map(|p| p.as_ptr())),
-            flags: Cell::new(SocketFlags::default()),
+            flags: Cell::new(SocketFlags::default() | SocketFlags::OWNS_HANDLERS),
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -1536,10 +1568,8 @@ pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     Err(global.throw(format_args!("Expected a Listener instance")))
 }
 
+#[cfg(windows)]
 fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
-    if !cfg!(windows) {
-        return false;
-    }
     // check for valid pipe names
     // at minimum we need to have \\.\pipe\ or \\?\pipe\ + 1 char that is not a separator
     pipe_name.len() > 9
@@ -1552,25 +1582,17 @@ fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
         && !node_path::is_sep_windows_t::<u8>(pipe_name[9])
 }
 
+#[cfg(windows)]
 fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a [u8]> {
-    #[cfg(windows)]
-    {
-        debug_assert!(pipe_name.len() < buffer.len());
-        if !is_valid_pipe_name(pipe_name) {
-            return None;
-        }
-        // normalize pipe name with can have mixed slashes
-        // pipes are simple and this will be faster than using node:path.resolve()
-        // we dont wanna to normalize the pipe name it self only the pipe identifier (//./pipe/, //?/pipe/, etc)
-        buffer[0..9].copy_from_slice(b"\\\\.\\pipe\\");
-        buffer[9..pipe_name.len()].copy_from_slice(&pipe_name[9..]);
-        Some(&buffer[0..pipe_name.len()])
+    if pipe_name.len() > buffer.len() || !is_valid_pipe_name(pipe_name) {
+        return None;
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (pipe_name, buffer);
-        None
-    }
+    // normalize pipe name with can have mixed slashes
+    // pipes are simple and this will be faster than using node:path.resolve()
+    // we dont wanna to normalize the pipe name it self only the pipe identifier (//./pipe/, //?/pipe/, etc)
+    buffer[0..9].copy_from_slice(b"\\\\.\\pipe\\");
+    buffer[9..pipe_name.len()].copy_from_slice(&pipe_name[9..]);
+    Some(&buffer[0..pipe_name.len()])
 }
 
 #[cfg(windows)]

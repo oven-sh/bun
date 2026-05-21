@@ -5,7 +5,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::Error;
 use bun_core::strings;
 use bun_install::dependency::{self, Behavior, Dependency, DependencyExt as _};
-use bun_install::{Lockfile, PackageManager, PackageNameHash};
+use bun_install::{PackageManager, PackageNameHash};
 use bun_output::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 use bun_semver::string::Builder as SemverBuilder;
@@ -47,10 +47,7 @@ impl OverrideMap {
     // the string buffer (the only field `sort` reads).
     pub fn sort(&mut self, string_bytes: &[u8]) {
         self.map.sort(|_, deps: &[Dependency], l, r| {
-            deps[l]
-                .name
-                .order(&deps[r].name, string_bytes, string_bytes)
-                == Ordering::Less
+            deps[l].name.order(deps[r].name, string_bytes, string_bytes) == Ordering::Less
         });
     }
 
@@ -78,7 +75,7 @@ impl OverrideMap {
         new.map.ensure_total_capacity(self.map.count())?;
 
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
-            // PERF(port): was ensureTotalCapacity + putAssumeCapacity — profile in Phase B
+            // PERF(port): was ensureTotalCapacity + putAssumeCapacity — profile if hot
             new.map
                 .put_assume_capacity(*k, v.clone_in(pm, old_string_bytes, new_builder)?);
         }
@@ -422,7 +419,7 @@ impl OverrideMap {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime field: []const u8`) — profile in Phase B.
+// PERF(port): was comptime monomorphization (`comptime field: []const u8`).
 // Only used in warning-message formatting, so runtime &'static str is fine.
 pub fn parse_override_value(
     field: &'static str,

@@ -1,14 +1,16 @@
 #![allow(
-    unused,
     non_snake_case,
     non_camel_case_types,
     non_upper_case_globals,
-    clippy::all
+    // *_sys FFI bindings: every fn body is `unsafe { ffi_call(args) }`; the
+    // safety contract is documented at each body and identical whether the
+    // wrapper is `unsafe fn` or not.
+    clippy::not_unsafe_ptr_arg_deref
 )]
 #![warn(unused_must_use)]
 //! Low-level FFI bindings for uSockets / uWebSockets as used by Bun.
 //!
-//! B-2: un-gated module bodies. Each `*.rs` file is mapped to a snake_case
+//! Each `*.rs` file is mapped to a snake_case
 //! module name (the names downstream `bun_uws` expects). Crate-root re-exports
 //! flatten the common handle types.
 
@@ -232,10 +234,16 @@ impl UpgradedDuplex {
     }
     #[inline]
     pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
@@ -341,7 +349,7 @@ impl WindowsNamedPipe {
 
 // ───────────────────────────── module map ────────────────────────────────────
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
-// PascalCase Phase-A drafts kept on disk.
+// PascalCase source files on disk.
 
 #[path = "App.rs"]
 pub mod app;

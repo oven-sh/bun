@@ -244,6 +244,13 @@ pub mod random {
         pub bytes: *mut u8,
         pub offset: u32,
         pub length: usize,
+        // Worker-owned destination for user-supplied buffers (`randomFill`).
+        // The user can detach (`transfer()`) or shrink (`resize()`) the backing
+        // store between scheduling and the WorkPool write, so the worker fills
+        // this scratch and `run_from_js` re-validates + copies on the JS thread.
+        // `randomBytes` allocates its own buffer (unreachable from JS until the
+        // callback fires) and leaves this `None`.
+        pub scratch: Option<Vec<u8>>,
         pub result: (), // void
     }
 
@@ -263,8 +270,14 @@ pub mod random {
         }
 
         fn run_task(&mut self) {
+            if let Some(scratch) = &mut self.scratch {
+                bun_core::csprng(scratch);
+                return;
+            }
             // SAFETY: `bytes` points into an ArrayBuffer kept alive by `self.value`
             // (protected in `init`); offset+length were range-checked by callers.
+            // This branch is only used for internally-allocated buffers that JS
+            // cannot reach (and therefore cannot detach/resize) until `run_from_js`.
             let slice = unsafe {
                 core::slice::from_raw_parts_mut(self.bytes.add(self.offset as usize), self.length)
             };
@@ -272,6 +285,22 @@ pub mod random {
         }
 
         fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue) {
+            if let Some(scratch) = self.scratch.take() {
+                // Re-fetch the buffer on the JS thread and re-validate bounds:
+                // the user may have detached or resized it while the WorkPool
+                // task ran. On mismatch, drop the random bytes rather than
+                // write through a stale pointer.
+                if let Some(mut buf) = self.value.as_array_buffer(global) {
+                    let off = self.offset as usize;
+                    let dst = buf.slice_mut();
+                    match off.checked_add(scratch.len()) {
+                        Some(end) if end <= dst.len() => {
+                            dst[off..end].copy_from_slice(&scratch);
+                        }
+                        _ => {}
+                    }
+                }
+            }
             // `bun_vm()` is the audited safe `&'static VirtualMachine` accessor;
             // `event_loop_mut()` is the audited safe `&mut EventLoop` accessor.
             global.bun_vm().event_loop_mut().run_callback(
@@ -533,6 +562,7 @@ pub mod random {
                 bytes: bytes.as_mut_ptr(),
                 offset: 0,
                 length: size as usize,
+                scratch: None,
                 result: (),
             };
             crypto_job_init_and_schedule(global, callback, ctx)?;
@@ -589,10 +619,10 @@ pub mod random {
 
         #[bun_jsc::host_fn]
         pub fn random_fill(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-            let [buf_value, mut offset_value, mut size_value, mut callback] =
+            let [buf_value, offset_value, mut size_value, mut callback] =
                 call_frame.arguments_as_array::<4>();
 
-            let Some(mut buf) = buf_value.as_array_buffer(global) else {
+            let Some(buf) = buf_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"buf",
                     b"ArrayBuffer or ArrayBufferView",
@@ -602,8 +632,7 @@ pub mod random {
 
             let element_size = buf.bytes_per_element().unwrap_or(1);
 
-            #[allow(unused_assignments)]
-            let mut offset: u32 = 0;
+            let offset: u32;
             if offset_value.is_callable() {
                 callback = offset_value;
                 offset =
@@ -636,11 +665,22 @@ pub mod random {
                 return Ok(JSValue::UNDEFINED);
             }
 
+            // `vec![0u8; size]` aborts the process on OOM. The 3-arg overload
+            // `randomFill(buf, offset, cb)` defaults `size` to the full
+            // remaining buffer length, which can exceed allocator limits for a
+            // multi-GiB ArrayBuffer — surface that as a JS error instead.
+            let mut scratch = Vec::new();
+            if scratch.try_reserve_exact(size).is_err() {
+                return Err(global.throw_out_of_memory());
+            }
+            scratch.resize(size, 0);
+
             let ctx = JobCtx {
                 value: buf_value,
-                bytes: buf.slice_mut().as_mut_ptr(),
+                bytes: core::ptr::null_mut(),
                 offset,
                 length: size,
+                scratch: Some(scratch),
                 result: (),
             };
             crypto_job_init_and_schedule(global, callback, ctx)?;

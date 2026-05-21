@@ -64,7 +64,7 @@ where
     {
         // TODO(port): the Zig code asserted, when Ty == E.Object, that every property
         // has key.is_some(), value.is_some(), initializer.is_none(). Requires
-        // specialization or a method on the ExprInit trait; deferring to Phase B.
+        // specialization or a method on the ExprInit trait.
     }
 
     Expr::init(t, loc)
@@ -699,7 +699,7 @@ impl<T: ToAst> ToAst for &T {
 impl<T: ToAst> ToAst for [T] {
     fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
         let mut exprs = BumpVec::with_capacity_in(self.len(), bump);
-        for (_i, ex) in self.iter().enumerate() {
+        for ex in self.iter() {
             exprs.push(ex.to_ast(bump)?);
         }
         Ok(Expr::init(
@@ -836,7 +836,7 @@ const PACKAGE_JSON_OPTS: js_lexer::JSONOptions = js_lexer::JSONOptions {
 // TODO(port): these were `var` (mutable file-scope) in Zig because Expr.Data
 // stores `*E.Object` etc. Never mutated — `RacyCell` only because
 // `StoreRef::from_raw` wants a `*mut T` and the payload types are `!Sync`.
-// Phase B: prefer `Expr::Data` constructors that don't need a backing static
+// Could prefer `Expr::Data` constructors that don't need a backing static
 // (e.g. inline empty-object sentinel).
 static EMPTY_OBJECT: bun_core::RacyCell<E::Object> = bun_core::RacyCell::new(E::Object::EMPTY);
 static EMPTY_ARRAY: bun_core::RacyCell<E::Array> = bun_core::RacyCell::new(E::Array::EMPTY);
@@ -957,18 +957,10 @@ pub fn parse_package_json_utf8(
     parser.parse_expr(false, true)
 }
 
+#[derive(Default)]
 pub struct JsonResult {
     pub root: Expr,
     pub indentation: Indentation,
-}
-
-impl Default for JsonResult {
-    fn default() -> Self {
-        Self {
-            root: Expr::default(),
-            indentation: Indentation::default(),
-        }
-    }
 }
 
 // Zig signature takes `comptime opts: js_lexer.JSONOptions`. The 8-bool

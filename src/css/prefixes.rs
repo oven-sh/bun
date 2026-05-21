@@ -198,7 +198,7 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub fn prefixes_for(self, browsers: Browsers) -> VendorPrefix {
+    pub fn prefixes_for(self, browsers: &Browsers) -> VendorPrefix {
         use Feature::*;
         let mut prefixes = VendorPrefix::NONE;
         match self {
@@ -2193,7 +2193,7 @@ impl Feature {
     }
 
     #[allow(non_snake_case)]
-    pub fn is_flex_2009(browsers: Browsers) -> bool {
+    pub fn is_flex_2009(browsers: &Browsers) -> bool {
         if let Some(version) = browsers.android {
             if version >= 131328 && version <= 262656 {
                 return true;
@@ -2217,7 +2217,7 @@ impl Feature {
         false
     }
 
-    pub fn is_webkit_gradient(browsers: Browsers) -> bool {
+    pub fn is_webkit_gradient(browsers: &Browsers) -> bool {
         if let Some(version) = browsers.android {
             if version >= 131328 && version <= 196608 {
                 return true;
@@ -2244,11 +2244,11 @@ impl Feature {
 
 // Module-level re-exports so callers can `use css::prefixes::is_flex_2009`.
 #[inline]
-pub fn is_flex_2009(browsers: Browsers) -> bool {
+pub fn is_flex_2009(browsers: &Browsers) -> bool {
     Feature::is_flex_2009(browsers)
 }
 
 #[inline]
-pub fn is_webkit_gradient(browsers: Browsers) -> bool {
+pub fn is_webkit_gradient(browsers: &Browsers) -> bool {
     Feature::is_webkit_gradient(browsers)
 }

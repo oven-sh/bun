@@ -150,12 +150,17 @@ impl PackageManager {
                         let package_json_source =
                             &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
 
-                        if let Err(err) = pkg.parse_from_real_manager(
-                            std::ptr::from_mut::<PackageManager>(self),
-                            package_json_source,
-                            &mut resolver,
-                            Features::NPM,
-                        ) {
+                        // SAFETY: `self` is a live `&mut PackageManager`; the callee
+                        // split-borrows `self.lockfile` / `self.log` (separate
+                        // allocations) alongside `self` for the call's duration.
+                        if let Err(err) = unsafe {
+                            pkg.parse_from_real_manager(
+                                std::ptr::from_mut::<PackageManager>(self),
+                                package_json_source,
+                                &mut resolver,
+                                Features::NPM,
+                            )
+                        } {
                             if log_level != LogLevel::Silent {
                                 let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                                 Output::err(
@@ -218,7 +223,7 @@ impl PackageManager {
                     package.meta.integrity = data.integrity;
                 }
 
-                package = self.lockfile.append_package(package).expect("unreachable");
+                package = self.lockfile.append_package(&package).expect("unreachable");
                 *package_id = package.meta.id;
 
                 if package.dependencies.len > 0 {
@@ -243,12 +248,17 @@ impl PackageManager {
                     resolution,
                 };
 
-                if let Err(err) = package.parse_from_real_manager(
-                    std::ptr::from_mut::<PackageManager>(self),
-                    package_json_source,
-                    &mut resolver,
-                    Features::NPM,
-                ) {
+                // SAFETY: `self` is a live `&mut PackageManager`; the callee
+                // split-borrows `self.lockfile` / `self.log` (separate
+                // allocations) alongside `self` for the call's duration.
+                if let Err(err) = unsafe {
+                    package.parse_from_real_manager(
+                        std::ptr::from_mut::<PackageManager>(self),
+                        package_json_source,
+                        &mut resolver,
+                        Features::NPM,
+                    )
+                } {
                     if log_level != LogLevel::Silent {
                         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                         Output::pretty_errorln(format_args!(
@@ -272,7 +282,7 @@ impl PackageManager {
                     package.meta.integrity = data.integrity;
                 }
 
-                package = self.lockfile.append_package(package).expect("unreachable");
+                package = self.lockfile.append_package(&package).expect("unreachable");
                 *package_id = package.meta.id;
 
                 if package.dependencies.len > 0 {
@@ -334,6 +344,7 @@ impl PackageManager {
                     builder.allocate().expect("unreachable");
                     scripts.parse_alloc(&mut builder, json_root);
                     scripts.filled = true;
+                    let _ = scripts;
                 }
 
                 None
@@ -343,11 +354,11 @@ impl PackageManager {
 
     pub fn process_dependency_list_item(
         &mut self,
-        item: TaskCallbackContext,
+        item: &TaskCallbackContext,
         any_root: Option<&Cell<bool>>,
         install_peer: bool,
     ) -> Result<(), bun_core::Error> {
-        match item {
+        match *item {
             TaskCallbackContext::Dependency(dependency_id) => {
                 // PORT NOTE: reshaped for borrowck — clone the dependency row
                 // out of the buffer before re-borrowing `self` for enqueue.
@@ -430,7 +441,7 @@ impl PackageManager {
         if !dep_list.is_empty() {
             let dependency_list = dep_list;
             let any_root = Cell::new(false);
-            for item in dependency_list.iter().cloned() {
+            for item in dependency_list.iter() {
                 self.process_dependency_list_item(item, Some(&any_root), install_peer)?;
             }
 
@@ -469,7 +480,7 @@ pub fn process_extracted_tarball_package(
 #[inline]
 pub fn process_dependency_list_item(
     this: &mut PackageManager,
-    item: TaskCallbackContext,
+    item: &TaskCallbackContext,
     any_root: Option<&Cell<bool>>,
     install_peer: bool,
 ) -> Result<(), bun_core::Error> {

@@ -2,7 +2,6 @@
 //! It provides protection against Cross-Site Request Forgery attacks
 //! by generating and validating tokens using HMAC signatures
 
-#![allow(unused, nonstandard_style)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 use bun_boringssl_sys as boring;
@@ -19,7 +18,7 @@ pub const DEFAULT_EXPIRATION_MS: u64 = 24 * 60 * 60 * 1000;
 pub const DEFAULT_ALGORITHM: Algorithm = Algorithm::Sha256;
 
 /// Error types for CSRF operations
-// TODO(b1): thiserror not in deps — manual Display/Error impl for now
+// TODO(port): thiserror not in deps — manual Display/Error impl for now
 #[derive(strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     InvalidToken,
@@ -85,7 +84,7 @@ impl TokenFormat {
 ///
 /// Returns: A slice into `out_buffer` containing the raw token
 pub fn generate<'a>(
-    options: GenerateOptions<'_>,
+    options: &GenerateOptions<'_>,
     out_buffer: &'a mut [u8; 512],
 ) -> Result<&'a mut [u8], Error> {
     // Generate nonce from entropy
@@ -136,7 +135,7 @@ pub fn generate<'a>(
 /// - options: Configuration for token validation
 ///
 /// Returns: true if valid, false if invalid
-pub fn verify(options: VerifyOptions<'_>) -> bool {
+pub fn verify(options: &VerifyOptions<'_>) -> bool {
     // Detect the encoding format
     let encoding: TokenFormat = options.encoding;
 
@@ -163,11 +162,11 @@ pub fn verify(options: VerifyOptions<'_>) -> bool {
             if outlen > buf.len() {
                 return false;
             }
-            let wrote = bun_base64::decode(&mut buf[0..outlen], slice).count;
-            wrote
+
+            bun_base64::decode(&mut buf[0..outlen], slice).count
         }
         TokenFormat::Hex => {
-            if token.len() % 2 != 0 {
+            if !token.len().is_multiple_of(2) {
                 return false;
             }
             // decoded len

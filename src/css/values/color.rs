@@ -1,10 +1,7 @@
-// ─── B-2 round 8: parse / to_css / ComponentParser / Interpolate un-gated ──
 // Full `CssColor::parse` / `to_css` surface, `ComponentParser` /
 // `RelativeComponentParser`, the `Colorspace` / `Interpolate` traits,
-// `color-mix()`, and the 47-variant `SystemColor` are now real. The
-// `From<Src> for Dst` lattice + `ColorGamut`/`map_gamut` were un-gated in
-// round 7 and remain at the bottom of the file. The former
-// `gated_full_impl` reference module has been folded into the outer scope.
+// `color-mix()`, and the 47-variant `SystemColor`. The `From<Src> for Dst`
+// lattice + `ColorGamut`/`map_gamut` are at the bottom of the file.
 
 use crate::PrintErr;
 use crate::compat::Feature;
@@ -53,19 +50,19 @@ impl RGBA {
     }
 
     #[inline]
-    pub fn red_f32(&self) -> f32 {
+    pub fn red_f32(self) -> f32 {
         self.red as f32 / 255.0
     }
     #[inline]
-    pub fn green_f32(&self) -> f32 {
+    pub fn green_f32(self) -> f32 {
         self.green as f32 / 255.0
     }
     #[inline]
-    pub fn blue_f32(&self) -> f32 {
+    pub fn blue_f32(self) -> f32 {
         self.blue as f32 / 255.0
     }
     #[inline]
-    pub fn alpha_f32(&self) -> f32 {
+    pub fn alpha_f32(self) -> f32 {
         self.alpha as f32 / 255.0
     }
 
@@ -80,7 +77,7 @@ impl RGBA {
     }
 
     #[inline]
-    pub fn into_srgb(&self) -> SRGB {
+    pub fn into_srgb(self) -> SRGB {
         SRGB {
             r: self.red_f32(),
             g: self.green_f32(),
@@ -91,13 +88,13 @@ impl RGBA {
 
     /// Zig: `rgba.into(.HSL)` — routes RGBA → SRGB → HSL.
     #[inline]
-    pub fn into_hsl(&self) -> HSL {
+    pub fn into_hsl(self) -> HSL {
         HSL::from_rgba(self)
     }
 
     /// Zig: `rgba.into(.LAB)` — routes RGBA → SRGB → LAB.
     #[inline]
-    pub fn into_lab(&self) -> LAB {
+    pub fn into_lab(self) -> LAB {
         LAB::from_rgba(self)
     }
 
@@ -363,7 +360,7 @@ pub enum SystemColor {
 }
 
 impl SystemColor {
-    pub fn is_compatible(self, browsers: targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &targets::Browsers) -> bool {
         match self {
             SystemColor::Accentcolor | SystemColor::Accentcolortext => {
                 Feature::AccentSystemColor.is_compatible(browsers)
@@ -486,7 +483,7 @@ impl CssColor {
                                 rounded_alpha = (color.alpha_f32() * 1000.0).round() / 1000.0;
                             }
 
-                            CSSNumberFns::to_css(&rounded_alpha, dest)?;
+                            CSSNumberFns::to_css(rounded_alpha, dest)?;
                             dest.write_char(b')')?;
                             return Ok(());
                         }
@@ -540,7 +537,7 @@ impl CssColor {
         }
     }
 
-    pub fn is_compatible(&self, browsers: targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &targets::Browsers) -> bool {
         match self {
             CssColor::CurrentColor | CssColor::Rgba(_) | CssColor::Float(_) => true,
             CssColor::Lab(lab) => match **lab {
@@ -584,7 +581,7 @@ impl CssColor {
     pub fn get_fallbacks(
         &mut self,
         _arena: &Arena,
-        targets: targets::Targets,
+        targets: &targets::Targets,
     ) -> crate::SmallList<CssColor, 2> {
         let fallbacks = self.get_necessary_fallbacks(targets);
 
@@ -616,14 +613,14 @@ impl CssColor {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub fn get_necessary_fallbacks(&self, targets: targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &targets::Targets) -> ColorFallbackKind {
         // Get the full set of possible fallbacks, and remove the highest one, which
         // will replace the original declaration. The remaining fallbacks need to be added.
         let fallbacks = self.get_possible_fallbacks(targets);
         fallbacks.difference(fallbacks.highest())
     }
 
-    pub fn get_possible_fallbacks(&self, targets: targets::Targets) -> ColorFallbackKind {
+    pub fn get_possible_fallbacks(&self, targets: &targets::Targets) -> ColorFallbackKind {
         // Fallbacks occur in levels: Oklab -> Lab -> P3 -> RGB. We start with all levels
         // below and including the authored color space, and remove the ones that aren't
         // compatible with our browser targets.
@@ -679,7 +676,7 @@ impl CssColor {
                 fallbacks = fallbacks.difference(ColorFallbackKind::P3.and_below());
             } else if targets
                 .browsers
-                .map_or(false, |b| Feature::LabColors.is_partially_compatible(b))
+                .is_some_and(|b| Feature::LabColors.is_partially_compatible(&b))
             {
                 // We don't need P3 if Lab is supported by some of our targets.
                 // No browser implements Lab but not P3.
@@ -693,7 +690,7 @@ impl CssColor {
             } else if fallbacks.highest() != ColorFallbackKind::P3
                 && targets
                     .browsers
-                    .map_or(true, |b| !Feature::P3Colors.is_partially_compatible(b))
+                    .is_none_or(|b| !Feature::P3Colors.is_partially_compatible(&b))
             {
                 // Remove P3 if it isn't supported by any targets, and wasn't the
                 // original authored color.
@@ -880,8 +877,8 @@ impl CssColor {
         // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
         let mut alpha_multiplier = p1 + p2;
         if alpha_multiplier != 1.0 {
-            p1 = p1 / alpha_multiplier;
-            p2 = p2 / alpha_multiplier;
+            p1 /= alpha_multiplier;
+            p2 /= alpha_multiplier;
             if alpha_multiplier > 1.0 {
                 alpha_multiplier = 1.0;
             }
@@ -1010,9 +1007,6 @@ impl ColorFallbackKind {
     }
 }
 
-#[allow(unused_imports)]
-use super::color_generated::generated_color_conversions as _;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Colorspace traits (replaces Zig comptime mixins: DefineColorspace,
 // BoundedColorGamut, UnboundedColorGamut, HslHwbColorGamut, DeriveInterpolate,
@@ -1022,7 +1016,7 @@ use super::color_generated::generated_color_conversions as _;
 
 /// Trait every colorspace implements. The Zig used `@field(this, "x")` over the
 /// first three struct fields plus `alpha`; here we expose them by index.
-/// `// TODO(port): Phase B may want to derive this with a proc-macro.`
+/// `// TODO(port): could be derived with a proc-macro.`
 pub trait Colorspace: Copy + Sized + FromAnyColorspace {
     const CHANNEL_NAMES: (&'static [u8], &'static [u8], &'static [u8]);
     const CHANNEL_TYPES: (ChannelType, ChannelType, ChannelType);
@@ -1079,13 +1073,13 @@ pub trait Colorspace: Copy + Sized + FromAnyColorspace {
         c.convert_to()
     }
     #[inline]
-    fn from_rgba(rgba: &RGBA) -> Self {
+    fn from_rgba(rgba: RGBA) -> Self {
         rgba.into_srgb().into()
     }
 
     fn try_from_css_color(color: &CssColor) -> Option<Self> {
         match color {
-            CssColor::Rgba(rgba) => Some(Self::from_rgba(rgba)),
+            CssColor::Rgba(rgba) => Some(Self::from_rgba(*rgba)),
             CssColor::Lab(lab) => Some(Self::from_lab_color(lab)),
             CssColor::Predefined(p) => Some(Self::from_predefined_color(p)),
             CssColor::Float(f) => Some(Self::from_float_color(f)),
@@ -1189,7 +1183,7 @@ pub fn parse_color_function(
             }
         }),
         b"rgb" | b"rgba" => parse_rgb(input, &mut parser),
-        b"color-mix" => input.parse_nested_block(|i| parse_color_mix(i)),
+        b"color-mix" => input.parse_nested_block(parse_color_mix),
         b"light-dark" => input.parse_nested_block(|i| {
             let light = match CssColor::parse(i)? {
                 CssColor::LightDark { light, dark } => take_light_free_dark(light, dark),
@@ -1221,9 +1215,7 @@ pub fn parse_rgb_components(
             NumberOrPercentage::Number { value } => {
                 let r = value.round().clamp(0.0, 255.0);
                 let g = parser.parse_number(input)?.round().clamp(0.0, 255.0);
-                if let Err(e) = input.expect_comma() {
-                    return Err(e);
-                }
+                input.expect_comma()?;
                 let b = parser.parse_number(input)?.round().clamp(0.0, 255.0);
                 (r, g, b)
             }
@@ -1232,9 +1224,7 @@ pub fn parse_rgb_components(
                 let g = (parser.parse_percentage(input)? * 255.0)
                     .round()
                     .clamp(0.0, 255.0);
-                if let Err(e) = input.expect_comma() {
-                    return Err(e);
-                }
+                input.expect_comma()?;
                 let b = (parser.parse_percentage(input)? * 255.0)
                     .round()
                     .clamp(0.0, 255.0);
@@ -1281,9 +1271,7 @@ pub fn parse_hslhwb_components<T>(
         && input.try_parse(|i| i.expect_comma()).is_ok();
     let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
     if is_legacy_syntax {
-        if let Err(e) = input.expect_colon() {
-            return Err(e);
-        }
+        input.expect_colon()?;
     }
     let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
@@ -1447,9 +1435,7 @@ pub fn parse_hsl_hwb_components<T>(
     let a = parser.parse_percentage(input)?.clamp(0.0, 1.0);
 
     if is_legacy_syntax {
-        if let Err(e) = input.expect_comma() {
-            return Err(e);
-        }
+        input.expect_comma()?;
     }
 
     let b = parser.parse_percentage(input)?.clamp(0.0, 1.0);
@@ -1500,9 +1486,7 @@ fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult
 
 fn parse_legacy_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
     if !input.is_exhausted() {
-        if let Err(e) = input.expect_comma() {
-            return Err(e);
-        }
+        input.expect_comma()?;
         return Ok(parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0));
     }
     Ok(1.0)
@@ -1527,10 +1511,6 @@ pub fn parse_number_or_percentage(
         NumberOrPercentage::Number { value } => value,
         NumberOrPercentage::Percentage { unit_value } => unit_value,
     })
-}
-
-fn clamp_floor_256_f32(val: f32) -> u8 {
-    val.round().max(0.0).min(255.0) as u8
 }
 
 impl LABColor {
@@ -2026,9 +2006,7 @@ impl ComponentParser {
                 unit_value: value.v,
             })
         } else if self.allow_none {
-            if let Err(e) = input.expect_ident_matching(b"none") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"none")?;
             Ok(NumberOrPercentage::Number { value: f32::NAN })
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2054,9 +2032,7 @@ impl ComponentParser {
         } else if let Ok(value) = input.try_parse(CSSNumberFns::parse) {
             Ok(css::color::AngleOrNumber::Number { value })
         } else if self.allow_none {
-            if let Err(e) = input.expect_ident_matching(b"none") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"none")?;
             Ok(css::color::AngleOrNumber::Number { value: f32::NAN })
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2074,9 +2050,7 @@ impl ComponentParser {
         if let Ok(val) = input.try_parse(Percentage::parse) {
             Ok(val.v)
         } else if self.allow_none {
-            if let Err(e) = input.expect_ident_matching(b"none") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2093,9 +2067,7 @@ impl ComponentParser {
         if let Ok(val) = input.try_parse(CSSNumberFns::parse) {
             Ok(val)
         } else if self.allow_none {
-            if let Err(e) = input.expect_ident_matching(b"none") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"none")?;
             Ok(f32::NAN)
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2132,8 +2104,8 @@ pub enum NumberOrPercentage {
 
 impl NumberOrPercentage {
     /// Return the value as a percentage.
-    pub fn unit_value(&self) -> f32 {
-        match *self {
+    pub fn unit_value(self) -> f32 {
+        match self {
             NumberOrPercentage::Number { value } => value,
             NumberOrPercentage::Percentage { unit_value } => unit_value,
         }
@@ -2141,8 +2113,8 @@ impl NumberOrPercentage {
 
     /// Return the value as a number with a percentage adjusted to the
     /// `percentage_basis`.
-    pub fn value(&self, percentage_basis: f32) -> f32 {
-        match *self {
+    pub fn value(self, percentage_basis: f32) -> f32 {
+        match self {
             NumberOrPercentage::Number { value } => value,
             NumberOrPercentage::Percentage { unit_value } => unit_value * percentage_basis,
         }
@@ -2185,9 +2157,6 @@ impl RelativeComponentParser {
             return Ok(css::color::AngleOrNumber::Number { value });
         }
 
-        // TODO(port): Zig threads a stack `Angle` through `Calc(Angle).parseWith` via a closure
-        // that returns `Calc{ .value = &t.angle }` (raw stack pointer). Here we use a Cell-based
-        // closure; Phase B should verify Calc::parse_with API shape.
         // PORT NOTE: Zig threads a stack `Angle` through `Calc(Angle).parseWith`
         // via a closure that returns `Calc{ .value = &t.angle }` (raw stack
         // pointer). Rust `Calc::Value` is `Box<V>`, so box the temporary.
@@ -2480,20 +2449,16 @@ pub enum ColorSpaceName {
 }
 
 pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
-    if let Err(e) = input.expect_ident_matching(b"in") {
-        return Err(e);
-    }
+    input.expect_ident_matching(b"in")?;
     let method = ColorSpaceName::parse(input)?;
 
     let hue_method_: CssResult<HueInterpolationMethod> = if matches!(
         method,
         ColorSpaceName::Hsl | ColorSpaceName::Hwb | ColorSpaceName::Lch | ColorSpaceName::Oklch
     ) {
-        let hue_method = input.try_parse(|i| HueInterpolationMethod::parse(i));
+        let hue_method = input.try_parse(HueInterpolationMethod::parse);
         if hue_method.is_ok() {
-            if let Err(e) = input.expect_ident_matching(b"hue") {
-                return Err(e);
-            }
+            input.expect_ident_matching(b"hue")?;
         }
         hue_method
     } else {
@@ -2501,9 +2466,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
     };
 
     let hue_method = hue_method_.unwrap_or(HueInterpolationMethod::Shorter);
-    if let Err(e) = input.expect_comma() {
-        return Err(e);
-    }
+    input.expect_comma()?;
 
     let first_percent_ = input.try_parse(|i| i.expect_percentage());
     let first_color = CssColor::parse(input)?;
@@ -2511,9 +2474,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
         Ok(v) => Some(v),
         Err(_) => input.try_parse(|i| i.expect_percentage()).ok(),
     };
-    if let Err(e) = input.expect_comma() {
-        return Err(e);
-    }
+    input.expect_comma()?;
 
     let second_percent_ = input.try_parse(|i| i.expect_percentage());
     let second_color = CssColor::parse(input)?;
@@ -2584,14 +2545,14 @@ pub enum HueInterpolationMethod {
 }
 
 impl HueInterpolationMethod {
-    pub fn interpolate(&self, a: &mut f32, b: &mut f32) {
+    pub fn interpolate(self, a: &mut f32, b: &mut f32) {
         // https://drafts.csswg.org/css-color/#hue-interpolation
-        if *self == HueInterpolationMethod::Specified {
+        if self == HueInterpolationMethod::Specified {
             *a = ((*a).rem_euclid(360.0) + 360.0).rem_euclid(360.0);
             *b = ((*b).rem_euclid(360.0) + 360.0).rem_euclid(360.0);
         }
 
-        match *self {
+        match self {
             HueInterpolationMethod::Shorter => {
                 // https://www.w3.org/TR/css-color-4/#hue-shorter
                 let delta = *b - *a;
@@ -2729,7 +2690,7 @@ pub fn write_component(c: f32, dest: &mut Printer) -> Result<(), PrintErr> {
     if c.is_nan() {
         dest.write_str("none")
     } else {
-        CSSNumberFns::to_css(&c, dest)
+        CSSNumberFns::to_css(c, dest)
     }
 }
 
@@ -2843,8 +2804,6 @@ const D50: [f32; 3] = [
 //
 // In Rust we express each conversion as `impl From<Src> for Dst`. The
 // handwritten ones are below; generated ones live in `color_generated.rs`.
-// `// TODO(port): Phase B must verify the generated From impls don't conflict
-//  with these (Rust forbids overlapping From impls).`
 // ──────────────────────────────────────────────────────────────────────────
 
 impl From<RGBA> for SRGB {
@@ -3715,11 +3674,10 @@ pub enum ConvertTo {
     PredefinedColor,
 }
 
-// TODO(port): `ColorIntoMixin` resolved conversions at comptime via @hasDecl
+// PORT NOTE: `ColorIntoMixin` resolved conversions at comptime via @hasDecl
 // across handwritten + generated tables. In Rust this is the union of the
-// `impl From<Src> for Dst` blocks above plus `color_generated.rs`. Phase B
-// must ensure every `T: From<U>` pair the macro requires actually exists
-// (the generated file fills the transitive gaps).
+// `impl From<Src> for Dst` blocks above plus `color_generated.rs`; the
+// generated file fills the transitive gaps the macro requires.
 
 crate::css_eql_partialeq!(CssColor);
 

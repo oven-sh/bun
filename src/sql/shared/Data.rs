@@ -5,21 +5,17 @@ use bun_ptr::RawSlice;
 pub type InlineStorage = BoundedArray<u8, 15>;
 
 /// Represents data that can be either owned or temporary
+#[derive(Default)]
 pub enum Data {
     Owned(Vec<u8>),
     // TODO(port): lifetime — `Temporary` borrows external bytes (see `substring`, which
     // returns a `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
     // pointer; safe `.slice()` projection under the borrowed-backing-outlives-holder
-    // invariant). Revisit whether a `<'a>` on `Data` is acceptable in Phase B.
+    // invariant). TODO(refactor): revisit whether a `<'a>` lifetime on `Data` is acceptable.
     Temporary(RawSlice<u8>),
     InlineStorage(InlineStorage),
+    #[default]
     Empty,
-}
-
-impl Default for Data {
-    fn default() -> Self {
-        Data::Empty
-    }
 }
 
 impl Data {

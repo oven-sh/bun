@@ -8,7 +8,7 @@
 //!
 //! This module therefore re-exports `Rc`/`Arc`/`Weak` under the Zig names so that
 //! mechanical `bun_ptr::shared::*` references resolve, and documents the 1:1 method
-//! mapping for Phase-B reviewers diffing against `src/ptr/shared.zig`.
+//! mapping for reviewers diffing against `src/ptr/shared.zig`.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -34,7 +34,6 @@ use std::sync::Arc;
 // TODO(port): this struct is kept only as documentation of the Zig surface; no
 // Rust code should construct it. Remove once all `WithOptions` call sites are
 // migrated to plain `Rc<T>`/`Arc<T>`.
-#[allow(dead_code)]
 pub struct Options {
     // If non-null, the shared pointer will always use the provided allocator. This saves a small
     // amount of memory, but it means the shared pointer will be a different type from shared
@@ -101,7 +100,7 @@ impl Default for Options {
 /// | `Self.adoptRawUnsafe(p)`    | `unsafe { Rc::from_raw(p) }`                  |
 /// | `Self.cloneFromRawUnsafe(p)`| `unsafe { Rc::increment_strong_count(p); Rc::from_raw(p) }` |
 ///
-// PERF(port): Rc weak-count header — profile in Phase B (PORTING.md §Pointers).
+// PERF(port): Rc weak-count header — profile if hot (PORTING.md §Pointers).
 pub type Shared<T> = Rc<T>;
 
 /// A thread-safe shared pointer, allocated using the default allocator.
@@ -120,9 +119,9 @@ pub type AtomicShared<T> = Arc<T>;
 //
 // TODO(port): `Rc::new_in` requires nightly `feature(allocator_api)`. The four
 // tree-wide call sites all pass `bun.DefaultAllocator`, which is the global
-// mimalloc — so in Phase B, rewrite those call sites to plain `Rc::new` and
-// delete this alias. If a non-default allocator is ever needed, gate on the
-// feature or hand-roll an `RcIn<T, A>` then.
+// mimalloc — rewrite those call sites to plain `Rc::new` and delete this
+// alias. If a non-default allocator is ever needed, gate on the feature or
+// hand-roll an `RcIn<T, A>` then.
 pub type SharedIn<T /*, A */> = Rc<T>;
 
 /// A thread-safe shared pointer allocated using a specific type of allocator.
@@ -135,8 +134,8 @@ pub type AtomicSharedIn<T /*, A */> = Arc<T>;
 // TODO(port): Rust cannot accept a struct const-generic on stable
 // (`feature(adt_const_params)`). Every `WithOptions` instantiation in-tree is
 // covered by one of `Rc<T>` / `Arc<T>` / `Option<Rc<T>>` / `Option<Arc<T>>` /
-// `ManuallyDrop<T>` payload. Phase B: rewrite each call site to the concrete
-// std type and delete this generic shim. The compile-time assertion
+// `ManuallyDrop<T>` payload. TODO(refactor): rewrite each call site to the
+// concrete std type and delete this generic shim. The compile-time assertion
 // `allow_weak ⇒ deinit` from the Zig is moot because std `Rc`/`Arc` always
 // support weak and always run `Drop`.
 pub type WithOptions<T> = Rc<T>;
@@ -187,8 +186,8 @@ pub type AtomicWeak<T> = std::sync::Weak<T>;
 // The `fromValuePtr` (`@fieldParentPtr("value", ptr)`) recovery is provided by
 // `Rc::from_raw` / `Arc::from_raw`, which subtract the header offset internally.
 //
-// TODO(port): if Phase-B profiling shows the std weak-count word is measurable
-// in a hot array, revisit with a `#[repr(C)]` hand-rolled inner — but per
+// TODO(port): if profiling shows the std weak-count word is measurable in a
+// hot array, revisit with a `#[repr(C)]` hand-rolled inner — but per
 // PORTING.md this is explicitly deprioritized.
 
 // `RawCount` was `u32` in Zig; std uses `usize`. The overflow assertion

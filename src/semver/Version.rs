@@ -242,11 +242,10 @@ impl<T: VersionInt> VersionType<T> {
     ///    from package.json)
     ///
     /// The goal of this function is to avoid a complete parse of semver that's unused
-    #[allow(unused_assignments)]
     pub fn which_version_is_pinned(input: &[u8]) -> PinnedVersion {
         let version = strings::trim(input, &strings::WHITESPACE_CHARS);
 
-        let mut i: usize = 0;
+        let mut i: usize;
 
         let pinned: PinnedVersion = 'pinned: {
             for j in 0..version.len() {
@@ -471,13 +470,12 @@ impl<T: VersionInt> VersionType<T> {
         self.tag.order_without_build(rhs.tag, lhs_buf, rhs_buf)
     }
 
-    #[allow(unused_assignments)]
     pub fn parse(sliced_string: SlicedString) -> ParseResult<T> {
         let input = sliced_string.slice;
         let mut result = ParseResult::<T>::default();
 
         let mut part_i: u8 = 0;
-        let mut part_start_i: usize = 0;
+        let mut part_start_i: usize;
         let mut last_char_i: usize = 0;
 
         if input.is_empty() {
@@ -526,16 +524,14 @@ impl<T: VersionInt> VersionType<T> {
                 }
                 b'|' | b'^' | b'#' | b'&' | b'%' | b'!' => {
                     is_done = true;
-                    if i > 0 {
-                        i -= 1;
-                    }
+                    i = i.saturating_sub(1);
                     break;
                 }
                 b'0'..=b'9' => {
                     part_start_i = i;
                     i += 1;
 
-                    while i < input.len() && matches!(input[i], b'0'..=b'9') {
+                    while i < input.len() && input[i].is_ascii_digit() {
                         i += 1;
                     }
 
@@ -593,7 +589,6 @@ impl<T: VersionInt> VersionType<T> {
                     break;
                 }
                 b'x' | b'*' | b'X' => {
-                    part_start_i = i;
                     i += 1;
 
                     while i < input.len() && matches!(input[i], b'x' | b'*' | b'X') {
@@ -627,10 +622,7 @@ impl<T: VersionInt> VersionType<T> {
                 c => {
                     // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
                     // npm just expects that to work...even though it has no "-" qualifier.
-                    if result.wildcard == Wildcard::None
-                        && part_i >= 2
-                        && matches!(c, b'a'..=b'z' | b'A'..=b'Z')
-                    {
+                    if result.wildcard == Wildcard::None && part_i >= 2 && c.is_ascii_alphabetic() {
                         part_start_i = i;
                         let tag_result =
                             Tag::parse_with_pre_count(sliced_string.sub(&input[part_start_i..]), 1);
@@ -994,10 +986,6 @@ pub struct Tag {
     pub build: ExternalString,
 }
 
-// TODO(port): unused module-level static in Zig (`var multi_tag_warn = false;`).
-// Kept as a note; remove if confirmed dead in Phase B.
-#[allow(dead_code)]
-static MULTI_TAG_WARN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 // TODO: support multiple tags
 
 impl Tag {

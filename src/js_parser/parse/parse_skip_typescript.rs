@@ -1,4 +1,3 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
 use crate::lexer::T;
 use crate::p::P;
@@ -8,7 +7,6 @@ use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
-use bun_ast::{self as js_ast, Op};
 use bun_core::{self, Error, err};
 
 // Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
@@ -1420,9 +1418,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match func(self) {
             Ok(_) => {}
             Err(e) => {
-                if e == err!("Backtrack") {
-                    backtrack = true;
-                } else if self.lexer.did_panic {
+                if e == err!("Backtrack") || self.lexer.did_panic {
                     backtrack = true;
                 }
             }
@@ -1452,9 +1448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result = match func(self) {
             Ok(r) => r,
             Err(e) => {
-                if e == err!("Backtrack") {
-                    backtrack = true;
-                } else if self.lexer.did_panic {
+                if e == err!("Backtrack") || self.lexer.did_panic {
                     backtrack = true;
                 }
                 SkipTypeParameterResult::DidNotSkipAnything

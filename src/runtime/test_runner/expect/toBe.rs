@@ -1,6 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::Expect;
@@ -40,7 +38,7 @@ impl Expect {
 
         // Zig: `switch (this.custom_label.isEmpty()) { inline else => |has_custom_label| { ... } }`
         // The comptime bool is only used to select a literal format string; demote to runtime.
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+        // PERF(port): was comptime bool dispatch — profile if hot.
         let has_custom_label = this.custom_label.is_empty();
 
         if not {

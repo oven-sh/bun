@@ -1,19 +1,11 @@
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![allow(unexpected_cfgs)]
 //! Bun's cross-platform filesystem watcher.
 //!
-//! B-2 un-gate: the Phase-A draft modules now compile against the real T0/T1
-//! crate surface where it exists. Function bodies that still depend on
-//! lower-tier surface that hasn't landed yet (e.g. `bun_sys::linux` raw
-//! inotify syscalls, `bun_collections::MultiArrayElement` derive, `bun_fs`)
-//! are individually re-gated with `// TODO(b2-blocked): bun_X::Y` markers.
+//! Function bodies that depend on crate surface that hasn't landed yet
+//! (e.g. `bun_sys::linux` raw inotify syscalls, `bun_collections::MultiArrayElement`
+//! derive, `bun_fs`) are individually gated with `// TODO(port): bun_X::Y` markers.
 
 // ─── platform impls ───────────────────────────────────────────────────────
 //
@@ -21,7 +13,7 @@
 // are now un-gated against their respective `bun_sys` platform surfaces. The
 // Windows backend's `init()` body alone remains re-gated on lower-tier
 // symbols that have not landed (`bun_windows_sys::ntdll::NtCreateFile`,
-// `bun_windows_sys::FILE_OPEN`); see the `TODO(b2-blocked)` marker in
+// `bun_windows_sys::FILE_OPEN`); see the `TODO(port)` marker in
 // `WindowsWatcher.rs`. A host build never compiles the non-native backends.
 
 #![warn(unreachable_pub)]
@@ -58,7 +50,7 @@ pub use watcher_impl::{
 // These belong to higher-tier crates that don't yet expose a usable surface
 // to depend on. Watcher only stores/passes them through; never dereferenced.
 
-// TODO(b2-blocked): bun_ast::Loader
+// TODO(port): bun_ast::Loader
 /// Opaque forward-decl of `bun_ast::Loader`. Watcher only stores
 /// the value in `WatchItem.loader` and passes it through.
 #[derive(Clone, Copy, Default)]

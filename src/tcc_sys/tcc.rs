@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::ZStr;
@@ -33,7 +32,7 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
         #[cfg(not(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64"))))]
-        // TODO(port): move to tcc_sys (already in *_sys crate — verify crate layout in Phase B)
+        // TODO(port): move to tcc_sys (already in *_sys crate — verify crate layout)
         unsafe extern "C" {
             $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
         }
@@ -113,7 +112,7 @@ pub enum Error {
     RelocationError,
     // TODO(port): `OutputError` is returned by `output_file` in the Zig source but is NOT a
     // member of the Zig `Error` set — latent bug only unobserved because Zig analysis is lazy
-    // and `outputFile` has no callers. Kept here so `output_file` type-checks; revisit in Phase B.
+    // and `outputFile` has no callers. Kept here so `output_file` type-checks.
     #[error("OutputError")]
     OutputError,
 }
@@ -121,9 +120,10 @@ pub enum Error {
 bun_core::named_error_set!(Error);
 
 #[repr(i32)] // Zig: enum(c_int) — c_int == i32 on all Bun targets
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OutputFormat {
     /// Output will be run in memory
+    #[default]
     Memory = TCC_OUTPUT_MEMORY as _,
     /// Executable file
     Exe = TCC_OUTPUT_EXE as _,
@@ -135,14 +135,8 @@ pub enum OutputFormat {
     Preprocess = TCC_OUTPUT_PREPROCESS as _,
 }
 
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Memory
-    }
-}
-
-/// Nominal type for some registered symbol. Used to force pointer-cast usage without
-/// allowing for interop with other APIs taking `*mut c_void` pointers.
+// Nominal type for some registered symbol. Used to force pointer-cast usage without
+// allowing for interop with other APIs taking `*mut c_void` pointers.
 bun_opaque::opaque_ffi! { pub struct Symbol; }
 
 /// Zig: `Symbol.Callback = fn (?*anyopaque, [*:0]const u8, ?*const Symbol) void`
@@ -163,7 +157,7 @@ pub struct ConfigErr<ErrCtx> {
 /// Zig: `fn Config(ErrCtx: type) type { return struct { ... } }`
 pub struct Config<ErrCtx> {
     // TODO(port): lifetime — call sites pass both literals (default_tcc_options) and runtime
-    // strings (CompileC.flags / BUN_TCC_OPTIONS); raw ptr in Phase A, revisit borrow in Phase B.
+    // strings (CompileC.flags / BUN_TCC_OPTIONS); kept as a raw ptr, revisit as a borrow.
     pub options: Option<NonNull<ZStr>>,
     pub output_type: OutputFormat,
     pub err: ConfigErr<ErrCtx>,
@@ -193,7 +187,7 @@ impl State {
 
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
-        config: Config<ErrCtx>,
+        config: &Config<ErrCtx>,
     ) -> Result<NonNull<State>, bun_core::Error> {
         // TODO(port): narrow error set to (AllocError | Error)
         let state_ptr = State::new()?;
@@ -244,6 +238,7 @@ impl State {
     /// `s` must have been returned by [`State::new`]/[`State::init`] and not yet freed.
     pub unsafe fn destroy(s: *mut State) {
         // PORT NOTE: opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
+        // SAFETY: caller's contract guarantees `s` is a live `tcc_new` handle not yet deleted.
         unsafe { tcc_delete(s) }
     }
 
@@ -337,7 +332,7 @@ impl State {
         for &(name, value) in symbols {
             // Zig field names are `[:0]const u8` (comptime NUL-terminated); copy into the stack
             // buffer to recover that invariant for the C ABI.
-            // PERF(port): was comptime monomorphization (zero-copy name) — profile in Phase B.
+            // PERF(port): was comptime monomorphization (zero-copy name) — profile if hot.
             let name_len = name.len();
             debug_assert!(name_len < buf.len());
             buf[..name_len].copy_from_slice(name.as_bytes());
@@ -428,7 +423,10 @@ impl State {
         Ok(())
     }
 
-    /// Add a symbol to the compiled program
+    /// Add a symbol to the compiled program. `val` is stored as the symbol's
+    /// address and never dereferenced here; it must remain valid for any JIT'd
+    /// code that calls it (same precondition as `add_symbols`).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn add_symbol(&mut self, name: &ZStr, val: *const c_void) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; name is NUL-terminated; val is an opaque address.
         if unsafe { tcc_add_symbol(self, name.as_ptr(), val) } != 0 {
@@ -455,7 +453,7 @@ impl State {
     pub fn add_symbols(&mut self, symbols: &[(&str, *const c_void)]) -> Result<(), Error> {
         // Zig field names are `[:0]const u8` (comptime NUL-terminated); copy into a stack buffer
         // to recover that invariant for the C ABI.
-        // PERF(port): was comptime monomorphization (zero-copy name) — profile in Phase B.
+        // PERF(port): was comptime monomorphization (zero-copy name) — profile if hot.
         let mut buf = [0u8; 256];
         for &(name, val) in symbols {
             let len = name.len();
@@ -513,7 +511,10 @@ impl State {
         NonNull::new(unsafe { tcc_get_symbol(self, name.as_ptr()) }.cast::<Symbol>())
     }
 
-    /// Return symbol value or NULL if not found
+    /// Return symbol value or NULL if not found.
+    /// `ctx` is forwarded opaquely to `symbol_cb`; it must be valid for every
+    /// callback invocation (or null if `symbol_cb` ignores it).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn list_symbols(&mut self, ctx: *mut c_void, symbol_cb: Option<SymbolCallback>) {
         // SAFETY: SymbolCallback is ABI-identical to the extern's callback type
         // (`*const Symbol` vs `*const c_void` in the last param); mirrors Zig's implicit ptrcast.

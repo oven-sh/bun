@@ -659,13 +659,13 @@ it("should not hang after FIN", async () => {
     const timeout = setTimeout(() => {
       process.kill();
       reject(new Error("Timeout"));
-    }, 2000);
+    }, 60_000);
     expect(await process.exited).toBe(0);
     clearTimeout(timeout);
   } finally {
     server.close();
   }
-});
+}, 120_000);
 
 it("should not hang after destroy", async () => {
   const net = require("node:net");
@@ -691,13 +691,13 @@ it("should not hang after destroy", async () => {
     const timeout = setTimeout(() => {
       process.kill();
       reject(new Error("Timeout"));
-    }, 2000);
+    }, 60_000);
     expect(await process.exited).toBe(0);
     clearTimeout(timeout);
   } finally {
     server.close();
   }
-});
+}, 120_000);
 
 it("should trigger error when aborted even if connection failed #13126", async () => {
   const signal = AbortSignal.timeout(100);

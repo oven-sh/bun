@@ -14,14 +14,8 @@
 //!   Dynamic(P)                Box<T> — std.mem.Allocator field deleted
 //!   Unmanaged                 Box<T> — managed/unmanaged split disappears
 //!
-//! Phase-A callers should use the std types directly (PORTING.md §Pointers). This file exists so
+//! Callers should use the std types directly (PORTING.md §Pointers). This file exists so
 //! `bun_ptr::owned::*` resolves and so the Zig API surface has a 1:1 diffable mapping comment.
-
-use core::mem::ManuallyDrop;
-
-use bun_alloc::AllocError;
-
-use super::meta::{AddConst, PointerInfo}; // TODO(port): meta.zig helpers are @typeInfo-based; likely unused in Rust
 
 /// An owned pointer or slice that was allocated using the default allocator.
 ///
@@ -41,7 +35,7 @@ use super::meta::{AddConst, PointerInfo}; // TODO(port): meta.zig helpers are @t
 pub type Owned<T> = Box<T>;
 // TODO(port): Zig `Owned` accepts a *pointer type* (`*T`, `[]T`, `?*T`, `?[]T`) and branches on
 // kind via @typeInfo. Rust generics cannot inspect "is T a slice / is T optional", so a single
-// alias cannot cover all four. Phase B: audit call sites; they should already be `Box<T>` /
+// alias cannot cover all four. Audit call sites; they should already be `Box<T>` /
 // `Box<[T]>` / `Option<Box<_>>` per PORTING.md §Pointers and LIFETIMES.tsv.
 
 /// An owned pointer or slice allocated using any `std.mem.Allocator`.
@@ -55,7 +49,7 @@ pub type Owned<T> = Box<T>;
 pub type Dynamic<T> = Box<T>;
 // TODO(port): if any caller genuinely needs a runtime-chosen allocator (e.g. arena vs heap at
 // runtime), that caller is in an AST crate and should use `bumpalo::boxed::Box<'bump, T>` or a
-// bespoke enum — not this type. Audit in Phase B.
+// bespoke enum — not this type. Audit call sites if one appears.
 
 /// An owned pointer or slice, allocated using an instance of `Allocator`.
 ///
@@ -75,7 +69,7 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 // The block below mirrors the body of `fn OwnedIn(...) type { return struct { ... } }` so that
-// Phase-B reviewers can diff method-by-method against owned.zig. Each Zig method is mapped to
+// reviewers can diff method-by-method against owned.zig. Each Zig method is mapped to
 // its `Box<T>` / `Box<[T]>` / `Option<Box<_>>` equivalent.
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -268,7 +262,7 @@ pub type Unmanaged<T /*, Allocator */> = Box<T>;
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 // Convenience free functions for the slice / optional shapes that the `Owned<T> = Box<T>` alias
-// cannot express. These give Phase-B a landing spot if a generic helper is wanted; otherwise
+// cannot express. These provide a landing spot if a generic helper is wanted; otherwise
 // callers use the std forms inline.
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -310,8 +304,6 @@ pub fn into_raw<T>(boxed: Box<T>) -> *mut T {
     bun_core::heap::into_raw(boxed)
 }
 
-// Suppress unused-import warnings until Phase B prunes.
-#[allow(unused_imports)]
-use {AddConst as _, AllocError as _, ManuallyDrop as _, PointerInfo as _};
+// Suppress unused-import warnings until the unused helpers are pruned.
 
 // ported from: src/ptr/owned.zig

@@ -3,26 +3,29 @@ use core::ffi::{CStr, c_char};
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_collections::VecExt;
-use bun_core::{self as strings_mod, String as BunString, ZStr, ZigString, strings};
-use bun_core::{Output, StackCheck, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
+#[cfg(not(windows))]
+use bun_core::StackCheck;
+use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
+use bun_core::{String as BunString, ZStr, strings};
 use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
 use bun_jsc::ipc as IPC;
 use bun_jsc::{
-    self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsError, JsResult, SystemError,
+    self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
+    JsResult, SystemError,
 };
-use bun_jsc::{JsCell, JsClass as _, SysErrorJsc as _};
-use bun_paths::PathBuffer;
+use bun_jsc::{JsCell, SysErrorJsc as _};
+#[cfg(unix)]
+use bun_sys::Fd;
 use bun_sys::UV_E;
-use bun_sys::{self as sys, Fd, FdExt as _, SignalCode};
+use bun_sys::{self as sys, FdExt as _, SignalCode};
 
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
-use crate::api::bun_process::{
-    self as spawn, CStrPtr, ExtraPipe, Process, Rusage, SpawnOptions, SpawnProcessResult,
-    SpawnResultExt as _,
-};
+#[cfg(unix)]
+use crate::api::bun_process::ExtraPipe;
+#[cfg(not(windows))]
+use crate::api::bun_process::SpawnResultExt as _;
+use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{
@@ -34,48 +37,13 @@ use crate::api::bun_terminal_body::{
 use crate::webcore as WebCore;
 
 // ── local extension shims (real-body wrappers, not stubs) ───────────────────
-// `JSValue::withAsyncContextIfNeeded` (Zig) — wraps a callback so its
-// AsyncLocalStorage context is restored at fire-time. The C-ABI symbol lives in
-// `src/jsc/bindings/AsyncContextFrame.cpp`; matches the per-callsite FFI used
-// by Timer.rs / udp_socket.rs / node_crypto_binding.rs.
-unsafe extern "C" {
-    safe fn AsyncContextFrame__withAsyncContextIfNeeded(
-        global: &JSGlobalObject,
-        callback: JSValue,
-    ) -> JSValue;
-}
 trait JSValueSpawnExt {
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue;
     fn is_finite(self) -> bool;
 }
 impl JSValueSpawnExt for JSValue {
     #[inline]
-    fn with_async_context_if_needed(self, global: &JSGlobalObject) -> JSValue {
-        AsyncContextFrame__withAsyncContextIfNeeded(global, self)
-    }
-    #[inline]
     fn is_finite(self) -> bool {
         self.is_number() && self.as_number().is_finite()
-    }
-}
-
-/// `bun.String.indexOfAsciiChar` — encoding-aware ASCII-char search over the
-/// string's storage code units (Latin-1 bytes or UTF-16 u16s). Matches Zig
-/// `bun.String.indexOfAsciiChar` exactly; `bun_core::String` does not expose it
-/// inherently yet.
-trait BunStringSpawnExt {
-    fn index_of_ascii_char(&self, chr: u8) -> Option<usize>;
-}
-impl BunStringSpawnExt for BunString {
-    #[inline]
-    fn index_of_ascii_char(&self, chr: u8) -> Option<usize> {
-        debug_assert!(chr < 128);
-        if self.is_utf16() {
-            self.utf16().iter().position(|&c| c == u16::from(chr))
-        } else {
-            // Latin-1 / ASCII: 1 byte == 1 code unit.
-            strings::index_of_char(self.latin1(), chr).map(|i| i as usize)
-        }
     }
 }
 
@@ -87,7 +55,7 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
 
 /// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
 /// `bun_jsc::SystemError` and materialize a JS Error instance.
-fn sys_system_error_to_js(err: bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
+fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
     let jsc_err = SystemError {
         errno: err.errno,
         code: err.code,
@@ -134,7 +102,7 @@ impl IPC::SendQueueOwner for SubprocessT<'static> {
         SubprocessT::handle_ipc_close(self)
     }
     fn handle_ipc_message(&mut self, msg: IPC::DecodedIPCMessage, handle: JSValue) {
-        SubprocessT::handle_ipc_message(self, msg, handle)
+        SubprocessT::handle_ipc_message(self, &msg, handle)
     }
     fn this_jsvalue(&self) -> JSValue {
         self.this_value.get().try_get().unwrap_or(JSValue::ZERO)
@@ -207,8 +175,6 @@ fn get_argv0(
     let mut path_buf: Box<bun_core::PathBuffer> = Box::default();
     // drops at scope exit (was `defer bun.default_allocator.destroy(path_buf)`).
 
-    let actual_argv0: ZBox;
-
     let argv0_to_use: &[u8] = arg0.slice();
 
     // This mimicks libuv's behavior, which mimicks execvpe
@@ -227,14 +193,14 @@ fn get_argv0(
         b""
     };
 
-    if path_to_use.is_empty() {
-        actual_argv0 = ZBox::from_bytes(argv0_to_use);
+    let actual_argv0: ZBox = if path_to_use.is_empty() {
+        ZBox::from_bytes(argv0_to_use)
     } else {
         let Some(resolved) = bun_which::which(&mut path_buf, path_to_use, cwd, argv0_to_use) else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
-        actual_argv0 = ZBox::from_bytes(resolved.as_bytes());
-    }
+        ZBox::from_bytes(resolved.as_bytes())
+    };
 
     Ok(Argv0Result {
         argv0: actual_argv0,
@@ -300,8 +266,7 @@ fn get_argv(
 
     let mut arg_index: usize = 1;
     while let Some(value) = cmds_array.next()? {
-        let arg = value.to_bun_string(global_this)?;
-        // `arg` derefs on drop (was `defer arg.deref()`).
+        let arg = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
 
         // Check for null bytes in argument (security: prevent null byte injection)
         if arg.index_of_ascii_char(0).is_some() {
@@ -365,7 +330,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // PERF(port): was arena bulk-free — argv/env strings allocated per-iteration; profile in Phase B.
+    // PERF(port): was arena bulk-free — argv/env strings allocated per-iteration; profile if hot.
     // Backing store for every NUL-terminated string whose `*const c_char` is
     // pushed into `argv` / `argv0` / `env_array` below. Zig used a bump arena
     // (`arena.deinit()` at fn exit); this `Vec` is the Rust equivalent and
@@ -393,7 +358,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // (process-lifetime; centralised non-null deref in `VirtualMachine`).
     let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
     let mut argv: Vec<CStrPtr> = Vec::new();
-    let mut cmd_value = JSValue::ZERO;
+    let cmd_value: JSValue;
     let mut detached = false;
     let mut args = args_;
     // TODO(port): Zig used `if (is_sync) void else ?IPC.Mode`; Rust const-generic bool
@@ -407,7 +372,9 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
 
+    #[cfg(windows)]
     let mut windows_hide: bool = false;
+    #[cfg(windows)]
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
     let mut terminal_info: Option<TerminalCreateResult> = None;
@@ -444,7 +411,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
     // `spawn_process` returns (Zig used the bump arena).
-    let mut cwd_owned: Option<ZBox> = None;
+    let cwd_owned: ZBox;
     {
         if args.is_empty_or_undefined_or_null() {
             return Err(global_this.throw_invalid_arguments(format_args!("cmd must be an array")));
@@ -476,10 +443,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(cwd_) = args.get_truthy(global_this, "cwd")? {
                 let cwd_str = cwd_.get_zig_string(global_this)?;
                 if cwd_str.len > 0 {
-                    cwd_owned = Some(cwd_str.to_owned_slice_z());
+                    cwd_owned = cwd_str.to_owned_slice_z();
                     // `cwd_owned` is never mutated again, so this borrow is valid
                     // for every read of `cwd` below.
-                    cwd = cwd_owned.as_ref().unwrap().as_bytes();
+                    cwd = cwd_owned.as_bytes();
                 }
             }
         }
@@ -699,11 +666,6 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             break 'brk;
                         }
 
-                        // TODO(port): `JSGlobalObject::validate_integer_range` lives in
-                        // a sibling impl block currently behind a different `mod` re-export;
-                        // route through the `bun_sql_jsc` extension trait until the
-                        // inherent method is re-exported from `bun_jsc::JSGlobalObject`.
-                        use bun_sql_jsc::jsc::JSGlobalObjectSqlExt as _;
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
@@ -916,7 +878,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple so the guard
     // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
     // TODO(port): errdefer — if borrowck rejects the double-&mut reborrow at later use sites,
-    // Phase B may need to move stdio into the guard by value and reborrow via DerefMut.
+    // may need to move stdio into the guard by value and reborrow via DerefMut.
     let (should_close_memfd, stdio) = &mut *memfd_guard;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
@@ -953,7 +915,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                     }
                     break 'brk fd;
                 } else {
-                    break 'brk i32::try_from(ipc_channel + 3).expect("int cast");
+                    break 'brk ipc_channel + 3;
                 }
             };
 
@@ -974,12 +936,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             // PERF(port): was assume_capacity
             env_array.push(match ipc_mode {
                 // PORT NOTE: Zig `inline else => |t| "..." ++ @tagName(t)` — written out per variant.
-                IPC::Mode::Json => b"NODE_CHANNEL_SERIALIZATION_MODE=json\0"
-                    .as_ptr()
-                    .cast::<c_char>(),
-                IPC::Mode::Advanced => b"NODE_CHANNEL_SERIALIZATION_MODE=advanced\0"
-                    .as_ptr()
-                    .cast::<c_char>(),
+                IPC::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json".as_ptr(),
+                IPC::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced".as_ptr(),
             });
         }
     }
@@ -1115,8 +1073,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         ..Default::default()
     };
 
-    let mut spawned = match spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
-    {
+    // SAFETY: `argv`/`env_array` are local null-terminated C-string arrays
+    // with argv[0] non-null; valid for this call.
+    let mut spawned = match unsafe {
+        spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
+    } {
         Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
@@ -1147,7 +1108,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 -UV_E::NFILE
             };
-            return Err(global_this.throw_value(sys_system_error_to_js(systemerror, global_this)));
+            return Err(global_this.throw_value(sys_system_error_to_js(&systemerror, global_this)));
         }
         Err(err) => {
             // See EMFILE arm above — Zig spec js_bun_spawn_bindings.zig:637.
@@ -1178,7 +1139,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 systemerror.errno = -UV_E::NOENT;
                             }
                             return Err(global_this
-                                .throw_value(sys_system_error_to_js(systemerror, global_this)));
+                                .throw_value(sys_system_error_to_js(&systemerror, global_this)));
                         }
                     }
                     _ => {}
@@ -1241,8 +1202,8 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         stdin: JsCell::new(Writable::Ignore),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
-        // 1. JavaScript.
-        // 2. Process.
+        // 1=JS (released in Subprocess::finalize), 2=Process exit handler
+        // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
         stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
         ipc_data: JsCell::new(None),
@@ -1716,8 +1677,12 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     if !IS_SYNC {
         if !subprocess.has_exited() {
-            // SAFETY: jsc_vm_ptr points to the live thread VM.
-            unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+            // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
+            // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+            unsafe {
+                (*jsc_vm_ptr)
+                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+            };
         }
         return Ok(out);
     }
@@ -1759,8 +1724,11 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if !subprocess.has_exited() {
-        // SAFETY: jsc_vm_ptr points to the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }.on_subprocess_spawn(subprocess.process.as_ptr());
+        // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
+        // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+        unsafe {
+            (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+        };
     }
 
     let mut did_timeout = false;
@@ -1849,9 +1817,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 None
             }) {
-                TickState::Completed => {
-                    now = Timespec::now(TimespecMockMode::AllowMockedTime);
-                }
+                TickState::Completed => {}
                 TickState::Timeout => {
                     now = Timespec::now(TimespecMockMode::AllowMockedTime);
                     let did_user_timeout = has_user_timespec
@@ -1888,7 +1854,7 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
                             // the event loop again, but it should wake up
                             // ~instantly so we can drain the events.
                             crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
-                                taken_active_file,
+                                &taken_active_file,
                                 &absolute_timespec,
                                 // SAFETY: jsc_vm_ptr is the live thread VM.
                                 unsafe { &*jsc_vm_ptr },
@@ -2021,8 +1987,7 @@ pub fn append_envp_from_js(
             continue;
         }
 
-        let value_bunstr = value.to_bun_string(global_this)?;
-        // derefs on drop (was `defer value_bunstr.deref()`).
+        let value_bunstr = bun_core::OwnedString::new(value.to_bun_string(global_this)?);
 
         // Check for null bytes in env key and value (security: prevent null byte injection)
         if key.index_of_ascii_char(0).is_some() {
@@ -2051,7 +2016,7 @@ pub fn append_envp_from_js(
         }
 
         // PORT NOTE: Zig `std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{key, value}, 0)`
-        // PERF(port): was arena bulk-free — profile in Phase B.
+        // PERF(port): was arena bulk-free — profile if it shows up on a hot path.
         let line: ZBox = {
             let mut buf: Vec<u8> = Vec::new();
             write!(&mut buf, "{}={}", key, value_bunstr.to_zig_string())

@@ -7,7 +7,7 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::timer::EventLoopTimerState;
 
 use super::source_map_store::{self, RemoveOrUpgradeMode};
-use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId, RouteBundle};
+use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
 use crate::bake::dev_server_body::HmrTopicBits;
 
 // Local shim for Zig's `res: anytype` — shared with `DevServer::on_web_socket_upgrade`.
@@ -103,6 +103,7 @@ impl HmrSocket {
                 }
                 let generation = u32::from_ne_bytes(generation_bytes);
                 let source_map_id = source_map_store::Key::init((generation as u64) << 32);
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 if dev
                     .source_maps
@@ -135,6 +136,7 @@ impl HmrSocket {
 
                         // on-subscribe hooks
                         if feature_flags::BAKE_DEBUGGING_FEATURES {
+                            // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                             let dev = unsafe { self.dev() };
                             match field {
                                 HmrTopic::IncrementalVisualizer => {
@@ -149,7 +151,7 @@ impl HmrSocket {
                                             dev.memory_visualizer_timer.state
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        // PORT NOTE (b2-cycle): `vm.timer` is `()` on the
+                                        // PORT NOTE (jsc/runtime crate cycle): `vm.timer` is `()` on the
                                         // low-tier `VirtualMachine`; the real `timer::All`
                                         // lives in `RuntimeState` (see jsc_hooks.rs).
                                         let state = crate::jsc_hooks::runtime_state();
@@ -183,6 +185,7 @@ impl HmrSocket {
             }
             x if x == IncomingMessageId::SetUrl as u8 => {
                 let pattern = &msg[1..];
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
                 // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
@@ -215,6 +218,7 @@ impl HmrSocket {
                 self.notify_inspector_client_navigation(pattern, Some(rbi));
             }
             x if x == IncomingMessageId::TestingBatchEvents as u8 => {
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
                 match &dev.testing_batch_events {
                     super::TestingBatchEvents::Disabled => {
@@ -281,6 +285,7 @@ impl HmrSocket {
                 };
 
                 let data = &msg[2..];
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 let dev = unsafe { self.dev() };
 
                 // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
@@ -321,6 +326,7 @@ impl HmrSocket {
                     ));
                     return; // no entry may happen.
                 };
+                // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
                 unsafe { self.dev() }.source_maps.unref(kv.0);
             }
             _ => ws.close(),
@@ -329,6 +335,7 @@ impl HmrSocket {
 
     fn on_unsubscribe(&mut self, field: HmrTopicBits) {
         if feature_flags::BAKE_DEBUGGING_FEATURES {
+            // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
             let dev = unsafe { self.dev() };
             if field.contains(HmrTopic::IncrementalVisualizer.as_bit()) {
                 dev.emit_incremental_visualizer_events -= 1;
@@ -338,7 +345,7 @@ impl HmrSocket {
                 if dev.emit_incremental_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
-                    // PORT NOTE (b2-cycle): `vm.timer` is `()` on the low-tier
+                    // PORT NOTE (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
                     // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
                     let state = crate::jsc_hooks::runtime_state();
                     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
@@ -351,14 +358,20 @@ impl HmrSocket {
         }
     }
 
-    pub fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
-        // SAFETY: uws guarantees the socket context pointer is valid for the
-        // duration of the close callback; we consume ownership here.
+    /// # Safety
+    /// `s` must be a valid, uniquely-owned `HmrSocket` heap pointer (allocated
+    /// via `HmrSocket::new`'s caller). uws guarantees the socket context
+    /// pointer is valid for the duration of the close callback; this function
+    /// consumes ownership and frees it.
+    pub(crate) fn on_close(s: *mut HmrSocket, _ws: AnyWebSocket, _exit_code: i32, _message: &[u8]) {
+        // SAFETY: caller contract above.
         let this = unsafe { &mut *s };
 
         let subs = this.subscriptions;
         this.on_unsubscribe(subs);
 
+        // SAFETY: JS-thread only; the `on_unsubscribe` borrow above has been
+        // released, so this is the sole `&mut DevServer` for the remainder.
         let dev = unsafe { this.dev() };
         if this.inspector_connection_id > -1 {
             // Notify inspector about client disconnection
@@ -392,6 +405,7 @@ impl HmrSocket {
         rbi: super::route_bundle::IndexOptional,
     ) {
         if self.inspector_connection_id > -1 {
+            // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
             let dev = unsafe { self.dev() };
             // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
             if let Some(agent) = unsafe { dev.inspector() } {

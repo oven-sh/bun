@@ -97,7 +97,7 @@ impl<C: WriterContext> NewWriterWrap<C> {
     /// logic from `PreparedStatement.zig::writeNullBitmap`, keyed on
     /// `Data::Empty` instead of `Value::Null`.
     pub fn write_null_bitmap(self, params: &[crate::shared::Data]) -> Result<(), AnyMySQLError> {
-        let bitmap_bytes = (params.len() + 7) / 8;
+        let bitmap_bytes = params.len().div_ceil(8);
         // PERF(port): Zig sized this from `(u16::MAX / 8) + 1` on the stack;
         // here a small Vec keeps stack usage bounded for the never-taken path.
         let mut null_bitmap = vec![0u8; bitmap_bytes];
@@ -138,7 +138,7 @@ impl<C: WriterContext> NewWriterWrap<C> {
 /// `is_wrapped`, otherwise wraps it via `NewWriterWrap`. Rust cannot branch on a
 /// type-level decl, so callers that already hold a `NewWriterWrap<C>` should use
 /// it directly; this alias covers the wrapping case.
-// TODO(port): @hasDecl(Context, "is_wrapped") short-circuit — Phase B: ensure no
+// TODO(refactor): @hasDecl(Context, "is_wrapped") short-circuit — ensure no
 // caller double-wraps; if needed, model via a `MySQLWriter` trait with a blanket
 // impl for `NewWriterWrap<C>`.
 pub type NewWriter<C> = NewWriterWrap<C>;

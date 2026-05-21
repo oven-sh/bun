@@ -42,6 +42,7 @@ impl OwnerPacked {
 
 /// The metaphorical owner of an incremental file error. The packed variant is
 /// given to the HMR runtime as an opaque handle.
+#[derive(Copy, Clone)]
 pub enum Owner {
     None,
     Route(route_bundle::Index),
@@ -50,7 +51,7 @@ pub enum Owner {
 }
 
 impl Owner {
-    pub fn encode(&self) -> Packed {
+    pub fn encode(self) -> Packed {
         match self {
             Owner::None => Packed::new(PackedKind::None, 0),
             Owner::Client(data) => Packed::new(PackedKind::Client, data.get()),
@@ -123,7 +124,7 @@ const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 /// PERF(port): Zig's `SerializedFailure` is a slice header (`data: []u8`) and
 /// gets shallow-copied between `bundling_failures` and the `failures_added`/
 /// `failures_removed` lists. The Rust port owns `data` as `Box<[u8]>`, so
-/// `Clone` deep-copies — profile in Phase B if this shows up.
+/// `Clone` deep-copies — profile if this shows up on a hot path.
 #[derive(Clone, Default)]
 pub struct SerializedFailure {
     /// Wire-format bytes (length-prefixed; first 4 bytes encode `Owner.Packed`).
@@ -160,7 +161,7 @@ impl SerializedFailure {
         debug_assert!(!messages.is_empty());
 
         // Avoid small re-allocations without requesting so much from the heap
-        // PERF(port): was stack-fallback (std.heap.stackFallback(65536, dev.arena())) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback(65536, dev.arena())) — profile if it shows up on a hot path.
         let mut payload: Vec<u8> = Vec::with_capacity(65536);
         let w = &mut payload;
 
@@ -194,10 +195,10 @@ impl ArrayHashContextViaOwner {
 
 pub struct ArrayHashAdapter;
 impl ArrayHashAdapter {
-    pub fn hash(&self, own: &Owner) -> u32 {
+    pub fn hash(&self, own: Owner) -> u32 {
         bun_wyhash::hash_int(own.encode().bits())
     }
-    pub fn eql(&self, a: &Owner, b: &SerializedFailure, _: usize) -> bool {
+    pub fn eql(&self, a: Owner, b: &SerializedFailure, _: usize) -> bool {
         a.encode().bits() == b.get_owner().encode().bits()
     }
 }
@@ -260,7 +261,7 @@ fn write_log_data(data: &bun_ast::Data, w: &mut Writer) {
         }
         debug_assert!(loc.column >= 0); // zero based and not negative
 
-        _ = w.write_int_le::<i32>(i32::try_from(loc.line).expect("int cast"));
+        _ = w.write_int_le::<i32>(loc.line);
         _ = w.write_int_le::<u32>(u32::try_from(loc.column).expect("int cast"));
         _ = w.write_int_le::<u32>(u32::try_from(loc.length).expect("int cast"));
 

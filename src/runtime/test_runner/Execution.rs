@@ -36,7 +36,6 @@
 //! ```
 
 use core::ptr::NonNull;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::{JSGlobalObject, JsResult};
@@ -47,7 +46,7 @@ use bun_core::scoped_log;
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, Phase, RefDataValue, ScopeMode, StepResult,
+    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
 
@@ -346,9 +345,9 @@ impl Execution {
     }
 
     pub fn step(
-        buntest_strong: BunTestPtr,
+        buntest_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
-        data: RefDataValue,
+        data: &RefDataValue,
     ) -> JsResult<StepResult> {
         let _g = group_begin!();
         let buntest = buntest_strong.get();
@@ -358,7 +357,7 @@ impl Execution {
 
         match data {
             RefDataValue::Start => {
-                return step_group(&buntest_strong, global_this, &mut now);
+                return step_group(buntest_strong, global_this, &mut now);
             }
             _ => {
                 // determine the active sequence,group
@@ -367,26 +366,26 @@ impl Execution {
                 // if the group is complete, step the group
 
                 let Some((sequence_ptr, group_ptr)) =
-                    this.get_current_and_valid_execution_sequence(&data)
+                    this.get_current_and_valid_execution_sequence(data)
                 else {
                     group_log::log(format_args!(
                         "runOneCompleted: the data is outdated, invalid, or did not know the sequence",
                     ));
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 };
-                let sequence_index = match &data {
+                let sequence_index = match data {
                     RefDataValue::Execution { entry_data: Some(ed), .. } => ed.sequence_index,
                     // get_current_and_valid_execution_sequence returned Some ⇒ data is Execution with entry_data
                     _ => unreachable!(),
                 };
 
-                // PORT NOTE: `bun.Environment.ci_assert` → debug_assertions (no `ci_assert` Cargo feature in bun_runtime).
+                // Zig: gated on `bun.Environment.ci_assert`.
                 // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
                 debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
                 let sequence_result =
-                    step_sequence(&buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
+                    step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
                 match sequence_result {
                     AdvanceSequenceStatus::Done => {}
                     AdvanceSequenceStatus::Execute { timeout } => {
@@ -410,7 +409,7 @@ impl Execution {
                         continue;
                     }
                     let sequence_status =
-                        step_sequence(&buntest_strong, global_this, group_ptr, next_idx, &mut now)?;
+                        step_sequence(buntest_strong, global_this, group_ptr, next_idx, &mut now)?;
                     match sequence_status {
                         AdvanceSequenceStatus::Done => {
                             // SAFETY: see above
@@ -425,7 +424,7 @@ impl Execution {
                 // all sequences have started
                 // SAFETY: see above
                 if unsafe { group_ptr.as_ref() }.remaining_incomplete_entries == 0 {
-                    return step_group(&buntest_strong, global_this, &mut now);
+                    return step_group(buntest_strong, global_this, &mut now);
                 }
                 return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
             }
@@ -540,7 +539,7 @@ impl Execution {
                 sequence.active_entry = nn(entry.next);
             }
         } else {
-            // PORT NOTE: `bun.Environment.ci_assert` → debug_assertions (no `ci_assert` Cargo feature in bun_runtime).
+            // Zig: gated on `bun.Environment.ci_assert`.
             debug_assert!(false, "can't call advanceSequence on a completed sequence");
         }
 
@@ -683,7 +682,7 @@ impl Execution {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
                 // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
-                // both `&mut BunTest` and `&mut ExecutionSequence` (Phase B: reshape callee).
+                // both `&mut BunTest` and `&mut ExecutionSequence` (TODO(refactor): reshape callee).
                 test_command::CommandLineReporter::handle_test_completed(
                     unsafe { &mut *buntest.as_ptr() },
                     sequence,
@@ -907,8 +906,8 @@ fn step_group_one(
         20
     };
     let mut active_count: usize = 0;
-    // SAFETY: group points into buntest.execution.groups; read-only here.
     let len = {
+        // SAFETY: group points into buntest.execution.groups; read-only here.
         let g = unsafe { group.as_ref() };
         g.sequence_end - g.sequence_start
     };
@@ -1028,7 +1027,7 @@ fn step_sequence_one(
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
         if BunTest::run_test_callback(
-            buntest_strong.clone(),
+            buntest_strong,
             global_this,
             cb.get(),
             next_item.has_done_parameter,

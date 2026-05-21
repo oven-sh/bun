@@ -1,6 +1,4 @@
 use crate::jsc::JSGlobalObject;
-#[allow(unused_imports)]
-use crate::mysql::my_sql_value::Value;
 use crate::mysql::my_sql_value::{DateTime, Time};
 use crate::shared::sql_data_cell::SQLDataCell;
 use crate::shared::sql_data_cell::{Tag as CellTag, Value as CellValue};
@@ -77,8 +75,10 @@ pub fn decode_binary_value<Context: ReaderContext>(
         }
         FieldType::MYSQL_TYPE_INT24 => {
             if raw {
-                let data = reader.read(3)?;
-                return Ok(SQLDataCell::raw(Some(&data)));
+                // Binary protocol sends INT24 as a fixed 4-byte field; consume
+                // all 4 to keep the cursor aligned and return only the low 3.
+                let data = reader.read(4)?;
+                return Ok(SQLDataCell::raw(Some(&data.substring(0, 3))));
             }
             if unsigned {
                 return Ok(SQLDataCell {
@@ -221,11 +221,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     Ok(SQLDataCell {
                         tag: CellTag::String,
                         value: CellValue {
-                            string: if !slice.is_empty() {
-                                clone_utf8_wtf_impl(slice)
-                            } else {
-                                core::ptr::null_mut()
-                            },
+                            string: clone_utf8_wtf_impl(slice),
                         },
                         free_value: 1,
                         ..Default::default()

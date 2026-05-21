@@ -2,17 +2,12 @@
 //! Exports here are referenced via aliases on the original structs so call
 //! sites do not change.
 
-use core::ffi::CStr;
-
-use bun_core::String as BunString;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, SystemError};
+use bun_jsc::{JSGlobalObject, JSValue};
 use bun_uws::{
-    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_bun_verify_error_t,
-    us_socket_stream_buffer_t, us_socket_t,
+    AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
 };
 
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
-use crate::webcore::BlobExt as _;
 
 // ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
 // is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──
@@ -51,12 +46,10 @@ pub fn create_bun_socket_error_to_js(
         // bad cert/key/DH return NULL with .none and the detail is on the
         // BoringSSL error queue. Surfacing it here keeps every
         // `createSSLContext(...) orelse return err.toJS()` site correct.
-        create_bun_socket_error_t::none => {
-            // SAFETY: ERR_get_error is thread-local queue read, always safe to call.
-            crate::crypto::boringssl_jsc::err_to_js(global_object, unsafe {
-                bun_boringssl_sys::ERR_get_error()
-            })
-        }
+        create_bun_socket_error_t::none => crate::crypto::boringssl_jsc::err_to_js(
+            global_object,
+            bun_boringssl_sys::ERR_get_error(),
+        ),
         create_bun_socket_error_t::load_ca_file => global_object
             .err(
                 bun_jsc::ErrorCode::BORINGSSL,
@@ -114,8 +107,11 @@ pub fn any_web_socket_get_topics_as_js_array(
 }
 
 // ── us_socket_buffered_js_write (C-exported, called from JSNodeHTTPServerSocket.cpp) ──
+/// # Safety
+/// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
+/// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
 #[unsafe(no_mangle)]
-pub extern "C" fn us_socket_buffered_js_write(
+pub unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     // kept for ABI parity with the C++ caller; TLS is now per-socket
     _ssl: bool,
@@ -142,7 +138,7 @@ pub extern "C" fn us_socket_buffered_js_write(
     // reshaped as a labeled block + post-block cleanup so the side effects run on every
     // exit path without a scopeguard borrow conflict.
     let result: JSValue = 'body: {
-        // PERF(port): was stack-fallback (std.heap.stackFallback(16 * 1024)) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback(16 * 1024)) — profile if hot.
         let node_buffer: BlobOrStringOrBuffer = if data.is_undefined() {
             BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
         } else {

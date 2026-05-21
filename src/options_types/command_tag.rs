@@ -87,39 +87,39 @@ impl Tag {
     }
 
     pub fn read_global_config(self) -> bool {
-        match self {
+        matches!(
+            self,
             Tag::BunxCommand
-            | Tag::PackageManagerCommand
-            | Tag::InstallCommand
-            | Tag::AddCommand
-            | Tag::RemoveCommand
-            | Tag::UpdateCommand
-            | Tag::PatchCommand
-            | Tag::PatchCommitCommand
-            | Tag::OutdatedCommand
-            | Tag::PublishCommand
-            | Tag::AuditCommand => true,
-            _ => false,
-        }
+                | Tag::PackageManagerCommand
+                | Tag::InstallCommand
+                | Tag::AddCommand
+                | Tag::RemoveCommand
+                | Tag::UpdateCommand
+                | Tag::PatchCommand
+                | Tag::PatchCommitCommand
+                | Tag::OutdatedCommand
+                | Tag::PublishCommand
+                | Tag::AuditCommand
+        )
     }
 
     pub fn is_npm_related(self) -> bool {
-        match self {
+        matches!(
+            self,
             Tag::BunxCommand
-            | Tag::LinkCommand
-            | Tag::UnlinkCommand
-            | Tag::PackageManagerCommand
-            | Tag::InstallCommand
-            | Tag::AddCommand
-            | Tag::RemoveCommand
-            | Tag::UpdateCommand
-            | Tag::PatchCommand
-            | Tag::PatchCommitCommand
-            | Tag::OutdatedCommand
-            | Tag::PublishCommand
-            | Tag::AuditCommand => true,
-            _ => false,
-        }
+                | Tag::LinkCommand
+                | Tag::UnlinkCommand
+                | Tag::PackageManagerCommand
+                | Tag::InstallCommand
+                | Tag::AddCommand
+                | Tag::RemoveCommand
+                | Tag::UpdateCommand
+                | Tag::PatchCommand
+                | Tag::PatchCommitCommand
+                | Tag::OutdatedCommand
+                | Tag::PublishCommand
+                | Tag::AuditCommand
+        )
     }
 
     /// Number of variants. Mirrors `enum_map::Enum::LENGTH` so const-array
@@ -136,8 +136,7 @@ impl Tag {
     // `bun_runtime::cli::Command::tag_params(cmd)` / `tag_print_help(cmd)` directly.
 }
 
-/// `.rodata` flag table indexed by [`Tag`] discriminant. Replaces the
-/// `LazyLock<EnumMap<Tag, _>>` Phase-A scaffolding so these tables cost zero
+/// `.rodata` flag table indexed by [`Tag`] discriminant. These tables cost zero
 /// init code on the startup path (matches Zig `std.EnumArray.initDefault`).
 #[repr(transparent)]
 pub struct TagTable<V: 'static>(pub [V; Tag::COUNT]);

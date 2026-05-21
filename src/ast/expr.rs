@@ -9,8 +9,8 @@ use core::fmt;
 use crate::Loc;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_collections::{ArrayHashMap, VecExt};
+use bun_core::ZStr;
 use bun_core::{self};
-use bun_core::{ZStr, strings};
 
 use crate::{DebugOnlyDisabler, E, G, Op, Ref, S, Stmt};
 use bun_alloc::ArenaVecExt as _;
@@ -176,9 +176,9 @@ impl Default for Query {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// ── live Expr accessor surface (round-E unblock) ───────────────────────────
+// ── live Expr accessor surface ─────────────────────────────────────────────
 // Subset of the gated impl below; bodies adapted to the live `E::Object` /
-// `E::EString` surface added this round. The full set/get_path/rope helpers
+// `E::EString` surface in `e.rs`. The full set/get_path/rope helpers
 // stay gated.
 impl Expr {
     #[inline]
@@ -255,7 +255,7 @@ impl Expr {
         }
     }
 
-    // TODO(b2-ast-round-C): gated on `EString::string_z` (E.rs:1666 block) which
+    // TODO(port): gated on `EString::string_z` (E.rs:1666 block) which
     // needs `bun_core::ZStr` bump-arena constructors. Only caller
     // (`get_string_cloned_z`) is likewise gated.
 
@@ -283,7 +283,7 @@ impl Expr {
 }
 
 // Expr — property/object/string accessor methods.
-// TODO(b2-ast-round-C): these call into `E::Object::as_property` / `EString`
+// TODO(port): these call into `E::Object::as_property` / `EString`
 // methods that need `bun_core::utf16_eql_string`/`to_utf8_alloc` (track-A
 // blocked_on) and `Vec::deep_clone`. Types are real; bodies un-gate with
 // the parser round once those land.
@@ -386,7 +386,6 @@ impl Expr {
         }
 
         if let Some(idx) = bun_core::index_of_any(name, b"[.") {
-            let idx = idx as usize;
             match name[idx] {
                 b'[' => {
                     let end_idx = bun_core::index_of_char(name, b']')? as usize;
@@ -708,12 +707,11 @@ impl ArrayIterator {
     }
 }
 
-// TODO(b2-ast-round-C): same as above (string/array accessors).
-// PORT NOTE: the Phase-A draft of `as_array`/`is_string`/`as_utf8_string_literal`/
+// PORT NOTE: earlier drafts of `as_array`/`is_string`/`as_utf8_string_literal`/
 // `as_string`/`as_string_cloned`/`as_bool`/`as_number` duplicated the live `&self`
 // implementations above (lines ~231-315) with worse signatures (`expr: &Expr`,
-// raw-ptr returns). Those drafts were dropped during un-gating; only the methods
-// without a live counterpart remain.
+// raw-ptr returns). Those drafts were dropped; only the methods without a live
+// counterpart remain.
 impl Expr {
     #[inline]
     pub fn as_string_literal<'b>(&self, bump: &'b Bump) -> Option<&'b [u8]> {
@@ -771,15 +769,7 @@ pub enum EFlags {
     TsDecorator,
 }
 
-#[allow(dead_code)] // see gated `json_stringify` below
-struct Serializable {
-    type_: Tag,
-    object: &'static [u8],
-    value: Data,
-    loc: Loc,
-}
-
-// `is_missing` lives in the `init`/`allocate` impl block below (round-A hoist).
+// `is_missing` lives in the `init`/`allocate` impl block below.
 impl Expr {
     /// The goal of this function is to "rotate" the AST if it's possible to use the
     /// left-associative property of the operator to avoid unnecessary parentheses.
@@ -960,8 +950,8 @@ impl Expr {
     }
 }
 
-// TODO(port): jsonStringify protocol — replace with serde or custom trait in
-// Phase B. Kept gated; `Serializable` is its payload shape.
+// TODO(refactor): jsonStringify protocol — replace with serde or a custom trait.
+// `Serializable` is its payload shape.
 
 impl Expr {
     // PORT NOTE: Zig's `jsonStringify` fed `Serializable` to `std.json.stringify`.
@@ -1181,7 +1171,7 @@ impl Expr {
         }
     }
 
-    // Trivial predicates kept live (round-A `is_missing` callers in G.rs/B.rs).
+    // Trivial predicates with `is_missing` callers in G.rs/B.rs.
     #[inline]
     pub fn is_missing(&self) -> bool {
         matches!(self.data, Data::EMissing(_))
@@ -1488,7 +1478,7 @@ impl Expr {
         }
     }
 
-    // `assign` lives in the `init`/`allocate` impl block above (round-A hoist).
+    // `assign` lives in the `init`/`allocate` impl block above.
 
     #[inline]
     pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
@@ -2314,10 +2304,10 @@ impl Data {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
-// TODO(b2-ast-round-C): these reference `Vec::deep_clone`/`E::*::Clone`
+// TODO(port): these reference `Vec::deep_clone`/`E::*::Clone`
 // surfaces, `bun_core::write_any_to_hasher`, and parser-state types that land
 // with `P.rs`/`Parser.rs`. The *types* (`Data`/`Expr`/`Tag`/`Store`) are real;
-// only these method bodies wait. The round-B verify gate covers what's live.
+// only these method bodies wait.
 
 impl Data {
     /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
@@ -3127,7 +3117,7 @@ impl Equality {
 }
 
 // `adt_const_params` (enum const-generic) is nightly-only. Lower to a sealed
-// ZST trait per the round-A `PlatformT` pattern; callers use
+// ZST trait, same pattern as `bun_paths::resolve_path::PlatformT`; callers use
 // `Data::eql::<P, LooseEql>(...)` / `<P, StrictEql>`.
 pub trait EqlKindT: Copy {
     const STRICT: bool;
@@ -3387,7 +3377,7 @@ pub mod data {
     crate::thread_local_ast_store!(expr_store::Store, "Expr");
 }
 
-/// Compatibility shim: Phase-A draft callers in this file used `Store::method()`
+/// Compatibility shim: callers in this file use `Store::method()`
 /// (impl-on-struct namespace). Forward to the real `data::Store` module.
 pub use data::Store;
 

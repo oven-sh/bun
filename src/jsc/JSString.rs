@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 use bun_core::ZigString;
@@ -79,7 +78,7 @@ impl JSString {
     // an owned UTF-8 copy so the result outlives the GC'd JSString. Returning
     // `to_slice()` here (a borrow that may alias JSC-owned memory) would hand
     // callers a use-after-free once the cell is collected.
-    // TODO(b2-blocked): un-gate once `bun_core::ZigString::to_slice_clone` is
+    // TODO(port): un-gate once `bun_core::ZigString::to_slice_clone` is
     // ported; gated so wrong-semantics fallback cannot be called.
 
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
@@ -91,7 +90,7 @@ impl JSString {
     // Spec (JSString.zig:54-62): `str.toSliceZ(allocator)` guarantees a `[:0]`
     // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
     // expects one reads past the buffer end.
-    // TODO(b2-blocked): un-gate once `bun_core::ZigString::to_slice_z` is
+    // TODO(port): un-gate once `bun_core::ZigString::to_slice_z` is
     // ported; gated so wrong-semantics fallback cannot be called.
 
     pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {
@@ -104,10 +103,10 @@ impl JSString {
         JSC__JSString__eql(self, global, other)
     }
 
-    pub fn iterator(&self, global_object: &JSGlobalObject, iter: *mut c_void) {
+    pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
         // SAFETY: `self`/`global_object` are valid opaque GC-cell handles; `iter`
-        // points to a caller-owned `Iterator` (extern struct) passed through to C++.
-        unsafe { JSC__JSString__iterator(self, global_object, iter) }
+        // is a caller-owned `Iterator` (extern struct) passed through to C++.
+        unsafe { JSC__JSString__iterator(self, global_object, core::ptr::from_mut(iter).cast()) }
     }
 
     pub fn length(&self) -> usize {

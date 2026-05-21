@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_long, c_void};
-use std::ffi::CStr;
 
 use bun_boringssl_sys as boringssl;
 use bun_core::{String as BunString, ZigString, strings};
@@ -8,7 +7,6 @@ use bun_jsc::{
 };
 
 use crate::api::bun_x509 as X509;
-use crate::webcore::blob::ZigStringBlobExt as _;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local BoringSSL FFI surface not yet in bun_boringssl_sys.
@@ -17,7 +15,7 @@ use crate::webcore::blob::ZigStringBlobExt as _;
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_camel_case_types, non_upper_case_globals, dead_code)]
 pub mod ffi {
-    use super::boringssl::{SSL, SSL_CTX, X509, X509_STORE_CTX, struct_stack_st_X509};
+    use super::boringssl::{SSL, SSL_CTX, X509, struct_stack_st_X509};
     use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 
     // Re-export the one decl whose `*const c_char` NUL-terminated arg keeps a
@@ -496,7 +494,7 @@ pub fn get_tls_finished_message(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let buffer_size = usize::try_from(size).expect("int cast");
+    let buffer_size = size;
     let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
@@ -532,7 +530,7 @@ pub fn get_shared_sigalgs(
     for i in 0..usize::try_from(nsig).expect("int cast") {
         let mut hash_nid: c_int = 0;
         let mut sign_nid: c_int = 0;
-        let mut sig_with_md: &[u8] = b"";
+        let sig_with_md: &[u8];
 
         ffi::SSL_get_shared_sigalgs(
             boringssl::SSL::opaque_ref(ssl_ptr),
@@ -684,7 +682,7 @@ pub fn get_tls_peer_finished_message(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let buffer_size = usize::try_from(size).expect("int cast");
+    let buffer_size = size;
     let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
     let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr.cast::<c_void>();
 
@@ -731,7 +729,7 @@ pub fn export_keying_material(
     if args.len > 2 {
         let context_arg = args.ptr[2];
 
-        // PERF(port): was arena bulk-free — profile in Phase B
+        // PERF(port): was arena bulk-free.
         if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
             let context_slice = sb.slice();
 
@@ -932,7 +930,7 @@ pub fn set_session(this: &This, global: &JSGlobalObject, frame: &CallFrame) -> J
     }
 
     let session_arg = args.ptr[0];
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free.
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();

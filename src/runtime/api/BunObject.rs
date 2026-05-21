@@ -83,34 +83,31 @@ pub fn get_public_path<W: core::fmt::Write>(to: &[u8], origin: &bun_url::URL, wr
     )
 }
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::c_void;
 use std::io::Write as _;
 
-use bun_core::{Environment, Output};
+use bun_core::Output;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, ConsoleObject, ErrorableString, JSFunction,
-    JSGlobalObject, JSObject, JSPromise, JSValue, JsRef, JsResult, WebCore, host_fn,
+    JSGlobalObject, JSObject, JSPromise, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
 use bun_core::{String as BunString, ZigString, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self as path, MAX_PATH_BYTES, PathBuffer, WPathBuffer};
+use bun_paths::MAX_PATH_BYTES;
+#[cfg(not(windows))]
+use bun_paths::PathBuffer;
+#[cfg(windows)]
+use bun_paths::WPathBuffer;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_url::URL;
 use bun_zlib as zlib;
 
-use crate::api::JSBundler;
-use crate::api::cron;
 use crate::api::csrf_jsc;
-use crate::api::{
-    self, FFIObject, HashObject, JSON5Object, JSONCObject, MarkdownObject, TOMLObject,
-    UnsafeObject, YAMLObject,
-};
+use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, YAMLObject};
 use crate::crypto as Crypto;
 use crate::node;
-use crate::test_runner::expect::{JSGlobalObjectTestExt as _, JSValueTestExt as _};
 use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use bun_core::zig_string::Slice as ZigStringSlice;
@@ -235,7 +232,7 @@ mod static_adapters {
         } else {
             StringOrBuffer::from_js(g, a1)?
         };
-        Crypto::SHA512_256::hash_(g, input, output)
+        Crypto::SHA512_256::hash_(g, &input, output)
     }
 }
 
@@ -256,8 +253,8 @@ pub mod bun_object {
     // `BunObject_lazyPropCb_<name>`. In Rust, the `#[bun_jsc::host_fn]`
     // attribute on the underlying fn emits the JSC-ABI shim; the export name
     // is set with `#[unsafe(no_mangle)]` on the shim. The two `macro_rules!`
-    // below expand the static export tables; Phase B should verify the shim
-    // ABI matches `LazyPropertyCallback` for the property variants.
+    // below expand the static export tables; verify the shim ABI matches
+    // `LazyPropertyCallback` for the property variants.
 
     // Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`),
     // so the full `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`
@@ -487,7 +484,7 @@ pub fn braces(
 ) -> JsResult<JSValue> {
     let brace_slice = brace_str.to_utf8();
 
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free — profile if hot
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
@@ -523,13 +520,23 @@ pub fn braces(
             Err(err) => return Err(global.throw_error(err.into(), "failed to parse braces")),
         };
         // PORT NOTE: see `tokenize` arm — manual JSON encoder for the AST.
-        let str = Braces::ast_to_json(ast_node);
+        let str = Braces::ast_to_json(&ast_node);
         let bun_str = BunString::from_bytes(&str);
         return bun_str.to_js(global);
     }
 
     if expansion_count == 0 {
         return bun_string_jsc::to_js_array(global, &[brace_str]);
+    }
+
+    // Hard cap before preallocation: `calculate_expanded_amount` saturates to
+    // `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
+    const MAX_BRACE_EXPANSIONS: u32 = 65536;
+    if expansion_count > MAX_BRACE_EXPANSIONS {
+        return Err(global.throw_pretty(format_args!(
+            "Too many brace expansions ({} > {})",
+            expansion_count, MAX_BRACE_EXPANSIONS
+        )));
     }
 
     // Non-AST crate: result containers use plain Vec (arena is only for Braces::* internals).
@@ -573,16 +580,11 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         return Err(global_this.throw(format_args!("which: expected 1 argument, got 0")));
     };
 
-    let mut path_str = ZigStringSlice::EMPTY;
-    let mut bin_str = ZigStringSlice::EMPTY;
-    let mut cwd_str = ZigStringSlice::EMPTY;
-    // path_str / bin_str / cwd_str deinit on Drop
-
     if path_arg.is_empty_or_undefined_or_null() {
         return Ok(JSValue::NULL);
     }
 
-    bin_str = path_arg.to_slice(global_this)?;
+    let bin_str = path_arg.to_slice(global_this)?;
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
     }
@@ -596,8 +598,9 @@ pub fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     }
 
     // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
-    path_str = ZigStringSlice::from_utf8_never_free(vm.env_loader().get(b"PATH").unwrap_or(b""));
-    cwd_str = ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
+    let mut path_str =
+        ZigStringSlice::from_utf8_never_free(vm.env_loader().get(b"PATH").unwrap_or(b""));
+    let mut cwd_str = ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
 
     if let Some(arg) = arguments.next_eat() {
         if !arg.is_empty_or_undefined_or_null() && arg.is_object() {
@@ -741,8 +744,7 @@ pub fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
         global_this,
-        arguments.as_ptr(),
-        1,
+        &arguments[..1],
         &mut array,
         format_options,
     )?;
@@ -777,8 +779,7 @@ pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> B
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
         global_this,
-        core::slice::from_ref(&value).as_ptr(),
-        1,
+        core::slice::from_ref(&value),
         &mut array,
         ConsoleObject::FormatOptions {
             enable_colors: false,
@@ -1032,7 +1033,8 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                         // directly into the persistent EditorContext (latent
                         // UAF in spec). Own the bytes in `name_storage` and
                         // hand back a thread-lifetime borrow.
-                        slot.name_storage = sliced.slice().to_vec();
+                        let prev_storage =
+                            core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
                         // SAFETY: `name_storage` lives in a thread_local that
                         // outlives any caller; we never reallocate it while
                         // `edit.name` is observed (single-threaded JS VM).
@@ -1041,6 +1043,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                         edit.detect_editor(env);
                         editor_choice = edit.editor;
                         if editor_choice.is_none() {
+                            slot.name_storage = prev_storage;
                             *edit = prev;
                             return Err(global_this.throw(format_args!(
                                 "Could not find editor \"{}\"",
@@ -1357,6 +1360,14 @@ pub fn bun_resolve_sync(
 }
 
 // HOST_EXPORT(Bun__resolveSyncWithPaths, c)
+/// # Safety
+/// `paths_ptr` must be null or point to `paths_len` initialized `BunString`s
+/// that remain valid for the duration of this call.
+// FFI entry point exported via HOST_EXPORT and called only from C++
+// (ImportMetaObject.cpp / NodeModuleModule.cpp), which upholds the contract
+// above. clippy excludes `extern "C"` fns from this lint; the export wrapper
+// lives in generated code, so allow it here.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn bun_resolve_sync_with_paths(
     global: &JSGlobalObject,
     specifier: JSValue,
@@ -1366,10 +1377,11 @@ pub fn bun_resolve_sync_with_paths(
     paths_ptr: *const BunString,
     paths_len: usize,
 ) -> JSValue {
-    // SAFETY: caller is C++; paths_ptr is valid for paths_len.
     let paths: &[BunString] = if paths_len == 0 {
         &[]
     } else {
+        // SAFETY: C++ caller guarantees `paths_ptr` points to `paths_len`
+        // initialized `BunString`s that outlive this call; `paths_len > 0` here.
         unsafe { core::slice::from_raw_parts(paths_ptr, paths_len) }
     };
 
@@ -1604,6 +1616,7 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
             }
             // SAFETY: `init` returned a live heap-allocated server pointer.
             let server_ref: &mut $ServerType = unsafe { &mut *server };
+            // SAFETY: `server` is the live heap-allocated server returned by `init`.
             let route_list_object = <$ServerType>::listen(server);
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
@@ -1662,8 +1675,11 @@ pub fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     }
 }
 
+/// # Safety
+/// `ptr` must point to `len` initialized `u16` values valid for the duration
+/// of this call.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__escapeHTML16(
+pub unsafe extern "C" fn Bun__escapeHTML16(
     global_object: &JSGlobalObject,
     input_value: JSValue,
     ptr: *const u16,
@@ -1688,15 +1704,20 @@ pub extern "C" fn Bun__escapeHTML16(
         Escaped::Allocated(escaped_html) => {
             // SAFETY: ownership of `escaped_html`'s buffer transfers to JSC via
             // the external-string finalizer; do not drop it here.
+            let escaped_html = core::mem::ManuallyDrop::new(escaped_html);
             let (ptr, len) = (escaped_html.as_ptr(), escaped_html.len());
-            core::mem::forget(escaped_html);
-            jsc::zig_string_to_external_u16(ptr, len, global_object)
+            // SAFETY: `ptr`/`len` describe `escaped_html`'s global-allocator buffer,
+            // forgotten above; ownership transfers to JSC's external-string finalizer.
+            unsafe { jsc::zig_string_to_external_u16(ptr, len, global_object) }
         }
     }
 }
 
+/// # Safety
+/// `ptr` must point to `len` initialized bytes valid for the duration of this
+/// call.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__escapeHTML8(
+pub unsafe extern "C" fn Bun__escapeHTML8(
     global_object: &JSGlobalObject,
     input_value: JSValue,
     ptr: *const u8,
@@ -1705,7 +1726,7 @@ pub extern "C" fn Bun__escapeHTML8(
     debug_assert!(len > 0);
     // SAFETY: caller passes a valid [ptr, len) byte slice.
     let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    // PERF(port): was stack-fallback (256 bytes) — profile in Phase B
+    // PERF(port): was stack-fallback (256 bytes) — profile if hot
 
     use bun_core::immutable::escape_html::{Escaped, escape_html_for_latin1_input};
     let escaped = match escape_html_for_latin1_input(input_slice) {
@@ -1761,6 +1782,7 @@ pub fn alloc_unsafe(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 pub fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]
     {
+        let _ = callframe;
         return Err(global_this.throw_todo(b"mmapFile is not supported on Windows"));
     }
 
@@ -2061,6 +2083,9 @@ pub fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResul
     // process singleton — `Graph::get()` returns the same instance the trait
     // object was built from (`vm.standalone_module_graph.is_some()` ⇔
     // `Graph::get().is_some()`).
+    // SAFETY: `Graph::get()` yields the process-lifetime singleton verified
+    // populated by the `is_some()` check above; this getter runs only on the
+    // JS thread, so the `&mut` borrow is exclusive for the call.
     let graph: &mut StandaloneModuleGraph = unsafe {
         &mut *StandaloneModuleGraph::get()
             .expect("vm.standalone_module_graph set ⇔ Graph singleton populated")
@@ -2120,7 +2145,7 @@ fn standalone_file_blob(
         return cached.as_ptr().cast::<Blob>();
     }
     let store: StoreRef = Store::init(file.contents.as_bytes().to_vec());
-    let mut blob_body = Blob::init_with_store(store, global);
+    let blob_body = Blob::init_with_store(store, global);
     // PORT NOTE (cyclebreak): `MimeType::by_loader` takes the `#[repr(u8)]`
     // discriminant and an extension; matches Zig spec
     // `MimeType.byLoader(file.loader, std.fs.path.extension(file.name))`.
@@ -2134,7 +2159,7 @@ fn standalone_file_blob(
     // Hold the (potentially owned) `Cow` for the lifetime of the cached blob.
     // The `by_loader` table only returns `Borrowed(&'static ..)`, so leaking
     // is a no-op for the static case and correct for the owned `OTHER` case.
-    core::mem::forget(mime);
+    let _mime = core::mem::ManuallyDrop::new(mime);
     blob_body
         .name
         .set(BunString::clone_utf8(bun_paths::basename(file.name)));
@@ -2240,8 +2265,12 @@ pub mod environment_variables {
         keys.len()
     }
 
+    /// # Safety
+    /// `ptr` must be the value written by `Bun__getEnvCount` and `i` must be
+    /// less than the count it returned; the backing storage must not have been
+    /// reallocated in between.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__getEnvKey(
+    pub unsafe extern "C" fn Bun__getEnvKey(
         ptr: *const Box<[u8]>,
         i: usize,
         data_ptr: &mut core::mem::MaybeUninit<*const u8>,
@@ -2418,7 +2447,7 @@ pub(crate) fn parse_compress_buffer_and_options(
 #[allow(non_snake_case)]
 pub mod JSZlib {
     use super::*;
-    use bun_jsc::{ComptimeStringMapExt as _, ZigStringJsc as _};
+    use bun_jsc::ComptimeStringMapExt as _;
     use bun_libdeflate_sys::libdeflate as bun_libdeflate;
 
     /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
@@ -2462,30 +2491,30 @@ pub mod JSZlib {
     #[bun_jsc::host_fn]
     pub fn gzip_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, buffer, options_val, true)
+        gzip_or_deflate_sync(global_this, &buffer, options_val, true)
     }
 
     #[bun_jsc::host_fn]
     pub fn inflate_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, buffer, options_val, false)
+        gunzip_or_inflate_sync(global_this, &buffer, options_val, false)
     }
 
     #[bun_jsc::host_fn]
     pub fn deflate_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, buffer, options_val, false)
+        gzip_or_deflate_sync(global_this, &buffer, options_val, false)
     }
 
     #[bun_jsc::host_fn]
     pub fn gunzip_sync(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let (buffer, options_val) = parse_compress_buffer_and_options(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, buffer, options_val, true)
+        gunzip_or_inflate_sync(global_this, &buffer, options_val, true)
     }
 
     pub fn gunzip_or_inflate_sync(
         global_this: &JSGlobalObject,
-        buffer: node::StringOrBuffer,
+        buffer: &node::StringOrBuffer,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2587,7 +2616,7 @@ pub mod JSZlib {
                     }
                 };
 
-                if let Err(_) = reader.read_all(true) {
+                if reader.read_all(true).is_err() {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
                     return Err(global_this
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
@@ -2618,8 +2647,10 @@ pub mod JSZlib {
                 }
                 // SAFETY: non-null per check above; freed via the scopeguard below.
                 let decompressor = unsafe { &mut *decompressor_ptr };
-                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| unsafe {
-                    bun_libdeflate::Decompressor::destroy(p)
+                let _decompressor_guard = scopeguard::guard(decompressor_ptr, |p| {
+                    // SAFETY: `p` is the non-null `Decompressor::alloc` pointer
+                    // checked above; this guard is its sole owner and runs once.
+                    unsafe { bun_libdeflate::Decompressor::destroy(p) }
                 });
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
@@ -2663,7 +2694,7 @@ pub mod JSZlib {
 
     pub fn gzip_or_deflate_sync(
         global_this: &JSGlobalObject,
-        buffer: node::StringOrBuffer,
+        buffer: &node::StringOrBuffer,
         options_val_: Option<JSValue>,
         is_gzip: bool,
     ) -> JsResult<JSValue> {
@@ -2739,7 +2770,7 @@ pub mod JSZlib {
                     }
                 };
 
-                if let Err(_) = reader.read_all() {
+                if reader.read_all().is_err() {
                     let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
                     return Err(global_this
                         .throw_value(ZigString::init(msg).to_error_instance(global_this)));
@@ -2766,8 +2797,10 @@ pub mod JSZlib {
                 }
                 // SAFETY: non-null per check above; freed via the scopeguard below.
                 let compressor = unsafe { &mut *compressor_ptr };
-                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| unsafe {
-                    bun_libdeflate::Compressor::destroy(p)
+                let _compressor_guard = scopeguard::guard(compressor_ptr, |p| {
+                    // SAFETY: `p` is the non-null `Compressor::alloc` pointer
+                    // checked above; this guard is its sole owner and runs once.
+                    unsafe { bun_libdeflate::Compressor::destroy(p) }
                 });
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
@@ -2807,10 +2840,8 @@ pub mod JSZlib {
 #[allow(non_snake_case)]
 pub mod JSZstd {
     use super::*;
-    use bun_jsc::virtual_machine::VirtualMachine;
 
     // `no_mangle` dropped: 0 C++ refs, 0 Rust refs (kept for parity with Zig export).
-    #[allow(unused_imports)]
     pub use bun_alloc::c_thunks::mi_free_ctx as deallocator;
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
@@ -2869,7 +2900,7 @@ pub mod JSZstd {
         let max_size = bun_zstd::compress_bound(input.len());
         let mut output = vec![0u8; max_size];
         // TODO(port): allocator.alloc(u8, n) — Zig left this uninitialized.
-        // PERF(port): use Box::new_uninit_slice — profile in Phase B.
+        // PERF(port): use Box::new_uninit_slice — profile if hot.
 
         // Perform compression with context
         let compressed_size = match bun_zstd::compress(&mut output, input, Some(level)) {
@@ -2939,7 +2970,7 @@ pub mod JSZstd {
                 // TODO(port): allocator.alloc(u8, n) — Zig left this uninitialized
                 // and surfaced OOM as an error. Rust's global allocator aborts on
                 // OOM, so the explicit "Out of memory" path is unreachable here.
-                // Phase B: route through a fallible bun_alloc helper.
+                // Could route through a fallible bun_alloc helper.
                 self.output = vec![0u8; max_size];
 
                 // Perform compression
@@ -3089,7 +3120,6 @@ mod stdio_stores {
     use crate::node::types::PathOrFileDescriptor;
     use crate::webcore::blob::store::{Data, File as FileStore};
     use crate::webcore::blob::{Blob, BlobExt as _, Store, StoreRef};
-    use core::sync::atomic::AtomicU32;
 
     thread_local! {
         static STDIN: core::cell::RefCell<Option<StoreRef>> = const { core::cell::RefCell::new(None) };
@@ -3139,7 +3169,7 @@ mod stdio_stores {
         });
         let blob = Blob::new(Blob::init_with_store(store, global_this));
         // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&mut *blob).to_js(global_this) }
+        unsafe { (&*blob).to_js(global_this) }
     }
 
     pub fn stdin(global_this: &JSGlobalObject) -> JSValue {

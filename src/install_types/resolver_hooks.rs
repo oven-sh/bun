@@ -363,6 +363,16 @@ pub struct NpmInfo {
     pub is_alias: bool,
 }
 
+impl Clone for NpmInfo {
+    fn clone(&self) -> Self {
+        Self {
+            name: self.name,
+            version: self.version.clone(),
+            is_alias: self.is_alias,
+        }
+    }
+}
+
 impl NpmInfo {
     pub fn eql(&self, that: &NpmInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
         self.name.eql(that.name, this_buf, that_buf) && self.version.eql(&that.version)
@@ -403,10 +413,10 @@ impl TarballInfo {
 }
 
 /// Port of `install/dependency.zig` `Version.Value` — untagged; discriminant
-/// lives in [`DependencyVersion::tag`]. `npm`/`git`/`github` are
-/// `ManuallyDrop` because [`NpmInfo`] embeds a `Semver.Query.Group` (owned
-/// linked list); cleanup is the constructing crate's responsibility (Zig has
-/// no destructors here either — arena-freed).
+/// lives in [`DependencyVersion::tag`]. The `npm` arm owns a `Box` linked list
+/// (`Semver.Query.Group`) and is `ManuallyDrop`-wrapped because the union has
+/// no tag; [`DependencyVersion`]'s `Drop`/`Clone` dispatch on `tag` to free /
+/// deep-copy it. `git`/`github` (`Repository`) hold no heap data.
 #[repr(C)]
 pub union DependencyVersionValue {
     pub uninitialized: (),
@@ -434,16 +444,7 @@ impl Default for DependencyVersionValue {
     }
 }
 
-impl Clone for DependencyVersionValue {
-    #[inline]
-    fn clone(&self) -> Self {
-        // SAFETY: `repr(C)` union of POD-ish payloads with no `Drop` glue;
-        // every active variant is either `Copy` or `ManuallyDrop<_>` over
-        // arena-backed data. Zig copies these by value; replicate with a
-        // bitwise read.
-        unsafe { core::ptr::read(self) }
-    }
-}
+// No `Clone for DependencyVersionValue`: a tag-blind bitwise clone would double-free `npm`.
 
 /// Port of `install/dependency.zig` `Version`.
 #[repr(C)]
@@ -464,12 +465,28 @@ impl Default for DependencyVersion {
 }
 
 impl Clone for DependencyVersion {
-    #[inline]
     fn clone(&self) -> Self {
+        let value = match self.tag {
+            DependencyVersionTag::Npm => DependencyVersionValue {
+                // SAFETY: tag == Npm, so `npm` is the active arm.
+                npm: ManuallyDrop::new(unsafe { (*self.value.npm).clone() }),
+            },
+            // SAFETY: all non-`npm` arms hold no heap; a bitwise read is a true clone.
+            _ => unsafe { core::ptr::read(&raw const self.value) },
+        };
         Self {
             tag: self.tag,
             literal: self.literal,
-            value: self.value.clone(),
+            value,
+        }
+    }
+}
+
+impl Drop for DependencyVersion {
+    fn drop(&mut self) {
+        if self.tag == DependencyVersionTag::Npm {
+            // SAFETY: tag == Npm, so `npm` is the active arm.
+            unsafe { ManuallyDrop::drop(&mut self.value.npm) };
         }
     }
 }
@@ -514,22 +531,12 @@ impl DependencyVersion {
 /// `&[bun_install::Dependency]` is reinterpretable as `&[Self]` (asserted in
 /// `bun_install::auto_installer`).
 #[repr(C)]
+#[derive(Default)]
 pub struct Dependency {
     pub name_hash: PackageNameHash,
     pub name: SemverString,
     pub version: DependencyVersion,
     pub behavior: Behavior,
-}
-
-impl Default for Dependency {
-    fn default() -> Self {
-        Self {
-            name_hash: 0,
-            name: SemverString::default(),
-            version: DependencyVersion::default(),
-            behavior: Behavior::default(),
-        }
-    }
 }
 
 impl Clone for Dependency {
@@ -561,7 +568,7 @@ impl Dependency {
         }
         let lhs_name = lhs.name.slice(string_buf);
         let rhs_name = rhs.name.slice(string_buf);
-        bun_core::strings::cmp_strings_asc(&(), lhs_name, rhs_name)
+        bun_core::strings::cmp_strings_asc((), lhs_name, rhs_name)
     }
 
     /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
@@ -1030,15 +1037,15 @@ impl Clone for Repository {
 
 impl Repository {
     pub fn order(&self, rhs: &Repository, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        let owner_order = self.owner.order(&rhs.owner, lhs_buf, rhs_buf);
+        let owner_order = self.owner.order(rhs.owner, lhs_buf, rhs_buf);
         if owner_order != Ordering::Equal {
             return owner_order;
         }
-        let repo_order = self.repo.order(&rhs.repo, lhs_buf, rhs_buf);
+        let repo_order = self.repo.order(rhs.repo, lhs_buf, rhs_buf);
         if repo_order != Ordering::Equal {
             return repo_order;
         }
-        self.committish.order(&rhs.committish, lhs_buf, rhs_buf)
+        self.committish.order(rhs.committish, lhs_buf, rhs_buf)
     }
 
     pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
@@ -1382,13 +1389,14 @@ pub struct TaskCallbackContext {
 /// lives in this crate — so callers pass the borrow directly.
 // Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
 // installed; the handler fn-ptrs are POD.
-#[derive(Default, Clone)]
+#[derive(Default, Copy, Clone)]
 pub struct WakeHandler {
     pub context: Option<NonNull<c_void>>,
     /// Zig: `fn(ctx: *anyopaque, pm: *PackageManager) void`.
     pub handler: Option<fn(*mut c_void, *mut c_void)>,
     /// Zig: `fn(ctx: *anyopaque, dep: Dependency, dep_id: DependencyID, err: anyerror) void`.
-    pub on_dependency_error: Option<fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
+    pub on_dependency_error:
+        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error)>,
 }
 
 impl WakeHandler {
@@ -1404,7 +1412,7 @@ impl WakeHandler {
     #[inline]
     pub fn get_on_dependency_error(
         &self,
-    ) -> fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
+    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
         // PORT NOTE: Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is
         // a Zig bug. The port reads `on_dependency_error` instead; preserving the bug would
         // require an unsound transmute between fn-pointer signatures.
@@ -1585,7 +1593,7 @@ pub trait AutoInstaller {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &bun_semver::SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     fn parse_dependency_with_tag(
         &mut self,
@@ -1594,7 +1602,7 @@ pub trait AutoInstaller {
         version: &[u8],
         tag: DependencyVersionTag,
         sliced: &bun_semver::SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
     /// Port of `dependency.zig` `Version.Tag.infer` — pure string
     /// classification, but the table lives in `bun_install`.

@@ -21,7 +21,7 @@ impl RowDescription {
         remaining_bytes = remaining_bytes.saturating_sub(4);
         let _ = remaining_bytes;
 
-        let field_count: usize = usize::try_from(reader.short()?.max(0)).expect("int cast");
+        let field_count: usize = usize::from(reader.short()?);
 
         // PORT NOTE: Zig allocates an uninit slice, fills it in-place, and uses
         // an `errdefer` to deinit the filled prefix + free on failure. Reshaped

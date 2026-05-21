@@ -31,8 +31,8 @@ use super::uuid::UUID;
 //
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `cron_jobs` / `node_fs_stat_watcher_scheduler` / `global_dns_data` /
-//     `websocket_deflate` → erased `*mut c_void` slots; high tier lazy-inits.
+//   - `cron_jobs` / `node_fs_stat_watcher_scheduler` / `websocket_deflate`
+//     → erased `*mut c_void` slots; high tier lazy-inits.
 //   - `fs_watchers_for_isolation` / `stat_watchers_for_isolation` → per-entry
 //     (ptr, close-fn) so `close_all_watchers_for_isolation` works without
 //     naming the watcher types.
@@ -262,10 +262,6 @@ pub struct RareData {
 
     pub file_polls_: Option<Box<FilePollStore>>,
 
-    /// `bun_runtime::dns_jsc::GlobalData` — erased; lazy-init owned by
-    /// `bun_runtime::dns_jsc::dns::global_resolver_mut`.
-    pub global_dns_data: Option<NonNull<c_void>>,
-
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.
     pub spawn_ipc_group: SocketGroup,
@@ -352,7 +348,6 @@ impl Default for RareData {
             cron_jobs: Vec::new(),
             cleanup_hooks: Vec::new(),
             file_polls_: None,
-            global_dns_data: None,
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
             bun_connect_group_tcp: SocketGroup::default(),
@@ -401,8 +396,8 @@ impl PathBuf {
     const S: usize = MAX_PATH_BYTES;
 
     /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
-    // PERF(port): was stack-fallback (FixedBufferAllocator + fallback allocator) — Phase B
-    // must revisit caller semantics for inputs exceeding the large tier.
+    // PERF(port): was stack-fallback (FixedBufferAllocator + fallback allocator).
+    // Revisit caller semantics for inputs exceeding the large tier.
     pub fn get(&mut self, min_len: usize) -> &mut [u8] {
         if min_len <= 2 * Self::S {
             &mut **self
@@ -547,12 +542,12 @@ impl ProxyEnvSlots {
     pub fn clone_from(&mut self, parent: &ProxyEnvSlots) {
         // PORT NOTE: reshaped for borrowck — Zig iterated fields via @typeInfo;
         // here Arc::clone bumps the refcount.
-        self.HTTP_PROXY = parent.HTTP_PROXY.clone();
-        self.http_proxy = parent.http_proxy.clone();
-        self.HTTPS_PROXY = parent.HTTPS_PROXY.clone();
-        self.https_proxy = parent.https_proxy.clone();
-        self.NO_PROXY = parent.NO_PROXY.clone();
-        self.no_proxy = parent.no_proxy.clone();
+        self.HTTP_PROXY.clone_from(&parent.HTTP_PROXY);
+        self.http_proxy.clone_from(&parent.http_proxy);
+        self.HTTPS_PROXY.clone_from(&parent.HTTPS_PROXY);
+        self.https_proxy.clone_from(&parent.https_proxy);
+        self.NO_PROXY.clone_from(&parent.NO_PROXY);
+        self.no_proxy.clone_from(&parent.no_proxy);
     }
 
     /// Overwrite proxy-var entries in an env map with this storage's reffed
@@ -673,14 +668,6 @@ macro_rules! for_each_socket_group {
 
 impl RareData {
     // ── trivial field accessors ────────────────────────────────────────────
-
-    /// Raw slot for the per-VM global DNS data. The lazy init + `&mut Resolver`
-    /// accessor lives in `bun_runtime::dns_jsc::dns::global_resolver_mut` (the
-    /// `Resolver` type is higher-tier and cannot be named here without a cycle).
-    #[inline]
-    pub fn global_dns_data_slot(&mut self) -> &mut Option<NonNull<c_void>> {
-        &mut self.global_dns_data
-    }
 
     /// Raw slot — lazy-init body lives in `bun_runtime::node::node_fs_stat_watcher`
     /// (`StatWatcherScheduler::init` is higher-tier).
@@ -1019,6 +1006,10 @@ impl RareData {
 // defined in `bun_runtime::webcore::blob`). Zig built `Blob.Store` inline.
 // ──────────────────────────────────────────────────────────────────────────
 
+unsafe extern "Rust" {
+    safe fn __bun_stdio_blob_store_deinit(ptr: *mut ());
+}
+
 impl RareData {
     #[inline]
     fn stdio_ctor(fd: Fd, is_atty: bool, mode: Mode) -> *mut c_void {
@@ -1194,6 +1185,17 @@ impl Drop for RareData {
         }
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
+
+        for store in [
+            self.stderr_store.take(),
+            self.stdout_store.take(),
+            self.stdin_store.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            __bun_stdio_blob_store_deinit(store.as_ptr().cast());
+        }
 
         // closeAllSocketGroups() must have already run (before JSC teardown) so
         // these are empty; deinit() asserts that in debug.

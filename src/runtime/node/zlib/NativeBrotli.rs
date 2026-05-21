@@ -50,8 +50,8 @@ impl Default for Context {
 // `NativeBrotli` carries `#[bun_jsc::JsClass]`; `impl Context` calls
 // `Error::init(&str, ..)` and uses brotli-C variant names that diverge from
 // `bun_brotli_sys` (e.g. `BrotliDecoderResult::Error` vs `::err`). Unblocking
-// requires aligning those signatures — Phase B.
-// TODO(b2-blocked): un-gate once bun_jsc JsClass + Error::init str overload + brotli_c variant names settle.
+// requires aligning those signatures.
+// TODO(blocked): un-gate once bun_jsc JsClass + Error::init str overload + brotli_c variant names settle.
 
 mod _impl {
     use super::*;
@@ -136,8 +136,10 @@ mod _impl {
                 ));
             }
 
-            let mut stream = Context::default();
-            stream.mode = bun_zlib::NodeMode::from_int(mode_int as u8);
+            let stream = Context {
+                mode: bun_zlib::NodeMode::from_int(mode_int as u8),
+                ..Default::default()
+            };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 // JSC_BORROW backref — the global outlives this m_ctx payload.

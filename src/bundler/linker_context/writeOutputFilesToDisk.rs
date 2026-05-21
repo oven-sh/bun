@@ -1,6 +1,4 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
-use core::mem::offset_of;
 use std::io::Write as _;
 
 use bun_alloc::MaxHeapAllocator;
@@ -22,7 +20,7 @@ use crate::output_file::{
 };
 use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
 
-// TODO(b0): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
+// TODO(port): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
 use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
     write_file_with_path_buffer,
@@ -70,12 +68,9 @@ pub fn write_output_files_to_disk(
             return Err(e);
         }
     };
-    let _root_dir_guard = scopeguard::guard(root_dir, |d| d.close());
-    let root_dir = *_root_dir_guard;
-
     // Optimization: when writing to disk, we can re-use the memory
     // PERF(port): MaxHeapAllocator reuses the largest allocation between
-    // iterations. Phase B should verify bun_alloc::MaxHeapAllocator semantics
+    // iterations. Verify bun_alloc::MaxHeapAllocator semantics
     // match (init/reset/deinit). DynAlloc is currently `()` so the arena
     // handles below are placeholders; allocation routes through global mimalloc.
     let mut max_heap_allocator = MaxHeapAllocator::init();
@@ -125,8 +120,8 @@ pub fn write_output_files_to_disk(
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
         // PERF(port): Zig `defer max_heap_allocator.reset()` — reset the reusable
         // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
-        // guard that resets on drop and derefs to the arena, so when Phase B
-        // wires up `code_allocator` it can borrow through `_code_allocator`.
+        // guard that resets on drop and derefs to the arena, so when
+        // `code_allocator` is wired up it can borrow through `_code_allocator`.
         let _code_allocator = max_heap_allocator.scope();
 
         let rel_parent =
@@ -367,7 +362,7 @@ pub fn write_output_files_to_disk(
                             .copy_from_slice(BYTECODE_EXTENSION.as_bytes());
                         match write_file_with_path_buffer(
                             &mut pathbuf,
-                            WriteFileArgs {
+                            &WriteFileArgs {
                                 data: WriteFileData::Buffer { buffer: &bytecode },
                                 encoding: WriteFileEncoding::Buffer,
                                 mode: if chunk.flags.contains(ChunkFlags::IS_EXECUTABLE) {
@@ -438,7 +433,7 @@ pub fn write_output_files_to_disk(
 
         match write_file_with_path_buffer(
             &mut pathbuf,
-            WriteFileArgs {
+            &WriteFileArgs {
                 data: WriteFileData::Buffer {
                     buffer: &code_result.buffer,
                 },
@@ -510,10 +505,11 @@ pub fn write_output_files_to_disk(
                 }
             }),
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                // TODO(b0-genuine): `bake_types::Framework` is missing
+                // TODO(port): `bake_types::Framework` is missing
                 // `server_components`; once it lands, restore the
-                // `if fw.server_components.is_some() { 3 } else { 1 }` branch.
-                let offset: u32 = if c.framework.is_some() { 1 } else { 1 };
+                // `if c.framework.is_some_and(|fw| fw.server_components.is_some()) { 3 } else { 1 }`
+                // branch.
+                let offset: u32 = 1;
                 Some(chunk.entry_point.source_index() - offset)
             } else {
                 None

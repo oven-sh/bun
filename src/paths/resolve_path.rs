@@ -1,11 +1,7 @@
 use core::cell::UnsafeCell;
 
 use crate::fs as Fs;
-use crate::{
-    MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, disk_designator_windows,
-    is_absolute_posix, is_absolute_windows, is_absolute_windows_t,
-};
-use bun_alloc::{is_slice_in_buffer, is_slice_in_buffer_t};
+use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
 use bun_core::{WStr, ZStr, strings};
 
 // PORT NOTE: Zig `threadlocal var` buffers. Stored in `UnsafeCell` (not `RefCell`)
@@ -71,19 +67,9 @@ type IsSeparatorFunc = fn(char: u8) -> bool;
 type LastSeparatorFunction = fn(slice: &[u8]) -> Option<usize>;
 
 #[inline(always)]
-fn is_dotdot(slice: &[u8]) -> bool {
-    slice.len() >= 2 && u16::from_le_bytes([slice[0], slice[1]]) == u16::from_le_bytes(*b"..")
-}
-
-#[inline(always)]
 fn is_dotdot_with_type<T: PathChar>(slice: &[T]) -> bool {
     // TODO(port): specialization for T==u8 used @bitCast; generic path checks bytewise
     slice.len() >= 2 && slice[0] == T::from_u8(b'.') && slice[1] == T::from_u8(b'.')
-}
-
-#[inline(always)]
-fn is_dotdot_slash(slice: &[u8]) -> bool {
-    slice.starts_with(b"../")
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -120,7 +106,6 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     input: &[&'a [u8]],
 ) -> Option<&'a [u8]> {
     // TODO(port): return lifetime — borrows from `input` strings; caller must ensure outlives
-    let separator = P::P.separator();
     let is_path_separator = P::P.get_separator_func();
 
     let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
@@ -128,7 +113,7 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
         _ => |n, i, inp| nql_at_index_dyn(n, i, inp),
     };
     // PERF(port): Zig used `inline 2..8 => |N|` to unroll per-count; Rust uses
-    // a runtime `n` here. Profile in Phase B.
+    // a runtime `n` here. Profile if it shows up on a hot path.
 
     let mut min_length: usize = usize::MAX;
     for str in input {
@@ -144,9 +129,7 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
         n @ 2..=8 => {
             while index < min_length {
                 if nql_at_index_fn(n, index, input) {
-                    if last_common_separator.is_none() {
-                        return None;
-                    }
+                    last_common_separator?;
                     break;
                 }
                 if is_path_separator(input[0][index]) {
@@ -161,16 +144,12 @@ pub fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
                 while index < min_length {
                     if P::P == Platform::Windows {
                         if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
-                            if last_common_separator.is_none() {
-                                return None;
-                            }
+                            last_common_separator?;
                             break;
                         }
                     } else {
                         if input[0][index] != input[string_index][index] {
-                            if last_common_separator.is_none() {
-                                return None;
-                            }
+                            last_common_separator?;
                             break;
                         }
                     }
@@ -240,14 +219,13 @@ fn nql_at_index_case_insensitive_dyn(string_count: usize, index: usize, input: &
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
 pub fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
-    let separator = P::P.separator();
     let is_path_separator = P::P.get_separator_func();
 
     let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
         Platform::Windows => nql_at_index_case_insensitive_dyn,
         _ => nql_at_index_dyn,
     };
-    // PERF(port): Zig used `inline 2..8 => |N|` to unroll per-count — profile in Phase B
+    // PERF(port): Zig used `inline 2..8 => |N|` to unroll per-count — profile if hot
 
     let mut min_length: usize = usize::MAX;
     for str in input {
@@ -377,30 +355,38 @@ pub fn longest_common_path_posix<'a>(input: &[&'a [u8]]) -> &'a [u8] {
 // from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
 // without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
 // of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
+struct LazyPathBuf(core::cell::Cell<*mut PathBuffer>);
+
+impl Drop for LazyPathBuf {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: `p` came from `heap::into_raw` in `lazy_path_buf`; sole accessor.
+            unsafe { drop(bun_core::heap::take(p)) };
+        }
+    }
+}
+
 thread_local! {
-    static RELATIVE_TO_COMMON_PATH_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_FROM_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
-    static RELATIVE_TO_BUF: core::cell::Cell<*mut PathBuffer> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_FROM_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_TO_BUF: LazyPathBuf =
+        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 /// Lazily allocate (on first use) and borrow a thread-local `PathBuffer`. One
 /// `unsafe` site for all `RELATIVE_*_BUF` accessors (nonnull-asref reduction:
 /// 5 sites → 1).
 #[inline]
-fn lazy_path_buf(c: &core::cell::Cell<*mut PathBuffer>) -> &'static mut PathBuffer {
-    let mut p = c.get();
+fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
+    let mut p = c.0.get();
     if p.is_null() {
         p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
-        c.set(p);
+        c.0.set(p);
     }
-    // SAFETY: `p` is non-null after the init branch above and points at a
-    // leaked `Box<PathBuffer>` (process-lifetime heap allocation). The `Cell`
-    // lives in a `thread_local!`, so this thread is the sole accessor; callers
-    // uphold the single-live-borrow-per-thread invariant documented at the
-    // thread-local declaration.
+    // SAFETY: `p` is non-null after the init branch; this thread is the sole accessor.
     unsafe { &mut *p }
 }
 
@@ -422,7 +408,7 @@ pub fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     normalized_to_: &'a [u8],
     buf: &'a mut [u8],
 ) -> &'a [u8] {
-    // TODO(port): return borrows either `buf` or `normalized_to_`; lifetime needs unification in Phase B
+    // TODO(port): return borrows either `buf` or `normalized_to_`; lifetimes need unification.
     let mut normalized_from = normalized_from_;
     let mut normalized_to = normalized_to_;
     let win_root_len: Option<usize> = if P::P == Platform::Windows {
@@ -814,7 +800,7 @@ pub fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
         && path[2] != T::from_u8(b'.')
     {
         // TODO(port): Zig branched on T==u8 to use SIMD index_of_any vs generic;
-        // collapse to a single generic helper here. PERF(port): profile in Phase B.
+        // collapse to a single generic helper here. PERF(port): profile if hot.
         if let Some(idx) = strings::index_of_any_t::<T>(&path[3..], T::lit(b"/\\")) {
             // TODO: handle input "//abc//def" should be picked up as a unc path
             if path.len() > idx + 4 && !Platform::Windows.is_separator_t::<T>(path[idx + 4]) {
@@ -947,7 +933,7 @@ pub fn normalize_string_generic<
         path_,
         buf,
         SEPARATOR,
-        |c| is_separator(c),
+        is_separator,
     )
 }
 
@@ -1103,7 +1089,7 @@ pub fn normalize_string_generic_tz<
     let (path, buf_start) = if is_windows {
         (&path_[path_begin..], buf_i)
     } else {
-        (&path_[..], 0usize)
+        (path_, 0usize)
     };
 
     let n = path.len();
@@ -1396,7 +1382,9 @@ pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) 
     PARSER_BUFFER.with(|b| normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)))
 }
 
-pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) -> &mut ZStr {
+pub fn normalize_string_z<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
+    str: &[u8],
+) -> &'static mut ZStr {
     PARSER_BUFFER.with(|b| {
         let buf = tl_buf_mut(b);
         let normalized = normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, buf);
@@ -1702,24 +1690,35 @@ pub fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
-/// Inline `MAX_PATH_BYTES * 2` stack buffer that heap-allocates when the
-/// requested size exceeds it. Keeps `_join_abs_string_buf`'s scratch buffer safe
-/// for arbitrarily long inputs while preserving zero-alloc behaviour for the
-/// common case.
-struct JoinScratch {
-    // PERF(port): was StackFallbackAllocator(MAX_PATH_BYTES * 2) — using Vec.
-    // Phase B: consider smallvec / stack-alloc fast path.
-    buf: Vec<u8>,
+/// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
+/// Zig used `std.heap.stackFallback(MAX_PATH_BYTES * 2)`; we draw from the
+/// thread-local `path_buffer_pool` for the common case and only heap-allocate
+/// when the concatenation would overflow a single `PathBuffer`. The pooled
+/// buffer is not re-zeroed — callers write every byte they later read.
+enum JoinScratch {
+    Pooled(crate::path_buffer_pool::Guard),
+    Heap(Vec<u8>),
 }
 
 impl JoinScratch {
+    #[inline]
     pub(crate) fn init(base: usize, parts: &[&[u8]]) -> Self {
         let mut total = base + 2;
         for p in parts {
             total += p.len() + 1;
         }
-        Self {
-            buf: vec![0u8; total],
+        if total <= MAX_PATH_BYTES {
+            JoinScratch::Pooled(crate::path_buffer_pool::get())
+        } else {
+            JoinScratch::Heap(vec![0u8; total])
+        }
+    }
+
+    #[inline]
+    fn buf(&mut self) -> &mut [u8] {
+        match self {
+            JoinScratch::Pooled(g) => &mut g[..],
+            JoinScratch::Heap(v) => &mut v[..],
         }
     }
 }
@@ -1756,7 +1755,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     // Slow path: allocate a large scratch for the result. The inner
     // join_abs_string_buf will heap-allocate its own temp buffer for the concat
     // since `total > MAX_PATH_BYTES * 2 > sfa inline size` is likely here.
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let mut scratch = vec![0u8; total];
     let joined = join_abs_string_buf::<P>(cwd, &mut scratch, parts);
     if joined.len() > buf.len() {
@@ -1782,7 +1781,10 @@ pub fn join_abs_string_buf_znt<'a, P: PlatformT>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> &'a ZStr {
-    if (matches!(P::P, Platform::AUTO | Platform::Loose | Platform::Windows)) && cfg!(windows) {
+    // `Platform::AUTO == Platform::Windows` on the windows host, so listing it
+    // alongside `Windows` would be a duplicate arm; on non-windows hosts the
+    // whole branch is dead via `cfg!(windows)`.
+    if (matches!(P::P, Platform::Loose | Platform::Windows)) && cfg!(windows) {
         let r = _join_abs_string_buf::<true, platform::Nt>(cwd, buf, parts);
         // SAFETY: NUL written at r.len()
         return unsafe { ZStr::from_raw(r.as_ptr(), r.len()) };
@@ -1862,7 +1864,6 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         return &buf[0..1];
     }
 
-    let mut out: usize = 0;
     let mut cwd = if cfg!(windows) && _cwd.len() >= 3 && _cwd[1] == b':' {
         &_cwd[2..]
     } else {
@@ -1887,10 +1888,10 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     }
 
     let mut scratch = JoinScratch::init(cwd.len(), parts);
-    let temp_buf = &mut scratch.buf;
+    let temp_buf = scratch.buf();
 
     temp_buf[..cwd.len()].copy_from_slice(cwd);
-    out = cwd.len();
+    let mut out: usize = cwd.len();
 
     for &_part in parts {
         if _part.is_empty() {
@@ -2006,7 +2007,7 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     }
 
     let mut scratch = JoinScratch::init(root.len() + set_cwd.len(), &parts[n_start..]);
-    let temp_buf = &mut scratch.buf;
+    let temp_buf = scratch.buf();
 
     temp_buf[0..root.len()].copy_from_slice(root);
     temp_buf[root.len()..root.len() + set_cwd.len()].copy_from_slice(set_cwd);
@@ -2351,14 +2352,19 @@ pub fn next_dirname(path_: &[u8]) -> Option<&[u8]> {
 ///
 /// To use this, stack allocate the following struct, and then call `resolve`.
 ///
-///     let mut normalizer = PosixToWinNormalizer::default();
-///     let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
+/// ```ignore
+/// let mut normalizer = PosixToWinNormalizer::default();
+/// let result = normalizer.resolve(b"C:\\dev\\bun", b"/dev/bun/test/etc.js");
+/// ```
 ///
 /// When you are certain that using the current working directory is fine, you can use
 ///
-///     let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
+/// ```ignore
+/// let result = normalizer.resolve_cwd(b"/dev/bun/test/etc.js");
+/// ```
 ///
 /// This API does nothing on Linux (it has a size of zero)
+#[derive(Default)]
 pub struct PosixToWinNormalizer {
     #[cfg(windows)]
     _raw_bytes: PathBuffer,
@@ -2370,21 +2376,6 @@ pub struct PosixToWinNormalizer {
 type PosixToWinBuf = PathBuffer;
 #[cfg(not(windows))]
 type PosixToWinBuf = ();
-
-impl Default for PosixToWinNormalizer {
-    fn default() -> Self {
-        #[cfg(windows)]
-        {
-            Self {
-                _raw_bytes: PathBuffer::uninit(),
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            Self { _raw_bytes: () }
-        }
-    }
-}
 
 impl PosixToWinNormalizer {
     // methods on PosixToWinNormalizer, to be minimal yet stack allocate the PathBuffer
@@ -2415,7 +2406,7 @@ impl PosixToWinNormalizer {
     ) -> Result<&'a mut ZStr, bun_core::Error> {
         Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
     }
-    // TODO(b2-windows): on posix `_raw_bytes` is `()`; the Zig version still
+    // TODO(windows): on posix `_raw_bytes` is `()`; the Zig version still
     // null-terminates into a buffer. Callers on posix should use
     // `resolve_cwd_with_external_buf_z` with an explicit PathBuffer.
 

@@ -129,19 +129,20 @@ declare function $getByValWithThis(target: any, receiver: any, propertyKey: stri
 /** gets the prototype of an object */
 declare function $getPrototypeOf(value: any): any;
 /**
- * Gets an internal property on a promise
- *
- *  You can pass
- *  - {@link $promiseFieldFlags} - get a number with flags
- *  - {@link $promiseFieldReactionsOrResult} - get the result (like {@link Bun.peek})
- *
- * @param promise the promise to get the field from
- * @param key an internal field id.
+ * Returns the internal Promise state as a small integer:
+ * `0` = pending, `1` = fulfilled, `2` = rejected.
  */
-declare function $getPromiseInternalField<K extends PromiseFieldType, V>(
-  promise: Promise<V>,
-  key: K,
-): PromiseFieldToValue<K, V>;
+declare function $peekPromiseStatus(promise: Promise<any>): number;
+/**
+ * Returns the settlement value of a settled Promise (the fulfillment value
+ * or the rejection reason). Returns `undefined` for a pending promise.
+ */
+declare function $peekPromiseSettledValue<V>(promise: Promise<V>): V | undefined;
+/**
+ * Marks a promise as handled so it doesn't fire the unhandled-rejection
+ * tracker. Equivalent to JSC's `JSPromise::markAsHandled()`.
+ */
+declare function $pokePromiseAsHandled(promise: Promise<any>): void;
 declare function $getInternalField<Fields extends any[], N extends keyof Fields>(
   base: InternalFieldObject<Fields>,
   number: N,
@@ -259,11 +260,6 @@ declare function $putInternalField<Fields extends any[], N extends keyof Fields>
   number: N,
   value: Fields[N],
 ): void;
-declare function $putPromiseInternalField<T extends PromiseFieldType, P extends Promise<any>>(
-  promise: P,
-  key: T,
-  value: PromiseFieldToValue<T, P>,
-): void;
 declare function $putGeneratorInternalField(): TODO;
 declare function $putAsyncGeneratorInternalField(): TODO;
 declare function $putArrayIteratorInternalField(): TODO;
@@ -316,14 +312,6 @@ declare const $ModuleLink: number;
 declare const $ModuleReady: number;
 declare const $promiseRejectionReject: TODO;
 declare const $promiseRejectionHandle: TODO;
-declare const $promiseStatePending: number;
-declare const $promiseStateFulfilled: number;
-declare const $promiseStateRejected: number;
-declare const $promiseStateMask: number;
-declare const $promiseFlagsIsHandled: number;
-declare const $promiseFlagsIsFirstResolvingFunctionCalled: number;
-declare const $promiseFieldFlags: 0;
-declare const $promiseFieldReactionsOrResult: 1;
 declare const $proxyFieldTarget: TODO;
 declare const $proxyFieldHandler: TODO;
 declare const $generatorFieldState: TODO;
@@ -552,12 +540,6 @@ interface InternalFieldObject<T extends any[]> {
 }
 
 // Types used in the above functions
-type PromiseFieldType = typeof $promiseFieldFlags | typeof $promiseFieldReactionsOrResult;
-type PromiseFieldToValue<X extends PromiseFieldType, V> = X extends typeof $promiseFieldFlags
-  ? number
-  : X extends typeof $promiseFieldReactionsOrResult
-    ? V | any
-    : any;
 type WellKnownSymbol = keyof { [K in keyof SymbolConstructor as SymbolConstructor[K] extends symbol ? K : never]: K };
 
 // You can also `@` on any method on a classes to avoid prototype pollution and secret internals

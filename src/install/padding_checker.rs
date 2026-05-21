@@ -36,7 +36,7 @@
 // `@compileError`s on any gap between `@offsetOf(T, field) + @sizeOf(field)` and the next
 // field's offset (and between the last field's end and `@sizeOf(T)`).
 //
-// Rust has no `@typeInfo` equivalent. Phase B should provide this as a proc-macro derive
+// Rust has no `@typeInfo` equivalent. TODO(port): provide this as a proc-macro derive
 // (`#[derive(AssertNoUninitializedPadding)]`) that emits the `const _: () = assert!(...)`
 // checks below per-field, plus a marker trait so `assert_no_uninitialized_padding::<T>()`
 // is bounded on it. The free function here is kept as the call-site-compatible entry point.
@@ -74,7 +74,7 @@ pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
 }
 
 // TODO(port): proc-macro — the derive should expand roughly to the following per type
-// (shown as a declarative helper for Phase-B reference; not invoked anywhere yet):
+// (shown as a declarative helper for reference; not invoked anywhere yet):
 //
 // For each adjacent field pair (prev, field) in declaration order:
 //   const _: () = assert!(
@@ -112,17 +112,27 @@ pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
 // `if (info_ == .@"union") return;` before the offset loop).
 
 // Blanket impls for leaf types the Zig version's `else => return` arm accepted.
-// SAFETY: scalar primitives have no padding by definition.
+// SAFETY: u8 is a single value byte; no padding by definition.
 unsafe impl AssertNoUninitializedPadding for u8 {}
+// SAFETY: u16 is a fixed-width integer; all 2 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for u16 {}
+// SAFETY: u32 is a fixed-width integer; all 4 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for u32 {}
+// SAFETY: u64 is a fixed-width integer; all 8 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for u64 {}
+// SAFETY: usize is a fixed-width integer; all bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for usize {}
+// SAFETY: i8 is a single value byte; no padding by definition.
 unsafe impl AssertNoUninitializedPadding for i8 {}
+// SAFETY: i16 is a fixed-width integer; all 2 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for i16 {}
+// SAFETY: i32 is a fixed-width integer; all 4 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for i32 {}
+// SAFETY: i64 is a fixed-width integer; all 8 bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for i64 {}
+// SAFETY: isize is a fixed-width integer; all bytes are value bytes, no padding.
 unsafe impl AssertNoUninitializedPadding for isize {}
+// SAFETY: bool occupies exactly one byte (value 0 or 1); no padding.
 unsafe impl AssertNoUninitializedPadding for bool {}
 
 // Arrays: Zig's `.array => |a| assertNoUninitializedPadding(a.child)`.

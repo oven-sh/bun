@@ -57,7 +57,7 @@ pub enum ExpansionState {
     Done,
     /// Spec: Expansion.zig `.err`. The parent inspects this on
     /// `child_done(_, 1)` to print the message.
-    Err(ShellErr),
+    Err(Box<ShellErr>),
 }
 
 #[derive(Default)]
@@ -142,6 +142,13 @@ impl Expansion {
                 }
                 ExpansionState::BraceExpand => {
                     Self::do_brace_expand(me);
+                    // brace + glob composes: after pushing the literal brace
+                    // variants, glob the original pattern (Zig re-enters the
+                    // `.glob` state). The normal glob path likewise calls
+                    // `transition_to_glob_state` directly (see below).
+                    if matches!(me.state, ExpansionState::Glob) {
+                        return Self::transition_to_glob_state(interp, this);
+                    }
                     continue;
                 }
                 ExpansionState::Done | ExpansionState::Err(_) => break,
@@ -205,7 +212,7 @@ impl Expansion {
                     Ok(d) => d,
                     Err(e) => {
                         drop(io);
-                        interp.throw(ShellErr::new_sys(e));
+                        interp.throw(ShellErr::new_sys(&e));
                         return Yield::failed();
                     }
                 };
@@ -265,7 +272,16 @@ impl Expansion {
                 braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(brace_str),
             )
         };
-        let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]) as usize;
+        let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]);
+        // Hard cap before preallocation: `calculate_expanded_amount` saturates
+        // to `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
+        const MAX_BRACE_EXPANSIONS: u32 = 65536;
+        if count > MAX_BRACE_EXPANSIONS {
+            let msg = format!("too many brace expansions ({count} > {MAX_BRACE_EXPANSIONS})");
+            me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+            return;
+        }
+        let count = count as usize;
         let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
 
         let arena = bun_alloc::Arena::new();
@@ -283,7 +299,6 @@ impl Expansion {
         // Spec lines 268-279: push each variant as its own word. The Zig
         // version NUL-terminated then `out.pushResult`; the NodeId port
         // records word boundaries via `bounds` instead.
-        me.current_out.clear();
         for s in expanded {
             if !me.out.buf.is_empty() {
                 me.out.bounds.push(me.out.buf.len() as u32);
@@ -293,15 +308,16 @@ impl Expansion {
 
         let node = me.node;
         let atom = node.get();
-        me.state = if atom.has_glob_expansion() {
-            // Spec: brace+glob composes — re-enter via the glob arm. The
-            // NodeId port currently routes glob through `current_out`, so
-            // brace-produced multi-word + glob is left as a TODO (matches the
-            // Zig "weird behaviour" note above the spec).
-            ExpansionState::Done
+        if atom.has_glob_expansion() {
+            // brace + glob composes (Zig re-enters the `.glob` state). Keep
+            // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
+            // the glob walker brace-expands and globs it; its matches are
+            // appended after the literal brace variants already pushed above.
+            me.state = ExpansionState::Glob;
         } else {
-            ExpansionState::Done
-        };
+            me.current_out.clear();
+            me.state = ExpansionState::Done;
+        }
     }
 
     /// Spec: Expansion.zig `transitionToGlobState`. Kick off an off-thread
@@ -321,12 +337,14 @@ impl Expansion {
         ) {
             Ok(Ok(w)) => w,
             Ok(Err(e)) => {
-                interp.as_expansion_mut(this).state = ExpansionState::Err(ShellErr::new_sys(e));
+                interp.as_expansion_mut(this).state =
+                    ExpansionState::Err(Box::new(ShellErr::new_sys(&e)));
                 return Yield::Next(this);
             }
             Err(e) => {
-                interp.as_expansion_mut(this).state =
-                    ExpansionState::Err(ShellErr::Custom(e.to_string().into_bytes().into()));
+                interp.as_expansion_mut(this).state = ExpansionState::Err(Box::new(
+                    ShellErr::Custom(e.to_string().into_bytes().into()),
+                ));
                 return Yield::Next(this);
             }
         };
@@ -370,6 +388,7 @@ impl Expansion {
                 }
             }
             ast::SimpleAtom::VarArgv(int) => {
+                // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
                 Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }
             ast::SimpleAtom::Asterisk => out.push(b'*'),
@@ -514,7 +533,7 @@ impl Expansion {
         log!("Expansion {} onGlobWalkDone", this);
         if let Some(err) = err {
             let shell_err = match err {
-                ShellGlobErr::Syscall(e) => ShellErr::new_sys(e),
+                ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
                 ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
             };
             interp.throw(shell_err);
@@ -541,7 +560,7 @@ impl Expansion {
                 me.state = ExpansionState::Done;
             } else {
                 let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
-                me.state = ExpansionState::Err(ShellErr::Custom(msg.into_bytes().into()));
+                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
             }
             Yield::Next(this).run(interp);
             return;
@@ -567,7 +586,7 @@ impl Expansion {
     pub fn take_err(interp: &Interpreter, this: NodeId) -> Option<ShellErr> {
         let me = interp.as_expansion_mut(this);
         match core::mem::replace(&mut me.state, ExpansionState::Done) {
-            ExpansionState::Err(e) => Some(e),
+            ExpansionState::Err(e) => Some(*e),
             other => {
                 me.state = other;
                 None

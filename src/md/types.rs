@@ -1,4 +1,4 @@
-// TODO(b1): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
+// TODO(port): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
 pub type JsResult<T> = Result<T, crate::parser::ParserError>;
 
 /// Offset into the input document.
@@ -174,8 +174,8 @@ impl<'a> Renderer<'a> {
 }
 
 /// Detail data for span events (links, images, wikilinks).
-// TODO(port): lifetime — href/title borrow from the source text; Phase B may
-// thread an arena `'bump` lifetime instead.
+// TODO(port): lifetime — href/title borrow from the source text; could thread
+// an arena `'bump` lifetime instead.
 #[derive(Copy, Clone)]
 pub struct SpanDetail<'a> {
     pub href: &'a [u8],
@@ -215,6 +215,7 @@ impl<'a> SpanDetail<'a> {
         SpanDetail {
             // SAFETY: caller contract.
             href: unsafe { &*core::ptr::from_ref::<[u8]>(self.href) },
+            // SAFETY: caller contract.
             title: unsafe { &*core::ptr::from_ref::<[u8]>(self.title) },
             autolink: self.autolink,
             autolink_email: self.autolink_email,
@@ -522,8 +523,8 @@ pub const TABLE_MAXCOLCOUNT: u32 = 128;
 
 /// Reference definition used for link resolution.
 // TODO(port): `label_needs_free`/`title_needs_free` indicate sometimes-owned
-// data (normalized label vs. source slice). Consider `Cow<'a, [u8]>` in Phase B
-// and drop the bool flags.
+// data (normalized label vs. source slice). Consider `Cow<'a, [u8]>` and drop
+// the bool flags.
 pub struct RefDef<'a> {
     pub label: &'a [u8],
     pub title: Attribute<'a>,

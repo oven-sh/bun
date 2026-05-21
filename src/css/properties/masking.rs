@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use crate as css;
 use crate::PrintErr;
@@ -9,7 +8,6 @@ use crate::css_values::length::LengthOrNumber;
 use crate::css_values::length::LengthPercentage;
 use crate::css_values::position::Position;
 use crate::css_values::rect::Rect;
-use crate::css_values::url::Url;
 
 use crate::css_properties::border_radius::BorderRadius;
 // `shape` is still gated; FillRule referenced only by the (gated) BasicShape::Polygon body.
@@ -28,33 +26,15 @@ use crate::generics::{CssEql, DeepClone};
 use crate::properties::PropertyId;
 use crate::properties::PropertyIdTag;
 
-/// A value for the [clip-path](https://www.w3.org/TR/css-masking-1/#the-clip-path) property.
-// TODO(port): non-pub in Zig — confirm visibility
-enum ClipPath {
-    /// No clip path.
-    None,
-    /// A url reference to an SVG path element.
-    Url(Url),
-    /// A basic shape, positioned according to the reference box.
-    Shape {
-        /// A basic shape.
-        // todo_stuff.think_about_mem_mgmt
-        shape: Box<BasicShape>,
-        /// A reference box that the shape is positioned according to.
-        reference_box: GeometryBox,
-    },
-    /// A reference box.
-    Box(GeometryBox),
-}
-
 /// A [`<geometry-box>`](https://www.w3.org/TR/css-masking-1/#typedef-geometry-box) value
 /// as used in the `mask-clip` and `clip-path` properties.
 // TODO(port): css.DefineEnumProperty(@This()) — comptime-generated eql/hash/parse/toCss/deepClone.
 // In Rust this becomes #[derive] of the css enum-property protocol (kebab-case serialization).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum GeometryBox {
     /// The painted content is clipped to the content box.
     #[css(name = "border-box")]
+    #[default]
     BorderBox,
     /// The painted content is clipped to the padding box.
     #[css(name = "padding-box")]
@@ -77,14 +57,8 @@ pub enum GeometryBox {
 }
 
 impl GeometryBox {
-    pub fn into_mask_clip(&self) -> MaskClip {
-        MaskClip::GeometryBox(*self)
-    }
-}
-
-impl Default for GeometryBox {
-    fn default() -> GeometryBox {
-        GeometryBox::BorderBox
+    pub fn into_mask_clip(self) -> MaskClip {
+        MaskClip::GeometryBox(self)
     }
 }
 
@@ -136,7 +110,7 @@ pub struct Polygon {
     // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
     // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
     // No construction site exists in src/css/*.zig today, so provenance is unconfirmed; keeping
-    // plain Vec<Point> until Phase B verifies the arena.
+    // plain Vec<Point> until the arena story is verified.
     pub points: Vec<Point>,
 }
 
@@ -163,7 +137,7 @@ pub struct Point {
 
 /// A value for the [mask-mode](https://www.w3.org/TR/css-masking-1/#the-mask-mode) property.
 // TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskMode {
     /// The luminance values of the mask image is used.
     #[css(name = "luminance")]
@@ -173,13 +147,8 @@ pub enum MaskMode {
     Alpha,
     /// If an SVG source is used, the value matches the `mask-type` property. Otherwise, the alpha values are used.
     #[css(name = "match-source")]
+    #[default]
     MatchSource,
-}
-
-impl Default for MaskMode {
-    fn default() -> MaskMode {
-        MaskMode::MatchSource
-    }
 }
 
 /// A value for the [mask-clip](https://www.w3.org/TR/css-masking-1/#the-mask-clip) property.
@@ -196,10 +165,11 @@ pub enum MaskClip {
 
 /// A value for the [mask-composite](https://www.w3.org/TR/css-masking-1/#the-mask-composite) property.
 // TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskComposite {
     /// The source is placed over the destination.
     #[css(name = "add")]
+    #[default]
     Add,
     /// The source is placed, where it falls outside of the destination.
     #[css(name = "subtract")]
@@ -210,12 +180,6 @@ pub enum MaskComposite {
     /// The non-overlapping regions of source and destination are combined.
     #[css(name = "exclude")]
     Exclude,
-}
-
-impl Default for MaskComposite {
-    fn default() -> MaskComposite {
-        MaskComposite::Add
-    }
 }
 
 /// A value for the [mask-type](https://www.w3.org/TR/css-masking-1/#the-mask-type) property.
@@ -256,8 +220,8 @@ pub struct Mask {
 
 impl Mask {
     // TODO(port): PropertyFieldMap was a Zig anon-struct const consumed by comptime
-    // reflection in shorthand handlers. Represent as assoc const slice; Phase B may
-    // replace with a trait/derive.
+    // reflection in shorthand handlers. Represented as an assoc const slice; could
+    // be replaced with a trait/derive.
     pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
         ("image", PropertyIdTag::MaskImage),
         ("position", PropertyIdTag::MaskPosition),
@@ -270,7 +234,7 @@ impl Mask {
     ];
 
     // TODO(port): VendorPrefixMap was a Zig anon-struct const of bools consumed by
-    // comptime reflection. Represent as field-name slice; Phase B may replace with trait/derive.
+    // comptime reflection. Represented as a field-name slice; could be replaced with trait/derive.
     pub const VENDOR_PREFIX_MAP: &'static [&'static str] =
         &["image", "position", "size", "repeat", "clip", "origin"];
 
@@ -350,8 +314,8 @@ impl Mask {
         }
 
         Ok(Self {
-            image: image.unwrap_or_else(Image::default),
-            position: position.unwrap_or_else(Position::default),
+            image: image.unwrap_or_default(),
+            position: position.unwrap_or_default(),
             repeat: repeat.unwrap_or_else(BackgroundRepeat::default),
             size: size.unwrap_or_else(BackgroundSize::default),
             origin: origin.unwrap_or(GeometryBox::BorderBox),
@@ -410,20 +374,15 @@ impl Mask {
 
 /// A value for the [mask-border-mode](https://www.w3.org/TR/css-masking-1/#the-mask-border-mode) property.
 // TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskBorderMode {
     /// The luminance values of the mask image is used.
     #[css(name = "luminance")]
     Luminance,
     /// The alpha values of the mask image is used.
     #[css(name = "alpha")]
+    #[default]
     Alpha,
-}
-
-impl Default for MaskBorderMode {
-    fn default() -> Self {
-        MaskBorderMode::Alpha
-    }
 }
 
 /// A value for the [mask-border](https://www.w3.org/TR/css-masking-1/#the-mask-border) shorthand property.
@@ -472,7 +431,7 @@ impl MaskBorder {
         });
 
         if border_image.is_ok() || mode.is_some() {
-            // PERF(port): Zig used `comptime BorderImage.default()` — const-eval default in Phase B
+            // PERF(port): Zig used `comptime BorderImage.default()` — could const-eval the default
             let bi = border_image.unwrap_or_else(|_| BorderImage::default());
             Ok(MaskBorder {
                 source: bi.source,
@@ -480,7 +439,7 @@ impl MaskBorder {
                 width: bi.width,
                 outset: bi.outset,
                 repeat: bi.repeat,
-                mode: mode.unwrap_or_else(MaskBorderMode::default),
+                mode: mode.unwrap_or_default(),
             })
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_declaration))
@@ -571,7 +530,7 @@ pub enum WebKitMaskSourceType {
 // blocked_on: PropertyId::WebKitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
 pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
     // TODO(port): PropertyId variant naming — Zig uses kebab-case @"mask-border-source" etc.
-    // Mapping to PascalCase variants here; Phase B should verify exact PropertyId enum shape.
+    // Mapping to PascalCase variants here; verify exact PropertyId enum shape.
     match property_id {
         PropertyId::MaskBorderSource => Some(PropertyId::MaskBoxImageSource(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorderSlice => Some(PropertyId::MaskBoxImageSlice(VendorPrefix::WEBKIT)),

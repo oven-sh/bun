@@ -4,7 +4,7 @@ use bun_ast::ImportRecord;
 use bun_collections::VecExt;
 
 use crate::options::Loader;
-use crate::{Index, LinkerContext, Part};
+use crate::{Index, LinkerContext};
 use bun_ast::PartList;
 use bun_collections::DynamicBitSet as BitSet;
 
@@ -30,7 +30,7 @@ pub fn find_imported_css_files_in_js_order(
     _temp: &Arena,
     entry_point: Index,
 ) -> Vec<Index> {
-    // PERF(port): was arena bulk-free (DynamicBitSet now Box<[usize]>-backed) — profile in Phase B
+    // PERF(port): was arena bulk-free (DynamicBitSet now Box<[usize]>-backed).
     let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
     let mut order: Vec<Index> = Vec::new();
 
@@ -43,8 +43,8 @@ pub fn find_imported_css_files_in_js_order(
     #[allow(clippy::too_many_arguments)]
     fn visit(
         c: &LinkerContext,
-        import_records: &[Vec<ImportRecord>],
-        parts: &[PartList],
+        import_records: &[bun_ast::import_record::List<'_>],
+        parts: &[PartList<'_>],
         loaders: &[Loader],
         visits: &mut BitSet,
         o: &mut Vec<Index>,
@@ -56,11 +56,11 @@ pub fn find_imported_css_files_in_js_order(
         }
         visits.set(source_index.get() as usize);
 
-        let records: &[ImportRecord] = import_records[source_index.get() as usize].slice();
+        let records: &[ImportRecord] = import_records[source_index.get() as usize].as_slice();
         let p = &parts[source_index.get() as usize];
 
         // Iterate over each part in the file in order
-        for part in p.slice() {
+        for part in p.as_slice() {
             // Traverse any files imported by this part. Note that CommonJS calls
             // to "require()" count as imports too, sort of as if the part has an
             // ESM "import" statement in it. This may seem weird because ESM imports

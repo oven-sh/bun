@@ -6,16 +6,17 @@ use crate::values::color::ColorFallbackKind;
 use crate::values::gradient::Gradient;
 use crate::values::resolution::Resolution;
 use crate::values::url::Url;
-use crate::{PrintErr, Printer, VendorPrefix};
+use crate::{PrintErr, VendorPrefix};
 use bun_alloc::Arena;
 use bun_ast::ImportKind;
-use bun_core::strings;
 
 /// A CSS [`<image>`](https://www.w3.org/TR/css-images-3/#image-values) value.
 // TODO(port): `parse`/`to_css` were `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
 // — comptime-reflection derives. Hand-expanded below until the proc-macro lands.
+#[derive(Default)]
 pub enum Image {
     /// The `none` keyword.
+    #[default]
     None,
     /// A `url()`.
     Url(Url),
@@ -30,7 +31,7 @@ impl Image {
     // NOTE: `pub fn deinit` was a no-op in Zig (all CSS parser memory is arena-owned).
     // No `Drop` impl needed — Box/Vec fields drop automatically.
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             Image::Gradient(g) => match &**g {
                 Gradient::Linear(linear) => {
@@ -66,14 +67,14 @@ impl Image {
 
     pub fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
         match self {
-            // PERF(port): was arena bulk-free — profile in Phase B
+            // PERF(port): was arena bulk-free — profile if hot
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
             Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
             _ => self.deep_clone(arena),
         }
     }
 
-    pub fn get_necessary_prefixes(&self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
         match self {
             Image::Gradient(grad) => grad.get_necessary_prefixes(targets),
             Image::ImageSet(image_set) => image_set.get_necessary_prefixes(targets),
@@ -138,7 +139,7 @@ impl Image {
     pub fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image> {
         match self {
             Image::Gradient(gradient) => {
-                // PERF(port): was arena bulk-free — profile in Phase B
+                // PERF(port): was arena bulk-free — profile if hot
                 Some(Image::Gradient(Box::new(
                     gradient.get_legacy_webkit(arena)?,
                 )))
@@ -150,7 +151,7 @@ impl Image {
     pub fn get_fallbacks(
         &mut self,
         arena: &Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
     ) -> css::SmallList<Image, 6> {
         // Determine which prefixes and color fallbacks are needed.
         let prefixes = self.get_necessary_prefixes(targets);
@@ -172,7 +173,7 @@ impl Image {
         // `if (targets.browsers) |b| isWebkitGradient(b) else (false and prefix_image.* == .gradient)`
         if prefixes.contains(VendorPrefix::WEBKIT)
             && if let Some(browsers) = targets.browsers {
-                css::prefixes::Feature::is_webkit_gradient(browsers)
+                css::prefixes::Feature::is_webkit_gradient(&browsers)
             } else {
                 false && matches!(prefix_image, Image::Gradient(_))
             }
@@ -222,13 +223,13 @@ impl Image {
 
     pub fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image {
         match self {
-            // PERF(port): was arena bulk-free — profile in Phase B
+            // PERF(port): was arena bulk-free — profile if hot
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(arena, kind))),
             _ => self.deep_clone(arena),
         }
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         match self {
             Image::Gradient(grad) => grad.get_necessary_fallbacks(targets),
             _ => ColorFallbackKind::empty(),
@@ -267,12 +268,6 @@ impl Image {
     }
 }
 
-impl Default for Image {
-    fn default() -> Image {
-        Image::None
-    }
-}
-
 impl crate::small_list::ImageFallback for Image {
     #[inline]
     fn get_image(&self) -> &Image {
@@ -287,7 +282,7 @@ impl crate::small_list::ImageFallback for Image {
         Image::get_fallback(self, arena, kind)
     }
     #[inline]
-    fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         Image::get_necessary_fallbacks(self, targets)
     }
 }
@@ -298,7 +293,7 @@ impl crate::small_list::ImageFallback for Image {
 /// display the most appropriate resolution or file type that it supports.
 pub struct ImageSet {
     /// The image options to choose from.
-    // PERF(port): was ArrayListUnmanaged fed arena arena — profile in Phase B
+    // PERF(port): was ArrayListUnmanaged fed arena — profile if hot
     pub options: Vec<ImageSetOption>,
 
     /// The vendor prefix for the `image-set()` function.
@@ -308,7 +303,7 @@ pub struct ImageSet {
 impl ImageSet {
     pub fn parse(input: &mut css::Parser) -> Result<ImageSet> {
         let location = input.current_source_location();
-        // SAFETY: borrow detached (Phase-A `'static` placeholder, see
+        // SAFETY: borrow detached (`'static` placeholder, see
         // `css_parser::src_str`) so `input` is reusable below.
         let f: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(input.expect_function()?) };
         let vendor_prefix = crate::match_ignore_ascii_case! { f, {
@@ -335,7 +330,7 @@ impl ImageSet {
         dest.write_char(b')')
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         css::Feature::ImageSet.is_compatible(browsers)
             && 'blk: {
                 for opt in self.options.iter() {
@@ -357,7 +352,7 @@ impl ImageSet {
     }
 
     pub fn eql(&self, other: &ImageSet) -> bool {
-        // TODO(port): was `css.implementEql(@This(), this, other)` — derive PartialEq in Phase B
+        // TODO(port): was `css.implementEql(@This(), this, other)` — derive PartialEq instead.
         self.vendor_prefix == other.vendor_prefix
             && self.options.len() == other.options.len()
             && self
@@ -368,7 +363,7 @@ impl ImageSet {
     }
 
     pub fn deep_clone(&self, arena: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone in Phase B
+        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone instead.
         ImageSet {
             options: self.options.iter().map(|o| o.deep_clone(arena)).collect(),
             vendor_prefix: self.vendor_prefix,
@@ -380,7 +375,7 @@ impl ImageSet {
     }
 
     /// Returns the vendor prefixes needed for the given browser targets.
-    pub fn get_necessary_prefixes(&self, targets: css::targets::Targets) -> css::VendorPrefix {
+    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> css::VendorPrefix {
         targets.prefixes(self.vendor_prefix, css::prefixes::Feature::ImageSet)
     }
 }
@@ -392,7 +387,7 @@ pub struct ImageSetOption {
     /// The resolution of the image.
     pub resolution: Resolution,
     /// The mime type of the image.
-    // TODO(port): arena-borrowed slice from tokenizer input; revisit ownership in Phase B
+    // TODO(port): arena-borrowed slice from tokenizer input; revisit ownership.
     pub file_type: Option<*const [u8]>,
 }
 
@@ -404,12 +399,8 @@ impl ImageSetOption {
         // it can't be used as a `try_parse` callback directly (the result type
         // `R` may not borrow the closure arg). Erase the borrow via `*const`
         // — token slices are arena-static (see `css_parser::src_str`).
-        let image = if let Some(url) = input
-            .try_parse(|p| {
-                p.expect_url_or_string()
-                    .map(|s| std::ptr::from_ref::<[u8]>(s))
-            })
-            .ok()
+        let image = if let Ok(url) =
+            input.try_parse(|p| p.expect_url_or_string().map(std::ptr::from_ref::<[u8]>))
         {
             // SAFETY: see above — `url` borrows the parser's source/arena.
             let url: &[u8] = unsafe { crate::arena_str(url) };
@@ -424,7 +415,7 @@ impl ImageSetOption {
         };
 
         let (resolution, file_type): (Resolution, Option<*const [u8]>) =
-            if let Some(res) = input.try_parse(Resolution::parse).ok() {
+            if let Ok(res) = input.try_parse(Resolution::parse) {
                 let file_type = input.try_parse(parse_file_type).ok();
                 (res, file_type)
             } else {
@@ -503,7 +494,7 @@ impl ImageSetOption {
         if let Some(file_type) = self.file_type {
             dest.write_str(" type(")?;
             // SAFETY: file_type points into the arena-owned parser input which outlives printing.
-            // TODO(port): replace raw slice with proper arena-lifetime borrow in Phase B.
+            // TODO(port): replace raw slice with proper arena-lifetime borrow.
             let file_type_slice = unsafe { crate::arena_str(file_type) };
             dest.serialize_string(file_type_slice)?;
             dest.write_char(b')')?;
@@ -513,7 +504,7 @@ impl ImageSetOption {
     }
 
     pub fn deep_clone(&self, arena: &Arena) -> Self {
-        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone in Phase B
+        // TODO(port): was `css.implementDeepClone(@This(), this, arena)` — derive Clone instead.
         ImageSetOption {
             image: self.image.deep_clone(arena),
             resolution: self.resolution,
@@ -522,7 +513,7 @@ impl ImageSetOption {
     }
 
     pub fn eql(&self, rhs: &ImageSetOption) -> bool {
-        // TODO(port): was `css.implementEql(@This(), lhs, rhs)` — derive PartialEq in Phase B
+        // TODO(port): was `css.implementEql(@This(), lhs, rhs)` — derive PartialEq instead.
         self.image.eql(&rhs.image)
             && self.resolution == rhs.resolution
             && match (self.file_type, rhs.file_type) {
@@ -534,12 +525,11 @@ impl ImageSetOption {
     }
 }
 
-#[allow(dead_code)]
 fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
     input.expect_function_matching(b"type")?;
     input.parse_nested_block(|i: &mut css::Parser| {
         // TODO(port): expect_string returns arena-borrowed &[u8]; coerced to raw ptr to avoid struct lifetime
-        i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s))
+        i.expect_string().map(std::ptr::from_ref::<[u8]>)
     })
 }
 

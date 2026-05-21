@@ -1,6 +1,4 @@
-#![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
-use crate as css;
 use crate::compat::Feature;
 use crate::css_values::length::LengthPercentageOrAuto;
 use crate::logical::PropertyCategory;
@@ -76,8 +74,8 @@ impl_size_shorthand!(
 // Zig used `css.DefineRectShorthand(@This(), V)` / `css.DefineSizeShorthand(@This(), V)`
 // as comptime mixins that inject `parse` + `toCss`. In Rust those become trait
 // impls (`RectShorthand` / `SizeShorthand`) that provide default `parse`/`to_css`.
-// The trait comes first (PORTING.md §Comptime reflection); a `#[derive]` may
-// replace the manual impls in Phase B.
+// The trait comes first (PORTING.md §Comptime reflection); a `#[derive]` could
+// replace the manual impls.
 //
 // `implementDeepClone` / `implementEql` are field-wise reflection helpers →
 // `#[derive(Clone, PartialEq)]`; the `DeepClone`/`CssEql` trait impls are
@@ -380,7 +378,7 @@ pub type InsetHandler = SizeHandler<InsetSpec>;
 // TODO(port): a `macro_rules! size_handler_spec!` could generate the four
 // `SizeHandlerSpec` impls from the same 13-argument table the Zig used,
 // eliminating the per-spec extract/construct boilerplate. Left explicit for
-// Phase-A reviewability.
+// reviewability.
 
 /// Selector for the four physical slots on `SizeHandler` (Zig used a
 /// `comptime field: []const u8` and `@field(this, field)`).
@@ -450,7 +448,7 @@ pub trait SizeHandlerSpec {
     //   `@field(property, @tagName(X_prop))`       → extract_x
     //   `@unionInit(Property, @tagName(X_prop), v)` → make_x
     // TODO(port): these are pure mechanical pattern-matches over `Property`;
-    // generate via macro in Phase B.
+    // could generate via macro.
 
     fn extract_top(p: &Property) -> &LengthPercentageOrAuto;
     fn extract_bottom(p: &Property) -> &LengthPercentageOrAuto;
@@ -533,10 +531,8 @@ impl<S: SizeHandlerSpec> Default for SizeHandler<S> {
     }
 }
 
-// PORT NOTE: un-gated B-2 round 15 — Property variants + prefixes::Feature +
-// PropertyHandlerContext::{targets,add_logical_rule} are real now.
-// `context.arena` was dropped from PropertyHandlerContext; the arena is
-// recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
+// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext; the
+// arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl<S: SizeHandlerSpec> SizeHandler<S> {
     // ---- @field(this, field) replacements ----
     fn physical_slot(&mut self, slot: PhysicalSlot) -> &mut Option<LengthPercentageOrAuto> {
@@ -848,14 +844,14 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // PERF(port): `category` was comptime monomorphization — profile in Phase B
+        // PERF(port): `category` was comptime monomorphization — profile if hot.
         // If the category changes betweet logical and physical,
         // or if the value contains syntax that isn't supported across all targets,
         // preserve the previous value as a fallback.
         if category != self.category
             || (self.physical_slot_is_some(field)
                 && context.targets.browsers.is_some()
-                && !val.is_compatible(context.targets.browsers.unwrap()))
+                && !val.is_compatible(&context.targets.browsers.unwrap()))
         {
             self.flush(dest, context);
         }
@@ -870,14 +866,14 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // PERF(port): `category` was comptime monomorphization — profile in Phase B
+        // PERF(port): `category` was comptime monomorphization — profile if hot.
         // If the category changes betweet logical and physical,
         // or if the value contains syntax that isn't supported across all targets,
         // preserve the previous value as a fallback.
         if category != self.category
             || (self.logical_slot_is_some(field)
                 && context.targets.browsers.is_some()
-                && !val.is_compatible(context.targets.browsers.unwrap()))
+                && !val.is_compatible(&context.targets.browsers.unwrap()))
         {
             self.flush(dest, context);
         }
@@ -891,7 +887,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        // PERF(port): `category` was comptime monomorphization — profile in Phase B
+        // PERF(port): `category` was comptime monomorphization — profile if hot.
         self.flush_helper_physical(field, val, category, dest, context);
         *self.physical_slot(field) = Some(val.clone());
         self.category = category;
@@ -935,30 +931,25 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             None => true,
         };
 
-        if (S::SHORTHAND_CATEGORY != PropertyCategory::Logical || logical_supported)
-            && top.is_some()
-            && bottom.is_some()
-            && left.is_some()
-            && right.is_some()
-        {
-            dest.push(S::make_shorthand(
-                top.unwrap(),
-                bottom.unwrap(),
-                left.unwrap(),
-                right.unwrap(),
-            ));
-        } else {
-            if let Some(t) = top {
-                dest.push(S::make_top(t));
+        match (top, bottom, left, right) {
+            (Some(top), Some(bottom), Some(left), Some(right))
+                if S::SHORTHAND_CATEGORY != PropertyCategory::Logical || logical_supported =>
+            {
+                dest.push(S::make_shorthand(top, bottom, left, right));
             }
-            if let Some(b) = bottom {
-                dest.push(S::make_bottom(b));
-            }
-            if let Some(b) = left {
-                dest.push(S::make_left(b));
-            }
-            if let Some(b) = right {
-                dest.push(S::make_right(b));
+            (top, bottom, left, right) => {
+                if let Some(t) = top {
+                    dest.push(S::make_top(t));
+                }
+                if let Some(b) = bottom {
+                    dest.push(S::make_bottom(b));
+                }
+                if let Some(b) = left {
+                    dest.push(S::make_left(b));
+                }
+                if let Some(b) = right {
+                    dest.push(S::make_right(b));
+                }
             }
         }
 
@@ -1197,10 +1188,10 @@ enum LogicalSidePair {
 // Spec instantiations
 // ──────────────────────────────────────────────────────────────────────────
 //
-// PORT NOTE: un-gated B-2 round 15 — the `extract_*` / `make_*` / `shorthand_*`
-// bodies are pure `@field` / `@unionInit` token-pasting in Zig
-// (`NewSizeHandler`). `size_handler_spec_projections!` expands them from the
-// 11 `Property` variant idents + 3 shorthand value-type idents that the Zig
+// PORT NOTE: the `extract_*` / `make_*` / `shorthand_*` bodies are pure
+// `@field` / `@unionInit` token-pasting in Zig (`NewSizeHandler`).
+// `size_handler_spec_projections!` expands them from the 11 `Property`
+// variant idents + 3 shorthand value-type idents that the Zig
 // `NewSizeHandler(...)` call sites passed positionally.
 
 macro_rules! size_handler_spec_projections {

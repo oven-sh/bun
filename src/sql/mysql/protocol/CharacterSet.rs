@@ -2,7 +2,7 @@ use strum::{FromRepr, IntoStaticStr};
 
 // TODO(port): Zig source is a non-exhaustive `enum(u8)` (trailing `_`), meaning it may
 // legally hold any u8 value not listed below. A Rust `#[repr(u8)] enum` makes that UB.
-// If callers ever construct this from an arbitrary wire byte, Phase B must either add an
+// If callers ever construct this from an arbitrary wire byte, either add an
 // `Unknown(u8)` path at the construction site or switch to `#[repr(transparent)] struct(u8)`
 // with associated consts.
 #[allow(non_camel_case_types)]
@@ -242,7 +242,7 @@ impl CharacterSet {
     /// this Rust enum is exhaustive, so unknown discriminants fall back to
     /// `DEFAULT` via the strum-generated `from_repr` exhaustive match (no
     /// hand-maintained range list, no `transmute`).
-    /// TODO(b2): switch to `#[repr(transparent)] struct(u8)` newtype to keep
+    /// TODO(port): switch to `#[repr(transparent)] struct(u8)` newtype to keep
     /// the unknown value (matching Zig semantics) instead of falling back.
     pub const fn from_raw(b: u8) -> Self {
         match Self::from_repr(b) {

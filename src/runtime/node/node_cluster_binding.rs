@@ -27,7 +27,7 @@ unsafe extern "C" {
 }
 
 // TODO(port): `pub var` mutable global with !Sync fields (Strong). Only ever accessed on the
-// JS thread. Phase B: wrap in a JS-thread-local cell or assert const-init of fields.
+// JS thread; wrap in a JS-thread-local cell or assert const-init of fields.
 // PORT NOTE: ArrayHashMap::new() is not const, so the global is lazily seeded on first
 // access via `child_singleton()`.
 // PORTING.md §Global mutable state: JS-thread-only singleton with `!Sync`

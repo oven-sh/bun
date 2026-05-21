@@ -2,7 +2,9 @@
 use core::ptr;
 
 use bun_alloc::AllocError;
-use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
+use bun_core::{Error, err};
+#[cfg(not(windows))]
+use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
@@ -69,15 +71,14 @@ impl FileCopier {
         #[cfg(not(windows))]
         let dest_subpath_u8: &[u8] = self.dest_subpath.slice_z().as_bytes();
         let dest_dir = match bun_sys::make_path::make_open_path(
-            Dir::cwd(),
+            &Dir::cwd(),
             dest_subpath_u8,
             Default::default(),
         ) {
             Ok(d) => d,
             Err(e) => {
                 // TODO: remove the need for this and implement openDir makePath makeOpenPath in bun
-                #[allow(unused_mut)]
-                let mut errno: E = {
+                let errno: E = {
                     // `@as(anyerror, err)` → match against interned bun_core::Error tags.
                     let e: Error = e;
                     if e == err!("AccessDenied") {
@@ -98,9 +99,7 @@ impl FileCopier {
                         E::EROFS
                     } else if e == err!("FileSystem") {
                         E::EIO
-                    } else if e == err!("FileBusy") {
-                        E::EBUSY
-                    } else if e == err!("DeviceBusy") {
+                    } else if e == err!("FileBusy") || e == err!("DeviceBusy") {
                         E::EBUSY
                     }
                     // One of the path components was not a directory.
@@ -109,14 +108,12 @@ impl FileCopier {
                         E::ENOTDIR
                     }
                     // On Windows, file paths must be valid Unicode.
-                    else if e == err!("InvalidUtf8") {
-                        E::EINVAL
-                    } else if e == err!("InvalidWtf8") {
-                        E::EINVAL
-                    }
                     // On Windows, file paths cannot contain these characters:
                     // '/', '*', '?', '"', '<', '>', '|'
-                    else if e == err!("BadPathName") {
+                    else if e == err!("InvalidUtf8")
+                        || e == err!("InvalidWtf8")
+                        || e == err!("BadPathName")
+                    {
                         E::EINVAL
                     } else if e == err!("FileNotFound") {
                         E::ENOENT
@@ -127,26 +124,26 @@ impl FileCopier {
                     }
                 };
                 #[cfg(windows)]
-                if errno == E::ENOTDIR {
-                    errno = E::ENOENT;
-                }
+                let errno = if errno == E::ENOTDIR {
+                    E::ENOENT
+                } else {
+                    errno
+                };
 
                 return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::copyfile));
             }
         };
-        // Zig: `defer dest_dir.close();` — `Dir` is a non-owning Copy handle
-        // with no Drop impl, so close explicitly on every exit path.
-        let _close_dest_dir = sys::CloseOnDrop::dir(dest_dir);
 
+        #[cfg(not(windows))]
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 
         loop {
-            let entry = match self.walker.next() {
-                sys::Result::Ok(res) => match res {
+            let entry = {
+                let res = self.walker.next()?;
+                match res {
                     Some(entry) => entry,
                     None => break,
-                },
-                sys::Result::Err(err) => return sys::Result::Err(err),
+                }
             };
 
             #[cfg(windows)]
@@ -180,7 +177,7 @@ impl FileCopier {
                         } == 0
                         {
                             let _ = bun_sys::make_path::make_path::<u16>(
-                                dest_dir,
+                                &dest_dir,
                                 entry.path.as_slice(),
                             );
                         }
@@ -207,7 +204,7 @@ impl FileCopier {
                                     None => sys::Result::Err(first_err),
                                     Some(entry_dirname) => {
                                         let _ = bun_sys::make_path::make_path::<u16>(
-                                            dest_dir,
+                                            &dest_dir,
                                             entry_dirname,
                                         );
                                         bun_sys::copy_file::copy_file(
@@ -235,14 +232,12 @@ impl FileCopier {
                     continue;
                 }
 
-                let src: Fd =
-                    match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0) {
-                        sys::Result::Ok(fd) => fd,
-                        sys::Result::Err(err) => {
-                            return sys::Result::Err(err);
-                        }
-                    };
-                // `defer src.close()` → handled by Drop on `src`.
+                let src = match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0) {
+                    sys::Result::Ok(fd) => bun_sys::File::from_fd(fd),
+                    sys::Result::Err(err) => {
+                        return sys::Result::Err(err);
+                    }
+                };
 
                 let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
                     Ok(f) => f,
@@ -251,7 +246,7 @@ impl FileCopier {
                             bun_paths::Dirname::dirname::<OSPathChar>(entry.path)
                         {
                             let _ = bun_sys::make_path::make_path::<OSPathChar>(
-                                dest_dir,
+                                &dest_dir,
                                 entry_dirname,
                             );
                         }
@@ -269,11 +264,10 @@ impl FileCopier {
                         }
                     }
                 };
-                // `defer dest.close()` → handled by Drop on `dest`.
 
                 #[cfg(unix)]
                 {
-                    let stat = match bun_sys::fstat(src) {
+                    let stat = match bun_sys::fstat(src.handle()) {
                         sys::Result::Ok(s) => s,
                         sys::Result::Err(_) => continue,
                     };
@@ -284,7 +278,7 @@ impl FileCopier {
                 }
 
                 match bun_sys::copy_file::copy_file_with_state(
-                    src,
+                    src.handle(),
                     dest.handle(),
                     &mut copy_file_state,
                 ) {

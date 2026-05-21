@@ -19,6 +19,7 @@
 
 use crate::SmallList;
 pub use crate::{PrintErr, Printer};
+use bun_alloc::ArenaPtr;
 
 use crate::selector::parser::{
     BunSelectorImpl as ValidSelectorImpl, Combinator, GenericComponent, SelectorFlags,
@@ -34,12 +35,6 @@ use crate::selector::parser::{
 /// (from left to right). Once the process is complete, callers should invoke
 /// build(), which transforms the contents of the SelectorBuilder into a heap-
 /// allocated Selector and leaves the builder in a drained state.
-// PORT NOTE: Zig threaded `arena: Allocator` and built `components` into
-// an arena `ArrayList`. Phase A: `GenericSelector.components` is a std `Vec`
-// (see parser.rs `// PERF(port): was arena ArrayList`), so the builder uses
-// std `Vec` for the result and drops the `&'bump Arena` field. Phase B
-// re-threads `'bump` once `GenericSelector.components` becomes
-// `bun_alloc::ArenaVec<'bump, _>`.
 pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     /// The entire sequence of simple selectors, from left to right, without combinators.
     ///
@@ -54,21 +49,19 @@ pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
 
     /// The length of the current compound selector.
     current_len: usize,
+
+    alloc: ArenaPtr,
 }
 
 pub struct BuildResult<Impl: ValidSelectorImpl> {
     pub specificity_and_flags: SpecificityAndFlags,
-    pub components: Vec<GenericComponent<Impl>>,
+    pub components: Vec<GenericComponent<Impl>, ArenaPtr>,
 }
 
 impl<Impl: ValidSelectorImpl> Default for SelectorBuilder<Impl> {
     #[inline]
     fn default() -> Self {
-        Self {
-            simple_selectors: SmallList::default(),
-            combinators: SmallList::default(),
-            current_len: 0,
-        }
+        Self::init_in(ArenaPtr::global())
     }
 }
 
@@ -76,6 +69,16 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     #[inline]
     pub fn init() -> Self {
         Self::default()
+    }
+
+    #[inline]
+    pub fn init_in(alloc: ArenaPtr) -> Self {
+        Self {
+            simple_selectors: SmallList::default(),
+            combinators: SmallList::default(),
+            current_len: 0,
+            alloc,
+        }
     }
 
     /// Returns true if combinators have ever been pushed to this builder.
@@ -163,10 +166,10 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         );
         let combinators = self.combinators.slice();
 
-        let mut components: Vec<GenericComponent<Impl>> = Vec::new();
+        let mut components: Vec<GenericComponent<Impl>, ArenaPtr> = Vec::new_in(self.alloc);
 
         let mut current_simple_selectors_i: usize = 0;
-        let mut combinator_i: i64 = i64::try_from(combinators_len).expect("int cast") - 1;
+        let mut combinator_i: i64 = i64::from(combinators_len) - 1;
         let mut rest_of_simple_selectors = rest;
         let mut current_simple_selectors = current;
 

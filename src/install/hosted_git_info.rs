@@ -59,7 +59,7 @@ use bun_core::StringBuilder;
 use bun_core::{OwnedString, strings};
 use bun_url::PercentEncoding;
 use bun_url::whatwg::URL as JscUrl;
-use enum_map::{Enum, EnumMap, enum_map};
+use enum_map::{Enum, EnumMap};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Errors
@@ -123,8 +123,8 @@ pub enum Representation {
 // PORT NOTE: reshaped for borrowck. The Zig stores `committish`/`project`/`user`
 // as `[]const u8` slices that alias into `_memory_buffer` (a single owned
 // allocation). Rust can't express that self-reference safely without lifetimes
-// on the struct (forbidden in Phase A). We store byte ranges into
-// `_memory_buffer` instead and expose slice accessors.
+// on the struct. We store byte ranges into `_memory_buffer` instead and expose
+// slice accessors.
 pub struct HostedGitInfo {
     committish: Option<Range<usize>>,
     project: Range<usize>,
@@ -252,7 +252,7 @@ impl HostedGitInfo {
         //  - It aliases `git_url`, in which case it must not be freed.
         //  - It actually points to a new allocation, in which case it must be freed.
         // PORT NOTE: modeled as Cow-like local; Drop handles the owned case.
-        let mut git_url_owned: Option<Box<[u8]>> = None;
+        let git_url_owned: Option<Box<[u8]>>;
         let mut git_url_mut: &[u8] = git_url;
 
         if is_github_shorthand(git_url) {
@@ -265,7 +265,10 @@ impl HostedGitInfo {
             let concatenated = strings::concat(&[b"github:", git_url]);
             git_url_owned = Some(concatenated);
             git_url_mut = git_url_owned.as_deref().unwrap();
+        } else {
+            git_url_owned = None;
         }
+        let _ = &git_url_owned;
 
         let Ok(parsed) = parse_url(git_url_mut) else {
             return Ok(None);
@@ -703,7 +706,7 @@ impl<'a> UrlProtocolPair<'a> {
         // Ehhh.. Old IE's max path length was 2K so let's just use that. I searched for a
         // statistical distribution of URL lengths and found nothing.
         const _LONG_URL_THRESH: usize = 2048;
-        // PERF(port): was stack-fallback (std.heap.stackFallback) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback) — profile if it shows up on a hot path
 
         let mut protocol_buf: StringWithColonBuffer =
             [0u8; WellDefinedProtocol::MAX_PROTOCOL_LENGTH + 1];
@@ -954,43 +957,6 @@ impl HostProvider {
         HostProvider::Sourcehut,
     ];
 
-    fn format_ssh(
-        self,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_ssh)(self, user, project, committish)
-    }
-
-    fn format_ssh_url(
-        self,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_sshurl)(self, user, project, committish)
-    }
-
-    fn format_https(
-        self,
-        auth: Option<&[u8]>,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_https)(self, auth, user, project, committish)
-    }
-
-    fn format_shortcut(
-        self,
-        user: Option<&[u8]>,
-        project: &[u8],
-        committish: Option<&[u8]>,
-    ) -> Result<Vec<u8>, AllocError> {
-        (configs()[self].format_shortcut)(self, user, project, committish)
-    }
-
     fn extract(self, url: &JscUrl) -> Result<Option<ExtractResult>, HostedGitInfoError> {
         (configs()[self].format_extract)(url)
     }
@@ -1008,32 +974,16 @@ impl HostProvider {
         configs()[self].domain
     }
 
-    fn protocols(self) -> &'static [WellDefinedProtocol] {
-        configs()[self].protocols
-    }
-
     fn shortcut_without_colon(self) -> &'static [u8] {
         let shct = self.shortcut();
         &shct[0..shct.len() - 1]
-    }
-
-    fn tree_path(self) -> Option<&'static [u8]> {
-        configs()[self].tree_path
-    }
-
-    fn blob_path(self) -> Option<&'static [u8]> {
-        configs()[self].blob_path
-    }
-
-    fn edit_path(self) -> Option<&'static [u8]> {
-        configs()[self].edit_path
     }
 
     /// Find the appropriate host provider by its shortcut (e.g. "github:").
     ///
     /// The second parameter allows you to declare whether the given string includes the protocol:
     /// colon or not.
-    // PERF(port): was comptime monomorphization — profile in Phase B
+    // PERF(port): was comptime monomorphization — profile if it shows up on a hot path
     fn from_shortcut(shortcut_str: &[u8], with_colon: bool) -> Option<HostProvider> {
         // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
         for provider in Self::ALL {
@@ -1054,13 +1004,9 @@ impl HostProvider {
     /// Find the appropriate host provider by its domain (e.g. "github.com").
     fn from_domain(domain_str: &[u8]) -> Option<HostProvider> {
         // PORT NOTE: Zig used `inline for (std.meta.fields(Self))` (comptime reflection).
-        for provider in Self::ALL {
-            if provider.domain() == domain_str {
-                return Some(provider);
-            }
-        }
-
-        None
+        Self::ALL
+            .into_iter()
+            .find(|&provider| provider.domain() == domain_str)
     }
 
     /// Parse a URL and return the appropriate host provider, if any.
@@ -1078,7 +1024,7 @@ impl HostProvider {
     /// Given a URL, use the domain in the URL to find the appropriate host provider.
     fn from_url_domain(url: &JscUrl) -> Option<HostProvider> {
         const _MAX_HOSTNAME_LEN: usize = 253;
-        // PERF(port): was stack-fallback (FixedBufferAllocator) — profile in Phase B
+        // PERF(port): was stack-fallback (FixedBufferAllocator) — profile if it shows up on a hot path
 
         let hostname_str = OwnedString::new(url.hostname());
 
@@ -1857,13 +1803,13 @@ pub mod formatters {
 
 // PERF(port): was `std.enums.EnumArray(Self, Config).init(.{...})` (comptime
 // dense array indexed by enum). `enum_map::EnumMap` can't be const-initialized
-// with fn pointers, so this uses a `OnceLock` static — profile in Phase B and
-// flatten into a `match`-based accessor if it shows up.
+// with fn pointers, so this uses a `OnceLock` static — flatten into a
+// `match`-based accessor if it shows up on a hot path.
 fn configs() -> &'static EnumMap<HostProvider, Config> {
     use std::sync::OnceLock;
     static CONFIGS: OnceLock<EnumMap<HostProvider, Config>> = OnceLock::new();
     CONFIGS.get_or_init(|| {
-        enum_map! {
+        EnumMap::from_fn(|k| match k {
             HostProvider::Bitbucket => Config {
                 protocols: &[
                     WellDefinedProtocol::GitPlusHttp,
@@ -1944,10 +1890,7 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
                 format_extract: formatters::extract::gitlab,
             },
             HostProvider::Sourcehut => Config {
-                protocols: &[
-                    WellDefinedProtocol::GitPlusSsh,
-                    WellDefinedProtocol::Https,
-                ],
+                protocols: &[WellDefinedProtocol::GitPlusSsh, WellDefinedProtocol::Https],
                 domain: b"git.sr.ht",
                 shortcut: b"sourcehut:",
                 tree_path: Some(b"tree"),
@@ -1960,7 +1903,7 @@ fn configs() -> &'static EnumMap<HostProvider, Config> {
                 format_git: formatters::git::DEFAULT,
                 format_extract: formatters::extract::sourcehut,
             },
-        }
+        })
     })
 }
 

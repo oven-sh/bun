@@ -1,14 +1,13 @@
-use core::ffi::{c_int, c_void};
+#[cfg(unix)]
+use core::ffi::c_int;
+use core::ffi::c_void;
 use core::fmt;
+#[cfg(unix)]
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_collections::HiveArray;
-use bun_core::Output;
-use bun_sys::{self as sys, Fd, FdExt};
+#[cfg(not(windows))]
+use bun_sys::{self as sys, Fd};
 use bun_uws_sys::Loop as UwsLoop;
-
-use bun_threading::work_pool::{self, WorkPool};
 
 pub type Loop = UwsLoop;
 
@@ -28,16 +27,10 @@ fn loop_add_active(loop_: &mut Loop, value: u32) {
 fn loop_sub_active(loop_: &mut Loop, value: u32) {
     loop_.active = loop_.active.saturating_sub(value);
 }
-#[cfg(windows)]
-#[inline]
-fn loop_add_active(_loop: &mut Loop, _value: u32) {}
-#[cfg(windows)]
-#[inline]
-fn loop_sub_active(_loop: &mut Loop, _value: u32) {}
 
 bun_core::declare_scope!(KeepAlive, visible);
 
-// TODO(b2-blocked): bun_sys::syslog — macro not exported from bun_sys yet.
+// TODO(port): bun_sys::syslog — macro not exported from bun_sys yet.
 // Local no-op shim so debug log call sites compile. All call sites live in
 // `#[cfg(not(windows))] impl FilePoll`, so gate the definition to match.
 #[cfg(not(windows))]
@@ -48,6 +41,7 @@ macro_rules! syslog {
 /// Local port of `Maybe(T).errnoSys` (Zig: src/runtime/node.zig). `bun_sys`
 /// does not yet expose this helper on `Result<T>`; once it does, drop this and
 /// call `sys::Result::<()>::errno_sys` directly.
+#[cfg(not(windows))]
 #[inline]
 fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
 where
@@ -126,7 +120,7 @@ pub fn js_vm_ctx() -> EventLoopCtx {
 // `KQueueGenerationNumber` is `usize` on macOS-debug, else a zero-size sentinel.
 #[cfg(all(target_os = "macos", debug_assertions))]
 type KQueueGenerationNumber = usize;
-#[cfg(not(all(target_os = "macos", debug_assertions)))]
+#[cfg(all(unix, not(all(target_os = "macos", debug_assertions))))]
 type KQueueGenerationNumber = u8; // PORT NOTE: Zig uses `u0`; smallest Rust int is u8. Gated by cfg below.
 
 // PORTING.md §Global mutable state: counter → Atomic. Debug-only diagnostic;
@@ -407,11 +401,11 @@ impl FilePoll {
         // access over the slot and invalidate `self`'s tag (Stacked Borrows).
         // Decay `self` to a raw slot pointer first, *then* materialise the
         // `&mut Store` via the crate-private backref-deref accessor.
-        let this: *mut FilePoll = std::ptr::from_mut::<FilePoll>(self);
+        let this = ptr::NonNull::from(self);
         // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
         // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
         // the `&mut Store` it produces is the sole unique borrow into the hive.
-        // `Store::put` itself touches `this` only via raw-pointer ops.
+        // `Store::put` touches `this` only via raw-pointer ops (see its doc).
         vm.file_polls_mut().put(this, vm, was_ever_registered);
     }
 
@@ -550,33 +544,14 @@ impl FilePoll {
         }
     }
 
-    // TODO(port): Zig branches on @TypeOf(vm) for *PackageManager, EventLoopHandle, else.
-    // Phase B: callers normalize to EventLoopCtx before calling.
+    // PORT NOTE: Zig branches on @TypeOf(vm) for *PackageManager, EventLoopHandle, else.
+    // Callers normalize to EventLoopCtx before calling.
     pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
         let generation_number = value.generation_number;
         let poll = vm.alloc_file_poll(value).as_ptr();
         syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
-            poll as usize,
-            generation_number,
-            fd
-        );
-        poll
-    }
-
-    // PORT NOTE: Zig `initWithOwner` picks `allocator_type` from comptime
-    // `@TypeOf(vm_) == *jsc.VirtualMachine`; here we derive it from the runtime
-    // `EventLoopCtx` tag. The two agree only when `vm` is built from the
-    // concrete VM/MiniEventLoop (the sole Zig call path, via `init`). Kept
-    // non-`pub` so callers can't pass a re-wrapped handle and diverge.
-    #[allow(dead_code)]
-    fn init_with_owner(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
-        let value = Self::new_value(vm, fd, flags, owner);
-        let generation_number = value.generation_number;
-        let poll = vm.alloc_file_poll(value).as_ptr();
-        syslog!(
-            "FilePoll.initWithOwner(0x{:x}, generation_number={}, fd={})",
             poll as usize,
             generation_number,
             fd
@@ -1395,12 +1370,14 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
-    pub fn put(&mut self, poll: *mut FilePoll, vm: EventLoopCtx, ever_registered: bool) {
-        // SAFETY: `poll` may point *inside* `self.hive`'s inline `[FilePoll; 128]`
-        // buffer, so accepting it as `&mut FilePoll` while `&mut self` is live
-        // would retag overlapping storage under Stacked Borrows (UB). Mirror Zig's
-        // alias-tolerant `poll: *FilePoll` and touch fields only through raw
-        // pointer ops — same rationale as `process_deferred_frees` above.
+    /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
+    /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
+    /// as `&mut FilePoll` while `&mut self` is live would retag overlapping
+    /// storage under Stacked Borrows (UB). Mirror Zig's alias-tolerant
+    /// `poll: *FilePoll` and touch fields only through raw pointer ops — same
+    /// rationale as `process_deferred_frees` above.
+    pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
+        let poll = poll.as_ptr();
         if !ever_registered {
             // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no
             // drop glue, so `put` is a no-op drop + recycle.
@@ -1408,6 +1385,7 @@ impl Store {
             return;
         }
 
+        // SAFETY: `poll` is a live hive slot (see fn-level comment); raw read of a POD field.
         debug_assert!(unsafe { (*poll).next_to_free }.is_null());
 
         if !self.pending_free_tail.is_null() {
@@ -1436,7 +1414,7 @@ impl Store {
         );
         vm.set_after_event_loop_callback(
             Some(callback),
-            std::ptr::from_mut::<Store>(self).cast::<c_void>(),
+            core::ptr::NonNull::new(std::ptr::from_mut::<Store>(self).cast::<c_void>()),
         );
     }
 
@@ -1510,7 +1488,13 @@ impl Pollable {
     target_os = "freebsd"
 ))]
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_pointer: *mut c_void) {
+/// # Safety
+/// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
+/// was registered via `Pollable::init` in `register_with_fd`.
+pub unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
+    loop_: *mut Loop,
+    tagged_pointer: *mut c_void,
+) {
     let tag = Pollable::from(tagged_pointer);
 
     if tag.tag() != Pollable::FILE_POLL_TAG {
@@ -1538,7 +1522,7 @@ pub extern "C" fn Bun__internal_dispatch_ready_poll(loop_: *mut Loop, tagged_poi
     file_poll.on_epoll_event(&ev);
 }
 
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+#[cfg(target_os = "macos")]
 static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec {
     tv_sec: 0,
     tv_nsec: 0,
@@ -1552,6 +1536,7 @@ pub enum OneShotFlag {
     None,
 }
 
+#[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
 
 // ──────────────────────────────────────────────────────────────────────────

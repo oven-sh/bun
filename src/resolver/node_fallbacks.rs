@@ -6,7 +6,7 @@ pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 
 // Ensure that checking for the prefix should be a cheap lookup (bun_core::has_prefix)
 // because 24 bytes == 8 * 3 --> read and compare three u64s
-const _: () = assert!(IMPORT_PATH.len() % 8 == 0);
+const _: () = assert!(IMPORT_PATH.len().is_multiple_of(8));
 
 pub struct FallbackModule {
     pub path: fs::Path<'static>,
@@ -43,7 +43,7 @@ macro_rules! create_source_code_getter {
 // is not const-constructible in Rust (Box<[u8]>/HashMap fields), so per PORTING.md
 // §Concurrency this is a `LazyLock` runtime-init singleton. `@setEvalBranchQuota` is dropped.
 //
-// PERF(port): Zig used a comptime perfect-hash map; this builds at first access — profile in Phase B.
+// PERF(port): Zig used a comptime perfect-hash map; this builds at first access.
 macro_rules! fallback_module_init {
     ($name:literal, $code_path:literal) => {{
         const _VERSION: &[u8] = b"0.0.0-polyfill";
@@ -126,7 +126,7 @@ fn init_modules() {
             m.put_assume_capacity(
                 name,
                 FallbackModule {
-                    path: path.clone(),
+                    path: *path,
                     package_json: pkg,
                     code: *code,
                 },

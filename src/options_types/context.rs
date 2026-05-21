@@ -18,8 +18,8 @@ use crate::offline_mode::OfflineMode;
 
 // TODO(port): every `[]const u8` / `[]const []const u8` struct field below is a
 // proc-lifetime CLI string (no `deinit`, populated once from argv/bunfig and
-// never freed). Ported as `Box<[u8]>` / `Vec<Box<[u8]>>` for now; Phase B may
-// retype to `&'static [u8]` once the CLI parser leaks into a bump arena.
+// never freed). Ported as `Box<[u8]>` / `Vec<Box<[u8]>>` for now; may retype to
+// `&'static [u8]` once the CLI parser leaks into a bump arena.
 
 pub struct ContextData {
     pub start_time: i128,
@@ -155,6 +155,7 @@ impl ContextData {
     /// If `self.log` is null (i.e. `create_context_data()` has not run).
     #[track_caller]
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
         assert!(
             !self.log.is_null(),
@@ -188,7 +189,6 @@ impl ContextData {
     // — Rust cannot re-export an associated fn; TODO(port): add a thin
     // delegating `pub fn create(...)` here once `bun_cli` exists, or invert the
     // alias direction (cli re-exports this type).
-    #[allow(unused)]
     pub const CREATE_SEE_CLI: () = ();
 }
 
@@ -296,7 +296,7 @@ impl Default for BundlerOptions {
 pub type Context<'a> = &'a mut ContextData;
 // TODO(port): Zig `*ContextData` is passed everywhere as a long-lived handle;
 // the borrow lifetime above may need to become `*mut ContextData` at call sites
-// that re-enter the global ctx (Phase B).
+// that re-enter the global ctx.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Process-global CLI context handle.

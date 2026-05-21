@@ -1,6 +1,5 @@
 use super::new_writer::NewWriter;
 use super::portal_or_prepared_statement::PortalOrPreparedStatement;
-use super::write_wrap::WriteWrap;
 
 pub struct Describe<'a> {
     pub p: PortalOrPreparedStatement<'a>,
@@ -13,7 +12,7 @@ impl<'a> Describe<'a> {
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let message = self.p.slice();
-        writer.write(&[b'D'])?;
+        writer.write(b"D")?;
         let length = writer.length()?;
         writer.write(&[self.p.tag()])?;
         writer.string(message)?;

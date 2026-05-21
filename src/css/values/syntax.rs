@@ -21,13 +21,13 @@ const SPACE_CHARACTERS: &[u8] = &[0x20, 0x09];
 /// A CSS [syntax string](https://drafts.css-houdini.org/css-properties-values-api/#syntax-strings)
 /// used to define the grammar for a registered custom property.
 // PORT NOTE: the Zig source comments note "Zig doesn't have lifetimes, so 'i is omitted" —
-// upstream lightningcss Rust threaded `'i`, but Phase-A uses `&'static [u8]` /
+// upstream lightningcss Rust threaded `'i`, but the port uses `&'static [u8]` /
 // `*const [u8]` placeholders for arena-borrowed slices (matching `Token` /
-// `ident.rs`). Phase B threads `'bump` and restores the lifetime.
-#[derive(Debug, Clone, PartialEq)]
+// `ident.rs`). TODO(refactor): thread `'bump` and restore the lifetime.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntaxString {
     /// A list of syntax components.
-    // PERF(port): was arena ArrayList — `Vec` until Phase B threads `'bump` into BumpVec.
+    // PERF(port): was arena ArrayList — `Vec` until `'bump` is threaded into BumpVec.
     Components(Vec<SyntaxComponent>),
     /// The universal syntax definition.
     Universal,
@@ -36,7 +36,7 @@ pub enum SyntaxString {
 impl SyntaxString {
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone is comptime field reflection — replace with
-        // a `DeepClone` trait/derive in Phase B. For now defer to Clone.
+        // a `DeepClone` trait/derive. For now defer to Clone.
         self.clone()
     }
 
@@ -105,7 +105,7 @@ impl SyntaxString {
             SyntaxString::Universal => Ok(ParsedComponent::TokenList(TokenList::parse(
                 input,
                 // PORT NOTE: Zig passes `ParserOptions.default(input.arena(), null)`;
-                // Rust's signature drops the arena param (global-alloc Phase A).
+                // Rust's signature drops the arena param (global-alloc port).
                 &ParserOptions::default(None),
                 0,
             )?)),
@@ -221,7 +221,7 @@ impl SyntaxString {
 ///
 /// A syntax component consists of a component kind an a multiplier, which indicates how the component
 /// may repeat during parsing.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyntaxComponent {
     pub kind: SyntaxComponentKind,
     pub multiplier: Multiplier,
@@ -267,7 +267,7 @@ impl SyntaxComponent {
 }
 
 /// A [syntax component component name](https://drafts.css-houdini.org/css-properties-values-api/#supported-names).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntaxComponentKind {
     /// A `<length>` component.
     Length,
@@ -300,9 +300,9 @@ pub enum SyntaxComponentKind {
     /// A literal component.
     // PORT NOTE: PORTING.md §Forbidden bans laundering a parser-borrowed slice to
     // `&'static`. Zig's arena keeps the source alive for the AST's lifetime; Rust
-    // would need a `'bump` lifetime threaded through `SyntaxString`. Phase-A owns
+    // would need a `'bump` lifetime threaded through `SyntaxString`. The port owns
     // the bytes instead — `Box<[u8]>` per §Forbidden ("the field should be
-    // `Box<[T]>` … not `&'static [T]`"). Phase B may swap for `&'bump [u8]`.
+    // `Box<[T]>` … not `&'static [T]`"). May swap for `&'bump [u8]` later.
     Literal(Box<[u8]>),
 }
 
@@ -424,9 +424,9 @@ pub enum ParsedComponent {
     /// A `<transform-function>` value.
     TransformFunction(Transform),
     /// A `<transform-list>` value.
-    // PORT NOTE: `TransformList<'bump>` borrows the parser arena. Phase A uses
-    // `'static` placeholders (matching `Token`/`Ident`); Phase B threads `'bump`
-    // through `ParsedComponent<'a>`.
+    // PORT NOTE: `TransformList<'bump>` borrows the parser arena. The port uses
+    // `'static` placeholders (matching `Token`/`Ident`). TODO(refactor): thread
+    // `'bump` through `ParsedComponent<'a>`.
     TransformList(TransformList),
     /// A `<custom-ident>` value.
     CustomIdent(CustomIdent),
@@ -441,7 +441,7 @@ pub enum ParsedComponent {
 /// A repeated component value.
 pub struct Repeated {
     /// The components to repeat.
-    // PERF(port): was arena ArrayList — `Vec` until Phase B threads `'bump` into BumpVec.
+    // PERF(port): was arena ArrayList — `Vec` until `'bump` is threaded into BumpVec.
     pub components: Vec<ParsedComponent>,
     /// A multiplier describing how the components repeat.
     pub multiplier: Multiplier,
@@ -462,13 +462,13 @@ impl ParsedComponent {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             ParsedComponent::Length(v) => v.to_css(dest),
-            ParsedComponent::Number(v) => CSSNumberFns::to_css(v, dest),
+            ParsedComponent::Number(v) => CSSNumberFns::to_css(*v, dest),
             ParsedComponent::Percentage(v) => v.to_css(dest),
             ParsedComponent::LengthPercentage(v) => v.to_css(dest),
             ParsedComponent::Color(v) => v.to_css(dest),
             ParsedComponent::Image(v) => v.to_css(dest),
             ParsedComponent::Url(v) => v.to_css(dest),
-            ParsedComponent::Integer(v) => CSSIntegerFns::to_css(v, dest),
+            ParsedComponent::Integer(v) => CSSIntegerFns::to_css(*v, dest),
             ParsedComponent::Angle(v) => v.to_css(dest),
             ParsedComponent::Time(v) => v.to_css(dest),
             ParsedComponent::Resolution(v) => v.to_css(dest),
@@ -493,7 +493,7 @@ impl ParsedComponent {
         // PORT NOTE: hand-expanded `css.implementDeepClone` (variant-wise reflection).
         // Payload signatures aren't yet uniform across the crate (some `deep_clone()`
         // take no arena, some take `&Arena`, some are `Copy`), so the `#[derive(DeepClone)]`
-        // macro can't cover this enum until Phase B unifies them. Match-arm dispatch
+        // macro can't cover this enum until the signatures are unified. Match-arm dispatch
         // mirrors the Zig comptime switch exactly.
         match self {
             ParsedComponent::Length(v) => ParsedComponent::Length(v.deep_clone()),

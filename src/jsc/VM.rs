@@ -1,8 +1,6 @@
-use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{Exception, ExceptionValidationScope, JSGlobalObject, JSValue, JsError};
+use crate::{Exception, JSGlobalObject, JSValue, JsError};
 
 // TODO(port): move to <jsc>_sys
 //

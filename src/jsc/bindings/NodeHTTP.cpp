@@ -347,10 +347,12 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         HTTPHeaderName name;
         WTF::String nameString;
         WTF::String lowercasedNameString;
+        bool isSetCookie = false;
 
         if (WebCore::findHTTPHeaderName(nameView, name)) {
             nameString = WTF::httpHeaderNameStringImpl(name);
             lowercasedNameString = nameString;
+            isSetCookie = name == WebCore::HTTPHeaderName::SetCookie;
         } else {
             nameString = nameView.toString();
             lowercasedNameString = nameString.convertToASCIILowercase();
@@ -358,7 +360,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 
         JSString* jsValue = jsString(vm, value);
 
-        if (name == WebCore::HTTPHeaderName::SetCookie) {
+        if (isSetCookie) {
             if (!setCookiesHeaderArray) {
                 setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});

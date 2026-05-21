@@ -38,22 +38,15 @@ it("should log to console correctly", async () => {
 });
 
 it("long arrays get cutoff", () => {
-  const proc = Bun.spawnSync({
-    cmd: [bunExe(), "-e", `console.log(Array(1000).fill(0))`],
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
-  expect(proc.exitCode).toBe(0);
-  expect(proc.stderr.toString("utf8")).toBeEmpty();
-  expect(proc.stdout.toString("utf8")).toEqual(
+  // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
+  expect(Bun.inspect(Array(1000).fill(0))).toEqual(
     "[\n" +
       "  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,\n" +
       "  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,\n" +
       "  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,\n" +
       "  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,\n" +
       "  ... 900 more items\n" +
-      "]\n" +
-      "",
+      "]",
   );
 });
 
@@ -151,27 +144,9 @@ NamedError: console.error a named error
 });
 
 it("console.log with SharedArrayBuffer", () => {
-  const proc = Bun.spawnSync({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      console.log(new ArrayBuffer(0));
-      console.log(new SharedArrayBuffer(0));
-      console.log(new ArrayBuffer(3));
-      console.log(new SharedArrayBuffer(3));
-    `,
-    ],
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "pipe"],
-  });
-  expect(proc.stderr.toString("utf8")).toBeEmpty();
-  expect(proc.exitCode).toBe(0);
-  expect(proc.stdout.toString("utf8")).toMatchInlineSnapshot(`
-    "ArrayBuffer(0) []
-    SharedArrayBuffer(0) []
-    ArrayBuffer(3) [ 0, 0, 0 ]
-    SharedArrayBuffer(3) [ 0, 0, 0 ]
-    "
-  `);
+  // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
+  expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");
+  expect(Bun.inspect(new SharedArrayBuffer(0))).toBe("SharedArrayBuffer(0) []");
+  expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
+  expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });

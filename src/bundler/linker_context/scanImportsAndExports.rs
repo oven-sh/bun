@@ -12,27 +12,25 @@
 // `bun_collections::multi_array_list::Slice::items_raw`.
 
 use crate::mal_prelude::*;
-use bun_alloc::AllocError;
 use bun_ast::Source;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
-use bun_collections::{HashMap, MultiArrayList, VecExt};
+use bun_collections::{HashMap, VecExt};
 use bun_core::FeatureFlags;
 
 use crate::bundled_ast::{self, NamedExports, NamedImports};
 use crate::options::{self, Format, Loader};
 use crate::ungate_support::perf;
 use crate::{
-    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, JSMeta, LinkerContext,
-    Part, RefImportData, ResolvedExports, WrapKind, js_meta,
+    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext, Part,
+    RefImportData, ResolvedExports, WrapKind, js_meta,
 };
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{Dependency, ExportsKind, PartList, Ref};
-use bun_js_parser as js_ast;
 
 use crate::linker_context_mod::LinkerCtx;
 
 type AstFlags = bundled_ast::Flags;
-type ImportRecordList = import_record::List;
+type ImportRecordList<'a> = import_record::List<'a>;
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ScanImportsAndExportsError {
@@ -105,14 +103,14 @@ pub fn scan_imports_and_exports(
     let input = this.parse_graph().input_files.split_raw();
 
     use crate::bundled_ast::CssCol;
-    let import_records_list: *mut [ImportRecordList] = ast.import_records;
+    let import_records_list: *mut [ImportRecordList<'_>] = ast.import_records;
     let exports_kind: *mut [ExportsKind] = ast.exports_kind;
     let entry_point_kinds: *mut [EntryPoint::Kind] = files.entry_point_kind;
     let named_imports: *mut [NamedImports] = ast.named_imports;
     let named_exports: *mut [NamedExports] = ast.named_exports;
     let flags: *mut [js_meta::Flags] = meta.flags;
     let ast_flags_list: *mut [AstFlags] = ast.flags;
-    let export_star_import_records: *mut [Box<[u32]>] = ast.export_star_import_records;
+    let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
@@ -128,8 +126,9 @@ pub fn scan_imports_and_exports(
     let resolved_export_stars: *mut [ExportData] = meta.resolved_export_star;
     let imports_to_bind_list: *mut [RefImportData] = meta.imports_to_bind;
     let wrapper_part_indices: *mut [Index] = meta.wrapper_part_index;
-    let sorted_aliases: *mut [Box<[Box<[u8]>]>] = meta.sorted_and_filtered_export_aliases;
-    let cjs_export_copies: *mut [Box<[Ref]>] = meta.cjs_export_copies;
+    let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
+        meta.sorted_and_filtered_export_aliases;
+    let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
     let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
     // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
@@ -151,7 +150,7 @@ pub fn scan_imports_and_exports(
                 // Inline URLs for non-CSS files into the CSS file
                 let _ = LinkerContext::scan_css_imports(
                     id as u32,
-                    col_ref!(import_records_list)[id].slice(),
+                    col_ref!(import_records_list)[id].as_slice(),
                     css_asts,
                     col_ref!(input_files),
                     col_ref!(loaders),
@@ -172,7 +171,7 @@ pub fn scan_imports_and_exports(
                 continue;
             }
 
-            for record in col_ref!(import_records_list)[id].slice() {
+            for record in col_ref!(import_records_list)[id].as_slice() {
                 if !record.source_index.is_valid() {
                     continue;
                 }
@@ -347,7 +346,7 @@ pub fn scan_imports_and_exports(
                 // `import_records` is a `&'a [_]` (Copy) field — copy it out so
                 // the loop borrow does not overlap `&mut dependency_wrapper`.
                 let import_records = dependency_wrapper.import_records;
-                for record in import_records[id].slice() {
+                for record in import_records[id].as_slice() {
                     if record.source_index.is_valid() {
                         let si = record.source_index.get();
                         if dependency_wrapper.exports_kind[si as usize] == ExportsKind::Cjs {
@@ -462,7 +461,10 @@ pub fn scan_imports_and_exports(
                         .graph
                         .symbols
                         .follow(col_ref!(module_refs)[source_index]);
+                    // SAFETY: `follow` returns a valid in-bounds `Ref`; no other
+                    // borrow into `this.graph.symbols` is live across this write.
                     unsafe { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
+                    // SAFETY: same as above; `module_ref` is a distinct slot.
                     unsafe { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
@@ -526,9 +528,11 @@ pub fn scan_imports_and_exports(
             );
         }
 
-        // Some parts of the AST may now be owned by worker allocators. Transfer ownership back
-        // to the graph arena.
-        this.graph.take_ast_ownership();
+        // Zig calls `takeAstOwnership` here because `doStep5` appends to
+        // `part.dependencies`/`declared_symbols` with the worker allocator.
+        // In the Rust port those are global-allocator `Vec`s (thread-safe to
+        // grow) and `do_step_5` never pushes to the arena-backed `PartList`/
+        // import-record columns, so no transfer is needed.
     }
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
@@ -543,13 +547,14 @@ pub fn scan_imports_and_exports(
         // const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items().needs_export_symbol_from_runtime;
 
         let mut runtime_export_symbol_ref: Ref = Ref::NONE;
+        let mut ident_scratch: Vec<u8> = Vec::new();
 
         for source_index_ in &reachable {
             let source_index = source_index_.get();
             let id = source_index as usize;
 
             let is_entry_point = col_ref!(entry_point_kinds)[id].is_entry_point();
-            let aliases: &[Box<[u8]>] = &col_ref!(sorted_aliases)[id];
+            let aliases = &col_ref!(sorted_aliases)[id];
             let flag = col_ref!(flags)[id];
             let wrap = flag.wrap;
             let export_kind = col_ref!(exports_kind)[id];
@@ -557,6 +562,21 @@ pub fn scan_imports_and_exports(
 
             let exports_ref = col_ref!(exports_refs)[id];
             let module_ref = col_ref!(module_refs)[id];
+
+            // Format the source identifier once into a reusable scratch so the
+            // per-file `init_/exports_/module_` writes below are plain memcpys
+            // instead of three trips through `core::fmt::write`.
+            let ident: &[u8] = if !source.identifier_name.is_empty() {
+                &source.identifier_name[..]
+            } else {
+                ident_scratch.clear();
+                core::fmt::Write::write_fmt(
+                    &mut bun_core::fmt::VecWriter(&mut ident_scratch),
+                    format_args!("{}", source.fmt_identifier()),
+                )
+                .expect("infallible: VecWriter never errors");
+                &ident_scratch[..]
+            };
 
             let string_buffer_len: usize = 'brk: {
                 let mut count: usize = 0;
@@ -569,11 +589,7 @@ pub fn scan_imports_and_exports(
                     }
                 }
 
-                let ident_fmt_len: usize = if source.identifier_name.len() > 0 {
-                    source.identifier_name.len()
-                } else {
-                    bun_core::fmt::count(format_args!("{}", source.fmt_identifier()))
-                };
+                let ident_fmt_len = ident.len();
 
                 if wrap == WrapKind::Esm && col_ref!(wrapper_refs)[id].is_valid() {
                     count += "init_".len() + ident_fmt_len;
@@ -614,7 +630,9 @@ pub fn scan_imports_and_exports(
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if is_entry_point && output_format == Format::Esm {
-                let mut copies = vec![Ref::NONE; aliases.len()].into_boxed_slice();
+                let mut copies: bun_alloc::AstVec<Ref> =
+                    bun_alloc::AstAlloc::vec_with_capacity(aliases.len());
+                copies.resize(aliases.len(), Ref::NONE);
 
                 debug_assert_eq!(aliases.len(), copies.len());
                 for (alias, copy) in aliases.iter().zip(copies.iter_mut()) {
@@ -635,8 +653,13 @@ pub fn scan_imports_and_exports(
             if wrap == WrapKind::Esm {
                 let r#ref = col_ref!(wrapper_refs)[id];
                 if r#ref.is_valid() {
-                    let original_name =
-                        builder.fmt(format_args!("init_{}", source.fmt_identifier()));
+                    let start = builder.len;
+                    builder.append(b"init_");
+                    builder.append(ident);
+                    let end = builder.len;
+                    let original_name = &builder.allocated_slice()[start..end];
+                    // SAFETY: `r#ref` was checked `is_valid()` above; no other
+                    // borrow into `this.graph.symbols` is live across this write.
                     unsafe { this.graph.symbol_mut(r#ref) }.original_name =
                         bun_ast::StoreStr::new(original_name);
                 }
@@ -651,12 +674,16 @@ pub fn scan_imports_and_exports(
                 && export_kind != ExportsKind::Cjs
                 && output_format != Format::InternalBakeDev
             {
-                let exports_name = bun_ast::StoreStr::new(
-                    builder.fmt(format_args!("exports_{}", source.fmt_identifier())),
-                );
-                let module_name = bun_ast::StoreStr::new(
-                    builder.fmt(format_args!("module_{}", source.fmt_identifier())),
-                );
+                let start = builder.len;
+                builder.append(b"exports_");
+                builder.append(ident);
+                let end = builder.len;
+                let exports_name = bun_ast::StoreStr::new(&builder.allocated_slice()[start..end]);
+                let start = builder.len;
+                builder.append(b"module_");
+                builder.append(ident);
+                let end = builder.len;
+                let module_name = bun_ast::StoreStr::new(&builder.allocated_slice()[start..end]);
 
                 // Note: it's possible for the symbols table to be resized
                 // so we cannot call .get() above this scope.
@@ -720,29 +747,29 @@ pub fn scan_imports_and_exports(
                     }
 
                     if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
-                        // PERF(port): clone to avoid holding column borrow across `&mut this.graph`.
-                        let local_parts: Vec<u32> =
-                            named_import.local_parts_with_uses.slice().to_vec();
-                        for part_index in local_parts {
-                            let parts_declaring_symbol: Vec<u32> = this
-                                .graph
-                                .top_level_symbol_to_parts(import_source_index, import_ref)
-                                .to_vec();
-                            // PERF(port): was zero-copy slice borrow; profile.
-
+                        // `local_parts_with_uses` and the `top_level_symbol_to_parts`
+                        // result are both arena-backed AstVec slices that this loop
+                        // body never resizes; capture them as BackRefs (same
+                        // discipline as `re_exports_ptr` above) so we can take
+                        // `&mut col!(parts_list)[id]` without cloning.
+                        let local_parts: bun_ptr::BackRef<[u32]> =
+                            bun_ptr::BackRef::new(named_import.local_parts_with_uses.slice());
+                        let parts_declaring_symbol: bun_ptr::BackRef<[u32]> = bun_ptr::BackRef::new(
+                            this.graph
+                                .top_level_symbol_to_parts(import_source_index, import_ref),
+                        );
+                        for &part_index in &*local_parts {
                             let part: &mut Part =
-                                &mut col!(parts_list)[id].slice_mut()[part_index as usize];
+                                &mut col!(parts_list)[id].as_mut_slice()[part_index as usize];
                             let re_exports: &[Dependency] = &re_exports_ptr;
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
                                 + part.dependencies.len() as usize;
-                            // PORT NOTE: bun.handleOom dropped — Vec growth aborts on OOM.
                             part.dependencies.ensure_total_capacity(total_len);
 
                             // Depend on the file containing the imported symbol
-                            for resolved_part_index in parts_declaring_symbol {
-                                // PERF(port): was appendAssumeCapacity
-                                part.dependencies.push(Dependency {
+                            for &resolved_part_index in &*parts_declaring_symbol {
+                                part.dependencies.append_assume_capacity(Dependency {
                                     source_index: bun_ast::Index::source(
                                         import_source_index as usize,
                                     ),
@@ -752,10 +779,7 @@ pub fn scan_imports_and_exports(
 
                             // Also depend on any files that re-exported this symbol in between the
                             // file containing the import and the file containing the imported symbol
-                            // PERF(port): was appendSliceAssumeCapacity
-                            for dep in re_exports {
-                                part.dependencies.push(*dep);
-                            }
+                            part.dependencies.append_slice_assume_capacity(re_exports);
                         }
                     }
 
@@ -770,7 +794,8 @@ pub fn scan_imports_and_exports(
 
                 let extra_count = (force_include_exports as usize) + (add_wrapper as usize);
 
-                let mut dependencies: Vec<Dependency> = Vec::with_capacity(extra_count);
+                let mut dependencies =
+                    bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
 
                 for alias in col_ref!(sorted_aliases)[id].iter() {
                     let exp = col_ref!(resolved_exports)[id].get(alias).unwrap();
@@ -831,7 +856,7 @@ pub fn scan_imports_and_exports(
                 let entry_point_part_index = this.graph.add_part_to_file(
                     source_index,
                     Part {
-                        dependencies: Vec::<Dependency>::move_from_list(dependencies),
+                        dependencies,
                         can_be_removed_if_unused: false,
                         ..Default::default()
                     },
@@ -869,15 +894,15 @@ pub fn scan_imports_and_exports(
                 // Imports of wrapped files must depend on the wrapper
                 // PORT NOTE: iterate by index so each iteration re-borrows
                 // `import_records` (the body calls `&mut this.graph` methods).
-                let import_record_indices_len = col_ref!(parts_list)[id].slice()[part_index]
+                let import_record_indices_len = col_ref!(parts_list)[id].as_slice()[part_index]
                     .import_record_indices
                     .len() as usize;
                 for iri in 0..import_record_indices_len {
-                    let import_record_index = col_ref!(parts_list)[id].slice()[part_index]
+                    let import_record_index = col_ref!(parts_list)[id].as_slice()[part_index]
                         .import_record_indices
                         .slice()[iri];
                     let (kind, rec_source_index, rec_flags) = {
-                        let record = &col_ref!(import_records_list)[id].slice()
+                        let record = &col_ref!(import_records_list)[id].as_slice()
                             [import_record_index as usize];
                         (record.kind, record.source_index, record.flags)
                     };
@@ -887,7 +912,7 @@ pub fn scan_imports_and_exports(
                     // PORT NOTE: short-circuit — `is_external_dynamic_import` indexes by
                     // `record.source_index`, so it must only run when that index is valid.
                     let is_external_dyn = rec_source_index.is_valid() && {
-                        let record = &col_ref!(import_records_list)[id].slice()
+                        let record = &col_ref!(import_records_list)[id].as_slice()
                             [import_record_index as usize];
                         this.is_external_dynamic_import(record, source_index)
                     };
@@ -955,14 +980,14 @@ pub fn scan_imports_and_exports(
                                             == ExportsKind::Cjs
                                     {
                                         // Cross-chunk dynamic import to CJS - needs special handling in printer
-                                        col!(import_records_list)[id].slice_mut()
+                                        col!(import_records_list)[id].as_mut_slice()
                                             [import_record_index as usize]
                                             .flags
                                             .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
                                         to_esm_uses += 1;
                                     } else if kind != ImportKind::Dynamic {
                                         // Static imports to external CJS modules need __toESM wrapping
-                                        col!(import_records_list)[id].slice_mut()
+                                        col!(import_records_list)[id].as_mut_slice()
                                             [import_record_index as usize]
                                             .flags
                                             .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
@@ -999,7 +1024,8 @@ pub fn scan_imports_and_exports(
                             && other_export_kind == ExportsKind::Cjs
                             && output_format != Format::InternalBakeDev
                         {
-                            col!(import_records_list)[id].slice_mut()[import_record_index as usize]
+                            col!(import_records_list)[id].as_mut_slice()
+                                [import_record_index as usize]
                                 .flags
                                 .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
                             to_esm_uses += 1;
@@ -1029,7 +1055,7 @@ pub fn scan_imports_and_exports(
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
                             if kind == ImportKind::Require {
-                                col!(import_records_list)[id].slice_mut()
+                                col!(import_records_list)[id].as_mut_slice()
                                     [import_record_index as usize]
                                     .flags
                                     .insert(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
@@ -1060,7 +1086,7 @@ pub fn scan_imports_and_exports(
 
                 for import_record_index in col_ref!(export_star_import_records)[id].iter() {
                     let (rec_source_index,) = {
-                        let record = &col_ref!(import_records_list)[id].slice()
+                        let record = &col_ref!(import_records_list)[id].as_slice()
                             [*import_record_index as usize];
                         (record.source_index,)
                     };
@@ -1101,7 +1127,7 @@ pub fn scan_imports_and_exports(
                             Index::source(source_index),
                         )?;
                         col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
-                        col!(import_records_list)[id].slice_mut()[*import_record_index as usize]
+                        col!(import_records_list)[id].as_mut_slice()[*import_record_index as usize]
                             .flags
                             .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
                         re_export_uses += 1;
@@ -1161,10 +1187,10 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 struct DependencyWrapper<'a> {
     flags: &'a mut [js_meta::Flags],
     exports_kind: &'a mut [ExportsKind],
-    import_records: &'a [ImportRecordList],
+    import_records: &'a [ImportRecordList<'a>],
     export_star_map: HashMap<IndexInt, ()>,
     entry_point_kinds: &'a [EntryPoint::Kind],
-    export_star_records: &'a [Box<[u32]>],
+    export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
 }
 
@@ -1192,7 +1218,7 @@ impl DependencyWrapper<'_> {
             // having an export star from a file with dynamic exports.
             let kind = self.entry_point_kinds[source_index as usize];
             let rec_source_index =
-                self.import_records[source_index as usize].slice()[*id as usize].source_index;
+                self.import_records[source_index as usize].as_slice()[*id as usize].source_index;
             if (rec_source_index.is_invalid()
                 && (!kind.is_entry_point() || !self.output_format.keep_es6_import_export_syntax()))
                 || (rec_source_index.is_valid()
@@ -1232,7 +1258,7 @@ impl DependencyWrapper<'_> {
         // `import_records` is a `&'a [_]` (Copy) field — copy it out so the
         // recursive `&mut self` call does not overlap the iterator borrow.
         let records = self.import_records;
-        for record in records[source_index as usize].slice() {
+        for record in records[source_index as usize].as_slice() {
             if !record.source_index.is_valid() {
                 continue;
             }
@@ -1244,16 +1270,16 @@ impl DependencyWrapper<'_> {
 // ──────────────────────────────────────────────────────────────────────────
 // ExportStarContext — port of the inner Zig struct. Holds raw column ptrs.
 // ──────────────────────────────────────────────────────────────────────────
-struct ExportStarContext {
-    import_records_list: *mut [ImportRecordList],
+struct ExportStarContext<'a> {
+    import_records_list: *mut [ImportRecordList<'a>],
     source_index_stack: Vec<IndexInt>,
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
-    export_star_records: *mut [Box<[u32]>],
+    export_star_records: *mut [bun_alloc::AstVec<u32>],
 }
 
-impl ExportStarContext {
+impl<'a> ExportStarContext<'a> {
     /// Recursively merge re-exports from `source_index` into
     /// `resolved_exports[target_id]`.
     fn add_exports(
@@ -1273,7 +1299,7 @@ impl ExportStarContext {
 
         for import_id in col_ref!(self.export_star_records)[source_index as usize].iter() {
             let other_source_index = col_ref!(self.import_records_list)[source_index as usize]
-                .slice()[*import_id as usize]
+                .as_slice()[*import_id as usize]
                 .source_index
                 .get();
 
@@ -1399,7 +1425,7 @@ mod __css_validation {
             // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`
             // (std `Hash` over the byte slice → wyhash truncated to u32).
             use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-            AutoContext::default().hash(key)
+            AutoContext.hash(key)
         }
         fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
             a == &**b
@@ -1410,14 +1436,14 @@ mod __css_validation {
         this: &mut LinkerContext,
         id: usize,
         css_asts: *mut [CssCol],
-        import_records_list: *mut [ImportRecordList],
+        import_records_list: *mut [ImportRecordList<'_>],
         input_files: *mut [Source],
     ) {
         // `css_asts[id]` checked Some by caller. We only *read* the AST here;
         // `other_css_ast` below may alias the same allocation when a file
         // composes from itself, so bind as shared.
         let css_ast: &BundlerStyleSheet = col_ref!(css_asts)[id].as_deref().unwrap();
-        let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].slice();
+        let import_records: &[ImportRecord] = col_ref!(import_records_list)[id].as_slice();
 
         // Validate cross-file "composes: ... from" named imports
         for composes in css_ast.composes.values() {
@@ -1441,7 +1467,7 @@ mod __css_validation {
                     let name_v = name.v();
                     if !other_css_ast
                         .local_scope
-                        .contains_adapted(name_v, SliceBoxAdapter)
+                        .contains_adapted(name_v, &SliceBoxAdapter)
                     {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         let _ = this.log_disjoint().add_error_fmt(
@@ -1494,7 +1520,7 @@ mod __css_validation {
         this: &mut LinkerContext,
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
-        import_records_list: *mut [ImportRecordList],
+        import_records_list: *mut [ImportRecordList<'_>],
         all_css_asts: *mut [CssCol],
     ) {
         #[derive(Default)]
@@ -1503,10 +1529,10 @@ mod __css_validation {
             range: bun_ast::Range,
         }
 
-        struct Visitor<'a> {
+        struct Visitor<'a, 'bump> {
             visited: ArrayHashMap<bun_ast::Ref, ()>,
             properties: StringArrayHashMap<PropertyInFile>,
-            all_import_records: *mut [ImportRecordList],
+            all_import_records: *mut [ImportRecordList<'bump>],
             all_css_asts: *mut [CssCol],
             all_symbols: &'a symbol::Map,
             all_sources: *mut [Source],
@@ -1515,7 +1541,7 @@ mod __css_validation {
 
         // PORT NOTE: `pub fn deinit` → Drop on `visited` / `properties` handles cleanup.
 
-        impl<'a> Visitor<'a> {
+        impl<'a, 'bump> Visitor<'a, 'bump> {
             fn add_property_or_warn(
                 &mut self,
                 local: bun_ast::Ref,
@@ -1617,7 +1643,7 @@ mod __css_validation {
                         if let Some(from) = compose.from.as_ref() {
                             if let Specifier::ImportRecordIndex(import_record_idx) = from {
                                 let record = &col_ref!(self.all_import_records)[idx as usize]
-                                    .slice()[*import_record_idx as usize];
+                                    .as_slice()[*import_record_idx as usize];
                                 if record.source_index.is_invalid() {
                                     continue;
                                 }
@@ -1632,7 +1658,7 @@ mod __css_validation {
                                 for name in compose.names.slice() {
                                     let name_v = name.v();
                                     let Some(other_name) =
-                                        other_ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                        other_ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
                                     else {
                                         continue;
                                     };
@@ -1655,7 +1681,7 @@ mod __css_validation {
                             for name in compose.names.slice() {
                                 let name_v = name.v();
                                 let Some(name_entry) =
-                                    ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                    ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
                                 else {
                                     continue;
                                 };

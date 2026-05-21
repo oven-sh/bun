@@ -5,10 +5,7 @@
 //! needs no high-tier deps) and reports disabled on macOS, so callers above T0
 //! should use `bun_perf::trace` to keep os_signpost coverage.
 #![warn(unreachable_pub)]
-#[allow(unused_imports)]
-use core::ffi::{c_char, c_int};
-#[allow(unused_imports)]
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
 pub mod generated_perf_trace_events;
@@ -60,7 +57,7 @@ impl Drop for Ctx {
 static IS_ENABLED_ONCE: Once = Once::new();
 static IS_ENABLED: AtomicBool = AtomicBool::new(false);
 
-#[allow(dead_code)]
+#[cfg(target_os = "macos")]
 fn is_enabled_on_mac_os_once() {
     if bun_core::env_var::DYLD_ROOT_PATH.platform_get().is_some()
         || bun_core::env_var::feature_flag::BUN_INSTRUMENTS
@@ -71,7 +68,7 @@ fn is_enabled_on_mac_os_once() {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn is_enabled_on_linux_once() {
     if bun_core::env_var::feature_flag::BUN_TRACE
         .get()
@@ -118,20 +115,19 @@ pub fn is_enabled() -> bool {
 // the type system — the @hasField/@compileError block is dropped.
 pub fn trace(event: PerfEvent) -> Ctx {
     if !is_enabled() {
-        // PERF(port): @branchHint(.likely) — profile in Phase B
+        // PERF(port): @branchHint(.likely) — profile if it shows up on a hot path.
         return Ctx::Disabled(Disabled);
     }
 
     #[cfg(target_os = "macos")]
     {
-        // PERF(port): was comptime monomorphization (event id was comptime i32) — profile in Phase B
+        // PERF(port): was comptime monomorphization (event id was comptime i32) — profile if it shows up on a hot path.
         return Ctx::Enabled(Darwin::init(event as i32));
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         return Ctx::Enabled(Linux::init(event));
     }
-    #[allow(unreachable_code)]
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     {
         let _ = event;
@@ -146,6 +142,7 @@ pub use darwin_impl::Darwin;
 mod darwin_impl {
     use super::*;
     use bun_sys::darwin::OSLog;
+    use core::sync::atomic::AtomicPtr;
     // TODO(port): verify Rust path for `OSLog.Signpost.Interval` and `.PointsOfInterest` category
     use bun_sys::darwin::os_log::signpost::{
         Category as SignpostCategory, Interval as SignpostInterval,
@@ -156,7 +153,7 @@ mod darwin_impl {
     }
 
     impl Darwin {
-        // PERF(port): was `comptime name: i32` — profile in Phase B
+        // PERF(port): was `comptime name: i32` — profile if it shows up on a hot path.
         pub fn init(name: i32) -> Self {
             Self {
                 // SAFETY: `is_enabled()` returned true, which implies `Darwin::get()` is Some

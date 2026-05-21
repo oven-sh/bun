@@ -1,14 +1,15 @@
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::ptr::NonNull;
+use core::sync::atomic::AtomicU8;
+#[cfg(not(windows))]
+use core::sync::atomic::Ordering;
 
 use bun_core::Error;
 use bun_core::ZigString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{
-    self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SysErrorJsc, SystemError,
-};
+use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
@@ -24,7 +25,7 @@ bun_output::declare_scope!(WriteFile, hidden);
 // modeled here as a plain Rust enum. Verify layout if it crosses FFI.
 pub enum WriteFileResultType {
     Result(SizeType),
-    Err(SystemError),
+    Err(Box<SystemError>),
 }
 
 pub type WriteFileOnWriteFileCallback =
@@ -32,6 +33,11 @@ pub type WriteFileOnWriteFileCallback =
 
 pub type WriteFileTask = bun_jsc::work_task::WorkTask<WriteFile>;
 
+// `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
+// cannot be marked `unsafe fn` and the parameter type cannot change, so the
+// lint is unsatisfiable here. The pointers come from the work-pool hand-off
+// and are guaranteed live (see SAFETY notes below).
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl bun_jsc::work_task::WorkTaskContext for WriteFile {
     const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileTask;
     fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
@@ -39,7 +45,8 @@ impl bun_jsc::work_task::WorkTaskContext for WriteFile {
         unsafe { (*this).run(task) }
     }
     fn then(this: *mut Self, global: &jsc::JSGlobalObject) -> Result<(), JsTerminated> {
-        WriteFile::then(this, global)
+        // SAFETY: `this` was heap-allocated by the WorkTask flow; consumed here.
+        WriteFile::then(unsafe { bun_core::heap::take(this) }, global)
     }
 }
 
@@ -107,7 +114,7 @@ impl FileOpener for WriteFile {
         display_path: &[u8],
     ) -> Retry {
         // Zig: `if (@hasField(This, "mkdirp_if_not_exists")) switch (mkdirIfNotExists(...)) { ... }`
-        mkdir_if_not_exists(self, err, path, display_path)
+        mkdir_if_not_exists(self, &err, path, display_path)
     }
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
@@ -200,6 +207,11 @@ impl FileCloser for WriteFile {
         })
     }
 
+    // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
+    // the trait method cannot be marked `unsafe fn`, so the lint is
+    // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
+    // in `on_io_request_closed` and is guaranteed live.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
@@ -231,7 +243,7 @@ impl WriteFile {
         WorkPool::schedule(&raw mut self.task);
     }
 
-    pub fn on_io_error(this: *mut (), err: sys::Error) {
+    pub fn on_io_error(this: *mut (), err: &sys::Error) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onIOError()");
         // SAFETY: ctx was set to `self as *mut WriteFile` in `on_request_writable`.
         let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(this.cast()) };
@@ -368,31 +380,24 @@ impl WriteFile {
         true
     }
 
-    pub fn then(this: *mut WriteFile, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
-        // SAFETY: `this` is a Box-allocated WriteFile owned by the WorkTask flow; we consume it here.
-        let cb;
-        let cb_ctx;
-        let system_error;
-        let total_written;
-        unsafe {
-            cb = (*this).on_complete_callback;
-            cb_ctx = (*this).on_complete_ctx;
-            system_error = (*this).system_error.take();
-            total_written = (*this).total_written;
-            // Zig: `this.bytes_blob.store.?.deref(); this.file_blob.store.?.deref();
-            //       bun.destroy(this);`
-            // Folded into RAII: `heap::take` runs `WriteFile`'s field-drop
-            // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
-            // StoreRef>` → `Store::deref()` — exactly one deref each, same as
-            // the spec. (An earlier explicit `detach()` here was a no-op; the
-            // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
-            // baseline RSS exceeding the fixture's 256 MB absolute threshold,
-            // not an unbalanced ref.)
-            drop(bun_core::heap::take(this));
-        }
+    pub fn then(mut this: Box<WriteFile>, _global: &JSGlobalObject) -> Result<(), JsTerminated> {
+        let cb = this.on_complete_callback;
+        let cb_ctx = this.on_complete_ctx;
+        let system_error = this.system_error.take();
+        let total_written = this.total_written;
+        // Zig: `this.bytes_blob.store.?.deref(); this.file_blob.store.?.deref();
+        //       bun.destroy(this);`
+        // Folded into RAII: dropping the `Box` runs `WriteFile`'s field-drop
+        // glue, which drops `bytes_blob.store`/`file_blob.store: Option<
+        // StoreRef>` → `Store::deref()` — exactly one deref each, same as
+        // the spec. (An earlier explicit `detach()` here was a no-op; the
+        // bun-write-leak.test.ts failure was the ASAN debug build's ~320 MB
+        // baseline RSS exceeding the fixture's 256 MB absolute threshold,
+        // not an unbalanced ref.)
+        drop(this);
 
         if let Some(err) = system_error {
-            cb(cb_ctx, WriteFileResultType::Err(err))?;
+            cb(cb_ctx, WriteFileResultType::Err(Box::new(err)))?;
             return Ok(());
         }
 
@@ -406,12 +411,17 @@ impl WriteFile {
     pub fn run(&mut self, task: *mut WriteFileTask) {
         #[cfg(windows)]
         {
+            let _ = task;
             panic!("todo");
         }
-        self.io_task = Some(task);
-        self.run_async();
+        #[cfg(not(windows))]
+        {
+            self.io_task = Some(task);
+            self.run_async();
+        }
     }
 
+    #[cfg(not(windows))]
     fn run_async(&mut self) {
         self.get_fd(Self::run_with_fd);
     }
@@ -428,6 +438,7 @@ impl WriteFile {
             .is_path()
     }
 
+    #[cfg(not(windows))]
     fn on_finish(&mut self) {
         bun_output::scoped_log!(WriteFile, "WriteFile.onFinish()");
 
@@ -438,11 +449,12 @@ impl WriteFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 // SAFETY: io_task is a backref set in run(); WorkTask owns lifetime.
-                unsafe { bun_jsc::work_task::WorkTask::on_finish(io_task) };
+                bun_jsc::work_task::WorkTask::on_finish(unsafe { &mut *io_task });
             }
         }
     }
 
+    #[cfg(not(windows))]
     fn run_with_fd(&mut self, fd_: Fd) {
         if fd_ == Fd::INVALID || self.errno.is_some() {
             self.on_finish();
@@ -536,6 +548,12 @@ impl WriteFile {
         {
             return; // why
         }
+        #[cfg(not(windows))]
+        self.do_write_loop_posix();
+    }
+
+    #[cfg(not(windows))]
+    fn do_write_loop_posix(&mut self) {
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
             let remain_full = self.bytes_blob.shared_view();
             // PORT NOTE: reshaped for borrowck — capture len/offset before mut borrow
@@ -1096,7 +1114,7 @@ mod windows_impl {
             if let Some(err) = unsafe { (*this).to_system_error() } {
                 // SAFETY: caller contract — `this` is live; consumed here.
                 unsafe { Self::deinit(this) };
-                if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(err)) {
+                if let Err(e) = cb(cb_ctx, WriteFileResultType::Err(Box::new(err))) {
                     return e.into();
                 }
             } else {
@@ -1325,21 +1343,26 @@ pub struct WriteFileWaitFromLockedValueTask {
 
 impl WriteFileWaitFromLockedValueTask {
     pub fn then_wrap(this: *mut c_void, value: &mut body::Value) {
-        let _ = Self::then(this.cast::<WriteFileWaitFromLockedValueTask>(), value);
+        // SAFETY: `this` is the Box-allocated task registered as `locked.task` below.
+        let _ = Self::then(
+            NonNull::new(this.cast::<WriteFileWaitFromLockedValueTask>()).unwrap(),
+            value,
+        );
         // TODO: properly propagate exception upwards
     }
 
+    /// # Safety
+    /// `this` must point to a live Box-allocated `WriteFileWaitFromLockedValueTask`.
+    /// On every arm except `body::Value::Locked`, the allocation is consumed.
     pub fn then(
-        this: *mut WriteFileWaitFromLockedValueTask,
+        this: NonNull<WriteFileWaitFromLockedValueTask>,
         value: &mut body::Value,
     ) -> Result<(), JsTerminated> {
+        let this = this.as_ptr();
         // SAFETY: this is a Box-allocated task (see Blob.zig:1581).
         let this_ref = unsafe { &mut *this };
         // `get()` returns a GC-owned cell, valid past `heap::take(this)`.
-        // SAFETY: GC-heap allocation (not inside `*this`); sole `&mut` borrow on
-        // the single JS thread. Hoisted once so each match arm calls through it
-        // safely instead of repeating `unsafe { &mut *promise }` per site.
-        let promise: &mut JSPromise = unsafe { &mut *this_ref.promise.get() };
+        let promise: &mut JSPromise = &mut *this_ref.promise.get();
         // Copy the `BackRef` out so the borrow is detached from `this_ref`
         // (must coexist with `&mut this_ref` and survive `heap::take(this)`).
         let global_ref = this_ref.global_this;

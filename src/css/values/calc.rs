@@ -8,39 +8,9 @@ use crate::values::protocol;
 use crate::values::time::Time;
 // Bring the numeric-protocol traits into scope so their methods resolve via the
 // `CalcValue` supertrait bounds inside `impl<V: CalcValue> Calc<V>`.
-use crate::values::protocol::{
-    IsCompatible, MulF32, Parse, ToCss, TryFromAngle, TryMap, TryOp, TryOpTo, TrySign,
-};
+use crate::values::protocol::{IsCompatible, ToCss};
 
 use core::cmp::Ordering;
-
-// TODO(port): `needsDeinit` / `needsDeepclone` were comptime type predicates used to gate
-// per-variant cleanup/clone in Zig. In Rust, `Drop` on `Box<V>` and `V: Clone` subsume
-// these. Kept as stubs for parity; Phase B may delete.
-pub const fn needs_deinit<V>() -> bool {
-    // TODO(port): comptime type switch — not expressible in Rust; subsumed by Drop.
-    true
-}
-
-pub const fn needs_deepclone<V>() -> bool {
-    // TODO(port): comptime type switch — not expressible in Rust; subsumed by Clone.
-    true
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Tag {
-    /// A literal value.
-    Value = 1,
-    /// A literal number.
-    Number = 2,
-    /// A sum of two calc expressions.
-    Sum = 4,
-    /// A product of a number and another calc expression.
-    Product = 8,
-    /// A math function, such as `calc()`, `min()`, or `max()`.
-    Function = 16,
-}
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
 #[strum(serialize_all = "lowercase")]
@@ -73,7 +43,7 @@ impl CalcUnit {
     // TODO(port): phf custom hasher — case-insensitive lookup over &[u8].
     pub fn get_any_case(f: &[u8]) -> Option<Self> {
         // PERF(port): Zig used a comptime perfect hash; this is a linear match on a
-        // stack-lowercased byte slice. Phase B: phf_map! over &[u8].
+        // stack-lowercased byte slice. TODO(perf): use a phf_map! over &[u8].
         // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
         let (buf, len) = bun_core::strings::ascii_lowercase_buf::<5>(f)?;
         match &buf[..len] {
@@ -353,7 +323,7 @@ impl<V: CalcValue> Calc<V> {
         let location = input.current_source_location();
         // PORT NOTE: clone the token before reborrowing `input` so the function
         // name slice is owned by the cloned `Token` (whose payload already
-        // carries the Phase-A arena lifetime) instead of being laundered to
+        // carries the parser's arena lifetime) instead of being laundered to
         // `'static` here.
         let tok = input.next()?.clone();
         let unit = match tok {
@@ -574,7 +544,7 @@ impl<V: CalcValue> Calc<V> {
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Self> {
-        // PERF(port): was comptime monomorphization on `op` — profile in Phase B.
+        // PERF(port): was comptime monomorphization on `op` — profile if hot.
         input.parse_nested_block(|i| {
             let v = Self::parse_numeric(i, ctx, parse_ident)?;
             Ok(Calc::Number(match op {
@@ -744,7 +714,7 @@ impl<V: CalcValue> Calc<V> {
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Self> {
-        // PERF(port): was comptime monomorphization on `trig_fn_kind` — profile in Phase B.
+        // PERF(port): was comptime monomorphization on `trig_fn_kind` — profile if hot.
         let trig_fn = move |x: f32| -> f32 {
             match trig_fn_kind {
                 TrigFnKind::Sin => x.sin(),
@@ -886,8 +856,8 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    // PERF(port): `args` was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
-    pub fn parse_hypot(args: &mut Vec<Self>) -> CssResult<Option<Self>> {
+    // PERF(port): `args` was arena bulk-free (ArrayList fed input.arena()) — profile if hot
+    pub fn parse_hypot(args: &mut [Self]) -> CssResult<Option<Self>> {
         if args.len() == 1 {
             let v = core::mem::replace(&mut args[0], Calc::Number(0.0));
             return Ok(Some(v));
@@ -967,7 +937,7 @@ impl<V: CalcValue> Calc<V> {
     pub fn to_css_impl(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Calc::Value(v) => v.to_css(dest),
-            Calc::Number(n) => CSSNumberFns::to_css(n, dest),
+            Calc::Number(n) => CSSNumberFns::to_css(*n, dest),
             Calc::Sum { left: a, right: b } => {
                 a.to_css(dest)?;
                 // White space is always required.
@@ -988,9 +958,9 @@ impl<V: CalcValue> Calc<V> {
                     let div = 1.0 / num;
                     calc.to_css(dest)?;
                     dest.delim(b'/', true)?;
-                    CSSNumberFns::to_css(&div, dest)?;
+                    CSSNumberFns::to_css(div, dest)?;
                 } else {
-                    CSSNumberFns::to_css(&num, dest)?;
+                    CSSNumberFns::to_css(num, dest)?;
                     dest.delim(b'*', true)?;
                     calc.to_css(dest)?;
                 }
@@ -1056,7 +1026,7 @@ impl<V: CalcValue> Calc<V> {
     /// I don't like how this function requires allocating a second ArrayList
     /// I am pretty sure we could do this reduction in place, or do it as the
     /// arguments are being parsed.
-    // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): `args`/`reduced` were arena bulk-free (ArrayList fed input.arena()) — profile if hot
     fn reduce_args(args: &mut Vec<Self>, order: Ordering) {
         // Reduces the arguments of a min() or max() expression, combining compatible values.
         // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
@@ -1100,7 +1070,7 @@ impl<V: CalcValue> Calc<V> {
         *args = reduced;
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             Calc::Sum { left, right } => {
                 left.is_compatible(browsers) && right.is_compatible(browsers)
@@ -1146,10 +1116,10 @@ pub enum MathFunction<V> {
     /// The `calc()` function.
     Calc(Calc<V>),
     /// The `min()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile if hot
     Min(Vec<Calc<V>>),
     /// The `max()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile if hot
     Max(Vec<Calc<V>>),
     /// The `clamp()` function.
     Clamp {
@@ -1172,7 +1142,7 @@ pub enum MathFunction<V> {
     /// The `sign()` function.
     Sign(Calc<V>),
     /// The `hypot()` function.
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile if hot
     Hypot(Vec<Calc<V>>),
 }
 
@@ -1422,7 +1392,7 @@ impl<V> MathFunction<V> {
         }
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool
     where
         V: CalcValue,
     {
@@ -1492,7 +1462,7 @@ pub enum RoundingStrategy {
 }
 
 fn arr2<T>(a: T, b: T) -> Vec<T> {
-    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile in Phase B
+    // PERF(port): was arena bulk-free (ArrayList fed input.arena()) — profile if hot
     vec![a, b]
 }
 
@@ -1547,7 +1517,7 @@ pub enum Constant {
 }
 
 impl Constant {
-    pub fn into_f32(&self) -> f32 {
+    pub fn into_f32(self) -> f32 {
         match self {
             Constant::E => core::f32::consts::E,
             Constant::Pi => core::f32::consts::PI,
@@ -1613,7 +1583,7 @@ impl CalcValue for Angle {
     }
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Angle::eql(self, other)
+        Angle::eql(*self, *other)
     }
 }
 
@@ -1648,6 +1618,10 @@ macro_rules! calc_protocol_forwarders {
         impl protocol::PartialCmp for $T { #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { <$T>::partial_cmp(self, rhs) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
+    (@ $T:ty; partial_cmp: forward_copy, $($r:tt)*) => {
+        impl protocol::PartialCmp for $T { #[inline] fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> { <$T>::partial_cmp(*self, *rhs) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
     (@ $T:ty; try_from_angle: forward, $($r:tt)*) => {
         impl protocol::TryFromAngle for $T { #[inline] fn try_from_angle(a: Angle) -> Option<Self> { <$T>::try_from_angle(a) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
@@ -1668,13 +1642,17 @@ macro_rules! calc_protocol_forwarders {
         impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { <$T>::try_map(self, f) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
+    (@ $T:ty; try_map: forward_copy, $($r:tt)*) => {
+        impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { <$T>::try_map(*self, f) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
     (@ $T:ty; try_map: $m:ident, $($r:tt)*) => {
         impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.$m(f)) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; try_op: forward, $($r:tt)*) => {
         impl protocol::TryOp for $T {
-            #[inline] fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> { <$T>::try_op(self, rhs, ctx, f) }
+            #[inline] fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> { <$T>::try_op(*self, *rhs, ctx, f) }
         }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
@@ -1701,11 +1679,11 @@ macro_rules! calc_protocol_forwarders {
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; is_compatible: forward, $($r:tt)*) => {
-        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, b: css::targets::Browsers) -> bool { <$T>::is_compatible(self, b) } }
+        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, b: &css::targets::Browsers) -> bool { <$T>::is_compatible(self, b) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; is_compatible: always_true, $($r:tt)*) => {
-        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, _: css::targets::Browsers) -> bool { true } }
+        impl protocol::IsCompatible for $T { #[inline] fn is_compatible(&self, _: &css::targets::Browsers) -> bool { true } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
     (@ $T:ty; parse_to_css: forward, $($r:tt)*) => {
@@ -1713,18 +1691,23 @@ macro_rules! calc_protocol_forwarders {
         impl protocol::ToCss for $T { #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { <$T>::to_css(self, dest) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
+    (@ $T:ty; parse_to_css: forward_copy, $($r:tt)*) => {
+        impl protocol::Parse for $T { #[inline] fn parse(input: &mut css::Parser) -> CssResult<Self> { <$T>::parse(input) } }
+        impl protocol::ToCss for $T { #[inline] fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> { <$T>::to_css(*self, dest) } }
+        calc_protocol_forwarders!(@ $T; $($r)*);
+    };
 }
 
 calc_protocol_forwarders!(Percentage {
     mul_f32: forward,
     try_from_angle: none,
-    try_sign: forward,
-    try_map: forward,
+    try_sign: sign,
+    try_map: forward_copy,
     try_op: forward,
-    try_op_to: |this, rhs, ctx, f| { Some(this.op_to(rhs, ctx, f)) },
-    partial_cmp: forward,
+    try_op_to: |this, rhs, ctx, f| { Some(this.op_to(*rhs, ctx, f)) },
+    partial_cmp: forward_copy,
     is_compatible: always_true,
-    parse_to_css: forward,
+    parse_to_css: forward_copy,
 });
 impl CalcValue for Percentage {
     #[inline]
@@ -1744,7 +1727,7 @@ impl CalcValue for Percentage {
     }
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Percentage::eql(self, other)
+        Percentage::eql(*self, *other)
     }
 }
 
@@ -1770,7 +1753,7 @@ calc_protocol_forwarders!(Time {
             (Time::Milliseconds(a), Time::Seconds(b)) => f(ctx, a, b * 1000.0),
         })
     },
-    partial_cmp: forward,
+    partial_cmp: forward_copy,
     is_compatible: always_true,
 });
 impl CalcValue for Time {
@@ -1790,7 +1773,7 @@ impl CalcValue for Time {
     }
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Time::eql(self, other)
+        Time::eql(*self, *other)
     }
 }
 

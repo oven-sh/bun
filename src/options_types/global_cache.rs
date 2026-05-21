@@ -48,13 +48,13 @@ impl GlobalCache {
     }
 
     pub fn can_install(self) -> bool {
-        match self {
+        matches!(
+            self,
             GlobalCache::auto
-            | GlobalCache::allow_install
-            | GlobalCache::force
-            | GlobalCache::fallback => true,
-            _ => false,
-        }
+                | GlobalCache::allow_install
+                | GlobalCache::force
+                | GlobalCache::fallback
+        )
     }
 }
 

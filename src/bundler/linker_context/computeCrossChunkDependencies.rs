@@ -1,17 +1,14 @@
 use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::ImportRecord;
-use bun_ast::{Part, Symbol};
 use bun_collections::{ArrayHashMap, VecExt};
-use bun_js_parser as js_ast;
 
 use crate::LinkerContext;
 use crate::js_meta;
 use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
 use crate::{
-    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt,
-    JSMeta, Ref, RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
+    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt, Ref,
+    RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
 pub fn compute_cross_chunk_dependencies(
@@ -87,22 +84,21 @@ pub fn compute_cross_chunk_dependencies(
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
 }
 
-pub struct CrossChunkDependencies<'a> {
+pub struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
     // PORT NOTE: `BackRef` — the same `[Chunk]` slice is also iterated mutably by
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
     // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
     // (caller stack frame).
     chunks: bun_ptr::BackRef<[Chunk]>,
-    parts: &'a [Vec<Part>],
-    import_records: &'a mut [Vec<ImportRecord>],
+    parts: &'a [bun_ast::PartList<'bump>],
+    import_records: &'a mut [bun_ast::import_record::List<'bump>],
     flags: &'a [js_meta::Flags],
     entry_point_chunk_indices: &'a [IndexInt],
     imports_to_bind: &'a [RefImportData],
     wrapper_refs: &'a [Ref],
     exports_refs: &'a [Ref],
-    // Zig: []const []const string → SoA column type is Box<[Box<[u8]>]>
-    sorted_and_filtered_export_aliases: &'a [Box<[Box<[u8]>]>],
+    sorted_and_filtered_export_aliases: &'a [js_meta::SortedAndFilteredExportAliases],
     resolved_exports: &'a [ResolvedExports],
     // PORT NOTE: `BackRef` — Zig stores `*LinkerContext` / `*Symbol.Map` and freely
     // aliases `c.graph` columns alongside; borrowck cannot express that split, so
@@ -119,7 +115,7 @@ pub struct CrossChunkDependencies<'a> {
     symbols: bun_ptr::BackRef<bun_ast::symbol::Map>,
 }
 
-impl<'a> CrossChunkDependencies<'a> {
+impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     // Called once per chunk from the sequential loop above. Writes:
     // `self.chunk_meta[chunk_index]` (per-chunk disjoint),
     // `self.import_records[source_index][rec].{path,source_index}` (per-chunk
@@ -156,14 +152,15 @@ impl<'a> CrossChunkDependencies<'a> {
             }
 
             // Go over each part in this file that's marked for inclusion in this chunk
-            let parts = deps.parts[source_index as usize].slice();
-            let import_records = deps.import_records[source_index as usize].slice_mut();
+            let parts = deps.parts[source_index as usize].as_slice();
+            let parts_live = &ctx.graph.parts_live[source_index as usize];
+            let import_records = deps.import_records[source_index as usize].as_mut_slice();
             let imports_to_bind = &deps.imports_to_bind[source_index as usize];
             let wrap = deps.flags[source_index as usize].wrap;
             let wrapper_ref = deps.wrapper_refs[source_index as usize];
 
-            for part in parts.iter() {
-                if !part.is_live {
+            for (part_index, part) in parts.iter().enumerate() {
+                if !parts_live.is_set(part_index) {
                     continue;
                 }
 
@@ -177,7 +174,7 @@ impl<'a> CrossChunkDependencies<'a> {
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
                         // TODO(port): Zig assigns the slice by pointer (no copy); decide
-                        // ownership of `path.text` vs `unique_key` in Phase B.
+                        // ownership of `path.text` vs `unique_key`.
                         import_record.source_index = Index::INVALID;
 
                         // Track this cross-chunk dynamic import so we make sure to
@@ -344,7 +341,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // PORT NOTE: reshaped for borrowck — collect keys first to avoid holding a borrow on
         // chunk_metas[chunk_index] while mutating chunk_metas[other_chunk_index].
         let import_refs: Vec<Ref> = chunk_metas[chunk_index].imports.keys().to_vec();
-        // PERF(port): was direct iteration over .keys() without copy — profile in Phase B
+        // PERF(port): was direct iteration over .keys() without copy — profile if it shows up on a hot path
         for import_ref in import_refs {
             let symbol = c.graph.symbols.get_const(import_ref).unwrap();
 
@@ -454,7 +451,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         debug!("Generating cross-chunk exports");
 
         let mut stable_ref_list: Vec<StableRef> = Vec::new();
-        // PERF(port): was arena-backed std.ArrayList — profile in Phase B
+        // PERF(port): was arena-backed std.ArrayList — profile if it shows up on a hot path
         // defer stable_ref_list.deinit() — handled by Drop
 
         debug_assert_eq!(chunks.len(), chunk_metas.len());
@@ -469,9 +466,12 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 OutputFormat::Esm => {
                     c.sorted_cross_chunk_export_items(&chunk_meta.exports, &mut stable_ref_list);
                     let mut clause_items =
-                        Vec::<bun_ast::ClauseItem>::init_capacity(stable_ref_list.len());
+                        bun_alloc::ArenaVec::<bun_ast::ClauseItem>::with_capacity_in(
+                            stable_ref_list.len(),
+                            c.arena(),
+                        );
                     repr.exports_to_other_chunks.reserve(stable_ref_list.len());
-                    // PERF(port): was ensureUnusedCapacity — profile in Phase B
+                    // PERF(port): was ensureUnusedCapacity — profile if it shows up on a hot path
                     r.clear_retaining_capacity();
 
                     for stable_ref in stable_ref_list.iter() {
@@ -513,15 +513,13 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                         // which outlives `exports_to_other_chunks`; `.slice()` re-borrows
                         // under the StoreStr arena contract.
                         let _ = repr.exports_to_other_chunks.put(ref_, alias.slice()); // OOM-only Result (Zig: catch unreachable)
-                        // PERF(port): was putAssumeCapacity — profile in Phase B
+                        // PERF(port): was putAssumeCapacity — profile if it shows up on a hot path
                     }
 
                     if clause_items.len() > 0 {
                         let mut stmts = Vec::<bun_ast::Stmt>::init_capacity(1);
-                        // PORT NOTE: `S.ExportClause.items` is `*mut [ClauseItem]`; leak the
-                        // Vec buffer (arena-lifetime) into a raw fat ptr.
-                        let items_ptr = bun_ast::StoreSlice::new_mut(clause_items.slice_mut());
-                        core::mem::forget(clause_items);
+                        let items_ptr =
+                            bun_ast::StoreSlice::new_mut(clause_items.into_bump_slice_mut());
                         // Zig: `c.allocator().create(S.ExportClause)` + struct literal —
                         // bypasses Stmt.Data.Store (not pushed on this thread here).
                         let export_clause = c.arena().alloc(bun_ast::S::ExportClause {
@@ -532,7 +530,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             bun_ast::StoreRef::from_bump(export_clause),
                             bun_ast::Loc::EMPTY,
                         ));
-                        // PERF(port): was appendAssumeCapacity — profile in Phase B
+                        // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
                         repr.cross_chunk_suffix_stmts = stmts;
                     }
                 }
@@ -598,7 +596,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                                 alias_loc: bun_ast::Loc::EMPTY,
                                 original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                             });
-                            // PERF(port): was appendAssumeCapacity — profile in Phase B
+                            // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
                         }
 
                         cross_chunk_imports.push(chunk::ChunkImport {

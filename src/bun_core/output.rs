@@ -15,12 +15,8 @@ use core::ffi::c_int;
 use core::fmt;
 // `#[macro_export]` macros land at crate root; re-import so order-of-definition
 // inside this module doesn't matter for the early call sites.
-#[allow(unused_imports)]
-use crate::{
-    declare_scope, err_generic, note, pretty, pretty_error, pretty_errorln, prettyln, scoped_log,
-    warn,
-};
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, AtomicU32, Ordering};
+use crate::{pretty, pretty_error, pretty_errorln};
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use crate::Global;
 use crate::env_var;
@@ -51,7 +47,7 @@ pub fn output_sink() -> OutputSink {
 
 /// Opaque handle to a `bun_sys::file::QuietWriter`. bun_core treats it as a
 /// POD blob; bun_sys casts back to the concrete type.
-/// TODO(b0-genuine): bun_sys::file::QuietWriter — size/align must match.
+/// TODO(port): bun_sys::file::QuietWriter — size/align must match.
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub struct QuietWriter {
@@ -92,7 +88,7 @@ impl core::fmt::Write for QuietWriter {
 // `qw.write_fmt(args)` resolves through `fmt::Write`.
 
 /// Opaque adapter wrapping a QuietWriter and exposing `crate::io::Writer`.
-/// TODO(b0-genuine): bun_sys::QuietWrite::Adapter — size/align must match.
+/// TODO(port): bun_sys::QuietWrite::Adapter — size/align must match.
 #[repr(C, align(8))]
 pub struct QuietWriterAdapter {
     _opaque: [u8; 64],
@@ -120,7 +116,7 @@ pub struct File(pub Fd);
 impl File {
     pub const ZEROED: Self = Self(Fd::INVALID);
     #[inline]
-    pub const fn fd(&self) -> Fd {
+    pub const fn fd(self) -> Fd {
         self.0
     }
     #[inline]
@@ -139,18 +135,18 @@ impl File {
     /// Write all bytes (best-effort; routes through QuietWriter so errors are
     /// swallowed per Zig `bun.Output` semantics). Progress.rs uses this.
     #[inline]
-    pub fn write_all(&self, bytes: &[u8]) -> Result<(), crate::Error> {
+    pub fn write_all(self, bytes: &[u8]) -> Result<(), crate::Error> {
         let mut qw = self.quiet_writer();
         let _ = output_sink().quiet_writer_write_all(&mut qw, bytes);
         Ok(())
     }
     #[inline]
-    pub fn write(&self, bytes: &[u8]) -> Result<usize, crate::Error> {
+    pub fn write(self, bytes: &[u8]) -> Result<usize, crate::Error> {
         self.write_all(bytes).map(|_| bytes.len())
     }
-    pub fn write_fmt(&self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
-        struct Adapter<'a>(&'a File);
-        impl core::fmt::Write for Adapter<'_> {
+    pub fn write_fmt(self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        struct Adapter(File);
+        impl core::fmt::Write for Adapter {
             fn write_str(&mut self, s: &str) -> core::fmt::Result {
                 let _ = self.0.write_all(s.as_bytes());
                 Ok(())
@@ -319,7 +315,7 @@ pub static TERMINAL_SIZE: crate::AtomicCell<crate::Winsize> =
 #[cfg(not(target_arch = "wasm32"))]
 pub type StreamType = File;
 #[cfg(target_arch = "wasm32")]
-pub type StreamType = io::FixedBufferStream; // TODO(b0): FixedBufferStream arrives via bun_io→core move-in.
+pub type StreamType = io::FixedBufferStream; // TODO(port): FixedBufferStream arrives via bun_io→core move-in.
 
 pub struct Source {
     pub stdout_buffer: [u8; 4096],
@@ -377,7 +373,7 @@ impl Source {
     // TODO(port): in-place init — `out` is the pre-allocated thread_local slot; PORTING.md
     // says keep `&mut MaybeUninit<Self>` (or reshape to `-> Self`) for out-param ctors.
     pub fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
-        // TODO(b2-blocked): bun_alloc::USE_MIMALLOC + mimalloc::Option::ShowErrors
+        // TODO(port): bun_alloc::USE_MIMALLOC + mimalloc::Option::ShowErrors
         // are gated in bun_alloc; re-enable once bun_alloc/basic.rs is un-gated.
 
         if cfg!(debug_assertions) && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
@@ -1047,12 +1043,10 @@ pub fn panic(args: fmt::Arguments<'_>) -> ! {
     // PORT NOTE: Zig branched on enable_ansi_colors_stderr to pick the comptime-colored
     // vs stripped format string. In Rust callers use `panic!(pretty_fmt!(...))` directly;
     // this fn is kept for non-macro callers and writes the (already-formatted) args.
-    if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
-        core::panic!("{args}");
-    } else {
-        core::panic!("{args}");
-    }
-    // TODO(port): callers must wrap fmt in `pretty_fmt!(.., enable_ansi_colors_stderr)`
+    // TODO(port): branch on ENABLE_ANSI_COLORS_STDERR once the colored vs
+    // stripped paths actually differ; callers should wrap fmt in
+    // `pretty_fmt!(.., enable_ansi_colors_stderr)`.
+    core::panic!("{args}");
 }
 
 pub type WriterType = QuietWriter;
@@ -1189,18 +1183,10 @@ pub fn flush_guard() -> FlushGuard {
 // ElapsedFormatter
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct ElapsedFormatter {
     pub colors: bool,
     pub duration_ns: u64,
-}
-
-impl Default for ElapsedFormatter {
-    fn default() -> Self {
-        Self {
-            colors: false,
-            duration_ns: 0,
-        }
-    }
 }
 
 impl fmt::Display for ElapsedFormatter {
@@ -1209,7 +1195,7 @@ impl fmt::Display for ElapsedFormatter {
         const FAST: u64 = NS_PER_MS * 10;
         const SLOW: u64 = NS_PER_MS * 8_000;
         let ms = self.duration_ns as f64 / NS_PER_MS as f64;
-        // PERF(port): was comptime bool dispatch on `colors` — profile in Phase B
+        // PERF(port): was comptime bool dispatch on `colors` — profile if hot.
         match self.duration_ns {
             0..=FAST => {
                 if self.colors {
@@ -1339,20 +1325,16 @@ fn with_dest_writer<R>(dest: Destination, f: impl FnOnce(*mut io::Writer) -> R) 
     // Load the writer pointer and *drop the RefCell borrow* before invoking `f`;
     // holding the `with_borrow_mut` guard across re-entry panics with BorrowMutError.
     let w: *mut io::Writer = SOURCE.with_borrow_mut(|s| match dest {
-        Destination::Stdout => std::ptr::from_mut(
-            (if buffering {
-                s.buffered_stream()
-            } else {
-                s.stream()
-            }),
-        ),
-        Destination::Stderr => std::ptr::from_mut(
-            (if buffering {
-                s.buffered_error_stream()
-            } else {
-                s.error_stream()
-            }),
-        ),
+        Destination::Stdout => std::ptr::from_mut(if buffering {
+            s.buffered_stream()
+        } else {
+            s.stream()
+        }),
+        Destination::Stderr => std::ptr::from_mut(if buffering {
+            s.buffered_error_stream()
+        } else {
+            s.error_stream()
+        }),
     });
     // SAFETY: `w` points into a `QuietWriterAdapter` field of the thread-local
     // `Source`, whose address is stable for the thread's lifetime once
@@ -1523,7 +1505,7 @@ pub struct ScopedLogger {
     lock: Mutex<()>,
     out_set: AtomicBool,
     // TODO(port): per-scope buffered writer (`buffer: [4096]u8` + adapter). For now route
-    // through `scoped_writer()` directly; Phase B can reintroduce per-scope buffering.
+    // through `scoped_writer()` directly; could reintroduce per-scope buffering.
 }
 
 impl ScopedLogger {
@@ -1618,7 +1600,7 @@ impl ScopedLogger {
         let _lock = self.lock.lock();
 
         let mut out = scoped_writer();
-        // PERF(port): was comptime bool dispatch on use_ansi — profile in Phase B.
+        // PERF(port): was comptime bool dispatch on use_ansi — profile if hot.
         // The colored/plain selection now happens at the `scoped_log!` call site
         // (single arg evaluation) via `_scoped_use_ansi()`.
         let result = out.write_fmt(args);
@@ -1643,7 +1625,9 @@ impl ScopedLogger {
 #[macro_export]
 macro_rules! declare_scope {
     ($name:ident, hidden) => {
-        #[allow(non_upper_case_globals)]
+        // `unreachable_pub`: the generated static must stay `pub` for callers
+        // in downstream crates; allow it at every expansion site.
+        #[allow(non_upper_case_globals, unreachable_pub)]
         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
             // TODO(port): lowercase tagname at compile time (Zig did std.ascii.toLower)
             stringify!($name),
@@ -1651,7 +1635,7 @@ macro_rules! declare_scope {
         );
     };
     ($name:ident, visible) => {
-        #[allow(non_upper_case_globals)]
+        #[allow(non_upper_case_globals, unreachable_pub)]
         pub static $name: $crate::output::ScopedLogger = $crate::output::ScopedLogger::new(
             stringify!($name),
             $crate::output::Visibility::Visible,
@@ -1771,7 +1755,6 @@ pub fn clear_to_end() {
 // <d> - dim
 // </r> - reset
 // <r> - reset
-const CSI: &str = "\x1b[";
 
 /// Lowercase lookup wrapper (Zig: `Output.color_map.get(name)`). The table
 /// itself lives in `bun_output_tags` (shared with the `pretty_fmt!` proc-macro
@@ -2400,6 +2383,7 @@ macro_rules! write_pretty {
 
 /// Argument shape accepted by `command`/`commandOut`. Mirrors the Zig `anytype`
 /// switch over `[][]const u8` vs `[]const u8`.
+#[derive(Clone, Copy)]
 pub enum CommandArgv<'a> {
     List(&'a [&'a [u8]]),
     Single(&'a [u8]),
@@ -2560,8 +2544,13 @@ macro_rules! debug_warn {
 /// The Zig original switched on `@typeInfo` of `error_name`. The Rust port accepts anything
 /// implementing `ErrName` (impl'd for `&[u8]`, `&str`, `bun_core::Error`, `bun_sys::Error`,
 /// and any `#[derive(strum::IntoStaticStr)]` enum).
-// TODO(port): the comptime-literal fast path (is_comptime_name) is dropped — Phase B can
-// recover it with a proc-macro overload that detects string literals.
+// TODO(port): the comptime-literal fast path (is_comptime_name) is dropped —
+// could be recovered with a proc-macro overload that detects string literals.
+//
+// By-value `error_name` is intentional: callers pass `"EACCES"` / `b"tag"` /
+// `bun_core::Error` (Copy) and `bun_sys::Error` (non-Copy, consumed). Taking
+// `&impl ErrName` would force `&"literal"` at every site.
+#[allow(clippy::needless_pass_by_value)] // by-value for call-site ergonomics; see above
 pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     // Zig concatenates `fmt` into the prettyErrorln template, whose trailing-\n
     // check then sees the caller's newline. Here `fmt` is rendered into a `{}`
@@ -2589,8 +2578,11 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
         return;
     }
 
-    let display_name = error_name.name();
-    pretty_errorln!("<red>{}<r><d>:<r> {}", bstr::BStr::new(display_name), body);
+    pretty_errorln!(
+        "<red>{}<r><d>:<r> {}",
+        bstr::BStr::new(error_name.name()),
+        body
+    );
 }
 
 /// `Output.err(.TAG, fmt, args)` with a bare string tag — e.g.
@@ -2648,7 +2640,7 @@ impl ErrName for crate::Error {
         (*self).name().as_bytes()
     }
 }
-// TODO(b0): `impl ErrName for bun_sys::Error` and `bun_sys::SystemErrno` arrive
+// TODO(port): `impl ErrName for bun_sys::Error` and `bun_sys::SystemErrno` arrive
 // via move-in pass in bun_sys (orphan rule allows higher tier to impl this trait).
 // TODO(port): blanket impl for `T: Into<&'static str>` (strum enums) once coherence allows.
 
@@ -2724,7 +2716,7 @@ pub fn init_scoped_debug_writer_at_startup() {
                     bstr::BStr::new(path),
                 )),
             };
-            // TODO(b2-blocked): bun_sys::Fd::truncate (Windows-only); add to OutputSinkVTable.
+            // TODO(port): bun_sys::Fd::truncate (Windows-only); add to OutputSinkVTable.
             // `create_file` above already opens for writing with truncate, so the explicit
             // `fd.truncate(0)` from Zig is a no-op here until the vtable entry lands.
             let _ = &fd; // windows
@@ -2750,10 +2742,10 @@ fn scoped_writer() -> QuietWriter {
     // `Scoped()` no-op struct never references it. Rust's `compile_error!` is
     // eager and would break every release build, so assert at runtime instead.
     // All callers are already gated on `Environment::ENABLE_LOGS`.
-    debug_assert!(
-        Environment::ENABLE_LOGS,
-        "scopedWriter() should only be called in debug mode",
-    );
+    #[cfg(debug_assertions)]
+    if !Environment::ENABLE_LOGS {
+        unreachable!("scopedWriter() should only be called in debug mode");
+    }
     // SAFETY: initialized in init_scoped_debug_writer_at_startup; QuietWriter is Copy POD.
     unsafe { scoped_debug_writer::SCOPED_FILE_WRITER.read() }
 }

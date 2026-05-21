@@ -85,6 +85,7 @@ pub static BACKEND: core::sync::atomic::AtomicU8 =
 /// `#[cfg(any(target_os = "macos", windows))]` gate at each call site (types
 /// can't be runtime-conditional, so the two stay separate). On platforms with
 /// no backend the cfg is comptime-dead and this is never referenced.
+#[cfg(any(target_os = "macos", windows))]
 #[inline]
 fn use_system() -> bool {
     BACKEND.load(core::sync::atomic::Ordering::Relaxed) == Backend::System as u8
@@ -317,11 +318,10 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
 
 // PORT NOTE: Zig returned `(Error || error{BackendUnavailable})!Decoded`;
 // reshaped to `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
-#[allow(unused_variables)]
-fn decode_via_system(bytes: &[u8], max_pixels: u64) -> Result<Option<Decoded>, Error> {
+fn decode_via_system(_bytes: &[u8], _max_pixels: u64) -> Result<Option<Decoded>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
-        return system_backend::BackendError::split(system_backend::decode(bytes, max_pixels));
+        return system_backend::BackendError::split(system_backend::decode(_bytes, _max_pixels));
     }
     Ok(None)
 }
@@ -347,8 +347,8 @@ pub struct Probe {
 /// metadata() and bytes() agree on what's "too big".
 pub fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
-    let mut w: u32 = 0;
-    let mut h: u32 = 0;
+    let w: u32;
+    let h: u32;
     match fmt {
         Format::Png => {
             // sig(8) · IHDR{len(4) type(4) w(4) h(4) ...}
@@ -454,7 +454,7 @@ pub struct EncodeOptions {
     /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
     /// re-encode. Borrowed; the caller retains ownership.
     // TODO(port): lifetime — borrowed from caller for the duration of `encode()`;
-    // raw ptr in Phase A per rule "never put a lifetime param on a struct".
+    // raw ptr per rule "never put a lifetime param on a struct".
     pub icc_profile: Option<NonNull<[u8]>>,
 }
 
@@ -529,14 +529,16 @@ impl Encoded {
         };
         Encoded {
             bytes: slice,
-            free: encoded_wrap_free!(bun_alloc::mimalloc::mi_free),
+            // `bytes` came from a `Vec<u8>` (the global allocator); free with
+            // `default_alloc::free` so it agrees with the `#[global_allocator]`.
+            free: encoded_wrap_free!(bun_alloc::default_alloc::free),
         }
     }
 }
 
 pub fn encode(rgba: &[u8], width: u32, height: u32, opts: EncodeOptions) -> Result<Encoded, Error> {
     // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
-    // duration of this call (Phase-A raw-ptr stand-in for a lifetime param).
+    // duration of this call (raw-ptr stand-in for a lifetime param).
     let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
@@ -697,7 +699,7 @@ pub fn resize(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, f: Filter) -> Resu
     // fits the same block, so this is free.
     block.truncate(out_sz);
     block.shrink_to_fit();
-    // PERF(port): Zig used realloc directly; Vec::shrink_to_fit may not in-place — profile in Phase B
+    // PERF(port): Zig used realloc directly; Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
 }
 

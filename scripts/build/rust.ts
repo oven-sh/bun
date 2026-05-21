@@ -387,6 +387,25 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // (flags.ts:293-301). Needed so profilers and crash backtraces walk Rust
   // frames the same as the Zig binary did.
   rustflags.push("-Cforce-frame-pointers=yes");
+  // Parallel frontend: rustc's default is single-threaded for parse / macro
+  // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
+  // sits on one core while the rest idle. With this, independent compiler
+  // queries run on a rayon pool and the long pole roughly halves. The pool
+  // shares cargo's jobserver, so N rustcs × 8 doesn't oversubscribe — each
+  // thread acquires a `-j` token before doing work.
+  //
+  // Why 8, not nproc: returns flatten past ~8 (the query DAG has its own
+  // serial spine — macro expansion in particular), and `-Zthreads=0` (= nproc)
+  // measured marginally *worse* on a 32-core box from sharded-lock contention.
+  // 8 is also the upstream proposal for the eventual default
+  // (rust-lang/compiler-team#681).
+  //
+  // Local-only: CI/release builds want byte-identical output across runs, and
+  // the parallel frontend can reorder diagnostics (and is still nightly
+  // `-Z`-gated). The shipped binaries stay on the serial path.
+  if (!cfg.ci) {
+    rustflags.push("-Zthreads=8");
+  }
   // rustc does not emit `.llvm_addrsig` by default on *any* target (verified
   // empirically — Linux-gnu, musl, darwin, msvc all missing it). lld's
   // `--icf=safe` (flags.ts:960) and lld-link's `/OPT:SAFEICF` (flags.ts:778)
@@ -522,23 +541,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_*.rs"))` and
     // `include_bytes!` in `bun_js_parser`/`bun_runtime` resolve against this.
     // Set in cargo's env so it reaches every crate's `rustc` invocation
-    // (not just those with a `build.rs` re-export).
+    // (not just those with a `build.rs` re-export). `bun_core::build_options`
+    // is also `include!()`'d from here — its values come from
+    // `buildOptionsRs.ts` (written at configure time), not env vars.
     BUN_CODEGEN_DIR: cfg.codegenDir,
-
-    // ── build_options (version / sha / feature flags) ──
-    // Read at compile time by `bun_core::build_options` via `option_env!`.
-    // Values come straight from `Config`, so `process.versions.bun` /
-    // `bun --revision` reflect the configured build.
-    BUN_GIT_SHA: cfg.revision,
-    BUN_VERSION_MAJOR: cfg.version.split(".")[0]!,
-    BUN_VERSION_MINOR: cfg.version.split(".")[1]!,
-    BUN_VERSION_PATCH: cfg.version.split(".")[2]!,
-    BUN_REPORTED_NODEJS_VERSION: cfg.nodejsVersion,
-    BUN_RELEASE_SAFE: String(cfg.assertions),
-    BUN_BASELINE: String(cfg.baseline),
-    BUN_IS_CANARY: String(cfg.canary),
-    BUN_CANARY_REVISION: String(cfg.canaryRevision ?? 0),
-    BUN_BASE_PATH: cfg.cwd,
 
     // ── toolchain forwarding (cc-rs / build scripts) ──
     // build.rs of vendored crates (lol-html, anything using `cc`) and rustc's

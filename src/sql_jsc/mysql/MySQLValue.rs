@@ -96,7 +96,7 @@ pub fn field_type_from_js(
                 *unsigned = true;
                 return Ok(FieldType::MYSQL_TYPE_LONG);
             }
-            if int >= i64::MAX {
+            if int == i64::MAX {
                 *unsigned = true;
                 return Ok(FieldType::MYSQL_TYPE_LONGLONG);
             }
@@ -187,7 +187,7 @@ impl Drop for Bytes {
 impl Value {
     pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
         let mut buffer = [0u8; 15]; // Large enough for all fixed-size types
-        let mut pos: usize = 0;
+        let pos: usize;
         match self {
             Value::Null => return Ok(Data::Empty),
             Value::Bool(b) => {
@@ -803,7 +803,7 @@ pub struct Decimal {
 
 impl Decimal {
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        // PERF(port): was stack-fallback (std.heap.stackFallback(64, ...)) — profile in Phase B
+        // PERF(port): was stack-fallback (std.heap.stackFallback(64, ...)) — profile if it shows up on a hot path.
         let mut str: Vec<u8> = Vec::new();
 
         if self.negative {
@@ -823,9 +823,9 @@ impl Decimal {
 
     pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
         // Zig: `bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});`
-        // Intentional shipped runtime "feature not yet implemented" — distinct
-        // from a Phase-A porting placeholder. The `Decimal` arm of `Value` is
-        // commented out, so this is unreachable today.
+        // Intentional shipped runtime "feature not yet implemented" — not a
+        // porting placeholder. The `Decimal` arm of `Value` is commented out,
+        // so this is unreachable today.
         bun_core::todo_panic!("Decimal.toBinary not implemented")
     }
 
@@ -840,7 +840,7 @@ impl Decimal {
 
 // Helper functions for date calculations
 fn is_leap_year(year: u16) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 fn days_in_month(year: u16, month: u8) -> u8 {

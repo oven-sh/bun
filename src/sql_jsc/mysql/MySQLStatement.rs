@@ -7,8 +7,7 @@ use crate::mysql::protocol::Signature;
 use crate::shared::CachedStructure;
 use crate::shared::sql_data_cell::Flags as DataCellFlags;
 
-use bun_sql::mysql::mysql_types as types;
-use bun_sql::mysql::protocol::column_definition41::{ColumnDefinition41, ColumnFlags};
+use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::shared::ColumnIdentifier;
 
@@ -53,7 +52,7 @@ impl Default for MySQLStatement {
             columns_received: 0,
             // TODO(port): Signature has no Zig default; callers must supply it. This Default
             // impl exists only to mirror Zig's per-field defaults — prefer a `new(signature)`
-            // constructor in Phase B.
+            // constructor.
             signature: Signature::default(),
             status: Status::Parsing,
             error_response: ErrorPacket::default(),
@@ -154,7 +153,7 @@ impl MySQLStatement {
                 }
                 ColumnIdentifier::Index(index) => {
                     let index = *index;
-                    if seen_numbers.iter().any(|&n| n == index) {
+                    if seen_numbers.contains(&index) {
                         field.name_or_index = ColumnIdentifier::Duplicate;
                         flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     } else {
@@ -173,7 +172,7 @@ impl MySQLStatement {
     }
 
     // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning `&CachedStructure`
-    // here to avoid moving out of `self`; callers in Phase B may need `.clone()` if they require
+    // here to avoid moving out of `self`; callers may need `.clone()` if they require
     // an owned copy.
     pub fn structure(
         &mut self,
@@ -204,12 +203,6 @@ impl Drop for MySQLStatement {
         //   - signature.deinit()                 → field Drop
         //   - bun.destroy(this)                  → handled by IntrusiveRc when refcount hits 0
     }
-}
-
-#[allow(dead_code)]
-struct ParamUnused {
-    r#type: types::FieldType,
-    flags: ColumnFlags,
 }
 
 // ported from: src/sql_jsc/mysql/MySQLStatement.zig

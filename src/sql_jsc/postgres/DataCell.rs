@@ -20,8 +20,8 @@ pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value
 use bun_sql::shared::column_identifier::ColumnIdentifier;
 
 // TODO(port): narrow error set — Zig used inferred error sets that flow into
-// AnyPostgresError. Phase B should confirm AnyPostgresError covers all variants
-// referenced via `err!(...)` here.
+// AnyPostgresError. Confirm AnyPostgresError covers all variants referenced
+// via `err!(...)` here.
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
 bun_core::declare_scope!(Postgres, visible);
@@ -108,7 +108,7 @@ const MAX_ARRAY_NESTING_DEPTH: usize = 100;
 
 // PERF(port): `array_type` and `is_json_sub_array` were `comptime` in Zig (per-variant
 // monomorphization). Demoted to runtime here because they are only used in value
-// position (branch selectors), never type position. Profile in Phase B.
+// position (branch selectors), never type position. Profile if it shows up on a hot path.
 fn parse_array(
     bytes: &[u8],
     bigint: bool,
@@ -723,11 +723,10 @@ fn parse_array(
     }
 
     // disarm errdefer
-    let mut array = scopeguard::ScopeGuard::into_inner(array);
+    let mut array = core::mem::ManuallyDrop::new(scopeguard::ScopeGuard::into_inner(array));
     let len = array.len() as u32;
     let cap = array.capacity() as u32;
     let ptr = array.as_mut_ptr();
-    core::mem::forget(array);
     Ok(SQLDataCell {
         tag: Tag::Array,
         value: Value {
@@ -1496,7 +1495,7 @@ impl<'a> Putter<'a> {
             }
         }
 
-        Ok(SQLDataCell::construct_object_from_data_cell(
+        SQLDataCell::construct_object_from_data_cell(
             global_object,
             array,
             structure,
@@ -1507,7 +1506,7 @@ impl<'a> Putter<'a> {
             names,
             names_count,
         )
-        .map_err(crate::jsc::js_error_to_postgres)?)
+        .map_err(crate::jsc::js_error_to_postgres)
     }
 
     fn put_impl<const IS_RAW: bool>(

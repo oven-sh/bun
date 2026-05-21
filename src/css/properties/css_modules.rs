@@ -106,7 +106,7 @@ impl Composes {
         }
         match (&lhs.from, &rhs.from) {
             (None, None) => {}
-            (Some(a), Some(b)) if Specifier::eql(a, b) => {}
+            (Some(a), Some(b)) if Specifier::eql(*a, *b) => {}
             _ => return false,
         }
         lhs.loc == rhs.loc && lhs.cssparser_loc == rhs.cssparser_loc
@@ -133,12 +133,12 @@ pub enum Specifier {
 impl crate::generics::CssEql for Specifier {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        Specifier::eql(self, other)
+        Specifier::eql(*self, *other)
     }
 }
 
 impl Specifier {
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
+    pub fn eql(lhs: Self, rhs: Self) -> bool {
         // PORT NOTE: Zig `css.implementEql` (variant-wise reflection) → hand-match.
         match (lhs, rhs) {
             (Specifier::Global, Specifier::Global) => true,
@@ -178,12 +178,12 @@ impl Specifier {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
+    pub fn deep_clone(self, _bump: &Arena) -> Self {
         // PORT NOTE: Zig `css.implementDeepClone` — variants are `Copy`.
-        *self
+        self
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub fn hash(self, hasher: &mut Wyhash) {
         // PORT NOTE: Zig `css.implementHash` (variant-wise reflection) → hand-match.
         match self {
             Specifier::Global => hasher.update(&0u32.to_ne_bytes()),

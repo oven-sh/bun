@@ -19,17 +19,20 @@
 //! without holding the full compressed or decompressed tarball in memory.
 
 use core::ffi::{c_int, c_void};
-use core::mem::{ManuallyDrop, offset_of};
+use core::mem::ManuallyDrop;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_collections::VecExt;
+#[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
 use bun_paths::resolve_path::{self, platform};
-use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSlice, OSPathSliceZ, PathBuffer};
-use bun_sys::{self, Dir, E, Fd, FdDirExt, FdExt, FileKind, Mode, O};
-use bun_threading::{Mutex, ThreadPool, thread_pool};
+use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+#[cfg(not(windows))]
+use bun_sys::FdDirExt;
+use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
+use bun_threading::{Mutex, thread_pool};
 
 use crate::NetworkTask;
 use crate::bun_fs::FileSystem;
@@ -112,6 +115,7 @@ pub struct TarballStream {
     /// Output file for the entry currently being written. `None` while
     /// between entries or when the current entry is being skipped.
     out_fd: Option<Fd>,
+    #[cfg(unix)]
     use_pwrite: bool,
     use_lseek: bool,
     /// Per-entry write cursors, carried across `write_data_block` calls so
@@ -125,7 +129,7 @@ pub struct TarballStream {
     /// cache. Lazily opened on the first drain so the HTTP thread never
     /// touches the filesystem.
     dest: Option<Fd>,
-    /// Owned copy of the temp-directory name; freed in `Drop`.
+    /// Owned copy of the temp-directory name.
     // Zig `[:0]const u8` field freed via `allocator.free`. `ZBox` is the
     // owned NUL-terminated counterpart of `&ZStr` (port of `dupeZ`).
     tmpname: ZBox,
@@ -199,7 +203,7 @@ impl TarballStream {
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
         let want_first_dirname = tarball.resolution.tag == ResolutionTag::Github;
         let hasher = integrity::Streaming::init(
-            if tarball.skip_verify {
+            &if tarball.skip_verify {
                 Integrity::default()
             } else {
                 tarball.integrity
@@ -222,7 +226,8 @@ impl TarballStream {
             archive: None,
             phase: Phase::WantHeader,
             out_fd: None,
-            use_pwrite: cfg!(unix),
+            #[cfg(unix)]
+            use_pwrite: true,
             use_lseek: true,
             entry_actual_offset: 0,
             entry_final_offset: 0,
@@ -520,12 +525,13 @@ impl TarballStream {
                                 (*this).begin_entry(&mut *entry)?;
                             }
                             lib::Result::Failed | lib::Result::Fatal => {
+                                // SAFETY: `(*this).archive` is the live `read_new()` handle
+                                // opened in `init` and held until `finish` frees it.
+                                let msg = (*(*this).archive.unwrap()).error_string();
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "readNextHeader: {}",
-                                    bstr::BStr::new(lib::Archive::error_string(
-                                        (*this).archive.unwrap()
-                                    ))
+                                    bstr::BStr::new(msg)
                                 );
                                 return Err(bun_core::err!("Fail"));
                             }
@@ -543,16 +549,17 @@ impl TarballStream {
                             lib::Result::Retry => return Ok(()),
                             lib::Result::Ok | lib::Result::Warn => {
                                 if let Some(fd) = (*this).out_fd {
-                                    (*this).write_data_block(fd, block)?;
+                                    (*this).write_data_block(fd, &block)?;
                                 }
                             }
                             _ => {
+                                // SAFETY: `(*this).archive` is the live `read_new()` handle
+                                // opened in `init` and held until `finish` frees it.
+                                let msg = (*(*this).archive.unwrap()).error_string();
                                 bun_output::scoped_log!(
                                     TarballStream,
                                     "read_data_block: {}",
-                                    bstr::BStr::new(lib::Archive::error_string(
-                                        (*this).archive.unwrap()
-                                    ))
+                                    bstr::BStr::new(msg)
                                 );
                                 return Err(bun_core::err!("Fail"));
                             }
@@ -631,7 +638,7 @@ impl TarballStream {
                     TarballStream,
                     "archive_read_open: {}",
                     // SAFETY: archive is a valid handle (guard not yet dropped).
-                    bstr::BStr::new(lib::Archive::error_string(archive))
+                    bstr::BStr::new(unsafe { (*archive).error_string() })
                 );
                 return Err(bun_core::err!("Fail"));
             }
@@ -656,11 +663,14 @@ impl TarballStream {
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
-        self.dest = Some(Fd::from_std_dir(&bun_sys::make_path::make_open_path(
-            tarball.temp_dir,
-            self.tmpname.as_bytes(),
-            Default::default(),
-        )?));
+        self.dest = Some(
+            bun_sys::make_path::make_open_path(
+                Dir::borrow(&tarball.temp_dir),
+                self.tmpname.as_bytes(),
+                Default::default(),
+            )?
+            .into_raw(),
+        );
         Ok(())
     }
 
@@ -841,8 +851,8 @@ impl TarballStream {
     /// `entry_actual_offset` / `entry_final_offset` persist across calls so
     /// `close_output_file` can perform the same trailing `ftruncate` the
     /// buffered path does after its block loop.
-    fn write_data_block(&mut self, fd: Fd, block: lib::Block) -> Result<(), bun_core::Error> {
-        let file = bun_sys::File::from_fd(fd);
+    fn write_data_block(&mut self, fd: Fd, block: &lib::Block) -> Result<(), bun_core::Error> {
+        let file = bun_sys::File::borrow(&fd);
         let data = block.bytes;
         if data.is_empty() {
             return Ok(());
@@ -883,7 +893,7 @@ impl TarballStream {
             if block.offset > self.entry_actual_offset {
                 let zero_count: usize =
                     usize::try_from(block.offset - self.entry_actual_offset).expect("int cast");
-                match lib::Archive::write_zeros_to_file(&file, zero_count) {
+                match lib::Archive::write_zeros_to_file(file, zero_count) {
                     lib::Result::Ok => {
                         self.entry_actual_offset = block.offset;
                     }
@@ -909,6 +919,10 @@ impl TarballStream {
     /// `&mut self`) so no Rust reference dangles across the
     /// `heap::take` self-destruction (Zig spec: `this.deinit()` with a
     /// freely-aliasing `*TarballStream`).
+    // The `&(&(*task).request.extract)` wrappers below are deliberate — they
+    // sidestep `dangerous_implicit_autorefs` by making the ref explicit before
+    // the union deref. `needless_borrow` flags them as redundant but they are not.
+    #[allow(clippy::needless_borrow)]
     unsafe fn finish(this: *mut Self) {
         // SAFETY: see fn-level # Safety — `this`/`task`/`network`/`manager`
         // are live raw pointers; this fn is the sole owner. After
@@ -948,7 +962,6 @@ impl TarballStream {
                 // `populate_result` closes `dest` on the success path before the
                 // rename; the early-return failure paths leave it open, so close
                 // it here first — Windows can't remove an open directory.
-                // `Drop` null-checks so this is not a double-close.
                 if let Some(d) = (*this).dest.take() {
                     d.close();
                 }
@@ -956,9 +969,7 @@ impl TarballStream {
                 // union; `extract` is the active variant. Explicit `&` (no
                 // implicit autoref through the raw-ptr deref) for the
                 // `ManuallyDrop` → `ExtractRequest` deref.
-                let _ = (&(*task).request.extract)
-                    .tarball
-                    .temp_dir
+                let _ = Dir::borrow(&(&(*task).request.extract).tarball.temp_dir)
                     .delete_tree((*this).tmpname.as_bytes());
             }
 
@@ -970,8 +981,8 @@ impl TarballStream {
             // dangling Box. Before 1e76047 the dangling `Some` was harmless
             // (overwritten on next `get()`); now it use-after-frees.
             debug_assert!(
-                (*network).tarball_stream.as_deref().map(|s| s as *const _)
-                    == Some(this as *const _),
+                (*network).tarball_stream.as_deref().map(std::ptr::from_ref)
+                    == Some(this.cast_const()),
                 "TarballStream::finish: network.tarball_stream != this",
             );
             drop((*network).tarball_stream.take());
@@ -988,7 +999,9 @@ impl TarballStream {
             // is `*mut` (Zig spec: mutable `*PackageManager`) and shared across
             // threads, so we mutate via raw-ptr deref without forming a
             // long-lived `&mut PackageManager`.
-            (*manager).resolve_tasks.push(task);
+            (*manager)
+                .resolve_tasks
+                .push(core::ptr::NonNull::new_unchecked(task));
             PackageManager::wake_raw(manager);
         } // unsafe
     }
@@ -997,13 +1010,14 @@ impl TarballStream {
     /// `task` must be live and exclusively owned by this drain. Takes a raw
     /// pointer (Zig: freely-aliasing `*Task`) so `tarball` (a borrow into
     /// `task.request`) can coexist with writes to `task.log`/`task.data`.
+    // The `&(&(*task).request.extract)` wrapper below sidesteps
+    // `dangerous_implicit_autorefs`; `needless_borrow` is wrong here.
+    #[allow(clippy::needless_borrow)]
     unsafe fn populate_result(&mut self, task: *mut Task) {
         // SAFETY: see fn-level # Safety — `task` is live and exclusively
         // owned by this drain; union field `extract` is the active variant
         // for streaming tarballs (set by `enqueueExtractNPMPackage`).
         unsafe {
-            // Explicit `&` (no implicit autoref through the raw-ptr deref) for
-            // the `ManuallyDrop` → `ExtractRequest` deref.
             let tarball = &(&(*task).request.extract).tarball;
             (*task).data = TaskData {
                 extract: ManuallyDrop::new(Default::default()),
@@ -1137,7 +1151,6 @@ impl Drop for TarballStream {
                 let _ = (*a).read_free();
             }
         }
-        // `tmpname`, `pending`, `reading` drop automatically.
     }
 }
 
@@ -1255,6 +1268,7 @@ fn open_output_file(
     let flags = O::WRONLY | O::CREAT | O::TRUNC;
     #[cfg(windows)]
     {
+        let _ = mode;
         return match bun_sys::openat_windows(dest_fd, path, flags, 0) {
             Ok(fd) => Ok(fd),
             Err(e) => match e.get_errno() {
@@ -1262,7 +1276,7 @@ fn open_output_file(
                     let Some(dir) = bun_paths::Dirname::dirname::<u16>(path_slice) else {
                         return Err(e.to_zig_err());
                     };
-                    let _ = bun_sys::make_path::make_path::<u16>(Dir::from_fd(dest_fd), dir);
+                    let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), dir);
                     break 'brk bun_sys::openat_windows(dest_fd, path, flags, 0)
                         .map_err(|e| e.to_zig_err());
                 }
@@ -1304,7 +1318,7 @@ fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice
     }
     #[cfg(windows)]
     {
-        let _ = bun_sys::make_path::make_path::<u16>(Dir::from_fd(dest_fd), &path[..]);
+        let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
         let _ = (path_slice, mode);
     }
     #[cfg(not(windows))]

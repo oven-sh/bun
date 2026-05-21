@@ -1,6 +1,5 @@
 use crate::mal_prelude::*;
 use bun_collections::MultiArrayList;
-use bun_collections::VecExt;
 use bun_core::string_joiner::{StringJoiner, Watcher};
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
@@ -17,7 +16,7 @@ pub fn post_process_css_chunk(
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let c = ctx.c();
-    // TODO(port): worker.arena is a per-worker arena — thread `&'bump Bump` in Phase B
+    // TODO(port): worker.arena is a per-worker arena — thread `&'bump Bump`.
     // PORT NOTE: avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();
     j.watcher = Watcher {
@@ -94,7 +93,9 @@ pub fn post_process_css_chunk(
             if c.options.source_maps != options::SourceMapOption::None {
                 bun_core::handle_oom(compile_results_for_source_map.append(
                     CompileResultForSourceMap {
-                        source_map_chunk: source_map_chunk.clone(),
+                        // SAFETY: bitwise alias of `chunk.compile_results_for_chunk`
+                        // (read-only and outlives this fn); see `postProcessJSChunk.rs`.
+                        source_map_chunk: unsafe { source_map_chunk.alias() },
                         // Zig reads `.value` payload directly — guaranteed `Value` here
                         // because `source_maps != None` implies `line_offset` was
                         // initialised to `Value(_)` above.
@@ -144,7 +145,7 @@ pub fn post_process_css_chunk(
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
-            compile_results_for_source_map,
+            &compile_results_for_source_map,
             output_dir,
             can_have_shifts,
         )?;

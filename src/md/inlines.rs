@@ -643,10 +643,10 @@ impl Parser<'_> {
                     // and the sum is a multiple of 3, and neither is individually a multiple of 3, skip
                     if self.emph_delims[oi].emph_char != b'~'
                         && (self.emph_delims[oi].can_close || self.emph_delims[closer_idx].can_open)
-                        && (self.emph_delims[oi].count + self.emph_delims[closer_idx].count) % 3
-                            == 0
-                        && self.emph_delims[oi].count % 3 != 0
-                        && self.emph_delims[closer_idx].count % 3 != 0
+                        && (self.emph_delims[oi].count + self.emph_delims[closer_idx].count)
+                            .is_multiple_of(3)
+                        && !self.emph_delims[oi].count.is_multiple_of(3)
+                        && !self.emph_delims[closer_idx].count.is_multiple_of(3)
                     {
                         continue;
                     }

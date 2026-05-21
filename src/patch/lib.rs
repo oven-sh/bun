@@ -2,13 +2,7 @@
 //!
 //! Port of `src/patch/patch.zig`.
 
-#![allow(
-    unused,
-    dead_code,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 use core::mem;
@@ -35,10 +29,10 @@ const PAGE_SIZE: usize = 16384;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// All strings point to the original patch file text
-// TODO(port): lifetime — every `&'a [u8]` in this module borrows from the
-// original patch file text. Phase A is told to avoid struct lifetimes, but
+// PORT NOTE: lifetime — every `&'a [u8]` in this module borrows from the
+// original patch file text. The port generally avoids struct lifetimes, but
 // this parser's whole output is borrowed; raw `*const [u8]` everywhere would
-// be worse. Re-evaluate in Phase B.
+// be worse.
 pub enum PatchFilePart<'a> {
     FilePatch(Box<FilePatch<'a>>),
     FileDeletion(Box<FileDeletion<'a>>),
@@ -97,7 +91,7 @@ impl ApplyState {
 impl<'a> PatchFile<'a> {
     pub fn apply(&self, patch_dir: Fd) -> Option<sys::Error> {
         let mut state = ApplyState::new();
-        // PERF(port): was stack-fallback + arena bulk-free per iteration — profile in Phase B
+        // PERF(port): was stack-fallback + arena bulk-free per iteration — profile if hot.
 
         for part in &self.parts {
             match part {
@@ -112,6 +106,11 @@ impl<'a> PatchFile<'a> {
                     }
                 }
                 PatchFilePart::FileRename(file_rename) => {
+                    if !is_safe_patch_path(file_rename.from_path)
+                        || !is_safe_patch_path(file_rename.to_path)
+                    {
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::rename));
+                    }
                     let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
                     let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
 
@@ -216,12 +215,18 @@ impl<'a> PatchFile<'a> {
                     }
                 }
                 PatchFilePart::FilePatch(file_patch) => {
+                    if !is_safe_patch_path(file_patch.path) {
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+                    }
                     // TODO: should we compute the hash of the original file and check it against the on in the patch?
                     if let sys::Result::Err(e) = apply_patch(file_patch, patch_dir, &mut state) {
                         return Some(e.without_path());
                     }
                 }
                 PatchFilePart::FileModeChange(file_mode_change) => {
+                    if !is_safe_patch_path(file_mode_change.path) {
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fchmodat));
+                    }
                     let newmode = file_mode_change.new_mode;
                     let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());
                     #[cfg(unix)]
@@ -270,7 +275,7 @@ impl<'a> PatchFile<'a> {
 /// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
 /// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
 fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
-    // PERF(port): was arena.arena().dupeZ — profile in Phase B
+    // PERF(port): was arena.arena().dupeZ — profile if hot.
     let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
 
     // Need to get the mode of the original file
@@ -302,7 +307,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     //
     // But if the file size is small, like less than a single page, it's probably ok
     // to use the arena
-    // PERF(port): was arena vs default_allocator selection — profile in Phase B
+    // PERF(port): was arena vs default_allocator selection — profile if hot.
     let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
     // TODO(port): Zig used `patch_dir.stdDir().readFileAlloc(...)` (std.fs). Replace with bun_sys::File::read_from.
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
@@ -315,7 +320,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         }
     };
 
-    let mut file_line_count: usize = 0;
+    let file_line_count: usize;
     let lines_count: usize = {
         let mut count: usize = 0;
         for _ in filebuf.split(|b| *b == b'\n') {
@@ -1041,27 +1046,26 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
             }
         }
 
-        if destination_file_path.is_some()
-            && file.old_mode.is_some()
-            && file.new_mode.is_some()
-            && file.old_mode.unwrap() != file.new_mode.unwrap()
+        if let (Some(path), Some(old_mode), Some(new_mode)) =
+            (destination_file_path, file.old_mode, file.new_mode)
+            && old_mode != new_mode
         {
             result
                 .parts
                 .push(PatchFilePart::FileModeChange(Box::new(FileModeChange {
-                    path: destination_file_path.unwrap(),
-                    old_mode: parse_file_mode(file.old_mode.unwrap())
-                        .ok_or(ParseErr::bad_file_mode)?,
-                    new_mode: parse_file_mode(file.new_mode.unwrap())
-                        .ok_or(ParseErr::bad_file_mode)?,
+                    path,
+                    old_mode: parse_file_mode(old_mode).ok_or(ParseErr::bad_file_mode)?,
+                    new_mode: parse_file_mode(new_mode).ok_or(ParseErr::bad_file_mode)?,
                 })));
         }
 
-        if destination_file_path.is_some() && !file.hunks.is_empty() {
+        if let Some(path) = destination_file_path
+            && !file.hunks.is_empty()
+        {
             result
                 .parts
                 .push(PatchFilePart::FilePatch(Box::new(FilePatch {
-                    path: destination_file_path.unwrap(),
+                    path,
                     hunks: file.take_hunks(),
                     before_hash: file.before_hash,
                     after_hash: file.after_hash,
@@ -1186,7 +1190,7 @@ enum HunkLineType {
     Pragma,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct ParseOpts {
     support_legacy_diffs: bool,
 }
@@ -1215,7 +1219,7 @@ impl<'a> PatchLinesParser<'a> {
             let last_nl = file_.iter().rposition(|b| *b == b'\n');
             let last_line = match last_nl {
                 Some(i) => &file_[i + 1..],
-                None => &file_[..],
+                None => file_,
             };
             if last_line.is_empty() {
                 if let Some(i) = last_nl {
@@ -1561,7 +1565,7 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     let delimiter_start = strings::index_of(line, b"..")? as usize;
 
     // PERF(port): was comptime IntegerBitSet — ArrayBitSet::set is non-const,
-    // so this builds at runtime. Profile in Phase B.
+    // so this builds at runtime. Profile if it shows up on a hot path.
     let valid_chars: ByteBitSet = {
         let mut bitset = ByteBitSet::init_empty();
         // TODO: the regex uses \w which is [a-zA-Z0-9_]
@@ -1598,7 +1602,7 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     let lmao_bro = &line[b_part_start..];
     core::hint::black_box(lmao_bro);
     let b_part_end = match strings::index_of_any(&line[b_part_start..], b" \n\r\t") {
-        Some(pos) => pos as usize + b_part_start,
+        Some(pos) => pos + b_part_start,
         None => line.len(),
     };
 
@@ -1633,8 +1637,8 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
     }
 
     let a_path_start_index: usize = 0;
-    let mut a_path_end_index: usize = 0;
-    let mut b_path_start_index: usize = 0;
+    let a_path_end_index: usize;
+    let b_path_start_index: usize;
 
     let mut i: usize = 0;
     loop {
@@ -1691,7 +1695,7 @@ pub fn spawn_opts(
             b"--no-index",
         ];
         // PERF(port): Zig stored borrowed slices; `Options.argv` is
-        // `Vec<Box<[u8]>>`, so we copy. Profile in Phase B.
+        // `Vec<Box<[u8]>>`, so we copy. Profile if it shows up on a hot path.
         let mut argv_buf: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 2);
         argv_buf.push(Box::from(git.as_bytes()));
         for i in 1..ARGV.len() {
@@ -1773,9 +1777,9 @@ pub fn diff_post_process(
     Ok(Ok(stdout))
 }
 
-// TODO(port): Zig signature returns `[2]if (sentinel) [:0]const u8 else []const u8` —
+// PORT NOTE: Zig signature returns `[2]if (sentinel) [:0]const u8 else []const u8` —
 // return type depends on a comptime bool. Rust cannot express this without GAT-ish
-// traits. Phase A: return owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
+// traits, so we return owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
 pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
     old_folder_: &[u8],
     new_folder_: &[u8],
@@ -1917,10 +1921,7 @@ pub fn git_diff_internal(
 
     // unfortunately, git diff returns non-zero exit codes even when it succeeds.
     // we have to check that stderr was not empty to know if it failed
-    let mut result = match bun_spawn::sync::spawn(&opts)? {
-        sys::Result::Ok(r) => r,
-        sys::Result::Err(e) => return Err(e.into()),
-    };
+    let mut result = bun_spawn::sync::spawn(&opts)??;
 
     // Keep envp storage alive across the spawn call; Options.envp borrows it.
     drop(opts);
@@ -2034,7 +2035,6 @@ fn git_diff_postprocess(
         if !skip {
             // a/$old_folder/
             if let Some(idx) = strings::index_of(&stdout[line_start..line_end], a_old_folder_slash)
-                .map(|i| i as usize)
             {
                 let old_folder_slash_start = idx + 2;
                 stdout.drain(
@@ -2048,7 +2048,6 @@ fn git_diff_postprocess(
             }
             // b/$new_folder/
             if let Some(idx) = strings::index_of(&stdout[line_start..line_end], b_new_folder_slash)
-                .map(|i| i as usize)
             {
                 let new_folder_slash_start = idx + 2;
                 stdout.drain(
@@ -2062,9 +2061,7 @@ fn git_diff_postprocess(
                 continue;
             }
             if saw_a_folder.is_none() || saw_a_folder.unwrap() != line_idx as usize {
-                if let Some(idx) =
-                    strings::index_of(&stdout[line_start..line_end], old_folder).map(|i| i as usize)
-                {
+                if let Some(idx) = strings::index_of(&stdout[line_start..line_end], old_folder) {
                     let line = &stdout[line_start..line_end];
                     if idx + old_folder.len() < line_len && line[idx + old_folder.len()] == b'/' {
                         stdout.drain(line_start + idx..line_start + idx + old_folder.len() + 1);
@@ -2075,9 +2072,7 @@ fn git_diff_postprocess(
                 }
             }
             if saw_b_folder.is_none() || saw_b_folder.unwrap() != line_idx as usize {
-                if let Some(idx) =
-                    strings::index_of(&stdout[line_start..line_end], new_folder).map(|i| i as usize)
-                {
+                if let Some(idx) = strings::index_of(&stdout[line_start..line_end], new_folder) {
                     let line = &stdout[line_start..line_end];
                     if idx + new_folder.len() < line_len && line[idx + new_folder.len()] == b'/' {
                         stdout.drain(line_start + idx..line_start + idx + new_folder.len() + 1);

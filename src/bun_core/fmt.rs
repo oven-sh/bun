@@ -38,7 +38,6 @@ pub mod js_lexer {
 pub mod js_printer {
     use super::strings::Encoding;
     use core::fmt;
-    use core::fmt::Write as _;
     /// Zig: js_printer.writeJSONString — minimal escape set for fmt.rs quoting.
     /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
     pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, enc: Encoding) -> fmt::Result {
@@ -363,7 +362,7 @@ pub struct IntegrityFormatter<const SHORT: bool> {
 
 impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        const BUF_LEN: usize = (SHA512_DIGEST + 2) / 3 * 4;
+        const BUF_LEN: usize = SHA512_DIGEST.div_ceil(3) * 4;
         let mut buf = [0u8; BUF_LEN];
         let count =
             bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
@@ -443,9 +442,27 @@ pub fn format_json_string_utf8(
 
 type SharedTempBuffer = [u8; 32 * 1024];
 
+struct SharedTempBufferSlot(Cell<Option<NonNull<SharedTempBuffer>>>);
+impl Drop for SharedTempBufferSlot {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            // SAFETY: produced by `heap::alloc_nn` in `SharedTempBufferBorrow::
+            // new` and parked here on borrow drop; the thread is exiting so no
+            // outstanding borrow holds it.
+            unsafe { crate::heap::destroy(p.as_ptr()) };
+        }
+    }
+}
+impl core::ops::Deref for SharedTempBufferSlot {
+    type Target = Cell<Option<NonNull<SharedTempBuffer>>>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 thread_local! {
-    static SHARED_TEMP_BUFFER_PTR: Cell<Option<NonNull<SharedTempBuffer>>> =
-        const { Cell::new(None) };
+    static SHARED_TEMP_BUFFER_PTR: SharedTempBufferSlot =
+        const { SharedTempBufferSlot(Cell::new(None)) };
 }
 
 /// RAII borrow of the thread-local shared temp buffer.
@@ -1258,7 +1275,7 @@ impl Display for FormatValidIdentifier<'_> {
             while iterator.next(&mut cursor) {
                 if !js_lexer::is_identifier_continue(cursor.c) || cursor.width > 1 {
                     needs_gap = true;
-                    start_i = cursor.i as usize;
+                    start_i = cursor.i;
                     break;
                 }
             }
@@ -1280,7 +1297,7 @@ impl Display for FormatValidIdentifier<'_> {
                         needs_gap = false;
                         has_needed_gap = true;
                     }
-                    let i = cursor.i as usize;
+                    let i = cursor.i;
                     write_bytes(f, &slice[i..i + cursor.width as usize])?;
                 } else if !needs_gap {
                     needs_gap = true;
@@ -1291,11 +1308,7 @@ impl Display for FormatValidIdentifier<'_> {
             // If it ends with an emoji
             if needs_gap {
                 f.write_str("_")?;
-                #[allow(unused_assignments)]
-                {
-                    needs_gap = false;
-                    has_needed_gap = true;
-                }
+                has_needed_gap = true;
             }
 
             let _ = has_needed_gap;
@@ -1887,9 +1900,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         let mut i: usize = 1;
                         if text.len() > 1 && num == b'0' && text[1] == b'x' {
                             i += 1;
-                            while i < text.len()
-                                && matches!(text[i], b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
-                            {
+                            while i < text.len() && text[i].is_ascii_hexdigit() {
                                 i += 1;
                             }
                         } else {
@@ -2274,39 +2285,13 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             // while-else runs the else branch whenever the condition becomes false
                             // (i.e. on normal loop exit, since the body has no `break`). So the
                             // else ALWAYS fires here and the code below is dead in Zig too.
-                            // TODO(port): Zig while-else always fires here — likely upstream bug, verify in Phase B.
+                            // TODO(port): Zig while-else always fires here — likely upstream bug, worth verifying.
                             while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32)
                             {
                                 i += 1;
                             }
                             i = 1;
                             break 'jsx;
-
-                            #[allow(unreachable_code)]
-                            while i < text.len() && text[i] != b'>' {
-                                i += 1;
-
-                                if i < text.len() && text[i] == b'<' {
-                                    i = 1;
-                                    break 'jsx;
-                                }
-                            }
-
-                            if i < text.len() && text[i] == b'>' {
-                                i += 1;
-                                // TODO(port): Output.prettyFmt("<r><cyan>{s}<r>", true)
-                                write!(
-                                    writer,
-                                    "{}\x1b[36m{}{}",
-                                    Output::RESET,
-                                    bstr::BStr::new(&text[..i]),
-                                    Output::RESET,
-                                )?;
-                                text = &text[i..];
-                                continue 'outer;
-                            }
-
-                            i = 1;
                         }
 
                         write!(
@@ -2345,7 +2330,7 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 // EnumTagListFormatter
 // ───────────────────────────────────────────────────────────────────────────
 
-// B-1: ConstParamTy is nightly. Use as runtime value instead.
+// ConstParamTy is nightly, so use a runtime value instead.
 // adt_const_params rewrite: SEPARATOR enum → const bool (only 2 variants).
 pub const SEP_LIST: bool = true;
 pub const SEP_DASH: bool = false;
@@ -2393,8 +2378,8 @@ pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListF
 // formatIp
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): `std.net.Address` — bun_core stays I/O-free; Phase B should accept a
-// bun_sys/bun_net Address type here. Logic preserved against a placeholder Display.
+// TODO(port): `std.net.Address` — bun_core stays I/O-free; this should accept a
+// bun_sys/bun_net Address type. Logic preserved against a placeholder Display.
 pub fn format_ip<'a>(
     address: &impl Display,
     into: &'a mut [u8],
@@ -2795,12 +2780,8 @@ pub fn hex_upper(bytes: &[u8]) -> HexBytes<'_, false> {
     HexBytes(bytes)
 }
 
-pub const LOWER_HEX_TABLE: [u8; 16] = [
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
-];
-pub const UPPER_HEX_TABLE: [u8; 16] = [
-    b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F',
-];
+pub const LOWER_HEX_TABLE: [u8; 16] = *b"0123456789abcdef";
+pub const UPPER_HEX_TABLE: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Sentinel returned by [`HEX_DECODE_TABLE`] for non-hex-digit bytes.
 pub const HEX_INVALID: u8 = 0xff;
@@ -3035,7 +3016,7 @@ pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
 // TODO(port): Zig parameterizes on `comptime Int: type` and computes
 // `BufType = [@bitSizeOf(Int) / 4]u8`. Rust const generics can't derive an array
 // length from a type's bit-width. Represent as a generic over u64 with explicit
-// nibble count; Phase B can add per-width helpers if hot.
+// nibble count; add per-width helpers if this shows up on a hot path.
 pub struct HexIntFormatter<const LOWER: bool, const NIBBLES: usize> {
     pub value: u64,
 }
@@ -3093,10 +3074,10 @@ pub fn u64_hex_fixed<const LOWER: bool, const N: usize>(v: u64) -> [u8; N] {
 /// for `ZigString::init`. Port of the inline `std.fmt.bufPrint(.., "{x:0>2}:..")`
 /// pattern duplicated at `node_os.zig:686` and `:800`.
 #[inline]
-pub fn mac_address_lower(mac: &[u8; 6]) -> [u8; 17] {
+pub fn mac_address_lower(mac: [u8; 6]) -> [u8; 17] {
     let mut out = [b':'; 17];
     let mut i = 0;
-    for &b in mac {
+    for b in mac {
         out[i] = LOWER_HEX_TABLE[(b >> 4) as usize];
         out[i + 1] = LOWER_HEX_TABLE[(b & 0x0f) as usize];
         i += 3;
@@ -3191,19 +3172,10 @@ pub fn trimmed_precision<const PRECISION: usize>(
 // Duration formatting
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct FormatDurationData {
     ns: u64,
     negative: bool,
-}
-
-impl Default for FormatDurationData {
-    fn default() -> Self {
-        Self {
-            ns: 0,
-            negative: false,
-        }
-    }
 }
 
 use crate::time::{
@@ -3664,6 +3636,7 @@ pub type IntOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, i64>;
 pub type StringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, &'a [u8]>;
 pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_alloc::String>;
 
+#[derive(Copy, Clone)]
 pub struct OutOfRangeOptions<'a> {
     pub min: i64,
     pub max: i64,

@@ -30,8 +30,8 @@ pub enum StringEncoding {
 
 // ─── SrcAscii ──────────────────────────────────────────────────────────────
 
-// Clone: bitwise OK — `bytes` borrows caller-owned input (BACKREF, non-owning).
-#[derive(Clone)]
+// Copy: bitwise OK — `bytes` borrows caller-owned input (BACKREF, non-owning).
+#[derive(Copy, Clone)]
 struct SrcAscii {
     bytes: *const [u8], // PORT NOTE: raw slice ptr — Zig held a borrowed `[]const u8`; lifetime erased (BACKREF).
     i: usize,
@@ -39,7 +39,8 @@ struct SrcAscii {
 
 /// Zig: `packed struct(u8) { char: u7, escaped: bool = false }`.
 // PERF(port): widened `char` to u32 so ascii/unicode share one `InputChar` shape and
-// `ShellCharIter<const E>` needs no type-level branching on `E`. Phase B may split.
+// `ShellCharIter<const E>` needs no type-level branching on `E`. Could split per
+// encoding if profiling shows it matters.
 #[derive(Copy, Clone)]
 pub struct InputChar {
     pub char: u32,
@@ -178,8 +179,8 @@ pub enum ShellCharIterState {
 
 // PERF(port): Zig selected `Src` at comptime via `switch (encoding)`. Rust const
 // generics can't pick a field type from an enum value without an aux trait, so we
-// store both arms in a small enum and branch at runtime. Phase B may split into
-// three `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
+// store both arms in a small enum and branch at runtime. Could split into three
+// `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
 // shows the branch matters.
 enum ShellSrc {
     Ascii(SrcAscii),
@@ -414,11 +415,9 @@ pub enum Token {
     Eof,
 }
 
-// TODO(b2-blocked): bun_core::SmolStr — missing `Clone` impl. Zig copied the
-// union by value (bitwise SmolStr copy with shared heap backing). Until the
-// lower-tier crate provides `Clone`, deep-copy via `from_slice` so the parser
-// can own its token. PERF(port): extra alloc on heap-backed SmolStr — profile
-// in Phase B once SmolStr grows Clone.
+// PORT NOTE: Zig copied the union by value (bitwise SmolStr copy with shared
+// heap backing). The Rust port deep-copies via `from_slice` so the parser can
+// own its token. PERF(port): extra alloc on heap-backed SmolStr — profile if hot.
 impl Clone for Token {
     fn clone(&self) -> Self {
         match self {
@@ -447,7 +446,7 @@ impl Token {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),
             Token::Comma => SmolStr::from_char(b','),
-            // TODO(b2-blocked): bun_core::SmolStr — see Clone for Token above.
+            // TODO(port): bun_core::SmolStr — see Clone for Token above.
             Token::Text(txt) => SmolStr::from_slice(txt.slice()).expect("OOM cloning SmolStr"),
             Token::Close => SmolStr::from_char(b'}'),
             Token::Eof => SmolStr::empty(),
@@ -498,9 +497,9 @@ pub fn tokens_to_json(tokens: &[Token]) -> Vec<u8> {
     out
 }
 
-pub fn ast_to_json(root: ast::Group) -> Vec<u8> {
+pub fn ast_to_json(root: &ast::Group) -> Vec<u8> {
     let mut out = Vec::new();
-    ast_group_to_json(&root, &mut out);
+    ast_group_to_json(root, &mut out);
     out
 }
 
@@ -662,8 +661,8 @@ pub fn expand(
 // writes `bubble_up` backrefs (raw pointers) into child Groups and re-enters the
 // parent through them; raw-pointer access is used throughout to avoid creating
 // overlapping `&mut` borrows. Mirrors Zig pointer semantics 1:1.
-// TODO(port): audit aliasing soundness in Phase B (no long-lived `&mut` is held
-// across recursion, only raw derefs).
+// TODO(port): audit aliasing soundness (no long-lived `&mut` is held across
+// recursion, only raw derefs).
 unsafe fn expand_nested(
     root: *mut ast::Group,
     out: &mut [Vec<u8>],
@@ -710,7 +709,7 @@ unsafe fn expand_nested(
                     let length = out[usize::from(out_key)].len();
                     // PORT NOTE: reshaped for borrowck — snapshot prefix once; Zig re-sliced
                     // out[out_key].items[0..length] each iteration (same bytes).
-                    // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
+                    // PERF(port): extra Vec alloc for prefix snapshot — profile if hot.
                     let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
@@ -760,7 +759,7 @@ unsafe fn expand_nested(
                 ast::Atom::Expansion(expansion) => {
                     let length = out[usize::from(out_key)].len();
                     // PORT NOTE: reshaped for borrowck — see above.
-                    // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
+                    // PERF(port): extra Vec alloc for prefix snapshot — profile if hot.
                     let prefix: Vec<u8> = out[usize::from(out_key)][..length].to_vec();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
@@ -812,7 +811,7 @@ fn expand_flat(
     }
 
     let mut depth = depth_;
-    for (_j, atom) in tokens[start..end].iter().enumerate() {
+    for atom in tokens[start..end].iter() {
         match atom {
             Token::Text(txt) => {
                 out[usize::from(out_key)].extend_from_slice(txt.slice());
@@ -832,7 +831,7 @@ fn expand_flat(
 
                 let starting_len = out[usize::from(out_key)].len();
                 // PORT NOTE: reshaped for borrowck — snapshot prefix once.
-                // PERF(port): extra Vec alloc for prefix snapshot — profile in Phase B
+                // PERF(port): extra Vec alloc for prefix snapshot — profile if hot.
                 let prefix: Vec<u8> = out[usize::from(out_key)][..starting_len].to_vec();
                 for (i, variant) in variants.iter().enumerate() {
                     let new_key = if i == 0 {
@@ -872,38 +871,13 @@ fn expand_flat(
     Ok(())
 }
 
-#[allow(dead_code)]
-fn calculate_variants_amount(tokens: &[Token]) -> u32 {
-    let mut brace_count: u32 = 0;
-    let mut count: u32 = 0;
-    for tok in tokens {
-        match tok {
-            Token::Comma => count += 1,
-            Token::Open(_) => brace_count += 1,
-            Token::Close => {
-                if brace_count == 1 {
-                    count += 1;
-                }
-                brace_count -= 1;
-            }
-            _ => {}
-        }
-    }
-    count
-}
-
 // FIXME error location
-pub struct ParserErrorMsg {
-    pub msg: Vec<u8>,
-}
-
 // PORT NOTE: lifetime on transient parser struct; `tokens`/`bump` borrowed from caller
 // for the parse() call only — not an AST node.
 pub struct Parser<'a> {
     current: usize,
     tokens: &'a [Token],
     bump: &'a Bump,
-    errors: Vec<ParserErrorMsg>,
 }
 
 impl<'a> Parser<'a> {
@@ -912,12 +886,11 @@ impl<'a> Parser<'a> {
             current: 0,
             tokens,
             bump,
-            errors: Vec::new(),
         }
     }
 
     pub fn parse(&mut self) -> Result<ast::Group, ParserError> {
-        // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile in Phase B
+        // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile if hot.
         let mut nodes: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
         while !self.r#match(TokenTag::Eof) {
             match self.parse_atom()? {
@@ -961,7 +934,7 @@ impl<'a> Parser<'a> {
             if self.r#match(TokenTag::Eof) {
                 break;
             }
-            // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile in Phase B
+            // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile if hot.
             let mut group: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
             let mut close = false;
             while !self.r#match(TokenTag::Eof) {
@@ -1003,11 +976,6 @@ impl<'a> Parser<'a> {
         })
     }
 
-    #[allow(dead_code)]
-    fn has_eq_sign(&self, str_: &[u8]) -> Option<u32> {
-        has_eq_sign(str_)
-    }
-
     fn advance(&mut self) -> Token {
         if !self.is_at_end() {
             self.current += 1;
@@ -1023,15 +991,6 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Token::Eof)
     }
 
-    #[allow(dead_code)]
-    fn expect(&mut self, toktag: TokenTag) -> Token {
-        debug_assert!(toktag == self.peek().tag());
-        if self.check(toktag) {
-            return self.advance();
-        }
-        unreachable!()
-    }
-
     /// Consumes token if it matches
     fn r#match(&mut self, toktag: TokenTag) -> bool {
         if self.peek().tag() == toktag {
@@ -1041,22 +1000,9 @@ impl<'a> Parser<'a> {
         false
     }
 
-    #[allow(dead_code)]
-    fn match_any2(&mut self, toktags: &[TokenTag]) -> Option<Token> {
-        let peeked = self.peek().clone();
-        // PERF(port): was `inline for` — profile in Phase B
-        for &tag in toktags {
-            if peeked.tag() == tag {
-                let _ = self.advance();
-                return Some(peeked);
-            }
-        }
-        None
-    }
-
     fn match_any(&mut self, toktags: &[TokenTag]) -> bool {
         let peeked = self.peek().tag();
-        // PERF(port): was `inline for` — profile in Phase B
+        // PERF(port): was `inline for` — profile if hot.
         for &tag in toktags {
             if peeked == tag {
                 let _ = self.advance();
@@ -1066,33 +1012,12 @@ impl<'a> Parser<'a> {
         false
     }
 
-    fn check(&self, toktag: TokenTag) -> bool {
-        self.peek().tag() == toktag
-    }
-
     fn peek(&self) -> &Token {
         &self.tokens[self.current]
     }
 
-    #[allow(dead_code)]
-    fn peek_n(&self, n: u32) -> &Token {
-        if self.current + n as usize >= self.tokens.len() {
-            return &self.tokens[self.tokens.len() - 1];
-        }
-        &self.tokens[self.current + n as usize]
-    }
-
     fn prev(&self) -> Token {
         self.tokens[self.current - 1].clone()
-    }
-
-    #[allow(dead_code)]
-    fn add_error(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), ParserError> {
-        use std::io::Write;
-        let mut error_msg: Vec<u8> = Vec::new();
-        write!(&mut error_msg, "{}", args).map_err(|_| ParserError::OutOfMemory)?;
-        self.errors.push(ParserErrorMsg { msg: error_msg });
-        Ok(())
     }
 }
 
@@ -1218,9 +1143,6 @@ fn build_expansion_table(
 
 pub type Lexer = NewLexer<{ Encoding::Ascii }>;
 
-// TODO(port): `ShellCharIter<ENCODING>` associated items `CodepointType` / `InputChar`
-// require either a trait or inherent associated types. Phase B: define a
-// `CharIter` trait in `bun_shell` exposing `type Codepoint; type InputChar; fn eat; fn read_char;`.
 type Chars<const E: Encoding> = ShellCharIter<E>;
 
 pub struct LexerOutput {
@@ -1414,8 +1336,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         *tok = Token::Text(tok_text);
     }
 
-    // TODO(port): `char` parameter type is `Chars<ENCODING>::CodepointType` —
-    // u8 for ascii, u32 for wtf8/wtf16. Phase B: thread the associated type.
     fn append_char(
         &mut self,
         char: <Chars<ENCODING> as CharIter>::CodepointType,
@@ -1449,11 +1369,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
 
     fn eat(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
         self.chars.eat()
-    }
-
-    #[allow(dead_code)]
-    fn read_char(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
-        self.chars.read_char()
     }
 }
 

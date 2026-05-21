@@ -7,9 +7,9 @@
 //! type implements). See `RefCounted` / `ThreadSafeRefCounted`.
 
 use core::cell::Cell;
+#[cfg(debug_assertions)]
 use core::ffi::c_void;
 use core::marker::PhantomData;
-use core::mem::size_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -19,7 +19,9 @@ use bun_core::ThreadLock;
 // PORT NOTE(b0): was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
 // Debug-only diagnostic storage; std HashMap drops insertion order for `frees`
 // which is acceptable for leak reports.
+#[cfg(debug_assertions)]
 use std::collections::HashMap;
+#[cfg(debug_assertions)]
 type ArrayHashMap<K, V> = HashMap<K, V>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -280,7 +282,7 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() + 1,
         );
         if DEBUG_STACK_TRACE {
-            // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
+            // TODO(port): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
@@ -314,7 +316,7 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() - 1,
         );
         if DEBUG_STACK_TRACE {
-            // TODO(b0-genuine): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
+            // TODO(port): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
@@ -356,10 +358,7 @@ impl<T: RefCounted> RefCount<T> {
         {
             // SAFETY: self is the `ref_count` field of a live T
             let ptr: *mut T = unsafe {
-                bun_core::container_of::<T, Self>(
-                    std::ptr::from_mut(self),
-                    offset_of_ref_count::<T, Self>(),
-                )
+                bun_core::container_of::<T, Self>(std::ptr::from_mut(self), offset_of_ref_count())
             };
             self.debug.dump(
                 Some(core::any::type_name::<T>().as_bytes()),
@@ -371,11 +370,8 @@ impl<T: RefCounted> RefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)` (closest analogue;
-        // see baby_list.rs). No `ci_assert` Cargo feature exists.
-        if cfg!(debug_assertions) {
-            debug_assert!(self.raw_count.get() == 0);
-        }
+        // Zig: gated on `bun.Environment.ci_assert`.
+        assert!(self.raw_count.get() == 0);
     }
 
     /// Sets the ref count to 0 without running the destructor.
@@ -579,7 +575,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
             let ptr: *mut T = unsafe {
                 bun_core::container_of::<T, Self>(
                     std::ptr::from_mut(self),
-                    offset_of_ref_count_ts::<T, Self>(),
+                    offset_of_ref_count_ts(),
                 )
             };
             self.debug.dump(
@@ -592,10 +588,8 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        // PORT NOTE: `bun.Environment.ci_assert` → `cfg!(debug_assertions)`.
-        if cfg!(debug_assertions) {
-            debug_assert!(self.raw_count.load(Ordering::SeqCst) == 0);
-        }
+        // Zig: gated on `bun.Environment.ci_assert`.
+        assert!(self.raw_count.load(Ordering::SeqCst) == 0);
     }
 
     /// Sets the ref count to 0 without running the destructor.
@@ -869,8 +863,8 @@ impl<T: AnyRefCounted> RefPtr<T> {
     /// This is the inverse of `leak()` / `into_raw()`.
     ///
     /// Std-conventional alias for [`take_ref`] (matches `Arc::from_raw` /
-    /// `Rc::from_raw` semantics) so Phase-A drafts that reached for the
-    /// idiomatic Rust name compile without churn.
+    /// `Rc::from_raw` semantics) so call sites that reach for the idiomatic
+    /// Rust name compile without churn.
     ///
     /// # Safety
     /// `raw_ptr` must point to a live `T` and the caller must own one ref.
@@ -1045,6 +1039,7 @@ where
 // TrackedRef / TrackedDeref
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(debug_assertions)]
 struct TrackedRef {
     acquired_at: StoredTrace,
 }
@@ -1054,6 +1049,7 @@ struct TrackedRef {
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TrackedRefId(u32);
 
+#[cfg(debug_assertions)]
 impl TrackedRefId {
     #[inline]
     const fn new(n: u32) -> Self {
@@ -1061,10 +1057,8 @@ impl TrackedRefId {
     }
 }
 
-struct TrackedDeref {
-    acquired_at: StoredTrace,
-    released_at: StoredTrace,
-}
+#[cfg(debug_assertions)]
+struct TrackedDeref;
 
 // ──────────────────────────────────────────────────────────────────────────
 // DebugData
@@ -1079,6 +1073,7 @@ pub trait DebugDataOps {
     fn release(&mut self, id: TrackedRefId, return_address: usize);
 }
 
+#[cfg(debug_assertions)]
 const MAGIC_VALID: u128 = 0x2f84_e51d;
 
 /// Provides Ref tracking. This is not generic over the pointer T to reduce
@@ -1099,7 +1094,7 @@ pub struct DebugData<Count> {
     next_id: AtomicU32,
     map: HashMap<TrackedRefId, TrackedRef>,
     frees: ArrayHashMap<TrackedRefId, TrackedDeref>,
-    count_pointer: Option<NonNull<Count>>,
+    _count: core::marker::PhantomData<Count>,
 }
 
 #[cfg(debug_assertions)]
@@ -1112,7 +1107,7 @@ impl<Count: CountLoad> DebugData<Count> {
             next_id: AtomicU32::new(0),
             map: HashMap::new(),
             frees: ArrayHashMap::new(),
-            count_pointer: None,
+            _count: core::marker::PhantomData,
         }
     }
 
@@ -1131,36 +1126,14 @@ impl<Count: CountLoad> DebugData<Count> {
         TrackedRefId::new(self.next_id.fetch_add(1, Ordering::SeqCst))
     }
 
-    fn acquire_with_count(
-        &mut self,
-        count_pointer: NonNull<Count>,
-        return_address: usize,
-    ) -> TrackedRefId {
-        let _guard = self.lock.lock();
-        self.count_pointer = Some(count_pointer);
-        let id = self.alloc_id();
-        self.map.insert(
-            id,
-            TrackedRef {
-                acquired_at: StoredTrace::capture(Some(return_address)),
-            },
-        );
-        id
-    }
-
     fn release_impl(&mut self, id: TrackedRefId, return_address: usize) {
         // If this triggers ASAN, the RefCounted object is double-freed.
         let _guard = self.lock.lock();
-        let Some(entry) = self.map.remove(&id) else {
+        let _ = return_address;
+        if self.map.remove(&id).is_none() {
             return;
-        };
-        self.frees.insert(
-            id,
-            TrackedDeref {
-                acquired_at: entry.acquired_at,
-                released_at: StoredTrace::capture(Some(return_address)),
-            },
-        );
+        }
+        self.frees.insert(id, TrackedDeref);
     }
 
     // PORT NOTE: Zig `deinit` took `std.mem.asBytes(self)` as `data: []const u8`
@@ -1258,7 +1231,7 @@ fn generic_dump(
         bun_core::pretty_error!("refs<r>\n");
     }
     let mut i: usize = 0;
-    for (_, entry) in map.iter() {
+    for entry in map.values() {
         bun_core::pretty_error!("<b>RefPtr acquired at:<r>\n");
         dump_stack_hook(Some(&entry.acquired_at), 0);
         i += 1;
@@ -1293,26 +1266,23 @@ fn return_address() -> usize {
 
 #[cfg(debug_assertions)]
 #[inline(always)]
-fn offset_of_ref_count<T: RefCounted, Rc>() -> usize {
+fn offset_of_ref_count() -> usize {
     // TODO(port): Zig used `@fieldParentPtr(field_name, count)`. Without the
     // field name as a const, compute via the trait: feed a dangling aligned T
-    // and diff pointers. Phase B: derive macro emits `offset_of!(T, ref_count)`.
-    let _ = core::mem::size_of::<Rc>();
+    // and diff pointers. The derive macro could emit `offset_of!(T, ref_count)`.
     0
 }
 
 #[cfg(debug_assertions)]
 #[inline(always)]
-fn offset_of_ref_count_ts<T: ThreadSafeRefCounted, Rc>() -> usize {
+fn offset_of_ref_count_ts() -> usize {
     // TODO(port): see offset_of_ref_count.
-    let _ = core::mem::size_of::<Rc>();
     0
 }
 
 // PORT NOTE: `const unique_symbol = opaque {};` — type-identity marker for
 // comptime assertion in `RefPtr`. Replaced by `AnyRefCounted` trait bound.
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(ref_count, hidden);
 
 // ported from: src/ptr/ref_count.zig

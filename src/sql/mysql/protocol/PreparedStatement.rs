@@ -8,24 +8,13 @@ use crate::mysql::mysql_types::FieldType;
 
 bun_core::declare_scope!(PreparedStatement, hidden);
 
+#[derive(Default)]
 pub struct PrepareOK {
     pub status: u8,
     pub statement_id: u32,
     pub num_columns: u16,
     pub num_params: u16,
     pub warning_count: u16,
-}
-
-impl Default for PrepareOK {
-    fn default() -> Self {
-        Self {
-            status: 0,
-            statement_id: 0,
-            num_columns: 0,
-            num_params: 0,
-            warning_count: 0,
-        }
-    }
 }
 
 impl PrepareOK {
@@ -76,10 +65,10 @@ pub struct Execute<'a> {
 /// Stand-in for the `params: []Value` field while `Value` lives in the
 /// higher-tier `bun_sql_jsc` crate. Carries the borrowed slice as raw bytes so
 /// `len()` is real; encoding goes through the `is_null` / `to_data` hooks
-/// which the jsc-side caller fills in. Phase B may replace this with a trait
+/// which the jsc-side caller fills in. TODO(refactor): replace this with a trait
 /// or move `Execute` itself up-tier (matches the Query::Execute precedent of
 /// taking `&mut [Data]`).
-// TODO(b2-blocked): bun_sql_jsc::mysql::mysql_value::Value
+// TODO(port): bun_sql_jsc::mysql::mysql_value::Value
 pub struct ExecuteParams<'a> {
     pub len: usize,
     pub ctx: *mut core::ffi::c_void,
@@ -105,7 +94,7 @@ impl<'a> Execute<'a> {
         const MYSQL_MAX_PARAMS: usize = (u16::MAX as usize / 8) + 1;
 
         let mut null_bitmap_buf = [0u8; MYSQL_MAX_PARAMS];
-        let bitmap_bytes = (self.params.len + 7) / 8;
+        let bitmap_bytes = self.params.len.div_ceil(8);
         let null_bitmap = &mut null_bitmap_buf[0..bitmap_bytes];
         null_bitmap.fill(0);
 

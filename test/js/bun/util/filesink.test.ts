@@ -304,10 +304,9 @@ it("start() with arbitrary objects does not hit the invalid-fd debug assertion",
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("panic");
-  expect(stderr).not.toContain("Fd::INVALID");
-  expect(exitCode).toBe(0);
+  expect(stderr).toBe("");
   expect(await Bun.file(path).text()).toBe("ok");
+  expect(exitCode).toBe(0);
 });
 
 it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {

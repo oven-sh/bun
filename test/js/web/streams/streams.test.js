@@ -345,6 +345,25 @@ describe("WritableStream", () => {
       expect(reasonOnSignal).toBe("stream-abort-reason");
     });
 
+    it("defaults abort() with no reason to an AbortError DOMException (matches AbortController)", async () => {
+      // Per DOM spec "signal abort" step 2: an undefined reason must become a
+      // fresh AbortError DOMException, matching what AbortController.abort() does.
+      let signal;
+      const ws = new WritableStream({
+        start(controller) {
+          signal = controller.signal;
+        },
+        write() {},
+      });
+
+      await ws.abort();
+
+      expect(signal.aborted).toBe(true);
+      expect(signal.reason).toBeInstanceOf(DOMException);
+      expect(signal.reason.name).toBe("AbortError");
+      expect(() => signal.throwIfAborted()).toThrow(DOMException);
+    });
+
     it("lets an abort listener unblock a pending write() — the stream-chain v4 use case", async () => {
       // Simulates the downstream pattern from uhop/stream-chain: a sink whose
       // write() hangs on an external condition, woken up when the signal fires.

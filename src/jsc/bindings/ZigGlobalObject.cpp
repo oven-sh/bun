@@ -1732,14 +1732,21 @@ JSC_DEFINE_HOST_FUNCTION(createAbortSignal, (JSGlobalObject * globalObject, Call
     return JSValue::encode(toJSNewlyCreated<IDLInterface<WebCore::AbortSignal>>(*globalObject, *jsDOMGlobalObject, WTF::move(abortSignal)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(signalAbort, (JSGlobalObject*, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(signalAbort, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     ASSERT(callFrame);
     ASSERT(callFrame->argumentCount() == 2);
 
     auto* abortSignal = dynamicDowncast<JSAbortSignal>(callFrame->uncheckedArgument(0));
-    if (abortSignal) [[likely]]
-        abortSignal->wrapped().signalAbort(callFrame->uncheckedArgument(1));
+    if (abortSignal) [[likely]] {
+        // Mirrors AbortController::abort: an undefined reason becomes an
+        // AbortError DOMException, per DOM spec "signal abort" step 2.
+        auto reason = callFrame->uncheckedArgument(1);
+        if (reason.isUndefined())
+            abortSignal->wrapped().signalAbort(globalObject, CommonAbortReason::UserAbort);
+        else
+            abortSignal->wrapped().signalAbort(reason);
+    }
     return JSValue::encode(JSC::jsUndefined());
 }
 

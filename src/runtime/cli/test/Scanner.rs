@@ -152,15 +152,35 @@ impl<'a> Scanner<'a> {
     }
 
     fn scan_internal(&mut self, path_literal: &[u8], mode: ScanMode) -> Result<(), ScanError> {
-        // Explicit paths bypass the built-in defaults only. User-configured
-        // patterns stay in effect either way. Swap the field in place and
-        // restore it on scope exit so `?` early-returns also clean up.
+        // Explicit paths narrow the built-in defaults only: any pattern that
+        // would match the explicit root itself is dropped for this scan, but
+        // every other default keeps pruning. So `bun test ./build/foo.test.ts`
+        // drops `**/build/**` and runs the named file, while
+        // `bun test ./packages/foo` keeps both defaults and still prunes
+        // `packages/foo/dist/`. User-configured patterns are untouched.
+        //
+        // Stored on the heap so `self.path_ignore_patterns` can alias a slice
+        // into it for the duration of this scan; restored via the RAII guard
+        // so `?` early-returns also clean up.
         let saved_patterns = self.path_ignore_patterns;
-        let bypass_defaults =
-            matches!(mode, ScanMode::ExplicitPath) && self.path_ignore_patterns_are_defaults;
-        if bypass_defaults {
-            self.path_ignore_patterns = &[];
-        }
+        let narrowed: Option<Box<[&'static [u8]]>> = if matches!(mode, ScanMode::ExplicitPath)
+            && self.path_ignore_patterns_are_defaults
+        {
+            let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path_literal);
+            let rel_source: &[u8] = if rel_path.is_empty() { path_literal } else { rel_path };
+            let mut kept: Vec<&'static [u8]> = Vec::with_capacity(self.path_ignore_patterns.len());
+            for &pattern in self.path_ignore_patterns {
+                if !pattern_matches_path(pattern, rel_source) {
+                    // SAFETY: all entries in DEFAULT_PATH_IGNORE_PATTERNS are
+                    // &'static [u8] byte-string literals; the `_are_defaults`
+                    // flag guarantees that's the slice we're iterating.
+                    kept.push(unsafe { &*(pattern as *const [u8]) });
+                }
+            }
+            Some(kept.into_boxed_slice())
+        } else {
+            None
+        };
         // RAII guard so early-returns still restore the field.
         struct RestorePatterns<'r, 'a> {
             scanner: *mut Scanner<'a>,
@@ -181,9 +201,15 @@ impl<'a> Scanner<'a> {
         let _restore: RestorePatterns<'_, 'a> = RestorePatterns {
             scanner: self as *mut _,
             saved: saved_patterns,
-            active: bypass_defaults,
+            active: narrowed.is_some(),
             _m: core::marker::PhantomData,
         };
+        if let Some(ref kept) = narrowed {
+            // SAFETY: lifetime-erase; `narrowed` lives until end of this
+            // function (after the RAII guard restores).
+            self.path_ignore_patterns =
+                unsafe { core::slice::from_raw_parts(kept.as_ptr(), kept.len()) };
+        }
 
         let parts: [&[u8]; 2] = [self.fs().top_level_dir, path_literal];
         // reshaped for borrowck — abs_buf's return keeps a &mut borrow
@@ -377,34 +403,9 @@ impl<'a> Scanner<'a> {
             return false;
         }
         let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
-
-        // Build rel_path + '/' once. rel_path is a relative path from the project
-        // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
-        let mut buf = [0u8; 4096];
-        let rel_with_slash: Option<&[u8]> = if !rel_path.is_empty()
-            && rel_path.len() < buf.len()
-            && rel_path[rel_path.len() - 1] != b'/'
-        {
-            buf[..rel_path.len()].copy_from_slice(rel_path);
-            buf[rel_path.len()] = b'/';
-            Some(&buf[..rel_path.len() + 1])
-        } else {
-            None
-        };
-
         for pattern in self.path_ignore_patterns {
-            if bun_glob::r#match(pattern, rel_path).matches() {
+            if pattern_matches_path(pattern, rel_path) {
                 return true;
-            }
-            // Only try trailing separator for ** patterns (e.g. "vendor/**").
-            // Single-star patterns like "vendor/*" must not prune entire
-            // directories because * doesn't cross directory boundaries.
-            if let Some(p) = rel_with_slash {
-                if strings::index_of(pattern, b"**").is_some() {
-                    if bun_glob::r#match(pattern, p).matches() {
-                        return true;
-                    }
-                }
             }
         }
         false
@@ -518,6 +519,32 @@ pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec",
 /// root, so these patterns prune the conventional output directories at any
 /// depth. An explicit (even empty) user configuration replaces this list.
 pub(crate) const DEFAULT_PATH_IGNORE_PATTERNS: [&[u8]; 2] = [b"**/dist/**", b"**/build/**"];
+
+/// Returns true if `pattern` matches `rel_path`. Handles the same two-attempt
+/// glob behavior as the main scanner match: try the raw relative path first,
+/// then retry with a trailing `/` for `**` patterns (so `**/build/**` matches
+/// the bare directory name `packages/sub/build` as well as files under it).
+fn pattern_matches_path(pattern: &[u8], rel_path: &[u8]) -> bool {
+    if bun_glob::r#match(pattern, rel_path).matches() {
+        return true;
+    }
+    // Only try trailing separator for ** patterns (e.g. "vendor/**").
+    // Single-star patterns like "vendor/*" must not prune entire
+    // directories because * doesn't cross directory boundaries.
+    if rel_path.is_empty()
+        || rel_path[rel_path.len() - 1] == b'/'
+        || strings::index_of(pattern, b"**").is_none()
+    {
+        return false;
+    }
+    let mut buf = [0u8; 4096];
+    if rel_path.len() >= buf.len() {
+        return false;
+    }
+    buf[..rel_path.len()].copy_from_slice(rel_path);
+    buf[rel_path.len()] = b'/';
+    bun_glob::r#match(pattern, &buf[..rel_path.len() + 1]).matches()
+}
 
 #[derive(Copy, Clone)]
 enum ScanMode {

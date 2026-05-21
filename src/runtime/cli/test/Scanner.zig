@@ -82,13 +82,28 @@ pub fn scanExplicit(this: *Scanner, path_literal: []const u8) Error!void {
 const ScanMode = enum { auto_discover, explicit_path };
 
 fn scanInternal(this: *Scanner, path_literal: []const u8, mode: ScanMode) Error!void {
-    // Explicit paths bypass the built-in defaults only. User-configured
-    // patterns stay in effect either way, so we swap the field in place
-    // and restore it before returning.
+    // Explicit paths narrow the built-in defaults only: any pattern that
+    // would match the explicit root itself is dropped for this scan, but
+    // every other default keeps pruning. So `bun test ./build/foo.test.ts`
+    // drops `**/build/**` and runs the named file, while `bun test
+    // ./packages/foo` keeps both defaults and still prunes
+    // `packages/foo/dist/`. User-configured patterns are untouched.
     const saved_patterns = this.path_ignore_patterns;
-    const bypass_defaults = mode == .explicit_path and this.path_ignore_patterns_are_defaults;
-    if (bypass_defaults) this.path_ignore_patterns = &.{};
-    defer if (bypass_defaults) {
+    const narrow = mode == .explicit_path and this.path_ignore_patterns_are_defaults;
+    var narrow_buf: [default_path_ignore_patterns.len][]const u8 = undefined;
+    if (narrow) {
+        const rel_path = bun.path.relative(this.fs.top_level_dir, path_literal);
+        const rel_source: []const u8 = if (rel_path.len == 0) path_literal else rel_path;
+        var kept: usize = 0;
+        for (this.path_ignore_patterns) |pattern| {
+            if (!patternMatchesPath(pattern, rel_source)) {
+                narrow_buf[kept] = pattern;
+                kept += 1;
+            }
+        }
+        this.path_ignore_patterns = narrow_buf[0..kept];
+    }
+    defer if (narrow) {
         this.path_ignore_patterns = saved_patterns;
     };
 
@@ -205,31 +220,28 @@ pub fn doesPathMatchFilter(this: *Scanner, name: []const u8) bool {
 pub fn matchesPathIgnorePattern(this: *Scanner, abs_path: []const u8) bool {
     if (this.path_ignore_patterns.len == 0) return false;
     const rel_path = bun.path.relative(this.fs.top_level_dir, abs_path);
-
-    // Build rel_path + '/' once. rel_path is a relative path from the project
-    // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
-    var buf: [4096]u8 = undefined;
-    const rel_with_slash: ?[]const u8 = if (rel_path.len > 0 and
-        rel_path.len + 1 <= buf.len and
-        rel_path[rel_path.len - 1] != '/')
-    blk: {
-        @memcpy(buf[0..rel_path.len], rel_path);
-        buf[rel_path.len] = '/';
-        break :blk buf[0 .. rel_path.len + 1];
-    } else null;
-
     for (this.path_ignore_patterns) |pattern| {
-        if (bun.glob.match(pattern, rel_path).matches()) return true;
-        // Only try trailing separator for ** patterns (e.g. "vendor/**").
-        // Single-star patterns like "vendor/*" must not prune entire
-        // directories because * doesn't cross directory boundaries.
-        if (rel_with_slash) |p| {
-            if (strings.indexOf(pattern, "**") != null) {
-                if (bun.glob.match(pattern, p).matches()) return true;
-            }
-        }
+        if (patternMatchesPath(pattern, rel_path)) return true;
     }
     return false;
+}
+
+/// Returns true if `pattern` matches `rel_path`. Handles the same two-attempt
+/// glob behavior as the main scanner match: try the raw relative path first,
+/// then retry with a trailing `/` for `**` patterns (so `**/build/**` matches
+/// the bare directory name `packages/sub/build` as well as files under it).
+fn patternMatchesPath(pattern: []const u8, rel_path: []const u8) bool {
+    if (bun.glob.match(pattern, rel_path).matches()) return true;
+    // Only try trailing separator for ** patterns (e.g. "vendor/**").
+    // Single-star patterns like "vendor/*" must not prune entire
+    // directories because * doesn't cross directory boundaries.
+    if (rel_path.len == 0 or rel_path[rel_path.len - 1] == '/') return false;
+    if (strings.indexOf(pattern, "**") == null) return false;
+    var buf: [4096]u8 = undefined;
+    if (rel_path.len + 1 > buf.len) return false;
+    @memcpy(buf[0..rel_path.len], rel_path);
+    buf[rel_path.len] = '/';
+    return bun.glob.match(pattern, buf[0 .. rel_path.len + 1]).matches();
 }
 
 pub fn isTestFile(this: *Scanner, name: []const u8) bool {

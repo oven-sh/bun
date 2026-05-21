@@ -284,7 +284,7 @@ it("start() without path/fd on an already-open writer does not crash", async () 
 // only flushed them via a deferred task, so a large write through a *second*
 // sink on the same fd reached the kernel first. Windows already forced stdout/
 // stderr sinks into sync mode; POSIX now does the same.
-describe("stdout/stderr sinks write synchronously", () => {
+describe.concurrent("stdout/stderr sinks write synchronously", () => {
   // A small write followed by a large write through separate FileSink
   // instances on fd 1/2 must appear in program order. Before the fix the
   // 4-byte write was buffered until the deferred auto-flush ran, landing

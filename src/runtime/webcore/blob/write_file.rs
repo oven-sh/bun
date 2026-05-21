@@ -692,9 +692,7 @@ mod windows_impl {
 
                 match &(*write_file)
                     .file_blob
-                    .store
-                    .get()
-                    .as_ref()
+                    .store()
                     .unwrap()
                     .data
                     .as_file()
@@ -712,9 +710,7 @@ mod windows_impl {
                                 if let Some(rare) = (*vm.as_ptr()).rare_data.as_ref() {
                                     let store_ptr = (*write_file)
                                         .file_blob
-                                        .store
-                                        .get()
-                                        .as_ref()
+                                        .store()
                                         .unwrap()
                                         .as_ptr()
                                         .cast::<c_void>();

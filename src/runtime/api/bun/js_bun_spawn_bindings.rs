@@ -1508,7 +1508,10 @@ pub fn spawn_maybe_sync<const IS_SYNC: bool>(
         // `Pipe` variant; the signal's stored back-pointer remains valid for
         // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
         unsafe {
-            if let Writable::Pipe(pipe) = (*subprocess_ptr).stdin.get() {
+            if let Some(pipe) = (*subprocess_ptr).stdin.with(|s| match s {
+                Writable::Pipe(pipe) => Some(*pipe),
+                _ => None,
+            }) {
                 (*pipe.as_ptr())
                     .signal
                     .set(WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(

@@ -827,8 +827,7 @@ impl GetHostByAddrInfoRequest {
                 (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
                     .pending_addr_cache_cares
-                    .get()
-                    .index_of(new)
+                    .with(|c| c.index_of(new))
                     .unwrap();
                 (*request).cache = CacheConfig::new(true, false, pos as u8, name.len() as u16);
                 (*new).lookup = request;
@@ -1086,8 +1085,7 @@ impl GetNameInfoRequest {
                 (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
                     .pending_nameinfo_cache_cares
-                    .get()
-                    .index_of(new)
+                    .with(|c| c.index_of(new))
                     .unwrap();
                 (*request).cache = CacheConfig::new(true, false, pos as u8, name_len as u16);
                 (*new).lookup = request;

@@ -1502,10 +1502,14 @@ impl PostgresSQLConnection {
         unsafe {
             (*this).disconnect();
             (*this).stop_timers();
-            for stmt_ptr in (*this).statements.get().values() {
-                // statements map owns a ref to each statement.
-                PostgresSQLStatement::deref(*stmt_ptr);
-            }
+            (*this).statements.with(|stmts| {
+                for stmt_ptr in stmts.values() {
+                    // statements map owns a ref to each statement; every
+                    // stored pointer is live, and this releases the map's ref
+                    // during teardown.
+                    PostgresSQLStatement::deref(*stmt_ptr);
+                }
+            });
             // statements/requests/write_buffer/read_buffer/backend_parameters dropped below.
             // PORT NOTE: Zig called .deinit() on each; Rust Drop handles Vec/HashMap/OffsetByteList.
 

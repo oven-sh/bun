@@ -471,7 +471,7 @@ impl FileSink {
 
             // TODO: on windows done means ended (no pending data on the buffer) on unix we can still have pending data on the buffer
             // we should unify the behaviors to simplify this
-            let has_pending_data = (*this).writer.get().has_pending_data();
+            let has_pending_data = (*this).writer.with(|w| w.has_pending_data());
             // Only keep the event loop ref'd while there's a pending write in progress.
             // If there's no pending write, no need to keep the event loop ref'd.
             // `with_mut`: Windows `update_ref` is `&mut self` (posix is `&self`).
@@ -491,17 +491,17 @@ impl FileSink {
 
             // if we are not done yet and has pending data we just wait so we do not runPending twice
             if status == WriteStatus::Pending && has_pending_data {
-                if (*this).pending.get().state == streams::PendingState::Pending {
+                if (*this).pending.with(|p| p.state) == streams::PendingState::Pending {
                     (*this).pending.with_mut(|p| p.consumed = amount as u64); // @truncate
                 }
                 return;
             }
 
-            if (*this).pending.get().state == streams::PendingState::Pending {
+            if (*this).pending.with(|p| p.state) == streams::PendingState::Pending {
                 (*this).pending.with_mut(|p| p.consumed = amount as u64); // @truncate
 
                 // when "done" is true, we will never receive more data.
-                let consumed = (*this).pending.get().consumed;
+                let consumed = (*this).pending.with(|p| p.consumed);
                 if (*this).done.get() || status == WriteStatus::EndOfFile {
                     (*this)
                         .pending
@@ -539,7 +539,7 @@ impl FileSink {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            if (*this).pending.get().state == streams::PendingState::Pending {
+            if (*this).pending.with(|p| p.state) == streams::PendingState::Pending {
                 (*this)
                     .pending
                     .with_mut(|p| p.result = streams::Writable::Err(err));
@@ -592,7 +592,7 @@ impl FileSink {
             // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
             if (*this).readable_stream.get_mut().has() {
                 if let Some(global) = (*this).js_global() {
-                    if let Some(stream) = (*this).readable_stream.get().get(global) {
+                    if let Some(stream) = (*this).readable_stream.with(|r| r.get(global)) {
                         stream.done(global);
                     }
                 }
@@ -906,7 +906,7 @@ impl FileSink {
     pub unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            if (*this).done.get() || !(*this).writer.get().has_pending_data() {
+            if (*this).done.get() || !(*this).writer.with(|w| w.has_pending_data()) {
                 (*this).update_ref(false);
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
@@ -914,7 +914,7 @@ impl FileSink {
 
             let _guard = FileSinkRef::new_ref(this);
 
-            let amount_buffered = (*this).writer.get().outgoing.size();
+            let amount_buffered = (*this).writer.with(|w| w.outgoing.size());
 
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
             // callback it may trigger goes via the stored `*mut FileSink` backref.
@@ -934,7 +934,7 @@ impl FileSink {
                 }
             }
 
-            let is_registered = !(*this).writer.get().has_pending_data();
+            let is_registered = !(*this).writer.with(|w| w.has_pending_data());
             (*this)
                 .auto_flusher
                 .with_mut(|a| a.registered.set(is_registered));

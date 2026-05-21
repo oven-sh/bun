@@ -4762,15 +4762,31 @@ pub type StatFS = libc::statfs;
 pub type StatFS = self::windows::libuv::uv_statfs_t;
 
 /// `bun.sys.statfs` — query filesystem stats for `path`. Retries on EINTR.
+///
+/// On macOS x86_64, calls `statfs64` instead of `statfs`. libc 0.2.x binds
+/// `libc::statfs` to `statfs$INODE64`, and in practice that symbol ends up
+/// writing the legacy (pre-Leopard) struct layout into our 64-bit-inode
+/// buffer — `bsize=0` and the remaining fields shift by one slot (see
+/// oven-sh/bun#31133). `statfs64` is a distinct symbol that always writes
+/// the `__DARWIN_STRUCT_STATFS64` layout matching `libc::statfs`. Deprecated
+/// on Apple but still exported on x86_64 (unavailable on arm64 macOS, where
+/// unsuffixed `statfs` already writes the 64-bit-inode layout).
 pub fn statfs(path: &ZStr) -> Maybe<StatFS> {
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    unsafe extern "C" {
+        #[link_name = "statfs64"]
+        fn _statfs(path: *const core::ffi::c_char, buf: *mut libc::statfs) -> core::ffi::c_int;
+    }
+    #[cfg(all(unix, not(all(target_os = "macos", target_arch = "x86_64"))))]
+    use libc::statfs as _statfs;
     #[cfg(unix)]
     loop {
         // SAFETY: all-zero is a valid `struct statfs` (kernel writes every
         // field on success); `path` is NUL-terminated by `ZStr`.
         let mut st: StatFS = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: `path` is NUL-terminated (`ZStr`); `st` is a valid
-        // out-pointer to stack storage that `statfs` fully initializes.
-        let rc = unsafe { libc::statfs(path.as_ptr(), &raw mut st) };
+        // out-pointer to stack storage that `_statfs` fully initializes.
+        let rc = unsafe { _statfs(path.as_ptr(), &raw mut st) };
         if rc < 0 {
             let e = last_errno();
             if e == libc::EINTR {

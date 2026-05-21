@@ -1050,14 +1050,15 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                                 bstr::BStr::new(sliced.slice()),
                             )));
                         } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                            // detect_editor pointed `name` at `path`'s storage
-                            // (process-lifetime dirname_store); dupe into our
-                            // owned buffer so a later `path` overwrite doesn't
-                            // dangling-alias it.
+                            // `detect_editor` aliased `path` to `name` (absolute
+                            // editor path). Re-backing `name_storage` frees the
+                            // old buffer, so repoint both `name` and `path` at
+                            // the new storage.
                             slot.name_storage = edit.path.to_vec();
                             // SAFETY: see above.
                             edit.name =
                                 unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                            edit.path = edit.name;
                         }
                     }
                 }

@@ -168,6 +168,15 @@ pub trait AnyRefCounted: Sized {
     /// guard's own ref keeps the allocation alive until the guard drops.
     /// Prefer this over [`ScopedRef::new`] whenever a `&self` is already in
     /// hand.
+    ///
+    /// Provenance note: the guard's pointer is derived from `&self`. If the
+    /// guard ends up holding the *final* ref, the destructor reclaims the
+    /// allocation through that shared-provenance pointer — the same posture
+    /// as the existing `as_ctx_ptr()` → `deref()` release sites, which the
+    /// formal aliasing model (Tree Borrows) rejects even though the compiled
+    /// code is correct today. Where the allocation-rooted `*mut T` is already
+    /// in hand (FFI userdata, [`RefPtr::as_ptr`]), prefer [`ScopedRef::new`]
+    /// or `ThisPtr::ref_guard`, which preserve it.
     #[inline]
     fn ref_guard(&self) -> ScopedRef<Self>
     where
@@ -1076,9 +1085,15 @@ where
     /// embedded refcount must start at 1 (i.e. `RefCount::init()` /
     /// `ThreadSafeRefCount::init()`); this handle owns that initial ref.
     pub fn new(init_data: T) -> Self {
+        let raw_ptr = bun_core::heap::into_raw(Box::new(init_data));
+        // Mirror `RefPtr::adopt_ref`: a freshly constructed object must start
+        // at exactly one ref (the one this handle adopts) — starting higher
+        // would leak the extras, since nothing else can release them.
+        // SAFETY: freshly boxed — live.
+        debug_assert!(unsafe { T::rc_has_one_ref(raw_ptr) });
         // SAFETY: freshly boxed — live, ref_count == 1, full allocation
         // provenance from `Box::into_raw`.
-        unsafe { Self::from_raw(bun_core::heap::into_raw(Box::new(init_data))) }
+        unsafe { Self::from_raw(raw_ptr) }
     }
 
     /// Increment the reference count and return an owning handle for the new

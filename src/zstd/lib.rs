@@ -312,6 +312,9 @@ pub struct ZstdReaderArrayList<'a> {
     pub state: State,
     pub total_out: usize,
     pub total_in: usize,
+    /// Decompression-bomb guard: `read_all` errors instead of growing the
+    /// output past this many bytes. Defaults to unbounded.
+    pub max_output_size: usize,
 }
 
 impl<'a> ZstdReaderArrayList<'a> {
@@ -343,6 +346,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             state: State::Uninitialized,
             total_out: 0,
             total_in: 0,
+            max_output_size: usize::MAX,
         }))
     }
 
@@ -378,6 +382,11 @@ impl<'a> ZstdReaderArrayList<'a> {
                     self.end();
                 }
                 return Ok(());
+            }
+
+            if self.list_ptr.len() >= self.max_output_size {
+                self.state = State::Error;
+                return Err(ZstdError::ZstdDecompressionError);
             }
 
             // SAFETY: write-only spare; ZSTD_decompressStream initializes the

@@ -59,6 +59,9 @@ pub struct BrotliReaderArrayList<'a> {
     pub state: ReaderState,
     pub total_out: usize,
     pub total_in: usize,
+    /// Decompression-bomb guard: `read_all` errors instead of growing the
+    /// output past this many bytes. Defaults to unbounded.
+    pub max_output_size: usize,
     pub flush_op: c::BrotliEncoderOperation,
     pub finish_flush_op: c::BrotliEncoderOperation,
     pub full_flush_op: c::BrotliEncoderOperation,
@@ -152,6 +155,7 @@ impl<'a> BrotliReaderArrayList<'a> {
             state: ReaderState::Uninitialized,
             total_out: 0,
             total_in: 0,
+            max_output_size: usize::MAX,
             flush_op,
             finish_flush_op,
             full_flush_op,
@@ -237,6 +241,10 @@ impl<'a> BrotliReaderArrayList<'a> {
                     return Err(err!("ShortRead"));
                 }
                 c::BrotliDecoderResult::needs_more_output => {
+                    if self.list_ptr.len() >= self.max_output_size {
+                        self.state = ReaderState::Error;
+                        return Err(err!("BrotliDecompressionError"));
+                    }
                     let target = self.list_ptr.capacity() + 4096;
                     self.list_ptr
                         .reserve(target.saturating_sub(self.list_ptr.len()));

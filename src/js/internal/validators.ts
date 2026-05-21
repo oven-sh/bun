@@ -27,8 +27,13 @@ function checkIsHttpToken(val) {
   catastrophic backtracking.
 */
 const linkValueRegExp = /^(?:<[^>]*>)(?:\s*;\s*[^;"\s=]+(?:=(")?[^;"\s]*\1)?)*$/;
+const linkValueForbiddenCharsRegExp = /[\r\n]/;
 function validateLinkHeaderFormat(value, name) {
-  if (typeof value === "undefined" || !RegExpPrototypeExec.$call(linkValueRegExp, value)) {
+  if (
+    typeof value === "undefined" ||
+    !RegExpPrototypeExec.$call(linkValueRegExp, value) ||
+    RegExpPrototypeExec.$call(linkValueForbiddenCharsRegExp, value) !== null
+  ) {
     throw $ERR_INVALID_ARG_VALUE(
       name,
       value,

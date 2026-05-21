@@ -926,12 +926,14 @@ impl HttpThread {
     }
 
     pub fn schedule_shutdown(&mut self, http: &AsyncHttp) {
-        bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", http.async_http_id);
+        self.schedule_shutdown_by_id(http.async_http_id);
+    }
+
+    pub fn schedule_shutdown_by_id(&mut self, async_http_id: u32) {
+        bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", async_http_id);
         {
             let _guard = self.queued_shutdowns_lock.lock_guard();
-            self.queued_shutdowns.push(ShutdownMessage {
-                async_http_id: http.async_http_id,
-            });
+            self.queued_shutdowns.push(ShutdownMessage { async_http_id });
         }
         self.wakeup();
     }

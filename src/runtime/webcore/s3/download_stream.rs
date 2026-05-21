@@ -39,6 +39,12 @@ pub struct S3HttpDownloadStreamingTask {
     pub concurrent_task: ConcurrentTask,
     pub range: Option<Box<[u8]>>,
     pub proxy_url: Box<[u8]>,
+    /// Copy of `http.async_http_id` captured before the task is scheduled to
+    /// the HTTP thread. `http` is bulk-overwritten under `mutex` by
+    /// `update_state`; this lets the JS thread schedule a shutdown on cancel
+    /// without touching `http` (and without taking `mutex`, which `on_response`
+    /// holds while calling back into JS via `report_progress`).
+    pub async_http_id: u32,
 }
 
 // Hot-dispatch tag for `ConcurrentTask::from` (Zig: variant of `jsc.Task` TaggedPointerUnion).
@@ -72,6 +78,7 @@ impl Default for S3HttpDownloadStreamingTask {
             reported_response_buffer: MutableString::default(),
             state: AtomicU64::new(State::default().0),
             concurrent_task: ConcurrentTask::default(),
+            async_http_id: 0,
         }
     }
 }

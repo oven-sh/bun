@@ -167,7 +167,11 @@ impl<'a> Scanner<'a> {
             && self.path_ignore_patterns_are_defaults
         {
             let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path_literal);
-            let rel_source: &[u8] = if rel_path.is_empty() { path_literal } else { rel_path };
+            let rel_source: &[u8] = if rel_path.is_empty() {
+                path_literal
+            } else {
+                rel_path
+            };
             let mut kept: Vec<&'static [u8]> = Vec::with_capacity(self.path_ignore_patterns.len());
             for &pattern in self.path_ignore_patterns {
                 if !pattern_matches_path(pattern, rel_source) {

@@ -604,10 +604,15 @@ fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
     }
     let copy = arena.alloc_slice_copy(s);
     let mut prev = 0u8;
-    for b in copy.iter_mut() {
-        let cur = *b;
+    for i in 0..copy.len() {
+        let cur = copy[i];
         if is_disallowed(prev, cur) {
-            *b = b' ';
+            copy[i] = b' ';
+            // For an encoded C1 control, blank the 0xC2 lead byte too so the
+            // output stays valid UTF-8 instead of leaving a dangling lead byte.
+            if prev == 0xc2 && i > 0 {
+                copy[i - 1] = b' ';
+            }
         }
         prev = cur;
     }

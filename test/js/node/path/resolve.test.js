@@ -144,7 +144,10 @@ describe("path.resolve", () => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    // ASAN/debug builds print a "WARNING: ASAN interferes..." line on stderr
+    // at startup — filter it out before asserting stderr is clean.
+    const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
+    expect(stderrLines).toEqual([]);
     expect(exitCode).toBe(0);
 
     // Node on POSIX normalises the cwd to the win32 form — slashes become

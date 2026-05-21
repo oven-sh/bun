@@ -1416,6 +1416,14 @@ impl MySQLConnection {
                         // Can't be 0
                         return Err(AnyMySQLError::UnexpectedPacket);
                     }
+                    // field_count is a server-controlled lenenc int (up to 2^64-1) and is
+                    // used below to size a Vec<ColumnDefinition41> (~256 bytes each). MySQL
+                    // hard-caps a result set at 4096 columns (MAX_FIELDS), so anything
+                    // larger is a malformed/hostile packet trying to make us commit
+                    // gigabytes from a ~13-byte response.
+                    if header.field_count > 4096 {
+                        return Err(AnyMySQLError::UnexpectedPacket);
+                    }
                     if statement.columns.len() as u64 != header.field_count {
                         bun_core::scoped_log!(
                             MySQLConnection,

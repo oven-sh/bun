@@ -2441,6 +2441,12 @@ impl<T: ?Sized> RacyCell<T> {
             core::sync::atomic::Ordering::Relaxed,
         ) {
             Ok(_) => {}
+            // Unreachable today (`check_owner` only calls this after the
+            // fast-path load saw `owner != me`, and only thread `me` ever
+            // stores `me`), but kept so the claim is idempotent if this is
+            // ever reached with the owner already set to the caller — same
+            // shape as `ThreadCell::claim`.
+            Err(prev) if prev == me => {}
             Err(owner) => panic!(
                 "RacyCell: accessed from thread {me}, but thread {owner} owns it. \
                  Cross-thread state needs an atomic, a lock, or `get_unsync` with \

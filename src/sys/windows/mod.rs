@@ -4828,14 +4828,11 @@ pub fn move_opened_file_at(
         if fallback_rc == win32::ntstatus::SUCCESS {
             bun_sys::Result::success()
         } else if fallback_rc == win32::ntstatus::INVALID_PARAMETER {
-            // Both FileRenameInformationEx and FileRenameInformation rejected — a filter
-            // driver (e.g. BFS-filterdriver) is blocking NtSetInformationFile entirely.
-            // MoveFileExW uses the same kernel path so would also fail; skip it and
-            // copy the content directly using the already-open src_fd handle instead.
-            // Bun unlinks the temp file after this function returns regardless.
-            // src_fd may have been opened write-only; open a fresh read handle by path.
-            // Use a single heap-allocated pool buffer (64 KB) to avoid stack overflow.
-            // src path is resolved first, handle opened, then buffer reused for dst.
+            // Filter driver blocks all NtSetInformationFile renames (MoveFileExW
+            // uses the same path and would also fail). Copy content instead:
+            // open a fresh read handle (src_fd may be write-only) and write to
+            // the destination directly. Bun unlinks the temp file on return.
+            // Single pool buffer (64 KB heap) reused for src then dst path.
             let mut buf = bun_paths::w_path_buffer_pool::get();
             let buf_len = buf.len() as u32;
 
@@ -4852,8 +4849,7 @@ pub fn move_opened_file_at(
             let _ = unsafe { kernel32::GetFileSizeEx(src_fd.native(), &mut src_size) };
             bun_sys::syslog!("moveOpenedFileAt src_fd size={}", src_size);
 
-            // FILE_FLAG_DELETE_ON_CLOSE: mark temp file for deletion so it is
-            // removed when all handles (including bun's src_fd) are closed.
+            // FILE_FLAG_DELETE_ON_CLOSE: temp file deleted when bun closes src_fd.
             const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x0400_0000;
             let src = unsafe {
                 externs::CreateFileW(
@@ -4873,18 +4869,31 @@ pub fn move_opened_file_at(
                 );
             }
 
-            // Reuse buf for the destination path now that src handle is open.
-            let dir_len = unsafe {
-                externs::GetFinalPathNameByHandleW(new_dir_fd.native(), buf.as_mut_ptr(), buf_len, 0)
-            } as usize;
-            if dir_len == 0 || dir_len + 1 + new_file_name.len() + 1 > buf.len() {
-                let _ = unsafe { externs::CloseHandle(src) };
-                return bun_sys::Result::errno(fallback_rc, bun_sys::Tag::NtSetInformationFile);
+            // Reuse buf for dst path. Mirrors FileRenameInformationEx:
+            // absolute new_file_name used as-is; relative resolved via new_dir_fd.
+            let dst_name_len;
+            if bun_paths::is_absolute_windows_wtf16(new_file_name) {
+                if new_file_name.len() + 1 > buf.len() {
+                    let _ = unsafe { externs::CloseHandle(src) };
+                    return bun_sys::Result::errno(fallback_rc, bun_sys::Tag::NtSetInformationFile);
+                }
+                buf[..new_file_name.len()].copy_from_slice(new_file_name);
+                buf[new_file_name.len()] = 0;
+                dst_name_len = new_file_name.len();
+            } else {
+                let dir_len = unsafe {
+                    externs::GetFinalPathNameByHandleW(new_dir_fd.native(), buf.as_mut_ptr(), buf_len, 0)
+                } as usize;
+                if dir_len == 0 || dir_len + 1 + new_file_name.len() + 1 > buf.len() {
+                    let _ = unsafe { externs::CloseHandle(src) };
+                    return bun_sys::Result::errno(fallback_rc, bun_sys::Tag::NtSetInformationFile);
+                }
+                buf[dir_len] = b'\\' as u16;
+                buf[dir_len + 1..dir_len + 1 + new_file_name.len()].copy_from_slice(new_file_name);
+                buf[dir_len + 1 + new_file_name.len()] = 0;
+                dst_name_len = dir_len + 1 + new_file_name.len();
             }
-            buf[dir_len] = b'\\' as u16;
-            buf[dir_len + 1..dir_len + 1 + new_file_name.len()].copy_from_slice(new_file_name);
-            buf[dir_len + 1 + new_file_name.len()] = 0;
-            bun_sys::syslog!("moveOpenedFileAt copy fallback dst='{}'", bun_core::fmt::utf16(&buf[..dir_len + 1 + new_file_name.len()]));
+            bun_sys::syslog!("moveOpenedFileAt copy fallback dst='{}'", bun_core::fmt::utf16(&buf[..dst_name_len]));
 
             let dst_disposition = if replace_if_exists { win32::CREATE_ALWAYS } else { win32::CREATE_NEW };
             let dst = unsafe {
@@ -4909,10 +4918,10 @@ pub fn move_opened_file_at(
             let mut copy_ok = true;
             let mut last_err: u32 = 0;
             let mut total_copied: u64 = 0;
-            let mut buf = [0u8; 4096];
+            let mut copy_buf = [0u8; 4096];
             loop {
                 let mut nr = 0u32;
-                let read_ok = unsafe { kernel32::ReadFile(src, buf.as_mut_ptr(), buf.len() as u32, &mut nr, ptr::null_mut()) };
+                let read_ok = unsafe { kernel32::ReadFile(src, copy_buf.as_mut_ptr(), copy_buf.len() as u32, &mut nr, ptr::null_mut()) };
                 if read_ok == 0 {
                     last_err = kernel32::GetLastError();
                     copy_ok = false;
@@ -4922,7 +4931,7 @@ pub fn move_opened_file_at(
                     break; // EOF
                 }
                 let mut nw = 0u32;
-                if unsafe { kernel32::WriteFile(dst, buf.as_ptr(), nr, &mut nw, ptr::null_mut()) } == 0 || nw != nr {
+                if unsafe { kernel32::WriteFile(dst, copy_buf.as_ptr(), nr, &mut nw, ptr::null_mut()) } == 0 || nw != nr {
                     last_err = kernel32::GetLastError();
                     copy_ok = false;
                     break;

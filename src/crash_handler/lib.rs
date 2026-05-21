@@ -2090,7 +2090,9 @@ mod draft {
         // SAFETY: the kernel passes a valid CONTEXT; we read aligned u64 register
         // slots at fixed offsets within it.
         unsafe {
-            let read = |off: usize| core::ptr::read_unaligned((ctx as *const u8).add(off) as *const u64) as usize;
+            let read = |off: usize| {
+                core::ptr::read_unaligned((ctx as *const u8).add(off) as *const u64) as usize
+            };
             #[cfg(target_arch = "x86_64")]
             {
                 // winnt.h `_CONTEXT` (x64): Rbp @ 0xA0, Rip @ 0xF8.

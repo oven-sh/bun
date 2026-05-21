@@ -3218,7 +3218,11 @@ pub fn get_total_memory_size() -> usize {
 /// # Safety
 /// `out` must be writable for `cap` `usize` slots (or null/`cap == 0`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
+pub unsafe extern "C" fn Bun__captureStackTrace(
+    begin: usize,
+    out: *mut usize,
+    cap: usize,
+) -> usize {
     if out.is_null() || cap == 0 {
         return 0;
     }
@@ -3361,7 +3365,14 @@ pub mod debug {
                         };
                         // SAFETY: iovecs point to valid memory for their stated lengths.
                         let bytes_read = unsafe {
-                            libc::process_vm_readv(pid, &raw const local, 1, &raw const remote, 1, 0)
+                            libc::process_vm_readv(
+                                pid,
+                                &raw const local,
+                                1,
+                                &raw const remote,
+                                1,
+                                0,
+                            )
                         };
                         if bytes_read >= 0 {
                             return bytes_read as usize == buf.len();
@@ -3390,7 +3401,12 @@ pub mod debug {
                     fd => {
                         // SAFETY: fd is a valid open file descriptor; buf is writable.
                         let n = unsafe {
-                            libc::pread(fd, buf.as_mut_ptr().cast(), buf.len(), address as libc::off_t)
+                            libc::pread(
+                                fd,
+                                buf.as_mut_ptr().cast(),
+                                buf.len(),
+                                address as libc::off_t,
+                            )
                         };
                         return n >= 0 && n as usize == buf.len();
                     }
@@ -3475,7 +3491,11 @@ pub mod debug {
         {
             // SAFETY: msync only inspects the mapping; aligned_address is page-aligned.
             let rc = unsafe {
-                libc::msync(aligned_address as *mut core::ffi::c_void, page_size, libc::MS_ASYNC)
+                libc::msync(
+                    aligned_address as *mut core::ffi::c_void,
+                    page_size,
+                    libc::MS_ASYNC,
+                )
             };
             if rc != 0 {
                 return crate::ffi::errno() != libc::ENOMEM;

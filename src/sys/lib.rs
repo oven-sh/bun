@@ -6091,12 +6091,7 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
     {
         // SAFETY: filename is NUL-terminated.
         let p = unsafe { libc::dlopen(filename.as_ptr(), flags) };
-        if !p.is_null() {
-            repair_jsc_gc_signal_after_dlopen();
-            Some(p)
-        } else {
-            None
-        }
+        if p.is_null() { None } else { Some(p) }
     }
     #[cfg(windows)]
     {
@@ -6105,72 +6100,6 @@ pub fn dlopen(filename: &ZStr, flags: i32) -> Option<*mut c_void> {
         let p = unsafe { bun_windows_sys::externs::LoadLibraryA(filename.as_ptr()) };
         if p.is_null() { None } else { Some(p.cast()) }
     }
-}
-
-/// Undo `SA_ONSTACK` that a just-`dlopen`ed library may have slapped onto JSC's
-/// thread-suspend signal.
-///
-/// JavaScriptCore suspends threads for GC/code-cache flushes by delivering a
-/// per-thread signal (`SIGPWR` on Linux in Bun's WebKit fork; `SIGUSR1`
-/// elsewhere) and having the handler snapshot the interrupted thread's
-/// context. The handler's sanity check — "am I running on the tracked thread's
-/// stack?" — uses its own frame pointer and therefore only holds when the
-/// signal arrives on the normal stack.
-///
-/// Several language runtimes iterate every signal in `initsig()`-style hooks
-/// when loaded as a shared library and, for any signal whose handler they
-/// don't want to own, force `SA_ONSTACK` onto the inherited disposition so
-/// their own threads' synchronous faults stay on a managed alt stack. Go's
-/// cgo runtime is the canonical offender — `runtime.setsigstack` sets
-/// `SA_ONSTACK` on *every* signal whose handler is non-default, including
-/// ours — but any runtime that follows the same recipe (Mono, some JNI
-/// layouts, Rust async runtimes compiled as cdylibs) trips the same wire.
-///
-/// When that happens in a process that already has an alternate signal stack
-/// installed (ASAN's runtime, Bun's own crash handler, libbacktrace, …) the
-/// next JSC suspend delivers the signal onto the alt stack; the stack check
-/// fails on every attempt; `Thread::suspend()` retries forever and the event
-/// loop stops. See oven-sh/bun#31158.
-///
-/// Fixing this inside WTF (use the interrupted SP from ucontext instead of
-/// the handler's own SP) is the clean path and should go upstream too;
-/// clearing `SA_ONSTACK` here is the belt-and-suspenders patch so the
-/// current prebuilt WebKit doesn't deadlock in the meantime.
-#[cfg(unix)]
-pub fn repair_jsc_gc_signal_after_dlopen() {
-    // Only Linux reproduces this: upstream WTF uses SIGUSR1 everywhere but
-    // Bun remapped to SIGPWR on Linux so userland SIGUSR1 stays available.
-    // `SA_ONSTACK` is a POSIX concept so the clearing itself works anywhere,
-    // but the wrongness we're correcting (`SA_ONSTACK` on our GC signal, plus
-    // an alt stack) only lines up on Linux in practice.
-    #[cfg(target_os = "linux")]
-    {
-        const SIGPWR: i32 = 30;
-        // SAFETY: both `oldact` and `newact` are stack-local, properly sized,
-        // and the kernel writes/reads only their POD contents.
-        unsafe {
-            let mut oldact: libc::sigaction = core::mem::zeroed();
-            if libc::sigaction(SIGPWR, core::ptr::null(), &raw mut oldact) != 0 {
-                return;
-            }
-            if (oldact.sa_flags & libc::SA_ONSTACK) == 0 {
-                return;
-            }
-            let mut newact = oldact;
-            newact.sa_flags &= !libc::SA_ONSTACK;
-            let _ = libc::sigaction(SIGPWR, &raw const newact, core::ptr::null_mut());
-        }
-    }
-}
-
-#[cfg(not(unix))]
-pub fn repair_jsc_gc_signal_after_dlopen() {}
-
-/// C-ABI wrapper so call sites outside the Rust tree (BunProcess.cpp's
-/// `process.dlopen`) can use the same post-dlopen repair.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__repairJscGcSignalAfterDlopen() {
-    repair_jsc_gc_signal_after_dlopen();
 }
 /// sys.zig:4565 — `dlsym(handle, name)`.
 pub fn dlsym_impl(handle: Option<*mut c_void>, name: &ZStr) -> Option<*mut c_void> {

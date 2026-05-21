@@ -386,13 +386,6 @@ extern "C" void Bun__unlink(const char*, size_t);
 
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
-// Post-dlopen repair for JSC's Linux SIGPWR suspend/resume signal: clears
-// SA_ONSTACK from our installed handler if the dlopen'd library added it
-// (Go's cgo `runtime.setsigstack` is the canonical offender). Without this,
-// the next `Thread::suspend()` retries forever and the event loop hangs on
-// any WASM compile/install. See `sys::repair_jsc_gc_signal_after_dlopen` —
-// no-op on non-Linux so no OS guard is needed here. oven-sh/bun#31158.
-extern "C" void Bun__repairJscGcSignalAfterDlopen();
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -541,8 +534,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
-    if (handle)
-        Bun__repairJscGcSignalAfterDlopen();
 
     tryToDeleteIfNecessary();
 #endif

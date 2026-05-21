@@ -3,7 +3,11 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "3167a44fb92c268c83f09b232b38a9f3e7f9655a";
+// Preview autobuild of oven-sh/WebKit#235 — ucontext-SP fix for JSC's
+// signalHandlerSuspendResume so the GC thread-suspend signal works under
+// SA_ONSTACK (Go cgo's initsig etc.) instead of spinning forever. Swap
+// back to the next merged hash once #235 lands.
+export const WEBKIT_VERSION = "autobuild-preview-pr-235-a355e3e0";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

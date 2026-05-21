@@ -77,6 +77,19 @@ pub trait UvCallback<H> {
 ///   wrapper's `(H, T)`.
 /// * [`close`](Self::close) (and `Drop`) is the teardown half: the slot is
 ///   freed by the `uv_close` callback, never while libuv still references it.
+///
+/// # Non-re-entrancy contract
+///
+/// Owning a `UvHandle<H, T>` asserts that no borrow returned by
+/// [`data`](Self::data) / [`data_mut`](Self::data_mut) /
+/// [`handle_mut`](Self::handle_mut) is held across a call that can dispatch
+/// this handle's callbacks (`uv_run` / `Loop::tick`). The event trampoline
+/// materialises `&mut T` from the slot back-pointer; a wrapper-side borrow
+/// live at that moment would alias it. This is the same contract every libuv
+/// userdata consumer (and `ExtSlot<T>` on the uWS side) relies on: the loop
+/// is only driven from the event-loop driver, with no handle borrows on the
+/// stack. Consumers that need to reach the userdata *during* a callback get
+/// it from the callback's own `&mut T` parameter, not from the wrapper.
 pub struct UvHandle<H: RawUvHandle + bun_core::Zeroable, T> {
     /// Owned heap slot. Held as a raw pointer (not `Box`) because libuv keeps
     /// an aliasing `*mut H` into the same allocation from `uv_*_init` until

@@ -23,10 +23,8 @@ import { bunEnv, bunExe, isGlibc } from "harness";
 // dlopens `libc.so.6` directly so it needs glibc; musl names its libc
 // differently and static-musl builds of Bun don't even have a dynamic
 // loader in the room.
-test.skipIf(!isGlibc)(
-  "event loop survives SA_ONSTACK on SIGPWR + WASM (oven-sh/bun#31158)",
-  async () => {
-    const script = /* ts */ `
+test.skipIf(!isGlibc)("event loop survives SA_ONSTACK on SIGPWR + WASM (oven-sh/bun#31158)", async () => {
+  const script = /* ts */ `
       import { dlopen, FFIType, ptr } from "bun:ffi";
 
       // 1. Open libc so we can flip SA_ONSTACK on SIGPWR the same way Go's
@@ -69,26 +67,21 @@ test.skipIf(!isGlibc)(
       console.log("EVENT_LOOP_ALIVE");
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    // Kill the child after 10 s so a regression shows up as "hung, no output"
-    // rather than a stuck test harness.
-    const watchdog = setTimeout(() => proc.kill("SIGKILL"), 10_000);
+  // Kill the child after 10 s so a regression shows up as "hung, no output"
+  // rather than a stuck test harness.
+  const watchdog = setTimeout(() => proc.kill("SIGKILL"), 10_000);
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
-    clearTimeout(watchdog);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  clearTimeout(watchdog);
 
-    expect(stderr).toBe("");
-    expect(stdout).toContain("EVENT_LOOP_ALIVE");
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("EVENT_LOOP_ALIVE");
+  expect(exitCode).toBe(0);
+});

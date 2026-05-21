@@ -1058,7 +1058,10 @@ pub struct SignResult {
 impl SignResult {
     pub const MAX_HEADERS: usize = 11;
 
-    pub fn headers(&self) -> &[PicoHeader<'static>] {
+    /// The header borrows are narrowed from the stored (lifetime-erased)
+    /// `'static` to `&self` so a copied-out `Header` cannot be read after this
+    /// `SignResult` is dropped.
+    pub fn headers(&self) -> &[PicoHeader<'_>] {
         &self._headers[0..self._headers_len as usize]
     }
 

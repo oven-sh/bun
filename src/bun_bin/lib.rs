@@ -267,7 +267,11 @@ fn abort_for_unsupported_simdutf() -> ! {
     // baseline build and haswell (AVX2) for the default build — the lower
     // tiers are elided once __SSE4_2__ / __AVX2__ are defined.
     let requirement: &core::ffi::CStr = if Environment::IS_X64 {
-        if Environment::BASELINE { c"SSE4.2" } else { c"AVX2" }
+        if Environment::BASELINE {
+            c"SSE4.2"
+        } else {
+            c"AVX2"
+        }
     } else if Environment::IS_AARCH64 {
         c"NEON"
     } else {

@@ -716,26 +716,24 @@ pub fn load(
             }
         }
 
-        if (forced) |*force_registry| {
-            // If the forced registry did not supply its own credentials (env
-            // var, or URL-only string in bunfig), inherit the token already
-            // resolved from `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` / `--token`
-            // — same behaviour as `BUN_CONFIG_REGISTRY`. Skip this when the
-            // forced registry carries basic-auth (username/password), since
-            // `Scope.fromAPI` gates basic-auth computation on token being
-            // empty and we'd otherwise clobber it.
-            if (force_registry.token.len == 0 and
-                force_registry.username.len == 0 and
-                force_registry.password.len == 0)
-            {
-                force_registry.token = this.scope.token;
-            }
+        if (forced) |force_registry| {
             const prev_scope = this.scope;
             const had_scoped_registries = this.registries.count() > 0;
             // `--registry` mutates `this.scope.url` without recomputing
             // `url_hash`, so detect it separately.
             const had_cli_registry = if (maybe_cli) |cli| cli.registry.len > 0 else false;
-            this.scope = try Npm.Registry.Scope.fromAPI("", force_registry.*, allocator, env);
+            this.scope = try Npm.Registry.Scope.fromAPI("", force_registry, allocator, env);
+            // If the forced registry did not supply credentials of its own
+            // in *any* form `fromAPI` recognises — bearer token, basic-auth
+            // username/password, or the yarn-style `:_authToken=` / `:_auth=`
+            // URL suffix — inherit the token already resolved from
+            // `BUN_CONFIG_TOKEN`/`NPM_CONFIG_TOKEN`/`--token`, matching
+            // `BUN_CONFIG_REGISTRY`. Checking after `fromAPI` (rather than
+            // inspecting the input struct fields) means we don't clobber any
+            // credential encoding `fromAPI` knows how to extract.
+            if (this.scope.token.len == 0 and this.scope.auth.len == 0) {
+                this.scope.token = prev_scope.token;
+            }
             // Discard scoped registries so `scopeForPackageName` always falls
             // back to `this.scope` — every package resolves through the
             // forced registry.

@@ -933,24 +933,23 @@ impl Options {
                 }
             }
 
-            if let Some(mut force_registry) = forced {
-                // If the forced registry did not supply its own credentials
-                // (env var, or URL-only string in bunfig), inherit the token
-                // already resolved from `BUN_CONFIG_TOKEN`/`NPM_CONFIG_TOKEN`/
-                // `--token` — same behaviour as `BUN_CONFIG_REGISTRY`. Skip
-                // this when the forced registry carries basic-auth
-                // (username/password), since `Scope::from_api` gates
-                // basic-auth computation on token being empty and we'd
-                // otherwise clobber it.
-                if force_registry.token.is_empty()
-                    && force_registry.username.is_empty()
-                    && force_registry.password.is_empty()
-                {
-                    force_registry.token.clone_from(&self.scope.token);
-                }
+            if let Some(force_registry) = forced {
                 let prev_url_hash = self.scope.url_hash;
+                let prev_token = core::mem::take(&mut self.scope.token);
                 let had_scoped_registries = self.registries.count() > 0;
                 self.scope = Npm::registry::Scope::from_api(b"", force_registry, env)?;
+                // If the forced registry did not supply credentials of its
+                // own in *any* form `from_api` recognises — bearer token,
+                // basic-auth username/password, or the yarn-style
+                // `:_authToken=` / `:_auth=` URL suffix — inherit the token
+                // already resolved from `BUN_CONFIG_TOKEN`/`NPM_CONFIG_TOKEN`/
+                // `--token`, matching `BUN_CONFIG_REGISTRY`. Checking after
+                // `from_api` (rather than inspecting the input struct fields)
+                // means we don't clobber any credential encoding `from_api`
+                // knows how to extract.
+                if self.scope.token.is_empty() && self.scope.auth.is_empty() {
+                    self.scope.token = prev_token;
+                }
                 // Discard scoped registries so `scope_for_package_name`
                 // always falls back to `self.scope` — every package
                 // resolves through the forced registry.

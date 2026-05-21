@@ -52,18 +52,11 @@ fn return_pooled_arena(arena: Arena) {
 
 pub struct ASTMemoryAllocator {
     // Zig fields `stack_arena: SFA` + `bump_std.mem.Allocator param` (the vtable into
-    // the SFA) collapse to a single bump arena. Zig's SFA *borrowed* the
-    // caller's per-job arena as its fallback; the Rust port grew an owned
-    // arena here, which doubled the `mi_heap_new`/`mi_heap_destroy` count per
-    // transpile job. [`Self::borrowing`] restores the Zig shape for callers
-    // whose arena strictly outlives this allocator; `external_arena` is null
-    // for owned instances.
+    // the SFA) collapse to a single bump arena.
     arena: Arena,
-    /// When non-null, the allocator routes every allocation to this
-    /// caller-owned arena instead of `self.arena`, and `Drop`/`reset` never
-    /// destroy or pool anything — the caller owns the arena's lifecycle. The
-    /// pointee must outlive `self` (the [`Self::borrowing`] contract; same
-    /// shape as `data_store_override`).
+    /// When non-null, allocations route to this caller-owned arena instead of
+    /// `self.arena` and `Drop`/`reset` never destroy or pool anything. Must
+    /// outlive `self` ([`Self::borrowing`] contract).
     external_arena: *const Arena,
     /// `true` once a scope on this instance armed `arena` for allocation (via
     /// [`Self::enter`] / [`Self::push`]) since the last reset. Lets
@@ -72,20 +65,15 @@ pub struct ASTMemoryAllocator {
     /// for the per-module callers, each of which takes a freshly-pooled (clean)
     /// arena and arms it exactly once.
     arena_dirty: bool,
-    /// The `AstAlloc` allocation state for this allocator's scope (`AstVec`
-    /// buffers: `named_exports`, `DeclList`, `PropertyList`, …). Owned here
-    /// while no scope is active; moved into the `AST_ALLOC` thread-local by
-    /// [`Self::push`] / `Scope::enter` and moved back by [`Self::pop`] /
-    /// `Scope::exit`. Lazily acquired on the first push. `None` both before
-    /// the first push and while pushed — `ast_pushed` disambiguates.
+    /// The `AstAlloc` state for this allocator's scope. Owned here while no
+    /// scope is active; in the `AST_ALLOC` thread-local while pushed
+    /// (`ast_pushed` disambiguates).
     ast_state: Option<Box<AstAllocState>>,
-    /// `true` while `ast_state` is installed in the `AST_ALLOC` thread-local
-    /// (i.e. the box is *not* in `ast_state`).
+    /// `true` while `ast_state` is installed in the `AST_ALLOC` thread-local.
     ast_pushed: bool,
     previous: *mut ASTMemoryAllocator,
     previous_logger: *const Arena,
-    /// The `AST_ALLOC` occupant displaced by [`Self::push`], restored by
-    /// [`Self::pop`].
+    /// The `AST_ALLOC` occupant displaced by `push()`, restored by `pop()`.
     previous_ast_state: Option<Box<AstAllocState>>,
 }
 
@@ -106,13 +94,8 @@ impl Default for ASTMemoryAllocator {
 
 impl Drop for ASTMemoryAllocator {
     fn drop(&mut self) {
-        // Park the (cursor-reset) `AstAlloc` state box in the thread-local
-        // spare slot *before* touching the arena: the state's spill pointer
-        // targets `self.arena()`'s heap, so it must be cleared before that
-        // heap can be destroyed below. If the state is still installed (push
-        // without pop), leave it where it is: the thread-local owns the box,
-        // so dropping nothing here turns a scope imbalance into a leak rather
-        // than a use-after-free.
+        // Recycle the AstAlloc state (whose spill pointer targets the arena's
+        // heap) before the arena can be reset/destroyed below.
         debug_assert!(
             !self.ast_pushed,
             "ASTMemoryAllocator dropped while its AstAllocState is still installed"
@@ -121,8 +104,7 @@ impl Drop for ASTMemoryAllocator {
             ast_alloc::release_state(state);
         }
         if !self.external_arena.is_null() {
-            // Borrowed arena: the caller owns its lifecycle; everything this
-            // allocator put in it is reclaimed when the caller resets/drops it.
+            // Borrowed arena: the caller owns its lifecycle.
             return;
         }
         // Recycle the owned arena for the next `ASTMemoryAllocator` on this
@@ -146,31 +128,18 @@ impl Drop for ASTMemoryAllocator {
 
 impl ASTMemoryAllocator {
     /// Construct with an **owned** arena (recycled via the per-thread pool).
-    ///
-    /// Zig callers wrote `var a: ASTMemoryAllocator = undefined;` then
-    /// `a.enter(arena)` (passing the fallback `std.mem.Allocator`). Callers
-    /// whose `fallback` arena strictly outlives the allocator should use
-    /// [`Self::borrowing`] instead so the job pays for one `mi_heap_t`, not
-    /// two. This constructor remains for callers that `reset()` the allocator
-    /// independently of the passed arena (the bundler worker, `BundleThread`,
-    /// the package manager's `MiniStore`).
+    /// Callers whose `fallback` arena outlives the allocator should use
+    /// [`Self::borrowing`] instead.
     pub fn new(_fallback: &Arena) -> Self {
         Self::default()
     }
 
     /// Construct an allocator that routes every allocation into `arena`
-    /// instead of owning a heap of its own. One transpile job then uses a
-    /// single `mi_heap_t` for the parser scratch, the AST node store, and the
-    /// `AstVec` spill.
-    ///
-    /// Contract: `arena` must strictly outlive the returned allocator (and
-    /// every `Scope` derived from it), and the caller — not this allocator —
-    /// is responsible for resetting/destroying it. Re-`enter()`ing a borrowing
-    /// allocator does **not** free the previous scope's data.
+    /// instead of owning a heap of its own. `arena` must outlive the returned
+    /// allocator (and every `Scope` derived from it); the caller owns its
+    /// reset/destroy.
     pub fn borrowing(arena: &Arena) -> Self {
         Self {
-            // Never allocated from and never pooled; `borrowing_default()`'s
-            // Drop is a no-op.
             arena: Arena::borrowing_default(),
             external_arena: ptr::from_ref(arena),
             arena_dirty: false,
@@ -213,9 +182,8 @@ impl ASTMemoryAllocator {
     }
 
     /// Bulk-free everything allocated through this allocator's `AstAlloc`
-    /// state, wherever the state currently lives (owned here, or installed in
-    /// the thread-local by a `push()` that has not been `pop()`ed — the
-    /// package manager's `MiniStore` re-arms without popping).
+    /// state, wherever the state currently lives (owned here, or installed by
+    /// a `push()` that has not been `pop()`ed).
     fn reset_ast_state(&mut self) {
         if let Some(state) = self.ast_state.as_deref_mut() {
             state.reset();
@@ -228,13 +196,9 @@ impl ASTMemoryAllocator {
         }
     }
 
-    /// Take this allocator's `AstAlloc` state (if any) and recycle it into the
-    /// per-thread spare slot. For owners that are arena-allocated and never
-    /// run `Drop` (the dev server's bundle-setup allocator) — without this the
-    /// 16 KB state box is stranded in the owner's bump chunk when the bundle
-    /// heap is bulk-freed. The AST-node arena is unaffected; only the `AstVec`
-    /// inline chunk is recycled, so call this only once nothing reads `AstVec`s
-    /// allocated under this allocator's scope.
+    /// Take this allocator's `AstAlloc` state (if any) and recycle it. For
+    /// owners that are arena-allocated and never run `Drop`. Call only once
+    /// nothing reads `AstVec`s allocated under this allocator's scope.
     pub fn release_ast_state(&mut self) {
         debug_assert!(
             !self.ast_pushed,
@@ -248,9 +212,6 @@ impl ASTMemoryAllocator {
     /// Debug-only: is the installed `AST_ALLOC` state the one this allocator
     /// pushed? Only meaningful while `ast_pushed`.
     fn ast_state_is_active(&self) -> bool {
-        // While pushed the box lives in the thread-local, so the only identity
-        // we can compare against is "something is installed". A stronger check
-        // would require keeping a raw alias to the box across the move.
         !ast_alloc::active_state_id().is_null()
     }
 
@@ -270,8 +231,7 @@ impl ASTMemoryAllocator {
         // pool, or just `reset()`) has nothing to discard, so the
         // `mi_heap_destroy` + `mi_heap_new` round-trip is skipped in that case
         // (the common one — per-module callers create a fresh instance,
-        // `enter()` once, and drop it). A borrowed arena is never reset here —
-        // its owner decides when its contents die.
+        // `enter()` once, and drop it). A borrowed arena is never reset here.
         if self.arena_dirty {
             self.reset_ast_state();
             if self.external_arena.is_null() {
@@ -317,13 +277,9 @@ impl ASTMemoryAllocator {
                 self.external_arena.is_null(),
                 "reset_retain_with_limit on a borrowing ASTMemoryAllocator"
             );
-            // Mirror the arena's retain-or-recycle decision for the `AstAlloc`
-            // state: when the arena heap is retained, the previous iteration's
-            // `AstVec` buffers (spill blocks in that heap *and* the inline
-            // chunk) survive too — callers like `--define` hold `StoreRef`s
-            // across this reset. When it is recycled, the spill heap is gone:
-            // null the state's pointer to it and rewind the chunk; the next
-            // `push()` re-points the spill at the fresh heap.
+            // The AstAlloc state follows the arena's retain-or-recycle
+            // decision: callers like `--define` hold `StoreRef`s across a
+            // retained reset, so only clear it when the heap is recycled.
             if !self.arena.reset_retain_with_limit(limit) {
                 self.reset_ast_state();
             }
@@ -335,27 +291,28 @@ impl ASTMemoryAllocator {
         // `push()` arms `arena` for allocation (the bundler workers allocate
         // directly into it across many modules with no intervening `reset()`).
         self.arena_dirty = true;
-        self.previous_logger = crate::data_store_override();
         let arena: *const Arena = self.arena_raw();
         stmt::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
         expr::data::Store::set_memory_allocator(std::ptr::from_mut::<Self>(self));
-        crate::set_data_store_override(arena);
         let spill = self.arena().heap_ptr();
         if !self.ast_pushed {
+            // Capture the outer override only on the first (un-popped) push so
+            // a re-arming `push()` doesn't clobber the saved outer value.
+            self.previous_logger = crate::data_store_override();
+            crate::set_data_store_override(arena);
             let mut state = self
                 .ast_state
                 .take()
                 .unwrap_or_else(ast_alloc::acquire_state);
-            // `AstVec` spill allocations share this allocator's arena — one
-            // `mi_heap_t` per scope, not two.
+            // `AstVec` spill allocations share this allocator's arena.
             state.set_spill_heap(spill);
             self.previous_ast_state = ast_alloc::swap_state(Some(state));
             self.ast_pushed = true;
         } else {
-            // Already installed (`push()` without an intervening `pop()`, e.g.
-            // the package manager's `MiniStore` re-arms per workspace child).
-            // Re-point the installed state's spill at the (possibly just
-            // recycled) arena heap; the saved previous occupant stays as is.
+            // Re-arming push (no intervening `pop()`, e.g. `MiniStore`):
+            // re-publish the override and re-point the spill at the (possibly
+            // recycled) arena heap.
+            crate::set_data_store_override(arena);
             ast_alloc::set_active_spill_heap(spill);
         }
     }
@@ -367,9 +324,7 @@ impl ASTMemoryAllocator {
         expr::data::Store::set_memory_allocator(prev);
         crate::set_data_store_override(self.previous_logger);
         if self.ast_pushed {
-            // Take the state back from the thread-local and restore whatever
-            // was installed before `push()`. The state's contents (the AST the
-            // bundler worker just built) stay alive in the box until the owner
+            // Take the state back; its contents stay alive until the owner
             // resets or drops this allocator.
             self.ast_state = ast_alloc::swap_state(self.previous_ast_state.take());
             self.ast_pushed = false;
@@ -419,13 +374,10 @@ pub struct Scope<'a> {
     current: Option<&'a mut ASTMemoryAllocator>,
     previous: Option<*mut ASTMemoryAllocator>,
     previous_logger: *const Arena,
-    /// The `AST_ALLOC` occupant displaced by [`Self::enter`], restored by
-    /// [`Self::exit`].
+    /// The `AST_ALLOC` occupant displaced by `enter()`, restored by `exit()`.
     previous_ast_state: Option<Box<AstAllocState>>,
-    /// `true` between `enter()` and the first `exit()`. Makes `exit()`
-    /// idempotent (Zig callers write `defer ast_scope.exit()` *and* the Rust
-    /// port runs it again from `Drop`) and makes dropping a never-entered
-    /// `Scope::default()` a no-op instead of clobbering the thread-locals.
+    /// `true` between `enter()` and the first `exit()`; makes `exit()`
+    /// idempotent and a never-entered `Scope::default()` drop a no-op.
     entered: bool,
 }
 
@@ -454,10 +406,12 @@ impl<'a> Scope<'a> {
 
         let (current, arena): (*mut ASTMemoryAllocator, *const Arena) = match &mut self.current {
             Some(r) => {
+                debug_assert!(
+                    !r.ast_pushed,
+                    "ASTMemoryAllocator::enter while its AstAllocState is already installed (push without pop)"
+                );
                 let arena: *const Arena = r.arena_raw();
-                // Install this allocator's `AstAlloc` state for the scope.
-                // `AstVec` spill allocations share the allocator's arena — one
-                // `mi_heap_t` per scope, not two.
+                // Install this allocator's `AstAlloc` state; spill shares its arena.
                 let mut state = r.ast_state.take().unwrap_or_else(ast_alloc::acquire_state);
                 state.set_spill_heap(r.arena().heap_ptr());
                 self.previous_ast_state = ast_alloc::swap_state(Some(state));
@@ -466,9 +420,7 @@ impl<'a> Scope<'a> {
             }
             None => {
                 // Block-store scope with no `ASTMemoryAllocator`: detach
-                // `AstAlloc` to the global-mimalloc fallback. Callers that
-                // want arena-lifetime `AstVec`s here install their own state
-                // (`ScopedAstAlloc` in `transpile_source_code`).
+                // `AstAlloc` to the global-mimalloc fallback.
                 self.previous_ast_state = ast_alloc::swap_state(None);
                 (ptr::null_mut(), ptr::null())
             }
@@ -485,8 +437,6 @@ impl<'a> Scope<'a> {
     }
 
     pub fn exit(&mut self) {
-        // Idempotent: Zig callers write `defer ast_scope.exit()` immediately
-        // after `enter()`, and the Rust `Drop` impl calls this again.
         if !self.entered {
             return;
         }
@@ -495,10 +445,7 @@ impl<'a> Scope<'a> {
         expr::data::Store::set_memory_allocator(prev);
         stmt::data::Store::set_memory_allocator(prev);
         crate::set_data_store_override(self.previous_logger);
-        // Restore the `AST_ALLOC` occupant that was displaced by `enter()`.
-        // Ownership of the displaced box travelled into `previous_ast_state`,
-        // so this is exact regardless of how the outer scope's state was
-        // reset in the meantime (the box address never changes).
+        // Restore the `AST_ALLOC` occupant displaced by `enter()`.
         let installed = ast_alloc::swap_state(self.previous_ast_state.take());
         match self.current.as_deref_mut() {
             Some(r) => {
@@ -510,9 +457,7 @@ impl<'a> Scope<'a> {
                 r.ast_pushed = false;
             }
             None => {
-                // `Scope::default()` installed nothing, so nothing should come
-                // back out. (A `ScopedAstAlloc` opened inside this scope must
-                // have been dropped already — it is declared after the scope.)
+                // `Scope::default()` installed nothing, so nothing should come back out.
                 debug_assert!(installed.is_none());
             }
         }

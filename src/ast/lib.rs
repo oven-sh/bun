@@ -3235,25 +3235,25 @@ pub mod store_ast_alloc_heap {
 
     use bun_alloc::ast_alloc::{self, AstAllocState};
 
-    /// Address of this thread's installed side state — the "entered" flag and
-    /// the identity used to assert that `reset()`/`exit()` operate on the
-    /// state this module installed (the box itself lives in the `AST_ALLOC`
-    /// thread-local while entered, so it cannot be reached through a field
-    /// here). Null when not entered. Never dereferenced.
+    /// Address of this thread's installed side state (the "entered" flag and
+    /// the identity check for `reset()`/`exit()`). Never dereferenced.
     #[thread_local]
     static STATE_ID: Cell<*const AstAllocState> = Cell::new(ptr::null());
     /// The `AST_ALLOC` occupant displaced by `enter()`, restored by `exit()`.
     #[thread_local]
     static PREVIOUS: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
 
+    /// `true` iff the state this module installed is the one currently active
+    /// (i.e. no other scope is stacked on top of it).
+    fn owns_active_state() -> bool {
+        core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get())
+    }
+
     pub fn enter() {
         if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
             return;
         }
         if !STATE_ID.get().is_null() {
-            // Already entered on this thread; the long-lived side state stays
-            // installed until `exit()`.
-            debug_assert!(core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get()));
             return;
         }
         let state = ast_alloc::acquire_state();
@@ -3266,17 +3266,15 @@ pub mod store_ast_alloc_heap {
             enter();
             return;
         }
-        // This is the `AstAlloc` side state holding `Ast.named_exports`,
-        // `AstVec` buffers, etc. — data that is intentionally NEVER `Drop`'d
-        // (the whole point of routing through `AstAlloc` is bulk-free here).
-        // The previous file's allocations are never individually freed, so the
-        // only correct per-file reclamation is a full bulk-free (destroy the
-        // spill heap, rewind the inline cursor). The call sites gate this on
-        // `memory_allocator().is_null()`, so the installed state is ours.
-        debug_assert!(
-            core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get()),
-            "store_ast_alloc_heap::reset while another AstAllocState is installed"
-        );
+        // Skip if another scope's state is stacked on top — resetting it
+        // would free that scope's live data.
+        if !owns_active_state() {
+            debug_assert!(
+                false,
+                "store_ast_alloc_heap::reset while another AstAllocState is installed"
+            );
+            return;
+        }
         ast_alloc::reset_active_state();
     }
 
@@ -3284,10 +3282,14 @@ pub mod store_ast_alloc_heap {
         if STATE_ID.get().is_null() {
             return;
         }
-        debug_assert!(
-            core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get()),
-            "store_ast_alloc_heap::exit while another AstAllocState is installed"
-        );
+        // Skip if another scope's state is stacked on top.
+        if !owns_active_state() {
+            debug_assert!(
+                false,
+                "store_ast_alloc_heap::exit while another AstAllocState is installed"
+            );
+            return;
+        }
         STATE_ID.set(ptr::null());
         if let Some(state) = ast_alloc::swap_state(PREVIOUS.take()) {
             ast_alloc::release_state(state);

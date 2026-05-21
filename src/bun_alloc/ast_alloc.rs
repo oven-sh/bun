@@ -35,68 +35,35 @@ use core::ptr::NonNull;
 
 use crate::{MimallocArena, mimalloc};
 
-// ── AstAllocState ────────────────────────────────────────────────────────────
-//
-// The parser builds thousands of tiny `AstVec`s (`ExprNodeList`, `G::DeclList`,
-// `G::PropertyList`, `ClassStaticBlock::stmts`, …). Without the bump chunk,
-// every fresh list and every growth reallocation is a `mi_heap_malloc` /
-// `mi_heap_realloc` — and the *first* allocation for a not-yet-seen size class
-// drops into mimalloc's `_mi_malloc_generic` slow path (visible in next-lint
-// profiles). Zig's parser keeps these short lists in a
-// `StackFallbackAllocator`'s inline buffer so the small case never touches the
-// allocator; this matches that by carving allocations `<= BUMP_MAX` from a
-// 16 KB buffer stored *inline* in the state.
-//
-// Lifetime / safety: the bump cursor is a field of the same struct as the
-// buffer it indexes, so it cannot outlive it. The spill heap is owned by the
-// same struct, so a block handed out by `heap_alloc` cannot outlive the state
-// either. The previous design kept the cursor in bare `#[thread_local]` statics
-// pointing into a chunk owned by a destroyable `mi_heap_t`; keeping that cursor
-// valid across heap destruction required a manual `bump_invalidate_heap()` call
-// before every `mi_heap_destroy` — a protocol that already shipped one
-// use-after-free (#53599) and was the prime suspect in the elysia
-// `bracket-pair-range` worker-heap corruption.
+// The parser builds thousands of tiny `AstVec`s; allocations `<= BUMP_MAX` are
+// carved from a 16 KB buffer stored inline in the state (mirroring Zig's
+// `StackFallbackAllocator`), so the small case never touches mimalloc. The
+// cursor, the buffer, and the spill target live in one struct, so none of them
+// can outlive the others.
 
 /// Largest allocation served from the inline bump chunk; above this, requests
-/// go straight to the state's spill heap. Covers the first few growth steps of
-/// the AST list types (e.g. a `Vec<Expr>` passes 96 / 192 / 384 bytes before
-/// mimalloc takes over) and `with_capacity` / `from_slice` for short lists.
+/// go straight to the spill heap.
 const BUMP_MAX: usize = 512;
 
-/// Inline bump chunk size. Once exhausted there is no refill — every
-/// subsequent small allocation falls through to the spill heap (matching Zig's
-/// `StackFallbackAllocator` semantics).
+/// Inline bump chunk size. No refill — once full, small allocations fall
+/// through to the spill heap.
 const BUMP_CHUNK: usize = 16 * 1024;
 
-/// Per-scope allocation state for [`AstAlloc`].
-///
-/// Owned by whichever component opened the AST allocation scope
-/// (`ASTMemoryAllocator`, the `store_ast_alloc_heap` side module, a
-/// [`ScopedAstAlloc`] guard) and moved into the [`AST_ALLOC`] thread-local
-/// while the scope is active. The owner decides when the contents are
-/// bulk-freed ([`Self::reset`] / [`release_state`]) — exactly where the
-/// backing `MimallocArena` was reset or dropped before this type existed.
+/// Per-scope allocation state for [`AstAlloc`]. Owned by whichever component
+/// opened the AST allocation scope and moved into the [`AST_ALLOC`]
+/// thread-local while the scope is active; the owner decides when the
+/// contents are bulk-freed.
 pub struct AstAllocState {
     /// Offset of the next free byte in `bump_chunk`.
     bump_cursor: usize,
-    /// Spill target for allocations that cannot be served from `bump_chunk`
-    /// (size > [`BUMP_MAX`], over-aligned, zeroed, or the chunk is full).
-    /// Set by the installing scope from its own arena via [`Self::set_spill_heap`]
-    /// — one transpile job therefore uses **one** `mi_heap_t` for everything
-    /// instead of paying a second `mi_heap_new`/`mi_heap_destroy` for the
-    /// spill. When the installer has no arena (the long-lived
-    /// `store_ast_alloc_heap` side module), it stays null and `owned_spill` is
-    /// created lazily on first use.
-    ///
-    /// Lifetime: the installer guarantees the heap outlives the installed
-    /// window and clears/replaces the pointer whenever the backing arena is
-    /// reset (`set_spill_heap` is called on every install; [`Self::reset`]
-    /// nulls it).
+    /// Spill target for allocations the chunk can't serve. Set by the
+    /// installing scope from its own arena ([`Self::set_spill_heap`]); the
+    /// installer guarantees the heap outlives the installed window. Null when
+    /// the installer has no arena — `owned_spill` is then created lazily.
     spill: *mut mimalloc::Heap,
     /// Backing storage for `spill` when no borrowed target was provided.
     owned_spill: Option<MimallocArena>,
-    /// Inline small-allocation buffer. Never initialised eagerly; carved
-    /// ranges are written by the `Vec`s that own them.
+    /// Inline small-allocation buffer.
     bump_chunk: [MaybeUninit<u8>; BUMP_CHUNK],
 }
 
@@ -105,9 +72,8 @@ impl AstAllocState {
     fn new_boxed() -> Box<Self> {
         let mut boxed = Box::<Self>::new_uninit();
         let p = boxed.as_mut_ptr();
-        // SAFETY: `p` points to a live uninitialised `Self`; the header
-        // fields are written before `assume_init`, and `bump_chunk` is
-        // `MaybeUninit` so it is allowed to stay uninitialised.
+        // SAFETY: the header fields are written before `assume_init`;
+        // `bump_chunk` is `MaybeUninit` and may stay uninitialised.
         unsafe {
             (&raw mut (*p).bump_cursor).write(0);
             (&raw mut (*p).spill).write(core::ptr::null_mut());
@@ -116,25 +82,18 @@ impl AstAllocState {
         }
     }
 
-    /// Bulk-free everything allocated through this state: drop the spill
-    /// target (destroying it only if owned) and rewind the bump cursor. Any
-    /// pointer previously returned by [`AstAlloc`] while this state was
-    /// installed is invalidated (borrowed-spill blocks are reclaimed by the
-    /// owning arena's own reset/drop).
+    /// Bulk-free everything allocated through this state. Any pointer
+    /// previously returned by [`AstAlloc`] under this state is invalidated.
     #[inline]
     pub fn reset(&mut self) {
         self.bump_cursor = 0;
         self.spill = core::ptr::null_mut();
-        // `MimallocArena::Drop` → `mi_heap_destroy` (bulk-free) — only for a
-        // lazily created owned spill.
         self.owned_spill = None;
     }
 
-    /// Point spill allocations at `heap` (the installing scope's arena) for
-    /// the duration of the install. Called by the owner on **every** install
-    /// so a reset of the backing arena between installs is picked up. Pass the
-    /// live `mi_heap_t` of an arena that strictly outlives the installed
-    /// window.
+    /// Point spill allocations at `heap` (the installing scope's arena), which
+    /// must outlive the installed window. Called on every install so an arena
+    /// reset between installs is picked up.
     #[inline]
     pub fn set_spill_heap(&mut self, heap: *mut mimalloc::Heap) {
         debug_assert!(
@@ -195,51 +154,30 @@ impl AstAllocState {
 /// The active [`AstAllocState`], or `None` when no AST scope is installed
 /// (allocations then fall back to global mimalloc).
 ///
-/// `#[thread_local]` (not `thread_local!`) so this is a bare `__thread` slot
-/// like Zig's `threadlocal var`: every `AstAlloc` allocation reads this, and
-/// the macro form's `LocalKey::__getit` wrapper showed up under
-/// `pthread_getspecific` in next-lint profiles. `#[thread_local]` statics run
-/// no destructor, but scopes are balanced, so this slot is `None` by the time
-/// a thread exits — except for process-lifetime installs (the package
-/// manager's `MiniStore`, the main thread's `store_ast_alloc_heap`), whose
-/// threads live until process exit anyway.
+/// `#[thread_local]` (not `thread_local!`): read on every `AstAlloc`
+/// allocation, so it must stay a bare `__thread` slot.
 #[thread_local]
 static AST_ALLOC: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
 
 // One-slot recycler so a per-job `acquire_state`/`release_state` pair doesn't
-// pay a 16 KB global malloc each time. Holds a clean state (cursor 0, no
-// heap) — an idle worker thread therefore retains 16 KB of buffer and **zero**
-// live `mi_heap_t`s between jobs.
-//
-// Unlike `AST_ALLOC` this is the `thread_local!` macro, which registers a
-// destructor: the parked box is a global-heap allocation (only the 8-byte
-// pointer lives in TLS), so without a destructor every exiting thread that
-// ever parsed JS — e.g. a terminated Web Worker — would leak ~16 KB. The
-// `LocalKey` access overhead doesn't matter here: the slot is only touched on
-// scope entry/exit, never on the per-allocation hot path. The destructor is
-// just a `free` of the box (a released state never holds an owned spill heap),
-// so it is safe at any point during thread teardown.
+// pay a 16 KB malloc each time. Uses `thread_local!` (unlike `AST_ALLOC`) so
+// the destructor frees a parked box at thread exit; only touched on scope
+// entry/exit, never on the allocation hot path.
 std::thread_local! {
     static AST_ALLOC_SPARE: Cell<Option<Box<AstAllocState>>> = const { Cell::new(None) };
 }
 
 /// Mutable access to the installed state without moving the box out of the
 /// thread-local.
-///
-/// The unbounded lifetime is constrained by the callers: the reference is used
-/// for the duration of a single carve / `mi_heap_malloc` and is never held
-/// across [`swap_state`] / [`release_state`] / a nested `AstAlloc` call.
 #[inline(always)]
 fn active_state<'a>() -> Option<&'a mut AstAllocState> {
     // SAFETY: `AST_ALLOC` is thread-local and this module never re-enters
-    // itself while a reference returned here is live (mimalloc FFI calls do
-    // not call back into Rust), so this is the only reference to the boxed
-    // state for its lifetime.
+    // itself while the returned reference is live, so this is the only
+    // reference to the boxed state for its lifetime.
     unsafe { (*AST_ALLOC.as_ptr()).as_deref_mut() }
 }
 
 /// Take the recycled spare state for this thread, or allocate a fresh one.
-/// The returned state is clean: cursor 0, no spill heap.
 #[inline]
 pub fn acquire_state() -> Box<AstAllocState> {
     AST_ALLOC_SPARE
@@ -249,34 +187,24 @@ pub fn acquire_state() -> Box<AstAllocState> {
         .unwrap_or_else(AstAllocState::new_boxed)
 }
 
-/// Bulk-free `state`'s allocations ([`AstAllocState::reset`]) and park the
-/// clean box in the one-slot recycler for the next [`acquire_state`] on this
-/// thread. If the slot is already occupied (or the thread is tearing down and
-/// the recycler's destructor has already run) the box is freed instead.
+/// Bulk-free `state`'s allocations and park the clean box in the recycler.
+/// If the slot is occupied (or the thread is tearing down) the box is freed.
 #[inline]
 pub fn release_state(mut state: Box<AstAllocState>) {
     state.reset();
-    let displaced = AST_ALLOC_SPARE.try_with(|slot| slot.replace(Some(state)));
-    // `Err` ⇒ the TLS destructor already ran; `state` was not moved into the
-    // slot and is dropped here. `Ok(Some(_))` ⇒ the previous occupant is
-    // dropped here.
-    drop(displaced);
+    drop(AST_ALLOC_SPARE.try_with(|slot| slot.replace(Some(state))));
 }
 
-/// Replace the active allocation state, returning the previous occupant.
-///
-/// `Some(state)` installs `state`; the caller must keep the returned previous
-/// occupant and pass it back through `swap_state` when its scope exits (the
-/// `prev` chain lives on the call stack, so nested scopes restore correctly).
-/// `None` detaches to the global-mimalloc fallback.
+/// Replace the active allocation state, returning the previous occupant. The
+/// caller passes the previous occupant back when its scope exits; `None`
+/// detaches to the global-mimalloc fallback.
 #[inline]
 pub fn swap_state(state: Option<Box<AstAllocState>>) -> Option<Box<AstAllocState>> {
     AST_ALLOC.replace(state)
 }
 
-/// Address of the active state (null when none is installed). For debug
-/// assertions that a scope is uninstalling the state it installed; never
-/// dereferenced.
+/// Address of the active state (null when none is installed). Identity checks
+/// only; never dereferenced.
 #[inline]
 pub fn active_state_id() -> *const AstAllocState {
     // SAFETY: see `active_state` — shared read of the thread-local slot.
@@ -284,11 +212,8 @@ pub fn active_state_id() -> *const AstAllocState {
 }
 
 /// Bulk-free the *installed* state in place. For owners that keep their state
-/// installed across resets (the package manager's `MiniStore`, the main-thread
-/// `store_ast_alloc_heap` side module) — they cannot reach the box through
-/// their own field while it lives in the thread-local. No-op when no state is
-/// installed; the caller is responsible for ensuring the installed state is
-/// the one it owns (see [`active_state_id`]).
+/// installed across resets and so cannot reach the box through their own
+/// field. No-op when no state is installed.
 #[inline]
 pub fn reset_active_state() {
     if let Some(state) = active_state() {
@@ -296,10 +221,8 @@ pub fn reset_active_state() {
     }
 }
 
-/// [`AstAllocState::set_spill_heap`] on the *installed* state. For owners that
-/// keep their state installed across arena resets (the package manager's
-/// `MiniStore`) and need to re-point the spill at the recycled arena's new
-/// heap. No-op when no state is installed.
+/// [`AstAllocState::set_spill_heap`] on the *installed* state. No-op when no
+/// state is installed.
 #[inline]
 pub fn set_active_spill_heap(heap: *mut mimalloc::Heap) {
     if let Some(state) = active_state() {
@@ -335,20 +258,13 @@ impl Drop for DetachAstHeap {
 
 /// RAII scope that installs a fresh (or recycled) [`AstAllocState`] for its
 /// lifetime and bulk-frees everything allocated through it on drop. For
-/// callers that want arena-lifetime `AstVec`s without an `ASTMemoryAllocator`
-/// (the synchronous module-loader transpile path).
+/// callers that want arena-lifetime `AstVec`s without an `ASTMemoryAllocator`.
 pub struct ScopedAstAlloc {
     prev: Option<Box<AstAllocState>>,
 }
 impl ScopedAstAlloc {
-    /// Install a state whose spill allocations land in `spill_heap` (the
-    /// caller's arena, which must outlive this guard **and** must not be reset
-    /// while the guard is alive). The scope therefore creates no `mi_heap_t`
-    /// of its own.
-    ///
-    /// SAFETY-adjacent contract (not `unsafe` because the failure mode is the
-    /// same as every other arena-backed allocation here): `spill_heap` must be
-    /// a live `mi_heap_t` for the guard's entire lifetime.
+    /// Install a state whose spill allocations land in `spill_heap`, which
+    /// must stay live (and not be reset) for the guard's entire lifetime.
     #[inline]
     pub fn with_spill(spill_heap: *mut mimalloc::Heap) -> Self {
         let mut state = acquire_state();
@@ -364,6 +280,22 @@ impl ScopedAstAlloc {
         Self {
             prev: swap_state(Some(acquire_state())),
         }
+    }
+
+    /// Uninstall the scope's state and return it **without** bulk-freeing it,
+    /// restoring the previous occupant exactly as `drop` would. For callers
+    /// that hand the parsed AST to an async consumer: small `AstVec`s live in
+    /// the state's inline chunk, so the returned box must be kept alive until
+    /// the consumer is done with the AST.
+    #[inline]
+    pub fn take_state(self) -> Option<Box<AstAllocState>> {
+        let mut this = core::mem::ManuallyDrop::new(self);
+        let installed = swap_state(this.prev.take());
+        debug_assert!(
+            installed.is_some(),
+            "ScopedAstAlloc state was uninstalled by someone else"
+        );
+        installed
     }
 }
 impl Default for ScopedAstAlloc {

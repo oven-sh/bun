@@ -2067,12 +2067,9 @@ fn transpile_source_code_inner(
 
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             unsafe { (*jsc_vm).transpiled_count += 1 };
-            // Spec :122 — `Transpiler::reset_store`.
-            // Inline only the block-store half and SKIP
-            // `store_ast_alloc_heap::reset()`: the `ScopedAstAlloc` installed
-            // below gives `AstAlloc` a per-transpile state with the same
-            // lifetime as the parser scratch arena, so the side module's
-            // long-lived state is neither needed nor touched here.
+            // Spec :122 — `Transpiler::reset_store`. Inline only the
+            // block-store half; `AstAlloc` gets its own per-transpile state
+            // below, so the side module's long-lived state is not touched.
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
 
@@ -2093,9 +2090,8 @@ fn transpile_source_code_inner(
             // Stable heap address (Box interior); survives the move into
             // `arena_guard` and into the VM slot on give-back.
             let arena_ptr: *const bun_alloc::Arena = &raw const *arena;
-            // `mi_heap_t` of the transpile arena, captured before `arena`
-            // moves into `arena_guard`. The Box interior (and therefore the
-            // heap handle it owns) is address-stable across that move.
+            // Captured before `arena` moves into `arena_guard` (the Box
+            // interior is address-stable across the move).
             let arena_heap: *mut bun_alloc::mimalloc::Heap = arena.heap_ptr();
             let give_back_arena = true;
             // PORT NOTE: reshaped for borrowck — Zig's `defer` block becomes a
@@ -2181,15 +2177,13 @@ fn transpile_source_code_inner(
                     // else: drop the fresh Box (spec :161-163).
                 },
             );
-            // Install a per-transpile `AstAlloc` state spilling into the
-            // transpile arena (see the `reset_store` note above) — the
-            // parser's `AstVec`s share the arena's single `mi_heap_t` and are
-            // bulk-freed with it. `_ast_scope.enter()` detached `AstAlloc` to
-            // the global fallback; this re-attaches it. Declared *after*
-            // `arena_guard` so it drops (uninstalls the state and clears its
-            // pointer into the arena's heap) before the guard can reset that
-            // heap.
-            let _ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
+            // Per-transpile `AstAlloc` state spilling into the transpile
+            // arena. Declared after `arena_guard` so it drops before the
+            // guard can reset that heap. Small `AstVec`s live in the state's
+            // inline chunk, not the arena, so the pending-imports path must
+            // consume this scope via `take_state()` and ship the box with the
+            // arena.
+            let ast_alloc_scope = bun_alloc::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
             // ── Watcher fd / package_json lookup ────────────────────────────
             // Spec :170-176.
             let mut fd: Option<bun_sys::Fd> = None;
@@ -2890,6 +2884,9 @@ fn transpile_source_code_inner(
 
                     // Hand `arena` ownership to the queue (defuse the give-back guard).
                     let (_, arena, _, _) = scopeguard::ScopeGuard::into_inner(arena_guard);
+                    // Hand the `AstAlloc` state to the queue too: the queued
+                    // AST's small `AstVec`s live in its inline bump chunk.
+                    let ast_alloc_state = ast_alloc_scope.take_state();
                     // SAFETY: per fn contract — `jsc_vm` / `global_object` are the live
                     // per-thread VM / global; `package_json` is the opaque watcher
                     // forward-decl of `bun_resolver::package_json::PackageJSON`.
@@ -2910,6 +2907,7 @@ fn transpile_source_code_inner(
                                 referrer,
                                 hash,
                                 arena,
+                                ast_alloc_state,
                             },
                         );
                     }

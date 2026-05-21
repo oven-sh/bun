@@ -657,15 +657,9 @@ impl TranspilerJob {
         }
 
         // Zig: `var ast_scope = ast_memory_store.?.enter(allocator); defer ast_scope.exit();`
-        // PORT NOTE: Zig's per-thread `ast_memory_store` was a `StackFallback
-        // Allocator` that *borrowed* the per-call `arena` above as its
-        // fallback, so its allocations were bulk-freed by `arena.deinit()`.
-        // `borrowing()` restores that shape: the AST node store and the
-        // `AstVec` spill share `arena`'s single `mi_heap_t`, all bulk-freed
-        // when `arena` drops at the end of `run()`. `arena` is declared first,
-        // so it strictly outlives `ast_memory_store` and the `Scope` (which
-        // restores the previous `Expr/Stmt.Data.Store.memory_allocator` on
-        // Drop, before `ast_memory_store` drops).
+        // `borrowing()` matches the Zig shape: the AST node store and the
+        // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
+        // drops at the end of `run()`.
         let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_store.enter();
 

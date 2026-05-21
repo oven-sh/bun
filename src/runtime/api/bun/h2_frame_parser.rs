@@ -5532,9 +5532,22 @@ impl H2FrameParser {
 impl H2FrameParser {
     // get memory usage in MB
     fn get_session_memory_usage(&self) -> usize {
+        // Count only live streams: entries stay in the map until connection
+        // teardown, so counting every entry would grow monotonically over the
+        // life of a keep-alive connection and eventually trip the session cap
+        // for a well-behaved peer making sequential requests.
+        let live_streams = self
+            .streams
+            .get()
+            .iter()
+            .filter(|(_, item)| {
+                // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
+                unsafe { &***item }.state != StreamState::CLOSED
+            })
+            .count();
         (self.write_buffer.get().len_u32() as usize
             + self.queued_data_size.get() as usize
-            + self.streams.get().len() * core::mem::size_of::<Stream>())
+            + live_streams * core::mem::size_of::<Stream>())
             / 1024
             / 1024
     }

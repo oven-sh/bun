@@ -31,6 +31,8 @@ pub struct ChildPtr {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ReaderTag {
     Cat,
+    Head,
+    Tail,
 }
 
 /// Spec: IOReader.zig `Readers = SmolList(ChildPtr, 4)`.
@@ -459,6 +461,12 @@ fn dispatch_read_chunk(
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_chunk(interp, child.node, chunk, remove)
         }
+        ReaderTag::Head => {
+            crate::shell::builtins::head::Head::on_io_reader_chunk(interp, child.node, chunk, remove)
+        }
+        ReaderTag::Tail => {
+            crate::shell::builtins::tail::Tail::on_io_reader_chunk(interp, child.node, chunk, remove)
+        }
     }
 }
 
@@ -475,6 +483,12 @@ fn dispatch_reader_done(
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)
         }
+        ReaderTag::Head => {
+            crate::shell::builtins::head::Head::on_io_reader_done(interp, child.node, err)
+        }
+        ReaderTag::Tail => {
+            crate::shell::builtins::tail::Tail::on_io_reader_done(interp, child.node, err)
+        }
     }
 }
 
@@ -483,6 +497,18 @@ pub fn on_read_chunk(interp: &Interpreter, child: ChildPtr, chunk: &[u8]) -> Yie
     let mut remove = false;
     match child.tag {
         ReaderTag::Cat => crate::shell::builtins::cat::Cat::on_io_reader_chunk(
+            interp,
+            child.node,
+            chunk,
+            &mut remove,
+        ),
+        ReaderTag::Head => crate::shell::builtins::head::Head::on_io_reader_chunk(
+            interp,
+            child.node,
+            chunk,
+            &mut remove,
+        ),
+        ReaderTag::Tail => crate::shell::builtins::tail::Tail::on_io_reader_chunk(
             interp,
             child.node,
             chunk,
@@ -499,6 +525,12 @@ pub fn on_reader_done(
     match child.tag {
         ReaderTag::Cat => {
             crate::shell::builtins::cat::Cat::on_io_reader_done(interp, child.node, err)
+        }
+        ReaderTag::Head => {
+            crate::shell::builtins::head::Head::on_io_reader_done(interp, child.node, err)
+        }
+        ReaderTag::Tail => {
+            crate::shell::builtins::tail::Tail::on_io_reader_done(interp, child.node, err)
         }
     }
 }

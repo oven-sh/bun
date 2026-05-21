@@ -57,7 +57,7 @@ impl<'a> Tmpfile<'a> {
             tmpfile.fd = crate::openat(
                 destination_dir,
                 tmpfilename,
-                O::CREAT | O::CLOEXEC | O::WRONLY,
+                O::CREAT | O::EXCL | O::CLOEXEC | O::WRONLY,
                 perm,
             )?
             .make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;

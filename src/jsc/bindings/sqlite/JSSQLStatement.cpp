@@ -1984,7 +1984,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetPrototypeFunction, (JSGlobalObject * l
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = uncheckedDowncast<JSSQLStatement>(callFrame->thisValue());
+    auto* castedThis = dynamicDowncast<JSSQLStatement>(callFrame->thisValue());
 
     CHECK_THIS
 

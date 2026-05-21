@@ -2476,9 +2476,9 @@ private:
         write(key.secondPrimeInfo().factorCRTExponent);
         write(key.secondPrimeInfo().factorCRTCoefficient);
         for (unsigned i = 2; i < primeCount; ++i) {
-            write(key.otherPrimeInfos()[i].primeFactor);
-            write(key.otherPrimeInfos()[i].factorCRTExponent);
-            write(key.otherPrimeInfos()[i].factorCRTCoefficient);
+            write(key.otherPrimeInfos()[i - 2].primeFactor);
+            write(key.otherPrimeInfos()[i - 2].factorCRTExponent);
+            write(key.otherPrimeInfos()[i - 2].factorCRTCoefficient);
         }
     }
 
@@ -3983,7 +3983,7 @@ private:
 
     bool read(BIO** bio, uint64_t length)
     {
-        if (m_ptr + length > m_end)
+        if (static_cast<uint64_t>(m_end - m_ptr) < length)
             return false;
         *bio = BIO_new_mem_buf(m_ptr, length);
         if (!*bio)
@@ -4082,11 +4082,11 @@ private:
         if (!read(secondPrimeInfo.factorCRTCoefficient))
             return false;
         for (unsigned i = 2; i < primeCount; ++i) {
-            if (!read(otherPrimeInfos[i].primeFactor))
+            if (!read(otherPrimeInfos[i - 2].primeFactor))
                 return false;
-            if (!read(otherPrimeInfos[i].factorCRTExponent))
+            if (!read(otherPrimeInfos[i - 2].factorCRTExponent))
                 return false;
-            if (!read(otherPrimeInfos[i].factorCRTCoefficient))
+            if (!read(otherPrimeInfos[i - 2].factorCRTCoefficient))
                 return false;
         }
 

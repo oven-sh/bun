@@ -692,8 +692,11 @@ impl MultiPartUpload {
                 let slice = response.body.list.as_slice();
                 // PERF(port): Zig stored body and sliced upload_id into it; here we dupe upload_id
                 if let Some(start) = strings::index_of(slice, b"<UploadId>") {
+                    let value_start = start + b"<UploadId>".len();
                     if let Some(end) = strings::index_of(slice, b"</UploadId>") {
-                        this.upload_id = Box::<[u8]>::from(&slice[start + 10..end]);
+                        if end >= value_start {
+                            this.upload_id = Box::<[u8]>::from(&slice[value_start..end]);
+                        }
                     }
                 }
                 this.uploadid_buffer = response.body;

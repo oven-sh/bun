@@ -2709,9 +2709,15 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
-            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
-            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`; bytemuck checks align + even-len.
+            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
+            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
+            //
+            // ZIG PARITY: this branch intentionally does NOT `self.detach()` for
+            // `Lifetime::Transfer` — `Blob.zig` `toStringWithBytes` (UTF-16LE arm)
+            // returns without detaching, unlike `toJSONWithBytes`. Any change to
+            // that asymmetry belongs upstream in the Zig source, not here.
+            let buf = &buf[..buf.len() & !1];
             let out =
                 OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
             return out.to_js(global);
@@ -2928,9 +2934,10 @@ impl BlobExt for Blob {
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
-            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`; bytemuck checks align + even-len.
+            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
+            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
+            let buf = &buf[..buf.len() & !1];
             let mut out =
                 OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
@@ -3875,6 +3882,25 @@ struct FormDataContext<'a> {
     global_this: &'a JSGlobalObject,
 }
 
+/// WHATWG HTML "multipart/form-data encoding algorithm": percent-encode `"`,
+/// CR and LF in field names and filenames so they cannot terminate the
+/// quoted-string or inject part headers.
+fn escape_form_data_name(bytes: Vec<u8>) -> Box<[u8]> {
+    if !bytes.iter().any(|&b| matches!(b, b'"' | b'\r' | b'\n')) {
+        return bytes.into_boxed_slice();
+    }
+    let mut out = Vec::with_capacity(bytes.len() + 6);
+    for &b in &bytes {
+        match b {
+            b'"' => out.extend_from_slice(b"%22"),
+            b'\r' => out.extend_from_slice(b"%0D"),
+            b'\n' => out.extend_from_slice(b"%0A"),
+            _ => out.push(b),
+        }
+    }
+    out.into_boxed_slice()
+}
+
 impl FormDataContext<'_> {
     pub fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
@@ -3895,7 +3921,7 @@ impl FormDataContext<'_> {
         // the optional allocator. `StringJoiner::push_owned` is the Rust
         // equivalent; `ZigStringSlice::into_vec` moves out the buffer if owned
         // or copies if borrowed (matching Zig's `null`-allocator borrow case).
-        joiner.push_owned(name.to_slice().into_vec().into_boxed_slice());
+        joiner.push_owned(escape_form_data_name(name.to_slice().into_vec()));
 
         match entry {
             FormDataEntry::String(value) => {
@@ -3904,11 +3930,14 @@ impl FormDataContext<'_> {
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                joiner.push_owned(filename.to_slice().into_vec().into_boxed_slice());
+                joiner.push_owned(escape_form_data_name(filename.to_slice().into_vec()));
                 joiner.push_static(b"\"\r\n");
 
-                let content_type: &[u8] = if !blob.content_type_slice().is_empty() {
-                    blob.content_type_slice()
+                let blob_ct = blob.content_type_slice();
+                let content_type: &[u8] = if !blob_ct.is_empty()
+                    && !blob_ct.iter().any(|&b| matches!(b, b'\r' | b'\n'))
+                {
+                    blob_ct
                 } else {
                     b"application/octet-stream"
                 };

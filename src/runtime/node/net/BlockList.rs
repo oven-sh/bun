@@ -33,7 +33,14 @@ use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
-use bun_threading::Mutex;
+use bun_threading::{Guarded, Mutex};
+
+/// Addresses of `BlockList` instances currently embedded in a live
+/// `SerializedScriptValue` (one entry per serialize; removed by
+/// `BlockList__onStructuredCloneDestroy`). Deserialize only honours pointers
+/// present here so wire bytes from another process (IPC `advanced` mode,
+/// `node:v8.deserialize`) cannot smuggle an arbitrary address through tag 251.
+static SERIALIZED_REFS: Guarded<Vec<usize>> = Guarded::new(Vec::new());
 
 use crate::node::util::validators;
 use crate::socket::socket_address::{SocketAddress, sockaddr};
@@ -73,6 +80,13 @@ pub struct BlockList {
 
     /// We cannot lock/unlock a mutex
     estimated_size: AtomicU32,
+
+    /// Per-instance random identity, written into the structured-clone wire
+    /// alongside the address. Deserialize re-reads it from the live instance
+    /// (after [`SERIALIZED_REFS`] confirms the address is safe to dereference)
+    /// so wire bytes captured before this instance existed cannot match even if
+    /// the allocator reused the same address.
+    serialize_nonce: u64,
 }
 
 impl BlockList {
@@ -101,6 +115,11 @@ impl BlockList {
             da_rules: JsCell::new(Vec::new()),
             mutex: Mutex::default(),
             estimated_size: AtomicU32::new(0),
+            serialize_nonce: {
+                let mut n = [0u8; 8];
+                bun_core::csprng(&mut n);
+                u64::from_ne_bytes(n)
+            },
         }));
         Ok(ptr)
     }
@@ -380,6 +399,8 @@ impl BlockList {
         use bun_io::Write as _;
         let _guard = this.mutex.lock_guard();
         this.ref_();
+        let addr = std::ptr::from_ref::<Self>(this) as usize;
+        SERIALIZED_REFS.lock().push(addr);
         let mut writer = StructuredCloneWriter {
             ctx,
             impl_: write_bytes,
@@ -388,7 +409,8 @@ impl BlockList {
         // Only the address is serialized; deserialize re-derives `*mut Self`
         // via int→ptr cast and never forms `&mut Self` (only `ref_()` +
         // `to_js_ptr`, both `&self`/raw-ptr), so `from_ref` provenance is fine.
-        _ = writer.write_int_le(std::ptr::from_ref::<Self>(this) as usize);
+        _ = writer.write_int_le(addr);
+        _ = writer.write_int_le(this.serialize_nonce);
     }
 
     // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
@@ -411,9 +433,9 @@ impl BlockList {
         let mut r =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
 
-        let int = match r.read_int_le::<usize>() {
-            Ok(v) => v,
-            Err(_) => {
+        let (int, nonce) = match (r.read_int_le::<usize>(), r.read_int_le::<u64>()) {
+            (Ok(a), Ok(n)) => (a, n),
+            _ => {
                 return Err(global.throw(format_args!(
                     "BlockList.onStructuredCloneDeserialize failed"
                 )));
@@ -424,7 +446,23 @@ impl BlockList {
         // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via `checked_add`).
         *ptr = unsafe { (*ptr).add(r.pos) };
 
+        if !SERIALIZED_REFS.lock().contains(&int) {
+            return Err(global.throw(format_args!(
+                "BlockList.onStructuredCloneDeserialize failed"
+            )));
+        }
+
         let this: *mut Self = int as *mut Self;
+        // SAFETY: presence in `SERIALIZED_REFS` (paired `ref_()`/`deref()`)
+        // guarantees `this` is a live `BlockList` allocation, so the field read
+        // is in-bounds. The nonce check then rejects wire bytes that name this
+        // address but were produced by a *different* instance that has since
+        // been freed and whose slot the allocator reused.
+        if unsafe { (*this).serialize_nonce } != nonce {
+            return Err(global.throw(format_args!(
+                "BlockList.onStructuredCloneDeserialize failed"
+            )));
+        }
         // A single SerializedScriptValue can be deserialized multiple times
         // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref
         // instead of adopting the one taken in serialize. The serialize ref is
@@ -447,6 +485,13 @@ bun_jsc::jsc_host_abi! {
     /// [`BlockList::on_structured_clone_serialize`].
     #[unsafe(no_mangle)]
     pub unsafe fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) -> () {
+        let addr = ptr as usize;
+        {
+            let mut refs = SERIALIZED_REFS.lock();
+            if let Some(i) = refs.iter().position(|&a| a == addr) {
+                refs.swap_remove(i);
+            }
+        }
         // SAFETY: `ptr` is the same `*mut BlockList` passed to
         // `on_structured_clone_serialize`; it stayed alive because that path
         // bumped the refcount. Dropping that ref here may free the box.

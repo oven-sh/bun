@@ -634,6 +634,8 @@ pub fn parse_until_after<T, C>(
     result
 }
 
+const MAX_NESTING_DEPTH: u32 = 512;
+
 fn parse_nested_block<T>(
     parser: &mut Parser,
     parsefn: impl FnOnce(&mut Parser) -> CssResult<T>,
@@ -645,6 +647,14 @@ fn parse_nested_block<T>(
              token was just consumed."
         )
     });
+
+    parser.input.nesting_depth += 1;
+    if parser.input.nesting_depth > MAX_NESTING_DEPTH {
+        parser.input.nesting_depth -= 1;
+        let err = parser.new_custom_error(ParserError::maximum_nesting_depth);
+        consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
+        return Err(err);
+    }
 
     let closing_delimiter = match block_type {
         BlockType::CurlyBracket => Delimiters::CLOSE_CURLY_BRACKET,
@@ -663,6 +673,7 @@ fn parse_nested_block<T>(
     }
     parser.stop_before = saved_stop_before;
     consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
+    parser.input.nesting_depth -= 1;
     result
 }
 
@@ -4201,6 +4212,7 @@ impl Delimiters {
 pub struct ParserInput<'a> {
     pub tokenizer: Tokenizer<'a>,
     pub cached_token: Option<CachedToken>,
+    pub nesting_depth: u32,
 }
 
 impl<'a> ParserInput<'a> {
@@ -4216,6 +4228,7 @@ impl<'a> ParserInput<'a> {
         ParserInput {
             tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,
+            nesting_depth: 0,
         }
     }
 }

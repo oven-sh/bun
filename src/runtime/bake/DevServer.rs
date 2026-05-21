@@ -1412,6 +1412,64 @@ pub enum DevHandlerId {
     MemoryVisualizer,
 }
 
+/// DNS-rebinding guard for `/_bun/...` internal routes. A rebound origin
+/// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
+/// non-loopback / non-IP / non-configured hostnames prevents the attacker's
+/// page from reading bundled source via same-origin fetch.
+fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
+    let Some(host) = req.header(b"host") else {
+        return false;
+    };
+    let host = if host.first() == Some(&b'[') {
+        match strings::index_of_scalar(host, b']') {
+            Some(end) => &host[..=end],
+            None => host,
+        }
+    } else {
+        match strings::last_index_of_char(host, b':') {
+            Some(colon) => &host[..colon],
+            None => host,
+        }
+    };
+    if strings::eql_case_insensitive_ascii(host, b"localhost", true) {
+        return true;
+    }
+    const DOT_LOCALHOST: &[u8] = b".localhost";
+    if host.len() > DOT_LOCALHOST.len()
+        && strings::eql_case_insensitive_ascii(
+            &host[host.len() - DOT_LOCALHOST.len()..],
+            DOT_LOCALHOST,
+            true,
+        )
+    {
+        return true;
+    }
+    let ip = if host.first() == Some(&b'[') && host.last() == Some(&b']') {
+        &host[1..host.len() - 1]
+    } else {
+        host
+    };
+    if strings::is_ip_address(ip) {
+        return true;
+    }
+    if let Some(server) = dev.server.as_ref() {
+        if let crate::server::server_config::Address::Tcp {
+            hostname: Some(h), ..
+        } = &server.config().address
+        {
+            return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+        }
+    }
+    false
+}
+
+fn host_forbidden(resp: AnyResponse) {
+    resp.corked(move || {
+        resp.write_status(b"403 Forbidden");
+        resp.end(b"Blocked: Host header does not match the dev server", false);
+    });
+}
+
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
 extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
@@ -1429,6 +1487,9 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
+    if !matches!(ID, DevHandlerId::Request) && !is_allowed_dev_host(dev, req) {
+        return host_forbidden(resp);
+    }
     match ID {
         DevHandlerId::JsRequest => on_js_request(dev, req, resp),
         DevHandlerId::AssetRequest => on_asset_request(dev, req, resp),
@@ -1533,6 +1594,9 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
         // callback; `Response<SSL>` is an opaque handle.
         let res = unsafe { &mut *res };
+        if !is_allowed_dev_host(this, req) {
+            return host_forbidden(res.as_any_response());
+        }
         let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
         let _ = this.active_websocket_connections.insert(dw, ());
         let _ = res.upgrade(
@@ -5772,31 +5836,6 @@ impl DevServer {
         emit_edges!(&self.client_graph);
         emit_edges!(&self.server_graph);
         Ok(())
-    }
-
-    pub fn on_web_socket_upgrade<R>(
-        &mut self,
-        res: &mut R,
-        req: &mut Request,
-        upgrade_ctx: &mut WebSocketUpgradeContext,
-        id: usize,
-    ) where
-        R: ResponseLike, // TODO(port): bun_uws::ResponseLike once upstream lands
-    {
-        debug_assert!(id == 0);
-
-        let dw: Box<HmrSocket> = HmrSocket::new(self, res);
-        let dw_ptr: *mut HmrSocket = bun_core::heap::into_raw(dw);
-        self.active_websocket_connections
-            .put_no_clobber(dw_ptr, ())
-            .expect("oom");
-        res.upgrade::<*mut HmrSocket>(
-            dw_ptr,
-            req.header(b"sec-websocket-key").unwrap_or(b""),
-            req.header(b"sec-websocket-protocol").unwrap_or(b""),
-            req.header(b"sec-websocket-extension").unwrap_or(b""),
-            upgrade_ctx,
-        );
     }
 }
 

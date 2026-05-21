@@ -2710,6 +2710,13 @@ impl PostgresSQLConnection {
                         }
                         debug!("SASLContinue");
 
+                        // RFC 5802 §5.1: the server's combined nonce MUST begin with
+                        // the client nonce we sent in the client-first-message.
+                        if !cont.r.slice().starts_with(sasl.nonce()) {
+                            debug!("SASLContinue server nonce does not start with client nonce");
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
+
                         let iteration_count = cont.iteration_count().map_err(pg_err)?;
                         // RFC 7677 §4: SCRAM-SHA-256 requires a minimum of 4096
                         // iterations. Cap the upper bound to avoid a CPU-burn DoS

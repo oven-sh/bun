@@ -723,8 +723,16 @@ fn path_entries_equal(a: &[u8], b: &[u8]) -> bool {
     if cfg!(windows) {
         a.len() == b.len()
             && a.iter().zip(b.iter()).all(|(&x, &y)| {
-                let nx = if x == b'/' { b'\\' } else { x.to_ascii_lowercase() };
-                let ny = if y == b'/' { b'\\' } else { y.to_ascii_lowercase() };
+                let nx = if x == b'/' {
+                    b'\\'
+                } else {
+                    x.to_ascii_lowercase()
+                };
+                let ny = if y == b'/' {
+                    b'\\'
+                } else {
+                    y.to_ascii_lowercase()
+                };
                 nx == ny
             })
     } else {

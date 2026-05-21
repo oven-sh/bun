@@ -3072,6 +3072,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     let mapping_value_line = self.token.line;
                     let mapping_value_start = self.token.start;
+                    // Mirrors first_entry_end_line: when this entry has an
+                    // explicit `:`, the next entry must start on a later line.
+                    if matches!(self.token.data, TokenData::MappingValue) {
+                        previous_line = mapping_value_line;
+                    }
 
                     let value: Expr = match self.token.data {
                         // it's a !!set entry

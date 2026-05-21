@@ -1193,6 +1193,15 @@ folded: >
         expect(YAML.parse("outer:\n  ? a\n: v\n")).toEqual({ outer: { a: null }, null: "v" });
         expect(YAML.parse("outer:\n  x: 1\n  ? a\n: v\n")).toEqual({ outer: { x: 1, a: null }, null: "v" });
         expect(YAML.parse("?\n  ? inner\n: outer\n")).toEqual({ "[object Object]": "outer" });
+        // tab after the lesser-indent `:` does not change the e-node decision
+        expect(YAML.parse("outer:\n  ? a\n:\tv\n")).toEqual({ outer: { a: null }, null: "v" });
+      });
+
+      test("Y79Y/009 pattern in loop entries", () => {
+        // The first-entry guard must also apply in the loop: a second entry
+        // on the same line as the explicit `:` is rejected in all positions.
+        expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow("Unexpected token");
+        expect(() => YAML.parse("x: 1\n? key:\n:\tkey:\n")).toThrow("Unexpected token");
       });
 
       test("compact mapping as nested explicit key", () => {

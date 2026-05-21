@@ -3485,7 +3485,19 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }));
             return Ok(());
         }
-        self.append_string_to_str_pool(bunstr)
+        let start = self.j;
+        self.append_string_to_str_pool(bunstr)?;
+        // Interpolated values are data, not shell syntax. In the unquoted state,
+        // flush them as a quoted-text token so the parser does not re-interpret
+        // a leading `~` as tilde expansion.
+        if self.chars.state == CharState::Normal {
+            self.tokens.push(Token::DoubleQuotedText(TextRange {
+                start,
+                end: self.j,
+            }));
+            self.word_start = self.j;
+        }
+        Ok(())
     }
 
     fn looks_like_js_obj_ref(&mut self) -> bool {

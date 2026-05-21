@@ -459,8 +459,9 @@ impl Blob {
     /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
     /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
     pub fn get_file_name(&self) -> Option<&[u8]> {
-        // SAFETY: single-JS-thread `JsCell` read; the borrow does not outlive
-        // this call and nothing in the match arms mutates `self.store`.
+        // SAFETY: single-JS-thread `JsCell` read; the returned slice borrows
+        // the store payload and must not be held across `set_store`/
+        // `take_store` (same contract as `Blob::store()` above).
         match &unsafe { self.store.get() }.as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = bytes.stored_name.slice();

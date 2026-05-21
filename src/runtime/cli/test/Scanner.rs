@@ -151,11 +151,7 @@ impl<'a> Scanner<'a> {
         self.scan_internal(path_literal, ScanMode::ExplicitPath)
     }
 
-    fn scan_internal(
-        &mut self,
-        path_literal: &[u8],
-        mode: ScanMode,
-    ) -> Result<(), ScanError> {
+    fn scan_internal(&mut self, path_literal: &[u8], mode: ScanMode) -> Result<(), ScanError> {
         // Explicit paths bypass the built-in defaults only. User-configured
         // patterns stay in effect either way. Swap the field in place and
         // restore it on scope exit so `?` early-returns also clean up.

@@ -50,7 +50,8 @@ test.concurrent("bun --cwd=<relative> update -i succeeds in a workspace child", 
 
   // `update -i` needs a lockfile, otherwise it crashes with "missing
   // lockfile" regardless of the cwd bug. Generate one first with a normal
-  // install — zero deps, no network.
+  // install — zero deps, no network. Drain stderr so a future install
+  // regression surfaces in the CI log instead of being swallowed.
   await using install = Bun.spawn({
     cmd: [bunExe(), "install"],
     env: bunEnv,
@@ -58,7 +59,13 @@ test.concurrent("bun --cwd=<relative> update -i succeeds in a workspace child", 
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await install.exited).toBe(0);
+  const [, installStderr, installExit] = await Promise.all([
+    install.stdout.text(),
+    install.stderr.text(),
+    install.exited,
+  ]);
+  expect(installStderr).not.toContain("error:");
+  expect(installExit).toBe(0);
 
   // No deps to update → the interactive command prints "All packages are up
   // to date!" and exits without ever entering the prompt. That's enough to

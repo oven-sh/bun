@@ -12,7 +12,7 @@ pub mod js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 8);
+        let obj = JSValue::create_empty_object(global, 9);
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[
@@ -29,6 +29,10 @@ pub mod js_bindings {
             (
                 "raiseIgnoringPanicHandler",
                 __jsc_host_js_raise_ignoring_panic_handler,
+            ),
+            (
+                "boundedArrayResizeGrowReturnsErr",
+                __jsc_host_js_bounded_array_resize_grow_returns_err,
             ),
         ];
         for &(name, func) in ENTRIES {
@@ -173,5 +177,28 @@ pub mod js_bindings {
             JSValue::js_number_from_int64(bun_core::time::milli_timestamp().max(0)),
         );
         Ok(obj)
+    }
+
+    /// Test helper for https://github.com/oven-sh/bun/issues/30861.
+    ///
+    /// `resize` is the safe view into `BoundedArrayAligned::len`. Pre-fix it
+    /// accepted any `len <= BUFFER_CAPACITY`, which let fully-safe code grow
+    /// `len` past the last initialized slot and then read uninit as `T` via
+    /// `as_slice` / `Deref` — UB by the Rust abstract machine. Post-fix it is
+    /// shrink-only: growing returns `Err(Overflow)`.
+    ///
+    /// Returns `true` iff `resize` correctly refused to grow; `false` if the
+    /// call was accepted (i.e., the pre-fix unsound behavior is present).
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_bounded_array_resize_grow_returns_err(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let mut a = BoundedArray::<u8, 8>::default();
+        a.append(1).expect("capacity 8 ≫ 1");
+        // `a.len() == 1`. `a.resize(4)` asks to grow len from 1 → 4 over three
+        // uninitialized slots. Post-fix: `Err(Overflow)`.
+        let refused = a.resize(4).is_err();
+        Ok(JSValue::js_boolean(refused))
     }
 }

@@ -438,8 +438,11 @@ impl FileSystemRouter {
     }
 
     pub fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
-        let dir =
-            strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
+        // SAFETY: single-JS-thread `JsCell` read; the borrow ends at the
+        // `to_vec()` copy below, before any router mutation.
+        let dir = strings::paths::without_trailing_slash_windows_path(
+            &unsafe { self.router.get() }.config.dir,
+        );
         // PORT NOTE: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
         // recursive walk re-derives the path from the resolver per-iteration so a one-time
         // copy is sufficient.
@@ -477,7 +480,9 @@ impl FileSystemRouter {
         // R-2: snapshot the config fields up front so the `JsCell::get()` borrow is
         // released before `JsCell::set()` below installs the new router.
         let (cfg_dir, cfg_extensions, cfg_asset_prefix_path) = {
-            let cfg = &this.router.get().config;
+            // SAFETY: single-JS-thread `JsCell` read; the borrow is scoped to
+            // this block, which only clones fields out of `config`.
+            let cfg = &unsafe { this.router.get() }.config;
             (
                 cfg.dir.clone(),
                 cfg.extensions.clone(),
@@ -657,7 +662,9 @@ impl FileSystemRouter {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_routes(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let router = this.router.get();
+        // SAFETY: single-JS-thread `JsCell` read; this getter only reads the
+        // route tables and never re-enters a router mutation.
+        let router = unsafe { this.router.get() };
         let paths = router.get_entry_points();
         let names = router.get_names();
         let mut name_strings: Vec<ZigString> = vec![ZigString::default(); names.len() * 2];
@@ -1003,7 +1010,7 @@ impl MatchedRoute {
             return Ok(JSValue::create_empty_object(global_this, 0));
         }
 
-        if this.param_map.get().is_none() {
+        if this.param_map.with(|v| v.is_none()) {
             let route = this.route();
             let scanner = CombinedScanner::init(
                 b"",
@@ -1030,7 +1037,7 @@ impl MatchedRoute {
             return Self::get_params(this, global_this);
         }
 
-        if this.query_string_map.get().is_none() {
+        if this.query_string_map.with(|v| v.is_none()) {
             let route = this.route();
             if !this.params().is_empty() {
                 let scanner = CombinedScanner::init(

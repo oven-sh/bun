@@ -194,14 +194,16 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             // BACKREF: see `Source::bytes()` — payload owned by `stream`.
             // R-2: all touched ByteStream methods/fields are `&self`/interior-mutable.
             // if pipe is empty, we can pipe
-            if byte_stream.pipe.get().is_empty() {
+            if byte_stream.pipe.with(|v| v.is_empty()) {
                 // equivalent to onStart to get the highWaterMark
                 this_ref.high_water_mark = byte_stream.high_water_mark.min(i64::MAX as u64) as i64;
 
                 if byte_stream.has_received_last_chunk.get() {
                     this_ref.status = Status::Done;
                     let err: Option<JSValue> = 'brk_err: {
-                        let pending = &byte_stream.pending.get().result;
+                        // SAFETY: single-JS-thread `JsCell` read; the borrow ends
+                        // inside this block, before `pending` is mutated.
+                        let pending = &unsafe { byte_stream.pending.get() }.result;
                         if let StreamResult::Err(e) = pending {
                             let (js_err, was_strong) = e.to_js_weak(global_this);
                             js_err.ensure_still_alive();

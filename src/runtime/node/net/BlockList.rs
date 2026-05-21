@@ -282,7 +282,9 @@ impl BlockList {
             }
         };
         let _guard = this.mutex.lock_guard();
-        for item in this.da_rules.get().iter() {
+        // SAFETY: single-JS-thread `JsCell` read (additionally serialized by
+        // `_guard`); the loop only reads the rules.
+        for item in unsafe { this.da_rules.get() }.iter() {
             match item {
                 Rule::Addr(a) => {
                     let Some(order) = _compare(address, a) else {
@@ -350,7 +352,9 @@ impl BlockList {
     #[bun_jsc::host_fn(getter)]
     pub fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let _guard = this.mutex.lock_guard();
-        let rules = this.da_rules.get();
+        // SAFETY: single-JS-thread `JsCell` read (additionally serialized by
+        // `_guard`); this getter only reads the rules.
+        let rules = unsafe { this.da_rules.get() };
         // GC must be able to visit
         let array = JSValue::create_empty_array(global, rules.len())?;
 

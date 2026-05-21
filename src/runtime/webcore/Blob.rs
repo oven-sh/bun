@@ -723,7 +723,7 @@ impl BlobExt for Blob {
         writer.write_all(ct)?;
         writer.write_int_le::<u8>(self.content_type_was_set.get() as u8)?;
 
-        let store_tag: store::SerializeTag = if let Some(store) = self.store.get() {
+        let store_tag: store::SerializeTag = if let Some(store) = self.store() {
             if matches!(store.data, store::Data::File(_)) {
                 store::SerializeTag::File
             } else {
@@ -736,7 +736,7 @@ impl BlobExt for Blob {
         writer.write_int_le::<u8>(store_tag as u8)?;
 
         self.resolve_size();
-        if let Some(store) = self.store.get() {
+        if let Some(store) = self.store() {
             store.serialize(writer)?;
         }
 
@@ -982,7 +982,7 @@ impl BlobExt for Blob {
     }
 
     fn is_detached(&self) -> bool {
-        self.store.get().is_none()
+        self.store.with(|v| v.is_none())
     }
     fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -1088,7 +1088,7 @@ impl BlobExt for Blob {
 
         let show_name = (self.is_jsdom_file.get() && self.get_name_string().is_some())
             || (!self.name.get().is_empty()
-                && self.store.get().is_some()
+                && self.store.with(|v| v.is_some())
                 && matches!(
                     self.store().expect("infallible: store present").data,
                     store::Data::Bytes(_)
@@ -1187,7 +1187,7 @@ impl BlobExt for Blob {
         }
         let stream = ReadableStream::from_blob_copy_ref(global_this, self, recommended_chunk_size)?;
 
-        if let Some(store) = self.store.get() {
+        if let Some(store) = self.store() {
             if let store::Data::File(f) = &store.data {
                 if let PathOrFileDescriptor::Fd(_) = f.pathlike {
                     // in the case we have a file descriptor store, we want to de-duplicate
@@ -1205,7 +1205,7 @@ impl BlobExt for Blob {
     }
 
     fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone(); // hold a ref across the call
+        let _store = self.store.with(|v| v.clone()); // hold a ref across the call
         JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Clone))
     }
 
@@ -1213,7 +1213,7 @@ impl BlobExt for Blob {
         &self,
         global_object: &JSGlobalObject,
     ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
+        let _store = self.store.with(|v| v.clone());
         JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Transfer))
     }
 
@@ -1222,7 +1222,7 @@ impl BlobExt for Blob {
     }
 
     fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
+        let _store = self.store.with(|v| v.clone());
         JSPromise::wrap(global_object, |g| self.to_json(g, Lifetime::Share))
     }
 
@@ -1230,7 +1230,7 @@ impl BlobExt for Blob {
         &self,
         global_this: &JSGlobalObject,
     ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
+        let _store = self.store.with(|v| v.clone());
         JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Transfer))
     }
 
@@ -1238,7 +1238,7 @@ impl BlobExt for Blob {
         &self,
         global_this: &JSGlobalObject,
     ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
+        let _store = self.store.with(|v| v.clone());
         JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Clone))
     }
 
@@ -1247,7 +1247,7 @@ impl BlobExt for Blob {
     }
 
     fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
+        let _store = self.store.with(|v| v.clone());
         JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Clone))
     }
 
@@ -1259,12 +1259,12 @@ impl BlobExt for Blob {
         &self,
         global_this: &JSGlobalObject,
     ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
+        let _store = self.store.with(|v| v.clone());
         JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Transfer))
     }
 
     fn get_form_data(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        let _store = self.store.get().clone();
+        let _store = self.store.with(|v| v.clone());
         Ok(JSPromise::wrap(global_this, |g| {
             self.to_form_data(g, Lifetime::Temporary)
                 .map_err(Into::into)
@@ -1277,7 +1277,7 @@ impl BlobExt for Blob {
         }
 
         // If there's no store that means it's empty and we just return true
-        let Some(store) = self.store.get() else {
+        let Some(store) = self.store() else {
             return JSValue::TRUE;
         };
 
@@ -1405,7 +1405,7 @@ impl BlobExt for Blob {
         readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        let Some(store) = self.store.get().clone() else {
+        let Some(store) = self.store.with(|v| v.clone()) else {
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
@@ -1626,7 +1626,7 @@ impl BlobExt for Blob {
         // explicitly set it to a dead pointer
         // we use this memory address to disable signals being sent
         signal.with_mut(|s| s.clear());
-        debug_assert!(signal.get().is_dead());
+        debug_assert!(signal.with(|v| v.is_dead()));
 
         // SAFETY: `file_sink` is a live +1 `*mut FileSink`; `JsCell::as_ptr`
         // yields the stable `*mut Signal` inside the `UnsafeCell`, and
@@ -1648,7 +1648,7 @@ impl BlobExt for Blob {
         assignment_result.ensure_still_alive();
 
         // assert that it was updated
-        debug_assert!(!signal.get().is_dead());
+        debug_assert!(!signal.with(|v| v.is_dead()));
 
         if let Some(err) = assignment_result.to_error() {
             // SAFETY: release our +1 ref on the sink.
@@ -2157,7 +2157,7 @@ impl BlobExt for Blob {
         if !ct.is_empty() {
             return JscZigString::init(ct).to_js(global_this);
         }
-        if let Some(store) = self.store.get() {
+        if let Some(store) = self.store() {
             return JscZigString::init(&store.mime_type.value).to_js(global_this);
         }
         JscZigString::EMPTY.to_js(global_this)
@@ -2224,7 +2224,7 @@ impl BlobExt for Blob {
 
     // TODO: Move this to a separate `File` object or BunFile
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
-        if let Some(store) = self.store.get() {
+        if let Some(store) = self.store() {
             if matches!(store.data, store::Data::File(_)) {
                 // PORT NOTE: do not hold a pattern-bound `&File` across
                 // `resolve_file_stat` — it materializes `&mut File` on the same
@@ -2257,7 +2257,7 @@ impl BlobExt for Blob {
 
         // If the file doesn't exist or is not seekable
         // signal that the size is unknown.
-        if let Some(store) = self.store.get() {
+        if let Some(store) = self.store() {
             if let store::Data::File(file) = &store.data {
                 if !file.seekable.unwrap_or(false) {
                     return u64::MAX;
@@ -2273,7 +2273,7 @@ impl BlobExt for Blob {
     }
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue> {
         // TODO: make this async for files
-        let tag = match self.store.get() {
+        let tag = match self.store() {
             None => return Ok(JSValue::UNDEFINED),
             Some(s) => s.data.tag(),
         };
@@ -2339,9 +2339,9 @@ impl BlobExt for Blob {
                 return JSValue::js_number(f64::NAN);
             }
             self.resolve_size();
-            if self.size.get() == MAX_SIZE && self.store.get().is_some() {
+            if self.size.get() == MAX_SIZE && self.store.with(|v| v.is_some()) {
                 return JSValue::js_number(f64::INFINITY);
-            } else if self.size.get() == 0 && self.store.get().is_some() {
+            } else if self.size.get() == 0 && self.store.with(|v| v.is_some()) {
                 if let store::Data::File(file) =
                     &self.store().expect("infallible: store present").data
                 {
@@ -2355,7 +2355,7 @@ impl BlobExt for Blob {
     }
 
     fn resolve_size(&self) {
-        let Some(store) = self.store.get() else {
+        let Some(store) = self.store() else {
             self.size.set(0);
             return;
         };
@@ -2409,7 +2409,7 @@ impl BlobExt for Blob {
     /// (e.g. `ByteBlobLoader::setup`) that in Zig copied the whole `Blob` value
     /// (`var blobe = blob.*; blobe.resolveSize();`) — `Blob` is not `Clone` in Rust.
     fn resolved_size(&self) -> (SizeType, SizeType) {
-        let Some(store) = self.store.get() else {
+        let Some(store) = self.store() else {
             return (self.offset.get(), 0);
         };
         // PORT NOTE: see `resolve_size` — dispatch on the copied tag and re-read
@@ -3069,7 +3069,7 @@ impl BlobExt for Blob {
                 {
                     use crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator;
                     // If we can use a copy-on-write clone of the buffer, do so.
-                    if let Some(store) = self.store.get() {
+                    if let Some(store) = self.store() {
                         if let store::Data::Bytes(bytes) = &store.data {
                             let allocated = bytes.allocated_slice();
                             // SAFETY: `Clone` arm reads only; `buf` is store-backed.
@@ -3619,7 +3619,7 @@ impl BlobExt for Blob {
         // in-memory size. not the size on disk.
         let mut size: usize = core::mem::size_of::<Blob>();
 
-        if let Some(store) = self.store.get() {
+        if let Some(store) = self.store() {
             size += core::mem::size_of::<Store>();
             match &store.data {
                 store::Data::Bytes(bytes) => {
@@ -3945,15 +3945,11 @@ impl FormDataContext<'_> {
                 joiner.push_cloned(content_type);
                 joiner.push_static(b"\r\n\r\n");
 
-                if blob.store.get().is_some() {
+                if blob.store.with(|v| v.is_some()) {
                     if blob.size.get() == MAX_SIZE {
                         blob.resolve_size();
                     }
-                    let store = blob
-                        .store
-                        .get()
-                        .as_deref()
-                        .expect("infallible: store present");
+                    let store = blob.store().expect("infallible: store present");
                     match &store.data {
                         store::Data::S3(_) => {
                             // TODO: s3
@@ -4200,7 +4196,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
     // make shared_view() slice past the end of the backing store (OOB heap read).
     blob.offset.set(offset as SizeType); // intentional truncate
-    if let Some(store) = blob.store.get() {
+    if let Some(store) = blob.store() {
         let store_size = store.size();
         if store_size != MAX_SIZE {
             blob.offset.set(blob.offset.get().min(store_size));
@@ -4603,11 +4599,10 @@ pub fn write_file_with_source_destination(
     destination_blob: &mut Blob,
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
-    let destination_store = destination_blob
-        .store
-        .get()
-        .clone()
-        .unwrap_or_else(|| Output::panic(format_args!("Destination blob is detached")));
+    let destination_store = destination_blob.store.with(|v| {
+        v.clone()
+            .unwrap_or_else(|| Output::panic(format_args!("Destination blob is detached")))
+    });
     let destination_type = destination_store.data.tag();
 
     // TODO: make sure this invariant isn't being broken elsewhere, then upgrade to allow_assert
@@ -4618,7 +4613,7 @@ pub fn write_file_with_source_destination(
         );
     }
 
-    let Some(source_store) = source_blob.store.get().clone() else {
+    let Some(source_store) = source_blob.store.with(|v| v.clone()) else {
         return write_file_with_empty_source_to_destination(ctx, destination_blob, options);
     };
     let source_type = source_store.data.tag();
@@ -4949,7 +4944,7 @@ pub fn write_file_internal(
     // PORT NOTE: Zig copies `path_or_blob_.*`; Blob is non-Clone, so reborrow.
     let path_or_blob = &mut *path_or_blob_;
     if let PathOrBlob::Blob(ref blob) = *path_or_blob {
-        let Some(blob_store) = blob.store.get() else {
+        let Some(blob_store) = blob.store() else {
             return Err(global_this.throw_invalid_arguments(format_args!("Blob is detached")));
         };
         debug_assert!(!matches!(blob_store.data, store::Data::Bytes(_)));
@@ -4961,7 +4956,7 @@ pub fn write_file_internal(
     }
 
     let input_store: Option<StoreRef> = if let PathOrBlob::Blob(ref b) = *path_or_blob {
-        b.store.get().clone()
+        b.store.with(|v| v.clone())
     } else {
         None
     };
@@ -4971,7 +4966,7 @@ pub fn write_file_internal(
     if let Some(mkdir) = options.mkdirp_if_not_exists {
         if mkdir
             && matches!(*path_or_blob, PathOrBlob::Blob(ref b)
-                if b.store.get().is_some()
+                if b.store.with(|v| v.is_some())
                     && matches!(b.store().expect("infallible: store present").data, store::Data::File(ref f)
                         if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))))
         {
@@ -4991,7 +4986,7 @@ pub fn write_file_internal(
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
-                    && !(b.store.get().is_some()
+                    && !(b.store.with(|v| v.is_some())
                         && matches!(b.store().expect("infallible: store present").data, store::Data::File(ref f)
                             if f.mode != 0 && bun_core::kind_from_mode(f.mode) == bun_core::FileKind::File))));
         if fast_path_ok {
@@ -5069,7 +5064,7 @@ pub fn write_file_internal(
     let mut destination_blob: Blob = match path_or_blob {
         PathOrBlob::Path(path) => {
             let new_blob = Blob::find_or_create_file_from_path(path, global_this, true);
-            if new_blob.store.get().is_none() {
+            if new_blob.store.with(|v| v.is_none()) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Writing to an empty blob is not implemented yet"
                 )));
@@ -5077,7 +5072,7 @@ pub fn write_file_internal(
             new_blob
         }
         PathOrBlob::Blob(b) => {
-            debug_assert!(b.store.get().is_some());
+            debug_assert!(b.store.with(|v| v.is_some()));
             b.dupe()
         }
     };
@@ -5228,7 +5223,7 @@ pub fn write_file_internal(
     // Zig: `defer source_blob.detach();`
     let mut source_blob = scopeguard::guard(source_blob, |b| b.detach());
 
-    let destination_store = destination_blob.store.get().clone();
+    let destination_store = destination_blob.store.with(|v| v.clone());
     // PORT NOTE: Zig manually ref/deref's; StoreRef clone+drop covers this.
     let _dest_hold = destination_store;
 
@@ -5241,7 +5236,7 @@ pub fn write_file_internal(
 }
 
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
-    let Some(store) = blob.store.get() else {
+    let Some(store) = blob.store() else {
         return Err(global_this.throw(format_args!("Cannot write to a detached Blob")));
     };
     if matches!(store.data, store::Data::Bytes(_)) {
@@ -5542,7 +5537,7 @@ pub fn jsdom_file_construct_(
         let name_value_str = OwnedString::new(BunString::from_js(args[1], global_this)?);
 
         blob = Blob::get::<false, true>(global_this, args[0])?;
-        if let Some(store_) = blob.store.get() {
+        if let Some(store_) = blob.store() {
             match store_.data_mut() {
                 store::Data::Bytes(bytes) => {
                     // `get::<_, true>` on a single-Blob sequence returns
@@ -6443,7 +6438,7 @@ impl Any {
 impl Any {
     fn to_internal_blob_if_possible(&mut self) {
         if let Any::Blob(blob) = self {
-            if let Some(s) = blob.store.get() {
+            if let Some(s) = blob.store() {
                 if matches!(s.data, store::Data::Bytes(_)) && s.has_one_ref() {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
                     let internal = s.data_mut().as_bytes_mut().to_internal_blob();
@@ -6701,7 +6696,7 @@ impl Any {
     pub fn store(&self) -> Option<&Store> {
         // Spec (Blob.zig:4651-4657) returns a borrow with no refcount change.
         if let Any::Blob(b) = self {
-            return b.store.get().as_deref();
+            return b.store().map(|s| &**s);
         }
         None
     }

@@ -378,23 +378,23 @@ mod shim {
     }
     #[inline]
     pub fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
-        cb.get().has_callback()
+        cb.with(|v| v.has_callback())
     }
     /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
     /// (E0034); inline the body here.
     #[inline]
     pub fn blob_is_s3(b: &Blob) -> bool {
-        b.store
-            .get()
-            .as_ref()
-            .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
+        b.store.with(|v| {
+            v.as_ref()
+                .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
+        })
     }
     #[inline]
     pub fn blob_needs_to_read_file(b: &Blob) -> bool {
-        b.store
-            .get()
-            .as_ref()
-            .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
+        b.store.with(|v| {
+            v.as_ref()
+                .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
+        })
     }
     #[inline]
     pub fn byte_stream_unpipe(s: NonNull<ByteStream>) {
@@ -2397,8 +2397,7 @@ where
                     // in this case should always be a redirect so should not hit this path, but in case we change it in the future lets handle it
                     this.ref_();
 
-                    let crate::webcore::blob::store::Data::S3(s3) =
-                        &blob.store.get().as_ref().unwrap().data
+                    let crate::webcore::blob::store::Data::S3(s3) = &blob.store().unwrap().data
                     else {
                         unreachable!()
                     };
@@ -2904,7 +2903,7 @@ where
                             let byte_stream_nn = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
                             let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
-                            debug_assert!(byte_stream.pipe.get().ctx.is_none());
+                            debug_assert!(byte_stream.pipe.with(|v| v.ctx.is_none()));
                             debug_assert!(this.byte_stream.is_none());
                             if this.resp.is_none() {
                                 // we don't have a response, so we can discard the stream

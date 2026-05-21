@@ -648,7 +648,7 @@ impl AnyRoute {
             // are 404'ing when the user goes to the route. You want to find
             // that out immediately so that the health check on startup fails
             // and the process exits with a non-zero status code.
-            if let Some(store) = blob.store.get().as_deref() {
+            if let Some(store) = blob.store() {
                 if let Some(store_path) = store.get_path() {
                     // PORT NOTE: `sys::exists_at_type` takes `&ZStr`; the store
                     // path is a borrowed byte slice. NUL-terminate into a path

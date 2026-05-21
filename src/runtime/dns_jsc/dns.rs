@@ -4141,7 +4141,7 @@ impl Resolver {
 
     fn any_requests_pending(&self) -> bool {
         // TODO(port): Zig used @typeInfo to iterate all `pending_*` fields.
-        macro_rules! check { ($($f:ident),*) => { $( if self.$f.get().used.find_first_set().is_some() { return true; } )* } }
+        macro_rules! check { ($($f:ident),*) => { $( if self.$f.with(|v| v.used.find_first_set().is_some()) { return true; } )* } }
         check!(
             pending_host_cache_cares,
             pending_host_cache_native,
@@ -4176,7 +4176,7 @@ impl Resolver {
     }
 
     fn add_timer(&self, now: Option<&bun::timespec>) -> bool {
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+        if self.event_loop_timer.with(|v| v.state) == EventLoopTimerState::ACTIVE {
             return false;
         }
 
@@ -4206,7 +4206,7 @@ impl Resolver {
     }
 
     fn remove_timer(&self) {
-        if self.event_loop_timer.get().state != EventLoopTimerState::ACTIVE {
+        if self.event_loop_timer.with(|v| v.state) != EventLoopTimerState::ACTIVE {
             return;
         }
 

@@ -51,13 +51,13 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
 #[inline]
 #[allow(clippy::mut_from_ref)]
 fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
-    blob.store
-        .get()
-        .as_ref()
-        // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
-        // any `StoreRef` exists; single-threaded JS event-loop discipline
-        // guarantees no other `&`/`&mut Store` is live for this borrow.
-        .map(|s| unsafe { &mut *s.as_ptr() })
+    blob.store.with(|v| {
+        v.as_ref()
+            // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
+            // any `StoreRef` exists; single-threaded JS event-loop discipline
+            // guarantees no other `&`/`&mut Store` is live for this borrow.
+            .map(|s| unsafe { &mut *s.as_ptr() })
+    })
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -129,7 +129,10 @@ impl Body {
     }
 
     pub fn slice(&self) -> &[u8] {
-        self.value.get().slice()
+        // SAFETY: single-JS-thread `JsCell` read; callers consume the slice
+        // before the body value is replaced (same contract as the Zig
+        // original's direct field access).
+        unsafe { self.value.get() }.slice()
     }
 
     pub fn use_(&self) -> Blob {
@@ -174,7 +177,7 @@ impl Body {
             .print_as::<W, ENABLE_ANSI_COLORS>(
                 jsc::FormatAs::Boolean,
                 writer,
-                JSValue::from(matches!(self.value.get(), Value::Used)),
+                JSValue::from(self.value.with(|v| matches!(v, Value::Used))),
                 jsc::JSType::BooleanObject,
             )
             .map_err(|_| core::fmt::Error)?;
@@ -1233,7 +1236,7 @@ impl Value {
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
-                        if !blob.content_type_was_set.get() && blob.store.get().is_some() {
+                        if !blob.content_type_was_set.get() && blob.store.with(|v| v.is_some()) {
                             blob.content_type.set(std::ptr::from_ref::<[u8]>(
                                 bun_http_types::MimeType::TEXT.value.as_ref(),
                             ));
@@ -2235,7 +2238,7 @@ pub trait BodyMixin: BodyOwnerJs + Sized {
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }
-            if !blob.content_type_was_set.get() && blob.store.get().is_some() {
+            if !blob.content_type_was_set.get() && blob.store.with(|v| v.is_some()) {
                 blob.content_type.set(std::ptr::from_ref::<[u8]>(
                     bun_http_types::MimeType::TEXT.value.as_ref(),
                 ));
@@ -2561,10 +2564,12 @@ impl<'a> ValueBufferer<'a> {
                     // readable stream, kept alive via `self.readable_stream_ref`
                     // above. R-2: all touched fields are interior-mutable.
                     let byte_stream = stream.ptr.bytes().expect("matched Bytes");
-                    debug_assert!(byte_stream.pipe.get().ctx.is_none());
+                    debug_assert!(byte_stream.pipe.with(|v| v.ctx.is_none()));
                     debug_assert!(self.byte_stream.is_none());
 
-                    let bytes = byte_stream.buffer.get().as_slice();
+                    // SAFETY: single-JS-thread `JsCell` read; `bytes` is
+                    // consumed by the bufferer before the stream can append.
+                    let bytes = unsafe { byte_stream.buffer.get() }.as_slice();
                     // If we've received the complete body by the time this function is called
                     // we can avoid streaming it and just send it all at once.
                     if byte_stream.has_received_last_chunk.get() {

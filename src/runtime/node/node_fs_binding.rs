@@ -159,7 +159,7 @@ impl Binding {
     }
 
     pub fn finalize(self: Box<Self>) {
-        if self.node_fs.get().vm.is_some() {
+        if self.node_fs.with(|v| v.vm.is_some()) {
             // `node_fs.vm` is always the per-thread VM when set; route the
             // read through the safe singleton accessor.
             let vm_node_fs = VirtualMachine::get().node_fs;

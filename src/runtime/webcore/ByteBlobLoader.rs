@@ -85,7 +85,7 @@ bun_core::impl_field_parent! { ByteBlobLoader => Source.context; pub fn parent_c
 impl ByteBlobLoader {
     pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // TODO(port): in-place init — `self` is a pre-allocated slot inside `Source`
-        let store = blob.store.get().as_ref().unwrap().clone();
+        let store = blob.store.with(|v| v.as_ref().unwrap().clone());
         // PORT NOTE: Zig did `var blobe = blob.*; blobe.resolveSize();` — `Blob` is not
         // `Clone` in Rust, so use the non-mutating `resolved_size()` helper instead.
         let (offset, size) = blob.resolved_size();

@@ -917,8 +917,7 @@ impl ValkeyClient {
                 let p = self.parent();
                 let sub_count = p
                     ._subscription_ctx
-                    .get()
-                    .channels_subscribed_to_count(&global_this)?;
+                    .with(|v| v.channels_subscribed_to_count(&global_this))?;
 
                 if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                     match msg_type {

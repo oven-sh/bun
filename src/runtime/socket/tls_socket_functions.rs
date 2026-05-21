@@ -271,7 +271,9 @@ pub fn set_servername(
     // Drop replaces the old value (Zig manually freed `old`).
     this.server_name.set(Some(slice));
 
-    let host = this.server_name.get().as_deref().unwrap();
+    // SAFETY: single-JS-thread `JsCell` read; the `host` borrow is consumed
+    // by the SNI setup below, which never re-assigns `server_name`.
+    let host = unsafe { this.server_name.get() }.as_deref().unwrap();
     if !host.is_empty() {
         let Some(ssl_ptr) = this.socket.get().ssl() else {
             return Ok(JSValue::UNDEFINED);

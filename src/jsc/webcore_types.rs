@@ -209,7 +209,10 @@ impl Blob {
     /// `Option<&StoreRef>` shape every caller used pre-migration.
     #[inline]
     pub fn store(&self) -> Option<&StoreRef> {
-        self.store.get().as_ref()
+        // SAFETY: single-JS-thread `JsCell` read; the returned borrow must not
+        // be held across `set_store`/`take_store` (same contract as the Zig
+        // original's raw `?*Store` field).
+        unsafe { self.store.get() }.as_ref()
     }
 
     /// Move the store ref out (Zig: `this.store = null` without `.deref()`;
@@ -351,8 +354,8 @@ impl Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),
             offset: Cell::new(self.offset.get()),
-            store: JsCell::new(self.store.get().clone()), // +1 ↔ StoreRef::drop on scope exit
-            content_type: Cell::new(self.content_type.get()), // borrowed; `self` owns it
+            store: JsCell::new(self.store.with(Clone::clone)), // +1 ↔ StoreRef::drop on scope exit
+            content_type: Cell::new(self.content_type.get()),  // borrowed; `self` owns it
             content_type_allocated: Cell::new(self.content_type_allocated.get()),
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
@@ -376,7 +379,7 @@ impl Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),
             offset: Cell::new(self.offset.get()),
-            store: JsCell::new(self.store.get().clone()),
+            store: JsCell::new(self.store.with(Clone::clone)),
             content_type: Cell::new(self.content_type.get()),
             content_type_allocated: Cell::new(self.content_type_allocated.get()),
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
@@ -434,26 +437,31 @@ impl Blob {
     /// `Blob.isBunFile()` — backed by a filesystem `Store::File`.
     #[inline]
     pub fn is_bun_file(&self) -> bool {
-        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+        self.store
+            .with(|s| matches!(s.as_deref(), Some(s) if matches!(s.data, store::Data::File(_))))
     }
 
     /// `Blob.isS3()` — backed by an S3 `Store::S3`.
     #[inline]
     pub fn is_s3(&self) -> bool {
-        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
+        self.store
+            .with(|s| matches!(s.as_deref(), Some(s) if matches!(s.data, store::Data::S3(_))))
     }
 
     /// `Blob.needsToReadFile()` — true when bytes must be fetched off-disk
     /// before any in-memory consumer can see them (i.e. `Store::File`).
     #[inline]
     pub fn needs_to_read_file(&self) -> bool {
-        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+        self.store
+            .with(|s| matches!(s.as_deref(), Some(s) if matches!(s.data, store::Data::File(_))))
     }
 
     /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
     /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
     pub fn get_file_name(&self) -> Option<&[u8]> {
-        match &self.store.get().as_deref()?.data {
+        // SAFETY: single-JS-thread `JsCell` read; the borrow does not outlive
+        // this call and nothing in the match arms mutates `self.store`.
+        match &unsafe { self.store.get() }.as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = bytes.stored_name.slice();
                 if n.is_empty() { None } else { Some(n) }

@@ -119,7 +119,7 @@ mod _impl {
 
         pub fn estimated_size(&self) -> usize {
             core::mem::size_of::<Self>()
-                + match self.stream.get().mode {
+                + match self.stream.with(|v| v.mode) {
                     NodeMode::ZSTD_COMPRESS => 5272, // estimate of bun.c.ZSTD_sizeof_CCtx(self.stream.state)
                     NodeMode::ZSTD_DECOMPRESS => 95968, // estimate of bun.c.ZSTD_sizeof_DCtx(self.stream.state)
                     _ => 0,

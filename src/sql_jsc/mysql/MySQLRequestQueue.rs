@@ -125,16 +125,21 @@ impl MySQLRequestQueue {
         // `ParentRef<Self>` so the borrow is detached from `conn_ref`'s
         // momentary `Deref` lifetime. All queue mutation below goes through
         // `Cell`/`JsCell` interior mutability — `&Self` is sufficient.
-        let queue_ref: ParentRef<Self> = ParentRef::new(&conn_ref.connection.get().queue);
+        // SAFETY: single-JS-thread `JsCell` read; the projected `&queue` is
+        // only used through `ParentRef`'s shared `Deref`, and nothing below
+        // forms a `&mut` to the whole `connection` payload.
+        let queue_ref: ParentRef<Self> =
+            ParentRef::new(&unsafe { conn_ref.connection.get() }.queue);
         // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
         // became a post-block pass; early `return`s in the Zig loop become
         // `break 'advance` so cleanup always runs at function exit.
         'advance: {
             let mut offset: usize = 0;
 
-            while queue_ref.requests.get().readable_length() > offset && conn_ref.is_able_to_write()
+            while queue_ref.requests.with(|v| v.readable_length()) > offset
+                && conn_ref.is_able_to_write()
             {
-                let request: *mut JSMySQLQuery = queue_ref.requests.get().peek_item(offset);
+                let request: *mut JSMySQLQuery = queue_ref.requests.with(|v| v.peek_item(offset));
                 // Queue holds a ref on every request; pointer is non-null and
                 // live. `JSMySQLQuery` is a separate heap allocation — never
                 // aliases the queue or `*connection`. R-2: `ParentRef` yields
@@ -227,8 +232,8 @@ impl MySQLRequestQueue {
         }
 
         // Zig: defer { while ... } — runs at function exit.
-        while queue_ref.requests.get().readable_length() > 0 {
-            let request: *mut JSMySQLQuery = queue_ref.requests.get().peek_item(0);
+        while queue_ref.requests.with(|v| v.readable_length()) > 0 {
+            let request: *mut JSMySQLQuery = queue_ref.requests.with(|v| v.peek_item(0));
             // Queue holds a ref on every request (taken in `add()`), so the
             // pointer is non-null and live. Separate heap allocation — never
             // aliases the queue. R-2: `ParentRef` yields `&T` only; every method
@@ -258,7 +263,7 @@ impl MySQLRequestQueue {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.requests.get().readable_length() == 0
+        self.requests.with(|v| v.readable_length()) == 0
     }
 
     pub fn add(&mut self, request: *mut JSMySQLQuery) {
@@ -289,12 +294,13 @@ impl MySQLRequestQueue {
 
     #[inline]
     pub fn current(&self) -> Option<*mut JSMySQLQuery> {
-        let q = self.requests.get();
-        if q.readable_length() == 0 {
-            return None;
-        }
+        self.requests.with(|q| {
+            if q.readable_length() == 0 {
+                return None;
+            }
 
-        Some(q.peek_item(0))
+            Some(q.peek_item(0))
+        })
     }
 
     /// [`current`] as a [`bun_ptr::ThisPtr`] — one audited deref site here

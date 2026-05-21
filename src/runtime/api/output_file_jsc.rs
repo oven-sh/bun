@@ -35,7 +35,7 @@ fn dupe_path_like(path: &[u8]) -> PathLike {
 /// stays valid without a separate allocation.
 #[inline]
 fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
-    if let Some(store) = blob.store.get().as_ref() {
+    if let Some(store) = blob.store() {
         let store_ptr = store.as_ptr();
         // SAFETY: `store` is the freshly-allocated backing store uniquely owned
         // by `blob`; no other borrow exists yet.

@@ -102,7 +102,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
 
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
-    let Some(this_value) = this.this_value.get().try_get() else {
+    let Some(this_value) = this.this_value.with(|v| v.try_get()) else {
         return;
     };
     let Some(callback) = js::on_drain_get_cached(this_value) else {
@@ -128,7 +128,7 @@ extern "C" fn on_data(
     packets: c_int,
 ) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
-    let Some(this_value) = udp_socket.this_value.get().try_get() else {
+    let Some(this_value) = udp_socket.this_value.with(|v| v.try_get()) else {
         return;
     };
     let Some(callback) = js::on_data_get_cached(this_value) else {
@@ -223,9 +223,7 @@ extern "C" fn on_data(
 
         let payload_js = match udp_socket
             .config
-            .get()
-            .binary_type
-            .to_js(slice, global_this)
+            .with(|v| v.binary_type.to_js(slice, global_this))
         {
             Ok(v) => v,
             Err(_) => {
@@ -567,7 +565,9 @@ impl UDPSocket {
 
         let mut err: c_int = 0;
 
-        let config = this.config.get();
+        // SAFETY: single-JS-thread `JsCell` read; `config` was just installed
+        // above and is only read until the socket is created.
+        let config = unsafe { this.config.get() };
         let hostname_z = config.hostname.to_owned_slice_z();
 
         let created = uws::udp::Socket::create(
@@ -617,7 +617,9 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Failed to bind socket")));
         }
 
-        if let Some(connect) = &this.config.get().connect {
+        // SAFETY: single-JS-thread `JsCell` read; the `connect` borrow ends at
+        // the end of the `if let` body, which does not re-assign `config`.
+        if let Some(connect) = &unsafe { this.config.get() }.connect {
             let address_z = connect.address.to_owned_slice_z();
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
             let ret = uws::udp::Socket::opaque_mut(this.socket.get().unwrap())
@@ -654,7 +656,7 @@ impl UDPSocket {
 
     pub fn call_error_handler(&self, this_value_: JSValue, err: JSValue) {
         let this_value = if this_value_.is_empty() {
-            match self.this_value.get().try_get() {
+            match self.this_value.with(|v| v.try_get()) {
                 Some(v) => v,
                 None => return,
             }
@@ -1610,7 +1612,7 @@ impl UDPSocket {
         }
 
         let options = args.ptr[0];
-        let Some(this_value) = this.this_value.get().try_get() else {
+        let Some(this_value) = this.this_value.with(|v| v.try_get()) else {
             return Ok(JSValue::UNDEFINED);
         };
         let config = UDPSocketConfig::from_js(global_this, options, this_value)?;
@@ -1627,7 +1629,8 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_hostname(this: &Self, _: &JSGlobalObject) -> JsResult<JSValue> {
-        this.config.get().hostname.to_js(this.global_this.get())
+        this.config
+            .with(|v| v.hostname.to_js(this.global_this.get()))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1695,7 +1698,7 @@ impl UDPSocket {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_binary_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(match this.config.get().binary_type {
+        Ok(match this.config.with(|v| v.binary_type) {
             BinaryType::Buffer => global_this.common_strings().buffer(),
             BinaryType::Uint8Array => global_this.common_strings().uint8array(),
             BinaryType::ArrayBuffer => global_this.common_strings().arraybuffer(),

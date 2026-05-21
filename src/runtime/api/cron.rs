@@ -1526,7 +1526,7 @@ impl CronJob {
     fn maybe_downgrade(&self) {
         if self.stopped.get()
             && !self.pending_ref.get()
-            && !matches!(self.this_value.get(), JsRef::Finalized)
+            && !self.this_value.with(|v| matches!(v, JsRef::Finalized))
         {
             self.this_value.with_mut(|v| v.downgrade());
         }
@@ -1545,7 +1545,7 @@ impl CronJob {
     /// Idempotent — every step checks its own state.
     fn stop_internal(&self, _vm: &VirtualMachine) {
         self.stopped.set(true);
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+        if self.event_loop_timer.with(|v| v.state) == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
         self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
@@ -1691,7 +1691,7 @@ impl CronJob {
             return;
         }
 
-        let Some(js_this) = this_ref.this_value.get().try_get() else {
+        let Some(js_this) = this_ref.this_value.with(|v| v.try_get()) else {
             Self::self_stop(this, vm);
             return;
         };
@@ -1948,7 +1948,7 @@ fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
     let this_ref = CronJob::from_ctx_ptr(this);
     // SAFETY: `bun_vm()` returns the per-thread singleton.
     let vm = this_ref.global.bun_vm();
-    if let Some(js_this) = this_ref.this_value.get().try_get() {
+    if let Some(js_this) = this_ref.this_value.with(|v| v.try_get()) {
         js::pending_promise_set_cached(js_this, &this_ref.global, JSValue::UNDEFINED);
     }
     CronJob::schedule_next(this, vm);
@@ -1965,7 +1965,7 @@ fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     let vm = this_ref.global.bun_vm().as_mut();
     let err = args[0];
     let mut promise_value = JSValue::UNDEFINED;
-    if let Some(js_this) = this_ref.this_value.get().try_get() {
+    if let Some(js_this) = this_ref.this_value.with(|v| v.try_get()) {
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         js::pending_promise_set_cached(js_this, &this_ref.global, JSValue::UNDEFINED);
     }

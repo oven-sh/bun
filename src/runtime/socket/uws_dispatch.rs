@@ -203,10 +203,9 @@ pub unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     // (stamped at construction); dispatch is single-threaded so no `&mut`
     // alias exists for the lifetime of this shared borrow.
     let tls: &TLSSocket = unsafe { &*tls_ptr };
-    if let Some(raw) = tls.twin.get().as_ref() {
-        // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
-        // grab the raw `*mut` without consuming the ref so the +1 stays put.
-        let raw: *mut TLSSocket = raw.as_ptr();
+    // `twin` is `IntrusiveRc<Self>` (intrusive ref-counted heap pointer);
+    // grab the raw `*mut` without consuming the ref so the +1 stays put.
+    if let Some(raw) = tls.twin.with(|v| v.as_ref().map(|rc| rc.as_ptr())) {
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
         let slice =

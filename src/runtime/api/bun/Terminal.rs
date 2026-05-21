@@ -1669,7 +1669,7 @@ impl Terminal {
     fn on_writer_ready(&self) {
         bun_output::scoped_log!(Terminal, "onWriterReady");
         // Call drain callback
-        let Some(this_jsvalue) = self.this_value.get().try_get() else {
+        let Some(this_jsvalue) = self.this_value.with(|v| v.try_get()) else {
             return;
         };
         if let Some(callback) = js::gc::get(js::GcValue::Drain, this_jsvalue) {
@@ -1743,7 +1743,7 @@ impl Terminal {
     /// Note: exit_code is PTY-level (0=EOF, 1=error), NOT the subprocess exit code.
     /// The signal parameter is only populated if a signal caused the PTY close.
     fn call_exit_callback(&self, exit_code: i32, signal: Option<SignalCode>) {
-        let Some(this_jsvalue) = self.this_value.get().try_get() else {
+        let Some(this_jsvalue) = self.this_value.with(|v| v.try_get()) else {
             return;
         };
         let Some(callback) = js::gc::get(js::GcValue::Exit, this_jsvalue) else {
@@ -1788,7 +1788,7 @@ impl Terminal {
             self.this_value.with_mut(|v| v.upgrade(global));
         }
 
-        let Some(this_jsvalue) = self.this_value.get().try_get() else {
+        let Some(this_jsvalue) = self.this_value.with(|v| v.try_get()) else {
             return true;
         };
         let Some(callback) = js::gc::get(js::GcValue::Data, this_jsvalue) else {

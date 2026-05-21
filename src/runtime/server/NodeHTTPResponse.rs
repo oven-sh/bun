@@ -376,7 +376,7 @@ impl NodeHTTPResponse {
         sec_websocket_protocol: ZigString,
         sec_websocket_extensions: ZigString,
     ) -> bool {
-        let upgrade_ctx = self.upgrade_context.get().context;
+        let upgrade_ctx = self.upgrade_context.with(|v| v.context);
         if upgrade_ctx.is_null() {
             return false;
         }
@@ -409,7 +409,9 @@ impl NodeHTTPResponse {
 
         // R-2: `JsCell::get()` projects `&UpgradeCTX`; the borrow lives until
         // the explicit `drop`s below (no `with_mut` on this cell overlaps).
-        let upgrade_context: &UpgradeCTX = self.upgrade_context.get();
+        // SAFETY: see the R-2 note above — nothing between here and the final
+        // use of `upgrade_context` writes `self.upgrade_context`.
+        let upgrade_context: &UpgradeCTX = unsafe { self.upgrade_context.get() };
 
         let sec_websocket_protocol_value: &[u8] = 'brk: {
             if sec_websocket_protocol.len == 0 {
@@ -483,12 +485,12 @@ impl NodeHTTPResponse {
         if (flags.contains(Flags::UPGRADED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED))
-            && (self.body_read_ref.get().has
+            && (self.body_read_ref.with(|v| v.has)
                 || self.body_read_state.get() == BodyReadState::Pending)
             && (!flags.contains(Flags::HAS_CUSTOM_ON_DATA)
                 || js::on_data_get_cached(this_value).is_none())
         {
-            let had_ref = self.body_read_ref.get().has;
+            let had_ref = self.body_read_ref.with(|v| v.has);
             if !flags.contains(Flags::UPGRADED) && !flags.contains(Flags::SOCKET_CLOSED) {
                 scoped_log!(NodeHTTPResponse, "clearOnData");
                 if let Some(raw_response) = self.raw_response.get() {
@@ -531,8 +533,7 @@ impl NodeHTTPResponse {
     ) -> JsResult<JSValue> {
         if self
             .buffered_request_body_data_during_pause
-            .get()
-            .capacity()
+            .with(|v| v.capacity())
             > 0
         {
             self.buffered_request_body_data_during_pause
@@ -639,7 +640,11 @@ impl NodeHTTPResponse {
             BodyReadState::Pending => result |= 1 << 1,
             BodyReadState::Done => result |= 1 << 2,
         }
-        if self.buffered_request_body_data_during_pause.get().len() > 0 {
+        if self
+            .buffered_request_body_data_during_pause
+            .with(|v| v.len())
+            > 0
+        {
             result |= 1 << 3;
         }
         if self
@@ -1043,9 +1048,14 @@ impl NodeHTTPResponse {
         scoped_log!(
             NodeHTTPResponse,
             "drainBufferedRequestBodyFromPause {}",
-            self.buffered_request_body_data_during_pause.get().len()
+            self.buffered_request_body_data_during_pause
+                .with(|v| v.len())
         );
-        if self.buffered_request_body_data_during_pause.get().len() > 0 {
+        if self
+            .buffered_request_body_data_during_pause
+            .with(|v| v.len())
+            > 0
+        {
             // Zig spec: `createBuffer` then `.{}` — `bun.ByteList` has no Drop, so the
             // assignment just forgets the storage and ownership transfers to JSC. A Rust
             // `Vec` *does* Drop, so the prior `create_buffer(slice_mut)` + `= Vec::new()`
@@ -1234,7 +1244,7 @@ impl NodeHTTPResponse {
             .with_mut(|b| b.append_slice(chunk));
         if last {
             self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST));
-            if self.body_read_ref.get().has {
+            if self.body_read_ref.with(|v| v.has) {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
                 self.mark_request_as_done_if_necessary();
             }
@@ -1246,7 +1256,12 @@ impl NodeHTTPResponse {
         // right now the socket instead of emitting an error event it will reportUncaughtException
         // this makes the behavior aligned with current implementation, but not ideal
         let bytes: JSValue = 'brk: {
-            if !chunk.is_empty() && self.buffered_request_body_data_during_pause.get().len() > 0 {
+            if !chunk.is_empty()
+                && self
+                    .buffered_request_body_data_during_pause
+                    .with(|v| v.len())
+                    > 0
+            {
                 let paused = self
                     .buffered_request_body_data_during_pause
                     .replace(Vec::new());
@@ -1321,7 +1336,7 @@ impl NodeHTTPResponse {
 
         // Deferred tail:
         if last {
-            if self.body_read_ref.get().has {
+            if self.body_read_ref.with(|v| v.has) {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
                 self.mark_request_as_done_if_necessary();
             }
@@ -1549,7 +1564,7 @@ impl NodeHTTPResponse {
         if IS_END {
             // Discard the body read ref if it's pending and no onData callback is set at this point.
             // This is the equivalent of req._dump().
-            if self.body_read_ref.get().has
+            if self.body_read_ref.with(|v| v.has)
                 && self.body_read_state.get() == BodyReadState::Pending
                 && (!self.flags.get().contains(Flags::HAS_CUSTOM_ON_DATA)
                     || js::on_data_get_cached(this_value).is_none())
@@ -1722,7 +1737,7 @@ impl NodeHTTPResponse {
                 }
                 BodyReadState::None => {}
             }
-            if self.body_read_ref.get().has {
+            if self.body_read_ref.with(|v| v.has) {
                 self.body_read_ref
                     .with_mut(|r| r.unref(bun_vm_mut(global_object)));
             }
@@ -1744,7 +1759,7 @@ impl NodeHTTPResponse {
         // or sets `is_data_buffered_during_pause_last`, both of which are rejected by the guard above.
         // So reaching here, `body_read_ref` is still held from create(). Do not re-acquire it or
         // `this.ref()` — there would be no balancing release (PR #18564 removed the paired derefs).
-        debug_assert!(self.body_read_ref.get().has);
+        debug_assert!(self.body_read_ref.with(|v| v.has));
     }
 
     pub fn write(
@@ -1764,7 +1779,7 @@ impl NodeHTTPResponse {
                 raw_response.uncork();
             }
         }
-        self.auto_flusher.get().registered.set(false);
+        self.auto_flusher.with(|v| v.registered.set(false));
         self.deref();
         false
     }
@@ -1774,12 +1789,12 @@ impl NodeHTTPResponse {
     // `on_auto_flush_trampoline` (extra `self.ref_()`) so the inline body
     // stays.
     fn register_auto_flush(&self) {
-        if self.auto_flusher.get().registered.get() {
+        if self.auto_flusher.with(|v| v.registered.get()) {
             return;
         }
         self.ref_();
-        debug_assert!(!self.auto_flusher.get().registered.get());
-        self.auto_flusher.get().registered.set(true);
+        debug_assert!(!self.auto_flusher.with(|v| v.registered.get()));
+        self.auto_flusher.with(|v| v.registered.set(true));
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let found_existing = vm_get()
             .event_loop_ref()
@@ -1789,17 +1804,17 @@ impl NodeHTTPResponse {
     }
 
     fn unregister_auto_flush(&self) {
-        if !self.auto_flusher.get().registered.get() {
+        if !self.auto_flusher.with(|v| v.registered.get()) {
             return;
         }
-        debug_assert!(self.auto_flusher.get().registered.get());
+        debug_assert!(self.auto_flusher.with(|v| v.registered.get()));
         let ctx = ptr::NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let removed = vm_get()
             .event_loop_ref()
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
-        self.auto_flusher.get().registered.set(false);
+        self.auto_flusher.with(|v| v.registered.set(false));
         self.deref();
     }
 
@@ -1945,8 +1960,8 @@ impl NodeHTTPResponse {
 
     /// Called by intrusive RefCount when count reaches zero.
     fn deinit(&self) {
-        debug_assert!(!self.body_read_ref.get().has);
-        debug_assert!(!self.poll_ref.get().has);
+        debug_assert!(!self.body_read_ref.with(|v| v.has));
+        debug_assert!(!self.poll_ref.with(|v| v.has));
         let flags = self.flags.get();
         debug_assert!(!flags.contains(Flags::IS_REQUEST_PENDING));
         debug_assert!(

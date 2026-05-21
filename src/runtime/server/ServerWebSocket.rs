@@ -410,9 +410,7 @@ impl ServerWebSocket {
 
         let this_value = self
             .this_value
-            .get()
-            .try_get()
-            .unwrap_or(JSValue::UNDEFINED);
+            .with(|v| v.try_get().unwrap_or(JSValue::UNDEFINED));
         let args = [this_value];
 
         let _loop_guard = vm.enter_event_loop_scope();
@@ -469,9 +467,7 @@ impl ServerWebSocket {
 
         let arguments = [
             self.this_value
-                .get()
-                .try_get()
-                .unwrap_or(JSValue::UNDEFINED),
+                .with(|v| v.try_get().unwrap_or(JSValue::UNDEFINED)),
             match opcode {
                 Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message)
                     .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
@@ -537,9 +533,7 @@ impl ServerWebSocket {
 
             let args = [self
                 .this_value
-                .get()
-                .try_get()
-                .unwrap_or(JSValue::UNDEFINED)];
+                .with(|v| v.try_get().unwrap_or(JSValue::UNDEFINED))];
             let mut corker = Corker {
                 args: &args,
                 global_object,
@@ -583,9 +577,7 @@ impl ServerWebSocket {
 
         let args = [
             self.this_value
-                .get()
-                .try_get()
-                .unwrap_or(JSValue::UNDEFINED),
+                .with(|v| v.try_get().unwrap_or(JSValue::UNDEFINED)),
             self.binary_to_js(global_this, data)
                 .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
         ];
@@ -617,9 +609,7 @@ impl ServerWebSocket {
 
         let args = [
             self.this_value
-                .get()
-                .try_get()
-                .unwrap_or(JSValue::UNDEFINED),
+                .with(|v| v.try_get().unwrap_or(JSValue::UNDEFINED)),
             self.binary_to_js(global_this, data)
                 .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
         ];
@@ -649,12 +639,10 @@ impl ServerWebSocket {
         // PORT NOTE: reshaped for borrowck — Zig defer block; downgrade + signal
         // cleanup runs at fn exit. `this_value` is not mutated between here and
         // the deferred `downgrade()`, so hoisting these reads is sound.
-        let was_not_empty = self.this_value.get().is_not_empty();
+        let was_not_empty = self.this_value.with(|v| v.is_not_empty());
         let cached_this = self
             .this_value
-            .get()
-            .try_get()
-            .unwrap_or(JSValue::UNDEFINED);
+            .with(|v| v.try_get().unwrap_or(JSValue::UNDEFINED));
         let this_value_cell: &JsCell<JsRef> = &self.this_value;
         let _cleanup = scopeguard::guard(signal, move |sig| {
             if let Some(sig) = sig {
@@ -1289,7 +1277,7 @@ impl ServerWebSocket {
     #[bun_jsc::host_fn(getter)]
     pub fn get_data(&self, _global_this: &JSGlobalObject) -> JSValue {
         bun_output::scoped_log!(WebSocketServer, "getData()");
-        if let Some(this_value) = self.this_value.get().try_get() {
+        if let Some(this_value) = self.this_value.with(|v| v.try_get()) {
             return js::data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
         }
         JSValue::UNDEFINED
@@ -1298,7 +1286,7 @@ impl ServerWebSocket {
     #[bun_jsc::host_fn(setter)]
     pub fn set_data(&self, global_object: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         bun_output::scoped_log!(WebSocketServer, "setData()");
-        if let Some(this_value) = self.this_value.get().try_get() {
+        if let Some(this_value) = self.this_value.with(|v| v.try_get()) {
             js::data_set_cached(this_value, global_object, value);
         }
         Ok(true)

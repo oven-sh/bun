@@ -189,7 +189,10 @@ macro_rules! node_accessors {
                 #[inline]
                 #[track_caller]
                 pub fn $get(&self, id: NodeId) -> &$ty {
-                    match &self.nodes.get()[id.idx()] {
+                    // SAFETY: single-JS-thread `JsCell` read; node slots are
+                    // never removed while a node accessor borrow is live (the
+                    // arena only grows until `free_node`).
+                    match unsafe { &self.nodes.get()[id.idx()] } {
                         Node::$variant(v) => v,
                         other => panic!(
                             concat!("expected Node::", stringify!($variant), " at {}, got {:?}"),
@@ -634,7 +637,9 @@ impl Interpreter {
         // Wire the interpreter backref into root stdin so async poll
         // callbacks can drive `Yield::run`.
         let interp_ptr: *mut Interpreter = Interpreter::as_ctx_ptr(&interpreter);
-        if let crate::shell::io::InKind::Fd(ref r) = interpreter.root_io.get().stdin {
+        // SAFETY: single-JS-thread `JsCell` read; the borrow ends inside the
+        // `if let` body and `root_io` is not reassigned there.
+        if let crate::shell::io::InKind::Fd(ref r) = unsafe { interpreter.root_io.get() }.stdin {
             // SAFETY: `interp_ptr` is the live `Interpreter` just constructed.
             r.set_interp(interp_ptr);
         }
@@ -852,7 +857,7 @@ macro_rules! shell_state_dispatch {
             if parent == NodeId::INTERPRETER {
                 return self.on_root_child_done(child, exit_code);
             }
-            match self.nodes.get()[parent.idx()].kind() {
+            match self.nodes.with(|v| v[parent.idx()].kind()) {
                 $( StateKind::$v => $h::child_done(self, parent, child, exit_code), )+
                 StateKind::Free => unreachable!("child_done on freed {}", parent),
             }
@@ -861,7 +866,7 @@ macro_rules! shell_state_dispatch {
         /// Advance node `id` by one step. The trampoline (`Yield::run`) calls
         /// this; replaces the per-variant `&mut State` dispatch in Yield.
         pub fn next_node(&self, id: NodeId) -> Yield {
-            match self.nodes.get()[id.idx()].kind() {
+            match self.nodes.with(|v| v[id.idx()].kind()) {
                 $( StateKind::$v => $h::next(self, id), )+
                 StateKind::Free => unreachable!("next on freed {}", id),
             }
@@ -870,7 +875,7 @@ macro_rules! shell_state_dispatch {
         /// Start node `id`. Most states return `Yield::<Kind>(id)` immediately;
         /// the trampoline then calls `next_node`.
         pub fn start_node(&self, id: NodeId) -> Yield {
-            match self.nodes.get()[id.idx()].kind() {
+            match self.nodes.with(|v| v[id.idx()].kind()) {
                 $( StateKind::$v => $h::start(self, id), )+
                 StateKind::Free => unreachable!("start on freed {}", id),
             }
@@ -955,7 +960,10 @@ impl Interpreter {
 
     #[inline]
     pub fn node(&self, id: NodeId) -> &Node {
-        &self.nodes.get()[id.idx()]
+        // SAFETY: single-JS-thread `JsCell` read; node slots are never removed
+        // while a node accessor borrow is live (the arena only grows until
+        // `free_node`).
+        unsafe { &self.nodes.get()[id.idx()] }
     }
 
     #[inline]
@@ -969,10 +977,12 @@ impl Interpreter {
     /// `StatePtrUnion.ptr.is::<T>()` checks.)
     #[inline]
     pub fn parent_of(&self, id: NodeId) -> NodeId {
-        self.nodes.get()[id.idx()]
-            .base()
-            .map(|b| b.parent)
-            .unwrap_or(NodeId::INTERPRETER)
+        self.nodes.with(|v| {
+            v[id.idx()]
+                .base()
+                .map(|b| b.parent)
+                .unwrap_or(NodeId::INTERPRETER)
+        })
     }
 
     #[inline]
@@ -984,7 +994,7 @@ impl Interpreter {
             // own variant in callers' matches.
             return StateKind::Script; // unused — callers test the sentinel first
         }
-        self.nodes.get()[id.idx()].kind()
+        self.nodes.with(|v| v[id.idx()].kind())
     }
 
     /// Shell exec env for the node at `id` (or the root env if `id` is the
@@ -994,10 +1004,12 @@ impl Interpreter {
         if id == NodeId::INTERPRETER {
             return self.root_shell.as_ptr();
         }
-        self.nodes.get()[id.idx()]
-            .base()
-            .map(|b| b.shell)
-            .unwrap_or(self.root_shell.as_ptr())
+        self.nodes.with(|v| {
+            v[id.idx()]
+                .base()
+                .map(|b| b.shell)
+                .unwrap_or(self.root_shell.as_ptr())
+        })
     }
 
     // ── hoisted dispatch (PORTING.md §Dispatch hot-path) ───────────────────
@@ -1075,7 +1087,7 @@ impl Interpreter {
             return;
         }
         // NOTE: keep in sync with shell_state_dispatch! table (irregular Async/Free arms keep this hand-rolled for v1).
-        match self.nodes.get()[id.idx()].kind() {
+        match self.nodes.with(|v| v[id.idx()].kind()) {
             StateKind::Script => Script::deinit(self, id),
             StateKind::Stmt => Stmt::deinit(self, id),
             StateKind::Binary => Binary::deinit(self, id),
@@ -1096,7 +1108,10 @@ impl Interpreter {
 
     fn on_root_child_done(&self, child: NodeId, exit_code: ExitCode) -> Yield {
         // Only `Script` can be a direct child of the interpreter.
-        debug_assert!(matches!(self.nodes.get()[child.idx()], Node::Script(_)));
+        debug_assert!(
+            self.nodes
+                .with(|v| matches!(v[child.idx()], Node::Script(_)))
+        );
         log!("Interpreter script finish {}", exit_code);
         Script::deinit_from_interpreter(self, child);
         self.free_node(child);
@@ -1146,17 +1161,21 @@ impl Interpreter {
 
     #[inline]
     pub fn root_io(&self) -> &IO {
-        self.root_io.get()
+        // SAFETY: single-JS-thread `JsCell` read; callers consume the borrow
+        // before `root_io` is reassigned (it is only written during init).
+        unsafe { self.root_io.get() }
     }
 
     /// Spec: interpreter.zig `#computeEstimatedSizeForGC` (interpreter.zig:752).
     pub fn compute_estimated_size_for_gc(&self) -> usize {
         let mut size = core::mem::size_of::<Interpreter>();
-        size += self.args.get().memory_cost();
-        size += self.root_shell.get().memory_cost();
-        size += self.root_io.get().memory_cost();
+        size += self.args.with(|v| v.memory_cost());
+        size += self.root_shell.with(|v| v.memory_cost());
+        size += self.root_io.with(|v| v.memory_cost());
         size += self.jsobjs.len() * core::mem::size_of::<crate::jsc::JSValue>();
-        let vm_args = self.vm_args_utf8.get();
+        // SAFETY: single-JS-thread `JsCell` read; this size estimator only
+        // reads the cached argv slices.
+        let vm_args = unsafe { self.vm_args_utf8.get() };
         for arg in vm_args {
             size += arg.slice().len();
         }
@@ -1291,8 +1310,10 @@ impl Interpreter {
         self.setup_io_before_run()?;
 
         let shell = self.root_shell.as_ptr();
-        let ast = &raw const self.args.get().script_ast;
-        let io = self.root_io.get().clone();
+        // SAFETY: single-JS-thread `JsCell` read; only used to form a raw
+        // pointer to the boxed AST, which outlives the script run.
+        let ast = &raw const unsafe { self.args.get() }.script_ast;
+        let io = self.root_io.with(|v| v.clone());
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
@@ -1393,8 +1414,10 @@ impl Interpreter {
         Self::incr_pending_activity_flag(&self.has_pending_activity);
 
         let shell = self.root_shell.as_ptr();
-        let ast = &raw const self.args.get().script_ast;
-        let io = self.root_io.get().clone();
+        // SAFETY: single-JS-thread `JsCell` read; only used to form a raw
+        // pointer to the boxed AST, which outlives the script run.
+        let ast = &raw const unsafe { self.args.get() }.script_ast;
+        let io = self.root_io.with(|v| v.clone());
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
@@ -1484,7 +1507,9 @@ impl Interpreter {
                 // i.e. its `base.shell` differs from its parent's.
                 {
                     let root_shell_ptr: *mut ShellExecEnv = this.root_shell.as_ptr();
-                    let nodes = this.nodes.get();
+                    // SAFETY: single-JS-thread `JsCell` read; deinit only reads the
+                    // node arena to collect owned sub-shell environments.
+                    let nodes = unsafe { this.nodes.get() };
                     let owned_envs: Vec<*mut ShellExecEnv> = nodes
                         .iter()
                         .filter_map(|n| {
@@ -1695,7 +1720,9 @@ impl Interpreter {
                 }
             }
         });
-        self.vm_args_utf8.get()[idx as usize].slice()
+        // SAFETY: single-JS-thread `JsCell` read; the cached UTF-8 argv entry
+        // is append-only, so the returned slice stays valid.
+        unsafe { self.vm_args_utf8.get()[idx as usize].slice() }
     }
 
     /// Spec: Expansion.zig `expandVarArgv`. Appends the value of `$N` to
@@ -3171,7 +3198,7 @@ pub fn create_shell_interpreter(
     // alias if JS re-enters another host fn on the same wrapper).
     let parsed_shell_script: &ParsedShellScript = unsafe { &*parsed_shell_script };
 
-    if parsed_shell_script.args.get().is_none() {
+    if parsed_shell_script.args.with(|v| v.is_none()) {
         return Err(global.throw(format_args!(
             "shell: shell args is null, this is a bug in Bun. Please file a GitHub issue.",
         )));

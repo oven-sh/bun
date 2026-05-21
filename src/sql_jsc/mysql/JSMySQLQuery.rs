@@ -276,7 +276,7 @@ impl JSMySQLQuery {
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, move |s| {
-            if s.this_value.get().is_not_empty() && is_last_result {
+            if s.this_value.with(|v| v.is_not_empty()) && is_last_result {
                 s.this_value.with_mut(|v| v.downgrade());
             }
         });
@@ -291,7 +291,7 @@ impl JSMySQLQuery {
         let Some(target_value) = self.get_target() else {
             return;
         };
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = self.this_value.with(|v| v.try_get()) else {
             return;
         };
         this_value.ensure_still_alive();
@@ -344,7 +344,7 @@ impl JSMySQLQuery {
         // Attention: we cannot touch JS here
         // If you need to touch JS, you wanna to use reject or reject_with_js_value instead
         let _guard = self.ref_guard();
-        if self.this_value.get().is_not_empty() {
+        if self.this_value.with(|v| v.is_not_empty()) {
             self.this_value.with_mut(|v| v.downgrade());
         }
         let _ = self.query.with_mut(|q| q.fail());
@@ -371,7 +371,7 @@ impl JSMySQLQuery {
         // R-2: `&Self` is `Copy`; the guard captures it by value and runs on
         // every exit path (defer). All mutation is `JsCell`-backed.
         let _downgrade = scopeguard::guard(self, |s| {
-            if s.this_value.get().is_not_empty() {
+            if s.this_value.with(|v| v.is_not_empty()) {
                 s.this_value.with_mut(|v| v.downgrade());
             }
         });
@@ -414,7 +414,7 @@ impl JSMySQLQuery {
             queries_array
         };
         js_array.ensure_still_alive();
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = self.this_value.with(|v| v.try_get()) else {
             return;
         };
         event_loop.run_callback(
@@ -431,13 +431,13 @@ impl JSMySQLQuery {
             // cannot run a query if the VM is shutting down
             return Ok(());
         }
+        if self
+            .query
+            .with(|q| !q.is_pending() || q.is_being_prepared())
         {
-            let q = self.query.get();
-            if !q.is_pending() || q.is_being_prepared() {
-                debug!("run already running or being prepared");
-                // already running or completed
-                return Ok(());
-            }
+            debug!("run already running or being prepared");
+            // already running or completed
+            return Ok(());
         }
         let global_object: &JSGlobalObject = self.global_object();
         self.this_value.with_mut(|v| v.upgrade(global_object));
@@ -484,39 +484,43 @@ impl JSMySQLQuery {
 
     #[inline]
     pub fn is_completed(&self) -> bool {
-        self.query.get().is_completed()
+        self.query.with(|v| v.is_completed())
     }
     #[inline]
     pub fn is_running(&self) -> bool {
-        self.query.get().is_running()
+        self.query.with(|v| v.is_running())
     }
     #[inline]
     pub fn is_pending(&self) -> bool {
-        self.query.get().is_pending()
+        self.query.with(|v| v.is_pending())
     }
     #[inline]
     pub fn is_being_prepared(&self) -> bool {
-        self.query.get().is_being_prepared()
+        self.query.with(|v| v.is_being_prepared())
     }
     #[inline]
     pub fn is_pipelined(&self) -> bool {
-        self.query.get().is_pipelined()
+        self.query.with(|v| v.is_pipelined())
     }
     #[inline]
     pub fn is_simple(&self) -> bool {
-        self.query.get().is_simple()
+        self.query.with(|v| v.is_simple())
     }
     #[inline]
     pub fn is_bigint_supported(&self) -> bool {
-        self.query.get().is_bigint_supported()
+        self.query.with(|v| v.is_bigint_supported())
     }
     #[inline]
     pub fn get_result_mode(&self) -> SQLQueryResultMode {
-        self.query.get().get_result_mode()
+        self.query.with(|v| v.get_result_mode())
     }
     // TODO: isolate statement modification away from the connection
+    #[allow(clippy::mut_from_ref)]
     pub fn get_statement(&self) -> Option<&mut MySQLStatement> {
-        self.query.get().get_statement()
+        // SAFETY: single-JS-thread `JsCell` read; the returned `&mut Statement`
+        // points at the heap-allocated statement, not into the cell payload,
+        // so the `&MySQLQuery` borrow ends when this call returns.
+        unsafe { self.query.get() }.get_statement()
     }
 
     pub fn mark_as_prepared(&self) {
@@ -528,7 +532,7 @@ impl JSMySQLQuery {
         if self.vm().is_shutting_down() {
             return;
         }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.with(|v| v.try_get()) {
             js::pending_value_set_cached(value, self.global_object(), result);
         }
     }
@@ -537,7 +541,7 @@ impl JSMySQLQuery {
         if self.vm().is_shutting_down() {
             return None;
         }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.with(|v| v.try_get()) {
             return js::pending_value_get_cached(value);
         }
         None
@@ -548,7 +552,7 @@ impl JSMySQLQuery {
         if self.vm().is_shutting_down() {
             return;
         }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.with(|v| v.try_get()) {
             js::target_set_cached(value, self.global_object(), result);
         }
     }
@@ -557,7 +561,7 @@ impl JSMySQLQuery {
         if self.vm().is_shutting_down() {
             return None;
         }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.with(|v| v.try_get()) {
             return js::target_get_cached(value);
         }
         None
@@ -568,7 +572,7 @@ impl JSMySQLQuery {
         if self.vm().is_shutting_down() {
             return;
         }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.with(|v| v.try_get()) {
             js::columns_set_cached(value, self.global_object(), result);
         }
     }
@@ -577,7 +581,7 @@ impl JSMySQLQuery {
         if self.vm().is_shutting_down() {
             return None;
         }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.with(|v| v.try_get()) {
             return js::columns_get_cached(value);
         }
         None
@@ -587,7 +591,7 @@ impl JSMySQLQuery {
         if self.vm().is_shutting_down() {
             return;
         }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.with(|v| v.try_get()) {
             js::binding_set_cached(value, self.global_object(), result);
         }
     }
@@ -596,7 +600,7 @@ impl JSMySQLQuery {
         if self.vm().is_shutting_down() {
             return None;
         }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.with(|v| v.try_get()) {
             return js::binding_get_cached(value);
         }
         None

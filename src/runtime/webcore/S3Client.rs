@@ -614,7 +614,7 @@ impl S3Client {
         )?;
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
-        let store = blob.store.get().as_ref().unwrap();
+        let store = blob.store().unwrap();
         store
             .data
             .as_s3()
@@ -651,7 +651,7 @@ impl S3Client {
             ptr.request_payer,
         )?;
         // Zig: `blob.store.?.data.s3.unlink(blob.store.?, globalThis, options)`.
-        let store = blob.store.get().as_ref().unwrap();
+        let store = blob.store().unwrap();
         store.data.as_s3().unlink(store, global, options)
     }
 
@@ -726,7 +726,7 @@ impl S3Client {
         )?;
 
         // Zig: `blob.store.?.data.s3.listObjects(blob.store.?, globalThis, object_keys, options)`.
-        let store = blob.store.get().as_ref().unwrap();
+        let store = blob.store().unwrap();
         store
             .data
             .as_s3()

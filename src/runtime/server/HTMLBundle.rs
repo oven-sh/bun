@@ -237,8 +237,8 @@ impl Route {
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
         cost += mem::size_of::<Route>();
-        cost += self.pending_responses.get().len() * mem::size_of::<PendingResponse>();
-        cost += self.state.get().memory_cost();
+        cost += self.pending_responses.with(|v| v.len()) * mem::size_of::<PendingResponse>();
+        cost += self.state.with(|v| v.memory_cost());
         cost
     }
 
@@ -312,7 +312,10 @@ impl Route {
             // R-2: swap the state out *before* running its destructor so no
             // `&mut State` borrow into `route.state` is live across the
             // `StaticRoute::deref_` / `JSBundleCompletionTask::deref` calls.
-            if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
+            if route
+                .state
+                .with(|s| matches!(s, State::Html(_) | State::Err(_)))
+            {
                 route.state.replace(State::Pending).deinit();
             }
         }
@@ -320,7 +323,13 @@ impl Route {
         // Zig `state: switch (this.state) { ... continue :state this.state; }` — one re-dispatch
         // after `.pending` schedules the bundle.
         loop {
-            match route.state.get() {
+            // SAFETY: single-JS-thread `JsCell` read. The `Pending` arm writes
+            // `route.state` (via `schedule_bundle`) while this borrow is still
+            // nominally in scope, but the borrow is never read again after the
+            // write — the arm `continue`s and re-reads the cell fresh. The
+            // other arms only copy `Copy` payloads out and never write the
+            // cell.
+            match unsafe { route.state.get() } {
                 State::Pending => {
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_output::scoped_log!(
@@ -750,7 +759,9 @@ impl Route {
             pending_response.is_response_pending = false;
             resp.clear_aborted();
 
-            match self.state.get() {
+            // SAFETY: single-JS-thread `JsCell` read; the arms only copy the
+            // `*mut StaticRoute` out and never replace `self.state`.
+            match unsafe { self.state.get() } {
                 State::Html(html) => {
                     if method == Method::HEAD {
                         // SAFETY: `*html` is a live intrusive-refcounted allocation.
@@ -787,7 +798,7 @@ impl Route {
 impl Drop for Route {
     fn drop(&mut self) {
         // pending responses keep a ref to the route
-        debug_assert!(self.pending_responses.get().is_empty());
+        debug_assert!(self.pending_responses.with(|v| v.is_empty()));
         // `pending_responses` (Vec) and `bundle` (IntrusiveRc) auto-drop.
         // `state` has no `Drop` glue for the intrusive-pointer variants — release
         // them explicitly (mirrors Zig `Route.deinit` calling `this.state.deinit()`).

@@ -185,7 +185,7 @@ impl JSMySQLConnection {
 
     pub fn on_auto_flush(&self) -> bool {
         bun_core::scoped_log!(MySQLConnection, "onAutoFlush");
-        if self.connection.get().has_backpressure() {
+        if self.connection.with(|v| v.has_backpressure()) {
             self.auto_flusher.with_mut(|a| a.registered = false);
             // if we have backpressure, wait for onWritable
             return false;
@@ -195,15 +195,15 @@ impl JSMySQLConnection {
         self.drain_internal();
 
         // if we dont have backpressure and if we still have data to send, return true otherwise return false and wait for onWritable
-        let keep_flusher_registered = self.connection.get().can_flush();
+        let keep_flusher_registered = self.connection.with(|v| v.can_flush());
         self.auto_flusher
             .with_mut(|a| a.registered = keep_flusher_registered);
         keep_flusher_registered
     }
 
     fn register_auto_flusher(&self) {
-        if !self.auto_flusher.get().registered // should not be registered
-            && self.connection.get().can_flush()
+        if !self.auto_flusher.with(|v| v.registered) // should not be registered
+            && self.connection.with(|v| v.can_flush())
         {
             AutoFlusher::register_deferred_microtask_with_type_unchecked(
                 self.as_ctx_ptr(),
@@ -214,7 +214,7 @@ impl JSMySQLConnection {
     }
 
     fn unregister_auto_flusher(&self) {
-        if self.auto_flusher.get().registered {
+        if self.auto_flusher.with(|v| v.registered) {
             AutoFlusher::unregister_deferred_microtask_with_type(self.as_ctx_ptr(), self.vm());
             self.auto_flusher.with_mut(|a| a.registered = false);
         }
@@ -222,19 +222,19 @@ impl JSMySQLConnection {
 
     fn stop_timers(&self) {
         bun_core::scoped_log!(MySQLConnection, "stopTimers");
-        if self.timer.get().state == EventLoopTimerState::ACTIVE {
+        if self.timer.with(|v| v.state) == EventLoopTimerState::ACTIVE {
             self.timer.with_mut(|t| self.vm_mut().timer().remove(t));
         }
-        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
+        if self.max_lifetime_timer.with(|v| v.state) == EventLoopTimerState::ACTIVE {
             self.max_lifetime_timer
                 .with_mut(|t| self.vm_mut().timer().remove(t));
         }
     }
 
     fn get_timeout_interval(&self) -> u32 {
-        match self.connection.get().status {
+        match self.connection.with(|v| v.status) {
             my_sql_connection::Status::Connected => {
-                if self.connection.get().is_idle() {
+                if self.connection.with(|v| v.is_idle()) {
                     return self.idle_timeout_interval_ms;
                 }
                 0
@@ -247,11 +247,11 @@ impl JSMySQLConnection {
     pub fn reset_connection_timeout(&self) {
         let interval = self.get_timeout_interval();
         bun_core::scoped_log!(MySQLConnection, "resetConnectionTimeout {}", interval);
-        if self.timer.get().state == EventLoopTimerState::ACTIVE {
+        if self.timer.with(|v| v.state) == EventLoopTimerState::ACTIVE {
             self.timer.with_mut(|t| self.vm_mut().timer().remove(t));
         }
-        if self.connection.get().status == my_sql_connection::Status::Failed
-            || self.connection.get().is_processing_data()
+        if self.connection.with(|v| v.status) == my_sql_connection::Status::Failed
+            || self.connection.with(|v| v.is_processing_data())
             || interval == 0
         {
             return;
@@ -267,11 +267,11 @@ impl JSMySQLConnection {
         self.timer
             .with_mut(|t| t.state = EventLoopTimerState::FIRED);
 
-        if self.connection.get().is_processing_data() {
+        if self.connection.with(|v| v.is_processing_data()) {
             return;
         }
 
-        if self.connection.get().status == my_sql_connection::Status::Failed {
+        if self.connection.with(|v| v.status) == my_sql_connection::Status::Failed {
             return;
         }
 
@@ -282,7 +282,7 @@ impl JSMySQLConnection {
 
         use bun_core::fmt::{ConnTimeoutKind::*, fmt_conn_timeout};
         use my_sql_connection::Status as S;
-        let (code, kind, ms, sfx) = match self.connection.get().status {
+        let (code, kind, ms, sfx) = match self.connection.with(|v| v.status) {
             S::Connected => (
                 AnyMySQLErrorT::IdleTimeout,
                 Idle,
@@ -309,7 +309,7 @@ impl JSMySQLConnection {
     pub fn on_max_lifetime_timeout(&self) {
         self.max_lifetime_timer
             .with_mut(|t| t.state = EventLoopTimerState::FIRED);
-        if self.connection.get().status == my_sql_connection::Status::Failed {
+        if self.connection.with(|v| v.status) == my_sql_connection::Status::Failed {
             return;
         }
         use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
@@ -330,7 +330,7 @@ impl JSMySQLConnection {
         if self.max_lifetime_interval_ms == 0 {
             return;
         }
-        if self.max_lifetime_timer.get().state == EventLoopTimerState::ACTIVE {
+        if self.max_lifetime_timer.with(|v| v.state) == EventLoopTimerState::ACTIVE {
             return;
         }
 
@@ -430,7 +430,7 @@ impl JSMySQLConnection {
     }
 
     fn ensure_js_value_is_alive(&self) {
-        if let Some(value) = self.js_value.get().try_get() {
+        if let Some(value) = self.js_value.with(|v| v.try_get()) {
             value.ensure_still_alive();
         }
     }
@@ -441,15 +441,15 @@ impl JSMySQLConnection {
     }
 
     fn update_reference_type(&self) {
-        if self.connection.get().is_active() {
+        if self.connection.with(|v| v.is_active()) {
             bun_core::scoped_log!(MySQLConnection, "connection is active");
-            if self.js_value.get().is_not_empty() && !self.js_value.get().is_strong() {
+            if self.js_value.with(|v| v.is_not_empty()) && !self.js_value.with(|v| v.is_strong()) {
                 bun_core::scoped_log!(MySQLConnection, "strong ref until connection is closed");
                 self.js_value.with_mut(|r| r.upgrade(&self.global_object));
             }
             let ctx = self.vm_ctx();
-            if self.connection.get().status == my_sql_connection::Status::Connected
-                && self.connection.get().is_idle()
+            if self.connection.with(|v| v.status) == my_sql_connection::Status::Connected
+                && self.connection.with(|v| v.is_idle())
             {
                 self.poll_ref.with_mut(|p| p.unref(ctx));
             } else {
@@ -457,7 +457,7 @@ impl JSMySQLConnection {
             }
             return;
         }
-        if self.js_value.get().is_not_empty() && self.js_value.get().is_strong() {
+        if self.js_value.with(|v| v.is_not_empty()) && self.js_value.with(|v| v.is_strong()) {
             self.js_value.with_mut(|r| r.downgrade());
         }
         let ctx = self.vm_ctx();
@@ -685,7 +685,7 @@ impl JSMySQLConnection {
 
     // TODO(port): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
+        JSValue::from(this.connection.with(|v| v.status) == my_sql_connection::Status::Connected)
     }
 
     // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
@@ -717,7 +717,7 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return None;
         }
-        if let Some(value) = self.js_value.get().try_get() {
+        if let Some(value) = self.js_value.with(|v| v.try_get()) {
             return js::onconnect_take_cached(value, global_object);
         }
         None
@@ -727,7 +727,7 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return None;
         }
-        if let Some(value) = self.js_value.get().try_get() {
+        if let Some(value) = self.js_value.with(|v| v.try_get()) {
             return js::onclose_take_cached(value, global_object);
         }
         None
@@ -737,7 +737,7 @@ impl JSMySQLConnection {
         if self.vm().is_shutting_down() {
             return JSValue::UNDEFINED;
         }
-        if let Some(value) = self.js_value.get().try_get() {
+        if let Some(value) = self.js_value.with(|v| v.try_get()) {
             return js::queries_get_cached(value).unwrap_or(JSValue::UNDEFINED);
         }
         JSValue::UNDEFINED
@@ -745,11 +745,11 @@ impl JSMySQLConnection {
 
     #[inline]
     pub fn is_able_to_write(&self) -> bool {
-        self.connection.get().is_able_to_write()
+        self.connection.with(|v| v.is_able_to_write())
     }
     #[inline]
     pub fn is_connected(&self) -> bool {
-        self.connection.get().status == my_sql_connection::Status::Connected
+        self.connection.with(|v| v.status) == my_sql_connection::Status::Connected
     }
     #[inline]
     pub fn can_pipeline(&self) -> bool {
@@ -801,7 +801,7 @@ impl JSMySQLConnection {
         }
         self.stop_timers();
 
-        if self.connection.get().status == my_sql_connection::Status::Failed {
+        if self.connection.with(|v| v.status) == my_sql_connection::Status::Failed {
             return;
         }
 
@@ -852,7 +852,9 @@ impl JSMySQLConnection {
             return;
         };
         on_connect.ensure_still_alive();
-        let js_value = self.js_value.get().try_get().unwrap_or(JSValue::UNDEFINED);
+        let js_value = self
+            .js_value
+            .with(|v| v.try_get().unwrap_or(JSValue::UNDEFINED));
         js_value.ensure_still_alive();
         self.global_object
             .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
@@ -878,10 +880,12 @@ impl JSMySQLConnection {
         // outlives this fn (held via `request`'s intrusive ref), satisfying
         // the `ParentRef` liveness invariant.
         let cached_structure: Option<ParentRef<CachedStructure>> = match result_mode {
-            ResultMode::Objects => self.js_value.get().try_get().map(|value| {
-                let cs = statement.structure(value, &self.global_object);
-                structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                ParentRef::new(cs)
+            ResultMode::Objects => self.js_value.with(|v| {
+                v.try_get().map(|value| {
+                    let cs = statement.structure(value, &self.global_object);
+                    structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
+                    ParentRef::new(cs)
+                })
             }),
             // no need to check for duplicate fields or structure
             ResultMode::Raw | ResultMode::Values => None,

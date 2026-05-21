@@ -144,7 +144,7 @@ impl<'a> Writable<'a> {
     // impl is on `Subprocess` and hands us the parent directly; field accesses
     // here are disjoint and sequential so a plain `&Subprocess` suffices.
     pub fn on_close(process: &Subprocess<'a>, _: Option<bun_sys::Error>) {
-        if let Some(this_jsvalue) = process.this_value.get().try_get() {
+        if let Some(this_jsvalue) = process.this_value.with(|v| v.try_get()) {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
             }
@@ -474,7 +474,7 @@ impl<'a> Writable<'a> {
                         subprocess.ref_();
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, true));
                     }
-                    if pipe.signal.get().ptr
+                    if pipe.signal.with(|v| v.ptr)
                         == NonNull::new(subprocess.as_ctx_ptr().cast::<c_void>())
                     {
                         pipe.signal.with_mut(|s| s.clear());
@@ -500,7 +500,7 @@ impl<'a> Writable<'a> {
     // parent; deriving it from `&mut self` on `Writable` would be
     // out-of-provenance.
     pub fn finalize(subprocess: &Subprocess<'a>) {
-        if let Some(this_jsvalue) = subprocess.this_value.get().try_get() {
+        if let Some(this_jsvalue) = subprocess.this_value.with(|v| v.try_get()) {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::set_destroy_callback(existing_value, 0);
             }
@@ -512,7 +512,7 @@ impl<'a> Writable<'a> {
         match subprocess.stdin.replace(Writable::Ignore) {
             Writable::Pipe(pipe_nn) => {
                 let pipe = Self::pipe_sink_mut(&pipe_nn);
-                if pipe.signal.get().ptr == parent_ptr {
+                if pipe.signal.with(|v| v.ptr) == parent_ptr {
                     pipe.signal.with_mut(|s| s.clear());
                 }
 

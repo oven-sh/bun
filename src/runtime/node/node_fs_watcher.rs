@@ -747,7 +747,9 @@ impl FSWatcher {
         this_ref.js_this.set(js_this);
         js::listener_set_cached(js_this, &this_ref.global_this, listener);
 
-        if let Some(s) = this_ref.signal.get() {
+        // SAFETY: single-JS-thread `JsCell` read; the `s` borrow ends inside
+        // the `if let` body and `signal` is not reassigned there.
+        if let Some(s) = unsafe { this_ref.signal.get() } {
             // already aborted?
             if s.aborted() {
                 // safely abort next tick
@@ -765,10 +767,10 @@ impl FSWatcher {
     }
 
     pub fn emit_if_aborted(&self) {
-        let reason = match self.signal.get() {
+        let reason = self.signal.with(|sig| match sig {
             Some(s) if s.aborted() => Some(s.abort_reason()),
             _ => None,
-        };
+        });
         if let Some(err) = reason {
             self.emit_abort(err);
         }

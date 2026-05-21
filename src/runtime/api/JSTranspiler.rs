@@ -715,7 +715,9 @@ impl<'a> TransformTask<'a> {
         global: &'a JSGlobalObject,
         loader: Loader,
     ) -> Box<AsyncTransformTask<'a>> {
-        let config = transpiler.config.get();
+        // SAFETY: single-JS-thread `JsCell` read; `config` is only read while
+        // building the task below and nothing in this function mutates it.
+        let config = unsafe { transpiler.config.get() };
         let mut log = bun_ast::Log::init();
         log.level = config.log.level;
 
@@ -1136,7 +1138,7 @@ impl Drop for JSTranspiler {
                 ctx.deinit();
             }
         });
-        let log = self.transpiler.get().log;
+        let log = self.transpiler.with(|v| v.log);
         if !log.is_null() {
             // SAFETY: `transpiler.log` was set via `set_log` to `&mut self.config.log`
             // (heap-stable for `Self`'s lifetime) and just checked non-null.
@@ -1272,7 +1274,9 @@ impl JSTranspiler {
         loader: Option<Loader>,
         macro_js_ctx: MacroJSCtx,
     ) -> Option<ParseResult<'static>> {
-        let config = self.config.get();
+        // SAFETY: single-JS-thread `JsCell` read; `config` is only read while
+        // assembling the parser options and nothing in this function mutates it.
+        let config = unsafe { self.config.get() };
         let name = config.default_loader.stdin_name();
 
         // In REPL mode, wrap potential object literals in parentheses
@@ -1297,8 +1301,8 @@ impl JSTranspiler {
             arena.alloc(bun_ast::Source::init_path_string(name, processed_code));
 
         let jsx = match config.tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
-            None => self.transpiler.get().options.jsx.clone(),
+            Some(ts) => ts.merge_jsx(self.transpiler.with(|v| v.options.jsx.clone())),
+            None => self.transpiler.with(|v| v.options.jsx.clone()),
         };
 
         let parse_options = ParseOptions {
@@ -1394,7 +1398,7 @@ impl JSTranspiler {
         let _ast_scope = ast_memory_allocator.enter();
 
         let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
-        let log_ref = self.transpiler.get().log_mut();
+        let log_ref = self.transpiler.with(|v| v.log_mut());
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
                 return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
@@ -1411,7 +1415,7 @@ impl JSTranspiler {
         let named_imports_value = named_imports_to_js(
             global,
             parse_result.ast.import_records.as_slice(),
-            self.config.get().trim_unused_imports.unwrap_or(false),
+            self.config.with(|v| v.trim_unused_imports.unwrap_or(false)),
         )?;
 
         let named_exports_value = named_exports_to_js(global, &mut parse_result.ast.named_exports)?;
@@ -1470,7 +1474,7 @@ impl JSTranspiler {
             break 'brk None;
         };
 
-        let default_loader = self.config.get().default_loader;
+        let default_loader = self.config.with(|v| v.default_loader);
         let mut task = TransformTask::create(self, code, global, loader.unwrap_or(default_loader));
         let promise = task.promise.value();
         task.schedule();
@@ -1561,7 +1565,7 @@ impl JSTranspiler {
         // bitwise-copyable in Rust, so explicitly snapshot the fields the body mutates
         // (`allocator`, `log`, `macro_context`) and restore them via RAII guard.
         let mut log = bun_ast::Log::init();
-        log.level = self.config.get().log.level;
+        log.level = self.config.with(|v| v.log.level);
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
         // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either drops.
@@ -1585,7 +1589,7 @@ impl JSTranspiler {
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
         let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
-        let log_ref = self.transpiler.get().log_mut();
+        let log_ref = self.transpiler.with(|v| v.log_mut());
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
                 return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
@@ -1735,7 +1739,7 @@ impl JSTranspiler {
         // defer code_holder.deinit() → Drop
         let code = code_holder.slice();
 
-        let mut loader: Loader = self.config.get().default_loader;
+        let mut loader: Loader = self.config.with(|v| v.default_loader);
         if let Some(arg) = args.next() {
             if let Some(l) = loader_from_js(global, arg)? {
                 loader = l;
@@ -1776,9 +1780,11 @@ impl JSTranspiler {
         let _ast_scope = ast_memory_allocator.enter();
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);
-        let jsx = match self.config.get().tsconfig.as_deref() {
-            Some(ts) => ts.merge_jsx(self.transpiler.get().options.jsx.clone()),
-            None => self.transpiler.get().options.jsx.clone(),
+        // SAFETY: single-JS-thread `JsCell` read; the `tsconfig` borrow ends
+        // at the end of the `match` and `config` is not mutated here.
+        let jsx = match unsafe { self.config.get() }.tsconfig.as_deref() {
+            Some(ts) => ts.merge_jsx(self.transpiler.with(|v| v.options.jsx.clone())),
+            None => self.transpiler.with(|v| v.options.jsx.clone()),
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
@@ -1828,8 +1834,12 @@ impl JSTranspiler {
 
             named_imports_to_js(
                 global,
-                self.scan_pass_result.get().import_records.as_slice(),
-                self.config.get().trim_unused_imports.unwrap_or(false),
+                // SAFETY: single-JS-thread `JsCell` read; the slice is consumed
+                // by `named_imports_to_js` before `scan_pass_result` is reset.
+                unsafe { self.scan_pass_result.get() }
+                    .import_records
+                    .as_slice(),
+                self.config.with(|v| v.trim_unused_imports.unwrap_or(false)),
             )
         })();
         self.scan_pass_result.with_mut(|s| s.reset());

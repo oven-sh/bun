@@ -1082,8 +1082,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_mut!() {
-            if let Some(signal_) = req.signal.get() {
-                break 'extract_signal NonNull::new(signal_.ref_());
+            if let Some(signal_) = req.signal.with(|s| s.as_ref().map(|sig| sig.ref_())) {
+                break 'extract_signal NonNull::new(signal_);
             }
             break 'extract_signal None;
         }

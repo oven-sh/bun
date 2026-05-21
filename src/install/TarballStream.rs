@@ -840,8 +840,7 @@ impl TarballStream {
                 // Mask to permission bits so setuid/setgid/sticky bits from the
                 // archive never reach `openat`'s mode argument.
                 #[cfg(not(windows))]
-                let mode: Mode =
-                    Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
+                let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
                 #[cfg(unix)]
                 let nofollow = !self.created_symlinks.is_empty();
                 #[cfg(not(unix))]

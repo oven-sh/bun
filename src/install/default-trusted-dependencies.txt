@@ -131,7 +131,7 @@ cldr-data
 clevertap-react-native
 clientjs
 cmark-gfm
-compresion
+compression
 contentlayer
 contextify
 cordova.plugins.diagnostic

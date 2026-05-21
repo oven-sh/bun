@@ -2360,8 +2360,6 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
 // We create a VM-level exception via napi_call_function: calling a C++
 // callback that throws sets vm.m_exception through JSC::call.
 static napi_value thrower_cb(napi_env env, napi_callback_info) {
-  napi_value msg;
-  napi_create_string_utf8(env, "vm-level", NAPI_AUTO_LENGTH, &msg);
   napi_throw_error(env, nullptr, "vm-level");
   return nullptr;
 }
@@ -2469,12 +2467,39 @@ static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
   }
   puts("napi_create_error loop test passed (5 iterations with VM exception pending)");
 
-  // Clear the pending exception so we can validate the created objects
+  // Clear the pending exception so we can validate the created objects.
+  // Also validate that the pending exception is the VM-level throw from thrower_cb.
   napi_value pending_exception;
   status = napi_get_and_clear_last_exception(env, &pending_exception);
   if (status != napi_ok) {
     printf("napi_get_and_clear_last_exception failed: %d\n", status);
     return nullptr;
+  }
+  {
+    napi_valuetype pending_type;
+    status = napi_typeof(env, pending_exception, &pending_type);
+    if (status != napi_ok || pending_type != napi_object) {
+      printf("pending_exception: expected object, got type %d (status %d)\n", pending_type, status);
+      return nullptr;
+    }
+    napi_value pending_message;
+    status = napi_get_named_property(env, pending_exception, "message", &pending_message);
+    if (status != napi_ok) {
+      printf("pending_exception.message: get failed with status %d\n", status);
+      return nullptr;
+    }
+    char pending_msg_buf[64];
+    size_t pending_msg_len = 0;
+    status = napi_get_value_string_utf8(env, pending_message, pending_msg_buf, sizeof(pending_msg_buf), &pending_msg_len);
+    if (status != napi_ok) {
+      printf("pending_exception.message: get_value_string_utf8 failed with status %d\n", status);
+      return nullptr;
+    }
+    if (strcmp(pending_msg_buf, "vm-level") != 0) {
+      printf("pending_exception.message: expected 'vm-level', got '%s'\n", pending_msg_buf);
+      return nullptr;
+    }
+    puts("pending_exception confirmed: 'vm-level' error object");
   }
 
   // Verify each created error is a proper object

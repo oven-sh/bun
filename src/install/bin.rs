@@ -769,9 +769,15 @@ pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     // Windows drive-relative paths (`C:foo`, `C:..\evil`) are not "absolute"
     // (no separator after the colon) and their `C:..` component is not a bare
     // `..`, so they would slip past the depth walk below while still resolving
-    // outside the package directory. A legitimate relative bin target never
-    // contains a colon (it is also the NTFS alternate-data-stream separator).
-    if target.contains(&b':') {
+    // outside the package directory. A colon in the *first* component can only
+    // be a drive prefix (or an NTFS alternate-data-stream on the leading
+    // segment) — reject it. Colons in later components are left alone so Unix
+    // filenames containing `:` keep working.
+    if target
+        .split(|&b| b == b'/' || b == b'\\')
+        .next()
+        .is_some_and(|first| first.contains(&b':'))
+    {
         return true;
     }
     let mut depth: isize = 0;

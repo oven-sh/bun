@@ -69,9 +69,11 @@ const RegExpPrototypeExec = RegExp.prototype.exec;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
 // Installed as an 'error' listener on ClientRequest when `options.signal` is
-// passed — matches Node's internal `addAbortSignal` which leaves a listener
-// behind so the synthesised AbortError doesn't become an uncaught exception
-// when the user has not registered their own handler.
+// passed so that the synthesised AbortError has somewhere to land when the
+// user hasn't attached their own 'error' handler. Node's ClientRequest ends
+// up in the same state (listenerCount('error') === 1) via its internal
+// `addAbortSignal` / `eos()` wiring. See the comment on the `this.on("error",
+// noop)` call below for the full rationale.
 function noop() {}
 
 function emitErrorEventNT(self, err) {
@@ -540,6 +542,12 @@ function ClientRequest(input, options, cb) {
 
             if (!!$debug) globalReportError(err);
 
+            // The request is settling with a non-abort error (ECONNREFUSED,
+            // DNS failure, TLS error, …). Drop the options.signal listener so
+            // a later signal firing doesn't schedule a second 'error' event
+            // (an AbortError) on top of this one.
+            removeSignalListener();
+
             try {
               this.emit("error", err);
             } catch (_err) {
@@ -569,6 +577,8 @@ function ClientRequest(input, options, cb) {
       options.lookup(host, { all: true }, (err, results) => {
         if (err) {
           if (!!$debug) globalReportError(err);
+          // Drop the signal listener so a later abort doesn't double-emit.
+          removeSignalListener();
           process.nextTick((self, err) => self.emit("error", err), this, err);
           return;
         }
@@ -581,6 +591,7 @@ function ClientRequest(input, options, cb) {
           error.code = code;
           error.syscall = syscall;
           if (!!$debug) globalReportError(error);
+          removeSignalListener();
           process.nextTick((self, err) => self.emit("error", err), this, error);
         };
 
@@ -793,11 +804,13 @@ function ClientRequest(input, options, cb) {
       removeSignalListener = () => signal.removeEventListener("abort", abortHandler);
     }
     this[kSignal] = signal;
-    // Node's internal `addAbortSignal` installs an 'error' listener on the
-    // stream as a side effect so that the signal-driven AbortError has
-    // somewhere to land when the user hasn't attached one themselves.
-    // Without this, `emit('error', …)` on a request with no listeners
-    // becomes an uncaught exception.
+    // Install a dummy 'error' listener so the synthesised AbortError doesn't
+    // become an uncaught exception when the user hasn't attached their own
+    // handler. Node's http.ClientRequest has the same listenerCount('error')
+    // === 1 when a signal is passed, installed via its `eos()`-based cleanup
+    // in `addAbortSignal`; this is the Bun equivalent. A user-provided
+    // `'error'` listener still fires alongside this one, so user code is
+    // unaffected.
     this.on("error", noop);
   }
   let method = options.method;

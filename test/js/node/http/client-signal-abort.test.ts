@@ -184,4 +184,28 @@ describe("http.request options.signal", () => {
       server.close();
     }
   });
+
+  it("does not re-emit 'error' after a connection failure when the signal fires later", async () => {
+    // A request that fails with a network error (ECONNREFUSED, DNS failure,
+    // TLS error, …) must not emit a second AbortError when a long-lived
+    // options.signal fires afterwards. Without listener cleanup on the
+    // fetch-rejection path, a deadline signal would settle the user's
+    // 'error' handler twice for one request.
+    const signal = AbortSignal.timeout(30);
+    const signalFired = new Promise<void>(resolve => {
+      signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+
+    const errors: Error[] = [];
+    // Port 1 is reliably refused on POSIX/Windows.
+    const req = request({ hostname: "127.0.0.1", port: 1, signal });
+    req.on("error", err => errors.push(err));
+    req.end();
+
+    await signalFired;
+    await Bun.sleep(0);
+
+    expect(errors.length).toBe(1);
+    expect((errors[0] as any).code).toBe("ECONNREFUSED");
+  });
 });

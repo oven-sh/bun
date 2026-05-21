@@ -6,6 +6,7 @@ use bun_alloc::AllocError;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
+#[cfg(not(windows))]
 use bun_core::UnwrapOrOom;
 use bun_core::ZStr;
 use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};

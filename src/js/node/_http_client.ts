@@ -216,9 +216,15 @@ function ClientRequest(input, options, cb) {
     }
   };
 
+  // When `options.signal` is provided this is overwritten below to tear down
+  // the abort listener on settle; default is a no-op so the destroy/close
+  // paths can call it unconditionally.
+  let removeSignalListener: () => void = () => {};
+
   this.destroy = function (err?: Error) {
     if (this.destroyed) return this;
     this.destroyed = true;
+    removeSignalListener();
 
     const res = this.res;
 
@@ -247,6 +253,7 @@ function ClientRequest(input, options, cb) {
 
   const socketCloseListener = () => {
     this.destroyed = true;
+    removeSignalListener();
 
     const res = this.res;
     if (res) {
@@ -681,6 +688,10 @@ function ClientRequest(input, options, cb) {
 
   const maybeEmitClose = () => {
     maybeEmitPrefinish();
+    // The request has settled normally — drop the options.signal listener so
+    // a later timeout-signal firing doesn't resurface as an AbortError on a
+    // completed request.
+    removeSignalListener();
 
     if (!this._closed) {
       process.nextTick(emitCloseNTAndComplete, this);
@@ -773,6 +784,13 @@ function ClientRequest(input, options, cb) {
       process.nextTick(abortHandler);
     } else {
       signal.addEventListener("abort", abortHandler, { once: true });
+      // Mirror Node's `eos()`-based cleanup: drop the abort listener once the
+      // request settles so a late-firing signal (e.g. a long-lived
+      // AbortSignal.timeout() used as a request deadline) doesn't fire
+      // `'error'` on a request that already finished or was destroyed by
+      // the caller. `removeSignalListener` is invoked from
+      // `socketCloseListener` and `req.destroy()`.
+      removeSignalListener = () => signal.removeEventListener("abort", abortHandler);
     }
     this[kSignal] = signal;
     // Node's internal `addAbortSignal` installs an 'error' listener on the

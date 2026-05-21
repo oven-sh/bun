@@ -133,7 +133,41 @@ describe("http.request options.signal", () => {
       req.end();
 
       await promise;
+      // Assert both fired first — `indexOf` returns -1 for a missing entry
+      // and -1 < anything, so the ordering check alone could green-light a
+      // missing 'error' emission.
+      expect(events).toContain("error");
+      expect(events).toContain("close");
       expect(events.indexOf("error")).toBeLessThan(events.indexOf("close"));
+    } finally {
+      server.close();
+    }
+  });
+
+  it("does not emit 'error' when the signal fires after req.destroy() with no end()", async () => {
+    // Destroy-before-end with a still-pending signal is a real-world pattern
+    // (external cancellation / retry logic that gives up before flushing).
+    // The signal listener must be removed on `destroy()` so a late-firing
+    // timeout doesn't resurface as a spurious AbortError on a request the
+    // caller already tore down.
+    const server = createServer(() => {
+      // Never gets hit — request is destroyed before any I/O starts.
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const signal = AbortSignal.timeout(20);
+      const errors: Error[] = [];
+      const req = request(`http://127.0.0.1:${port}`, { signal });
+      req.on("error", err => errors.push(err));
+      req.destroy();
+
+      // Wait long enough for the signal to fire, plus a tick to drain.
+      await Bun.sleep(50);
+
+      expect(errors).toEqual([]);
     } finally {
       server.close();
     }

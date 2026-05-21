@@ -227,7 +227,7 @@ impl Framework {
     ) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
         use bun_options_types::schema as bun_schema;
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(

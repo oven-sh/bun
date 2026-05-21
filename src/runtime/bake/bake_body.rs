@@ -1199,7 +1199,7 @@ impl Framework {
         // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
         // returning the RAII `Scope`, whose `Drop` runs `exit()` at end-of-fn
         // (Zig's `defer ast_scope.exit()`).
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         // PORT NOTE: Zig passed `out: *Transpiler` pointing at `= undefined`

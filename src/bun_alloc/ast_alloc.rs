@@ -79,11 +79,22 @@ const BUMP_CHUNK: usize = 16 * 1024;
 pub struct AstAllocState {
     /// Offset of the next free byte in `bump_chunk`.
     bump_cursor: usize,
-    /// Spill heap, lazily created on the first allocation that cannot be
-    /// served from `bump_chunk` (size > [`BUMP_MAX`], over-aligned, zeroed, or
-    /// the chunk is full). Scopes that never overflow the chunk never pay
-    /// `mi_heap_new`/`mi_heap_destroy` at all.
-    heap: Option<MimallocArena>,
+    /// Spill target for allocations that cannot be served from `bump_chunk`
+    /// (size > [`BUMP_MAX`], over-aligned, zeroed, or the chunk is full).
+    /// Set by the installing scope from its own arena via [`Self::set_spill_heap`]
+    /// — one transpile job therefore uses **one** `mi_heap_t` for everything
+    /// instead of paying a second `mi_heap_new`/`mi_heap_destroy` for the
+    /// spill. When the installer has no arena (the long-lived
+    /// `store_ast_alloc_heap` side module), it stays null and `owned_spill` is
+    /// created lazily on first use.
+    ///
+    /// Lifetime: the installer guarantees the heap outlives the installed
+    /// window and clears/replaces the pointer whenever the backing arena is
+    /// reset (`set_spill_heap` is called on every install; [`Self::reset`]
+    /// nulls it).
+    spill: *mut mimalloc::Heap,
+    /// Backing storage for `spill` when no borrowed target was provided.
+    owned_spill: Option<MimallocArena>,
     /// Inline small-allocation buffer. Never initialised eagerly; carved
     /// ranges are written by the `Vec`s that own them.
     bump_chunk: [MaybeUninit<u8>; BUMP_CHUNK],
@@ -94,24 +105,43 @@ impl AstAllocState {
     fn new_boxed() -> Box<Self> {
         let mut boxed = Box::<Self>::new_uninit();
         let p = boxed.as_mut_ptr();
-        // SAFETY: `p` points to a live uninitialised `Self`; the two header
+        // SAFETY: `p` points to a live uninitialised `Self`; the header
         // fields are written before `assume_init`, and `bump_chunk` is
         // `MaybeUninit` so it is allowed to stay uninitialised.
         unsafe {
             (&raw mut (*p).bump_cursor).write(0);
-            (&raw mut (*p).heap).write(None);
+            (&raw mut (*p).spill).write(core::ptr::null_mut());
+            (&raw mut (*p).owned_spill).write(None);
             boxed.assume_init()
         }
     }
 
-    /// Bulk-free everything allocated through this state: destroy the spill
-    /// heap and rewind the bump cursor. Any pointer previously returned by
-    /// [`AstAlloc`] under this state is invalidated.
+    /// Bulk-free everything allocated through this state: drop the spill
+    /// target (destroying it only if owned) and rewind the bump cursor. Any
+    /// pointer previously returned by [`AstAlloc`] while this state was
+    /// installed is invalidated (borrowed-spill blocks are reclaimed by the
+    /// owning arena's own reset/drop).
     #[inline]
     pub fn reset(&mut self) {
         self.bump_cursor = 0;
-        // `MimallocArena::Drop` → `mi_heap_destroy` (bulk-free).
-        self.heap = None;
+        self.spill = core::ptr::null_mut();
+        // `MimallocArena::Drop` → `mi_heap_destroy` (bulk-free) — only for a
+        // lazily created owned spill.
+        self.owned_spill = None;
+    }
+
+    /// Point spill allocations at `heap` (the installing scope's arena) for
+    /// the duration of the install. Called by the owner on **every** install
+    /// so a reset of the backing arena between installs is picked up. Pass the
+    /// live `mi_heap_t` of an arena that strictly outlives the installed
+    /// window.
+    #[inline]
+    pub fn set_spill_heap(&mut self, heap: *mut mimalloc::Heap) {
+        debug_assert!(
+            self.owned_spill.is_none(),
+            "AstAllocState: switching an owned spill heap to a borrowed one would strand its contents"
+        );
+        self.spill = heap;
     }
 
     /// Carve `size` bytes at `align` (a power of two `<= MI_MAX_ALIGN_SIZE`)
@@ -146,13 +176,17 @@ impl AstAllocState {
         }
     }
 
-    /// The state's spill `mi_heap_t`, created on first use.
+    /// The state's spill `mi_heap_t`: the borrowed target installed by
+    /// [`Self::set_spill_heap`], or a lazily created owned heap when none was
+    /// provided.
     #[inline]
     fn heap_ptr(&mut self) -> *mut mimalloc::Heap {
-        match &self.heap {
-            Some(heap) => heap.heap_ptr(),
-            None => self.heap.insert(MimallocArena::new()).heap_ptr(),
+        if !self.spill.is_null() {
+            return self.spill;
         }
+        let heap = self.owned_spill.insert(MimallocArena::new()).heap_ptr();
+        self.spill = heap;
+        heap
     }
 }
 
@@ -183,8 +217,8 @@ static AST_ALLOC: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
 // ever parsed JS — e.g. a terminated Web Worker — would leak ~16 KB. The
 // `LocalKey` access overhead doesn't matter here: the slot is only touched on
 // scope entry/exit, never on the per-allocation hot path. The destructor is
-// just a `free` of the box (a released state never holds a spill heap), so it
-// is safe at any point during thread teardown.
+// just a `free` of the box (a released state never holds an owned spill heap),
+// so it is safe at any point during thread teardown.
 std::thread_local! {
     static AST_ALLOC_SPARE: Cell<Option<Box<AstAllocState>>> = const { Cell::new(None) };
 }
@@ -262,6 +296,17 @@ pub fn reset_active_state() {
     }
 }
 
+/// [`AstAllocState::set_spill_heap`] on the *installed* state. For owners that
+/// keep their state installed across arena resets (the package manager's
+/// `MiniStore`) and need to re-point the spill at the recycled arena's new
+/// heap. No-op when no state is installed.
+#[inline]
+pub fn set_active_spill_heap(heap: *mut mimalloc::Heap) {
+    if let Some(state) = active_state() {
+        state.set_spill_heap(heap);
+    }
+}
+
 /// RAII guard: for its lifetime, [`AstAlloc`] allocates on **global** mimalloc
 /// instead of the active per-parse state. Use when constructing
 /// `AstVec`/`StoreRef` data that must outlive the current parse arena
@@ -296,6 +341,24 @@ pub struct ScopedAstAlloc {
     prev: Option<Box<AstAllocState>>,
 }
 impl ScopedAstAlloc {
+    /// Install a state whose spill allocations land in `spill_heap` (the
+    /// caller's arena, which must outlive this guard **and** must not be reset
+    /// while the guard is alive). The scope therefore creates no `mi_heap_t`
+    /// of its own.
+    ///
+    /// SAFETY-adjacent contract (not `unsafe` because the failure mode is the
+    /// same as every other arena-backed allocation here): `spill_heap` must be
+    /// a live `mi_heap_t` for the guard's entire lifetime.
+    #[inline]
+    pub fn with_spill(spill_heap: *mut mimalloc::Heap) -> Self {
+        let mut state = acquire_state();
+        state.set_spill_heap(spill_heap);
+        Self {
+            prev: swap_state(Some(state)),
+        }
+    }
+
+    /// Install a state with a lazily created owned spill heap.
     #[inline]
     pub fn new() -> Self {
         Self {

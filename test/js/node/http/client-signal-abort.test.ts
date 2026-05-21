@@ -161,10 +161,7 @@ describe("http.request options.signal", () => {
       const signal = AbortSignal.timeout(20);
       // Block until the signal has definitely fired so the assertion can
       // only run after the late-abort path has had its chance to (wrongly)
-      // re-enter `onAbort`. We can't use `events.once(signal, "abort")` here
-      // — `AbortSignal` is an `EventTarget`, not an `EventEmitter`, and
-      // Node's `once()` hangs on one after destroy has already removed
-      // every listener. Attach a dedicated listener instead.
+      // re-enter `onAbort`.
       const signalFired = new Promise<void>(resolve => {
         signal.addEventListener("abort", () => resolve(), { once: true });
       });
@@ -292,5 +289,43 @@ describe("http.request options.signal", () => {
 
     expect(errors.length).toBe(1);
     expect(errors[0]).toBe(lookupErr);
+  });
+
+  it("does not double-emit when signal aborts during happy-eyeballs lookup iteration", async () => {
+    // When a pre-aborted signal meets a multi-candidate `options.lookup`
+    // result, `emitSignalAbortNT` schedules the AbortError and the
+    // happy-eyeballs `iterate()` → `fail()` path also schedules an
+    // ECONNREFUSED — firing 'error' twice on the same request. Guard
+    // `fail()` on `this[abortedSymbol] || this.destroyed` so only the
+    // AbortError reaches the user.
+    const controller = new AbortController();
+    controller.abort();
+
+    const errors: Error[] = [];
+    const req = request({
+      hostname: "test.invalid",
+      port: 1,
+      signal: controller.signal,
+      lookup: (_host, _opts, cb) => {
+        cb(null, [
+          { address: "127.0.0.1", family: 4 },
+          { address: "127.0.0.1", family: 4 },
+        ]);
+      },
+    });
+    const firstError = new Promise<void>(resolve => {
+      req.on("error", err => {
+        errors.push(err);
+        resolve();
+      });
+    });
+    req.end();
+
+    await firstError;
+    await Bun.sleep(0);
+
+    expect(errors.length).toBe(1);
+    expect(errors[0].name).toBe("AbortError");
+    expect((errors[0] as any).code).toBe("ABORT_ERR");
   });
 });

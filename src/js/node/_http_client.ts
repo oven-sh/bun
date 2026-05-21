@@ -601,6 +601,12 @@ function ClientRequest(input, options, cb) {
         let candidates = results.sort((a, b) => b.family - a.family); // prefer IPv6
 
         const fail = (message, name, code, syscall) => {
+          // If the request has already been aborted or destroyed (e.g. the
+          // user's signal fired mid-connect during happy-eyeballs
+          // iteration, or req.abort() was called), swallow this error
+          // rather than firing a second 'error' event on top of the
+          // AbortError that `emitSignalAbortNT` has already scheduled.
+          if (this[abortedSymbol] || this.destroyed) return;
           const error = new Error(message);
           error.name = name;
           error.code = code;

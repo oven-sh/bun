@@ -699,10 +699,13 @@ function ClientRequest(input, options, cb) {
 
   const maybeEmitClose = () => {
     maybeEmitPrefinish();
-    // The request has settled normally — drop the options.signal listener so
-    // a later timeout-signal firing doesn't resurface as an AbortError on a
-    // completed request.
-    removeSignalListener();
+    // NB: we intentionally do NOT call `removeSignalListener()` here — this
+    // runs on the nextTick after response headers arrive (while the body is
+    // still streaming), so detaching the listener early would make
+    // `options.signal` a no-op for the remainder of the response. Late-fire
+    // protection is instead handled by the `!res.complete` guard in
+    // `onAbort`, and the listener is cleaned up on real teardown via
+    // `socketCloseListener()` and `req.destroy()`.
 
     if (!this._closed) {
       process.nextTick(emitCloseNTAndComplete, this);

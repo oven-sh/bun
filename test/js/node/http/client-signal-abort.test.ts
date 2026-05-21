@@ -208,4 +208,47 @@ describe("http.request options.signal", () => {
     expect(errors.length).toBe(1);
     expect((errors[0] as any).code).toBe("ECONNREFUSED");
   });
+
+  it("aborts a streaming response when the signal fires after headers but before end", async () => {
+    // `options.signal` used as a total deadline must still cancel a server
+    // that sends headers and then stalls / trickles the body. An earlier
+    // iteration of the fix detached the signal listener in
+    // `maybeEmitClose()` — which runs on the nextTick after response
+    // headers arrive — making the signal a no-op for the rest of the
+    // response.
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.write("chunk1\n");
+      // Never call res.end() — force the client to cancel.
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const controller = new AbortController();
+      const { promise: errorFired, resolve: onError } = Promise.withResolvers<Error>();
+      const { promise: gotData, resolve: onData } = Promise.withResolvers<void>();
+
+      const req = request(`http://127.0.0.1:${port}`, { signal: controller.signal }, res => {
+        res.on("data", () => onData());
+      });
+      req.on("error", onError);
+      req.end();
+
+      // Wait for data to arrive (response headers have been received and the
+      // body is actively streaming). Then fire the signal — this is the
+      // window where the previous fix regressed: if the listener got
+      // detached in `maybeEmitClose` on the headers-arrived tick, this
+      // `abort()` would be a no-op and `errorFired` would hang.
+      await gotData;
+      controller.abort();
+
+      const err = await errorFired;
+      expect(err.name).toBe("AbortError");
+      expect((err as any).code).toBe("ABORT_ERR");
+    } finally {
+      server.close();
+    }
+  });
 });

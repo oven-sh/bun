@@ -3698,15 +3698,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     // [185] same-line compact construct after `?` requires
                     // s-indent (spaces only); a tab is plain s-separate.
-                    let parent_indent = if matches!(
-                        self.context.get(),
-                        Context::FlowIn | Context::FlowKey
-                    ) || Enc::wide(self.next()) == 0x09
-                    {
-                        None
-                    } else {
-                        Some(mapping_indent.add(1))
-                    };
+                    let parent_indent =
+                        if matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
+                            || Enc::wide(self.next()) == 0x09
+                        {
+                            None
+                        } else {
+                            Some(mapping_indent.add(1))
+                        };
                     self.scan(ScanOptions {
                         additional_parent_indent: parent_indent,
                         ..Default::default()

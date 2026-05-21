@@ -6196,7 +6196,7 @@ test.todo("yaml-test-suite/Y79Y/005", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/Y79Y/006", () => {
+test("yaml-test-suite/Y79Y/006", () => {
   // Tabs in various contexts
   // Error test - expecting parse to fail
   const input: string = `?	-

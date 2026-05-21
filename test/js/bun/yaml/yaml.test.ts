@@ -1014,8 +1014,14 @@ folded: >
           expect(YAML.parse("outer:\n  a: 1\n  ?\tb\n  : 2\n")).toEqual({ outer: { a: 1, b: 2 } });
         });
 
-        test("tab-indented line after explicit : errors", () => {
-          expect(() => YAML.parse("? key:\n:\n\tkey:\n")).toThrow("Unexpected character");
+        test("tab before compact construct errors (s-indent requires spaces)", () => {
+          // [185] same-line compact constructs after `?`/`:` need s-indent
+          // (spaces only); a tab is plain s-separate and does not qualify.
+          // All four reference parsers reject these (eemeli/js-yaml/PyYAML/ruamel).
+          expect(() => YAML.parse("?\t- a\n: v\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("? key\n:\t- x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("? a\n: 1\n? b\n:\t- x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("?\t-\n")).toThrow("Unexpected token");
         });
       });
 
@@ -1048,19 +1054,32 @@ folded: >
           // Update to {a:"b"} when flow-? is fixed.
           expect(YAML.parse("{? a\n  : b}\n")).toEqual({ "[object Object]": null });
         });
+
+        test.todo("flow mapping with bare ? (DFF7 cluster)", () => {
+          // Was an error before this PR; now produces wrong nested-map result.
+          // Reference parsers split: eemeli/js-yaml return {a:null}; PyYAML/
+          // ruamel error. Should be {a:null}; needs flow-? to bypass
+          // parse_block_mapping. Currently {"[object Object]":null}.
+          expect(YAML.parse("{? a}\n")).toEqual({ a: null });
+        });
       });
 
       describe("tab-only blank line in block context", () => {
-        // Side-effect of the api-after-? tab-guard rewrite: a tab at column 0
-        // on a blank line inside a block construct now errors. Spec [70]
-        // l-empty requires s-indent (spaces only); PyYAML/ruamel agree.
+        // Tab on an otherwise-blank line is treated as content separation,
+        // not indentation; matches main and eemeli/js-yaml. (PyYAML/ruamel
+        // reject — a 2/2 reference split — but Bun has always accepted these
+        // and changing it broke other suite cases.)
         test("inside block sequence", () => {
-          expect(() => YAML.parse("-\n\t\n- b\n")).toThrow("Unexpected character");
-          expect(() => YAML.parse("- 'a'\n\t\n- b\n")).toThrow("Unexpected character");
+          expect(YAML.parse("-\n\t\n- b\n")).toEqual([null, "b"]);
+          expect(YAML.parse("- 'a'\n\t\n- b\n")).toEqual(["a", "b"]);
         });
 
         test("inside block mapping", () => {
-          expect(() => YAML.parse("a:\n\t\nb: 2\n")).toThrow("Unexpected character");
+          expect(YAML.parse("a:\n\t\nb: 2\n")).toEqual({ a: null, b: 2 });
+        });
+
+        test("tab before comment line", () => {
+          expect(YAML.parse("a: \n\t# comment\nb: c\n")).toEqual({ a: null, b: "c" });
         });
       });
 

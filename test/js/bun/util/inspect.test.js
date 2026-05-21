@@ -19,18 +19,25 @@ it("Proxy prototype with throwing getPrototypeOf trap does not crash", () => {
   expect(() => Bun.inspect(obj)).not.toThrow();
 });
 
-it("Proxy prototype with throwing getter does not crash", () => {
+it("Proxy prototype with throwing get trap does not crash", () => {
+  // The `get` trap must throw so ProxyObject's performGet throws and
+  // getPropertySlot returns false with a pending exception — exercising
+  // the CLEAR_IF_EXCEPTION before the `if (!found) continue` in
+  // forEachPropertyImpl. ownKeys/getOwnPropertyDescriptor ensure the
+  // property names are enumerated so the loop reaches the get trap.
   const obj = {};
   Object.setPrototypeOf(
     obj,
     new Proxy(
-      {
-        get x() {
-          throw new Error("getter threw");
-        },
-        foo: 1,
-      },
       {},
+      {
+        ownKeys: () => ["x", "foo"],
+        getOwnPropertyDescriptor: () => ({ configurable: true, enumerable: true, value: 1 }),
+        get(_, p) {
+          if (p === "x") throw new Error("trap threw");
+          return 1;
+        },
+      },
     ),
   );
   const out = Bun.inspect(obj);

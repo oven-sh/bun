@@ -58,3 +58,19 @@ test.concurrent.each(["$", "sql", "SQL", "postgres"] as const)(
     expect([0, 1]).toContain(exitCode);
   },
 );
+
+// Bun.redis is a Zig-backed lazy PropertyCallback whose init reads REDIS_URL
+// and throws a plain TypeError for an empty/invalid value. Same crash path
+// as above; additionally verify the diagnostic isn't silently swallowed.
+test.concurrent("accessing Bun.redis with invalid REDIS_URL does not crash and reports the error", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", 'process.stdout.write(String(Bun.redis)); process.stdout.write("OK")'],
+    env: { ...bunEnv, REDIS_URL: "" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, signalCode: proc.signalCode }).toEqual({ stdout: "undefinedOK", signalCode: null });
+  expect(stderr).toContain("Invalid URL");
+  expect([0, 1]).toContain(exitCode);
+});

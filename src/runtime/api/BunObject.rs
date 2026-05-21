@@ -2036,10 +2036,17 @@ pub fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> 
 
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
         Ok(p) => p,
-        Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
+        Err(err @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+            // PropertyCallback contract: the C++ wrapper clears any pending
+            // exception and reifies the slot to `undefined`, so report here
+            // (like s3_default_client) or the diagnostic is silently dropped.
+            global_this.report_active_exception_as_unhandled(err);
+            return JSValue::UNDEFINED;
+        }
         Err(err) => {
             let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
-            return JSValue::ZERO;
+            global_this.report_active_exception_as_unhandled(jsc::JsError::Thrown);
+            return JSValue::UNDEFINED;
         }
     };
 
@@ -2051,10 +2058,14 @@ pub fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> 
     valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
     match SubscriptionCtx::init(valkey_ref) {
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
-        Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
+        Err(err @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+            global_this.report_active_exception_as_unhandled(err);
+            return JSValue::UNDEFINED;
+        }
         Err(err) => {
             let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
-            return JSValue::ZERO;
+            global_this.report_active_exception_as_unhandled(jsc::JsError::Thrown);
+            return JSValue::UNDEFINED;
         }
     }
 

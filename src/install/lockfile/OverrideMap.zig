@@ -306,18 +306,18 @@ pub fn parseFromOverrides(
                     try log.addWarningFmt(source, child_prop.key.?.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
                     continue;
                 }
-            if (try parseOverrideValue(
-                "override",
-                lockfile,
-                pm,
-                root_package,
-                source,
-                child_prop.value.?.loc,
-                log,
-                child_key_str,
-                child_version_str,
-                builder,
-            )) |child_dep| {
+                if (try parseOverrideValue(
+                    "override",
+                    lockfile,
+                    pm,
+                    root_package,
+                    source,
+                    child_prop.value.?.loc,
+                    log,
+                    child_key_str,
+                    child_version_str,
+                    builder,
+                )) |child_dep| {
                     const child_name_hash = String.Builder.stringHash(child_key_str);
                     // Strip version qualifier from parent key so the hash matches
                     // what get() looks up from the installed package's name_hash.
@@ -511,7 +511,7 @@ fn stripVersionSuffix(name: []const u8) []const u8 {
         }
         return name;
     }
-    // For unscoped packages: look for the last @ that introduces a version
+    // For unscoped packages: look for the first @ that introduces a version
     if (strings.indexOfChar(name, '@')) |at_idx| {
         return name[0..at_idx];
     }

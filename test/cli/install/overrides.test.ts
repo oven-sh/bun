@@ -346,3 +346,24 @@ test("Yarn-style nested resolution with scoped parent package", async () => {
   expect(versionOf(String(tmp), "node_modules/semver/package.json")).toBe("7.5.4");
   ensureLockfileDoesntChangeOnBunI(String(tmp));
 });
+
+test("nested override with version-qualified parent key strips version suffix", async () => {
+  using tmp = tempDir("overrides-version-qualified-parent", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      overrides: {
+        "raw-body@2.5.2": {
+          bytes: "1.0.0",
+        },
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+

@@ -159,31 +159,39 @@ pub trait AnyRefCounted: Sized {
     unsafe fn rc_debug_data(this: *mut Self) -> *mut dyn DebugDataOps;
 
     /// Bump the intrusive refcount and return an RAII guard that releases it
-    /// on `Drop`. Safe replacement for the hand-paired
+    /// on `Drop`. Replacement for the hand-paired
     /// `this.ref_(); … defer this.deref();` keep-alive bracket: the paired
     /// release runs on every exit path, so the count cannot be left
     /// unbalanced by an early return.
     ///
-    /// `&self` proves the pointee is live at acquisition time, and the
-    /// guard's own ref keeps the allocation alive until the guard drops.
-    /// Prefer this over [`ScopedRef::new`] whenever a `&self` is already in
-    /// hand.
+    /// `&self` discharges the "points to a live `T`" half of
+    /// [`ScopedRef::new`]'s contract; the storage-governance half below is
+    /// why this is still `unsafe`. Prefer this over [`ScopedRef::new`]
+    /// whenever a `&self` is already in hand.
     ///
-    /// Provenance note: the guard's pointer is derived from `&self`. If the
-    /// guard ends up holding the *final* ref, the destructor reclaims the
-    /// allocation through that shared-provenance pointer — the same posture
-    /// as the existing `as_ctx_ptr()` → `deref()` release sites, which the
-    /// formal aliasing model (Tree Borrows) rejects even though the compiled
-    /// code is correct today. Where the allocation-rooted `*mut T` is already
-    /// in hand (FFI userdata, [`RefPtr::as_ptr`]), prefer [`ScopedRef::new`]
-    /// or `ThisPtr::ref_guard`, which preserve it.
+    /// # Safety
+    ///
+    /// - `*self`'s storage must be governed by its embedded refcount: a
+    ///   heap allocation that only the count-zero destructor frees, which
+    ///   therefore outlives the returned guard ([`ScopedRef`] carries no
+    ///   lifetime, so the compiler cannot stop the guard from outliving a
+    ///   stack- or arena-backed `*self`).
+    /// - The guard's pointer is derived from `&self`. If the guard ends up
+    ///   holding the *final* ref, the destructor reclaims the allocation
+    ///   through that shared-provenance pointer — the same posture as the
+    ///   existing `as_ctx_ptr()` → `deref()` release sites, which the formal
+    ///   aliasing model (Tree Borrows) rejects even though the compiled code
+    ///   is correct today. Where the allocation-rooted `*mut T` is already in
+    ///   hand (FFI userdata, [`RefPtr::as_ptr`]), prefer [`ScopedRef::new`]
+    ///   or `ThisPtr::ref_guard`, which preserve it.
     #[inline]
-    fn ref_guard(&self) -> ScopedRef<Self>
+    unsafe fn ref_guard(&self) -> ScopedRef<Self>
     where
         Self::DestructorCtx: Default,
     {
         // SAFETY: `&self` proves the pointee is live, which is `ScopedRef::
-        // new`'s precondition; the guard's ref keeps it live until `Drop`.
+        // new`'s liveness precondition; the caller contract above guarantees
+        // the allocation outlives the guard.
         unsafe { ScopedRef::new(core::ptr::from_ref(self).cast_mut()) }
     }
 }
@@ -1757,7 +1765,9 @@ mod tests {
         let live = live();
         let owned = OwnedRef::new(TsObj::new(&live));
         {
-            let _guard = owned.ref_guard();
+            // SAFETY: `*owned` is a `Box`-backed allocation governed by its
+            // embedded refcount and outlives this block.
+            let _guard = unsafe { owned.ref_guard() };
             assert_eq!(owned.count(), 2);
         }
         assert_eq!(owned.count(), 1);
@@ -1774,7 +1784,9 @@ mod tests {
     fn ref_guard_keeps_object_alive_after_owner_releases() {
         let live = live();
         let owned = OwnedRef::new(TsObj::new(&live));
-        let guard = owned.ref_guard();
+        // SAFETY: `*owned` is a `Box`-backed allocation governed by its
+        // embedded refcount; the guard's own ref keeps it alive past `owned`.
+        let guard = unsafe { owned.ref_guard() };
         drop(owned);
         assert_eq!(live.get(), 1, "guard keeps the object alive");
         drop(guard);
@@ -1805,7 +1817,9 @@ mod tests {
         let live = live();
         let ptr = RefPtr::new(StObj::new(&live));
         let owned = ptr.to_owned();
-        let guard = owned.ref_guard();
+        // SAFETY: `*owned` is a `Box`-backed allocation governed by its
+        // embedded refcount; `owned` outlives the guard.
+        let guard = unsafe { owned.ref_guard() };
         ptr.deref();
         drop(guard);
         assert_eq!(live.get(), 1);

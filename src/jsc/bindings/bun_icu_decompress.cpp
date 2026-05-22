@@ -12,6 +12,14 @@
 // (the hook is then never called, since no item is compressed).
 
 #include "root.h"
+
+// The repacked libicudata.a (and the patched udata.cpp that calls this hook)
+// are produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl only. On every
+// other platform ICU is unmodified, so there is nothing to decompress and the
+// weak externs below have no definer — gate the whole implementation to keep
+// non-ELF weak-symbol semantics out of the picture.
+#if OS(LINUX)
+
 #include "MimallocWTFMalloc.h"
 
 #include <wtf/HashMap.h>
@@ -103,3 +111,5 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
         return p;
     return Bun::ICUDecompressor::get().decompress(p, length);
 }
+
+#endif // OS(LINUX)

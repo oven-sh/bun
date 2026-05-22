@@ -4241,9 +4241,27 @@ impl<'a> HTTPClient<'a> {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
                     // byte-level parse — header.value() is network bytes, not &str
-                    let content_length =
-                        bun_core::parse_unsigned::<usize>(header.value(), 10).unwrap_or(0);
+                    //
+                    // RFC 9112 section 6.3: an invalid Content-Length, or
+                    // multiple Content-Length fields with differing values, is
+                    // an unrecoverable framing error. Falling back to 0 would
+                    // deliver an empty body and release a desynchronized socket
+                    // into the keep-alive pool, where the unread body bytes
+                    // would be read as the response to the next request on the
+                    // connection.
+                    let Ok(content_length) =
+                        bun_core::parse_unsigned::<usize>(header.value(), 10)
+                    else {
+                        return Err(err!(InvalidHTTPResponse));
+                    };
                     if self.method.has_body() {
+                        if self
+                            .state
+                            .content_length
+                            .is_some_and(|prev| prev != content_length)
+                        {
+                            return Err(err!(InvalidHTTPResponse));
+                        }
                         self.state.content_length = Some(content_length);
                     } else {
                         // ignore body size for HEAD requests

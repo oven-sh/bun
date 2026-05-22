@@ -1535,7 +1535,27 @@ var require_wasi = __commonJS({
                   full = fs.realpathSync(fullUnresolved);
                 } catch (e) {
                   if (e?.code === "ENOENT") {
-                    full = fullUnresolved;
+                    // The final component may legitimately not exist yet (e.g.
+                    // O_CREAT), but the rest of the path must not be redirected
+                    // by symlinks: resolve the parent directory and re-attach
+                    // the final component. A dangling symlink as the final
+                    // component would still redirect the create, so reject it.
+                    const parentDir = path.dirname(fullUnresolved);
+                    const lastComponent = path.basename(fullUnresolved);
+                    let realParent = parentDir;
+                    try {
+                      realParent = fs.realpathSync(parentDir);
+                    } catch (e2) {
+                      if (e2?.code !== "ENOENT") throw e2;
+                    }
+                    full = path.join(realParent, lastComponent);
+                    let finalIsLink = false;
+                    try {
+                      finalIsLink = fs.lstatSync(full).isSymbolicLink();
+                    } catch {}
+                    if (finalIsLink) {
+                      throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
+                    }
                   } else {
                     throw e;
                   }

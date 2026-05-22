@@ -3504,6 +3504,51 @@ impl BlobExt for Blob {
                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
                     let mut iter = jsc::JSArrayIterator::init(current, global)?;
                     stack.reserve(iter.len as usize);
+
+                    // Decide up front whether processing any part can re-enter
+                    // user JS (toString / Symbol.toPrimitive / proxy traps /
+                    // getters) before `joiner.done()` copies the borrowed
+                    // slices out. If nothing can, typed-array parts can be
+                    // borrowed (`push_static`) instead of cloned — cloning
+                    // every part doubles peak memory for the common
+                    // `new Blob(largeChunks)` case. The prescan is only
+                    // side-effect-free on a fast (contiguous, sane-prototype)
+                    // array; anything else is conservatively treated as able
+                    // to run user JS. `js_type_loose`/`as_class_ref` read the
+                    // cell header only, so the extra pass is unobservable.
+                    let mut parts_can_run_js = iter.fast.is_none();
+                    if !parts_can_run_js {
+                        let mut prescan = jsc::JSArrayIterator::init(current, global)?;
+                        while let Some(item) = prescan.next()? {
+                            if item.is_undefined_or_null() {
+                                continue;
+                            }
+                            match item.js_type_loose() {
+                                jsc::JSType::String
+                                | jsc::JSType::ArrayBuffer
+                                | jsc::JSType::Int8Array
+                                | jsc::JSType::Uint8Array
+                                | jsc::JSType::Uint8ClampedArray
+                                | jsc::JSType::Int16Array
+                                | jsc::JSType::Uint16Array
+                                | jsc::JSType::Int32Array
+                                | jsc::JSType::Uint32Array
+                                | jsc::JSType::Float16Array
+                                | jsc::JSType::Float32Array
+                                | jsc::JSType::Float64Array
+                                | jsc::JSType::BigInt64Array
+                                | jsc::JSType::BigUint64Array
+                                | jsc::JSType::DataView => {}
+                                jsc::JSType::DOMWrapper
+                                    if item.as_class_ref::<Blob>().is_some() => {}
+                                _ => {
+                                    parts_can_run_js = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     while let Some(item) = iter.next()? {
                         if item.is_undefined_or_null() {
                             continue;
@@ -3538,10 +3583,18 @@ impl BlobExt for Blob {
                                 | jsc::JSType::DataView => {
                                     could_have_non_ascii = true;
                                     let buf = item.as_array_buffer(global).unwrap();
-                                    // Copy now: processing later parts can run user JS
-                                    // (toString / Symbol.toPrimitive / proxy traps) that
-                                    // detaches or resizes this buffer before `done()`.
-                                    joiner.push_cloned(buf.byte_slice());
+                                    if parts_can_run_js {
+                                        // Copy now: processing a later part can run
+                                        // user JS (toString / Symbol.toPrimitive /
+                                        // proxy traps) that detaches or resizes this
+                                        // buffer before `done()`.
+                                        joiner.push_cloned(buf.byte_slice());
+                                    } else {
+                                        // No part can re-enter JS before `done()`,
+                                        // so the backing store cannot be detached;
+                                        // borrow it instead of doubling peak memory.
+                                        joiner.push_static(buf.byte_slice());
+                                    }
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {

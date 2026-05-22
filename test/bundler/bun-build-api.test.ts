@@ -73,8 +73,9 @@ describe("Bun.build", () => {
 
   // A `define:` value that isn't valid JSON or a JS identifier is auto-quoted
   // (treated as a string literal). The JSON lexer must not error eagerly on the
-  // first character — a raw minified CSS string starts with `*{...}`, which
-  // src/codegen/bake-codegen.ts passes verbatim as `OVERLAY_CSS`.
+  // first character — a raw minified CSS string starts with `*{...}`, originally
+  // what src/codegen/bake-codegen.ts passed verbatim as `OVERLAY_CSS` (now
+  // `JSON.stringify`d there for old-bun bootstrap compat).
   describe.each([
     "*{box-sizing:border-box}.root{all:initial}",
     "?foo",

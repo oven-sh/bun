@@ -384,7 +384,10 @@ impl<'a> ZstdReaderArrayList<'a> {
                 return Ok(());
             }
 
-            if self.list_ptr.len() >= self.max_output_size {
+            // Decompression-bomb guard: clamp the output space handed to a single
+            // ZSTD_decompressStream call so one call can never write past the cap.
+            let remaining_output = self.max_output_size.saturating_sub(self.list_ptr.len());
+            if remaining_output == 0 {
                 self.state = State::Error;
                 return Err(ZstdError::ZstdDecompressionError);
             }
@@ -399,7 +402,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             };
             let mut out_buf = c::ZSTD_outBuffer {
                 dst: spare.as_mut_ptr().cast::<c_void>(),
-                size: spare.len(),
+                size: spare.len().min(remaining_output),
                 pos: 0,
             };
 

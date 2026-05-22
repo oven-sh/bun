@@ -13,11 +13,16 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 
 #define ZSTD_STATIC_LINKING_ONLY
 #include <zstd.h>
+
+static_assert(ZSTD_MAGICNUMBER == 0xFD2FB528);
+// Raw ICU items have bytes[2..3] == {0xda, 0x27} (ucmndata.h MAGIC1/MAGIC2),
+// so their first u32 is 0x27da'hhhh — cannot collide with zstd's magic.
 
 extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
 extern "C" __attribute__((weak)) const unsigned int bun_icu_zstd_dict_size;
@@ -42,11 +47,9 @@ void ensureInit()
 extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
 {
     if (!p) return p;
-    const uint8_t* b = static_cast<const uint8_t*>(p);
-    // Raw ICU item: bytes[2..3] == 0xda27.
-    if (b[2] == 0xda && b[3] == 0x27) return p;
-    // zstd frame: bytes[0..3] == 28 b5 2f fd.
-    if (!(b[0] == 0x28 && b[1] == 0xb5 && b[2] == 0x2f && b[3] == 0xfd)) return p;
+    uint32_t magic;
+    std::memcpy(&magic, p, sizeof(magic));
+    if (magic != ZSTD_MAGICNUMBER) return p;
 
     std::lock_guard<std::mutex> lock(g_mutex);
     ensureInit();

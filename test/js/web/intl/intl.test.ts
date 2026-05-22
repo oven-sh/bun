@@ -10,6 +10,14 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
+import { isLinux } from "harness";
+
+// Snapshots are CLDR-version-specific. Only check them where Bun bundles the
+// ICU they were generated against (Linux); macOS uses Apple's libicucore and
+// Windows is on a different ICU build, so snapshot diffs there are expected
+// and not a regression. The structural sweep below runs everywhere.
+const SNAPSHOT_ICU_VERSION = "75.1";
+const snapshotIf = isLinux && process.versions.icu === SNAPSHOT_ICU_VERSION ? test : test.skip;
 
 const LOCALES = ["en", "de", "fr", "ja", "ko", "ru", "zh", "zh-Hant", "ar", "th", "es-419", "pt-PT"] as const;
 
@@ -20,14 +28,14 @@ const LOCALES = ["en", "de", "fr", "ja", "ko", "ru", "zh", "zh-Hant", "ar", "th"
 describe("Intl.DisplayNames", () => {
   for (const type of ["region", "language", "currency", "script"] as const) {
     const code = { region: "US", language: "en", currency: "USD", script: "Hant" }[type];
-    test(`${type}:'${code}' across locales`, () => {
+    snapshotIf(`${type}:'${code}' across locales`, () => {
       const out: Record<string, string | undefined> = {};
       for (const loc of LOCALES) out[loc] = new Intl.DisplayNames(loc, { type }).of(code);
       expect(out).toMatchSnapshot();
     });
   }
 
-  test("a few more region codes", () => {
+  snapshotIf("a few more region codes", () => {
     const out: Record<string, Record<string, string | undefined>> = {};
     for (const code of ["DE", "JP", "BR", "419"]) {
       out[code] = {};
@@ -42,27 +50,27 @@ describe("Intl.DisplayNames", () => {
 // ---------------------------------------------------------------------------
 
 describe("Intl.NumberFormat", () => {
-  test("default grouping", () => {
+  snapshotIf("default grouping", () => {
     const out: Record<string, string> = {};
     for (const loc of LOCALES) out[loc] = new Intl.NumberFormat(loc).format(1234567.89);
     expect(out).toMatchSnapshot();
   });
 
-  test("currency symbol", () => {
+  snapshotIf("currency symbol", () => {
     const out: Record<string, string> = {};
     for (const loc of LOCALES)
       out[loc] = new Intl.NumberFormat(loc, { style: "currency", currency: "EUR" }).format(1234.56);
     expect(out).toMatchSnapshot();
   });
 
-  test("currencyDisplay:'name' (curr/<loc>.res)", () => {
+  snapshotIf("currencyDisplay:'name' (curr/<loc>.res)", () => {
     const out: Record<string, string> = {};
     for (const loc of LOCALES)
       out[loc] = new Intl.NumberFormat(loc, { style: "currency", currency: "USD", currencyDisplay: "name" }).format(2);
     expect(out).toMatchSnapshot();
   });
 
-  test("style:'unit' (unit/<loc>.res; ru is the largest item)", () => {
+  snapshotIf("style:'unit' (unit/<loc>.res; ru is the largest item)", () => {
     const out: Record<string, Record<string, string>> = {};
     for (const unit of ["kilometer", "celsius", "kilometer-per-hour"]) {
       out[unit] = {};
@@ -78,13 +86,13 @@ describe("Intl.NumberFormat", () => {
 // ---------------------------------------------------------------------------
 
 describe("Intl.DateTimeFormat", () => {
-  test("default", () => {
+  snapshotIf("default", () => {
     const out: Record<string, string> = {};
     for (const loc of LOCALES) out[loc] = new Intl.DateTimeFormat(loc, { timeZone: "UTC" }).format(0);
     expect(out).toMatchSnapshot();
   });
 
-  test("timeZoneName:'long' (zone/<loc>.res)", () => {
+  snapshotIf("timeZoneName:'long' (zone/<loc>.res)", () => {
     const tzName = (loc: string, tz: string) =>
       new Intl.DateTimeFormat(loc, { timeZone: tz, timeZoneName: "long" })
         .formatToParts(0)
@@ -103,21 +111,21 @@ describe("Intl.DateTimeFormat", () => {
 // ---------------------------------------------------------------------------
 
 describe("Intl.Collator", () => {
-  test("sort order across locales", () => {
+  snapshotIf("sort order across locales", () => {
     const out: Record<string, string[]> = {};
     for (const loc of LOCALES) out[loc] = ["z", "a", "ä", "ö", "Z", "A"].sort(new Intl.Collator(loc).compare);
     expect(out).toMatchSnapshot();
   });
 
-  test("zh pinyin (coll/zh.res, 713 KB raw)", () => {
+  snapshotIf("zh pinyin (coll/zh.res, 713 KB raw)", () => {
     expect(["波", "次", "阿"].sort(new Intl.Collator("zh", { collation: "pinyin" }).compare)).toMatchSnapshot();
   });
 
-  test("ko", () => {
+  snapshotIf("ko", () => {
     expect(["하", "가", "나"].sort(new Intl.Collator("ko").compare)).toMatchSnapshot();
   });
 
-  test("de phonebook vs standard", () => {
+  snapshotIf("de phonebook vs standard", () => {
     expect({
       standard: ["öf", "of"].sort(new Intl.Collator("de").compare),
       phonebook: ["öf", "of"].sort(new Intl.Collator("de-u-co-phonebk").compare),
@@ -140,11 +148,11 @@ describe("Intl.Segmenter", () => {
   const seg = (loc: string, g: Intl.SegmenterOptions["granularity"], s: string) =>
     [...new Intl.Segmenter(loc, { granularity: g }).segment(s)].map(x => x.segment);
 
-  test("grapheme — emoji ZWJ sequence", () => {
+  snapshotIf("grapheme — emoji ZWJ sequence", () => {
     expect(seg("en", "grapheme", "👨‍👩‍👧‍👦a🇯🇵")).toMatchSnapshot();
   });
 
-  test("word — en/zh/ja/th", () => {
+  snapshotIf("word — en/zh/ja/th", () => {
     expect({
       en: seg("en", "word", "hello world"),
       zh: seg("zh", "word", "中文分词测试"),
@@ -159,7 +167,7 @@ describe("Intl.Segmenter", () => {
 // ---------------------------------------------------------------------------
 
 describe("Intl.PluralRules", () => {
-  test("select across locales", () => {
+  snapshotIf("select across locales", () => {
     const out: Record<string, Record<number, string>> = {};
     for (const loc of ["en", "ru", "ar", "pl"]) {
       out[loc] = {};
@@ -170,7 +178,7 @@ describe("Intl.PluralRules", () => {
 });
 
 describe("Intl.ListFormat", () => {
-  test("conjunction across locales", () => {
+  snapshotIf("conjunction across locales", () => {
     const out: Record<string, string> = {};
     for (const loc of LOCALES) out[loc] = new Intl.ListFormat(loc, { type: "conjunction" }).format(["a", "b", "c"]);
     expect(out).toMatchSnapshot();
@@ -178,7 +186,7 @@ describe("Intl.ListFormat", () => {
 });
 
 describe("Intl.RelativeTimeFormat", () => {
-  test("format across locales", () => {
+  snapshotIf("format across locales", () => {
     const out: Record<string, string[]> = {};
     for (const loc of LOCALES) {
       const f = new Intl.RelativeTimeFormat(loc);

@@ -76,8 +76,8 @@ private:
     ICUDecompressor()
         : m_dctx(ZSTD_createDCtx())
         , m_ddict(&bun_icu_zstd_dict_size && bun_icu_zstd_dict_size
-                ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
-                : nullptr)
+                  ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
+                  : nullptr)
     {
     }
 

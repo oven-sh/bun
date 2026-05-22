@@ -2650,7 +2650,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let item = if matches!(self.token.data, TokenData::MappingKey) {
                     // [150] ns-flow-pair ::= '?' s-separate ns-flow-map-explicit-entry
                     let pair_start = self.token.start;
-                    let pair_indent = self.token.indent;
                     let key = self.parse_flow_explicit_key()?;
                     let value = if matches!(self.token.data, TokenData::MappingValue) {
                         self.scan(ScanOptions::default())?;
@@ -2660,13 +2659,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ) {
                             Expr::init(E::Null {}, self.token.start.loc())
                         } else {
-                            // [147] the value is ns-flow-node; threading
-                            // current_mapping_indent makes the Scalar arm's
-                            // cmi==scalar_indent check return the bare scalar
-                            // instead of consuming a trailing `: …` as a
-                            // nested mapping.
+                            // [147] the value is ns-flow-node; threading the
+                            // value's own indent as current_mapping_indent
+                            // makes the Scalar arm's cmi==scalar_indent check
+                            // return the bare scalar instead of consuming a
+                            // trailing `: …` as a nested mapping.
                             self.parse_node(ParseNodeOptions {
-                                current_mapping_indent: Some(pair_indent),
+                                current_mapping_indent: Some(self.token.indent),
                                 ..Default::default()
                             })?
                         }

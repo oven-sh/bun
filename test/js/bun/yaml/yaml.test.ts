@@ -1131,6 +1131,8 @@ folded: >
 
         test("rejects nested : in flow-seq explicit-entry value", () => {
           // [147] the value is ns-flow-node, not a pair.
+          expect(() => YAML.parse("[?\n  a: b: c]\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("[? a:\n  b: c]\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("[? a: b: c]\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("[? [1]: [2]: 3]\n")).toThrow("Unexpected token");
         });
@@ -1160,6 +1162,15 @@ folded: >
           expect(() => YAML.parse('{a: "b":1}\n')).toThrow();
           // Currently: {"a":{"1 b":2}}
           expect(() => YAML.parse("{a: 1 b: 2}\n")).toThrow();
+        });
+
+        test.todo(":-prefixed plain scalar after `? &x` / `? !!str` (anchor/tag re-scan in FlowKey)", () => {
+          // The first scan after `?` is in flow-in (so `:b` is ns-plain-first),
+          // but when an anchor/tag intervenes the property arm re-scans inside
+          // the key parse_node's FlowKey wrap, mis-tokenizing `:b` as a
+          // separator. Anchor/tag-on-empty cluster.
+          expect(YAML.parse("[? &x :b]\n")).toEqual([{ ":b": null }]);
+          expect(YAML.parse("{? !!str :b}\n")).toEqual({ ":b": null });
         });
 
         test.todo("flow-map value is ns-flow-node, not a pair", () => {

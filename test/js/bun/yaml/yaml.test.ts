@@ -1054,20 +1054,37 @@ folded: >
           expect(YAML.parse("[? a\n: b]\n")).toEqual([{ a: "b" }]);
         });
 
-        test("flow mapping with explicit ? (no indent constraint)", () => {
-          // Locks in current behavior. Spec result per [142]/[143] is {a:"b"}
-          // (matches js-yaml, PyYAML, ruamel.yaml); the [object Object] is a
-          // pre-existing flow-? quirk (routes through parse_block_mapping).
-          // Update to {a:"b"} when flow-? is fixed.
-          expect(YAML.parse("{? a\n  : b}\n")).toEqual({ "[object Object]": null });
+        test("flow mapping with explicit ?", () => {
+          // [142]/[143] flow `?` is just an indicator; the entry is a normal
+          // implicit pair (or e-node : e-node when nothing follows).
+          expect(YAML.parse("{? a\n  : b}\n")).toEqual({ a: "b" });
+          expect(YAML.parse("{? a}\n")).toEqual({ a: null });
+          expect(YAML.parse("{?}\n")).toEqual({ null: null });
+          expect(YAML.parse("{?, x}\n")).toEqual({ null: null, x: null });
+          expect(YAML.parse("{? a: b, ? c: d}\n")).toEqual({ a: "b", c: "d" });
         });
 
-        test.todo("flow mapping with bare ? (DFF7 cluster)", () => {
-          // Was an error before this PR; now produces wrong nested-map result.
-          // Reference parsers split: eemeli/js-yaml return {a:null}; PyYAML/
-          // ruamel error. Should be {a:null}; needs flow-? to bypass
-          // parse_block_mapping. Currently {"[object Object]":null}.
-          expect(YAML.parse("{? a}\n")).toEqual({ a: null });
+        test("flow mapping with bare : (e-node key)", () => {
+          // [147] e-node key followed by `:`
+          expect(YAML.parse("{: x}\n")).toEqual({ null: "x" });
+          expect(YAML.parse("{a: 1, : 2}\n")).toEqual({ a: 1, null: 2 });
+          expect(YAML.parse("{? : x}\n")).toEqual({ null: "x" });
+        });
+
+        test("JSON-adjacent : after JSON-style key", () => {
+          // [149] a `:` may follow a quoted scalar / `]` / `}` with no
+          // separation in flow context. Plain scalars do not qualify.
+          expect(YAML.parse('["a":b]\n')).toEqual([{ a: "b" }]);
+          expect(YAML.parse("['a':b]\n")).toEqual([{ a: "b" }]);
+          expect(YAML.parse("[{a: 1}:b]\n")).toEqual([{ "[object Object]": "b" }]);
+          expect(YAML.parse("[[1, 2]:b]\n")).toEqual([{ "1,2": "b" }]);
+          // plain scalar — `:` is part of the scalar
+          expect(YAML.parse("[a:b]\n")).toEqual(["a:b"]);
+        });
+
+        test("JSON-adjacent : in flow mapping", () => {
+          expect(YAML.parse('{"a":b}\n')).toEqual({ a: "b" });
+          expect(YAML.parse("{{a: 1}:b}\n")).toEqual({ "[object Object]": "b" });
         });
       });
 

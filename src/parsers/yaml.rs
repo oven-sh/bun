@@ -1167,6 +1167,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                     drop(scalar_str);
                     break 'scalar TokenScalar {
                         multiline,
+                        is_quoted: false,
                         data: scalar,
                     };
                 }
@@ -1176,6 +1177,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
             break 'scalar TokenScalar {
                 multiline,
+                is_quoted: false,
                 data: NodeScalar::String(scalar_str),
             };
         };
@@ -1962,6 +1964,7 @@ impl<Enc: Encoding> TokenData<Enc> {
 pub struct TokenScalar<Enc: Encoding> {
     pub data: NodeScalar<Enc>,
     pub multiline: bool,
+    pub is_quoted: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -2569,6 +2572,26 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(Document { root, directives })
     }
 
+    /// [149] c-ns-flow-map-json-key-entry — when a JSON-style key (quoted
+    /// scalar, flow sequence, flow mapping) appears in flow context, the scan
+    /// for a following `:` is in `flow-key` (per [150] c-s-implicit-json-key),
+    /// so an adjacent `:` with no separation is recognized. Returns true iff
+    /// FlowKey was pushed; the caller must then `unset_json_key()` once after
+    /// the relevant scan, regardless of its result.
+    fn maybe_set_json_key(&mut self) -> Result<bool, ParseError> {
+        if self.context.get() == Context::FlowIn {
+            self.context.set(Context::FlowKey)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn unset_json_key(&mut self, was_set: bool) {
+        if was_set {
+            self.context.unset(Context::FlowKey);
+        }
+    }
+
     fn parse_flow_sequence(&mut self) -> Result<Expr, ParseError> {
         let sequence_start = self.token.start;
         let _sequence_indent = self.token.indent;
@@ -2639,7 +2662,36 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
 
             while !matches!(self.token.data, TokenData::MappingEnd) {
-                let key = {
+                // [142] `? …` and bare `:` are handled here so the key parse
+                // never reaches parse_node's MappingKey arm (which routes
+                // through block-mapping logic).
+                let key = if matches!(self.token.data, TokenData::MappingKey) {
+                    // Consume `?`, then parse the entry's key (or e-node).
+                    self.context.set(Context::FlowKey)?;
+                    let r = self.scan(ScanOptions::default());
+                    self.context.unset(Context::FlowKey);
+                    r?;
+                    if matches!(
+                        self.token.data,
+                        TokenData::MappingValue
+                            | TokenData::CollectEntry
+                            | TokenData::MappingEnd
+                    ) {
+                        // [143] e-node key (`?,` / `?}` / `? :`)
+                        Expr::init(E::Null {}, self.token.start.loc())
+                    } else {
+                        self.context.set(Context::FlowKey)?;
+                        let k = self.parse_node(ParseNodeOptions {
+                            explicit_mapping_key: true,
+                            ..Default::default()
+                        });
+                        self.context.unset(Context::FlowKey);
+                        k?
+                    }
+                } else if matches!(self.token.data, TokenData::MappingValue) {
+                    // [147] e-node key followed by `:`
+                    Expr::init(E::Null {}, self.token.start.loc())
+                } else {
                     self.context.set(Context::FlowKey)?;
                     let k = self.parse_node(ParseNodeOptions::default());
                     self.context.unset(Context::FlowKey);
@@ -3570,7 +3622,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let sequence_start = self.token.start;
                     let sequence_indent = self.token.indent;
                     let sequence_line = self.token.line;
-                    let seq = self.parse_flow_sequence()?;
+                    let json_key = self.maybe_set_json_key()?;
+                    let seq = self.parse_flow_sequence();
+                    self.unset_json_key(json_key);
+                    let seq = seq?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         if self.token.indent.is_less_than(sequence_indent)
@@ -3645,7 +3700,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping_indent = self.token.indent;
                     let mapping_line = self.token.line;
 
-                    let map = self.parse_flow_mapping()?;
+                    let json_key = self.maybe_set_json_key()?;
+                    let map = self.parse_flow_mapping();
+                    self.unset_json_key(json_key);
+                    let map = map?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         if self.token.indent.is_less_than(mapping_indent)
@@ -3802,11 +3860,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         _ => unreachable!("token.data was Scalar at match guard"),
                     };
 
-                    self.scan(ScanOptions {
+                    let json_key = if scalar.is_quoted {
+                        self.maybe_set_json_key()?
+                    } else {
+                        false
+                    };
+                    let r = self.scan(ScanOptions {
                         tag: node_props.tag(),
                         outside_context: true,
                         ..Default::default()
-                    })?;
+                    });
+                    self.unset_json_key(json_key);
+                    r?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         // this might be the start of a new object with an implicit key
@@ -4478,6 +4543,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     resolved: TokenScalar {
                         data: NodeScalar::String(YamlString::List(self.text)),
                         multiline: true,
+                        is_quoted: false,
                     },
                 }))
             }
@@ -4850,6 +4916,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         resolved: TokenScalar {
                             // TODO: wrong! (matches Zig comment)
                             multiline: self.line != scalar_line,
+                            is_quoted: true,
                             data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));
@@ -4934,6 +5001,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         resolved: TokenScalar {
                             // TODO: wrong! (matches Zig comment)
                             multiline: self.line != scalar_line,
+                            is_quoted: true,
                             data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));

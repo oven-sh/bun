@@ -62,7 +62,11 @@ impl URLPath {
     /// Take ownership of the percent-decode buffer, if `parse()` had to
     /// allocate one. The slice fields of `self` keep pointing into the
     /// returned allocation — the caller must keep it alive for as long as any
-    /// of those slices (or sub-slices of them) are read.
+    /// of those slices (or sub-slices of them) are read; dropping it while
+    /// they are still in use leaves them dangling. (Sole caller:
+    /// `filesystem_router`, which immediately re-parks the buffer as the owned
+    /// backing storage of the matched route's path.)
+    #[must_use = "dropping the returned storage dangles the slice fields of this URLPath"]
     pub fn take_decoded_storage(&mut self) -> Option<Box<[u8]>> {
         self._decoded_storage.take()
     }

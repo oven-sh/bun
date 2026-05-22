@@ -691,4 +691,4 @@ it("does not match a dynamic route whose static segment merely collides on lengt
   expect(router.match(`/${routeSegment}/42`)?.name).toBe(`/${routeSegment}/[id]`);
   // A different segment that only collides on (length, 32-bit hash) must not.
   expect(router.match(`/${attackSegment}/42`)).toBeNull();
-}, 30_000);
+});

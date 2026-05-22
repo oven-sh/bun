@@ -1042,7 +1042,10 @@ impl QueryStringMap {
 
         debug_assert!(count > 0); // We should not call initWithScanner when there are no path params
 
-        while let Some(result) = scanner.query.next() {
+        while count < MAX_QUERY_STRING_PARAMS {
+            let Some(result) = scanner.query.next() else {
+                break;
+            };
             if result.name_needs_decoding || result.value_needs_decoding {
                 nothing_needs_decoding = false;
             }
@@ -1054,7 +1057,7 @@ impl QueryStringMap {
             return Ok(None);
         }
 
-        list.reserve(count); // PERF(port): was ensureTotalCapacity
+        list.reserve(count.min(MAX_QUERY_STRING_PARAMS)); // PERF(port): was ensureTotalCapacity
         scanner.reset();
 
         // this over-allocates
@@ -1175,7 +1178,10 @@ impl QueryStringMap {
         let mut estimated_str_len: usize = 0;
 
         let mut nothing_needs_decoding = true;
-        while let Some(result) = scanner.next() {
+        while count < MAX_QUERY_STRING_PARAMS {
+            let Some(result) = scanner.next() else {
+                break;
+            };
             if result.name_needs_decoding || result.value_needs_decoding {
                 nothing_needs_decoding = false;
             }

@@ -4383,6 +4383,12 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
+        // RFC 9110 §9.3.6: a non-200 response to CONNECT means the tunnel was
+        // not established. Surface the proxy's response to the caller, but
+        // never follow a Location header from it — a malicious proxy could
+        // otherwise redirect the request (body and custom headers included)
+        // to an attacker-chosen plaintext origin.
+        let mut is_proxy_connect_failure = false;
         if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
             if response.status_code == 200 {
                 // signal to continue the proxing
@@ -4392,6 +4398,7 @@ impl<'a> HTTPClient<'a> {
             // proxy denied connection so return proxy result (407, 403 etc)
             self.flags.proxy_tunneling = false;
             self.flags.disable_keepalive = true;
+            is_proxy_connect_failure = true;
         }
 
         let status_code = response.status_code;
@@ -4404,7 +4411,8 @@ impl<'a> HTTPClient<'a> {
         // if is no redirect or if is redirect == "manual" just proceed
         let is_redirect = status_code >= 300 && status_code <= 399;
         if is_redirect {
-            if self.redirect_type == FetchRedirect::Follow
+            if !is_proxy_connect_failure
+                && self.redirect_type == FetchRedirect::Follow
                 && !location.is_empty()
                 && self.remaining_redirect_count > 0
             {

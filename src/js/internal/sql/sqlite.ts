@@ -51,19 +51,94 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
 }
 
 /**
+ * Strip SQL comments (`/* ... *\/` and `-- ... \n`) from a query so that
+ * `parseSQLQuery` can locate the leading statement keyword. Quoted regions
+ * — string literals in `'...'`, identifiers in `"..."` or `` `...` `` /
+ * `[...]` (SQLite accepts all four; see https://sqlite.org/lang_keywords.html)
+ * — are preserved verbatim, so a `--` or `/*` inside them is data, not a
+ * comment.
+ *
+ * Only called once per query from `parseSQLQuery`; operates on the
+ * upper-cased input.
+ */
+function stripSQLComments(text: string): string {
+  const len = text.length;
+  let out = "";
+  // `quoted` holds the OPENING delimiter. `[` closes on `]`; the rest close
+  // on themselves.
+  let quoted: false | "'" | '"' | "`" | "[" = false;
+  let i = 0;
+  while (i < len) {
+    const c = text[i];
+    if (quoted) {
+      out += c;
+      const closing = quoted === "[" ? "]" : quoted;
+      if (c === closing) {
+        // `'`, `"`, and `` ` `` use a doubled delimiter as an escape (`''`
+        // / `""` / ` `` `). `[...]` has no escape mechanism — the first `]`
+        // always terminates it. See https://sqlite.org/lang_keywords.html.
+        if (quoted !== "[" && i + 1 < len && text[i + 1] === closing) {
+          out += text[i + 1];
+          i += 2;
+          continue;
+        }
+        quoted = false;
+      }
+      i++;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === "`" || c === "[") {
+      quoted = c;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === "-" && i + 1 < len && text[i + 1] === "-") {
+      // `-- ...` line comment: skip to end of line (but keep the newline
+      // so the tokenizer still sees a boundary between the preceding
+      // token and the next one).
+      i += 2;
+      while (i < len && text[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && i + 1 < len && text[i + 1] === "*") {
+      // `/* ... */` block comment: skip to matching `*/`. SQLite doesn't
+      // support nested block comments, so a simple scan is correct.
+      i += 2;
+      while (i < len && !(text[i] === "*" && i + 1 < len && text[i + 1] === "/")) i++;
+      if (i < len) i += 2;
+      // Insert a space so the tokens on either side don't merge.
+      out += " ";
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/**
  * Parse the SQL query and return the command and the last token
  * @param query - The SQL query to parse
  * @param partial - Whether to stop on the first command we find
  * @returns The command, the last token, and whether it can return rows
  */
 function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
-  const text = query.toUpperCase().trim();
+  // Strip SQL comments up front so a leading `/* ... */` or `-- ...` doesn't
+  // hide the statement keyword from the reverse token walk below.
+  const text = stripSQLComments(query.toUpperCase()).trim();
   const text_len = text.length;
 
   let token = "";
   let command = SQLCommand.none;
   let lastToken = "";
   let canReturnRows = false;
+  // Tracks whether the reverse walk observed an INSERT / UPDATE / DELETE
+  // token anywhere in the query. Used at end-of-loop to decide whether a
+  // leading `WITH` is `WITH cte AS (...) SELECT ...` (returns rows) or
+  // `WITH cte AS (...) INSERT/UPDATE/DELETE ...` (does not, unless
+  // RETURNING was seen). Only RETURNING flips `canReturnRows` mid-loop.
+  let sawDML = false;
   let quoted: false | "'" | '"' = false;
   // we need to reverse search so we find the closest command to the parameter
   for (let i = text_len - 1; i >= 0; i--) {
@@ -80,6 +155,7 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             if (command === SQLCommand.none) {
               command = SQLCommand.insert;
             }
+            sawDML = true;
             lastToken = token;
             token = "";
             if (partial) {
@@ -91,11 +167,67 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             if (command === SQLCommand.none) {
               command = SQLCommand.update;
             }
+            sawDML = true;
             lastToken = token;
             token = "";
             if (partial) {
               return { command: SQLCommand.update, lastToken, canReturnRows };
             }
+            continue;
+          }
+          case "DELETE": {
+            // DELETE isn't tracked in the `SQLCommand` enum (the adapter
+            // uses `lastToken` to report the command name), but we still
+            // need to remember we saw it so a leading `WITH` ahead of
+            // `DELETE FROM ...` doesn't falsely flip `canReturnRows`.
+            sawDML = true;
+            lastToken = token;
+            token = "";
+            continue;
+          }
+          case "REPLACE": {
+            // `REPLACE` is ambiguous: as a statement it's the SQLite
+            // alias for `INSERT OR REPLACE INTO …` and must be followed
+            // by `INTO`; as a scalar function (`replace(X, Y, Z)`) the
+            // next non-whitespace char is `(`. SQL allows whitespace
+            // between a function name and its arg list, so we can't just
+            // treat `REPLACE` as a keyword — we'd falsely flag
+            // `SELECT REPLACE (name, 'a', 'b') FROM t` as DML and make a
+            // `WITH … SELECT REPLACE (…)` query return zero rows.
+            //
+            // `i` points at the whitespace immediately AFTER `REPLACE`
+            // in source order; peek forward past any further whitespace
+            // for an `INTO` token to disambiguate.
+            let peek = i + "REPLACE".length + 1;
+            while (
+              peek < text_len &&
+              (text[peek] === " " ||
+                text[peek] === "\t" ||
+                text[peek] === "\n" ||
+                text[peek] === "\r" ||
+                text[peek] === "\f" ||
+                text[peek] === "\v")
+            ) {
+              peek++;
+            }
+            if (
+              peek + 4 <= text_len &&
+              text[peek] === "I" &&
+              text[peek + 1] === "N" &&
+              text[peek + 2] === "T" &&
+              text[peek + 3] === "O" &&
+              (peek + 4 === text_len ||
+                text[peek + 4] === " " ||
+                text[peek + 4] === "\t" ||
+                text[peek + 4] === "\n" ||
+                text[peek + 4] === "\r" ||
+                text[peek + 4] === "\f" ||
+                text[peek + 4] === "\v")
+            ) {
+              sawDML = true;
+            }
+            lastToken = token;
+            token = "";
             continue;
           }
           case "WHERE": {
@@ -131,16 +263,21 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
             }
             continue;
           }
-          case "SELECT":
-          case "PRAGMA":
-          case "WITH":
-          case "EXPLAIN":
           case "RETURNING": {
+            // RETURNING always produces rows regardless of the leading
+            // statement keyword (INSERT/UPDATE/DELETE ... RETURNING ...).
             lastToken = token;
             canReturnRows = true;
             token = "";
             continue;
           }
+          // NOTE: `SELECT`, `PRAGMA`, `WITH`, and `EXPLAIN` deliberately do
+          // NOT flip `canReturnRows` here. Seeing them mid-query means they
+          // occur inside a subquery (e.g. `INSERT ... SELECT ...`,
+          // `UPDATE ... WHERE id IN (SELECT ...)`), which does not return
+          // rows unless there's a `RETURNING` clause. They only flip
+          // `canReturnRows` when they appear as the leading statement
+          // keyword, handled in the post-loop block below.
           default: {
             lastToken = token;
             token = "";
@@ -171,9 +308,15 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         if (command === SQLCommand.none) {
           command = SQLCommand.insert;
         }
+        sawDML = true;
         break;
       case "UPDATE":
         if (command === SQLCommand.none) command = SQLCommand.update;
+        sawDML = true;
+        break;
+      case "DELETE":
+      case "REPLACE":
+        sawDML = true;
         break;
       case "WHERE":
         if (command === SQLCommand.none) {
@@ -192,10 +335,20 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         break;
       case "SELECT":
       case "PRAGMA":
-      case "WITH":
       case "EXPLAIN":
       case "RETURNING": {
         canReturnRows = true;
+        break;
+      }
+      case "WITH": {
+        // `WITH cte AS (...) <stmt>` takes its row-returning behaviour
+        // from <stmt>. If the reverse walk never saw an INSERT / UPDATE
+        // / DELETE keyword, <stmt> is a SELECT (or PRAGMA/EXPLAIN inside
+        // a CTE — rare but row-returning), so flip `canReturnRows`. For
+        // `WITH ... INSERT/UPDATE/DELETE` without RETURNING, leave it
+        // false so the adapter uses `db.run()` and reports `changes()`.
+        // RETURNING already flipped `canReturnRows` mid-loop on its own.
+        if (!sawDML) canReturnRows = true;
         break;
       }
       default:

@@ -19,7 +19,38 @@ pub mod hint;
 pub mod result;
 pub mod thread_id;
 pub mod tty;
-pub mod util;
+
+pub mod argv;
+pub mod byte_cast;
+pub mod embed;
+pub mod extern_union;
+pub mod fd;
+pub mod float16;
+pub mod form_data;
+pub mod generic_index;
+pub mod getenv;
+pub mod hash;
+pub mod hw_timer;
+pub mod io;
+pub mod map_like;
+pub mod mode;
+pub mod once;
+pub mod ordinal;
+pub mod path_buffer;
+pub mod perf;
+pub mod process;
+pub mod racy_cell;
+pub mod rand;
+pub mod stack_check;
+pub mod string_pointer;
+pub mod sync;
+pub mod thread_lock;
+pub mod time;
+#[path = "timespec.rs"]
+mod timespec_file;
+pub mod version;
+pub mod zstr;
+
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 
 /// Shared state-machine tag for the streaming (de)compressors in
@@ -679,10 +710,53 @@ pub use bun_alloc::{
 // can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
 pub use Global::*;
 pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
+
+/// Nomicon-style opaque FFI handle. Expands to a zero-sized `#[repr(C)]`
+/// struct whose address is the only thing Rust ever observes.
+///
+/// `_p: UnsafeCell<[u8; 0]>` makes the type `!Freeze`, so a `&T` does **not**
+/// carry `readonly`/`noalias` at the ABI boundary — the C side mutates through
+/// these handles regardless of whether Rust holds `&` or `&mut`, and a
+/// `readonly` attribute would license LLVM to cache loads across the FFI call.
+/// `PhantomData<(*mut u8, PhantomPinned)>` makes the type `!Send + !Sync +
+/// !Unpin`, matching the conservative defaults for foreign-owned state.
+///
+/// Thin re-export of [`bun_opaque::opaque_ffi!`] under the legacy name. The
+/// canonical macro lives in the zero-dep `bun_opaque` crate so tier-0 `*_sys`
+/// leaves (`mimalloc_sys`, `brotli_sys`, …) can reach it without pulling
+/// `bun_core` into their build graph; this alias just keeps existing
+/// `bun_core::opaque_extern!(...)` callers compiling.
+#[macro_export]
+macro_rules! opaque_extern {
+    ($($t:tt)*) => { ::bun_opaque::opaque_ffi!($($t)*); };
+}
+pub use argv::*;
+pub use byte_cast::*;
+pub use embed::*;
+pub use fd::*;
 pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
+pub use float16::*;
+pub use form_data as FormData;
+pub use generic_index::*;
+pub use getenv::*;
+pub use hash::*;
+pub use map_like::*;
+pub use mode::*;
+pub use once::*;
+pub use ordinal::*;
+pub use path_buffer::*;
+pub use process::*;
+pub use racy_cell::*;
+pub use rand::*;
 pub use result::*;
+pub use stack_check::*;
+pub use string_pointer::*;
+pub use sync::*;
+pub use thread_lock::*;
+pub use timespec_file::*;
 pub use tty::Winsize;
-pub use util::*;
+pub use version::*;
+pub use zstr::*;
 
 // ── intrusive-container parent recovery ───────────────────────────────────
 //
@@ -1208,42 +1282,13 @@ pub fn set_start_time(ns: i128) {
     let _ = START_TIME.set(ns);
 }
 
-/// `bun.Timer` / `std.time.Timer` — minimal monotonic stopwatch. Mirrors Zig's
-/// `std.time.Timer.{start,read}` so callers ported verbatim (e.g.
-/// `Lockfile::clean_with_logger`, `LifecycleScriptSubprocess`) compile against
-/// the tier-0 surface without pulling in `bun_perf`.
-pub mod time {
-    // `std.time.*` — defined in `util::time`; re-exported so `bun_core::time::*` resolves uniformly.
-    pub use crate::util::time::{
-        MS_PER_DAY, MS_PER_S, NS_PER_DAY, NS_PER_HOUR, NS_PER_MIN, NS_PER_MS, NS_PER_S, NS_PER_US,
-        NS_PER_WEEK, S_PER_DAY, US_PER_MS, US_PER_S, milli_timestamp, nano_timestamp, timestamp,
-    };
-
-    #[derive(Clone, Copy)]
-    pub struct Timer {
-        started: std::time::Instant,
-    }
-    impl Timer {
-        #[inline]
-        pub fn start() -> core::result::Result<Self, crate::Error> {
-            Ok(Self {
-                started: std::time::Instant::now(),
-            })
-        }
-        #[inline]
-        pub fn read(&self) -> u64 {
-            self.started.elapsed().as_nanos() as u64
-        }
-    }
-}
-
 /// `bun.schema` — `src/options_types/schema.zig`. The full generated API
 /// types live in `bun_api` (tier-2); tier-0 only needs the namespace to
 /// exist so `bun_core::schema::api::StringPointer` etc. resolve as re-exports
 /// once that crate un-gates. For now expose the one type tier-0 itself owns.
 pub mod schema {
     pub mod api {
-        pub use crate::util::StringPointer;
+        pub use crate::string_pointer::StringPointer;
     }
 }
 

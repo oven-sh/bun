@@ -248,9 +248,9 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
         }
     }
 
-    match bun_core::is_writable(fd) {
-        bun_core::Pollable::Ready | bun_core::Pollable::Hup => sys::write(fd, buf),
-        bun_core::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
+    match bun_sys::is_writable(fd) {
+        bun_sys::Pollable::Ready | bun_sys::Pollable::Hup => sys::write(fd, buf),
+        bun_sys::Pollable::NotReady => sys::Result::Err(sys::Error::retry()),
     }
 }
 

@@ -507,14 +507,14 @@ impl PosixBufferedReader {
             FileType::Socket => {
                 Self::read_socket(self, fd, 0, false);
             }
-            FileType::Pipe => match bun_core::is_readable(fd) {
-                bun_core::Pollable::Ready => {
+            FileType::Pipe => match bun_sys::is_readable(fd) {
+                bun_sys::Pollable::Ready => {
                     Self::read_from_blocking_pipe_without_blocking(self, fd, 0, false);
                 }
-                bun_core::Pollable::Hup => {
+                bun_sys::Pollable::Hup => {
                     Self::read_from_blocking_pipe_without_blocking(self, fd, 0, true);
                 }
-                bun_core::Pollable::NotReady => {
+                bun_sys::Pollable::NotReady => {
                     self.register_poll();
                 }
             },
@@ -771,17 +771,17 @@ impl PosixBufferedReader {
             // whether HUP still holds before committing to another blocking
             // read. This is one extra poll() per chunk only on the HUP path
             // (i.e. while draining the final buffered bytes), not per read.
-            match bun_core::is_readable(fd) {
-                bun_core::Pollable::Hup => {
+            match bun_sys::is_readable(fd) {
+                bun_sys::Pollable::Hup => {
                     // Still hung up; keep draining towards EOF.
                 }
-                bun_core::Pollable::Ready => {
+                bun_sys::Pollable::Ready => {
                     // Data is available but HUP cleared — a writer came back.
                     // Drop the stale HUP so the next iteration takes the
                     // normal registerPoll() exit once the data is drained.
                     received_hup = false;
                 }
-                bun_core::Pollable::NotReady => {
+                bun_sys::Pollable::NotReady => {
                     // No data and no HUP: a writer exists. Go back to the
                     // event loop instead of blocking in read().
                     parent.register_poll();

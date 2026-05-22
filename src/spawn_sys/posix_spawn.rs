@@ -128,10 +128,10 @@ pub mod bun_spawn {
     use super::*;
 
     // The #[repr(C)] FFI mirrors (`FileActionType`, `Action`) live in
-    // `bun_core::spawn_ffi` — the single source of truth for bun-spawn.cpp's
+    // `crate::spawn_ffi` — the single source of truth for bun-spawn.cpp's
     // request layout. The owning `CString` backing each non-null `Action.path`
     // lives in `Actions.paths` below.
-    pub use bun_core::spawn_ffi::{Action, FileActionType};
+    pub use crate::spawn_ffi::{Action, FileActionType};
 
     // `Fd::native()` returns `*mut c_void` on Windows, which can't fill the
     // `c_int` action slot. posix_spawn never runs on Windows (libuv handles
@@ -504,12 +504,12 @@ pub mod posix_spawn {
     // draft, but Windows goes through `process.rs::spawn_process_windows`
     // (libuv), never these. Leave undeclared on Windows for now.
 
-    // The #[repr(C)] request mirrors + extern decl live in `bun_core::spawn_ffi`
+    // The #[repr(C)] request mirrors + extern decl live in `crate::spawn_ffi`
     // (single source of truth for bun-spawn.cpp's `bun_spawn_request_t`). The
     // `sys::Result`-wrapping spawn helper stays here because `bun_core` cannot
     // depend on `bun_sys`.
     #[cfg(unix)]
-    pub(super) use bun_core::spawn_ffi::{ActionsList, BunSpawnRequest, posix_spawn_bun};
+    pub(super) use crate::spawn_ffi::{ActionsList, BunSpawnRequest, posix_spawn_bun};
 
     #[cfg(unix)]
     pub(super) fn spawn_bun(

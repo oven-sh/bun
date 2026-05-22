@@ -10,7 +10,7 @@ use crate::jsc::{
 use crate::shared::CachedStructure;
 use bun_boringssl_sys as boringssl;
 use bun_core::strings;
-use bun_core::{TimespecMockMode, timespec};
+use bun_core::{Timespec, TimespecMockMode};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
@@ -258,7 +258,7 @@ impl JSMySQLConnection {
         }
 
         self.timer.with_mut(|t| {
-            t.next = timespec::ms_from_now(TimespecMockMode::AllowMockedTime, interval.into());
+            t.next = Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, interval.into());
             self.vm_mut().timer().insert(t);
         });
     }
@@ -335,7 +335,7 @@ impl JSMySQLConnection {
         }
 
         self.max_lifetime_timer.with_mut(|t| {
-            t.next = timespec::ms_from_now(
+            t.next = Timespec::ms_from_now(
                 TimespecMockMode::AllowMockedTime,
                 self.max_lifetime_interval_ms.into(),
             );

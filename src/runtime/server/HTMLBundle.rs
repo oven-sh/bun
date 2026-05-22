@@ -507,8 +507,7 @@ impl Route {
             create_and_schedule_completion_task(config, plugins, global, vm.event_loop())?;
         // SAFETY: `completion_task` is the freshly-boxed allocation (refcount==1); sole owner.
         unsafe {
-            (*completion_task).started_at_ns =
-                bun_core::util::Timespec::now_allow_mocked_time().ns();
+            (*completion_task).started_at_ns = bun_core::Timespec::now_allow_mocked_time().ns();
             (*completion_task).html_build_task = Some(self.as_ctx_ptr());
         }
         self.state.set(State::Building(Some(completion_task)));
@@ -573,7 +572,7 @@ impl Route {
                 let output_files = &mut bundle.output_files;
 
                 if server.config().is_development() {
-                    let now = bun_core::util::Timespec::now_allow_mocked_time().ns();
+                    let now = bun_core::Timespec::now_allow_mocked_time().ns();
                     let duration = now.saturating_sub(completion_task.started_at_ns);
                     let duration_f64 = duration as f64 / 1_000_000_000.0;
 

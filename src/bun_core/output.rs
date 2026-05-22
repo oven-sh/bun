@@ -168,7 +168,7 @@ pub fn argv() -> impl Iterator<Item = &'static [u8]> {
     // Delegates to the canonical `bun_core::argv()` which reads the raw
     // `(argc,argv)` captured by `init_argv` in `main` (musl-safe) and falls
     // back to `std::env::args_os()` for tests/tools.
-    crate::util::argv().into_iter()
+    crate::argv::argv().into_iter()
 }
 
 /// `bun.Output.debugWarn` — yellow `debug warn:` prefix to stderr in debug

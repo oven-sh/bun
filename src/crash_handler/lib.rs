@@ -2904,7 +2904,7 @@ mod draft {
             let Some(path_env) = env_var::PATH::get() else {
                 return;
             };
-            let Ok(cwd) = bun_core::getcwd(&mut buf2) else {
+            let Ok(cwd) = bun_sys::getcwd_z(&mut buf2) else {
                 return;
             };
             // PORT NOTE: reshaped for borrowck — capture cwd bytes by value (it
@@ -3277,9 +3277,9 @@ mod draft {
             argv.push(format!("0x{:X}", line.address).into_bytes());
         }
 
-        // PORTING.md: no std::process — routed through bun_core::spawn_sync_inherit (posix_spawn).
+        // PORTING.md: no std::process — routed through bun_spawn_sys::spawn_sync_inherit (posix_spawn).
         let stderr = &mut stderr_writer();
-        let result = bun_core::spawn_sync_inherit(&argv).inspect_err(|_err| {
+        let result = bun_spawn_sys::spawn_sync_inherit(&argv).inspect_err(|_err| {
         let _ = stderr.write_all(b"Failed to invoke command: ");
         let _ = fmt_argv(stderr, &argv);
         let _ = stderr.write_all(b"\n");

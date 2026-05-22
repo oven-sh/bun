@@ -35,6 +35,14 @@ pub mod posix_spawn;
 #[path = "spawn_process.rs"]
 pub mod spawn_process;
 
+/// `spawn_ffi` (the `posix_spawn_bun` repr(C) request structs + extern decl)
+/// plus `spawn_sync_inherit` / `SpawnStatus` — the minimal inherit-stdio
+/// spawner used by the crash-handler symbolizer and `bun init`.
+#[path = "spawn_sync.rs"]
+pub mod spawn_sync;
+
+pub use spawn_sync::{SpawnStatus, spawn_ffi, spawn_sync_inherit};
+
 // ──────────────────────────────────────────────────────────────────────────
 // Canonical FFI type aliases — Zig `?[*:0]const u8` ↔ Rust `*const c_char`
 //

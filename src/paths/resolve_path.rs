@@ -2496,7 +2496,7 @@ impl PosixToWinNormalizer {
                     // `buf` and returns a borrow of it; capture the lengths we
                     // need, drop the borrow, then re-slice `buf`.
                     let sr_len = {
-                        let cwd = bun_core::getcwd(buf)?;
+                        let cwd = bun_sys::getcwd_z(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()
                     };
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
@@ -2532,7 +2532,7 @@ impl PosixToWinNormalizer {
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
                     // PORT NOTE: reshaped for borrowck — see resolve_cwd above.
                     let sr_len = {
-                        let cwd = bun_core::getcwd(buf)?;
+                        let cwd = bun_sys::getcwd_z(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()
                     };
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]

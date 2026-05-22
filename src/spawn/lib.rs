@@ -63,7 +63,7 @@ pub mod static_pipe_writer;
 pub use bun_event_loop::EventLoopHandle;
 
 // Raw OS-spawn types from the leaf -sys crate.
-pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
+pub use bun_spawn_sys::{Argv, CStrPtr, Envp, SpawnStatus, ffi, spawn_sync_inherit};
 
 pub use bun_spawn_sys::RusageFields;
 pub use process::{

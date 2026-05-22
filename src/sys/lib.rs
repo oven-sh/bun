@@ -17,10 +17,12 @@ pub extern crate bun_core as bun_str;
 #[cfg(windows)]
 pub extern crate bun_libuv_sys;
 pub mod fd;
+pub mod poll;
 pub use fd::{
     ErrorCase, FdExt, FdOptionalExt, FdT, HashMapContext, MakeLibUvOwnedError, MovableIfWindowsFd,
     RawFd, UvFile,
 };
+pub use poll::{PollFlag, Pollable, is_readable, is_writable};
 #[path = "Error.rs"]
 mod error;
 pub use error::Error;
@@ -7244,8 +7246,8 @@ pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
                     linux::RWFFlagSupport::disable();
                     // sys.zig:4070 — only fall through to BLOCKING read if the fd is
                     // actually readable now; otherwise return retry (EAGAIN).
-                    return match bun_core::is_readable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
+                    return match crate::is_readable(fd) {
+                        crate::Pollable::Ready | crate::Pollable::Hup => read(fd, buf),
                         _ => Err(Error::retry().with_fd(fd)),
                     };
                 }
@@ -7273,8 +7275,8 @@ pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
                 libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
                     linux::RWFFlagSupport::disable();
                     // sys.zig:4123 — poll before issuing a blocking write.
-                    return match bun_core::is_writable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
+                    return match crate::is_writable(fd) {
+                        crate::Pollable::Ready | crate::Pollable::Hup => write(fd, buf),
                         _ => {
                             let mut e = Error::retry();
                             e.syscall = Tag::write;
@@ -7495,7 +7497,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         // sys.zig:3054-3066 — FreeBSD: F_KINFO returns a `struct kinfo_file`
         // with `kf_path`. The /dev/fd readlink trick used for the Linuxulator
         // path doesn't resolve to an absolute path on native FreeBSD, so go
-        // via fcntl. Mirrors `bun_core::util::fd_path_raw` (T0 sibling).
+        // via fcntl. Mirrors `bun_core::fd::fd_path_raw` (T0 sibling).
         use core::ptr::{addr_of, addr_of_mut};
         let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
         // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.

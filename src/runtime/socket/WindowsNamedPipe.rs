@@ -25,7 +25,7 @@ use core::ptr::NonNull;
 use bun_boringssl_sys as boringssl;
 #[cfg(windows)]
 use bun_collections::ByteVecExt;
-use bun_core::timespec;
+use bun_core::Timespec;
 use bun_io::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -1304,7 +1304,7 @@ impl WindowsNamedPipe {
         // reschedule the timer
         // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
-        let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
+        let next = Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
         self.event_loop_timer.next = ElTimespec {
             sec: next.sec,
             nsec: next.nsec,

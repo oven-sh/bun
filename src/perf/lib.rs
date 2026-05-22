@@ -9,9 +9,13 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
 pub mod generated_perf_trace_events;
-pub mod hw_timer;
 pub mod system_timer;
 pub mod tracy;
+
+/// Moved into `bun_core` so `Timespec::now` (the `bun.getRoughTickCount` port)
+/// can read it from tier-0; re-exported here for existing `bun_perf::hw_timer`
+/// callers.
+pub use bun_core::hw_timer;
 
 pub use crate::generated_perf_trace_events::PerfEvent;
 

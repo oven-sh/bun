@@ -41,7 +41,7 @@ or don't match the cross-platform behavior the runtime needs.
 | `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `borrow_utf8`                                       |
 | `&str` operations on byte slices        | `bun_core::strings::*` (SIMD-backed `&[u8]` ops)                                     |
 | `eprintln!` for debug logging           | `bun_core::declare_scope!` + `scoped_log!`                                           |
-| `std::process::Command`                 | `bun_core::util::spawn_sync_inherit` (CLI helpers) or `bun_spawn_sys` (full control) |
+| `std::process::Command`                 | `bun_spawn::spawn_sync_inherit` (CLI helpers) or `bun_spawn_sys` (full control) |
 | `Box::new` + raw ptr round-trip         | `bun_core::heap::{into_raw, take, destroy}`                                          |
 
 ## `bun_sys` — System Calls (`src/sys/`)
@@ -261,7 +261,7 @@ bun_core::pretty_errorln!("<red>error<r>: {}", msg);
 For simple inherit-stdio CLI helpers:
 
 ```rust
-use bun_core::util::spawn_sync_inherit;
+use bun_spawn::spawn_sync_inherit; // owned by bun_spawn_sys, re-exported here
 let status = spawn_sync_inherit(&[b"git", b"status"])?;
 ```
 

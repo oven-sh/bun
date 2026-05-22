@@ -472,8 +472,7 @@ pub mod registry {
                         && auth.is_empty()
                     {
                         let combo_len = registry.username.len() + registry.password.len() + 1;
-                        let total =
-                            combo_len + bun_core::base64::standard_encoder_calc_size(combo_len);
+                        let total = combo_len + bun_base64::encode_len_from_size(combo_len);
                         output_buf_owned = vec![0u8; total].into_boxed_slice();
                         let (user_slice, output_buf) = output_buf_owned.split_at_mut(combo_len);
                         user_slice[..registry.username.len()].copy_from_slice(&registry.username);
@@ -481,7 +480,8 @@ pub mod registry {
                         user_slice[registry.username.len() + 1..][..registry.password.len()]
                             .copy_from_slice(&registry.password);
                         user = user_slice;
-                        auth = bun_core::base64::standard_encode(output_buf, user);
+                        let encoded_len = bun_base64::encode(output_buf, user);
+                        auth = &output_buf[..encoded_len];
                         break 'outer;
                     }
                 }

@@ -836,13 +836,13 @@ impl Encoding {
         // const-generic arithmetic in array lengths, so we heap-allocate.
         match self {
             Self::Base64 => {
-                let encoded_len = bun_core::base64::encode_len(input);
+                let encoded_len = bun_base64::encode_len(input);
                 let (mut encoded, bytes) =
                     bun_core::String::create_uninitialized_latin1(encoded_len);
                 if encoded.is_dead() {
                     return encoded.transfer_to_js(global_object);
                 }
-                let n = bun_core::base64::encode(bytes, input);
+                let n = bun_base64::encode(bytes, input);
                 debug_assert_eq!(n, encoded_len);
                 encoded.transfer_to_js(global_object)
             }

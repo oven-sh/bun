@@ -88,7 +88,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     }
 
     let mut cwd_buf = PathBuffer::uninit();
-    let cwd = match bun_core::getcwd(&mut cwd_buf) {
+    let cwd = match bun_sys::getcwd_z(&mut cwd_buf) {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
             Output::err(err, "Could not query current working directory", ());

@@ -684,3 +684,13 @@ mod tests {
 }
 
 // ported from: src/bun.zig
+
+// ── errno_to_zig_err ──────────────────────────────────────────────────────
+// Port of `bun.errnoToZigErr` (bun.zig:2854). Zig indexes into a comptime
+// `errno_map: [N]anyerror`; the Rust intern table reproduces that mapping in
+// `Error::from_errno` (errno → tag name → interned code).
+#[inline]
+pub fn errno_to_zig_err(errno: i32) -> crate::Error {
+    debug_assert!(errno != 0);
+    crate::Error::from_errno(errno)
+}

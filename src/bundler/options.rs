@@ -110,7 +110,7 @@ pub fn validate_path(
     Box::from(out)
 }
 
-// PORT NOTE: options.zig `stringHashMapFromArrays` — use `bun_core::util::{MapLike, from_entries}`
+// PORT NOTE: options.zig `stringHashMapFromArrays` — use `bun_core::{MapLike, from_entries}`
 // or inline the construction (see definesFromTransformOptions / loadersFromTransformOptions below).
 // Note `from_entries` reserves `iter.len()`; if you need the Zig over-reserve (`keys.len + N`),
 // call `MapLike::ensure_unused_capacity(total_cap)` yourself before zipping keys/values.

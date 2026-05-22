@@ -26,6 +26,7 @@ bun_core.workspace = true
 bun_dispatch.workspace = true
 bun_collections.workspace = true
 bun_io.workspace = true
+bun_spawn_sys.workspace = true
 bun_options_types.workspace = true
 bun_ast.workspace = true
 bun_paths.workspace = true

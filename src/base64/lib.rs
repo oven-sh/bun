@@ -67,7 +67,10 @@ pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
     Ok(dest)
 }
 
-pub use bun_core::base64::encode;
+pub fn encode(destination: &mut [u8], source: &[u8]) -> usize {
+    debug_assert!(destination.len() >= encode_len(source));
+    simdutf::base64::encode(source, destination, false)
+}
 
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
     // TODO(port): narrow error set (Zig was `!bun.Vec<u8>`; OOM now aborts)
@@ -129,9 +132,10 @@ pub const fn encode_len(source: &[u8]) -> usize {
     encode_len_from_size(source.len())
 }
 
+/// `std.base64.standard.Encoder.calcSize` — standard alphabet, padded.
 #[inline]
 pub const fn encode_len_from_size(source: usize) -> usize {
-    bun_core::base64::standard_encoder_calc_size(source)
+    source.div_ceil(3) * 4
 }
 
 #[inline]

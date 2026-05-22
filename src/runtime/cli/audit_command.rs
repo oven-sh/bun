@@ -76,7 +76,7 @@ impl AuditCommand {
             Err(err) => {
                 if err == bun_core::err!("MissingPackageJSON") {
                     let mut cwd_buf = bun_paths::PathBuffer::uninit();
-                    if let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) {
+                    if let Ok(cwd) = bun_sys::getcwd_z(&mut cwd_buf) {
                         Output::err_generic(
                             "No package.json was found for directory \"{s}\"",
                             (BStr::new(cwd.as_bytes()),),

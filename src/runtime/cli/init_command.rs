@@ -949,7 +949,7 @@ impl InitCommand {
                     Output::prettyln(format_args!(""));
                     // Zig: std.process.Child .{stderr,stdin,stdout}=.Inherit → spawnAndWait
                     let self_exe = bun::self_exe_path()?;
-                    let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+                    let _ = bun_spawn::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
                 }
             }
             _ => {}
@@ -1754,7 +1754,7 @@ impl Template {
         // TODO(port): spawn_sync_inherit inherits stdin too; full bun.spawnSync
         // (with Ignore stdin) lives in bun_runtime::api::process::sync.
         let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+        let _ = bun_spawn::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
 
         Output::prettyln(format_args!(
             "\n\

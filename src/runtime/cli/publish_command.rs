@@ -2049,8 +2049,7 @@ impl PublishCommand {
             b"latest"
         };
 
-        let encoded_tarball_len =
-            bun_core::base64::standard_encoder_calc_size(ctx.tarball_bytes.len());
+        let encoded_tarball_len = bun_base64::encode_len_from_size(ctx.tarball_bytes.len());
         let version_without_build_tag =
             install::dependency::without_build_tag(&ctx.package_version);
 

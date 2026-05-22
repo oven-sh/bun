@@ -596,7 +596,7 @@ impl<T: ?Sized> ThreadCell<T> {
     pub fn claim(&self) {
         #[cfg(debug_assertions)]
         {
-            let me = crate::util::debug_thread_id();
+            let me = crate::thread_lock::debug_thread_id();
             match self
                 .owner
                 .compare_exchange(UNCLAIMED, me, Ordering::AcqRel, Ordering::Acquire)
@@ -617,7 +617,7 @@ impl<T: ?Sized> ThreadCell<T> {
         {
             let owner = self.owner.load(Ordering::Acquire);
             if owner != UNCLAIMED {
-                let me = crate::util::debug_thread_id();
+                let me = crate::thread_lock::debug_thread_id();
                 assert!(
                     owner == me,
                     "ThreadCell: accessed from thread {me}, owned by thread {owner}"

@@ -793,7 +793,7 @@ impl ReadFile {
         // If we immediately call read(), it will block until stdin is
         // readable.
         if self.could_block {
-            if bun_core::is_readable(fd) == bun_core::Pollable::NotReady {
+            if bun_sys::is_readable(fd) == bun_sys::Pollable::NotReady {
                 self.wait_for_readable();
                 return;
             }
@@ -897,9 +897,9 @@ impl ReadFile {
                         // call. We already know it's done.
                         && !self.read_eof
                         {
-                            match bun_core::is_readable(self.opened_fd) {
-                                bun_core::Pollable::NotReady => {}
-                                bun_core::Pollable::Ready | bun_core::Pollable::Hup => continue,
+                            match bun_sys::is_readable(self.opened_fd) {
+                                bun_sys::Pollable::NotReady => {}
+                                bun_sys::Pollable::Ready | bun_sys::Pollable::Hup => continue,
                             }
                         }
                         self.read_eof = false;

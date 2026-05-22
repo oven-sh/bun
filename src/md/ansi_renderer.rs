@@ -1960,9 +1960,9 @@ impl<'a> AnsiRenderer<'a> {
     fn emit_kitty_image_file(&mut self, path: &[u8]) {
         // Base64-encode the file path (Kitty expects the payload to be b64).
         let encoded = {
-            let encoded_len = bun_core::base64::encode_len(path);
+            let encoded_len = bun_base64::encode_len(path);
             let mut encoded = vec![0u8; encoded_len];
-            let _ = bun_core::base64::encode(&mut encoded, path);
+            let _ = bun_base64::encode(&mut encoded, path);
             encoded
         };
         self.write_raw_no_color(b"\x1b_Ga=T,t=f,f=100,q=2;");

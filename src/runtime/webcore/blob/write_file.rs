@@ -501,7 +501,7 @@ impl WriteFile {
         //     }
         // }
 
-        if self.could_block && bun_core::is_writable(fd) == bun_core::Pollable::NotReady {
+        if self.could_block && bun_sys::is_writable(fd) == bun_sys::Pollable::NotReady {
             self.wait_for_writable();
             return;
         }
@@ -576,7 +576,7 @@ impl WriteFile {
 
                 // Do not immediately attempt to write again if it's not a regular file.
                 if self.could_block
-                    && bun_core::is_writable(self.opened_fd) == bun_core::Pollable::NotReady
+                    && bun_sys::is_writable(self.opened_fd) == bun_sys::Pollable::NotReady
                 {
                     self.wait_for_writable();
                     return;

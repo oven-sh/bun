@@ -18,7 +18,6 @@ use crate::webcore::blob::store as blob_store;
 use crate::webcore::blob::{ReadBytesHandler, ReadBytesResult};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
-use bun_core::base64;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
@@ -384,13 +383,13 @@ fn source_from_js(
                 )));
             }
             let mut out = vec![0u8; bun_base64::decode_len(payload)];
-            let r = base64::decode(&mut out, payload);
-            if r.fail {
+            let r = bun_base64::decode(&mut out, payload);
+            if !r.is_successful() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image(): invalid base64 in data: URL"
                 )));
             }
-            out.truncate(r.written);
+            out.truncate(r.count);
             return Ok(Source::Owned(out));
         }
         return Ok(Source::Path(ZBox::from_bytes(s)));
@@ -1816,9 +1815,10 @@ impl<'a> PipelineTask<'a> {
                         } else {
                             b""
                         };
-                        let mut buf = vec![0u8; pre.len() + base64::encode_len(out_slice)];
+                        let mut buf = vec![0u8; pre.len() + bun_base64::encode_len(out_slice)];
                         buf[..pre.len()].copy_from_slice(pre);
-                        let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], out_slice);
+                        let wrote =
+                            pre.len() + bun_base64::encode(&mut buf[pre.len()..], out_slice);
                         let str =
                             match jsc::bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
                                 Ok(s) => s,

@@ -108,7 +108,7 @@ struct Calibration {
 // `CALIBRATE_ONCE.call_once`, which establishes happens-before for readers.
 // `RacyCell` (not `OnceLock`) because `calibrate()` may early-return without
 // writing (freq==0) yet must still mark the Once as done.
-static CALIBRATION: bun_core::RacyCell<Calibration> = bun_core::RacyCell::new(Calibration {
+static CALIBRATION: crate::RacyCell<Calibration> = crate::RacyCell::new(Calibration {
     start_counter: 0,
     start_ns: 0,
     mult: 0,
@@ -237,13 +237,18 @@ fn os_monotonic_ns() -> u64 {
     #[cfg(windows)]
     {
         // QPF is a constant read from KUSER_SHARED_DATA; no need to cache.
+        // Declared locally (kernel32) — `bun_core` sits below `bun_sys`, which
+        // carries the canonical `QueryPerformanceCounter/Frequency` decls.
+        unsafe extern "system" {
+            // `&mut i64` is ABI-identical to `LARGE_INTEGER *`; QPC/QPF never
+            // fail on XP+, so `safe fn` discharges the link-time proof.
+            safe fn QueryPerformanceCounter(lpPerformanceCount: &mut i64) -> i32;
+            safe fn QueryPerformanceFrequency(lpFrequency: &mut i64) -> i32;
+        }
         let mut counter: i64 = 0;
         let mut freq: i64 = 0;
-        // SAFETY: out-params are valid stack locals; QPC/QPF never fail on XP+.
-        unsafe {
-            bun_sys::windows::QueryPerformanceCounter(&mut counter);
-            bun_sys::windows::QueryPerformanceFrequency(&mut freq);
-        }
+        QueryPerformanceCounter(&mut counter);
+        QueryPerformanceFrequency(&mut freq);
         return u64::try_from((counter as u128) * (NS_PER_S as u128) / (freq as u128)).unwrap();
     }
     #[cfg(not(windows))]
@@ -251,7 +256,8 @@ fn os_monotonic_ns() -> u64 {
         // PORT NOTE: Zig used `bun.timespec` (struct with .sec/.nsec/.ns()) and called
         // `std.os.linux.clock_gettime` / `std.c.clock_gettime` directly. The Rust port
         // uses `libc::timespec` + `libc::clock_gettime` directly (same ABI) and
-        // computes ns inline; `bun_core::Timespec` does not exist at this tier.
+        // computes ns inline; `Timespec::now` routes through this module, so going
+        // through it here would recurse.
         let mut spec = libc::timespec {
             tv_sec: 0,
             tv_nsec: 0,
@@ -269,7 +275,7 @@ fn os_monotonic_ns() -> u64 {
         {
             // SAFETY: spec is a valid out-pointer.
             unsafe {
-                let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &mut spec);
+                let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &raw mut spec);
             }
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
@@ -285,7 +291,7 @@ fn os_monotonic_ns() -> u64 {
     }
 }
 
-use bun_core::time::{NS_PER_MS, NS_PER_S};
+use crate::time::{NS_PER_MS, NS_PER_S};
 
 // TODO(port): move to perf_sys / bun_sys
 #[cfg(all(
@@ -302,4 +308,4 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
-// ported from: src/perf/hw_timer.zig
+// ported from: src/bun_core/hw_timer.zig

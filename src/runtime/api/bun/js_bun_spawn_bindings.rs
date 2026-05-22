@@ -263,6 +263,17 @@ fn get_argv(
     // quoting cannot make that safe, so reject arguments that cmd.exe would
     // reinterpret.
     let is_batch_file = cfg!(windows) && bun_which::is_batch_file(argv0_result.argv0.as_bytes());
+    if is_batch_file && bun_which::batch_arg_has_cmd_metachars(argv0_result.arg0.as_bytes()) {
+        return Err(global_this
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!(
+                    "The command name contains a cmd.exe special character and cannot be safely passed to a .bat/.cmd file. Received {}",
+                    bun_fmt::quote(argv0_result.arg0.as_bytes())
+                ),
+            )
+            .throw());
+    }
 
     *argv0 = Some(argv0_result.argv0.as_ptr());
     argv.push(argv0_result.arg0.as_ptr());

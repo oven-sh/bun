@@ -107,11 +107,7 @@ describe("TypeScript 'declare' statements discard scopes of dropped statements",
       "declare module : es2015\nclass Foo {}\n",
       ["class Foo"],
     ],
-    [
-      "declare followed by a labeled statement and a class",
-      "declare foo: bar\nclass Foo {}\n",
-      ["class Foo"],
-    ],
+    ["declare followed by a labeled statement and a class", "declare foo: bar\nclass Foo {}\n", ["class Foo"]],
     [
       "declare const with an arrow function initializer followed by a class",
       "declare const x = () => {};\nclass Foo {}\n",

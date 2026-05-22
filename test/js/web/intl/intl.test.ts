@@ -87,7 +87,8 @@ describe("Intl.DateTimeFormat", () => {
   test("timeZoneName:'long' (zone/<loc>.res)", () => {
     const tzName = (loc: string, tz: string) =>
       new Intl.DateTimeFormat(loc, { timeZone: tz, timeZoneName: "long" })
-        .formatToParts(0).find(p => p.type === "timeZoneName")!.value;
+        .formatToParts(0)
+        .find(p => p.type === "timeZoneName")!.value;
     const out: Record<string, Record<string, string>> = {};
     for (const tz of ["America/Los_Angeles", "Asia/Tokyo", "Europe/Berlin"]) {
       out[tz] = {};
@@ -104,8 +105,7 @@ describe("Intl.DateTimeFormat", () => {
 describe("Intl.Collator", () => {
   test("sort order across locales", () => {
     const out: Record<string, string[]> = {};
-    for (const loc of LOCALES)
-      out[loc] = ["z", "a", "ä", "ö", "Z", "A"].sort(new Intl.Collator(loc).compare);
+    for (const loc of LOCALES) out[loc] = ["z", "a", "ä", "ö", "Z", "A"].sort(new Intl.Collator(loc).compare);
     expect(out).toMatchSnapshot();
   });
 
@@ -172,8 +172,7 @@ describe("Intl.PluralRules", () => {
 describe("Intl.ListFormat", () => {
   test("conjunction across locales", () => {
     const out: Record<string, string> = {};
-    for (const loc of LOCALES)
-      out[loc] = new Intl.ListFormat(loc, { type: "conjunction" }).format(["a", "b", "c"]);
+    for (const loc of LOCALES) out[loc] = new Intl.ListFormat(loc, { type: "conjunction" }).format(["a", "b", "c"]);
     expect(out).toMatchSnapshot();
   });
 });
@@ -223,7 +222,89 @@ describe("URL IDNA", () => {
 // ---------------------------------------------------------------------------
 
 describe("locale sweep (structural)", () => {
-  const seed = ["af","am","ar","az","be","bg","bn","bs","ca","cs","cy","da","de","el","en","es","et","eu","fa","fi","fil","fr","ga","gl","gu","he","hi","hr","hu","hy","id","is","it","ja","jv","ka","kk","km","kn","ko","ky","lo","lt","lv","mk","ml","mn","mr","ms","my","nb","ne","nl","or","pa","pl","ps","pt","ro","ru","sd","si","sk","sl","so","sq","sr","sv","sw","ta","te","th","tk","tr","uk","ur","uz","vi","yue","zh","zu"];
+  const seed = [
+    "af",
+    "am",
+    "ar",
+    "az",
+    "be",
+    "bg",
+    "bn",
+    "bs",
+    "ca",
+    "cs",
+    "cy",
+    "da",
+    "de",
+    "el",
+    "en",
+    "es",
+    "et",
+    "eu",
+    "fa",
+    "fi",
+    "fil",
+    "fr",
+    "ga",
+    "gl",
+    "gu",
+    "he",
+    "hi",
+    "hr",
+    "hu",
+    "hy",
+    "id",
+    "is",
+    "it",
+    "ja",
+    "jv",
+    "ka",
+    "kk",
+    "km",
+    "kn",
+    "ko",
+    "ky",
+    "lo",
+    "lt",
+    "lv",
+    "mk",
+    "ml",
+    "mn",
+    "mr",
+    "ms",
+    "my",
+    "nb",
+    "ne",
+    "nl",
+    "or",
+    "pa",
+    "pl",
+    "ps",
+    "pt",
+    "ro",
+    "ru",
+    "sd",
+    "si",
+    "sk",
+    "sl",
+    "so",
+    "sq",
+    "sr",
+    "sv",
+    "sw",
+    "ta",
+    "te",
+    "th",
+    "tk",
+    "tr",
+    "uk",
+    "ur",
+    "uz",
+    "vi",
+    "yue",
+    "zh",
+    "zu",
+  ];
   const locales = Intl.DisplayNames.supportedLocalesOf(seed);
 
   test(`DisplayNames(region:'US') is non-empty and locale-varying across ${locales.length} locales`, () => {

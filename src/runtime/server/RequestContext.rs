@@ -2282,7 +2282,8 @@ where
             resp.write_header_int(b"content-length", pair.size as u64);
         }
         this.end_without_body(this.should_close_connection());
-        this.deref();
+        // `end_without_body` released the base ref; the caller
+        // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
     }
 
     /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>`.

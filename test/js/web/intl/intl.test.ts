@@ -216,119 +216,57 @@ describe("URL IDNA", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Structural sweep — broad locale coverage without hardcoding strings.
-// A corrupt item surfaces as a throw, an empty string, or every locale
-// collapsing to the same fallback.
+// Exhaustive sweep — load EVERY compressed item.
+//
+// icu-locales.txt is the full set of locales present in ICU's display-name
+// trees (extracted from the package at build time). Iterating each × the five
+// tree-touching APIs forces every region/ lang/ curr/ unit/ zone/ item through
+// the decompress hook. A corrupt item surfaces as a throw or empty string;
+// "everything fell back to root" surfaces as low distinct-value count.
+//
+// Regenerate the fixture when WEBKIT_VERSION bumps ICU:
+//   icupkg -l icudt<NN>l.dat | grep -E '^(curr|lang|region|unit|zone)/' \
+//     | sed -E 's|.*/||; s|\.res$||; s|_|-|g' | sort -u > icu-locales.txt
 // ---------------------------------------------------------------------------
 
-describe("locale sweep (structural)", () => {
-  const seed = [
-    "af",
-    "am",
-    "ar",
-    "az",
-    "be",
-    "bg",
-    "bn",
-    "bs",
-    "ca",
-    "cs",
-    "cy",
-    "da",
-    "de",
-    "el",
-    "en",
-    "es",
-    "et",
-    "eu",
-    "fa",
-    "fi",
-    "fil",
-    "fr",
-    "ga",
-    "gl",
-    "gu",
-    "he",
-    "hi",
-    "hr",
-    "hu",
-    "hy",
-    "id",
-    "is",
-    "it",
-    "ja",
-    "jv",
-    "ka",
-    "kk",
-    "km",
-    "kn",
-    "ko",
-    "ky",
-    "lo",
-    "lt",
-    "lv",
-    "mk",
-    "ml",
-    "mn",
-    "mr",
-    "ms",
-    "my",
-    "nb",
-    "ne",
-    "nl",
-    "or",
-    "pa",
-    "pl",
-    "ps",
-    "pt",
-    "ro",
-    "ru",
-    "sd",
-    "si",
-    "sk",
-    "sl",
-    "so",
-    "sq",
-    "sr",
-    "sv",
-    "sw",
-    "ta",
-    "te",
-    "th",
-    "tk",
-    "tr",
-    "uk",
-    "ur",
-    "uz",
-    "vi",
-    "yue",
-    "zh",
-    "zu",
-  ];
-  const locales = Intl.DisplayNames.supportedLocalesOf(seed);
+import { readFileSync } from "node:fs";
 
-  test(`DisplayNames(region:'US') is non-empty and locale-varying across ${locales.length} locales`, () => {
-    const seen = new Set<string>();
-    for (const loc of locales) {
-      const v = new Intl.DisplayNames(loc, { type: "region" }).of("US");
-      expect(typeof v).toBe("string");
-      expect(v!.length).toBeGreaterThan(0);
-      seen.add(v!);
-    }
-    // Different locales should produce many distinct strings — if everything
-    // collapses to one value, locale data isn't being read.
-    expect(seen.size).toBeGreaterThan(locales.length / 2);
-  });
+describe("exhaustive locale sweep (every compressed item)", () => {
+  const all = readFileSync(new URL("./icu-locales.txt", import.meta.url), "utf8")
+    .split("\n").map(s => s.trim()).filter(Boolean)
+    // ICU's tree includes legacy/alias tags (e.g. no_NO_NY) that aren't valid
+    // BCP-47; getCanonicalLocales throws on those, so drop them up front.
+    .filter(tag => { try { Intl.getCanonicalLocales(tag); return true; } catch { return false; } });
 
-  test(`NumberFormat(unit:meter) is non-empty across ${locales.length} locales`, () => {
-    for (const loc of locales) {
-      const v = new Intl.NumberFormat(loc, { style: "unit", unit: "meter" }).format(1);
-      expect(v.length).toBeGreaterThan(0);
-    }
-  });
+  const locales = Intl.DisplayNames.supportedLocalesOf(all);
+
+  type Tree = "region" | "lang" | "curr" | "unit" | "zone";
+  const probe: Record<Tree, (loc: string) => string | undefined> = {
+    region: loc => new Intl.DisplayNames(loc, { type: "region" }).of("US"),
+    lang:   loc => new Intl.DisplayNames(loc, { type: "language" }).of("en"),
+    curr:   loc => new Intl.DisplayNames(loc, { type: "currency" }).of("USD"),
+    unit:   loc => new Intl.NumberFormat(loc, { style: "unit", unit: "meter", unitDisplay: "long" }).format(1),
+    zone:   loc => new Intl.DateTimeFormat(loc, { timeZone: "America/Los_Angeles", timeZoneName: "long" })
+                     .formatToParts(0).find(p => p.type === "timeZoneName")?.value,
+  };
+
+  for (const tree of Object.keys(probe) as Tree[]) {
+    test(`${tree}/ — ${locales.length} locales, non-empty + locale-varying`, () => {
+      const seen = new Set<string>();
+      for (const loc of locales) {
+        const v = probe[tree](loc);
+        expect(typeof v).toBe("string");
+        expect(v!.length).toBeGreaterThan(0);
+        seen.add(v!);
+      }
+      // Regional variants (en-GB, ar-AE, …) legitimately share strings with
+      // their base locale, so the bar is "many distinct", not "all distinct".
+      expect(seen.size).toBeGreaterThan(50);
+    });
+  }
 
   test("repeat calls return identical results (cache consistency)", () => {
-    for (const loc of ["ko", "ru", "zh-Hant"]) {
+    for (const loc of ["ko", "ru", "zh-Hant", "yo", "ar-EG"]) {
       const a = new Intl.DisplayNames(loc, { type: "region" }).of("US");
       const b = new Intl.DisplayNames(loc, { type: "region" }).of("US");
       expect(a).toBe(b);

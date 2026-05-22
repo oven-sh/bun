@@ -488,6 +488,12 @@ function ClientRequest(input, options, cb) {
             if (err.code === "ConnectionRefused") {
               err = new Error("ECONNREFUSED");
               err.code = "ECONNREFUSED";
+            } else if (err.code === "InvalidHTTPResponse") {
+              // The native client refuses to deliver a response it cannot
+              // frame (malformed or conflicting Content-Length, unparseable
+              // status line). Node surfaces these as llhttp parse errors on
+              // the request object.
+              err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
             }
             // Node treats AbortError separately.
             // The "abort" listener on the abort controller should have called this

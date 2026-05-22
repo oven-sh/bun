@@ -208,6 +208,13 @@ impl<'a> BrotliReaderArrayList<'a> {
             unsafe { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
             self.total_in += bytes_read;
 
+            // Enforce the cap after every write so a chunk that ends the
+            // stream (`success`) cannot push the output past the limit.
+            if self.list_ptr.len() > self.max_output_size {
+                self.state = ReaderState::Error;
+                return Err(err!("BrotliDecompressionError"));
+            }
+
             match result {
                 c::BrotliDecoderResult::success => {
                     debug_assert!(BrotliDecoder::is_finished(self.brotli()));

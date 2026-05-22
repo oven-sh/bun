@@ -13,13 +13,18 @@ test("expect().not.not", () => {
 });
 
 // Fuzzer-found crash: Bun.jest() without an active test runner, followed by
-// misuse of the expect statics, must not crash the process.
+// misuse of the expect statics, must not crash the process. In particular,
+// `new` on a matcher registered via expect.extend() used to jump to a null
+// native constructor and SIGSEGV.
 test("Bun.jest() expect statics do not crash on misuse", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `const jestExpect = Bun.jest().expect;
+jestExpect.extend({ customMatcher() { return { pass: true, message: () => "" }; } });
+try { new jestExpect.customMatcher(); } catch (e) { if (!(e instanceof TypeError)) throw e; }
+try { new (jestExpect(1).customMatcher)(); } catch (e) { if (!(e instanceof TypeError)) throw e; }
 try { jestExpect.extend(); } catch {}
 const arrayContaining = jestExpect.arrayContaining;
 try { new arrayContaining(); } catch (e) { if (!(e instanceof TypeError)) throw e; }

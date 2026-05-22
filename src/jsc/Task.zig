@@ -559,11 +559,11 @@ const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.process.Waite
 
 const log = bun.Output.scoped(.Task, .hidden);
 
-const JSCScheduler = @import("../jsc/JSCScheduler.zig");
-const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;
-
 const Fetch = @import("../runtime/webcore/fetch.zig");
 const FetchTasklet = Fetch.FetchTasklet;
+
+const JSCScheduler = @import("./JSCScheduler.zig");
+const JSCDeferredWorkTask = JSCScheduler.JSCDeferredWorkTask;
 
 const bun = @import("bun");
 const Async = bun.Async;

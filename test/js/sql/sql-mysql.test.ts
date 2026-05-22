@@ -44,6 +44,7 @@ if (isDockerEnabled()) {
         const getOptions = (): Bun.SQL.Options => ({
           url: `mysql://root:${password}@${container.host}:${container.port}/bun_sql_test`,
           max: 1,
+          allowPublicKeyRetrieval: true,
           tls:
             image.name === "MySQL with TLS"
               ? Bun.file(path.join(import.meta.dir, "mysql-tls", "ssl", "ca.pem"))
@@ -75,6 +76,25 @@ if (isDockerEnabled()) {
           const { affectedRows } =
             await sql`UPDATE ${sql(random_name)} SET name = "test2" WHERE id = ${lastInsertRowid}`;
           expect(affectedRows).toBe(1);
+        });
+        test("MEDIUMINT not in the last column reads following columns correctly", async () => {
+          // MySQL's binary protocol sends MYSQL_TYPE_INT24 as a fixed 4-byte
+          // field. Reading only 3 left the cursor 1 byte behind, silently
+          // corrupting every following column (and hanging forever if a
+          // length-prefixed column like VARCHAR followed).
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          const t = "mi_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT PRIMARY KEY, uviews MEDIUMINT UNSIGNED, sviews MEDIUMINT, balance BIGINT, ratio DOUBLE, name VARCHAR(64))`;
+          await sql`INSERT INTO ${sql(t)} VALUES (1, 100, -50, 5000, 3.5, ${"alice"})`;
+          const [row] = await sql`SELECT id, uviews, sviews, balance, ratio, name FROM ${sql(t)} WHERE id = ${1}`;
+          expect(row).toEqual({ id: 1, uviews: 100, sviews: -50, balance: 5000, ratio: 3.5, name: "alice" });
+          // `.raw()` takes a separate branch that must also consume 4 bytes.
+          const [rawRow] =
+            await sql`SELECT id, uviews, sviews, balance, ratio, name FROM ${sql(t)} WHERE id = ${1}`.raw();
+          expect(rawRow).toHaveLength(6);
+          expect(rawRow[2]).toEqual(new Uint8Array([0xce, 0xff, 0xff])); // -50 as i24 LE
+          expect(Buffer.from(rawRow[5]).toString("utf-8")).toBe("alice");
         });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {
@@ -483,9 +503,7 @@ if (isDockerEnabled()) {
         test("Binary", async () => {
           const random_name = ("t_" + Bun.randomUUIDv7("hex").replaceAll("-", "")).toLowerCase();
           await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a binary(1), b varbinary(1), c blob)`;
-          const values = [
-            { a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) },
-          ];
+          const values = [{ a: Buffer.from([1]), b: Buffer.from([2]), c: Buffer.from([3]) }];
           await sql`INSERT INTO ${sql(random_name)} ${sql(values)}`;
           const results = await sql`select * from ${sql(random_name)}`;
           // return buffers
@@ -497,7 +515,7 @@ if (isDockerEnabled()) {
           expect(results2[0].a).toEqual(Buffer.from([1]));
           expect(results2[0].b).toEqual(Buffer.from([2]));
           expect(results2[0].c).toEqual(Buffer.from([3]));
-        })
+        });
 
         test("bulk insert nested sql()", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });

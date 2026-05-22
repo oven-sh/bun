@@ -10,8 +10,38 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 describe("backpressure", () => {
-  // INT_MAX is the maximum we can sent to the socket in one call
-  const TwoGBPayload = Buffer.allocUnsafe(1024 * 1024 * 1024 * 2);
+  // Writes `total` bytes to `res` in `chunk`-sized pieces, waiting for "drain"
+  // whenever a write reports backpressure, then ends the response. Reusing one
+  // chunk buffer keeps the test's peak memory small (the previous version held
+  // a single 2 GB payload plus the server's queued copy, which pushed peak RSS
+  // past 4.5 GB and intermittently got OOM-killed on 8 GB CI runners).
+  async function writeBytes(res: http.ServerResponse, total: number, chunk: Buffer) {
+    let remaining = total;
+    while (remaining > 0) {
+      const slice = remaining >= chunk.byteLength ? chunk : chunk.subarray(0, remaining);
+      remaining -= slice.byteLength;
+      if (!res.write(slice)) {
+        await once(res, "drain");
+      }
+    }
+    res.end();
+  }
+
+  async function countResponseBytes(port: number): Promise<number> {
+    const response = await fetch(`http://localhost:${port}/`);
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+    let totalBytes = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (value) {
+        totalBytes += value.byteLength;
+      }
+      if (done) break;
+    }
+    return totalBytes;
+  }
+
   it("should handle backpressure", async () => {
     await using server = http.createServer((req, res) => {
       res.writeHead(200, {
@@ -34,75 +64,53 @@ describe("backpressure", () => {
     const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.arrayBuffer());
     expect(bytes.byteLength).toBe(1024 * 1024 * 3);
   });
+
   it("should handle backpressure with INT_MAX bytes", async () => {
+    const totalSize = 1024 * 1024 * 1024 * 2; // 2^31, one past INT_MAX
+    const chunk = Buffer.alloc(64 * 1024 * 1024, "a");
     await using server = http.createServer((req, res) => {
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
         "Transfer-Encoding": "chunked",
       });
 
-      res.write(TwoGBPayload, () => {
-        res.end();
-      });
+      writeBytes(res, totalSize, chunk);
     });
 
     await once(server.listen(0), "listening");
 
     const PORT = (server.address() as AddressInfo).port;
-    const response = await fetch(`http://localhost:${PORT}/`);
-    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-    let totalBytes = 0;
-    while (true) {
-      const { done, value } = await reader.read();
+    const totalBytes = await countResponseBytes(PORT);
 
-      if (value) {
-        totalBytes += value.byteLength;
-      }
-      if (done) break;
-    }
-
-    expect(totalBytes).toBe(TwoGBPayload.byteLength);
-    // `response.body.getReader()` now couples the fetch client's
-    // socket read to JS consumption: the HTTP thread counts bytes
-    // delivered-but-not-yet-reported-consumed and pauses the socket
-    // past 4 MiB; the cross-thread consume report runs on the next
-    // HTTP-thread loop iteration, so on a fast loopback the counter
-    // can reach the threshold before the first credit lands even
-    // when the reader keeps up. For 2 GiB that's ~150 pause/resume
-    // cycles; each adds a loop wakeup and an epoll/kqueue mod. The
-    // overhead is ~10–20% in release — acceptable for the feature —
-    // but on the slow darwin-14-x64 CI runner 30s had no headroom.
+    expect(totalBytes).toBe(totalSize);
+    // `response.body.getReader()` couples the fetch client's socket
+    // read to JS consumption: the HTTP thread pauses the socket once
+    // delivered-but-not-yet-credited bytes reach 4 MiB, and the
+    // cross-thread credit lands on the next HTTP-thread loop tick. For
+    // 2 GiB that's ~150 pause/resume cycles (~10–20% overhead in
+    // release). On the slow darwin-14-x64 CI runner 30s had no
+    // headroom.
   }, 60_000);
 
   it("should handle backpressure with more than INT_MAX bytes", async () => {
     // enough to fill the socket buffer
     const smallPayloadSize = 1024 * 1024;
+    const totalSize = 1024 * 1024 * 1024 * 2; // 2^31, one past INT_MAX
+    const chunk = Buffer.alloc(64 * 1024 * 1024, "a");
     await using server = http.createServer((req, res) => {
       res.writeHead(200, {
         "Content-Type": "application/octet-stream",
         "Transfer-Encoding": "chunked",
       });
       res.write(Buffer.alloc(smallPayloadSize, "a"));
-      res.write(TwoGBPayload, () => {
-        res.end();
-      });
+      writeBytes(res, totalSize, chunk);
     });
 
     await once(server.listen(0), "listening");
 
     const PORT = (server.address() as AddressInfo).port;
-    const response = await fetch(`http://localhost:${PORT}/`);
-    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-    let totalBytes = 0;
-    while (true) {
-      const { done, value } = await reader.read();
+    const totalBytes = await countResponseBytes(PORT);
 
-      if (value) {
-        totalBytes += value.byteLength;
-      }
-      if (done) break;
-    }
-
-    expect(totalBytes).toBe(TwoGBPayload.byteLength + smallPayloadSize);
+    expect(totalBytes).toBe(totalSize + smallPayloadSize);
   }, 60_000);
 });

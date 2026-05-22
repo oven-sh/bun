@@ -44,8 +44,8 @@ var i = 0;
 
 const server = Bun.serve({
   port: 3001,
-  h3: true,
-  h1: true,
+  http3: true,
+  http1: true,
   tls: { cert, key, rejectUnauthorized: false },
   routes: { "/hi": new Response("hello!") },
   fetch(req) {

@@ -647,7 +647,7 @@ describe("fetch() over HTTP/1.1 — socket-read backpressure", () => {
 });
 
 // --- HTTP/3 ------------------------------------------------------------------
-// `Bun.serve({ h3: true })` runs in the test process; the fetch client
+// `Bun.serve({ http3: true })` runs in the test process; the fetch client
 // runs in a subprocess (lsquic's client and server engines can't share
 // the same event loop). Bun.serve's response sink buffers ahead of
 // QUIC flow control, and `reader.read()` itself triggers a consume
@@ -664,8 +664,8 @@ describe("fetch() over HTTP/3 — lsquic wantRead backpressure", () => {
     await using server = Bun.serve({
       port: 0,
       tls,
-      h3: true,
-      h1: false,
+      http3: true,
+      http1: false,
       fetch() {
         let sent = 0;
         return new Response(

@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isPosix, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, isASAN, isPosix, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { bunExe } from "./test_builder";
 import { createTestBuilder } from "./util";
@@ -12,7 +12,9 @@ $.env(bunEnv);
 $.cwd(process.cwd());
 $.nothrow();
 
-const DEFAULT_THRESHOLD = process.platform === "darwin" ? 100 * (1 << 20) : 150 * (1 << 20);
+// ASAN's quarantine retains freed allocations (default 256 MB) so per-iteration
+// RSS jumps run far higher under bun-asan; widen the threshold there.
+const DEFAULT_THRESHOLD = (isASAN ? 350 : process.platform === "darwin" ? 100 : 150) * (1 << 20);
 
 const TESTS: [name: string, builder: () => TestBuilder, runs?: number][] = [
   ["redirect_file", () => TestBuilder.command`echo hello > test.txt`.fileEquals("test.txt", "hello\n")],

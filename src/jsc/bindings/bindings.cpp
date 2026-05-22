@@ -2264,24 +2264,49 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return *out != nullptr;
     };
 
+    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSGenerator* {
+        JSC::InternalFieldTuple* tuple = nullptr;
+        if (dynamicCastValue(context, &tuple))
+            context = tuple->getInternalField(0);
+        JSC::JSGenerator* generator = nullptr;
+        dynamicCastValue(context, &generator);
+        return generator;
+    };
+
     // Walk reaction->context → generator. If context is not a generator (e.g.
     // thenable-chain from `return promise` without await inside an async
     // function), follow reaction->promise() to the next promise in the chain.
     // Cap hops to avoid pathological chains.
+    //
+    // The pending reaction can be stored two ways:
+    //  - Inline in the JSPromise itself (the common single-await / single-then
+    //    fast path). InternalMicrotask carries the await generator context in
+    //    m_slot; FulfillHandler/RejectHandler carry the result promise in
+    //    payloadCell() and the handler in m_slot.
+    //  - As a heap-allocated JSPromiseReaction list once a second handler is
+    //    attached, headed at payloadCell().
     auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSGenerator* {
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
-            JSC::JSValue reactionsValue = p->reactionsOrResult();
-            JSC::JSPromiseReaction* reaction = nullptr;
-            if (!dynamicCastValue(reactionsValue, &reaction))
+            switch (p->inlineReactionKind()) {
+            case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
+                if (auto* generator = unwrapGeneratorFromContext(p->inlineReactionContext()))
+                    return generator;
                 return nullptr;
-            JSC::JSValue context = JSC::JSPromiseReaction::tryGetContext(reactionsValue);
-            JSC::InternalFieldTuple* tuple = nullptr;
-            if (dynamicCastValue(context, &tuple))
-                context = tuple->getInternalField(0);
-            JSC::JSGenerator* generator = nullptr;
-            if (dynamicCastValue(context, &generator))
+            }
+            case JSC::JSPromise::InlineReactionKind::FulfillHandler:
+            case JSC::JSPromise::InlineReactionKind::RejectHandler: {
+                p = p->inlineHandlerResultPromise();
+                continue;
+            }
+            case JSC::JSPromise::InlineReactionKind::None:
+                break;
+            }
+            auto* reaction = dynamicDowncast<JSC::JSPromiseReaction>(p->payloadCell());
+            if (!reaction)
+                return nullptr;
+            if (auto* generator = unwrapGeneratorFromContext(JSC::JSPromiseReaction::tryGetContext(reaction)))
                 return generator;
             // No generator in context — follow the thenable chain to the
             // promise this reaction resolves/rejects.
@@ -3748,13 +3773,13 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
 
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+    uint16_t flags = promise->flags();
     if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
         if (handled) {
             flags |= JSC::JSPromise::isHandledFlag;
         }
 
-        promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
+        promise->setFlags(static_cast<uint16_t>(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(promise->globalObject());
         auto rejectPromiseFunction = globalObject->rejectPromiseFunction();
 
@@ -3784,23 +3809,21 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::JSValue::decode(JSValue1));
+    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
+    promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
     return promise;
 }
 
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSPromise__result(JSC::JSPromise* promise, JSC::VM* arg1)
 {
-    auto& vm = *arg1;
+    UNUSED_PARAM(arg1);
 
     // if the promise is rejected we automatically mark it as handled so it
     // doesn't end up in the promise rejection tracker
     switch (promise->status()) {
     case JSC::JSPromise::Status::Rejected: {
-        uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
-        if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
-            promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
-        }
+        if (!(promise->flags() & JSC::JSPromise::isFirstResolvingFunctionCalledFlag))
+            promise->markAsHandled();
     }
     // fallthrough intended
     case JSC::JSPromise::Status::Fulfilled: {
@@ -3910,9 +3933,8 @@ bool JSC__JSInternalPromise__isHandled(const JSC::JSPromise* arg0)
 }
 void JSC__JSInternalPromise__setHandled(JSC::JSPromise* promise, JSC::VM* arg1)
 {
-    auto& vm = *arg1;
-    auto flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isHandledFlag));
+    UNUSED_PARAM(arg1);
+    promise->markAsHandled();
 }
 
 #pragma mark - JSC::JSGlobalObject
@@ -5032,8 +5054,8 @@ JSC::EncodedJSValue JSC__JSPromise__rejectedPromiseValue(JSC::JSGlobalObject* gl
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::JSValue::decode(JSValue1));
+    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Rejected));
+    promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
     JSC::ensureStillAliveHere(promise);
     JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
     return JSC::JSValue::encode(promise);
@@ -5044,8 +5066,8 @@ JSC::EncodedJSValue JSC__JSPromise__resolvedPromiseValue(JSC::JSGlobalObject* gl
 {
     auto& vm = JSC::getVM(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, JSC::JSValue::decode(JSValue1));
+    promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
+    promise->setSlot(vm, JSC::JSValue::decode(JSValue1));
     JSC::ensureStillAliveHere(promise);
     JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
     return JSC::JSValue::encode(promise);

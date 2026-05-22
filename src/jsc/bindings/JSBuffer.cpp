@@ -151,7 +151,7 @@ namespace Bun {
 
 // Use a JSString* here to avoid unnecessarily joining the rope string.
 // If we're only getting the length property, it won't join the rope string.
-std::optional<double> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
+std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
 {
     if (str->length() == 0)
         return 0;
@@ -197,7 +197,7 @@ std::optional<double> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
         }
 
         // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L579
-        return static_cast<double>((length * 3) >> 2);
+        return static_cast<size_t>((length * 3) >> 2);
     }
 
     case WebCore::BufferEncodingType::hex: {
@@ -396,6 +396,14 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
 
     size_t written = 0;
 
+    // Per Node docs, `'ascii'` on write is equivalent to `'latin1'` —
+    // verbatim byte copy, no 7-bit masking. The writeLatin1/writeUTF16
+    // ascii arm masks because the ascii *decode* path (jsBufferToStringFromBytes)
+    // reuses it; on encode we route ascii through the latin1 branch instead.
+    auto encodingForWrite = encoding == WebCore::BufferEncodingType::ascii
+        ? WebCore::BufferEncodingType::latin1
+        : encoding;
+
     switch (encoding) {
     case WebCore::BufferEncodingType::utf8:
     case WebCore::BufferEncodingType::latin1:
@@ -408,10 +416,10 @@ static JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlobalObjec
 
         if (view->is8Bit()) {
             const auto span = view->span8();
-            written = Bun__encoding__writeLatin1(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
+            written = Bun__encoding__writeLatin1(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encodingForWrite));
         } else {
             const auto span = view->span16();
-            written = Bun__encoding__writeUTF16(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
+            written = Bun__encoding__writeUTF16(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encodingForWrite));
         }
         break;
     }
@@ -2377,12 +2385,17 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     }
     if (lengthValue.isUndefined() && offsetValue.isString()) {
         encodingValue = offsetValue;
-        offset = 0;
-        length = castedThis->byteLength();
 
         auto* str = stringValue.toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
         RETURN_IF_EXCEPTION(scope, {});
+        if (castedThis->isDetached()) [[unlikely]] {
+            throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
+            return {};
+        }
+        offset = 0;
+        length = castedThis->byteLength();
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
     } else {
         length = castedThis->byteLength();
@@ -2414,6 +2427,16 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
 
     auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (castedThis->isDetached()) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
+        return {};
+    }
+    uint32_t currentByteLength = castedThis->byteLength();
+    if (offset >= currentByteLength)
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(0)));
+    uint32_t currentRemaining = currentByteLength - offset;
+    if (length > currentRemaining) length = currentRemaining;
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }

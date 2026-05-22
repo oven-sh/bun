@@ -52,8 +52,8 @@ reuse_port: bool = false,
 id: []const u8 = "",
 allow_hot: bool = true,
 ipv6_only: bool = false,
-h3: bool = false,
-h1: bool = true,
+http3: bool = false,
+http1: bool = true,
 
 is_node_http: bool = false,
 had_routes_object: bool = false,
@@ -862,13 +862,13 @@ pub fn fromJS(
         }
         if (global.hasException()) return error.JSError;
 
-        if (try arg.get(global, "h3")) |v| {
-            args.h3 = v.toBoolean();
+        if (try arg.get(global, "http3")) |v| {
+            args.http3 = v.toBoolean();
         }
         if (global.hasException()) return error.JSError;
 
-        if (try arg.get(global, "h1")) |v| {
-            args.h1 = v.toBoolean();
+        if (try arg.get(global, "http1")) |v| {
+            args.http1 = v.toBoolean();
         }
         if (global.hasException()) return error.JSError;
 
@@ -983,15 +983,15 @@ pub fn fromJS(
             }
         }
 
-        if (args.h3) {
+        if (args.http3) {
             if (args.ssl_config == null) {
                 return global.throwInvalidArguments("HTTP/3 requires 'tls' to be set", .{});
             }
-        } else if (!args.h1) {
-            return global.throwInvalidArguments("Cannot disable h1 without enabling h3", .{});
+        } else if (!args.http1) {
+            return global.throwInvalidArguments("Cannot disable http1 without enabling http3", .{});
         }
-        if (!args.h1 and args.address == .unix) {
-            return global.throwInvalidArguments("Cannot disable h1 with a unix socket — HTTP/3 over AF_UNIX is not supported", .{});
+        if (!args.http1 and args.address == .unix) {
+            return global.throwInvalidArguments("Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported", .{});
         }
     } else {
         return global.throwInvalidArguments("Bun.serve expects an object", .{});

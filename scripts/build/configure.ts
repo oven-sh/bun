@@ -10,10 +10,12 @@ import { globSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
+import { generateCargoConfig } from "./cargo-config.ts";
 import { type Config, type PartialConfig, type Toolchain, detectHost, findRepoRoot, resolveConfig } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { Ninja } from "./ninja.ts";
+import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
@@ -42,7 +44,7 @@ export function resolveToolchain(): Toolchain {
   // shadowing). Only needed when cargo builds with the msvc target.
   const msvcLinker = host.os === "windows" ? findMsvcLinker(host.arch) : undefined;
 
-  // esbuild/zig paths are relative to REPO ROOT, not process.cwd() — when
+  // esbuild path is relative to REPO ROOT, not process.cwd() — when
   // ninja's generator rule invokes reconfigure, cwd is the build dir.
   const repoRoot = findRepoRoot();
 
@@ -51,10 +53,6 @@ export function resolveToolchain(): Toolchain {
   // (and the build itself runs `bun install` first via the root install
   // stamp, so this path will exist by the time esbuild rules fire).
   const esbuild = resolve(repoRoot, "node_modules", ".bin", host.os === "windows" ? "esbuild.exe" : "esbuild");
-
-  // zig — lives at vendor/zig/, downloaded by the zig_fetch rule.
-  // Same deal: path is deterministic, download happens at build time.
-  const zig = resolve(repoRoot, "vendor", "zig", host.os === "windows" ? "zig.exe" : "zig");
 
   const bun = findBun(host.os);
 
@@ -69,7 +67,6 @@ export function resolveToolchain(): Toolchain {
   return {
     ...llvm,
     cmake,
-    zig,
     bun,
     jsRuntime,
     esbuild,
@@ -117,23 +114,43 @@ function configureInputs(cwd: string): string[] {
 }
 
 /**
+ * What the user asked for, *before* profile expansion. This is what gets
+ * persisted to configure.json and replayed by ninja's generator rule.
+ *
+ * We persist the profile NAME (not its expanded values) so that editing
+ * profiles.ts propagates to existing build dirs on the next regen. The old
+ * scheme persisted the post-merge PartialConfig, which froze whatever the
+ * profile said at first-configure time — a build dir created from
+ * `--profile=release --build-dir=build/btg` would keep replaying
+ * `lto:false` forever even after a `btg` profile with `lto:true` was added.
+ */
+export interface ConfigureInput {
+  /** Profile name to resolve via getProfile(). Omitted = no profile base. */
+  profile?: string;
+  /** Explicit CLI overrides layered on top of the profile. */
+  overrides?: PartialConfig;
+}
+
+/**
  * Emit the generator rule — makes build.ninja self-rebuilding. When you
  * run `ninja` directly and a build script has changed, ninja runs
  * reconfigure first, then restarts with the fresh graph.
  *
- * The original PartialConfig is persisted to configure.json; the regen
- * command reads it back via --config-file. This ensures the replay uses
- * the exact same profile/overrides as the original configure.
+ * The *unresolved* ConfigureInput (profile name + CLI overrides) is
+ * persisted to configure.json; the regen command reads it back via
+ * --config-file and re-expands the profile against the current
+ * profiles.ts. Edits to a profile therefore take effect on the next
+ * `ninja` in an existing build dir without `rm -rf`.
  */
-function emitGeneratorRule(n: Ninja, cfg: Config, partial: PartialConfig): void {
+function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
   const configFile = resolve(cfg.buildDir, "configure.json");
   const buildScript = resolve(cfg.cwd, "scripts", "build.ts");
 
-  // Persist the partial config. writeIfChanged — same config → no mtime
+  // Persist the unresolved input. writeIfChanged — same input → no mtime
   // bump → no unnecessary regen on identical reconfigures.
   // This runs before n.write() (which mkdir's), so ensure dir exists.
   mkdirSync(cfg.buildDir, { recursive: true });
-  writeIfChanged(configFile, JSON.stringify(partial, null, 2) + "\n");
+  writeIfChanged(configFile, JSON.stringify(input, null, 2) + "\n");
 
   const hostWin = cfg.host.os === "windows";
   n.rule("regen", {
@@ -188,15 +205,44 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * Configure: resolve config → emit build.ninja. Returns the resolved config
  * and emitted build info.
  *
- * `partial` comes from a profile + CLI overrides. If no buildDir is set,
- * one is computed from the build type (build/debug, build/release, etc).
+ * `input` is the profile name + explicit CLI overrides. The profile is
+ * expanded here (not by the caller) so the generator rule can persist the
+ * unresolved input and re-expand it on regen — see emitGeneratorRule. If
+ * no buildDir is set, one is computed from the build type (build/debug,
+ * build/release, etc).
  */
-export async function configure(partial: PartialConfig): Promise<ConfigureResult> {
+export async function configure(input: ConfigureInput): Promise<ConfigureResult> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
     if (trace) process.stderr.write(`  ${label}: ${Math.round(performance.now() - start)}ms\n`);
   };
+
+  // Expand profile → PartialConfig. Overrides win.
+  const partial: PartialConfig = {
+    ...(input.profile !== undefined ? getProfile(input.profile) : {}),
+    ...(input.overrides ?? {}),
+  };
+
+  // Guard: build/btg is reserved for the LTO bench profile. Configuring it
+  // with any other profile (e.g. `--profile=release --build-dir=build/btg`,
+  // or a legacy configure.json migrated to {profile:"release",overrides:{…}})
+  // persists lto:false and silently links the non-LTO WebKit prebuilt — the
+  // bench suite then reports a phantom ~6-8% time / ~1 MB RSS "regression"
+  // that is pure binary layout (.data.rel.ro vtables, outlined JSC slow-
+  // paths), not src/ code. Fail loudly so the bench harness can't produce a
+  // de-LTO'd comparison binary. See profiles.ts:btg.
+  if (
+    partial.buildDir !== undefined &&
+    resolve(partial.buildDir) === resolve("build", "btg") &&
+    input.profile !== "btg"
+  ) {
+    throw new BuildError(`build/btg must be configured with --profile=btg (lto:true)`, {
+      hint:
+        `Got profile=${input.profile ?? "<none>"}. Run \`bun run build:btg\` ` +
+        `(or \`rm build/btg/configure.json\` first if regen is replaying a stale config).`,
+    });
+  }
 
   const toolchain = resolveToolchain();
   mark("resolveToolchain");
@@ -205,11 +251,18 @@ export async function configure(partial: PartialConfig): Promise<ConfigureResult
   validateBunConfig(cfg);
   checkWorkarounds(cfg);
 
+  // Generated `.cargo/config.toml` — written at configure time (not a ninja
+  // rule), like `bun_dependency_versions.h`. Holds the per-target `linker = `
+  // (the discovered clang++ from `tools.ts`) so a contributor running `cargo`
+  // directly / rust-analyzer use the same toolchain the ninja build does.
+  generateCargoConfig(cfg);
+  mark("generateCargoConfig");
+
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the
   // perl script from JSC. If perl is missing, codegen fails cryptically.
   // Check here so the error is at configure time with a clear hint.
-  // zig-only/link-only don't run LUT codegen — skip the check so split-CI
-  // steps don't require perl on the zig cross-compile box.
+  // rust-only/link-only don't run LUT codegen — skip the check so split-CI
+  // steps don't require perl on the rust cross-compile box.
   if (cfg.mode === "full" || cfg.mode === "cpp-only") {
     if (findSystemTool("perl") === undefined) {
       throw new BuildError("perl not found in PATH", {
@@ -226,7 +279,7 @@ export async function configure(partial: PartialConfig): Promise<ConfigureResult
   // Emit ninja.
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerAllRules(n, cfg);
-  emitGeneratorRule(n, cfg, partial);
+  emitGeneratorRule(n, cfg, input);
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
 

@@ -29,30 +29,15 @@ pub const H3TestingAPIs = struct {
     /// mangles `[^A-Za-z]` to `_`, so `H2Client.zig` and `H3Client.zig` produce
     /// the same path prefix and the function name has to differ.
     pub fn quicLiveCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const obj = jsc.JSValue.createEmptyObject(globalThis, 3);
+        const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
         obj.put(globalThis, jsc.ZigString.static("sessions"), .jsNumber(H3Client.live_sessions.load(.monotonic)));
         obj.put(globalThis, jsc.ZigString.static("streams"), .jsNumber(H3Client.live_streams.load(.monotonic)));
-        obj.put(globalThis, jsc.ZigString.static("bodyBytesReceived"), .jsNumber(H3Client.body_bytes_received.load(.monotonic)));
-        return obj;
-    }
-};
-
-pub const HTTPTestingAPIs = struct {
-    /// Process-wide HTTP/1.1 `receive_paused` transition counters — lets
-    /// the backpressure tests observe pause/resume from inside the
-    /// fetching subprocess instead of inferring it from a server-side
-    /// `drain` timeout that varies with kernel loopback tuning.
-    pub fn h1BackpressureCounts(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
-        const obj = jsc.JSValue.createEmptyObject(globalThis, 2);
-        obj.put(globalThis, jsc.ZigString.static("pauses"), .jsNumber(http.h1_socket_pauses.load(.monotonic)));
-        obj.put(globalThis, jsc.ZigString.static("resumes"), .jsNumber(http.h1_socket_resumes.load(.monotonic)));
         return obj;
     }
 };
 
 const H2Client = @import("../http/H2Client.zig");
 const H3Client = @import("../http/H3Client.zig");
-const http = @import("../http/http.zig");
 
 const bun = @import("bun");
 const jsc = bun.jsc;

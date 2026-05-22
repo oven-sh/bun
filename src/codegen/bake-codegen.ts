@@ -11,7 +11,7 @@ if (!codegenRoot) {
   process.exit(1);
 }
 
-const base_dir = join(import.meta.dirname, "../bake");
+const base_dir = join(import.meta.dirname, "../runtime/bake");
 process.chdir(base_dir); // to make bun build predictable in development
 
 function convertZigEnum(zig: string, names: string[]) {
@@ -53,7 +53,7 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../bake/client/overlay.css", !!debug),
+          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
         },
         minify: {
           syntax: !debug,

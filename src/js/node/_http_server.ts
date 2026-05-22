@@ -911,10 +911,26 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onClose() {
     this[kHandle] = null;
 
+    // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
+    // that are still in `state.incoming` — i.e. requests whose response has
+    // not yet finished (`resOnFinish` does `incoming.shift()`). Our
+    // equivalent of "still in the queue" is `_httpMessage` being non-null:
+    // `detachSocket()` (called from `res.end()` / on `"finish"`) clears it.
+    // Do NOT fall back to `this[kRequest]` here — that slot is never cleared,
+    // so falling back would abort the request on every keep-alive close even
+    // after a fully successful response, which races `req._dump()`'s
+    // nextTick and can surface as a spurious `"aborted"` (seen as flakes in
+    // the express `res.sendFile` suite where supertest closes the socket
+    // right after reading the body).
+    //
+    // Gate on `!req.destroyed` rather than `!req.complete`: a body-less GET
+    // flips `complete` before the response is written, so an aborted
+    // connection would otherwise never reach `req.destroy()` →
+    // `emit("close")` (test-http-should-emit-close-when-connection-is-aborted).
     const message = this._httpMessage;
     const req = message?.req;
 
-    if (req && !req.complete && !req[kHandle]?.upgraded) {
+    if (req && !req.destroyed && !req[kHandle]?.upgraded) {
       // At this point the socket is already destroyed; let's avoid UAF
       req[kHandle] = undefined;
       if (req.listenerCount("error") > 0) {

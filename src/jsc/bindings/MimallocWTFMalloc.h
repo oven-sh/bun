@@ -3,11 +3,31 @@
 #include <cstddef>
 #include <cstdlib>
 #include <wtf/Assertions.h>
+#include <wtf/Compiler.h>
 #include <wtf/PlatformOS.h>
 #include "mimalloc.h"
 #include "mimalloc/types.h"
 
 namespace Bun {
+
+/// Free a pointer that came from Rust's **default allocator** (a `Vec`/`Box`/
+/// `String` owned by the `#[global_allocator]`). Must mirror
+/// `bun_alloc::default_alloc::free`:
+///   - normally the global allocator is mimalloc → `mi_free`
+///   - under ASAN the global allocator is `std::alloc::System` (libc malloc)
+///     so the ASAN interceptor sees every Rust allocation → `::free`
+///
+/// Use this wherever a C++ deallocator/finalizer is registered against a raw
+/// pointer handed over by Rust. Going through `mi_free` directly there is
+/// wrong under ASAN because the buffer was allocated by `System`, not mimalloc.
+ALWAYS_INLINE void defaultAllocatorFree(void* p)
+{
+#if ASAN_ENABLED
+    ::free(p);
+#else
+    mi_free(p);
+#endif
+}
 // For use with WTF types like WTF::Vector.
 struct MimallocMalloc {
 #if USE(BUN_MIMALLOC)

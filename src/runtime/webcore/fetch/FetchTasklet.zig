@@ -187,6 +187,12 @@ pub const FetchTasklet = struct {
     fn clearSink(this: *FetchTasklet) void {
         if (this.sink) |sink| {
             this.sink = null;
+            // Detach the JS side first so that, if the sink's JS wrapper still
+            // holds the other ref (deref() below won't drop the count to 0, so it
+            // won't run deinit/detachJS), the wrapper stops being rooted by
+            // #js_this and the cached ondrain closure (+ stream graph) can be
+            // collected. detachJS runs no JS callbacks, safe during deinit.
+            sink.detachJS();
             sink.deref();
         }
         if (this.request_body_streaming_buffer) |buffer| {
@@ -235,7 +241,7 @@ pub const FetchTasklet = struct {
             response.unref();
         }
 
-        this.clearStreamHandlers();
+        this.clearStreamCancelHandler();
         this.readable_stream_ref.deinit();
 
         this.scheduled_response_buffer.deinit();
@@ -368,7 +374,7 @@ pub const FetchTasklet = struct {
                         bun.default_allocator,
                     );
                 } else {
-                    this.clearStreamHandlers();
+                    this.clearStreamCancelHandler();
                     var prev = this.readable_stream_ref;
                     this.readable_stream_ref = .{};
                     defer prev.deinit();
@@ -471,6 +477,18 @@ pub const FetchTasklet = struct {
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if (is_done) {
+                // The HTTP response has been fully received. If the request body
+                // is still uploading through a ResumableSink (e.g. its underlying
+                // source's `pull` awaits a timer, so a chunk arrives after the
+                // sink paused on backpressure), the HTTP layer will never drain it
+                // again — `ondrain` never fires, so the JS drainReaderIntoSink
+                // continuation (which captures the reader/stream graph) and the
+                // startRequestStream ref would leak forever. Cancel the sink so
+                // the JS side releases the reader and writeEndRequest drops that
+                // ref. cancel is a no-op if the sink already finished.
+                if (this.sink) |sink| {
+                    sink.cancel(.js_undefined);
+                }
                 var poll_ref = this.poll_ref;
                 this.poll_ref = .{};
                 poll_ref.unref(vm);
@@ -872,13 +890,6 @@ pub const FetchTasklet = struct {
 
         if (this.http) |http_| {
             http_.enableResponseBodyStreaming();
-            // Both Body.toReadableStream and Body.tee wire `drain_handler`
-            // on the ByteStream they construct after this returns, so
-            // `scheduleResponseBodyConsumed` will fire for every reader
-            // pull. Arm the signal so the transport gates receive
-            // flow-control on those reports instead of on receipt (h2
-            // per-stream WINDOW_UPDATE, h1 socket pause, h3 wantRead).
-            this.signal_store.body_consumption_tracked.store(true, .release);
 
             // If the server sent the headers and the response body in two separate socket writes
             // and if the server doesn't close the connection by itself
@@ -923,22 +934,15 @@ pub const FetchTasklet = struct {
         };
     }
 
-    /// Clear every ByteStream.Source callback whose ctx pointer is this
-    /// FetchTasklet (cancel_handler/cancel_ctx and drain_handler/drain_ctx)
-    /// to prevent use-after-free. Must be called before releasing
-    /// readable_stream_ref, while the Strong ref still keeps the
-    /// ReadableStream (and thus the ByteStream.Source) alive — the stream
-    /// can outlive the tasklet in JS, and a late `didDrain` or
-    /// `onStreamCancelled` firing against a freed FetchTasklet is the
-    /// UAF this guards.
-    fn clearStreamHandlers(this: *FetchTasklet) void {
+    /// Clear the cancel_handler on the ByteStream.Source to prevent use-after-free.
+    /// Must be called before releasing readable_stream_ref, while the Strong ref
+    /// still keeps the ReadableStream (and thus the ByteStream.Source) alive.
+    fn clearStreamCancelHandler(this: *FetchTasklet) void {
         if (this.readable_stream_ref.get(this.global_this)) |readable| {
             if (readable.ptr == .Bytes) {
                 const source = readable.ptr.Bytes.parent();
                 source.cancel_handler = null;
                 source.cancel_ctx = null;
-                source.drain_handler = null;
-                source.drain_ctx = null;
             }
         }
     }
@@ -947,18 +951,6 @@ pub const FetchTasklet = struct {
         const this = bun.cast(*FetchTasklet, ctx.?);
         if (this.ignore_data) return;
         this.ignoreRemainingResponseBody();
-    }
-
-    /// ByteStream delivered `bytes` to the JS reader. Forward to the
-    /// HTTP thread so the transport can release response-body receive
-    /// backpressure: HTTP/2 emits per-stream WINDOW_UPDATE, HTTP/1.1
-    /// resumes a paused socket read, HTTP/3 re-enables
-    /// `lsquic_stream_wantread`.
-    fn onStreamConsumedCallback(ctx: ?*anyopaque, bytes: usize) void {
-        const this = bun.cast(*FetchTasklet, ctx.?);
-        if (this.signal_store.aborted.load(.monotonic)) return;
-        const http_ = this.http orelse return;
-        bun.http.http_thread.scheduleResponseBodyConsumed(http_.async_http_id, bytes);
     }
 
     fn toBodyValue(this: *FetchTasklet) Body.Value {
@@ -974,7 +966,6 @@ pub const FetchTasklet = struct {
                     .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                     .onStreamCancelled = FetchTasklet.onStreamCancelledCallback,
-                    .onStreamConsumed = FetchTasklet.onStreamConsumedCallback,
                 },
             };
             return response;
@@ -1020,32 +1011,24 @@ pub const FetchTasklet = struct {
 
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
         log("ignoreRemainingResponseBody", .{});
+        // The response is being abandoned. If the request body is still uploading
+        // through a ResumableSink, detach its JS wrapper so the cached `ondrain`
+        // closure (and the reader/stream graph it captures) becomes collectible
+        // instead of leaking. detachJS runs no JS callbacks, so it is safe even
+        // on the GC-finalizer caller (Bun__FetchResponse_finalize).
+        if (this.sink) |sink| {
+            sink.detachJS();
+        }
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         if (this.http) |http_| {
             http_.enableResponseBodyStreaming();
         }
-        // `drain_handler` is about to be cleared and incoming chunks will
-        // be dropped without ever reaching the ByteStream, so no more
-        // `scheduleResponseBodyConsumed` reports. Disarm the tracking
-        // signal so the transport falls back to receipt-based flow
-        // control (h2 per-stream WINDOW_UPDATE, h1 socket resume, h3
-        // `wantRead(true)`) and the abandoned body can drain instead of
-        // stalling. The maxInt sentinel consume both wakes the HTTP
-        // thread (the only other consume trigger is inbound body data,
-        // and a window-stalled / socket-paused server sends none) and
-        // saturates the transport's outstanding counter so the first
-        // re-run releases whatever is already buffered regardless of
-        // which order the atomic store and the queue drain land in.
-        this.signal_store.body_consumption_tracked.store(false, .release);
-        if (this.http) |http_| {
-            bun.http.http_thread.scheduleResponseBodyConsumed(http_.async_http_id, std.math.maxInt(u32));
-        }
         // we should not keep the process alive if we are ignoring the body
         const vm = this.javascript_vm;
         this.poll_ref.unref(vm);
         // clean any remaining references
-        this.clearStreamHandlers();
+        this.clearStreamCancelHandler();
         this.readable_stream_ref.deinit();
         this.response.deinit();
 

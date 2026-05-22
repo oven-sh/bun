@@ -26,12 +26,6 @@ pub const AltSvc = @import("./h3_client/AltSvc.zig");
 /// via TestingAPIs.quicLiveCounts so they must be atomic.
 pub var live_sessions = std.atomic.Value(u32).init(0);
 pub var live_streams = std.atomic.Value(u32).init(0);
-/// Cumulative response-body bytes delivered via `onStreamData` across all
-/// h3 client streams in this process. Exposed for the backpressure tests:
-/// a stalled JS reader should cap this near `receive_body_high_water` once
-/// `wantRead(false)` lands, whereas without the gate it tracks whatever
-/// the server pushes.
-pub var body_bytes_received = std.atomic.Value(u64).init(0);
 
 pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H3TestingAPIs;
 

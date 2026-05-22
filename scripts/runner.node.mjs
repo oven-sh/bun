@@ -79,7 +79,9 @@ const integrationTimeout = 5 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) return 60_000;
+  if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
+  if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -166,6 +168,11 @@ const { values: options, positionals: filters } = parseArgs({
     ["parallel"]: {
       type: "boolean",
       default: false,
+    },
+    /** Write per-file results as JSON to this path (for test-fix workflows). */
+    ["results-json"]: {
+      type: "string",
+      default: undefined,
     },
   },
 });
@@ -353,7 +360,10 @@ const skipsForLeaksan = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+  // Skip-list entries use `/`; on Windows callers pass `\`-separated paths
+  // (path.relative) which never match. Normalize before lookup.
+  const t = test.replaceAll(sep, "/");
+  return !(skipsForExceptionValidation.includes(t) || skipsForExceptionValidation.includes("test/" + t));
 };
 
 /**
@@ -639,7 +649,7 @@ async function runTests() {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
-              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+              env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -909,6 +919,23 @@ async function runTests() {
         console.log(`${getAnsi("yellow")}- ${testPath}${getAnsi("reset")}`);
       }
     }
+  }
+
+  // Dump per-file results as JSON for post-processing (test-fix workflows
+  // shard from this). Opt-in via --results-json so CI output is unchanged.
+  if (cliOptions["results-json"]) {
+    const all = [...okResults, ...flakyResults, ...failedResults].map(r => ({
+      testPath: r.testPath,
+      ok: r.ok,
+      status: r.status,
+      error: r.error,
+      exitCode: r.exitCode,
+      signalCode: r.signalCode,
+      duration: r.duration,
+      stdoutPreview: r.stdoutPreview?.slice?.(-4000),
+    }));
+    writeFileSync(cliOptions["results-json"], JSON.stringify(all, null, 2));
+    !isQuiet && console.log(`Wrote ${all.length} results to ${cliOptions["results-json"]}`);
   }
 
   // Exclude flaky tests from the final results
@@ -1364,7 +1391,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
-  const perTestTimeout = Math.ceil(timeout / 2);
+  // ASAN builds run 5-10x slower (instrumentation + the agent only exposes
+  // 2 of its 8 vCPUs); without a wider per-test timeout, install/git tests
+  // that spawn many subprocesses time out on otherwise-healthy runs.
+  const isAsan = basename(execPath).includes("asan");
+  const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
   const absPath = join(opts["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
   const args = opts["args"] ?? [];
@@ -1403,7 +1434,14 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore
-    env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+    env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+  }
+  if (basename(execPath).includes("asan")) {
+    // ASAN test processes are slow and memory-heavy; if the bun test runner is
+    // SIGKILLed (timeout, OOM) its spawned subprocesses keep running and pile
+    // up, eventually OOM-killing the agent. --no-orphans makes every spawned
+    // bun exit when its parent dies AND SIGKILL its own descendants on exit.
+    env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1442,7 +1480,11 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
  * @returns {number}
  */
 function getTestTimeout(testPath) {
-  if (/integration|3rd_party|docker|bun-install-registry|v8|bundler_compile/i.test(testPath)) {
+  if (
+    /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic/i.test(
+      testPath,
+    )
+  ) {
     return integrationTimeout;
   }
   return testTimeout;
@@ -2374,6 +2416,7 @@ function isAlwaysFailure(error) {
     error.includes("illegal instruction") ||
     error.includes("unchecked exception") ||
     error.includes("sigtrap") ||
+    error.includes("sigabrt") ||
     error.includes("sigkill") ||
     error.includes("error: addresssanitizer") ||
     error.includes("internal assertion failure") ||

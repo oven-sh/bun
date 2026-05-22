@@ -414,6 +414,22 @@ bool Worker::postTaskToWorkerGlobalScope(Function<void(ScriptExecutionContext&)>
 
 void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
 {
+    // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
+    // a message post racing this transition either queues (drained below by
+    // fireEarlyMessages) or posts directly — never both, never neither.
+    //
+    // This MUST happen BEFORE the open event is posted to the parent: the
+    // parent's `online` handler may immediately call getHeapSnapshot() (or
+    // anything else gated on isOnline() / postTaskToWorkerGlobalScope()). If
+    // the state flip happens after the post, a fast parent thread can run the
+    // open task while m_state is still Pending and observe
+    // ERR_WORKER_NOT_RUNNING — flaky `await once(worker, "online");
+    // worker.getHeapSnapshot()` in worker_threads.test.ts.
+    {
+        Locker lock(m_pendingTasksMutex);
+        m_state.store(State::Running);
+    }
+
     postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext&) {
         if (protectedThis->hasEventListeners(eventNames().openEvent)) {
             auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
@@ -427,12 +443,6 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
     }
     RELEASE_ASSERT(&thisContext->vm() == &workerGlobalObject->vm());
     RELEASE_ASSERT(thisContext == workerGlobalObject->globalEventScope->scriptExecutionContext());
-
-    // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
-    // a message post racing this transition either queues (drained below by
-    // fireEarlyMessages) or posts directly — never both, never neither.
-    Locker lock(m_pendingTasksMutex);
-    m_state.store(State::Running);
 }
 
 // Kick off the first drain of messages that arrived before the worker was
@@ -508,7 +518,7 @@ bool Worker::dispatchExit(int32_t exitCode)
 {
     // Runs on the worker thread after its JSC VM has been torn down. Post the
     // close event to the parent; that task additionally releases parent_poll_ref
-    // and drops the worker-thread-held ref (both parent-thread-only operations).
+    // (parent-thread-only).
     //
     // If posting fails — parent context no longer exists (nested worker whose
     // middle thread has already torn down) — the ref and poll are intentionally
@@ -517,25 +527,40 @@ bool Worker::dispatchExit(int32_t exitCode)
     // teardown implies process shutdown (or at least that nothing observes the
     // leak), so this is bounded. The proper fix is for a worker to stop+join
     // its sub-workers before tearing down its own context.
-    return postTaskToParent([exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
-        // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
-        // handlers observe threadId == -1 and isOnline() == false while
-        // postMessage() (gated only on Closed) still accepts and drops the
-        // message, matching browser/Node and pre-refactor behaviour.
-        protectedThis->m_state.store(State::Closing);
+    //
+    // The create-time ref (taken in create() to keep `this` alive while the
+    // worker thread runs) is released via the `betweenLookupAndEnqueue` hook —
+    // i.e. after the parent context is found-live and the lambda's captured
+    // `Ref` exists, but BEFORE the task is enqueued. Once enqueued the parent
+    // can run-and-destroy the lambda (dropping `protectedThis`) and sweep the
+    // JSWorker before this frame resumes; deref()ing after that point can be
+    // the last ref and run ~Worker on the worker thread (the 71d7f78f5e74
+    // race). Releasing inside the lambda body instead would re-introduce the
+    // shutdown leak that commit closed: when global_exit() destroys queued
+    // close tasks without running them, the inner deref() never fires and the
+    // WebWorker box leaks.
+    return ScriptExecutionContext::postTaskTo(
+        m_parentContextId,
+        [this] { this->deref(); },
+        [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
+            // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
+            // handlers observe threadId == -1 and isOnline() == false while
+            // postMessage() (gated only on Closed) still accepts and drops the
+            // message, matching browser/Node and pre-refactor behaviour.
+            protectedThis->m_state.store(State::Closing);
 
-        if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
-            auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
-            protectedThis->EventTargetWithInlineData::dispatchEvent(event);
-        }
+            if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
+                auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
+                protectedThis->EventTargetWithInlineData::dispatchEvent(event);
+            }
 
-        protectedThis->m_state.store(State::Closed);
-        WebWorker__releaseParentPollRef(protectedThis->impl_);
-        // Drop the ref taken in create(). protectedThis keeps us alive across
-        // this line; its own deref happens at lambda destruction on the parent
-        // thread, so ~Worker never runs on the worker thread.
-        protectedThis->deref();
-    });
+            protectedThis->m_state.store(State::Closed);
+            WebWorker__releaseParentPollRef(protectedThis->impl_);
+            // protectedThis (and the JSWorker GC cell, if still rooted) keep us
+            // alive across the close-event dispatch; both deref on the parent
+            // thread (lambda destruction here / GC sweep), so ~Worker never runs
+            // on the worker thread.
+        });
 }
 
 // ---- extern "C" shims (called from Zig) -------------------------------------
@@ -557,7 +582,14 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 
-    vm.derefSuppressingSaferCPPChecking(); // NOLINT
+    // Drop the single ref taken by `Zig__GlobalObject__create`
+    // (`vmPtr->refSuppressingSaferCPPChecking()`), bringing the VM refcount
+    // to zero — `~VM` runs here while the API lock is still held by this
+    // thread, exactly as in the Zig build (where `pthread_exit` skipped the
+    // outer `JSLockHolder` destructor and a second `deref` here released its
+    // abandoned ref). The Rust port acquires the API lock manually with no
+    // extra VM ref (see `WebWorker::thread_main`), so a second `deref` would
+    // run `~VM` twice / dereference the freed VM.
     vm.derefSuppressingSaferCPPChecking(); // NOLINT
 }
 
@@ -576,11 +608,12 @@ extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* 
     worker->fireEarlyMessages(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString* message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
+    WTF::String messageStr = message->transferToWTFString();
     ErrorEvent::Init init;
-    init.message = message.toWTFString(BunString::ZeroCopy).isolatedCopy();
+    init.message = messageStr.isolatedCopy();
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
@@ -588,11 +621,11 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr));
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
             // If serialization threw an error, use the string instead
-            worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+            worker->dispatchErrorWithMessage(WTF::move(messageStr));
         }
         return;
     }
@@ -639,19 +672,30 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         auto& options = worker->options();
         auto ports = MessagePort::entanglePorts(*ScriptExecutionContext::getScriptExecutionContext(worker->clientIdentifier()), WTF::move(options.dataMessagePorts));
         RefPtr<WebCore::SerializedScriptValue> serialized = WTF::move(options.workerDataAndEnvironmentData);
-        JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
-        RETURN_IF_EXCEPTION(scope, {});
-        // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
-        auto* pair = uncheckedDowncast<JSArray>(deserialized);
-        ASSERT(pair->length() == 2);
-        ASSERT(pair->canGetIndexQuickly(0u));
-        ASSERT(pair->canGetIndexQuickly(1u));
-        workerData = pair->getIndexQuickly(0);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto environmentDataValue = pair->getIndexQuickly(1);
-        // it might not be a Map if the parent had not set up environmentData yet
-        environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
-        RETURN_IF_EXCEPTION(scope, {});
+        // `workerDataAndEnvironmentData` is moved-from on the first call. If
+        // this binding is created twice (lazy-init re-entry), `serialized` is
+        // null and `->deserialize` would UB → garbage → SIGTRAP at the
+        // uncheckedDowncast below (#53748 darwin). Guard both: skip the
+        // deserialize on second call (workerData stays jsUndefined), and use a
+        // checked cast so a non-Array deserialize result doesn't trap.
+        if (serialized) {
+            JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
+            RETURN_IF_EXCEPTION(scope, {});
+            // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp
+            if (auto* pair = dynamicDowncast<JSArray>(deserialized)) {
+                ASSERT(pair->length() == 2);
+                ASSERT(pair->canGetIndexQuickly(0u));
+                ASSERT(pair->canGetIndexQuickly(1u));
+                workerData = pair->getIndexQuickly(0);
+                RETURN_IF_EXCEPTION(scope, {});
+                auto environmentDataValue = pair->getIndexQuickly(1);
+                // it might not be a Map if the parent had not set up environmentData yet
+                environmentData = environmentDataValue ? dynamicDowncast<JSMap>(environmentDataValue) : nullptr;
+                RETURN_IF_EXCEPTION(scope, {});
+            } else {
+                ASSERT_NOT_REACHED_WITH_MESSAGE("createNodeWorkerThreadsBinding: deserialized is not JSArray");
+            }
+        }
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);

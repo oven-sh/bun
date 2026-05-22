@@ -3314,7 +3314,7 @@ pub mod debug {
     }
 
     impl MemoryAccessor {
-        pub const INIT: Self = Self {
+        const INIT: Self = Self {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             mem: -1,
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -3430,14 +3430,14 @@ pub mod debug {
         {
             use bun_windows_sys::kernel32::{MEM_FREE, MEMORY_BASIC_INFORMATION, VirtualQuery};
             // SAFETY: MEMORY_BASIC_INFORMATION is a plain Win32 POD; all-zeros is
-            // a valid representation. `mbi` is a valid out-param of the size we
-            // pass; VirtualQuery only inspects the address-space mapping at
-            // `aligned_address`.
+            // a valid representation.
             let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { crate::ffi::zeroed_unchecked() };
+            // SAFETY: `mbi` is a valid out-param of the size we pass; VirtualQuery
+            // only inspects the address-space mapping at `aligned_address`.
             let rc = unsafe {
                 VirtualQuery(
-                    aligned_address as *const core::ffi::c_void,
-                    &mut mbi,
+                    core::ptr::without_provenance(aligned_address),
+                    &raw mut mbi,
                     core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
                 )
             };
@@ -3536,7 +3536,7 @@ pub mod debug {
                 bun_windows_sys::ntdll::RtlCaptureStackBackTrace(
                     0,
                     cap,
-                    out.as_mut_ptr() as *mut *mut core::ffi::c_void,
+                    out.as_mut_ptr().cast::<*mut core::ffi::c_void>(),
                     core::ptr::null_mut(),
                 )
             }
@@ -3597,7 +3597,7 @@ pub mod debug {
                 bun_windows_sys::ntdll::RtlCaptureStackBackTrace(
                     0,
                     cap,
-                    out[1..].as_mut_ptr() as *mut *mut core::ffi::c_void,
+                    out[1..].as_mut_ptr().cast::<*mut core::ffi::c_void>(),
                     core::ptr::null_mut(),
                 )
             } as usize;

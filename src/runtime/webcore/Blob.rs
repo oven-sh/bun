@@ -3516,7 +3516,15 @@ impl BlobExt for Blob {
                     // array; anything else is conservatively treated as able
                     // to run user JS. `js_type_loose`/`as_class_ref` read the
                     // cell header only, so the extra pass is unobservable.
-                    let mut parts_can_run_js = iter.fast.is_none();
+                    //
+                    // The decision must also account for entries still pending
+                    // on `stack`: they are processed after this array's parts
+                    // are pushed but before `done()`, so if anything else
+                    // remains to be walked, its processing could re-enter user
+                    // JS and detach a buffer this array borrowed. (A nested
+                    // array *inside* this one already forces cloning via the
+                    // prescan's catch-all arm.)
+                    let mut parts_can_run_js = iter.fast.is_none() || !stack.is_empty();
                     if !parts_can_run_js {
                         let mut prescan = jsc::JSArrayIterator::init(current, global)?;
                         while let Some(item) = prescan.next()? {

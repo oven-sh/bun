@@ -108,15 +108,26 @@ A typical pattern is to generate a token when rendering a form, embed it in a hi
 ```ts title="server.ts" icon="/icons/typescript.svg"
 const SECRET = process.env.CSRF_SECRET || "my-secret";
 
-// Resolve the requester's session identifier (e.g. from a session cookie).
-function getSessionId(req: Request): string {
-  return req.headers.get("cookie")?.match(/session=([^;]+)/)?.[1] ?? "anonymous";
+// Resolve the requester's session identifier from a session cookie. Returns
+// null when the visitor has no session yet — never fall back to a shared
+// placeholder, or every session-less visitor would share one token binding.
+function getSessionId(req: Request): string | null {
+  return req.headers.get("cookie")?.match(/session=([^;]+)/)?.[1] ?? null;
 }
 
 const server = Bun.serve({
   routes: {
     "/form": req => {
-      const token = Bun.CSRF.generate(SECRET, { sessionId: getSessionId(req) });
+      // Create a per-visitor session before issuing the form so the token is
+      // bound to this visitor and no one else.
+      let sessionId = getSessionId(req);
+      const headers = new Headers({ "Content-Type": "text/html" });
+      if (!sessionId) {
+        sessionId = crypto.randomUUID();
+        headers.append("Set-Cookie", `session=${sessionId}; HttpOnly; SameSite=Lax; Path=/`);
+      }
+
+      const token = Bun.CSRF.generate(SECRET, { sessionId });
 
       return new Response(
         `<form method="POST" action="/submit">
@@ -124,18 +135,20 @@ const server = Bun.serve({
           <input type="text" name="message" />
           <button type="submit">Send</button>
         </form>`,
-        { headers: { "Content-Type": "text/html" } },
+        { headers },
       );
     },
 
     "/submit": {
       POST: async req => {
+        const sessionId = getSessionId(req);
         const formData = await req.formData();
         const csrfToken = formData.get("_csrf");
 
         if (
+          !sessionId ||
           typeof csrfToken !== "string" ||
-          !Bun.CSRF.verify(csrfToken, { secret: SECRET, sessionId: getSessionId(req) })
+          !Bun.CSRF.verify(csrfToken, { secret: SECRET, sessionId })
         ) {
           return new Response("Invalid CSRF token", { status: 403 });
         }

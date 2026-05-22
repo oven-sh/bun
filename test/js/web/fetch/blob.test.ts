@@ -388,9 +388,13 @@ describe("structuredClone preserves slice bounds", () => {
     const { promise, resolve, reject } = Promise.withResolvers<{ size: number; text: string }>();
     worker.onmessage = e => resolve(e.data);
     worker.onerror = e => reject(e.error ?? e.message);
-    worker.postMessage(s);
-    const got = await promise;
-    worker.terminate();
+    let got: { size: number; text: string };
+    try {
+      worker.postMessage(s);
+      got = await promise;
+    } finally {
+      worker.terminate();
+    }
 
     expect(got).toEqual({ size: 4, text: "3456" });
     expect(s.size).toBe(4);

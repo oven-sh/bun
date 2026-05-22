@@ -956,6 +956,10 @@ test("node:vm native Module prototype methods reject non-module receivers", asyn
 
     const results = [];
     for (const name of ["getStatus", "getStatusCode", "getModuleRequests", "createModuleRecord", "getError"]) {
+      if (typeof proto[name] !== "function") {
+        results.push(name + ": missing");
+        continue;
+      }
       try {
         const value = proto[name].call(fake);
         results.push(name + ": returned " + String(value));
@@ -963,11 +967,16 @@ test("node:vm native Module prototype methods reject non-module receivers", asyn
         results.push(name + ": " + (e instanceof TypeError ? "TypeError" : "unexpected " + e));
       }
     }
-    try {
-      const value = Object.getOwnPropertyDescriptor(proto, "identifier").get.call(fake);
-      results.push("identifier: returned " + String(value));
-    } catch (e) {
-      results.push("identifier: " + (e instanceof TypeError ? "TypeError" : "unexpected " + e));
+    const identifierGetter = Object.getOwnPropertyDescriptor(proto, "identifier")?.get;
+    if (typeof identifierGetter !== "function") {
+      results.push("identifier: missing");
+    } else {
+      try {
+        const value = identifierGetter.call(fake);
+        results.push("identifier: returned " + String(value));
+      } catch (e) {
+        results.push("identifier: " + (e instanceof TypeError ? "TypeError" : "unexpected " + e));
+      }
     }
 
     // The legitimate receiver still works through the same native entry points.

@@ -465,7 +465,7 @@ describe("HTTP/2 HEADERS padding near the frame-size boundary", () => {
             ":path": "/",
             ":scheme": "https",
             ":authority": `127.0.0.1:${paddingServer.port}`,
-            "x-filler": "A".repeat(valueLength),
+            "x-filler": Buffer.alloc(valueLength, "A").toString(),
           });
 
           assert.ok(response.data, `Should receive response data for valueLength=${valueLength}`);

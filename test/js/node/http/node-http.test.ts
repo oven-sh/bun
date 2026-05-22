@@ -1862,6 +1862,7 @@ it("native server socket handle accessors return undefined for non-socket receiv
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toContain("OK");
   expect(exitCode).toBe(0);
 }, 15_000);
@@ -1943,6 +1944,7 @@ it("socket handle write keeps buffered data intact when encoding coercion re-ent
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toContain("received=" + expectedTotal + " a=" + 8 * MB + " b=" + 4 * MB + " c=" + 4 * MB);
   expect(exitCode).toBe(0);
 }, 30_000);

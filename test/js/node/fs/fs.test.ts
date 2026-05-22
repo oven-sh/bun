@@ -4060,7 +4060,7 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
 
 it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred while the read is pending", async () => {
   using dir = tempDir("fs-read-transfer", {
-    "data.bin": "a".repeat(65536),
+    "data.bin": Buffer.alloc(65536, 0x61).toString(),
   });
 
   // The async read snapshots the destination buffer before handing it to the

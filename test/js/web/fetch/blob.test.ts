@@ -353,7 +353,7 @@ test("Blob constructor copies typed array parts before later parts run user code
           },
         ]);
         const text = await blob.text();
-        const expected = "A".repeat(64) + "tail";
+        const expected = Buffer.alloc(64, 0x41).toString() + "tail";
         if (text !== expected) {
           throw new Error("unexpected blob contents: " + JSON.stringify(text));
         }

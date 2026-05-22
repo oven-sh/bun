@@ -1798,15 +1798,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.is_contextual_keyword(b"global") {
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
+                    let scope_index = p.scopes_in_order.len();
                     let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.next()?;
+                    // The statements inside are dropped, so discard any scopes they
+                    // recorded or the visit pass will hit a scope order mismatch.
+                    p.discard_scopes_up_to(scope_index);
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
 
                 // "declare const x: any"
+                let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
                 if let Some(decs) = &opts.ts_decorators {
                     p.discard_scopes_up_to(decs.scope_index);
+                } else {
+                    // The statement is dropped below (or reduced to just its bindings
+                    // for "export declare var" inside a namespace), so discard any
+                    // scopes it recorded or the visit pass will hit a scope order
+                    // mismatch (e.g. "declare foo: bar" parses a labeled statement
+                    // that records a Label scope).
+                    p.discard_scopes_up_to(scope_index);
                 }
 
                 // Unlike almost all uses of "declare", statements that use

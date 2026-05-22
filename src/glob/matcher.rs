@@ -471,7 +471,10 @@ fn match_brace(
                 }
             }
             b',' => {
-                if brace_depth == 1 {
+                // A comma inside a `[...]` character class is a class member,
+                // not a branch separator — same `!in_brackets` guard as the
+                // `{`/`}` arms above.
+                if brace_depth == 1 && !in_brackets {
                     if match_brace_branch(
                         state,
                         glob,

@@ -83,6 +83,15 @@ describe("Glob.match", () => {
     expect(glob.match("src/foo/nice/bar/baz/lmao.ts")).toBeTrue();
   });
 
+  test("comma inside a bracket class inside braces is not a branch separator", () => {
+    // `[,]` is a single-character class containing a literal comma, so the
+    // group has three branches: `ts`, `[,]foo`, and nothing after — not a
+    // spurious `]foo` branch split off at the class-interior comma.
+    expect(new Glob("x.{ts,[,]foo}").match("x.,foo")).toBeTrue();
+    expect(new Glob("x.{ts,[,]foo}").match("x.]foo")).toBeFalse();
+    expect(new Glob("x.{ts,[,]foo}").match("x.ts")).toBeTrue();
+  });
+
   test("no early globstar lock-in", () => {
     // see https://github.com/oven-sh/bun/issues/14934
     expect(new Glob(`**/*abc*`).match(`a/abc`)).toBeTrue();

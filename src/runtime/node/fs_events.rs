@@ -371,18 +371,6 @@ unsafe impl Sync for FSEventsLoop {}
 // completeness — no `FSEventsLoop` value is ever moved across threads.
 unsafe impl Send for FSEventsLoop {}
 
-impl FSEventsLoop {
-    /// Borrow the mutex-guarded state. Caller **must** hold `self.mutex`.
-    ///
-    /// SAFETY: `state` is `UnsafeCell`; exclusive access is guaranteed by the
-    /// caller holding `self.mutex`. This is the same pattern as
-    /// `PathWatcherManager::{watchers,platform}`.
-    #[inline]
-    unsafe fn state(&self) -> &mut FSEventsLoopState {
-        unsafe { &mut *self.state.get() }
-    }
-}
-
 pub struct Task {
     pub ctx: *mut (),
     pub callback: fn(*mut ()),
@@ -656,8 +644,9 @@ impl FSEventsLoop {
         // on freed memory. Holding the lock also prevents `registerWatcher`
         // from reallocating the `watchers` buffer mid-iteration.
         let _guard = loop_.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { loop_.state() };
+        // SAFETY: `state` is `UnsafeCell`; exclusive access is guaranteed by
+        // holding `mutex` (same pattern as `PathWatcherManager::watchers`).
+        let state = unsafe { &mut *loop_.state.get() };
 
         for watcher in state.watchers.slice() {
             let Some(handle) = *watcher else { continue };
@@ -730,8 +719,9 @@ impl FSEventsLoop {
     // Runs on CF Thread
     fn _schedule(&self) {
         let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        // SAFETY: `state` is `UnsafeCell`; exclusive access is guaranteed by
+        // holding `mutex` (same pattern as `PathWatcherManager::watchers`).
+        let state = unsafe { &mut *self.state.get() };
         state.has_scheduled_watchers = false;
         let watcher_count = state.watcher_count;
 
@@ -874,8 +864,9 @@ impl FSEventsLoop {
 
     fn register_watcher(&'static self, watcher: *mut FSEventsWatcher) {
         let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        // SAFETY: `state` is `UnsafeCell`; exclusive access is guaranteed by
+        // holding `mutex` (same pattern as `PathWatcherManager::watchers`).
+        let state = unsafe { &mut *self.state.get() };
         if state.watcher_count as usize == state.watchers.len() {
             state.watcher_count += 1;
             state.watchers.push(NonNull::new(watcher));
@@ -902,8 +893,9 @@ impl FSEventsLoop {
 
     fn unregister_watcher(&'static self, watcher: *mut FSEventsWatcher) {
         let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        // SAFETY: `state` is `UnsafeCell`; exclusive access is guaranteed by
+        // holding `mutex` (same pattern as `PathWatcherManager::watchers`).
+        let state = unsafe { &mut *self.state.get() };
         let len = state.watchers.len() as usize;
         for i in 0..len {
             if let Some(item) = state.watchers.slice_mut()[i] {
@@ -952,6 +944,8 @@ impl FSEventsLoop {
     /// `close_and_wait` serializes calls under `FSEVENTS_DEFAULT_LOOP_MUTEX`,
     /// and this is idempotent under that lock: `thread.take()` returns `None`
     /// on a repeat call and we bail before touching CF.
+    // Only called from the `cfg(macos)` arm of `close_and_wait()`.
+    #[cfg(target_os = "macos")]
     fn shutdown(&'static self) {
         // SAFETY: `thread` is JS-thread-only; `shutdown()` runs from
         // `close_and_wait()` on the JS thread at exit under
@@ -983,8 +977,9 @@ impl FSEventsLoop {
         // mutex anyway to keep the "touch `state` ⇒ hold `mutex`" invariant
         // uniform.
         let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        // SAFETY: `state` is `UnsafeCell`; exclusive access is guaranteed by
+        // holding `mutex` (same pattern as `PathWatcherManager::watchers`).
+        let state = unsafe { &mut *self.state.get() };
         if state.watcher_count > 0 {
             while let Some(watcher) = state.watchers.pop() {
                 if let Some(w) = watcher {

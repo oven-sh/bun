@@ -177,6 +177,7 @@ impl PathWatcherManager {
     /// `&'static mut` later would pop the first under Stacked Borrows.
     /// Called from `Platform::init` *after* its fallible syscall succeeds,
     /// so the common retry path never leaks.
+    #[cfg(not(windows))] // `WindowsStub::init` errors before allocating.
     fn leak() -> &'static PathWatcherManager {
         &*bun_core::heap::release(Box::new(PathWatcherManager::default()))
     }

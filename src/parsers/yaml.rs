@@ -3688,8 +3688,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        let map =
-                            self.parse_block_mapping(copy, alias_start, alias_indent, alias_line, opts.flow_pair_allowed)?;
+                        let map = self.parse_block_mapping(
+                            copy,
+                            alias_start,
+                            alias_indent,
+                            alias_line,
+                            opts.flow_pair_allowed,
+                        )?;
                         return Ok(map);
                     }
 

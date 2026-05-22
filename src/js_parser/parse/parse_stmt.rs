@@ -588,6 +588,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     match res.stmt_or_expr {
                         js_ast::StmtOrExpr::Stmt(stmt) => {
                             bad_let_range = None;
+                            // Keep the "let"/"using" declarations visible to the for-in/for-of
+                            // checks below ("forbid_initializers"), like the "var"/"const" arms.
+                            decls_ptr = bun_ast::StoreSlice::new(res.decls.slice());
                             init_ = Some(stmt);
                         }
                         js_ast::StmtOrExpr::Expr(expr) => {

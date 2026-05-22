@@ -2192,6 +2192,36 @@ console.log(resolve.length)
       expectParseError("for ([...a, b] of c) {}", 'Unexpected "," after rest pattern');
     });
 
+    it("for-in and for-of loop initializers", () => {
+      // Annex B: a plain identifier "var" binding may keep its initializer in a sloppy-mode for-in
+      expectPrintedNoTrim("for (var x = 1 in y) ;", "x = 1;\nfor (x in y)\n  ;\nvar x;\n");
+
+      // A destructuring binding can never have an initializer in a for-in/for-of head
+      expectParseError("for (var [a] = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (var {a} = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (var [a] = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (var {a} = 1 of y) ;", "for-of loop variables cannot have an initializer");
+
+      // "let" and "const" bindings can never have an initializer in a for-in/for-of head
+      expectParseError("for (let x = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (let x = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (let [a] = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (let {a} = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (const x = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (const x = 1 of y) ;", "for-of loop variables cannot have an initializer");
+
+      // for-in/for-of heads must have exactly one declaration
+      expectParseError("for (var x, y in z) ;", "for-in loops must have a single declaration");
+      expectParseError("for (let x, y in z) ;", "for-in loops must have a single declaration");
+      expectParseError("for (let x, y of z) ;", "for-of loops must have a single declaration");
+
+      // Declarations without an initializer are still allowed
+      expectPrintedNoTrim("for (var x in y) ;", "for (x in y)\n  ;\nvar x;\n");
+      expectPrintedNoTrim("for (var [a] in y) ;", "for ([a] in y)\n  ;\nvar a;\n");
+      expectPrintedNoTrim("for (let [a] of y) ;", "for (let [a] of y)\n  ;\n");
+      expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
+    });
+
     it("regexp", () => {
       expectPrinted("/x/g", "/x/g");
       expectPrinted("/x/i", "/x/i");

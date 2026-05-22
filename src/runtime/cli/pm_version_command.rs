@@ -462,7 +462,7 @@ impl PmVersionCommand {
         let entry_ptr: *mut Semver::Version = unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
             match (*lf).workspace_versions.get_ptr_mut(&name_hash) {
-                Some(e) => e as *mut Semver::Version,
+                Some(e) => std::ptr::from_mut::<Semver::Version>(e),
                 None => {
                     // Root workspace or a package not tracked in
                     // `workspace_versions`. The root's version isn't currently
@@ -518,11 +518,16 @@ impl PmVersionCommand {
         // next to the root `package.json` via the process top-level dir, so
         // mirror that exact location here rather than relying on whatever
         // the process cwd happens to be.
+        //
+        // SAFETY: `pm_raw` is the singleton derived at fn entry; `options` is
+        // a plain POD sub-field disjoint from `lockfile`, and no other live
+        // borrow of `pm.options` exists in this scope.
         let save_format = load_result.save_format(unsafe { &(*pm_raw).options });
         let filename = save_format.filename().as_bytes();
         let root_dir = bun_paths::fs::FileSystem::instance().top_level_dir();
 
-        drop(load_result);
+        // `load_result` ends its lexical borrow of `pm.lockfile` at the
+        // function boundary; no explicit `drop` needed.
 
         let mut join_buf = PathBuffer::uninit();
         let abs = path::join_abs_string_buf_z::<path_platform::Auto>(

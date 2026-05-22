@@ -5019,7 +5019,7 @@ private:
         }
         case ObjectReferenceTag: {
             auto index = readConstantPoolIndex(m_gcBuffer);
-            if (!index) {
+            if (!index || *index >= m_gcBuffer.size()) {
                 fail();
                 return JSValue();
             }

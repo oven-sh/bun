@@ -396,3 +396,39 @@ describe("structuredClone preserves slice bounds", () => {
     expect(s.size).toBe(4);
   });
 });
+
+describe("slice bounds are respected when streaming and serving", () => {
+  test("Blob.slice(start, end).stream()", async () => {
+    const s = new Blob(["0123456789"]).slice(3, 7);
+    expect(await new Response(s.stream()).text()).toBe("3456");
+    // Streaming must not mutate the slice either.
+    expect(s.size).toBe(4);
+    expect(await s.text()).toBe("3456");
+  });
+
+  test("Response(slice).body reader", async () => {
+    const res = new Response(new Blob(["0123456789"]).slice(3, 7));
+    const reader = res.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    expect(Buffer.concat(chunks).toString()).toBe("3456");
+  });
+
+  test("content-length of a sliced Blob response body", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new Blob(["0123456789"]).slice(3, 7)),
+    });
+
+    const head = await fetch(`http://localhost:${server.port}/`, { method: "HEAD" });
+    expect(head.headers.get("content-length")).toBe("4");
+
+    const get = await fetch(`http://localhost:${server.port}/`);
+    expect(get.headers.get("content-length")).toBe("4");
+    expect(await get.text()).toBe("3456");
+  });
+});

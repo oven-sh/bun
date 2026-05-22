@@ -2436,7 +2436,16 @@ impl BlobExt for Blob {
                 let offset = self.offset.get();
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
-                    return (store_size.min(offset), store_size - offset);
+                    let offset = store_size.min(offset);
+                    // Matches `resolve_size`: a known size (e.g. a slice) is
+                    // authoritative; only an unknown size falls back to the
+                    // remainder of the backing store.
+                    let size = if self.size.get() == MAX_SIZE {
+                        store_size - offset
+                    } else {
+                        self.size.get()
+                    };
+                    return (offset, size);
                 }
                 (self.offset.get(), self.size.get())
             }
@@ -4228,7 +4237,7 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
             let available = store_size - blob.offset.get();
             // v4+ payloads carry the slice length on the wire; older payloads
             // don't, so fall back to the store-derived size (pre-v4 behavior).
-            let requested = serialized_size.map_or(blob.size.get(), |s| s as SizeType);
+            let requested: SizeType = serialized_size.unwrap_or_else(|| blob.size.get());
             blob.size.set(requested.min(available));
         }
     } else {

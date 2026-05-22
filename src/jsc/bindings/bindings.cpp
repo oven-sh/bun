@@ -2294,6 +2294,16 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
             case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
                 if (auto* generator = unwrapGeneratorFromContext(p->inlineReactionContext()))
                     return generator;
+                // No generator in the context. For the resolve-with-promise fast
+                // path (`return promise` without await inside an async function),
+                // the reaction's cell payload is the outer promise being resolved —
+                // follow it to the next promise in the chain. Combinator reactions
+                // store a JSPromiseCombinatorsGlobalContext there, so the downcast
+                // fails and we stop, as before.
+                if (auto* next = dynamicDowncast<JSC::JSPromise>(p->payloadCell())) {
+                    p = next;
+                    continue;
+                }
                 return nullptr;
             }
             case JSC::JSPromise::InlineReactionKind::FulfillHandler:

@@ -616,7 +616,7 @@ describe("structuredClone with Blob and File", () => {
         const payload = new Uint8Array(serialize(Bun.file(realPath)));
 
         const pathBytes = new TextEncoder().encode(realPath);
-        const s3Url = "s3://bucket/" + "k".repeat(pathBytes.length - "s3://bucket/".length);
+        const s3Url = "s3://bucket/" + Buffer.alloc(pathBytes.length - "s3://bucket/".length, "k").toString();
         const s3Bytes = new TextEncoder().encode(s3Url);
         expect(s3Bytes.length).toBe(pathBytes.length);
 

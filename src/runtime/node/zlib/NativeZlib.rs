@@ -152,9 +152,7 @@ mod _impl {
                 return Err(global
                     .err(
                         bun_jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "writeResult must be a Uint32Array with at least 2 elements"
-                        ),
+                        format_args!("writeResult must be a Uint32Array with at least 2 elements"),
                     )
                     .throw());
             }

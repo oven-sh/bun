@@ -647,10 +647,7 @@ impl DateTime {
     /// 1970-01-01T00:00:00Z through 9999-12-31T23:59:59Z (the MySQL DATETIME
     /// maximum). Anything outside that window panics on an integer cast, so
     /// reject it with a catchable error instead.
-    fn check_range(
-        ts: i64,
-        global_object: &JSGlobalObject,
-    ) -> Result<(), any_mysql_error::Error> {
+    fn check_range(ts: i64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
         const MAX_DATETIME_UNIX_TIMESTAMP: i64 = 253_402_300_799;
         if !(0..=MAX_DATETIME_UNIX_TIMESTAMP).contains(&ts) {
             return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
@@ -704,10 +701,7 @@ impl Time {
     /// `from_unix_timestamp` stores whole days in a `u32`; negative or
     /// oversized values panic on an integer cast. Reject them with a
     /// catchable error instead.
-    fn check_range(
-        ts: i64,
-        global_object: &JSGlobalObject,
-    ) -> Result<(), any_mysql_error::Error> {
+    fn check_range(ts: i64, global_object: &JSGlobalObject) -> Result<(), any_mysql_error::Error> {
         const MAX_TIME_SECONDS: i64 = (u32::MAX as i64) * 86400 + 86399;
         if !(0..=MAX_TIME_SECONDS).contains(&ts) {
             return Err(js_error_to_mysql(global_object.throw_invalid_arguments(

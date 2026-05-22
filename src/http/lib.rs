@@ -4261,8 +4261,7 @@ impl<'a> HTTPClient<'a> {
                     // into the keep-alive pool, where the unread body bytes
                     // would be read as the response to the next request on the
                     // connection.
-                    let Ok(content_length) =
-                        bun_core::parse_unsigned::<usize>(header.value(), 10)
+                    let Ok(content_length) = bun_core::parse_unsigned::<usize>(header.value(), 10)
                     else {
                         return Err(err!(InvalidHTTPResponse));
                     };

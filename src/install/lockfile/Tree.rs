@@ -834,11 +834,15 @@ impl Tree {
             // component for un-hoisted packages). Reject names that could
             // resolve outside that directory before placing them in the tree.
             if !crate::dependency::is_safe_install_folder_name(
-                dependency.name.slice(lockfile.buffers.string_bytes.as_slice()),
+                dependency
+                    .name
+                    .slice(lockfile.buffers.string_bytes.as_slice()),
             ) {
                 builder.maybe_report_error(format_args!(
                     "Invalid dependency name \"{}\"",
-                    dependency.name.fmt(lockfile.buffers.string_bytes.as_slice()),
+                    dependency
+                        .name
+                        .fmt(lockfile.buffers.string_bytes.as_slice()),
                 ));
                 continue 'dep;
             }

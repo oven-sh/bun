@@ -171,9 +171,7 @@ mod _impl {
                 return Err(global
                     .err(
                         jsc::ErrorCode::INVALID_ARG_VALUE,
-                        format_args!(
-                            "writeState must be a Uint32Array with at least 2 elements"
-                        ),
+                        format_args!("writeState must be a Uint32Array with at least 2 elements"),
                     )
                     .throw());
             }

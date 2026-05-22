@@ -5918,20 +5918,19 @@ impl H2FrameParser {
                 );
                 return Err(global_object.throw_value(exception));
             }
-            let validated_name =
-                match Self::to_valid_header_name(name, &mut name_buffer[..]) {
-                    Ok(n) => n,
-                    Err(_) => {
-                        let exception = global_object.to_type_error(
-                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
-                            format_args!(
-                                "The arguments Header name is invalid. Received {}",
-                                BStr::new(name)
-                            ),
-                        );
-                        return Err(global_object.throw_value(exception));
-                    }
-                };
+            let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                Ok(n) => n,
+                Err(_) => {
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                        format_args!(
+                            "The arguments Header name is invalid. Received {}",
+                            BStr::new(name)
+                        ),
+                    );
+                    return Err(global_object.throw_value(exception));
+                }
+            };
 
             // closure for encode error handling
             let mut handle_encode =
@@ -6550,20 +6549,19 @@ impl H2FrameParser {
                 let name_slice = header_name.to_utf8();
                 let name = name_slice.slice();
 
-                let validated_name =
-                    match Self::to_valid_header_name(name, &mut name_buffer[..]) {
-                        Ok(n) => n,
-                        Err(_) => {
-                            let exception = global_object.to_type_error(
-                                bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
-                                format_args!(
-                                    "The arguments Header name is invalid. Received \"{}\"",
-                                    BStr::new(name)
-                                ),
-                            );
-                            return Err(global_object.throw_value(exception));
-                        }
-                    };
+                let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                            format_args!(
+                                "The arguments Header name is invalid. Received \"{}\"",
+                                BStr::new(name)
+                            ),
+                        );
+                        return Err(global_object.throw_value(exception));
+                    }
+                };
 
                 if name.first() == Some(&b':') {
                     if ignore_pseudo_headers == 1 {

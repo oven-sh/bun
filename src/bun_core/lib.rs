@@ -3428,7 +3428,7 @@ pub mod debug {
         }
         #[cfg(windows)]
         {
-            use bun_windows_sys::kernel32::{VirtualQuery, MEMORY_BASIC_INFORMATION, MEM_FREE};
+            use bun_windows_sys::kernel32::{MEM_FREE, MEMORY_BASIC_INFORMATION, VirtualQuery};
             // SAFETY: MEMORY_BASIC_INFORMATION is a plain Win32 POD; all-zeros is
             // a valid representation. `mbi` is a valid out-param of the size we
             // pass; VirtualQuery only inspects the address-space mapping at
@@ -3486,7 +3486,10 @@ pub mod debug {
         /// `frame_address()` from the caller (where it inlines) or a context-seeded
         /// value.
         pub fn init(fp: usize) -> StackIterator {
-            StackIterator { fp, ma: MemoryAccessor::INIT }
+            StackIterator {
+                fp,
+                ma: MemoryAccessor::INIT,
+            }
         }
 
         pub fn next(&mut self) -> Option<usize> {

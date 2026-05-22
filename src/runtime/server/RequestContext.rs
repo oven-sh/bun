@@ -184,6 +184,10 @@ pub struct RequestContext<
     pub request_body: Option<body::BodyHiveHandle>,
     pub request_body_buf: Vec<u8>,
     pub request_body_content_len: usize,
+    /// Total bytes forwarded to the request-body `ReadableStream`. The
+    /// up-front `maxRequestBodySize` check only sees Content-Length, so
+    /// chunked / H3 bodies consumed as a stream are capped against this.
+    pub request_body_streamed_len: usize,
 
     pub sink: Option<NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>>,
     pub byte_stream: Option<NonNull<ByteStream>>,
@@ -1262,6 +1266,7 @@ where
                 request_body: None,
                 request_body_buf: Vec::new(),
                 request_body_content_len: 0,
+                request_body_streamed_len: 0,
                 sink: None,
                 byte_stream: None,
                 response_body_readable_stream_ref: readable_stream::Strong::default(),
@@ -3567,6 +3572,52 @@ where
         // we can no longer hold the strong reference from the body value ref.
         if let Some(readable) = this.request_body_readable_stream_ref.get(global_this) {
             debug_assert!(this.request_body_buf.is_empty());
+
+            // The up-front maxRequestBodySize check only sees Content-Length.
+            // Chunked / H3 bodies may omit it, so cap the bytes forwarded to
+            // the stream here too — otherwise a single CL-less request can
+            // stream unbounded data past the configured limit.
+            this.request_body_streamed_len =
+                this.request_body_streamed_len.saturating_add(chunk.len());
+            if this.request_body_streamed_len > server.config().max_request_body_size {
+                this.resp.expect("infallible: resp bound").clear_on_data();
+                this.flags.set_is_waiting_for_request_body(false);
+
+                let _exit = vm.enter_event_loop_scope();
+
+                // Release the strong stream ref like the `last` arm does, then
+                // error the stream so a pending or future read rejects instead
+                // of hanging forever.
+                let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
+
+                readable.value.ensure_still_alive();
+                if let Some(bytes) = readable.ptr.bytes() {
+                    let mut err = Body::ValueError::Message(BunString::static_(
+                        "Request body exceeded maxRequestBodySize",
+                    ));
+                    let js_err = err.to_js(global_this);
+                    js_err.ensure_still_alive();
+                    // TODO: properly propagate exception upwards
+                    let _ = bytes.on_data(WebCore::streams::Result::Err(
+                        WebCore::streams::StreamError::JSValue(js_err),
+                    ));
+                    err.reset();
+                }
+
+                // Route through the normal end path so this.resp is detached
+                // and the base ref released (see the buffering branch below).
+                // SAFETY: FFI handle
+                if let Some(resp) = this.resp {
+                    if !resp.has_responded() {
+                        this.flags.set_has_written_status(true);
+                        // SAFETY: FFI handle
+                        resp.write_status(b"413 Payload Too Large");
+                    }
+                }
+                this.end_without_body(!HTTP3);
+                return;
+            }
+
             let _exit = vm.enter_event_loop_scope();
 
             // `RawSlice` is non-owning; ownership of `chunk` stays with the

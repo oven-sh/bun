@@ -166,14 +166,9 @@ describe("Bun.Transpiler", () => {
     it("does not crash on an unterminated template literal after type arguments", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
-
-      // An unterminated template literal reached while speculatively parsing `<T>`
-      // as type arguments must be reported as a parse error, not crash the parser.
       err("new C<T>\n`", "Unterminated string literal");
       err("new C<T>`", "Unterminated string literal");
       err("f<T>`", "Unterminated string literal");
-
-      // Terminated tagged templates after type arguments still transpile.
       exp("new C<T>`ok`", "new C`ok`;\n");
       exp("f<T>`ok`", "f`ok`;\n");
     });

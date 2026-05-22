@@ -1418,11 +1418,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match func(self) {
             Ok(_) => {}
             Err(_) => {
-                // Backtrack on *any* error, not just an explicit `Backtrack`: errors raised
-                // while the log is disabled (e.g. an unterminated template literal hitting
-                // EOF mid-scan) are suppressed, so the lexer must be restored rather than
-                // left on a half-scanned token. Normal parsing then re-encounters and
-                // reports the error.
                 backtrack = true;
             }
         }
@@ -1451,7 +1446,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let result = match func(self) {
             Ok(r) => r,
             Err(_) => {
-                // See `lexer_backtracker_bool`: restore the lexer on any error.
                 backtrack = true;
                 SkipTypeParameterResult::DidNotSkipAnything
             }
@@ -1479,7 +1473,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match func(self) {
             Ok(_) => {}
             Err(_) => {
-                // See `lexer_backtracker_bool`: restore the lexer on any error.
                 backtrack = true;
             }
         }

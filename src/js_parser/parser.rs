@@ -1166,8 +1166,8 @@ pub struct ExprOrLetStmt {
     // PORT NOTE: Zig writes `.decls = decls.slice()` borrowing the heap buffer
     // that was just moved into `S::Local`. The buffer pointer is stable across
     // the move, but borrowck can't see that — store as `RawSlice` to record the
-    // outlives-holder invariant without a per-site unsafe cast. (Neither caller
-    // currently reads this field, matching parseStmt.zig:829-836.)
+    // outlives-holder invariant without a per-site unsafe cast. Read by the
+    // for-loop parser so for-in/for-of heads can validate "let"/"using" decls.
     pub decls: bun_collections::RawSlice<G::Decl>,
 }
 

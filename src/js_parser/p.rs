@@ -4586,7 +4586,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             0 => {}
             1 => {
                 if let Some(value) = &decls[0].value {
-                    if is_var {
+                    if is_var && matches!(decls[0].binding.data, js_ast::b::B::BIdentifier(_)) {
                         // This is a weird special case. Initializers are allowed in "var"
                         // statements with identifier bindings.
                         return Ok(());

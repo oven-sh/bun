@@ -7017,10 +7017,15 @@ impl H2FrameParser {
             0
         };
         let available_payload = actual_max_frame_size - priority_overhead;
-        let padding: u8 = if encoded_size > available_payload {
+        // Reserve one byte for the pad-length field so `encoded_size +
+        // padding_overhead` never exceeds `available_payload`; otherwise the
+        // CONTINUATION branch below would slice past the end of the encoded
+        // header block. CONTINUATION frames cannot carry padding, so it is
+        // disabled whenever the block does not fit in a single HEADERS frame.
+        let padding: u8 = if encoded_size >= available_payload {
             0
         } else {
-            stream.get_padding(encoded_size, available_payload)
+            stream.get_padding(encoded_size, available_payload - 1)
         };
         let padding_overhead: usize = if padding != 0 {
             padding as usize + 1

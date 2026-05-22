@@ -1429,19 +1429,30 @@ impl VectorArrayBuffer {
             );
         }
 
-        let mut bufferlist: Vec<PlatformIoVec> = Vec::new();
-        let mut i: usize = 0;
         let len = val.get_length(global_object)? as usize;
-        bufferlist.reserve_exact(len);
 
+        // `get_index` can re-enter JavaScript (Proxy traps, index getters), which
+        // could detach or resize an ArrayBuffer whose raw pointer we already
+        // collected. Gather and validate every element first; only derive the
+        // iovec pointers once no more JavaScript can run.
+        let mut elements: Vec<JSValue> = Vec::new();
+        elements.reserve_exact(len);
+        let mut i: usize = 0;
         while i < len {
             let element = val.get_index(global_object, i as u32)?;
 
-            if !element.is_cell() {
+            if !element.is_cell() || element.as_array_buffer(global_object).is_none() {
                 return Err(global_object
                     .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
             }
 
+            elements.push(element);
+            i += 1;
+        }
+
+        let mut bufferlist: Vec<PlatformIoVec> = Vec::new();
+        bufferlist.reserve_exact(len);
+        for element in elements {
             let Some(mut array_buffer) = element.as_array_buffer(global_object) else {
                 return Err(global_object
                     .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
@@ -1449,7 +1460,6 @@ impl VectorArrayBuffer {
 
             let buf = array_buffer.byte_slice_mut();
             bufferlist.push(bun_sys::platform_iovec_create(buf));
-            i += 1;
         }
 
         Ok(VectorArrayBuffer {

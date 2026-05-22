@@ -886,7 +886,11 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         }
 
     } else if (JSC::JSArrayBufferView* buffer = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-        CHECK_BIND(sqlite3_bind_blob(stmt, i, buffer->vector(), buffer->byteLength(), transientOrStatic));
+        // Always copy. With SQLITE_STATIC, sqlite3 keeps the raw pointer until
+        // sqlite3_step(), but a re-entrant property getter for a later parameter
+        // can detach the ArrayBuffer (e.g. ArrayBuffer.prototype.transfer) and
+        // free the backing store before the query runs.
+        CHECK_BIND(sqlite3_bind_blob(stmt, i, buffer->vector(), buffer->byteLength(), SQLITE_TRANSIENT));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Binding expected string, TypedArray, boolean, number, bigint or null"_s));
         return false;
@@ -896,9 +900,21 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
 #undef CHECK_BIND
 }
 
-static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindingsMap& bindings, JSC::JSObject* target, JSC::ThrowScope& scope, sqlite3* db, sqlite3_stmt* stmt, bool clone, bool safeIntegers)
+static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindingsMap& bindings, JSC::JSObject* target, JSC::ThrowScope& scope, sqlite3* db, sqlite3_stmt* stmt, bool clone, bool safeIntegers, JSSQLStatement* statement)
 {
     int count = 0;
+
+    // Reading a property off `target` can run arbitrary JS (getters, Proxy
+    // traps), which can call statement.finalize() and free `stmt`. Re-validate
+    // before touching `stmt` again after any callback into JS.
+    const auto& statementStillAlive = [&]() -> bool {
+        if (statement && statement->stmt != stmt) [[unlikely]] {
+            if (!scope.exception())
+                throwException(globalObject, scope, createError(globalObject, "Statement has finalized"_s));
+            return false;
+        }
+        return true;
+    };
 
     auto& vm = JSC::getVM(globalObject);
     auto& structure = *target->structure();
@@ -951,6 +967,8 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             auto* name = sqlite3_bind_parameter_name(stmt, i + 1);
 
             JSValue value = getValue(name, i);
+            if (!statementStillAlive())
+                return {};
             if (!value && !scope.exception()) {
                 if (throwOnMissing) {
                     throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) }), "\""_s)));
@@ -975,6 +993,8 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
     else if (bindings.isOnlyIndexed) [[unlikely]] {
         for (size_t i = 0; i < size; i++) {
             JSValue value = target->getDirectIndex(globalObject, i);
+            if (!statementStillAlive())
+                return {};
             if (!value && !scope.exception()) {
                 if (throwOnMissing) {
                     throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, i + 1, "\""_s)));
@@ -1001,6 +1021,8 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
         for (size_t i = 0; i < size; i++) {
             const auto& property = bindingNames[i];
             JSValue value = property.isEmpty() ? target->getDirectIndex(globalObject, i) : target->fastGetOwnProperty(vm, structure, bindingNames[i]);
+            if (!statementStillAlive())
+                return {};
             if (!value && !scope.exception()) {
                 if (throwOnMissing) {
                     throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, property.isEmpty() ? String::number(i) : property.string(), "\""_s)));
@@ -1043,6 +1065,9 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
 
             RETURN_IF_EXCEPTION(scope, {});
 
+            if (!statementStillAlive())
+                return {};
+
             if (!rebindValue(globalObject, db, stmt, i + 1, value, scope, clone, safeIntegers)) {
                 return {};
             }
@@ -1055,7 +1080,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
     return jsNumber(count);
 }
 
-static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, JSC::ThrowScope& scope, sqlite3* db, sqlite3_stmt* stmt, bool clone, SQLiteBindingsMap& bindings, bool safeIntegers)
+static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, JSC::ThrowScope& scope, sqlite3* db, sqlite3_stmt* stmt, bool clone, SQLiteBindingsMap& bindings, bool safeIntegers, JSSQLStatement* statement)
 {
     sqlite3_clear_bindings(stmt);
     JSC::JSArray* array = dynamicDowncast<JSC::JSArray>(values);
@@ -1063,7 +1088,7 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
 
     if (!array) {
         if (JSC::JSObject* object = values.getObject()) {
-            auto res = rebindObject(lexicalGlobalObject, bindings, object, scope, db, stmt, clone, safeIntegers);
+            auto res = rebindObject(lexicalGlobalObject, bindings, object, scope, db, stmt, clone, safeIntegers, statement);
             RETURN_IF_EXCEPTION(scope, {});
             return res;
         }
@@ -1453,7 +1478,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
                 int count = sqlite3_bind_parameter_count(sql.stmt);
 
                 SQLiteBindingsMap bindings { static_cast<uint16_t>(count > -1 ? count : 0), strict };
-                JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, sql.stmt, false, bindings, safeIntegers);
+                JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, db, sql.stmt, false, bindings, safeIntegers, nullptr);
                 RETURN_IF_EXCEPTION(scope, {});
 
                 if (!reb.isNumber()) [[unlikely]] {
@@ -2772,7 +2797,16 @@ JSC::JSValue JSSQLStatement::rebind(JSC::JSGlobalObject* lexicalGlobalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stmt = this->stmt;
 
-    auto val = rebindStatement(lexicalGlobalObject, values, scope, this->version_db->db, stmt, clone, this->m_bindingNames, this->useBigInt64);
+    auto val = rebindStatement(lexicalGlobalObject, values, scope, this->version_db->db, stmt, clone, this->m_bindingNames, this->useBigInt64, this);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // A getter invoked while binding can finalize this statement; the callers
+    // cache `stmt` before binding and call sqlite3_step() on it afterwards.
+    if (this->stmt != stmt) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+        return {};
+    }
+
     if (val.isNumber()) {
         RELEASE_AND_RETURN(scope, val);
     } else {

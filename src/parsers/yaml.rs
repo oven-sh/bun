@@ -791,8 +791,6 @@ pub enum ParseError {
     MultipleYamlDirectives,
     #[error("InvalidIndentation")]
     InvalidIndentation,
-    #[error("MergeKeyLimitExceeded")]
-    MergeKeyLimitExceeded,
     #[error("StackOverflow")]
     StackOverflow,
 }
@@ -2160,7 +2158,6 @@ pub enum ParseResultError {
     UnexpectedDocumentEnd { pos: Pos },
     MultipleYamlDirectives { pos: Pos },
     InvalidIndentation { pos: Pos },
-    MergeKeyLimitExceeded { pos: Pos },
 }
 
 impl ParseResultError {
@@ -2210,9 +2207,6 @@ impl ParseResultError {
             }
             ParseResultError::InvalidIndentation { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Invalid indentation");
-            }
-            ParseResultError::MergeKeyLimitExceeded { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Merge key expansion is too large");
             }
         }
         Ok(())
@@ -2271,9 +2265,6 @@ impl<Enc: Encoding> ParseResult<Enc> {
             ParseError::InvalidIndentation => {
                 ParseResultError::InvalidIndentation { pos: parser.pos }
             }
-            ParseError::MergeKeyLimitExceeded => ParseResultError::MergeKeyLimitExceeded {
-                pos: parser.token.start,
-            },
         };
         ParseResult::Err(e)
     }
@@ -2319,12 +2310,6 @@ pub struct Parser<'i, Enc: Encoding> {
     pub whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub stack_check: StackCheck,
-
-    /// Total key-equality comparisons performed while deduplicating `<<` merge
-    /// keys across the entire parse invocation (all documents in a
-    /// multi-document stream; `parse_document` does not reset it). Bounded so
-    /// that aliased anchors cannot turn a small input into quadratic work.
-    pub merge_key_comparisons: u64,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2347,7 +2332,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
-            merge_key_comparisons: 0,
         }
     }
 
@@ -2706,7 +2690,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     })?;
                 } else {
                     let value = self.parse_node(ParseNodeOptions::default())?;
-                    props.append_maybe_merge(key, value, &mut self.merge_key_comparisons)?;
+                    props.append_maybe_merge(key, value)?;
                 }
 
                 if matches!(self.token.data, TokenData::CollectEntry) {
@@ -2961,7 +2945,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                 };
 
-                props.append_maybe_merge(first_key, value, &mut self.merge_key_comparisons)?;
+                props.append_maybe_merge(first_key, value)?;
             }
 
             if self.context.get() == Context::FlowIn {
@@ -3068,7 +3052,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     };
 
-                    props.append_maybe_merge(key, value, &mut self.merge_key_comparisons)?;
+                    props.append_maybe_merge(key, value)?;
                 }
 
                 Ok(Expr::init(
@@ -3098,13 +3082,6 @@ pub struct MappingProps {
 }
 
 impl MappingProps {
-    /// Upper bound on the total number of key-equality comparisons performed
-    /// while deduplicating `<<` merge keys across an entire parse invocation
-    /// (cumulative over all documents in a stream). Aliases make re-merging a
-    /// large anchor nearly free in input bytes, so without a cap a small input
-    /// can force quadratic work.
-    pub const MAX_MERGE_KEY_COMPARISONS: u64 = 1 << 24;
-
     pub fn init() -> Self {
         Self {
             list: bun_alloc::AstAlloc::vec(),
@@ -3116,19 +3093,11 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn merge(
-        &mut self,
-        merge_props: &[G::Property],
-        comparisons: &mut u64,
-    ) -> Result<(), ParseError> {
+    pub fn merge(&mut self, merge_props: &[G::Property]) -> Result<(), AllocError> {
         self.list.reserve(merge_props.len());
         // PERF(port): was ensureUnusedCapacity
         'next_merge_prop: for merge_prop in merge_props.iter().rev() {
             let merge_key = merge_prop.key.as_ref().unwrap();
-            *comparisons = comparisons.saturating_add(self.list.len() as u64);
-            if *comparisons > Self::MAX_MERGE_KEY_COMPARISONS {
-                return Err(ParseError::MergeKeyLimitExceeded);
-            }
             for existing_prop in self.list.iter() {
                 let existing_key = existing_prop.key.as_ref().unwrap();
                 if Parser::<Utf8>::yaml_merge_key_expr_eql(existing_key, merge_key) {
@@ -3151,12 +3120,7 @@ impl MappingProps {
         Ok(())
     }
 
-    pub fn append_maybe_merge(
-        &mut self,
-        key: Expr,
-        value: Expr,
-        comparisons: &mut u64,
-    ) -> Result<(), ParseError> {
+    pub fn append_maybe_merge(&mut self, key: Expr, value: Expr) -> Result<(), AllocError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,
@@ -3173,16 +3137,14 @@ impl MappingProps {
         }
 
         match &value.data {
-            ast::ExprData::EObject(value_obj) => {
-                self.merge(value_obj.properties.slice(), comparisons)
-            }
+            ast::ExprData::EObject(value_obj) => self.merge(value_obj.properties.slice()),
             ast::ExprData::EArray(value_arr) => {
                 for item in value_arr.items.slice() {
                     let item_obj = match &item.data {
                         ast::ExprData::EObject(obj) => obj,
                         _ => continue,
                     };
-                    self.merge(item_obj.properties.slice(), comparisons)?;
+                    self.merge(item_obj.properties.slice())?;
                 }
                 Ok(())
             }

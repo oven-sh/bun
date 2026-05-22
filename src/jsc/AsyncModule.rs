@@ -34,6 +34,9 @@ pub struct InitOpts<'a> {
     pub loader: bun_ast::Loader,
     pub hash: u32,
     pub arena: Box<ArenaAllocator>,
+    /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
+    /// alive alongside `arena` until the module finishes loading.
+    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
 }
 
 pub struct AsyncModule {
@@ -58,6 +61,8 @@ pub struct AsyncModule {
     pub hash: u32, // default = u32::MAX
     pub global_this: crate::GlobalRef,
     pub arena: Box<ArenaAllocator>,
+    /// See [`InitOpts::ast_alloc_state`].
+    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
 
     // This is the specific state for making it async
     pub poll_ref: KeepAlive,
@@ -692,6 +697,7 @@ impl AsyncModule {
             // .expr_blocks = expr_blocks,
             global_this: crate::GlobalRef::new(global_object),
             arena: opts.arena,
+            ast_alloc_state: opts.ast_alloc_state,
             poll_ref: KeepAlive::default(),
             any_task: AnyTask::AnyTask::default(),
         })

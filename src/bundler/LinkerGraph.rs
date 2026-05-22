@@ -790,8 +790,8 @@ impl<'a> LinkerGraph<'a> {
     /// `append` call site; the Rust `Vec<T, &Arena>` stores it, so swap here.
     /// Zig also transfers `part.dependencies` and `symbols`; the Rust port's
     /// `DependencyList` is `Vec<_, AstAlloc>` (linker-side grows just route
-    /// through whichever thread's `AST_HEAP` is active — `AstAlloc` is a ZST,
-    /// so there is nothing to retag) and new symbols feed through
+    /// through whichever thread's `AstAlloc` state is active — `AstAlloc` is a
+    /// ZST, so there is nothing to retag) and new symbols feed through
     /// `self.symbols: symbol::Map` (global) — neither needs transfer here.
     pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
         for v in self.ast.items_import_records_mut() {

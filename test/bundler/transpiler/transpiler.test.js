@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -3802,5 +3802,72 @@ const Layout = () => {
     const result = transpiler.transformSync(code);
     expect(result).toContain("a: 1");
     expect(result).not.toContain("fn(");
+  });
+});
+
+describe("export of a block-scoped function declaration", () => {
+  // In a module, a function declaration inside a block is block-scoped (modules are
+  // strict mode), so "export { name }" at module scope must be rejected up front.
+  // Previously the transpiler accepted it, lowered the function to a "let" inside the
+  // block, and still emitted the top-level export clause - output that fails to parse.
+  const code = "{\n  function encrypt() {}\n}\nexport { encrypt }";
+
+  function expectNotDeclaredError(loader) {
+    const transpiler = new Bun.Transpiler({ loader });
+    try {
+      transpiler.transformSync(code);
+      expect.unreachable();
+    } catch (e) {
+      const error = e instanceof AggregateError ? e.errors[0] : e;
+      expect(error.message).toBe('"encrypt" is not declared in this file');
+    }
+  }
+
+  it("is a parse error for JavaScript", () => {
+    expectNotDeclaredError("js");
+  });
+
+  it("is a parse error for JSX", () => {
+    expectNotDeclaredError("jsx");
+  });
+
+  it("is stripped like a type-only export for TypeScript", () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const out = transpiler.transformSync(code);
+    expect(out).not.toContain("export { encrypt }");
+  });
+
+  it("still allows exporting a top-level function declaration", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("function encrypt() {}\nexport { encrypt }");
+    expect(out).toContain("export { encrypt }");
+  });
+
+  it("still allows exporting a var declared inside a block", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("{\n  var encrypt = 1;\n}\nexport { encrypt }");
+    expect(out).toContain("export { encrypt }");
+  });
+
+  it("does not affect block-level function declarations in sloppy mode", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("{\n  function f() {}\n}\nmodule.exports = f;");
+    expect(out).toContain("let f = function");
+    expect(out).toContain("module.exports = f");
+  });
+
+  it("reports the error when running a module with this pattern", async () => {
+    using dir = tempDir("block-scoped-fn-export", {
+      "mod.mjs": code + "\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "mod.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('"encrypt" is not declared in this file');
+    expect(exitCode).toBe(1);
   });
 });

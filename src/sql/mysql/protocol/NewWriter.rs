@@ -32,6 +32,14 @@ impl<C: WriterContext> Packet<C> {
         let new_offset = self.ctx.wrapped.offset();
         // fix position for packet header
         let length = new_offset - self.offset - PacketHeader::SIZE;
+        // The header's length field is only 24 bits. Truncating a larger
+        // payload would make the server reparse the trailing bytes as
+        // separate, attacker-controlled packets (protocol injection). We do
+        // not implement multi-packet splitting on the write path, so reject
+        // payloads that cannot be framed as a single packet.
+        if length >= PacketHeader::MAX_PAYLOAD_LENGTH {
+            return Err(AnyMySQLError::Overflow);
+        }
         self.header.length = u32::try_from(length).expect("int cast");
         bun_core::scoped_log!(NewWriter, "writing packet header: {}", self.header.length);
         self.ctx.pwrite(&self.header.encode(), self.offset)

@@ -161,20 +161,14 @@ impl Options {
                         Global::exit(1);
                     }
                     if argv[i].as_bytes().is_empty() {
-                        Output::err_generic(
-                            "--cwd requires a non-empty path",
-                            format_args!(""),
-                        );
+                        Output::err_generic("--cwd requires a non-empty path", format_args!(""));
                         Global::exit(1);
                     }
                     opts.cwd = Some(argv[i].as_bytes());
                 } else if positional.starts_with(b"--cwd=") {
                     let cwd_value = &positional[b"--cwd=".len()..];
                     if cwd_value.is_empty() {
-                        Output::err_generic(
-                            "--cwd requires a non-empty path",
-                            format_args!(""),
-                        );
+                        Output::err_generic("--cwd requires a non-empty path", format_args!(""));
                         Global::exit(1);
                     }
                     opts.cwd = Some(cwd_value);

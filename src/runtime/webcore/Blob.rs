@@ -3538,7 +3538,10 @@ impl BlobExt for Blob {
                                 | jsc::JSType::DataView => {
                                     could_have_non_ascii = true;
                                     let buf = item.as_array_buffer(global).unwrap();
-                                    joiner.push_static(buf.byte_slice());
+                                    // Copy now: processing later parts can run user JS
+                                    // (toString / Symbol.toPrimitive / proxy traps) that
+                                    // detaches or resizes this buffer before `done()`.
+                                    joiner.push_cloned(buf.byte_slice());
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {

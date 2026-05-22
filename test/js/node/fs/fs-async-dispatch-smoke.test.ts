@@ -178,9 +178,7 @@ describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` ar
   test.skipIf(typeof fscb.lchmod !== "function")("lchmod", async () => {
     using dir = tempDir("fs-disp-lcm", { "f.txt": "" });
     const p = join(String(dir), "f.txt");
-    await new Promise<void>((resolve, reject) =>
-      fscb.lchmod(p, 0o644, err => (err ? reject(err) : resolve())),
-    );
+    await new Promise<void>((resolve, reject) => fscb.lchmod(p, 0o644, err => (err ? reject(err) : resolve())));
   });
 
   test("link / symlink / readlink / unlink", async () => {

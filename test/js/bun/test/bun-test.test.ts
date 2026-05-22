@@ -19,18 +19,20 @@ test("Bun.jest() expect statics do not crash on misuse", async () => {
     cmd: [
       bunExe(),
       "-e",
-      `
-      const jestExpect = Bun.jest().expect;
-      try { jestExpect.extend(); } catch {}
-      const arrayContaining = jestExpect.arrayContaining;
-      try { new arrayContaining(); } catch (e) { if (!(e instanceof TypeError)) throw e; }
-      Bun.gc(true);
-    `,
+      `const jestExpect = Bun.jest().expect;
+try { jestExpect.extend(); } catch {}
+const arrayContaining = jestExpect.arrayContaining;
+try { new arrayContaining(); } catch (e) { if (!(e instanceof TypeError)) throw e; }
+Bun.gc(true);
+console.log("OK");`,
     ],
     env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
   });
 
-  const exitCode = await proc.exited;
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stdout).toBe("OK\n");
   expect(exitCode).toBe(0);
 });

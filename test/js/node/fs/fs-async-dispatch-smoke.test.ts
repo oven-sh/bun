@@ -159,7 +159,7 @@ describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` ar
     }
   });
 
-  test("chmod / fchmod / lchmod", async () => {
+  test("chmod / fchmod", async () => {
     using dir = tempDir("fs-disp-cm", { "f.txt": "" });
     const p = join(String(dir), "f.txt");
     await fs.chmod(p, 0o644);
@@ -169,12 +169,18 @@ describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` ar
     } finally {
       await fh.close();
     }
-    // lchmod exists as a callback API but not promises on most platforms;
-    // exercise via the callback form where available so the Lchmod dispatch
-    // arm is hit.
-    if (typeof fscb.lchmod === "function") {
-      await new Promise<void>((resolve, reject) => fscb.lchmod(p, 0o644, err => (err ? reject(err) : resolve())));
-    }
+  });
+
+  // `fs.lchmod` is only defined when `constants.O_SYMLINK` exists (macOS-only,
+  // see `src/js/node/fs.ts:278-285`), so the `Lchmod` arm of
+  // `for_each_fs_async_op!` is platform-gated; skip with a visible marker on
+  // Linux/Windows instead of silently no-oping. Mirrors the `lchown` split above.
+  test.skipIf(typeof fscb.lchmod !== "function")("lchmod", async () => {
+    using dir = tempDir("fs-disp-lcm", { "f.txt": "" });
+    const p = join(String(dir), "f.txt");
+    await new Promise<void>((resolve, reject) =>
+      fscb.lchmod(p, 0o644, err => (err ? reject(err) : resolve())),
+    );
   });
 
   test("link / symlink / readlink / unlink", async () => {

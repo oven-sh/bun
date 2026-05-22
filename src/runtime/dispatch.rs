@@ -1253,8 +1253,22 @@ pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
                         // holds the embedded `task` field.
                         unsafe { fs_async::$ty::destroy(task.ptr.cast::<fs_async::$ty>()) };
                     })*
-                    // SAFETY: outer arm guard proves one of the table tags matched.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
+                    // SAFETY: outer arm guard proves one of the 42 tags matched;
+                    // the `__fs_count` assert pins the table at 42 rows. Mirrors
+                    // the `__fs_run` wildcard in `run_task` — debug/ASAN builds
+                    // panic instead of invoking UB so a regression surfaces as a
+                    // controlled crash before release.
+                    _ => {
+                        if cfg!(debug_assertions) {
+                            unreachable!(
+                                "fs-async shutdown release: tag {} passed outer \
+                                 or-pattern but missed inner match — table desync?",
+                                task.tag.0,
+                            );
+                        }
+                        // SAFETY: see arm comment.
+                        unsafe { core::hint::unreachable_unchecked() }
+                    }
                 }};
             }
             for_each_fs_async_op!(__fs_destroy);

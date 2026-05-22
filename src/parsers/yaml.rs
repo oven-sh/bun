@@ -3702,8 +3702,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     self.block_indents.push(mapping_indent)?;
 
-                    let in_flow =
-                        matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
+                    let in_flow = matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
                     let parent_indent = if in_flow {
                         None
                     } else {

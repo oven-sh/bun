@@ -102,13 +102,17 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
         // Decay to a raw pointer so `handler` can be dropped before resolution.
         let promise: *mut jsc::JSPromise = handler.promise.swap();
-        let blob = core::mem::take(&mut handler.context);
+        let mut blob = core::mem::take(&mut handler.context);
         // `context` was populated via `this.dupe()` in doReadFile(), so it
         // owns a store ref, a name ref, and possibly a content_type copy.
-        // (blob is dropped at end of scope — Drop handles deinit.)
+        // Zig: `defer blob.deinit()`. `Blob` has no `Drop` impl (`finalize()`
+        // owns teardown for class-payload blobs), so the field drop glue
+        // releases the store ref and name but NOT the heap `content_type`
+        // copy made by `dupe_with_content_type` — that must be freed
+        // explicitly after the callback has run.
         let global_this = handler.global_this;
         drop(handler);
-        match maybe_bytes {
+        let result = match maybe_bytes {
             ReadFileResultType::Result(result) => {
                 let bytes = result.buf;
                 if blob.size.get() > 0 {
@@ -119,9 +123,9 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // `Function` into the `toJSHostCall` shape; Rust closures + the
                 // `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // give the same source-location/exception-scope behaviour.
-                AnyPromise::Normal(promise).wrap(global_this, move |g| {
+                AnyPromise::Normal(promise).wrap(global_this, |g| {
                     F::call(&blob, g, bytes, Lifetime::Temporary)
-                })?;
+                })
             }
             ReadFileResultType::Err(err) => {
                 // SAFETY: `promise` was just swapped out of a live `Strong`
@@ -129,10 +133,11 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                 // `JSRef` over the ReadFile task.
                 let promise = unsafe { &mut *promise };
                 let val = err.to_error_instance_with_async_stack(global_this, promise);
-                promise.reject(global_this, Ok(val))?;
+                promise.reject(global_this, Ok(val))
             }
-        }
-        Ok(())
+        };
+        blob.deinit();
+        result
     }
 }
 

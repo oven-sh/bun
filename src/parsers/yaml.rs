@@ -2615,6 +2615,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Ok(Expr::init(E::Null {}, start.loc()));
         }
 
+        // [143] the explicit key after `?` is ns-flow-map-implicit-entry,
+        // whose own key is a ns-flow-yaml-node / c-flow-json-node — neither
+        // admits another `?`.
+        if matches!(self.token.data, TokenData::MappingKey) {
+            return Err(Self::unexpected_token());
+        }
+
         self.context.set(Context::FlowKey)?;
         let k = self.parse_node(ParseNodeOptions {
             explicit_mapping_key: true,
@@ -3810,20 +3817,23 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::MappingKey => {
+                    if matches!(self.context.get(), Context::FlowIn | Context::FlowKey) {
+                        // Only reachable when a flow `?` appears in a position
+                        // where ns-flow-pair is not allowed (e.g. as a flow-map
+                        // value, or after another `?`). Both parse_flow_mapping
+                        // and parse_flow_sequence intercept `?` themselves for
+                        // the legitimate paths.
+                        return Err(Self::unexpected_token());
+                    }
+
                     let mapping_start = self.token.start;
                     let mapping_indent = self.token.indent;
                     let mapping_line = self.token.line;
 
                     self.block_indents.push(mapping_indent)?;
 
-                    let in_flow = matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
-                    let parent_indent = if in_flow {
-                        None
-                    } else {
-                        Some(mapping_indent.add(1))
-                    };
                     self.scan(ScanOptions {
-                        additional_parent_indent: parent_indent,
+                        additional_parent_indent: Some(mapping_indent.add(1)),
                         ..Default::default()
                     })?;
 
@@ -3831,8 +3841,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // indent >= n+1 via s-indent (spaces). A tab separator
                     // leaves the token at the line's natural indent, which
                     // fails this.
-                    if !in_flow
-                        && self.token.line == mapping_line
+                    if self.token.line == mapping_line
                         && self.token.indent.is_less_than_or_equal(mapping_indent)
                         && matches!(
                             self.token.data,
@@ -3843,29 +3852,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Err(Self::unexpected_token());
                     }
 
-                    let key = if in_flow {
-                        // Only reachable when a flow `?` appears in a position
-                        // where ns-flow-pair is not allowed (e.g. as a flow-map
-                        // value). Both parse_flow_mapping and parse_flow_sequence
-                        // intercept `?` themselves for the legitimate paths.
-                        if matches!(
-                            self.token.data,
-                            TokenData::CollectEntry
-                                | TokenData::MappingEnd
-                                | TokenData::SequenceEnd
-                                | TokenData::MappingValue
-                        ) {
-                            Expr::init(E::Null {}, self.token.start.loc())
-                        } else {
-                            self.parse_node(ParseNodeOptions {
-                                explicit_mapping_key: true,
-                                current_mapping_indent: Some(
-                                    opts.current_mapping_indent.unwrap_or(mapping_indent),
-                                ),
-                                ..Default::default()
-                            })?
-                        }
-                    } else if self.token.line != mapping_line
+                    let key = if self.token.line != mapping_line
                         && self.token.indent.is_less_than_or_equal(mapping_indent)
                         && !(self.token.indent == mapping_indent
                             && matches!(self.token.data, TokenData::SequenceEntry))

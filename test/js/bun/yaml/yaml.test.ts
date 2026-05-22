@@ -1112,6 +1112,15 @@ folded: >
           expect(YAML.parse("[? {a:1}:2]\n")).toEqual([{ "[object Object]": 2 }]);
         });
 
+        test("rejects ? in non-pair flow positions", () => {
+          // [148] flow-map value is ns-flow-node; [143] explicit key is
+          // ns-flow-map-implicit-entry — neither admits another `?`.
+          expect(() => YAML.parse("{a: ?}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{? ?}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("[? ? a]\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("{a: ? : b}\n")).toThrow("Unexpected token");
+        });
+
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
           // pre-existing over-accepts on main (refs error); preserved as-is.

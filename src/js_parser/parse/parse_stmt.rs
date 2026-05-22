@@ -1688,12 +1688,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Self::parse_labeled_stmt(p, opts, loc, expr.loc, ident.ref_);
                 }
 
-                // The TS contextual statement keywords only apply when the parsed
-                // expression is still just the bare identifier. If the identifier was
-                // consumed as part of a larger expression (e.g. "declare = () => {}"),
-                // it must be kept as a regular expression statement; replacing it with
-                // a TS no-op would orphan any scopes recorded while parsing it and
-                // desync the visit pass.
                 if Self::IS_TYPESCRIPT_ENABLED {
                     if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
                         // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/

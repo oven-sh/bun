@@ -156,8 +156,6 @@ describe("Bun.Transpiler", () => {
     it("contextual keywords used as plain identifiers keep their statements", () => {
       const exp = ts.expectPrinted_;
 
-      // A TS contextual statement keyword that is only the start of a larger
-      // expression must be treated as a regular identifier, not as a modifier.
       exp("declare = t => 0;", "declare = (t) => 0;\n");
       exp("declare = (...t) => R;", "declare = (...t) => R;\n");
       exp("declare.foo = 1;", "declare.foo = 1;\n");
@@ -172,7 +170,6 @@ describe("Bun.Transpiler", () => {
         "abstract = () => {};\n\nclass Foo {\n  m() {\n    return 1;\n  }\n}",
       );
 
-      // Actual ambient declarations are still erased.
       exp("declare const x: number", "");
       exp("declare let x: number", "");
       exp("declare function f(): void", "");
@@ -183,18 +180,11 @@ describe("Bun.Transpiler", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
 
-      // Fuzz-found crash: the whole `declare = <arrow>` assignment used to be
-      // replaced with a TS no-op, orphaning the arrow function's scopes and
-      // panicking in the visit pass once later statements pushed nested scopes.
       exp("declare = (...t) => R;e((a) => {(u=> uge);\r\n})", "declare = (...t) => R;\ne((a) => {});\n");
       exp("declare = t => 0; () => () => 0", "declare = (t) => 0;\n");
       exp("declare = function () {}; () => () => 0", "declare = function() {};\n");
       exp("declare = t => 0; function f() { () => 0; }\nf();", "declare = (t) => 0;\nfunction f() {}\nf();\n");
 
-      // The same scope desync used to panic through the other contextual
-      // keywords when the token after the parsed expression happened to satisfy
-      // their lookahead (a class for `abstract`, an identifier for
-      // `type`/`namespace`/`module`).
       exp(
         "abstract = (t) => 0\nclass Foo { m() { return () => () => 0 } }",
         "abstract = (t) => 0;\n\nclass Foo {\n  m() {\n    return () => () => 0;\n  }\n}",

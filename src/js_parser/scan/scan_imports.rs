@@ -334,7 +334,10 @@ impl<'a> ImportScanner<'a> {
                             .map(|name| (name.ref_.expect("infallible: ref bound"), name.loc));
                         let star_binding = st.star_name_loc.map(|loc| (st.namespace_ref, loc));
                         let item_bindings = st.items.slice().iter().map(|item| {
-                            (item.name.ref_.expect("infallible: ref bound"), item.name.loc)
+                            (
+                                item.name.ref_.expect("infallible: ref bound"),
+                                item.name.loc,
+                            )
                         });
 
                         for (name_ref, import_loc) in default_binding

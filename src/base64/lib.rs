@@ -303,8 +303,8 @@ pub mod vlq {
     const U7_MAX: u8 = 127;
 
     // base64 stores values up to 7 bits
-    const BASE64_LUT: [u8; U7_MAX as usize] = {
-        let mut bytes = [U7_MAX; U7_MAX as usize];
+    const BASE64_LUT: [u8; U7_MAX as usize + 1] = {
+        let mut bytes = [U7_MAX; U7_MAX as usize + 1];
         let mut i = 0;
         while i < BASE64.len() {
             bytes[BASE64[i] as usize] = i as u8;

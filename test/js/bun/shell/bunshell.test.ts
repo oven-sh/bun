@@ -483,6 +483,17 @@ describe("bunshell", () => {
         .stdout("/home/user/bin\n")
         .runAsTest("cmd subst as last atom");
     });
+
+    describe("interpolated values", async () => {
+      // A `~` that comes from an interpolated value is data, not syntax.
+      TestBuilder.command`echo ${"~"}/x`.stdout("~/x\n").runAsTest("interpolated tilde stays literal");
+      TestBuilder.command`echo ${"~/secret"}`.stdout("~/secret\n").runAsTest("interpolated tilde path stays literal");
+      // A literal `~` in the source after an interpolation keeps its meaning.
+      TestBuilder.command`echo ${"a b"}~/x`.stdout("a b~/x\n").runAsTest("literal tilde after interpolated value");
+      TestBuilder.command`echo ${"a b"}~bak`
+        .stdout("a b~bak\n")
+        .runAsTest("backup-suffix idiom after interpolated value");
+    });
   });
 
   // Ported from GNU bash "quote.tests"

@@ -1364,7 +1364,7 @@ fn is_symlink_target_safe(
 /// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
 /// rejected rather than resolved.
 #[cfg(unix)]
-fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
+pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
     if created_symlinks.is_empty() {
         return false;
     }
@@ -1993,10 +1993,27 @@ impl Archiver {
                             #[cfg(not(windows))]
                             let mode: bun_sys::Mode = bun_sys::Mode::try_from(
                                 // SAFETY: entry valid
-                                lib::Entry::opaque_ref(entry).perm() | 0o666,
+                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
                             )
                             .unwrap();
 
+                            // `path_traverses_created_symlink` is a lexical check: on
+                            // filesystems that alias differently-encoded names (Unicode
+                            // NFC/NFD normalization on APFS/HFS+), a path component can
+                            // reach a created symlink without byte-matching its recorded
+                            // path. Once this extraction has created any symlink, ask the
+                            // kernel to refuse to follow symlinks while opening file
+                            // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets.
+                            #[cfg(unix)]
+                            let flags = {
+                                let mut flags =
+                                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                                if !created_symlinks.is_empty() {
+                                    flags |= bun_sys::O::NOFOLLOW_ANY;
+                                }
+                                flags
+                            };
+                            #[cfg(not(unix))]
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
                             #[cfg(windows)]

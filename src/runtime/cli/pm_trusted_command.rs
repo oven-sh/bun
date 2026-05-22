@@ -95,8 +95,9 @@ impl UntrustedCommand {
 
             // called alias because a dependency name is not always the package name
             let alias = dep.name.slice(buf);
+            let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, resolution) {
+            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -325,8 +326,9 @@ impl TrustCommand {
             }
 
             let alias = dep.name.slice(buf);
+            let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
-            if !lockfile.has_trusted_dependency(alias, resolution) {
+            if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
         }
@@ -407,7 +409,11 @@ impl TrustCommand {
 
                         for package_name_from_cli in &packages_to_trust {
                             if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(alias, resolution)
+                                && !lockfile.has_trusted_dependency(
+                                    alias,
+                                    packages.items_name()[package_id as usize].slice(buf),
+                                    resolution,
+                                )
                             {
                                 break 'brk false;
                             }

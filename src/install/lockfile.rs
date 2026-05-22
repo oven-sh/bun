@@ -3349,14 +3349,22 @@ pub mod default_trusted_dependencies {
 }
 
 impl Lockfile {
-    pub fn has_trusted_dependency(&self, name: &[u8], resolution: &Resolution) -> bool {
+    pub fn has_trusted_dependency(
+        &self,
+        alias: &[u8],
+        pkg_name: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let hash = SemverStringBuilder::string_hash(name) as u32;
+            let hash = SemverStringBuilder::string_hash(alias) as u32;
             return trusted_dependencies.contains(&hash);
         }
 
-        // Only allow default trusted dependencies for npm packages
-        resolution.tag == ResolutionTag::Npm && default_trusted_dependencies::has(name)
+        // Only allow default trusted dependencies for npm packages. Check the
+        // resolved package's real name, not the dependency alias, so an
+        // `npm:`-aliased package can't inherit trust from a default-trusted
+        // name.
+        resolution.tag == ResolutionTag::Npm && default_trusted_dependencies::has(pkg_name)
     }
 }
 

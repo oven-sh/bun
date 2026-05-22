@@ -740,10 +740,13 @@ impl Builtin {
                     if redirect.stderr() {
                         me.stderr = BuiltinIO::ArrayBuf { buf: mk(), i: 0 };
                     }
-                } else if matches!(
-                    crate::webcore::ReadableStream::from_js(jsval, global),
-                    Ok(Some(_))
-                ) {
+                } else if match crate::webcore::ReadableStream::from_js(jsval, global) {
+                    Ok(Some(_)) => true,
+                    Ok(None) => false,
+                    // from_js threw (e.g. a hostile Symbol.asyncIterator getter);
+                    // propagate instead of continuing with a pending exception.
+                    Err(_) => return Some(Yield::failed()),
+                } {
                     if redirect.stdin() {
                         // Builtins read stdin synchronously from a buffer/blob; piping an
                         // async ReadableStream into a builtin would require buffering the

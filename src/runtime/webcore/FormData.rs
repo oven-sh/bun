@@ -282,7 +282,16 @@ pub fn to_js_from_multipart_data(
                 );
                 // PORT NOTE: Zig `defer blob.detach()` — no early returns in
                 // this branch, so call explicitly at scope end.
+                //
+                // `append_blob` → `Blob__dupe` → `dupe_with_content_type`,
+                // which takes its own copy of a heap-allocated content type
+                // (webcore_types.rs `dupe_with_content_type`), so the copy
+                // boxed above is solely owned by this stack-local and must be
+                // released here. Zig stored a borrowed slice of the multipart
+                // buffer instead, so it had nothing to free. No-op when the
+                // content type is the borrowed/static-mime case.
                 blob.detach();
+                blob.free_content_type();
             } else {
                 let value = ZigString::init_utf8(
                     // > Each part whose `Content-Disposition` header does not

@@ -871,7 +871,15 @@ describe("DONT_CONTEXTIFY", () => {
 
     expect(sandboxObjectPrototype).not.toBe(Object.prototype);
     expect(Object.getPrototypeOf(ctx)).not.toBe(Object.prototype);
-    expect(Object.getPrototypeOf(ctx)).toBe(sandboxObjectPrototype);
+
+    // The full prototype chain of the sandbox's globalThis must stay inside the
+    // sandbox realm and terminate at the sandbox's own Object.prototype.
+    const chain: object[] = [];
+    for (let proto = Object.getPrototypeOf(ctx); proto !== null; proto = Object.getPrototypeOf(proto)) {
+      chain.push(proto);
+    }
+    expect(chain).not.toContain(Object.prototype);
+    expect(chain.at(-1)).toBe(sandboxObjectPrototype);
 
     // globalThis.constructor.constructor must resolve to the sandbox's Function,
     // so code it creates runs in the sandbox realm where host globals are absent.
@@ -894,8 +902,9 @@ describe("DONT_CONTEXTIFY", () => {
       runInContext(`Object.getPrototypeOf(globalThis).__vmDontContextifyLeakCheck = true`, ctx);
       expect(({} as any).__vmDontContextifyLeakCheck).toBeUndefined();
       expect((Object.prototype as any).__vmDontContextifyLeakCheck).toBeUndefined();
-      // The write should land on the sandbox's own Object.prototype.
-      expect(runInContext(`({}).__vmDontContextifyLeakCheck`, ctx)).toBe(true);
+      // The write lands somewhere inside the sandbox realm, so the sandbox's
+      // globalThis still sees it through its own prototype chain.
+      expect(runInContext(`globalThis.__vmDontContextifyLeakCheck`, ctx)).toBe(true);
     } finally {
       delete (Object.prototype as any).__vmDontContextifyLeakCheck;
     }

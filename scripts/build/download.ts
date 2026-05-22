@@ -1,9 +1,9 @@
 /**
  * Download + archive extraction helpers.
  *
- * Used by the fetch CLIs in source.ts (dep tarballs), webkit.ts (prebuilt
- * tarball), zig.ts (compiler zip). Extracted because the retry + temp-then-
- * rename logic was copy-pasted three times and the platform-specific
+ * Used by the fetch CLIs in source.ts (dep tarballs) and webkit.ts
+ * (prebuilt tarball). Extracted because the retry + temp-then-rename
+ * logic was copy-pasted several times and the platform-specific
  * extraction quirks (tar vs unzip, -m for mtime) were starting to drift.
  *
  * ## Retry behavior
@@ -56,7 +56,7 @@ const tarExe =
  * Layout:
  *   <prefetchDir>/by-url/<sha256(url)[:32]>   raw downloaded bytes (any URL)
  *   <prefetchDir>/extracted/<basename(dest)>/ pre-extracted prebuilt trees
- *                                             (.identity / .zig-commit inside)
+ *                                             (.identity inside)
  *
  * Both are content-addressed — a dep version bump changes the URL/identity, so
  * stale prefetch entries are simply not found and the build falls through to
@@ -89,7 +89,7 @@ export function prefetchPathForUrl(url: string, dir = prefetchDir): string | und
 
 /**
  * If `prefetchDir/extracted/<basename(dest)>/<stampFile>` matches `expected`,
- * copy that tree to `dest` and return true. Used by fetchPrebuilt/fetchZig to
+ * copy that tree to `dest` and return true. Used by fetchPrebuilt to
  * skip download+extract entirely when the image has the right version baked.
  *
  * Recursive copy (not symlink) so the per-build cacheDir stays self-contained

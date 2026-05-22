@@ -20,7 +20,15 @@
 const expected_version = 20;
 
 const debug = Output.scoped(.cache, .visible);
-const MINIMUM_CACHE_SIZE = 50 * 1024;
+// Source files smaller than this are not written to / read from the on-disk
+// transpiler cache. Originally 50 KiB, which excluded almost every file in a
+// typical node_modules tree (eslint pulls in ~1500 small CommonJS files, all
+// well under that floor), forcing a full lex -> parse -> visit -> print ->
+// sourcemap pass on every invocation. A statx + open + read of a tiny cache
+// file is far cheaper than re-transpiling, so the floor is low. The cache key
+// still incorporates the source byte length (input_byte_length / isStale), so
+// shrinking this does not weaken staleness detection.
+const MINIMUM_CACHE_SIZE = 4 * 1024;
 
 // When making parser changes, it gets extremely confusing.
 var bun_debug_restore_from_cache = false;

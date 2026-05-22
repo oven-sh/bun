@@ -67,7 +67,7 @@ public:
         bool operator==(const UncommonHeader &other) const { return key == other.key && value == other.value; }
     };
 
-    typedef Vector<CommonHeader, 0, CrashOnOverflow, 6> CommonHeadersVector;
+    typedef Vector<CommonHeader, 2, CrashOnOverflow, 6> CommonHeadersVector;
     typedef Vector<UncommonHeader, 0, CrashOnOverflow, 0> UncommonHeadersVector;
 
     class HTTPHeaderMapConstIterator {

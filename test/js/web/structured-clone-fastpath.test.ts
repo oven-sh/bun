@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isASAN } from "harness";
 
 describe("Structured Clone Fast Path", () => {
   test("structuredClone should work with empty object", () => {
@@ -69,7 +70,9 @@ describe("Structured Clone Fast Path", () => {
     Bun.gc(true);
     const rss2 = process.memoryUsage.rss();
     const delta = rss2 - rss;
-    expect(delta).toBeLessThan(1024 * 1024 * 8);
+    // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+    // retention inflate RSS even when nothing is leaking.
+    expect(delta).toBeLessThan(isASAN ? 1024 * 1024 * 400 : 1024 * 1024 * 8);
     expect(clones.length).toBe(10000 + 100);
   });
 
@@ -87,7 +90,9 @@ describe("Structured Clone Fast Path", () => {
     Bun.gc(true);
     const rss2 = process.memoryUsage.rss();
     const delta = rss2 - rss;
-    expect(delta).toBeLessThan(1024 * 1024);
+    // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
+    // retention inflate RSS even when nothing is leaking.
+    expect(delta).toBeLessThan(isASAN ? 1024 * 1024 * 400 : 1024 * 1024);
   });
 
   // === Array fast path tests ===

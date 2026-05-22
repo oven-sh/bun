@@ -14,14 +14,14 @@ const cases: Array<{
   protocol: Proto;
   fetch: (url: string | URL, init?: any) => Promise<Response>;
   scheme: "https" | "http";
-  serve: { tls?: typeof tls; h3?: boolean };
+  serve: { tls?: typeof tls; http3?: boolean };
 }> = [
   { protocol: "http/1.1", fetch, scheme: "http", serve: {} },
   {
     protocol: "http/3",
     fetch: (url, init) => fetch(url, { ...init, protocol: "http3", tls: { rejectUnauthorized: false } } as any),
     scheme: "https",
-    serve: { tls, h3: true },
+    serve: { tls, http3: true },
   },
 ];
 

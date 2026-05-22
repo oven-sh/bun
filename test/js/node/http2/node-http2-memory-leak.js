@@ -1,6 +1,9 @@
 import { heapStats } from "bun:jsc";
 
 // This file is meant to be able to run in node and bun
+// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
+// run far higher under bun-asan; widen the threshold to avoid false positives.
+const isASAN = process.execPath.includes("bun-asan");
 const http2 = require("http2");
 const { TLS_OPTIONS, nodeEchoServer } = require("./http2-helpers.cjs");
 function getHeapStats() {
@@ -109,7 +112,7 @@ async function main() {
     console.error("Memory delta", deltaMegaBytes, "MB");
 
     // we executed 100 requests per iteration, memory usage should not go up by 10 MB
-    if (deltaMegaBytes > 20) {
+    if (deltaMegaBytes > (isASAN ? 256 : 20)) {
       console.error("Too many bodies leaked", deltaMegaBytes);
       process.exit(1);
     }

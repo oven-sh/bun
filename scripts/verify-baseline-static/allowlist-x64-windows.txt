@@ -616,12 +616,35 @@ deflate_decompress_bmi2            [BMI2]
 
 
 # ----------------------------------------------------------------------------
-# Rust memchr detect functions (via lolhtml deps).
-# (3 symbols)
+# Rust memchr AVX2 (direct dep + via lolhtml). Gate: is_x86_feature_detected!
+# — memchr stores the resolved fn-ptr in an AtomicPtr after CPUID, see
+# memchr::arch::x86_64::memchr::*_raw::detect / avx2::packedpair::Finder::new.
+# PDB DBI records carry demangled Rust names for the directly-linked crate;
+# the older v0-mangled detect entries are kept for toolchain drift.
+# (14 symbols)
 # ----------------------------------------------------------------------------
+memchr::arch::x86_64::avx2::memchr::One::find_raw_avx2             [AVX, AVX2]
+memchr::arch::x86_64::avx2::memchr::One::rfind_raw_avx2            [AVX, AVX2]
+memchr::arch::x86_64::avx2::memchr::Two::find_raw_avx2             [AVX, AVX2]
+memchr::arch::x86_64::avx2::memchr::Three::find_raw_avx2           [AVX, AVX2]
+memchr::arch::x86_64::avx2::packedpair::Finder::with_pair_impl     [AVX, AVX2]
+memchr::arch::x86_64::avx2::packedpair::Finder::find_impl          [AVX, AVX2]
+memchr::arch::x86_64::avx2::packedpair::Finder::find_prefilter_impl  [AVX, AVX2]
+memchr::arch::x86_64::memchr::memchr_raw::find_avx2                [AVX, AVX2]
+memchr::arch::x86_64::memchr::memchr2_raw::find_avx2               [AVX, AVX2]
+memchr::arch::x86_64::memchr::memchr3_raw::find_avx2               [AVX, AVX2]
+memchr::arch::x86_64::memchr::memrchr_raw::find_avx2               [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw6detect   [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw6detect  [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Rust blake2b_simd AVX2 (via rust-argon2). Gate: is_x86_feature_detected!("avx2")
+# in blake2b_simd::Platform::detect() — falls back to SSE4.1 / portable.
+# (1 symbol)
+# ----------------------------------------------------------------------------
+blake2b_simd::avx2::compress1_loop  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
@@ -645,7 +668,7 @@ __std_reverse_trivially_swappable_8                                             
 
 # ----------------------------------------------------------------------------
 # MSVC CRT libm + mem*/str* SIMD variants. Gate: __isa_available.
-# (42 symbols)
+# (44 symbols)
 # ----------------------------------------------------------------------------
 __remainder_piby2_fma3      [AVX, FMA]
 __remainder_piby2_fma3_bdl  [AVX, FMA]
@@ -656,6 +679,7 @@ acosf_fma                   [AVX, FMA]
 asin_fma                    [AVX, FMA]
 asinf_fma                   [AVX, FMA]
 atan2_fma                   [AVX, BMI2, FMA]
+atan2f_fma                  [AVX, BMI2, FMA]
 atan_fma                    [AVX, FMA]
 atanf_fma                   [AVX, FMA]
 cos                         [AVX, FMA]
@@ -683,6 +707,7 @@ sinf                        [AVX, FMA]
 sinh_fma                    [AVX, FMA]
 sinhf_fma                   [AVX, FMA]
 strnlen                     [AVX, AVX2]
+strpbrk                     [AVX, AVX2]   # UCRT vectorized str routine, runtime-gated on __isa_available
 tan                         [AVX, FMA]
 tanf                        [AVX, FMA]
 tanh_fma                    [AVX, FMA]

@@ -7,13 +7,14 @@ const port = 0;
 const globalFetch = fetch;
 
 // Run the entire suite once over plain HTTP/1.1 and once over HTTP/3 so the
-// streaming-body matrix exercises both transports end-to-end. The h3 row uses
-// `h1: false` so a regression that silently falls back to TCP fails outright.
+// streaming-body matrix exercises both transports end-to-end. The http/3 row
+// uses `http1: false` so a regression that silently falls back to TCP fails
+// outright.
 describe.each([
-  { name: "http/1.1", h3: false },
-  { name: "http/3", h3: true },
-])("body-stream over $name", ({ h3 }) => {
-  const fetch: typeof globalFetch = h3
+  { name: "http/1.1", http3: false },
+  { name: "http/3", http3: true },
+])("body-stream over $name", ({ http3 }) => {
+  const fetch: typeof globalFetch = http3
     ? (input, init) => globalFetch(input, { ...init, protocol: "http3", tls: { rejectUnauthorized: false } } as any)
     : globalFetch;
 
@@ -253,7 +254,7 @@ describe.each([
     const handler = {
       ...opts,
       port: 0,
-      ...(h3 ? { tls, h3: true, h1: false } : {}),
+      ...(http3 ? { tls, http3: true, http1: false } : {}),
       fetch(req) {
         try {
           return opts.fetch(req);
@@ -277,7 +278,7 @@ describe.each([
       server.reload(handler);
     }
 
-    const scheme = h3 ? "https" : "http";
+    const scheme = http3 ? "https" : "http";
     try {
       await cb(`${scheme}://${server.hostname}:${server.port}`);
     } catch (e) {
@@ -321,7 +322,7 @@ describe.each([
             // in a debug+ASAN build the per-packet cost pushes those past the
             // default timeout without exercising any path the smaller sizes
             // don't already cover.
-            const inputLengths = h3
+            const inputLengths = http3
               ? [1, 2, 12, 95, 1024, 64 * 1024]
               : [1, 2, 12, 95, 1024, 1024 * 1024, 1024 * 1024 * 2];
             for (let inputLength of inputLengths) {

@@ -1212,19 +1212,12 @@ it.skipIf(isWindows)(
           console.log(code);
         `,
       ],
-      // Disable symbolization so an ASAN abort exits promptly instead of spending
-      // seconds in llvm-symbolizer against the large debug binary.
-      env: {
-        ...bunEnv,
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0", "abort_on_error=1"]
-          .filter(Boolean)
-          .join(":"),
-      },
+      env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
   },
@@ -1650,6 +1643,34 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
+// src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
+// (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
+// covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every
+// non-Windows target Bun ships, fd→path resolution is implemented — there is
+// no platform that falls through to ENOSYS. realpathSync on POSIX is
+// open() → getFdPath(fd), so an ENOSYS here means the per-OS arm is missing.
+it.skipIf(isWindows)("realpathSync (getFdPath) is implemented on every POSIX target — never ENOSYS", () => {
+  using dir = tempDir("fs-getfdpath-platform-arm", { "probe.txt": "x" });
+  const probe = join(String(dir), "probe.txt");
+
+  let resolved: string;
+  try {
+    resolved = realpathSync(probe);
+  } catch (e: any) {
+    // The Zig spec never returns ENOSYS from getFdPath: every Environment.os
+    // value has a real implementation. If this fires, a target (FreeBSD's
+    // F_KINFO arm, or Android via the .linux /proc/self/fd arm) was dropped.
+    expect(e?.code).not.toBe("ENOSYS");
+    expect(e?.errno).not.toBe(-os.constants.errno.ENOSYS);
+    throw e;
+  }
+
+  expect(resolved).toStartWith("/");
+  expect(readFileSync(resolved, "utf8")).toBe("x");
+  // Idempotent: resolving the canonical path returns itself.
+  expect(realpathSync(resolved)).toBe(resolved);
+});
+
 it("readlink", () => {
   const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {
@@ -1877,6 +1898,41 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(true);
     rmSync(join(path, "../../"), { recursive: true });
     expect(existsSync(path)).toBe(false);
+  });
+
+  // On Windows a leading-separator, drive-less path like "/foo/bar" is
+  // "rooted" and must be resolved against the cwd's drive. existsSync/
+  // statSync/unlinkSync all do this; recursive rmSync/rmdirSync must agree
+  // or cleanup helpers (rmSync(dir, { recursive: true, force: true })) silently
+  // no-op on directories existsSync just said were there.
+  //
+  // Derive the driveless-but-rooted path from tmpdir() so all writes stay
+  // inside the existing temp area instead of creating <drive>:\tmp at the
+  // drive root. Only meaningful when cwd and tmpdir share a drive (always
+  // true on CI); otherwise the driveless path resolves to a different
+  // physical location, so skip.
+  const cwdDrive = process.cwd().slice(0, 2);
+  const tmpDrive = tmpdir().slice(0, 2);
+  const sameDriveAsCwd = isWindows && cwdDrive.toLowerCase() === tmpDrive.toLowerCase();
+  const drivelessTmp = tmpdir()
+    .replace(/^[a-zA-Z]:/, "")
+    .replaceAll("\\", "/");
+
+  it.skipIf(!sameDriveAsCwd)("rmSync recursive agrees with existsSync for rooted POSIX-style paths", () => {
+    const dir = `${drivelessTmp}/bun-rm-posix-path-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(dir + "/inner.txt", "x");
+    expect(fs.existsSync(dir)).toBe(true);
+    fs.rmSync(dir, { recursive: true, force: true });
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it.skipIf(!sameDriveAsCwd)("rmdirSync recursive agrees with existsSync for rooted POSIX-style paths", () => {
+    const dir = `${drivelessTmp}/bun-rmdir-posix-path-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    fs.mkdirSync(dir + "/nested", { recursive: true });
+    expect(fs.existsSync(dir)).toBe(true);
+    fs.rmdirSync(dir, { recursive: true });
+    expect(fs.existsSync(dir)).toBe(false);
   });
 });
 
@@ -3648,24 +3704,47 @@ it("fs.statfsSync should work", () => {
     expect(stats[k]).toBeNumber();
   });
 
+  // Regression for oven-sh/bun#31133: on darwin-x64, libc::statfs linked
+  // to `statfs$INODE64` was writing a legacy struct layout, so bsize came
+  // back as 0 and the remaining fields were shifted. Any real filesystem
+  // has a positive block size and at least one block — asserting that here
+  // catches the misaligned-struct case without depending on absolute values.
+  if (isPosix) {
+    expect(stats.bsize).toBeGreaterThan(0);
+    expect(stats.blocks).toBeGreaterThan(0);
+  }
+
   const bigIntStats = statfsSync(import.meta.path, { bigint: true });
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
     expect(bigIntStats).toHaveProperty(k);
     expect(bigIntStats[k]).toBeTypeOf("bigint");
   });
+  if (isPosix) {
+    expect(bigIntStats.bsize > 0n).toBe(true);
+    expect(bigIntStats.blocks > 0n).toBe(true);
+  }
 });
 
 it("fs.promises.statfs should work", async () => {
   const stats = await fs.promises.statfs(import.meta.path);
   expect(stats).toBeDefined();
+  // See "fs.statfsSync should work" above — same regression gate for #31133.
+  if (isPosix) {
+    expect(stats.bsize).toBeGreaterThan(0);
+    expect(stats.blocks).toBeGreaterThan(0);
+  }
 });
 
 it("fs.promises.statfs should work with bigint", async () => {
   const stats = await fs.promises.statfs(import.meta.path, { bigint: true });
   expect(stats).toBeDefined();
+  if (isPosix) {
+    expect(stats.bsize > 0n).toBe(true);
+    expect(stats.blocks > 0n).toBe(true);
+  }
 });
 
-it("fs.statfs should work with bigint", async () => {
+it("fs.statfs (callback) should work with bigint", async () => {
   const { promise, resolve } = Promise.withResolvers();
   fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
     if (err) return resolve(err);
@@ -3677,19 +3756,10 @@ it("fs.statfs should work with bigint", async () => {
     expect(stats).toHaveProperty(k);
     expect(stats[k]).toBeTypeOf("bigint");
   }
-});
-
-it("fs.statfs should work with bigint", async () => {
-  const { promise, resolve } = Promise.withResolvers();
-  fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
-    if (err) return resolve(err);
-    resolve(stats);
-  });
-  const stats = await promise;
-  expect(stats).toBeDefined();
-  for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
-    expect(stats).toHaveProperty(k);
-    expect(stats[k]).toBeTypeOf("bigint");
+  // See "fs.statfsSync should work" above — same regression gate for #31133.
+  if (isPosix) {
+    expect(stats.bsize > 0n).toBe(true);
+    expect(stats.blocks > 0n).toBe(true);
   }
 });
 
@@ -3966,5 +4036,24 @@ describe("synchronous I/O string flags", () => {
     closeSync(fd);
 
     expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  });
+});
+
+describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", () => {
+  it("does not balloon the read buffer", async () => {
+    using dir = tempDir("fs-readfile-fifo", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fs-readfile-fifo-fixture.js"), String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Pre-fix this never returns (RawVec doubling balloons RSS to multiple GB);
+    // the per-test timeout would fire. Fixed: completes promptly with the full
+    // 400 KB of content intact.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("len=409600 allA=true");
+    expect(exitCode).toBe(0);
   });
 });

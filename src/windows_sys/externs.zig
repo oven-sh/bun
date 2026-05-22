@@ -9,7 +9,7 @@ pub extern "kernel32" fn GetFileInformationByHandle(
     lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
 ) callconv(.winapi) BOOL;
 
-pub extern "kernel32" fn CommandLineToArgvW(
+pub extern "shell32" fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
 ) callconv(.winapi) ?[*]win32.LPWSTR;

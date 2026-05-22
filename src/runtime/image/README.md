@@ -8,7 +8,7 @@ off the JS thread.
 | file                                  | owns                                                                                                            | touch when                               |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `Image.classes.ts`                    | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
-| `Image.zig`                           | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                     | new options, new chainable, new terminal |
+| `Image.zig`                           | JS↔Zig glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                    | new options, new chainable, new terminal |
 | `codecs.zig`                          | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
 | `exif.zig`                            | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
 | `quantize.zig`                        | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |

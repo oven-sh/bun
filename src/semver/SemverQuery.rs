@@ -1018,6 +1018,14 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 }
 
                 i += second_parsed.len as usize + 1;
+            } else if token.tag == TokenTag::None {
+                // No pending comparator token for this chunk, so skip it instead of
+                // emitting a comparator. This covers a leading "--foo" (treat "--foo"
+                // the same as "-foo", example: foo/bar@1.2.3@--canary.24) as well as
+                // a dangling "-" after a skipped tag, like "1 || - foo".
+                is_or = false;
+                token.wildcard = Wildcard::None;
+                continue;
             } else if count == 0 && token.tag == TokenTag::Version {
                 match parse_result.wildcard {
                     Wildcard::None => {
@@ -1028,14 +1036,6 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     }
                 }
             } else if count == 0 {
-                // From a semver perspective, treat "--foo" the same as "-foo"
-                // example: foo/bar@1.2.3@--canary.24
-                //                         ^
-                if token.tag == TokenTag::None {
-                    is_or = false;
-                    token.wildcard = Wildcard::None;
-                    continue;
-                }
                 list.and_range(&token.to_range(&parse_result.version))?;
             } else if is_or {
                 list.or_range(&token.to_range(&parse_result.version))?;

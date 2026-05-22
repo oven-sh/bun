@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
@@ -323,4 +323,76 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   const clonedType = cloned.headers.get("content-type");
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
+});
+
+describe("structuredClone preserves slice bounds", () => {
+  test("Blob.slice(start, end)", async () => {
+    const full = new Blob(["0123456789"]);
+    const s = full.slice(3, 7);
+    expect(s.size).toBe(4);
+
+    const c = structuredClone(s);
+    expect(c.size).toBe(4);
+    expect(await c.text()).toBe("3456");
+    expect(await c.bytes()).toEqual(new Uint8Array([0x33, 0x34, 0x35, 0x36]));
+    // Cloning must not mutate the input.
+    expect(s.size).toBe(4);
+    expect(await s.text()).toBe("3456");
+  });
+
+  test("Blob.slice(0, end)", async () => {
+    const full = new Blob(["0123456789"]);
+    const s = full.slice(0, 4);
+    const c = structuredClone(s);
+    expect(c.size).toBe(4);
+    expect(await c.text()).toBe("0123");
+    expect(s.size).toBe(4);
+  });
+
+  test("Blob.slice(start) open-ended", async () => {
+    const full = new Blob(["0123456789"]);
+    const s = full.slice(3);
+    const c = structuredClone(s);
+    expect(c.size).toBe(7);
+    expect(await c.text()).toBe("3456789");
+    expect(s.size).toBe(7);
+  });
+
+  test("un-sliced Blob", async () => {
+    const full = new Blob(["0123456789"]);
+    const c = structuredClone(full);
+    expect(c.size).toBe(10);
+    expect(await c.text()).toBe("0123456789");
+    expect(full.size).toBe(10);
+  });
+
+  test("File.slice(start, end)", async () => {
+    const file = new File(["ABCDEFGHIJ"], "letters.txt", { type: "text/plain" });
+    const s = file.slice(2, 6);
+    expect(s.size).toBe(4);
+
+    const c = structuredClone(s);
+    expect(c.size).toBe(4);
+    expect(await c.text()).toBe("CDEF");
+    expect(s.size).toBe(4);
+    expect(await s.text()).toBe("CDEF");
+  });
+
+  test("Worker.postMessage of Blob.slice(start, end)", async () => {
+    const full = new Blob(["0123456789"]);
+    const s = full.slice(3, 7);
+
+    const worker = new Worker(
+      `data:text/javascript,self.onmessage = async e => { const b = e.data; postMessage({ size: b.size, text: await b.text() }); };`,
+    );
+    const { promise, resolve, reject } = Promise.withResolvers<{ size: number; text: string }>();
+    worker.onmessage = e => resolve(e.data);
+    worker.onerror = e => reject(e.error ?? e.message);
+    worker.postMessage(s);
+    const got = await promise;
+    worker.terminate();
+
+    expect(got).toEqual({ size: 4, text: "3456" });
+    expect(s.size).toBe(4);
+  });
 });

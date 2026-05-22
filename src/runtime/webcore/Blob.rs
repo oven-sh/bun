@@ -113,7 +113,9 @@ pub type Ref = bun_ptr::ExternalShared<Blob>;
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const SERIALIZATION_VERSION: u8 = 3;
+/// 4: Added u64 slice size immediately after `offset`, so `blob.slice(a, b)` deserializes
+///    with the correct length instead of `[offset, store_end]`.
+const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -726,6 +728,7 @@ impl BlobExt for Blob {
     ) -> Result<(), bun_core::Error> {
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
         writer.write_int_le::<u64>(self.offset.get())?;
+        writer.write_int_le::<u64>(self.size.get())?;
 
         let ct = self.content_type_slice();
         writer.write_int_le::<u32>(ct.len() as u32)?;
@@ -744,7 +747,6 @@ impl BlobExt for Blob {
 
         writer.write_int_le::<u8>(store_tag as u8)?;
 
-        self.resolve_size();
         if let Some(store) = self.store.get() {
             store.serialize(writer)?;
         }
@@ -2383,7 +2385,12 @@ impl BlobExt for Blob {
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
                     self.offset.set(store_size.min(offset));
-                    self.size.set(store_size - offset);
+                    // Only resolve an unknown size. A slice already has a concrete
+                    // `size`; overwriting it with `store_size - offset` would widen
+                    // the view to the end of the backing store.
+                    if self.size.get() == MAX_SIZE {
+                        self.size.set(store_size - self.offset.get());
+                    }
                 }
             }
             store::DataTag::File => {
@@ -4079,6 +4086,11 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 ) -> Result<JSValue, bun_core::Error> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
+    let serialized_size: Option<u64> = if version >= 4 {
+        Some(reader.read_int_le::<u64>()?)
+    } else {
+        None
+    };
 
     let content_type_len = reader.read_int_le::<u32>()?;
     let mut content_type = read_slice(reader, content_type_len as usize)?;
@@ -4213,8 +4225,11 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         let store_size = store.size();
         if store_size != MAX_SIZE {
             blob.offset.set(blob.offset.get().min(store_size));
-            blob.size
-                .set(blob.size.get().min(store_size - blob.offset.get()));
+            let available = store_size - blob.offset.get();
+            // v4+ payloads carry the slice length on the wire; older payloads
+            // don't, so fall back to the store-derived size (pre-v4 behavior).
+            let requested = serialized_size.map_or(blob.size.get(), |s| s as SizeType);
+            blob.size.set(requested.min(available));
         }
     } else {
         blob.offset.set(0);

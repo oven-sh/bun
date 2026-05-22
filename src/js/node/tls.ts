@@ -461,7 +461,11 @@ function validateSecureContextOptions(options) {
     if ($isUndefinedOrNull(options.privateKeyEngine))
       throw $ERR_INVALID_ARG_VALUE("options.privateKeyEngine", options.privateKeyEngine);
     if (typeof options.privateKeyEngine !== "string")
-      throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], options.privateKeyEngine);
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.privateKeyEngine",
+        ["string", "null", "undefined"],
+        options.privateKeyEngine,
+      );
     if (typeof options.privateKeyIdentifier !== "string")
       throw $ERR_INVALID_ARG_TYPE(
         "options.privateKeyIdentifier",

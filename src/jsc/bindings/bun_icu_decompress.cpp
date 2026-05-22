@@ -28,7 +28,8 @@ std::unordered_map<const void*, void*>* g_cache;
 ZSTD_DCtx* g_dctx;
 ZSTD_DDict* g_ddict;
 
-void ensureInit() {
+void ensureInit()
+{
     if (g_dctx) return;
     g_cache = new std::unordered_map<const void*, void*>();
     g_cache->reserve(128);
@@ -38,7 +39,8 @@ void ensureInit() {
 }
 } // namespace
 
-extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length) {
+extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
+{
     if (!p) return p;
     const uint8_t* b = static_cast<const uint8_t*>(p);
     // Raw ICU item: bytes[2..3] == 0xda27.
@@ -65,7 +67,10 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length) 
     size_t r = g_ddict
         ? ZSTD_decompress_usingDDict(g_dctx, buf, (size_t)dlen, p, clen, g_ddict)
         : ZSTD_decompressDCtx(g_dctx, buf, (size_t)dlen, p, clen);
-    if (ZSTD_isError(r)) { free(buf); return p; }
+    if (ZSTD_isError(r)) {
+        free(buf);
+        return p;
+    }
 
     (*g_cache)[p] = buf;
     *length = (int32_t)dlen;

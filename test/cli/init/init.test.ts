@@ -317,7 +317,7 @@ import path from "path";
     // `bun install` prints its own version header on startup; seeing it here
     // proves the child's stdout reached us.
     expect(stdout).toContain("bun install");
-    expect(stdout).toContain("packages installed");
+    expect(stdout).toMatch(/\bpackages? installed\b/);
     expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
     expect(exitCode).toBe(0);
   }, 30_000);

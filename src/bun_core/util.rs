@@ -5790,11 +5790,13 @@ pub mod form_data {
     /// Parameters are `;`-delimited per RFC 7231 and the parameter *name* must
     /// be exactly `boundary`, so a different parameter (`xboundary=FAKE`) or a
     /// `boundary=` substring inside another parameter's value is not picked up
-    /// by an unanchored substring search.
+    /// by an unanchored substring search. A `;` inside a quoted parameter
+    /// value (RFC 7230 quoted-string, `\` escapes the next byte) does not
+    /// delimit parameters.
     pub fn get_boundary(content_type: &[u8]) -> Option<&[u8]> {
         let mut rest = content_type;
         loop {
-            let semi = crate::strings_impl::index_of_char(rest, b';')?;
+            let semi = index_of_unquoted_semicolon(rest)?;
             rest = &rest[semi + 1..];
             let Some(begin) =
                 crate::strings_impl::trim_left(rest, b" \t").strip_prefix(b"boundary=")
@@ -5814,6 +5816,23 @@ pub mod form_data {
             }
             return Some(&begin[..end]);
         }
+    }
+
+    /// Index of the next `;` in `s` that is not inside an RFC 7230
+    /// quoted-string (`\` escapes the following byte inside quotes).
+    fn index_of_unquoted_semicolon(s: &[u8]) -> Option<usize> {
+        let mut in_quotes = false;
+        let mut i = 0;
+        while i < s.len() {
+            match s[i] {
+                b'"' => in_quotes = !in_quotes,
+                b'\\' if in_quotes => i += 1,
+                b';' if !in_quotes => return Some(i),
+                _ => {}
+            }
+            i += 1;
+        }
+        None
     }
 
     /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.

@@ -3636,6 +3636,23 @@ private:
         LengthType byteLength;
         if (!read(byteLength))
             return false;
+        // The backing store of an ArrayBufferView can only be an ArrayBuffer (or a
+        // reference to one already in the object pool). Reject anything else before
+        // recursing into readTerminal() so a crafted payload of nested
+        // ArrayBufferViewTags can't consume one native stack frame per level and
+        // overflow the stack.
+        if (m_ptr >= m_end)
+            return false;
+        switch (static_cast<SerializationTag>(*m_ptr)) {
+        case ArrayBufferTag:
+        case ResizableArrayBufferTag:
+        case ArrayBufferTransferTag:
+        case SharedArrayBufferTag:
+        case ObjectReferenceTag:
+            break;
+        default:
+            return false;
+        }
         JSValue arrayBufferValue = readTerminal();
         if (!arrayBufferValue || !arrayBufferValue.inherits<JSArrayBuffer>())
             return false;

@@ -1269,13 +1269,14 @@ impl Diff {
                     // stored names to match (empty = legacy bun.lockb
                     // hash-only sentinel) so replacing a trusted name with a
                     // colliding one is still reported as an add + remove.
-                    let already_trusted = from_trusted_dependencies
-                        .get(&to_trusted)
-                        .is_some_and(|from_name| {
-                            from_name.is_empty()
-                                || to_name.is_empty()
-                                || **from_name == **to_name
-                        });
+                    let already_trusted =
+                        from_trusted_dependencies
+                            .get(&to_trusted)
+                            .is_some_and(|from_name| {
+                                from_name.is_empty()
+                                    || to_name.is_empty()
+                                    || **from_name == **to_name
+                            });
                     if !already_trusted {
                         summary.added_trusted_dependencies.put(
                             to_trusted,
@@ -1289,13 +1290,14 @@ impl Diff {
 
                 // removed
                 for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
-                    let still_trusted = to_trusted_dependencies
-                        .get(&from_trusted)
-                        .is_some_and(|to_name| {
-                            from_name.is_empty()
-                                || to_name.is_empty()
-                                || **to_name == **from_name
-                        });
+                    let still_trusted =
+                        to_trusted_dependencies
+                            .get(&from_trusted)
+                            .is_some_and(|to_name| {
+                                from_name.is_empty()
+                                    || to_name.is_empty()
+                                    || **to_name == **from_name
+                            });
                     if !still_trusted {
                         summary
                             .removed_trusted_dependencies

@@ -1827,8 +1827,10 @@ mod draft {
         }
         PANIC_STAGE.with(|s| s.set(1));
 
-        // Build "msg (file:line:col)" into a stack buffer so `CrashReason::Panic`
-        // can borrow it — matches Zig `@panic(msg)` payload shape.
+        // Just the panic message — no `(file:line:col)` suffix. The call site is
+        // captured in the backtrace and symbolized there (matching Zig, which
+        // never appended a location to the message). With `-Zlocation-detail=none`
+        // in release the location would be `<redacted>:0:0` anyway.
         let mut msg_buf = BoundedArray::<u8, 1024>::default();
         {
             let payload = info.payload();
@@ -1839,17 +1841,7 @@ mod draft {
             } else {
                 "<non-string panic payload>"
             };
-            let _ = match info.location() {
-                Some(loc) => write!(
-                    msg_buf.writer(),
-                    "{} ({}:{}:{})",
-                    msg,
-                    loc.file(),
-                    loc.line(),
-                    loc.column()
-                ),
-                None => write!(msg_buf.writer(), "{msg}"),
-            };
+            let _ = write!(msg_buf.writer(), "{msg}");
         }
         // SAFETY: `CrashReason::Panic` stores `&'static [u8]` (it was designed for
         // the `-> !` path). `msg_buf` outlives every read of `reason` below — the

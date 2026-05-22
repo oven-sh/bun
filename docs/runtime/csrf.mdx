@@ -145,11 +145,7 @@ const server = Bun.serve({
         const formData = await req.formData();
         const csrfToken = formData.get("_csrf");
 
-        if (
-          !sessionId ||
-          typeof csrfToken !== "string" ||
-          !Bun.CSRF.verify(csrfToken, { secret: SECRET, sessionId })
-        ) {
+        if (!sessionId || typeof csrfToken !== "string" || !Bun.CSRF.verify(csrfToken, { secret: SECRET, sessionId })) {
           return new Response("Invalid CSRF token", { status: 403 });
         }
 

@@ -99,14 +99,7 @@ impl MemoryAccessor {
                     };
                     // SAFETY: iovecs point to valid memory for their stated lengths.
                     let bytes_read = unsafe {
-                        libc::process_vm_readv(
-                            pid,
-                            &raw const local,
-                            1,
-                            &raw const remote,
-                            1,
-                            0,
-                        )
+                        libc::process_vm_readv(pid, &raw const local, 1, &raw const remote, 1, 0)
                     };
                     if bytes_read >= 0 {
                         return bytes_read as usize == buf.len();

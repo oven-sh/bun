@@ -365,16 +365,13 @@ pub mod Jest {
         )?;
         module.put(global_object, b"describe", describe_scope_functions);
 
-        let xdescribe_scope_functions = match create_bound(
+        let xdescribe_scope_functions = create_bound(
             global_object,
             ScopeKind::Describe,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
             scope_strings::XDESCRIBE(),
-        ) {
-            Ok(v) => v,
-            Err(_) => return Ok(JSValue::ZERO),
-        };
+        )?;
         module.put(global_object, b"xdescribe", xdescribe_scope_functions);
 
         // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw
@@ -497,7 +494,7 @@ pub mod Jest {
             }
         }
 
-        Ok(Bun__Jest__testModuleObject(global_object))
+        jsc::from_js_host_call(global_object, || Bun__Jest__testModuleObject(global_object))
     }
 
     #[bun_jsc::host_fn]

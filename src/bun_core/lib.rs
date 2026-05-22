@@ -3241,11 +3241,12 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
     debug::capture_current(first, addrs)
 }
 
-/// Zig `@returnAddress()`. With frame pointers force-enabled, this (non-inlined)
-/// function's return address lives at `[fp + PC_OFFSET]` — a PC inside the
-/// caller. Used as a best-effort `first_address` trim point for current-stack
-/// captures (`capture_current` falls back to the full trace if it doesn't match).
-#[inline(never)]
+/// Zig `@returnAddress()`: a PC inside the caller's caller. `#[inline(always)]`
+/// so this has no frame of its own — `frame_address()` reads the caller's fp,
+/// and `[fp + PC_OFFSET]` is the caller's saved return address. Used as the
+/// `first_address` trim point for `capture_current` (which falls back to the
+/// full trace if it doesn't match).
+#[inline(always)]
 pub fn return_address() -> usize {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
@@ -3601,10 +3602,9 @@ pub mod debug {
         let n = {
             // Read THIS frame's pointer inline (`frame_address` is `#[inline(always)]`,
             // so this reads `capture_current`'s own fp) and seed the walk explicitly.
-            // Do NOT route through `StackIterator::init(_, None)` — that passes
-            // `frame_address` as a fn-pointer to `unwrap_or_else`, which forces a
-            // non-inlined `frame_address` frame whose own frame setup is unreliable
-            // and corrupts the very first link of the walk.
+            // `StackIterator::init(_, None)` is not `#[inline(always)]`, so a
+            // `frame_address()` call from inside it would read `init`'s own rbp —
+            // a frame that no longer exists by the time `next()` dereferences it.
             let fp = frame_address();
             let mut it = StackIterator::init(None, Some(fp));
             let mut n = 0usize;

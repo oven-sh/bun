@@ -3493,8 +3493,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         // cannot be misread stay coalesced with the surrounding word so that
         // literal source text after the interpolation (e.g. `${name}~bak`)
         // keeps its meaning.
-        if self.chars.state == CharState::Normal
-            && self.strpool.get(start as usize) == Some(&b'~')
+        if self.chars.state == CharState::Normal && self.strpool.get(start as usize) == Some(&b'~')
         {
             self.tokens
                 .push(Token::DoubleQuotedText(TextRange { start, end: self.j }));

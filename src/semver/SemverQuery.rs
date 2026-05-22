@@ -1020,10 +1020,11 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 i += second_parsed.len as usize + 1;
             } else if token.tag == TokenTag::None {
                 // No pending comparator token for this chunk, so skip it instead of
-                // emitting a comparator. This covers a leading "--foo" (treat "--foo"
-                // the same as "-foo", example: foo/bar@1.2.3@--canary.24) as well as
-                // a dangling "-" after a skipped tag, like "1 || - foo".
-                is_or = false;
+                // emitting a comparator, the same way skipped tags like "boop" in
+                // "1.0.0 || boop" are ignored (any pending "||" is preserved). This
+                // covers a leading "--foo" (treat "--foo" the same as "-foo", example:
+                // foo/bar@1.2.3@--canary.24) as well as a dangling "-" after a skipped
+                // tag, like "1 || - foo".
                 token.wildcard = Wildcard::None;
                 continue;
             } else if count == 0 && token.tag == TokenTag::Version {

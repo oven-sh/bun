@@ -766,6 +766,8 @@ test("a range with a dangling '-' after a skipped tag does not crash the parser"
     ["1.0.0", "1 || -"],
     ["2.0.0", "1 || -"],
     ["1.0.0", "1 a - b"],
+    // the skipped "-q" chunk must not swallow the "||", so "^2" still matches
+    ["2.5.0", "^1 || -q ^2"],
   ];
   await using proc = Bun.spawn({
     cmd: [
@@ -779,6 +781,6 @@ test("a range with a dangling '-' after a skipped tag does not crash the parser"
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual([true, true, false, true, false, true]);
+  expect(JSON.parse(stdout)).toEqual([true, true, false, true, false, true, true]);
   expect(exitCode).toBe(0);
-}, 30_000);
+});

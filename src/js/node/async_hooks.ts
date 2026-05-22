@@ -621,7 +621,7 @@ function installTimerHooks() {
     // globalThis patches — direct `setTimeout(…)` calls continue to work.
     // `node:timers/promises` is not patched here; its module-level `const`
     // captures of `globalThis.setImmediate`/etc. at load time are a known
-    // limitation (see warning text).
+    // limitation.
   }
 }
 

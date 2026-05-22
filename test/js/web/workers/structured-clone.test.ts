@@ -210,9 +210,9 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         } else if (structuredCloneFn === jscSerializeRoundtrip) {
           expect(() => structuredCloneFn(blob)).toThrow();
         } else {
-          // Cross-process: the child's deserialize rejects the file record,
-          // so no file-backed Blob ever comes back.
-          expect(structuredCloneFn(blob)).not.toBeInstanceOf(Blob);
+          // Cross-process: the child's deserialize must reject the file
+          // record outright (surfaced by the helper as a sentinel).
+          expect(structuredCloneFn(blob)).toBe("DESERIALIZE_THREW");
         }
       });
       test("file from fd", async () => {
@@ -226,9 +226,9 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         } else if (structuredCloneFn === jscSerializeRoundtrip) {
           expect(() => structuredCloneFn(blob)).toThrow();
         } else {
-          // Cross-process: the child's deserialize rejects the file record,
-          // so no file-backed Blob ever comes back.
-          expect(structuredCloneFn(blob)).not.toBeInstanceOf(Blob);
+          // Cross-process: the child's deserialize must reject the file
+          // record outright (surfaced by the helper as a sentinel).
+          expect(structuredCloneFn(blob)).toBe("DESERIALIZE_THREW");
         }
       });
       describe("dom file", async () => {

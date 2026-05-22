@@ -2600,10 +2600,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         debug_assert!(matches!(self.token.data, TokenData::MappingKey));
         let start = self.token.start;
 
-        self.context.set(Context::FlowKey)?;
-        let r = self.scan(ScanOptions::default());
-        self.context.unset(Context::FlowKey);
-        r?;
+        // The post-`?` scan stays in the enclosing flow-in context so a
+        // `:`-prefixed plain scalar (`[? :b]`) tokenizes as ns-plain-first
+        // per [126], not as `c-ns-flow-map-separate-value`.
+        self.scan(ScanOptions::default())?;
 
         if matches!(
             self.token.data,
@@ -2650,6 +2650,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let item = if matches!(self.token.data, TokenData::MappingKey) {
                     // [150] ns-flow-pair ::= '?' s-separate ns-flow-map-explicit-entry
                     let pair_start = self.token.start;
+                    let pair_indent = self.token.indent;
                     let key = self.parse_flow_explicit_key()?;
                     let value = if matches!(self.token.data, TokenData::MappingValue) {
                         self.scan(ScanOptions::default())?;
@@ -2659,7 +2660,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         ) {
                             Expr::init(E::Null {}, self.token.start.loc())
                         } else {
-                            self.parse_node(ParseNodeOptions::default())?
+                            // [147] the value is ns-flow-node; threading
+                            // current_mapping_indent makes the Scalar arm's
+                            // cmi==scalar_indent check return the bare scalar
+                            // instead of consuming a trailing `: …` as a
+                            // nested mapping.
+                            self.parse_node(ParseNodeOptions {
+                                current_mapping_indent: Some(pair_indent),
+                                ..Default::default()
+                            })?
                         }
                     } else {
                         Expr::init(E::Null {}, self.token.start.loc())
@@ -4198,13 +4207,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
 
                     match parser!().context.get() {
-                        Context::BlockOut | Context::BlockIn | Context::FlowIn => {}
-                        Context::FlowKey => match Enc::wide(parser!().peek(1)) {
-                            0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
-                                return Ok(ctx.done());
+                        Context::BlockOut | Context::BlockIn => {}
+                        // [130] `:` is ns-plain-char only when followed by
+                        // ns-plain-safe(c); in flow context that excludes
+                        // c-flow-indicator.
+                        Context::FlowIn | Context::FlowKey => {
+                            match Enc::wide(parser!().peek(1)) {
+                                0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
+                                    return Ok(ctx.done());
+                                }
+                                _ => {}
                             }
-                            _ => {}
-                        },
+                        }
                     }
 
                     ctx.append_source(Enc::ch(b':'), parser!().pos)?;

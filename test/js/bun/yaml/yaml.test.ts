@@ -1121,6 +1121,20 @@ folded: >
           expect(() => YAML.parse("{a: ? : b}\n")).toThrow("Unexpected token");
         });
 
+        test(":-prefixed plain scalar after ?", () => {
+          // [126] `:` followed by ns-plain-safe is ns-plain-first; the post-`?`
+          // scan stays in flow-in so this is a plain-scalar key, not a separator.
+          expect(YAML.parse("[? :b]\n")).toEqual([{ ":b": null }]);
+          expect(YAML.parse("{? :b}\n")).toEqual({ ":b": null });
+          expect(YAML.parse("[? :b: c]\n")).toEqual([{ ":b": "c" }]);
+        });
+
+        test("rejects nested : in flow-seq explicit-entry value", () => {
+          // [147] the value is ns-flow-node, not a pair.
+          expect(() => YAML.parse("[? a: b: c]\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("[? [1]: [2]: 3]\n")).toThrow("Unexpected token");
+        });
+
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
           // pre-existing over-accepts on main (refs error); preserved as-is.

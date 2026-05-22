@@ -117,8 +117,14 @@ impl PmVersionCommand {
             false, // JSON_WARN_DUPLICATE_KEYS
             false, // WAS_ORIGINALLY_MACRO
             true,  // GUESS_INDENTATION
-        >(&package_json_source, unsafe { ctx.log_mut() }, &json_bump)
-        {
+        >(
+            &package_json_source,
+            // SAFETY: single-threaded CLI dispatch; the returned `&mut Log` is
+            // passed straight into this parse call and no other borrow of the
+            // process-static `Log` (via `ctx` or `pm`) is live for its duration.
+            unsafe { ctx.log_mut() },
+            &json_bump,
+        ) {
             Ok(r) => r,
             Err(err) => {
                 Output::err_generic("Failed to parse package.json: {}", (err.name(),));
@@ -209,7 +215,7 @@ impl PmVersionCommand {
 
             if let Err(err) = JSPrinter::print_json(
                 &mut package_json_writer,
-                bun_ast::Expr::from(json),
+                json,
                 &package_json_source,
                 JSPrinter::PrintJsonOptions {
                     indent: printer_indent,
@@ -361,6 +367,9 @@ impl PmVersionCommand {
         let json_bump = Arena::new();
         let Ok(json) = JSON::parse_package_json_utf8(
             &package_json_source,
+            // SAFETY: single-threaded CLI dispatch; the returned `&mut Log` is
+            // passed straight into this parse call and no other borrow of the
+            // process-static `Log` is live for its duration.
             unsafe { ctx.log_mut() },
             &json_bump,
         ) else {

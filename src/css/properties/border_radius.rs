@@ -185,7 +185,7 @@ pub struct BorderRadiusHandler {
 #[inline]
 fn size2d_lp_is_compatible(
     val: &Size2D<LengthPercentage>,
-    browsers: css::targets::Browsers,
+    browsers: &css::targets::Browsers,
 ) -> bool {
     val.a.is_compatible(browsers) && val.b.is_compatible(browsers)
 }
@@ -202,7 +202,7 @@ macro_rules! maybe_flush {
 
         if $self.$prop.is_some()
             && $ctx.targets.browsers.is_some()
-            && !size2d_lp_is_compatible($val, $ctx.targets.browsers.unwrap())
+            && !size2d_lp_is_compatible($val, &$ctx.targets.browsers.unwrap())
         {
             $self.flush($d, $ctx);
         }
@@ -428,7 +428,7 @@ impl BorderRadiusHandler {
                             self.flush(dest, context);
                             dest.push(Property::Unparsed(unparsed.get_prefixed(
                                 bump,
-                                context.targets,
+                                &context.targets,
                                 css::prefixes::Feature::BorderRadius,
                             )));
                         }

@@ -1,6 +1,5 @@
 use crate::postgres::any_postgres_error::AnyPostgresError;
 use crate::postgres::postgres_types::{self as types, Int4, Short};
-use crate::postgres::protocol::decoder_wrap::DecoderWrap;
 use crate::postgres::protocol::new_reader::NewReader;
 use crate::shared::column_identifier::ColumnIdentifier;
 

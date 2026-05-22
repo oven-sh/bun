@@ -205,6 +205,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
         });
         quote! {
             #[inline]
+            #[allow(clippy::not_unsafe_ptr_arg_deref)]
             pub fn #mn(&self #(, #an: #at)*) #ret {
                 match self.kind { #(#arms),* }
             }

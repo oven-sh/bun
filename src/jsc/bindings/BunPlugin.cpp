@@ -848,7 +848,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
                 return {};
             }
             case JSPromise::Status::Rejected: {
-                promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
+                promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
                 result = promise->result();
                 return JSValue::encode(result);
             }

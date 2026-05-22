@@ -24,10 +24,14 @@
 //! }
 //! ```
 
-#![allow(dead_code)]
+#[cfg(not(any(windows, target_vendor = "apple")))]
+use core::sync::atomic::AtomicU32;
+#[cfg(debug_assertions)]
+use core::sync::atomic::AtomicU64;
+#[cfg(any(debug_assertions, not(any(windows, target_vendor = "apple"))))]
+use core::sync::atomic::Ordering;
 
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-
+#[cfg(not(any(windows, target_vendor = "apple")))]
 use crate::Futex;
 
 #[derive(Default)]
@@ -148,12 +152,15 @@ pub type ExternImpl = OsUnfairLock;
 #[cfg(not(any(windows, target_vendor = "apple")))]
 pub type ExternImpl = u32;
 
+#[cfg(debug_assertions)]
 type ThreadId = u64;
+#[cfg(debug_assertions)]
 #[inline]
 fn current_thread_id() -> ThreadId {
     crate::current_thread_id()
 }
 
+#[cfg(debug_assertions)]
 #[derive(Default)]
 pub struct DebugImpl {
     /// 0 means it's not locked.
@@ -161,6 +168,7 @@ pub struct DebugImpl {
     pub(crate) impl_: ReleaseImpl,
 }
 
+#[cfg(debug_assertions)]
 impl DebugImpl {
     pub const fn new() -> Self {
         Self {
@@ -305,11 +313,13 @@ impl DarwinImpl {
     }
 }
 
+#[cfg(not(any(windows, target_vendor = "apple")))]
 #[derive(Default)]
 pub struct FutexImpl {
     state: AtomicU32,
 }
 
+#[cfg(not(any(windows, target_vendor = "apple")))]
 impl FutexImpl {
     pub const fn new() -> Self {
         Self {
@@ -403,14 +413,14 @@ pub fn spin_cycle() {}
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
+pub unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
     unsafe { (*ptr).lock() }
 }
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
+pub unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.
     unsafe { (*ptr).unlock() }
 }

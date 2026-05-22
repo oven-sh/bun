@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
@@ -7,7 +5,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -129,16 +127,15 @@ impl Yes {
             return Self::write_failing_error(interp, cmd, &buf, 1);
         }
         // Bounce back via the event loop so we don't block the main thread.
-        // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
-        // the interpreter arena, so the address is stable across the enqueue
-        // and the later main-thread callback.
         let task: *mut YesTask = Self::state_mut(interp, cmd)
             .task
             .as_mut()
             .expect("YesTask set in start()");
-        // PORT NOTE: `enqueue` ticks the event loop (Zig spec), which may
-        // re-enter shell dispatch. We hold no `&mut` derived from `interp`
-        // across the call; the parameter borrow itself is not re-used after.
+        // SAFETY: `task` was set in `start()`; `Yes` lives in a `Box` inside
+        // the interpreter arena, so the address is stable across the enqueue
+        // and the later main-thread callback. `enqueue` ticks the event loop
+        // and may re-enter shell dispatch — we hold no `&mut` derived from
+        // `interp` across the call.
         unsafe { YesTask::enqueue(task) };
         Yield::suspended()
     }
@@ -232,18 +229,21 @@ impl YesTask {
             match (*this).evtloop {
                 EventLoopHandle::Js { owner } => {
                     owner.tick();
-                    let ct: *mut ConcurrentTask = match &mut (*this).concurrent_task {
+                    let ct = core::ptr::NonNull::from(match &mut (*this).concurrent_task {
                         EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
                         EventLoopTask::Mini(_) => unreachable!(),
-                    };
+                    });
                     owner.enqueue_task_concurrent(ct);
                 }
                 EventLoopHandle::Mini(mut mini) => {
                     (*mini.loop_).tick();
-                    let at = match &mut (*this).concurrent_task {
-                        EventLoopTask::Mini(at) => at.from(this, Self::run_from_main_thread_mini),
-                        EventLoopTask::Js(_) => unreachable!(),
-                    };
+                    let at =
+                        core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
+                            EventLoopTask::Mini(at) => {
+                                at.from(this, Self::run_from_main_thread_mini)
+                            }
+                            EventLoopTask::Js(_) => unreachable!(),
+                        });
                     mini.get_mut().enqueue_task_concurrent(at);
                 }
             }
@@ -252,13 +252,13 @@ impl YesTask {
 
     /// Spec: yes.zig `YesTask.runFromMainThread`.
     ///
-    /// Reached only via the concurrent-task dispatch installed in
-    /// [`enqueue`](Self::enqueue), which always passes the live task whose
-    /// storage is stable inside `Box<Yes>` in the interpreter arena.
-    pub fn run_from_main_thread(this: *mut Self) {
-        // SAFETY: dispatch contract — `this` is the live task previously passed
-        // to `enqueue`; `interp` set in `Yes::start`, outlives the builtin.
-        let (interp, cmd) = unsafe { (&*(*this).interp, (*this).cmd) };
+    /// `this` must be a live `YesTask` whose storage is stable inside
+    /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
+    /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
+    /// in [`enqueue`](Self::enqueue).
+    pub fn run_from_main_thread(this: &Self) {
+        // SAFETY: `interp` was set in `Yes::start` and outlives the task.
+        let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
         Yes::write_no_io_loop(interp, cmd).run(interp);
     }
 
@@ -266,7 +266,9 @@ impl YesTask {
     /// [`AnyTaskWithExtraContext::from`](bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from)'s
     /// callback shape (`fn(*mut T, *mut ())`).
     fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
-        Self::run_from_main_thread(this)
+        // SAFETY: dispatch contract — `this` is the live task previously passed
+        // to `enqueue`; see `run_from_main_thread`.
+        Self::run_from_main_thread(unsafe { &*this })
     }
 }
 

@@ -230,7 +230,6 @@ impl MutableString {
             // If it ends with an emoji
             if needs_gap {
                 mutable.append_char(b'_')?;
-                needs_gap = false;
                 has_needed_gap = true;
             }
 
@@ -310,12 +309,10 @@ impl MutableString {
 
     pub fn inflate(&mut self, amount: usize) -> Result<(), AllocError> {
         // Zig MutableString.inflate: `list.resize(amount)` leaves new bytes
-        // uninitialized. Match that — callers always overwrite the inflated
-        // region (it's a printer buffer pre-size).
-        self.list.reserve(amount.saturating_sub(self.list.len()));
-        // SAFETY: `u8` has no drop and any bit pattern is valid; capacity ≥
-        // `amount` after `reserve`. Callers MUST write before reading.
-        unsafe { self.list.set_len(amount) };
+        // uninitialized. Callers always overwrite the inflated region, so the
+        // zero-fill here is technically redundant — but it lowers to a single
+        // memset and avoids `clippy::uninit_vec` / a `set_len` over uninit bytes.
+        self.list.resize(amount, 0);
         Ok(())
     }
 
@@ -496,11 +493,6 @@ impl<'a> BufferedWriter<'a> {
 
     // Zig: `pub const Writer = std.Io.GenericWriter(*BufferedWriter, Allocator.Error, writeAll)`
     // → `impl std::io::Write for BufferedWriter` below; `writer()` returns `&mut Self`.
-
-    #[inline]
-    fn remain(&mut self) -> &mut [u8] {
-        &mut self.buffer[self.pos..]
-    }
 
     pub fn flush(&mut self) -> Result<(), AllocError> {
         let _ = self.context.write_all(&self.buffer[0..self.pos])?;

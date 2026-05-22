@@ -1,3 +1,5 @@
+//! TODO(port): correct this documentation comment post-rust port
+//!
 //! This program is a shim for node_modules/.bin scripts.
 //!
 //! This is needed because:
@@ -37,7 +39,7 @@
 //! The compiled binary is 13312 bytes and is `@embedFile`d into Bun itself.
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 //!
-//! Questions about this file should be directed at @paperclover.
+//! Theorized and written by @paperclover during one of the most entranced all-nighters of her life.
 
 #![cfg(windows)]
 
@@ -152,8 +154,6 @@ mod k32 {
     pub use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
     pub use w::kernel32::GetLastError;
-    /// https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-sethandleinformation
-    pub use w::kernel32::SetHandleInformation;
 
     // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
     // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
@@ -1418,7 +1418,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     debug!("CreateProcessW failed: {}", spawn_err);
                     debug!("attempt number: {}", attempt_number);
                 }
-                return match w::Win32Error(spawn_err as u16) {
+                match w::Win32Error(spawn_err as u16) {
                     w::Win32Error::FILE_NOT_FOUND => {
                         if flags.has_shebang() {
                             if attempt_number == 0 {

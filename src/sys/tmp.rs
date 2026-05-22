@@ -26,7 +26,7 @@ impl<'a> Tmpfile<'a> {
             using_tmpfile: ALLOW_TMPFILE,
         };
 
-        'open: loop {
+        'open: {
             // ALLOW_TMPFILE = false (Zig comment: O_TMPFILE doesn't seem to work
             // very well). Dead in Zig too, but Zig comptime drops it; Rust still
             // type-checks `if false` bodies, so the body must resolve.
@@ -57,11 +57,10 @@ impl<'a> Tmpfile<'a> {
             tmpfile.fd = crate::openat(
                 destination_dir,
                 tmpfilename,
-                O::CREAT | O::CLOEXEC | O::WRONLY,
+                O::CREAT | O::EXCL | O::CLOEXEC | O::WRONLY,
                 perm,
             )?
             .make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
-            break 'open;
         }
 
         Ok(tmpfile)

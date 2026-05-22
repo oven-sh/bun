@@ -43,11 +43,11 @@ fn read_bytes<const BYTES: u8>(data: &[u8]) -> u64 {
         // SAFETY: `data.len() >= BYTES == 4` (asserted above; every caller
         // proves it). `read_unaligned` imposes no alignment requirement.
         4 => u64::from(u32::from_le(unsafe {
-            core::ptr::read_unaligned(data.as_ptr() as *const u32)
+            core::ptr::read_unaligned(data.as_ptr().cast::<u32>())
         })),
         // SAFETY: `data.len() >= BYTES == 8` (asserted above; every caller
         // proves it). `read_unaligned` imposes no alignment requirement.
-        8 => u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr() as *const u64) }),
+        8 => u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr().cast::<u64>()) }),
         _ => unreachable!(),
     }
 }
@@ -201,7 +201,7 @@ impl WyhashStateless {
 
     #[inline(always)] // Zig: `@call(bun.callmod_inline, c.update, ...)`
     pub(crate) fn update(&mut self, b: &[u8]) {
-        debug_assert!(b.len() % 32 == 0);
+        debug_assert!(b.len().is_multiple_of(32));
 
         let mut off: usize = 0;
         while off < b.len() {
@@ -568,7 +568,7 @@ impl Wyhash {
         // SAFETY: every caller passes a slice with ≥4 bytes (see comment above);
         // `read_unaligned` imposes no alignment requirement.
         u64::from(u32::from_le(unsafe {
-            core::ptr::read_unaligned(data.as_ptr() as *const u32)
+            core::ptr::read_unaligned(data.as_ptr().cast::<u32>())
         }))
     }
 
@@ -577,7 +577,7 @@ impl Wyhash {
         debug_assert!(data.len() >= 8);
         // SAFETY: every caller passes a slice with ≥8 bytes (see comment above);
         // `read_unaligned` imposes no alignment requirement.
-        u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr() as *const u64) })
+        u64::from_le(unsafe { core::ptr::read_unaligned(data.as_ptr().cast::<u64>()) })
     }
 
     #[inline]
@@ -672,14 +672,14 @@ impl Wyhash {
                 let bound = input.len() - 48;
                 let p = input.as_ptr();
                 while i < bound {
-                    // SAFETY: loop invariant `i < len - 48` ⇒ `i + 48 ≤ len`,
-                    // so every `p.add(i + off)` for off ∈ {0,8,16,24,32,40}
-                    // addresses an 8-byte window wholly inside `input`.
-                    // `read_unaligned` imposes no alignment requirement.
                     macro_rules! r8 {
                         ($o:literal) => {
+                            // SAFETY: loop invariant `i < len - 48` ⇒ `i + 48 ≤ len`,
+                            // so every `p.add(i + off)` for off ∈ {0,8,16,24,32,40}
+                            // addresses an 8-byte window wholly inside `input`.
+                            // `read_unaligned` imposes no alignment requirement.
                             u64::from_le(unsafe {
-                                core::ptr::read_unaligned(p.add(i + $o) as *const u64)
+                                core::ptr::read_unaligned(p.add(i + $o).cast::<u64>())
                             })
                         };
                     }

@@ -1,4 +1,3 @@
-#![allow(unused, non_camel_case_types, non_snake_case)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 use core::ffi::c_int;
@@ -168,6 +167,7 @@ impl Header {
         // outer `clone` keeps the builder (or its moved-out buffer) alive for
         // the lifetime of the cloned `Header` (see PORT NOTE on `StringBuilder`).
         let name = unsafe { builder.append_raw(self.name()) };
+        // SAFETY: same buffer-lifetime invariant as `name` above.
         let value = unsafe { builder.append_raw(self.value()) };
         Header {
             name_ptr: name.as_ptr(),
@@ -322,6 +322,7 @@ impl<'a> Request<'a> {
         Request {
             // SAFETY: see `Header::clone` — caller keeps `builder` alive.
             method: unsafe { builder.append_raw(self.method) },
+            // SAFETY: see `Header::clone` — caller keeps `builder` alive.
             path: unsafe { builder.append_raw(self.path) },
             minor_version: self.minor_version,
             headers,
@@ -343,8 +344,10 @@ impl<'a> Request<'a> {
         Request {
             // SAFETY: caller contract.
             method: unsafe { &*core::ptr::from_ref::<[u8]>(self.method) },
+            // SAFETY: caller contract.
             path: unsafe { &*core::ptr::from_ref::<[u8]>(self.path) },
             minor_version: self.minor_version,
+            // SAFETY: caller contract.
             headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
             bytes_read: self.bytes_read,
         }
@@ -389,6 +392,7 @@ impl<'a> Request<'a> {
             _ => Ok(Request {
                 // SAFETY: on success, ptr/len point into `buf`.
                 method: unsafe { bun_core::ffi::slice(method_ptr, method_len) },
+                // SAFETY: on success, ptr/len point into `buf`.
                 path: unsafe { bun_core::ffi::slice(path_ptr, path_len) },
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 headers: &src[0..num_headers],
@@ -403,9 +407,9 @@ impl fmt::Display for Request<'_> {
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
-        write!(
+        writeln!(
             f,
-            "> HTTP/1.1 {} {}\n",
+            "> HTTP/1.1 {} {}",
             BStr::new(self.method),
             BStr::new(self.path)
         )?;
@@ -414,7 +418,7 @@ impl fmt::Display for Request<'_> {
                 f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
             }
             f.write_str("> ")?;
-            write!(f, "{}\n", header)?;
+            writeln!(f, "{}", header)?;
         }
         Ok(())
     }
@@ -523,7 +527,8 @@ impl fmt::Display for StatusCodeFormatter {
 
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum ParseResponseError {
-    Malformed_HTTP_Response,
+    #[strum(serialize = "Malformed_HTTP_Response")]
+    MalformedHttpResponse,
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseResponseError);
@@ -565,6 +570,7 @@ impl<'a> Response<'a> {
             // SAFETY: caller contract.
             status: unsafe { &*core::ptr::from_ref::<[u8]>(self.status) },
             headers: HeaderList {
+                // SAFETY: caller contract.
                 list: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers.list) },
             },
             bytes_read: self.bytes_read,
@@ -627,11 +633,8 @@ impl<'a> Response<'a> {
                 // NOTE: `bun_core::debug!` macro is currently broken (it forwards
                 // `concat!(...)` into `pretty_errorln!` whose matcher is `$fmt:literal`).
                 // Use the function-form `output::debug` until the macro is fixed.
-                Output::debug(&format_args!(
-                    "Malformed HTTP response:\n{}",
-                    BStr::new(buf)
-                ));
-                Err(ParseResponseError::Malformed_HTTP_Response)
+                Output::debug(format_args!("Malformed HTTP response:\n{}", BStr::new(buf)));
+                Err(ParseResponseError::MalformedHttpResponse)
             }
             -2 => {
                 *offset += buf.len();
@@ -663,9 +666,9 @@ impl fmt::Display for Response<'_> {
             f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
 
-        write!(
+        writeln!(
             f,
-            "< {} {}\n",
+            "< {} {}",
             StatusCodeFormatter {
                 code: self.status_code as usize
             },
@@ -677,7 +680,7 @@ impl fmt::Display for Response<'_> {
             }
 
             f.write_str("< ")?;
-            write!(f, "{}\n", header)?;
+            writeln!(f, "{}", header)?;
         }
         Ok(())
     }

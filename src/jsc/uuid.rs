@@ -96,7 +96,7 @@ fn print_bytes(bytes: &[u8; 16], buf: &mut [u8; 36]) {
     // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
     for (j, &i) in ENCODED_POS.iter().enumerate() {
         let [hi, lo] = bun_core::fmt::hex_byte_lower(bytes[j]);
-        buf[i as usize + 0] = hi;
+        buf[i as usize] = hi;
         buf[i as usize + 1] = lo;
     }
 }
@@ -124,7 +124,7 @@ impl UUID7 {
         UUID_V7_COUNTER.fetch_add(1, Ordering::Relaxed) % 4096
     }
 
-    pub fn init(timestamp: u64, random: &[u8; 8]) -> UUID7 {
+    pub fn init(timestamp: u64, random: [u8; 8]) -> UUID7 {
         let count = Self::get_count(timestamp);
 
         let mut bytes = [0u8; 16];

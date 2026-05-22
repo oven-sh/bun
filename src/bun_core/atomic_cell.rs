@@ -59,13 +59,18 @@ pub struct AtomicCell<T: Copy> {
     inner: UnsafeCell<T>,
 }
 
-// SAFETY: every access goes through an atomic op; `T: Copy` so no drop glue
-// races. No `T: Send` bound — the only `Copy + !Send` types are raw pointers
-// / `NonNull`, and those are steered to [`AtomicPtrCell`] (pointer types are
-// not `Atom`). What the receiving thread *does* with a loaded value is on
-// the caller.
-unsafe impl<T: Copy> Sync for AtomicCell<T> {}
-unsafe impl<T: Copy> Send for AtomicCell<T> {}
+// SAFETY: every shared access goes through an atomic op; `T: Atom ⊃ Copy` so
+// no drop glue races. We bound on `T: Atom` (not `T: Send`) because `Atom`'s
+// safety contract includes cross-thread transport. Pointers are *not* `Atom`
+// — they are steered to [`AtomicPtrCell`], whose backing `AtomicPtr<U>` is
+// `Send + Sync` unconditionally; what the receiving thread *does* with a
+// loaded pointer is on the caller, same as `AtomicPtr`. A plain `T: Copy`
+// bound would be unsound: `&Cell<u32>` is `Copy + !Send`, and shipping one to
+// another thread via `into_inner()` would be a data race.
+unsafe impl<T: Atom> Sync for AtomicCell<T> {}
+// SAFETY: see the `Sync` justification above — the same invariants apply to
+// moving the cell itself across threads; `T: Copy` has no drop glue to race.
+unsafe impl<T: Atom> Send for AtomicCell<T> {}
 
 impl<T: Copy> AtomicCell<T> {
     /// `const` constructor — required because most call sites are `static`
@@ -189,6 +194,13 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   produced from a valid `Self`) yields the original value. This is weaker
 ///   than `bytemuck::AnyBitPattern` — `#[repr(u8)]` enums qualify because the
 ///   cell only ever stores valid discriminants.
+/// - `Self` is safe to transport across threads when stored in an
+///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
+///   itself provides. This is what backs `AtomicCell<T: Atom>: Send + Sync`.
+///   A `Copy` reference like `&Cell<_>` does **not** qualify — it would alias
+///   unsynchronized interior mutability across threads. (Pointers are not
+///   `Atom` at all; use [`AtomicPtrCell`], which inherits the same
+///   caller-owns-the-pointee contract from `AtomicPtr`.)
 ///
 /// Prefer the [`unsafe_impl_atom!`](crate::unsafe_impl_atom) macro over a
 /// hand-written `impl`.
@@ -292,24 +304,32 @@ macro_rules! size_dispatch {
             1 => {
                 type $A = AtomicU8;
                 type $I = u8;
+                // SAFETY: caller passes an 8-aligned live `*mut $T`; this arm
+                // is taken only when `size_of::<$T>()` matches `$A`'s width.
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
             2 => {
                 type $A = AtomicU16;
                 type $I = u16;
+                // SAFETY: caller passes an 8-aligned live `*mut $T`; this arm
+                // is taken only when `size_of::<$T>()` matches `$A`'s width.
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
             4 => {
                 type $A = AtomicU32;
                 type $I = u32;
+                // SAFETY: caller passes an 8-aligned live `*mut $T`; this arm
+                // is taken only when `size_of::<$T>()` matches `$A`'s width.
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
             8 => {
                 type $A = AtomicU64;
                 type $I = u64;
+                // SAFETY: caller passes an 8-aligned live `*mut $T`; this arm
+                // is taken only when `size_of::<$T>()` matches `$A`'s width.
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
@@ -323,18 +343,29 @@ macro_rules! size_dispatch {
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn _dispatch_load<T: Copy>(p: *mut T, ord: Ordering) -> T {
-    size_dispatch!(T, p, |a: A, I| unsafe { xmute::<I, T>(a.load(ord)) })
+    size_dispatch!(T, p, |a: A, I| {
+        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; the loaded
+        // `I` was stored from a valid `T` so the `Atom` round-trip holds.
+        unsafe { xmute::<I, T>(a.load(ord)) }
+    })
 }
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn _dispatch_store<T: Copy>(p: *mut T, v: T, ord: Ordering) {
-    size_dispatch!(T, p, |a: A, I| a.store(unsafe { xmute::<T, I>(v) }, ord))
+    size_dispatch!(T, p, |a: A, I| a.store(
+        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; `T: Atom`
+        // guarantees no padding so every byte of `v` is initialized.
+        unsafe { xmute::<T, I>(v) },
+        ord,
+    ))
 }
 #[doc(hidden)]
 #[inline(always)]
 pub unsafe fn _dispatch_swap<T: Copy>(p: *mut T, v: T, ord: Ordering) -> T {
-    size_dispatch!(T, p, |a: A, I| unsafe {
-        xmute::<I, T>(a.swap(xmute::<T, I>(v), ord))
+    size_dispatch!(T, p, |a: A, I| {
+        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; `T: Atom`
+        // guarantees no padding and that the round-trip yields a valid `T`.
+        unsafe { xmute::<I, T>(a.swap(xmute::<T, I>(v), ord)) }
     })
 }
 #[doc(hidden)]
@@ -348,12 +379,17 @@ pub unsafe fn _dispatch_cas<T: Copy>(
 ) -> Result<T, T> {
     size_dispatch!(T, p, |a: A, I| {
         match a.compare_exchange(
+            // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`;
+            // `T: Atom` guarantees no padding bytes.
             unsafe { xmute::<T, I>(cur) },
+            // SAFETY: as above.
             unsafe { xmute::<T, I>(new) },
             s,
             f,
         ) {
+            // SAFETY: `x` was stored from a valid `T`; `Atom` round-trip holds.
             Ok(x) => Ok(unsafe { xmute::<I, T>(x) }),
+            // SAFETY: as above.
             Err(x) => Err(unsafe { xmute::<I, T>(x) }),
         }
     })
@@ -544,6 +580,8 @@ pub struct ThreadCell<T: ?Sized> {
 // SAFETY: same lie as `RacyCell` (caller promises thread-affinity), now
 // *checked* in debug via `owner`.
 unsafe impl<T: ?Sized> Sync for ThreadCell<T> {}
+// SAFETY: `UnsafeCell<T>: Send` when `T: Send`, and `owner: AtomicU64` is
+// `Send`; sending the cell just moves the (still thread-affine) `T`.
 unsafe impl<T: ?Sized + Send> Send for ThreadCell<T> {}
 
 #[cfg(debug_assertions)]

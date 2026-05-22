@@ -1,4 +1,3 @@
-use core::cmp::Ordering;
 use core::fmt;
 use std::sync::OnceLock;
 
@@ -6,13 +5,9 @@ use bstr::BStr;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
-use bun_core::{self, Error, err};
+use bun_core::{self, Error, Output, err};
 use bun_paths::{self as Path, PathBuffer};
-use bun_semver::String;
-use bun_semver::StringBuilder as StringBuilderLike;
 use bun_semver::string::Buf as StringBuf;
-#[allow(unused_imports)]
-use bun_sys::{FdDirExt, File};
 
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
@@ -306,6 +301,22 @@ pub fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
+/// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for
+/// `git`, or `<owner>-<repo>-<sha>` for `github`). It is concatenated into a cache
+/// directory name and passed to `git checkout`, so it must be a single safe path
+/// component: no separators, no NUL, and no leading `-` that git would parse as an
+/// option.
+pub fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
+    !resolved.is_empty()
+        && resolved.len() <= 256
+        && resolved[0] != b'-'
+        && resolved != b"."
+        && resolved != b".."
+        && resolved
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+}
+
 /// Install-tier `Repository` behaviour (parsing, formatting, git CLI exec,
 /// download/checkout). Data struct + buffer-relative `order`/`count`/`clone`/
 /// `eql` are inherent on [`Repository`] (defined in `bun_install_types`).
@@ -329,7 +340,7 @@ pub trait RepositoryExt: Sized {
     fn download(
         env: &bun_dotenv::Map,
         log: &mut bun_ast::Log,
-        cache_dir: bun_sys::Dir,
+        cache_dir: bun_sys::Fd,
         task_id: crate::package_manager_task::Id,
         name: &[u8],
         url: &[u8],
@@ -338,7 +349,7 @@ pub trait RepositoryExt: Sized {
     fn find_commit(
         env: &mut bun_dotenv::Loader,
         log: &mut bun_ast::Log,
-        repo_dir: bun_sys::Dir,
+        repo_dir: bun_sys::Fd,
         name: &[u8],
         committish: &[u8],
         task_id: crate::package_manager_task::Id,
@@ -346,8 +357,8 @@ pub trait RepositoryExt: Sized {
     fn checkout(
         env: &bun_dotenv::Map,
         log: &mut bun_ast::Log,
-        cache_dir: bun_sys::Dir,
-        repo_dir: bun_sys::Dir,
+        cache_dir: bun_sys::Fd,
+        repo_dir: bun_sys::Fd,
         name: &[u8],
         url: &[u8],
         resolved: &[u8],
@@ -392,6 +403,28 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
             }
         }
         _ => {}
+    }
+
+    // Surface git's own diagnostics — the "git fetch/clone failed" log messages
+    // at the call sites only mention the package name, which leaves CI failures
+    // (auth, ssh, signal) opaque. Mirror git's stderr to ours and report the
+    // termination kind so the actual cause is visible.
+    {
+        let term = match result.term {
+            bun_spawn::Term::Exited(code) => format!("exit code {code}"),
+            bun_spawn::Term::Signal(sig) => format!("signal {sig}"),
+            bun_spawn::Term::Stopped(sig) => format!("stopped (signal {sig})"),
+            bun_spawn::Term::Unknown(_) => "unknown status".to_string(),
+        };
+        Output::err_generic("{} failed with {}", (BStr::new(argv[0]), term.as_str()));
+        if !result.stderr.is_empty() {
+            let ew = Output::error_writer();
+            let _ = ew.write_all(&result.stderr);
+            if result.stderr.last() != Some(&b'\n') {
+                let _ = ew.write_all(b"\n");
+            }
+        }
+        Output::flush();
     }
 
     Err(err!("InstallFailed"))
@@ -643,13 +676,14 @@ impl RepositoryExt for Repository {
     fn download(
         env: &bun_dotenv::Map,
         log: &mut bun_ast::Log,
-        cache_dir: bun_sys::Dir,
+        cache_dir: bun_sys::Fd,
         task_id: crate::package_manager_task::Id,
         name: &[u8],
         url: &[u8],
         attempt: u8,
     ) -> Result<bun_sys::Dir, Error> {
-        // TODO(port): verify bun_sys::Dir API matches the Zig original (std::fs::Dir is banned).
+        // `cache_dir` is a borrowed view of the manager's cache directory fd;
+        // we never own/close it — only the freshly-opened repo `Dir` is owned.
         bun_analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Per-field accessor — retags only `folder_name_buf`, leaving any live
@@ -671,7 +705,7 @@ impl RepositoryExt for Repository {
             bun_core::ZStr::from_buf(&folder_name_buf[..], written)
         };
 
-        match cache_dir.open_dir_z(folder_name) {
+        match bun_sys::Dir::borrow(&cache_dir).open_dir_z(folder_name) {
             Ok(dir) => {
                 let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
                     &PackageManager::get().cache_directory_path,
@@ -721,7 +755,7 @@ impl RepositoryExt for Repository {
                     return Err(err);
                 }
 
-                cache_dir.open_dir_z(folder_name)
+                bun_sys::Dir::borrow(&cache_dir).open_dir_z(folder_name)
             }
         }
     }
@@ -729,7 +763,7 @@ impl RepositoryExt for Repository {
     fn find_commit(
         env: &mut bun_dotenv::Loader,
         log: &mut bun_ast::Log,
-        repo_dir: bun_sys::Dir,
+        repo_dir: bun_sys::Fd,
         name: &[u8],
         committish: &[u8],
         task_id: crate::package_manager_task::Id,
@@ -799,15 +833,29 @@ impl RepositoryExt for Repository {
     fn checkout(
         env: &bun_dotenv::Map,
         log: &mut bun_ast::Log,
-        cache_dir: bun_sys::Dir,
-        repo_dir: bun_sys::Dir,
+        cache_dir: bun_sys::Fd,
+        repo_dir: bun_sys::Fd,
         name: &[u8],
         url: &[u8],
         resolved: &[u8],
     ) -> Result<ExtractData, Error> {
-        // TODO(port): verify bun_sys::Dir API matches the Zig original (std::fs::Dir is banned).
+        // `cache_dir`/`repo_dir` are borrowed views; only `package_dir` is owned.
         bun_analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        if !is_safe_resolved_tag(resolved) {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "invalid git commit \"{}\" for \"{}\"",
+                    BStr::new(resolved),
+                    BStr::new(name)
+                ),
+            );
+            return Err(err!("InstallFailed"));
+        }
+
         let folder_name_buf = TlBufs::folder_name_buf();
         let folder_name = crate::package_manager_real::cached_git_folder_name_print(
             &mut folder_name_buf[..],
@@ -816,7 +864,10 @@ impl RepositoryExt for Repository {
         )
         .as_bytes();
 
-        let mut package_dir = match bun_sys::open_dir(cache_dir, folder_name) {
+        let package_dir = match bun_sys::Dir::borrow(&cache_dir)
+            .open_at(folder_name)
+            .map_err(Error::from)
+        {
             Ok(d) => d,
             Err(not_found) => 'brk: {
                 if not_found != err!("ENOENT") {
@@ -829,7 +880,7 @@ impl RepositoryExt for Repository {
                 );
 
                 let repo_path = bun_sys::get_fd_path(
-                    bun_sys::Fd::from_std_dir(&repo_dir),
+                    repo_dir,
                     // Per-field accessor — disjoint from `folder_name_buf`
                     // borrow above. See `TlBufs` accessor doc.
                     TlBufs::final_path_buf(),
@@ -863,6 +914,8 @@ impl RepositoryExt for Repository {
 
                 if let Err(err) = exec(
                     env,
+                    // `is_safe_resolved_tag` above rejects a leading `-`, so
+                    // `resolved` cannot be parsed as a git option.
                     &[b"git", b"-C", folder, b"checkout", b"--quiet", resolved],
                 ) {
                     log.add_error_fmt(
@@ -872,7 +925,9 @@ impl RepositoryExt for Repository {
                     );
                     return Err(err);
                 }
-                let dir = bun_sys::open_dir(cache_dir, folder_name)?;
+                let dir = bun_sys::Dir::borrow(&cache_dir)
+                    .open_at(folder_name)
+                    .map_err(Error::from)?;
                 let _ = dir.delete_tree(b".git");
 
                 if !resolved.is_empty() {
@@ -896,8 +951,6 @@ impl RepositoryExt for Repository {
                 break 'brk dir;
             }
         };
-        // `defer package_dir.close()` — TODO(port): bun_sys::Dir should impl Drop or
-        // expose RAII close; for now closed explicitly below on all paths.
 
         let (json_file, json_buf) =
             match bun_sys::File::read_file_from(package_dir.fd(), b"package.json") {

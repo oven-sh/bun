@@ -13,7 +13,6 @@ use crate::{
     MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
     resolve_path as path,
 };
-use bun_core::Environment;
 use bun_core::{Fd, WStr, ZStr, strings};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -137,7 +136,7 @@ pub mod options {
     }
 
     impl From<Error> for bun_core::Error {
-        fn from(e: Error) -> Self {
+        fn from(_e: Error) -> Self {
             bun_core::err!("MaxPathExceeded")
         }
     }
@@ -193,7 +192,7 @@ pub mod options {
     // parameter already names `C` directly, so this helper disappears.
 }
 
-use options::{BufType, CheckLength, Error as PathError, Kind, PathSeparators, Unit};
+use options::{CheckLength, Error as PathError, Kind, PathSeparators};
 
 // Runtime → type-param dispatch for `resolve_path`'s `<P: PlatformT>` fns,
 // keyed on `SEP_OPT`. PERF: SEP_OPT is a const generic so the optimizer
@@ -299,6 +298,8 @@ impl PathUnit for u8 {
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u8, len: usize) -> &'a ZStr {
+        // SAFETY: caller of this `unsafe fn` upholds the trait contract that
+        // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
         unsafe { ZStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<PathBuffer> {
@@ -346,6 +347,8 @@ impl PathUnit for u16 {
 
     #[inline]
     unsafe fn zslice_from_raw<'a>(ptr: *const u16, len: usize) -> &'a WStr {
+        // SAFETY: caller of this `unsafe fn` upholds the trait contract that
+        // `ptr[..=len]` is valid for reads for `'a` and `ptr[len] == 0`.
         unsafe { WStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<WPathBuffer> {
@@ -462,11 +465,6 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
         }
         self.len += converted_len;
     }
-
-    #[allow(dead_code)]
-    fn convert_append(&mut self, _characters: &[U::Other]) {
-        // Intentionally empty — Zig body is fully commented out.
-    }
 }
 
 /// Width-generic `bun.strings.basename` (Zig: `src/string/immutable/paths.zig:413`).
@@ -491,6 +489,7 @@ pub fn dirname_generic<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     return dirname_windows(path);
 }
 
+#[cfg(not(windows))]
 #[inline]
 fn dirname_posix<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     if path.is_empty() {
@@ -517,7 +516,7 @@ fn dirname_posix<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     Some(&path[..end_index])
 }
 
-#[allow(dead_code)]
+#[cfg(windows)]
 #[inline]
 fn dirname_windows<U: PathUnit>(path: &[U]) -> Option<&[U]> {
     if path.is_empty() {
@@ -574,7 +573,7 @@ pub(crate) fn disk_designator_len_windows<U: PathUnit>(path: &[U]) -> usize {
     // UNC NetworkShare: `\\server\share` or `//server/share` (uniform sep).
     // `inline for ("/\\") |this_sep|` — separator that started the prefix
     // must match throughout; mixing `/` and `\` falls through to relative.
-    for this_sep in [b'/', b'\\'] {
+    for this_sep in *b"/\\" {
         if path[0].eq_ascii(this_sep) && path[1].eq_ascii(this_sep) {
             if path[2].eq_ascii(this_sep) {
                 return 0;

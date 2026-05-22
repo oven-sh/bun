@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::mem;
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::ByteVecExt;
 use bun_core::OOM;
 use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for all 4 writers
 #[cfg(windows)]
@@ -11,7 +11,7 @@ use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
 // `close`/`set_data`/`ref_` are default trait methods; bring traits into scope
 // so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
-use bun_sys::windows::libuv::{UvHandle as _, UvReq as _, UvStream as _};
+use bun_sys::windows::libuv::UvHandle as _;
 use bun_sys::{self as sys, Fd};
 
 use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
@@ -99,6 +99,9 @@ pub trait PosixPipeWriter {
         write_fn: fn(Fd, &[u8]) -> sys::Result<usize>,
     ) -> WriteResult {
         let fd = self.get_fd();
+        if fd == Fd::INVALID {
+            return WriteResult::Done(0);
+        }
 
         let mut offset: usize = 0;
 
@@ -433,7 +436,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         // `self.close()` without reload. Launder so post-call accesses see
         // fresh state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        let was_done = Self::r(this).is_done == true;
+        let was_done = Self::r(this).is_done;
         let parent = Self::r(this).parent();
 
         if status == WriteStatus::EndOfFile && !was_done {
@@ -543,9 +546,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
-        // SAFETY: caller passes the owning `Parent` (BACKREF); the writer is an
-        // intrusive field of `*parent`, so the parent strictly outlives it.
-        self.parent = unsafe { bun_ptr::ParentRef::from_nullable_mut(parent) };
+        // Reject null up front: every dispatch path past this point assumes
+        // `self.parent` is set (see the type-invariant doc on `parent_event_loop`).
+        self.parent = Some(bun_ptr::ParentRef::from(
+            core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null"),
+        ));
         // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
@@ -2097,11 +2102,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
     }
 
-    fn is_done_internal(&self) -> bool {
-        // done is flags and no more data queued? so we are done!
-        self.is_done && !self.has_pending_data()
-    }
-
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
         // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
         // `Parent::on_write` (e.g. `FileSink::on_write`) re-enters JS via
@@ -2795,7 +2795,7 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(err) };
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
@@ -2858,7 +2858,7 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(err) };
+                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]

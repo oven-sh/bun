@@ -137,8 +137,8 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         // TODO(port): preload/argv are `Vec<Box<[u8]>>` on both sides; clone since
         // ctx outlives vm but Zig assigned slices directly (no ownership transfer).
         // Could change VM fields to borrow from ctx.
-        vm.preload = ctx.preloads.clone();
-        vm.argv = ctx.passthrough.clone();
+        vm.preload.clone_from(&ctx.preloads);
+        vm.argv.clone_from(&ctx.passthrough);
         vm.arena = NonNull::new(&raw mut arena);
         // vm.allocator = arena.arena() — dropped per §Allocators
         // Spec production.zig:50: `b.options.install = ctx.install` (raw
@@ -293,10 +293,7 @@ pub fn write_sourcemap_to_disk(
 
     let mut key = Vec::with_capacity(6 + without_prefix.len());
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
-    source_maps.put(
-        &key,
-        OutputFileIndex::init(u32::try_from(source_map_index).expect("int cast")),
-    )?;
+    source_maps.put(&key, OutputFileIndex::init(source_map_index))?;
     Ok(())
 }
 
@@ -362,7 +359,6 @@ pub fn build_with_vm(
 
     let config_entry_point_string =
         BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
-    // defer config_entry_point_string.deref() — Drop handles deref
 
     let Some(config_promise) =
         JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
@@ -684,9 +680,7 @@ pub fn build_with_vm(
     Output::flush();
 
     // Zig: `try std.fs.cwd().makeOpenPath("dist", .{})` — mkdir -p + open.
-    // `OwnedDir` closes the fd on Drop (Zig: `defer root_dir.close()`).
-    let root_dir =
-        bun_sys::OwnedDir::new(bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?);
+    let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 
@@ -832,7 +826,7 @@ pub fn build_with_vm(
         };
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
-                && &file.src_path.text[..] != b"bun-framework-react/client.tsx"
+                && file.src_path.text != b"bun-framework-react/client.tsx"
         });
         if any_client_chunks {
             let runtime_file: &OutputFile = &bundled_outputs_list[runtime_file_index as usize];
@@ -1044,15 +1038,7 @@ pub fn build_with_vm(
             _ => {}
         }
         let mut file_count: u32 = 1;
-        let mut css_file_count: u32 = u32::try_from(
-            pt.output_file(main_file_route_index)
-                .referenced_css_chunks
-                .len(),
-        )
-        .expect("int cast");
-        if let Some(file) = route.file_layout {
-            css_file_count +=
-                u32::try_from(pt.output_file(file).referenced_css_chunks.len()).expect("int cast");
+        if route.file_layout.is_some() {
             file_count += 1;
         }
         let mut next: Option<framework_router::RouteIndex> = route.parent;
@@ -1073,9 +1059,7 @@ pub fn build_with_vm(
                 }
                 _ => {}
             }
-            if let Some(file) = parent.file_layout {
-                css_file_count += u32::try_from(pt.output_file(file).referenced_css_chunks.len())
-                    .expect("int cast");
+            if parent.file_layout.is_some() {
                 file_count += 1;
             }
             next = parent.parent;
@@ -1087,7 +1071,7 @@ pub fn build_with_vm(
 
         next = route.parent;
         file_count = 1;
-        css_file_count = 0;
+        let mut css_file_count: u32 = 0;
         file_list
             .put_index(
                 global,
@@ -1158,7 +1142,6 @@ pub fn build_with_vm(
 
         // Init the items
         let pattern_string = BunString::clone_utf8(pattern.slice());
-        // defer pattern_string.deref() — Drop handles deref
         route_patterns
             .put_index(
                 global,
@@ -1340,7 +1323,7 @@ fn bake_get_on_module_namespace(
     Some(result)
 }
 
-/// Renders all routes for static site generation by calling the JavaScript implementation.
+// Renders all routes for static site generation by calling the JavaScript implementation.
 // TODO(port): move to bake_sys
 // All args are by-value `JSValue`/`BunString` plus a live `&JSGlobalObject`
 // (UnsafeCell-backed); C++ allocates and returns a non-null `JSPromise*`.
@@ -1373,25 +1356,6 @@ unsafe extern "C" {
     ) -> *mut JSPromise;
 }
 
-/// The result of this function is a JSValue that wont be garbage collected, as
-/// it will always have at least one reference by the module loader.
-pub fn bake_register_production_chunk(
-    global: &JSGlobalObject,
-    key: BunString,
-    source_code: BunString,
-) -> JsResult<JSValue> {
-    unsafe extern "C" {
-        #[link_name = "BakeRegisterProductionChunk"]
-        safe fn f(global: &JSGlobalObject, key: BunString, source_code: BunString) -> JSValue;
-    }
-    let result: JSValue = f(global, key, source_code);
-    if result.is_empty() {
-        return Err(jsc::JsError::Thrown);
-    }
-    debug_assert!(result.is_string());
-    Ok(result)
-}
-
 #[unsafe(no_mangle)]
 pub extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
     #[cfg(unix)]
@@ -1405,7 +1369,6 @@ pub extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
         let input_utf8 = input.to_utf8();
         let input_slice = input_utf8.slice();
         let mut output = bun_paths::w_path_buffer_pool::get();
-        // defer bun.w_path_buffer_pool.put(output) — RAII guard puts back on Drop
         let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
         BunString::clone_utf16(output_slice.as_slice())
     }
@@ -1676,7 +1639,7 @@ impl PerThread {
             self.loaded_files.set(id.get() as usize);
             self.all_server_files.as_ref().unwrap().get().put_index(
                 global,
-                u32::try_from(id.get()).expect("int cast"),
+                id.get(),
                 self.module_keys[id.get() as usize].to_js(global)?,
             )?;
         }

@@ -29,7 +29,7 @@ pub struct MapEntry {
     /// is called on that same allocation, so the source's path slices stay
     /// valid for the entry's lifetime. `StringHashMap` boxes its own key,
     /// so keep the `dupeZ` alive here instead.
-    path_storage: bun_core::ZBox,
+    _path_storage: bun_core::ZBox,
     /// Owns the arena that backs decoded string bytes inside `root`.
     /// Zig passes `bun.default_allocator` to the JSON parser so escape-decoded
     /// `E.String.data` slices live forever; `deepClone` does *not* dupe them.
@@ -41,6 +41,9 @@ pub struct MapEntry {
     /// can allocate those nodes here instead of in the resettable `Store` —
     /// the cached `root` outlives `initialize_store()` resets.
     pub json_arena: bun_alloc::Arena,
+    /// Superseded `source.contents` buffers, pinned so cached `root` slices
+    /// stay valid; freed when the entry drops.
+    pub stale_contents: Vec<std::borrow::Cow<'static, [u8]>>,
 }
 
 impl Default for MapEntry {
@@ -49,8 +52,9 @@ impl Default for MapEntry {
             root: Expr::default(),
             source: Source::default(),
             indentation: Indentation::default(),
-            path_storage: bun_core::ZBox::default(),
+            _path_storage: bun_core::ZBox::default(),
             json_arena: bun_alloc::Arena::new(),
+            stale_contents: Vec::new(),
         }
     }
 }
@@ -217,8 +221,9 @@ impl WorkspacePackageJSONCache {
             indentation: parsed.indentation,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
             // address is stable across the move into the map.
-            path_storage: key,
+            _path_storage: key,
             json_arena: json_bump,
+            stale_contents: Vec::new(),
         };
 
         let entry = bun_core::handle_oom(self.map.get_or_put(path));
@@ -271,8 +276,9 @@ impl WorkspacePackageJSONCache {
             root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
             source: source.clone(),
             indentation: parsed.indentation,
-            path_storage: bun_core::ZBox::default(),
+            _path_storage: bun_core::ZBox::default(),
             json_arena: json_bump,
+            stale_contents: Vec::new(),
         };
 
         let entry = bun_core::handle_oom(self.map.get_or_put(path));

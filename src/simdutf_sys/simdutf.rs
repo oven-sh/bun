@@ -788,6 +788,8 @@ pub mod base64 {
     /// `encode_len(input.len(), is_urlsafe)` bytes and must not overlap
     /// `input`.
     pub unsafe fn encode_raw(input: &[u8], output: *mut u8, is_urlsafe: bool) -> usize {
+        // SAFETY: caller contract guarantees `output` is valid for
+        // `encode_len(input.len(), is_urlsafe)` bytes and disjoint from `input`.
         unsafe { simdutf__base64_encode(input.as_ptr(), input.len(), output, is_urlsafe as c_int) }
     }
 

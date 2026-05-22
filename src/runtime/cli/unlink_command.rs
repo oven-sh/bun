@@ -10,7 +10,7 @@ use bun_install::bin as stub_bin;
 use bun_install::bin_real as bin;
 use bun_install::lockfile_real::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
-    self as pm, CommandLineArguments, PackageManager, Subcommand, attempt_to_create_package_json,
+    self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json,
     global_link_dir_path, options::LogLevel, package_manager_options, setup_global_dir,
 };
 
@@ -152,6 +152,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
 
             match manager
                 .global_dir
+                .as_ref()
                 .unwrap()
                 .make_open_path(b"node_modules", Default::default())
             {
@@ -199,15 +200,11 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
                         Global::crash();
                     }
                 };
-            // `defer node_modules_path.deinit()` — handled by Drop.
 
             let mut bin_linker = bin::Linker {
                 target_node_modules_path: &raw const target_node_modules_path,
                 target_package_name: strings::StringOrTinyString::init(name),
-                // `package.bin` is the inline stub `bin::Bin` (struct `Value`);
-                // project to the real union-`Value` shape via the
-                // `From<bin::Bin> for bin_real::Bin` bridge in `bun_install::lib`.
-                bin: bin::Bin::from(package.bin),
+                bin: package.bin,
                 node_modules_path: &mut node_modules_path,
                 global_bin_path: manager.options.bin_path,
                 package_name: strings::StringOrTinyString::init(name),

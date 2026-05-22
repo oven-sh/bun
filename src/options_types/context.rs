@@ -155,6 +155,7 @@ impl ContextData {
     /// If `self.log` is null (i.e. `create_context_data()` has not run).
     #[track_caller]
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn log_mut(&self) -> &mut bun_ast::Log {
         assert!(
             !self.log.is_null(),
@@ -188,7 +189,6 @@ impl ContextData {
     // — Rust cannot re-export an associated fn; TODO(port): add a thin
     // delegating `pub fn create(...)` here once `bun_cli` exists, or invert the
     // alias direction (cli re-exports this type).
-    #[allow(unused)]
     pub const CREATE_SEE_CLI: () = ();
 }
 

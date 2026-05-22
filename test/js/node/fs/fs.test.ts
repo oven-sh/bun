@@ -1212,19 +1212,12 @@ it.skipIf(isWindows)(
           console.log(code);
         `,
       ],
-      // Disable symbolization so an ASAN abort exits promptly instead of spending
-      // seconds in llvm-symbolizer against the large debug binary.
-      env: {
-        ...bunEnv,
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allow_user_segv_handler=1", "symbolize=0", "abort_on_error=1"]
-          .filter(Boolean)
-          .join(":"),
-      },
+      env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
   },
@@ -3711,24 +3704,47 @@ it("fs.statfsSync should work", () => {
     expect(stats[k]).toBeNumber();
   });
 
+  // Regression for oven-sh/bun#31133: on darwin-x64, libc::statfs linked
+  // to `statfs$INODE64` was writing a legacy struct layout, so bsize came
+  // back as 0 and the remaining fields were shifted. Any real filesystem
+  // has a positive block size and at least one block — asserting that here
+  // catches the misaligned-struct case without depending on absolute values.
+  if (isPosix) {
+    expect(stats.bsize).toBeGreaterThan(0);
+    expect(stats.blocks).toBeGreaterThan(0);
+  }
+
   const bigIntStats = statfsSync(import.meta.path, { bigint: true });
   ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"].forEach(k => {
     expect(bigIntStats).toHaveProperty(k);
     expect(bigIntStats[k]).toBeTypeOf("bigint");
   });
+  if (isPosix) {
+    expect(bigIntStats.bsize > 0n).toBe(true);
+    expect(bigIntStats.blocks > 0n).toBe(true);
+  }
 });
 
 it("fs.promises.statfs should work", async () => {
   const stats = await fs.promises.statfs(import.meta.path);
   expect(stats).toBeDefined();
+  // See "fs.statfsSync should work" above — same regression gate for #31133.
+  if (isPosix) {
+    expect(stats.bsize).toBeGreaterThan(0);
+    expect(stats.blocks).toBeGreaterThan(0);
+  }
 });
 
 it("fs.promises.statfs should work with bigint", async () => {
   const stats = await fs.promises.statfs(import.meta.path, { bigint: true });
   expect(stats).toBeDefined();
+  if (isPosix) {
+    expect(stats.bsize > 0n).toBe(true);
+    expect(stats.blocks > 0n).toBe(true);
+  }
 });
 
-it("fs.statfs should work with bigint", async () => {
+it("fs.statfs (callback) should work with bigint", async () => {
   const { promise, resolve } = Promise.withResolvers();
   fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
     if (err) return resolve(err);
@@ -3740,19 +3756,10 @@ it("fs.statfs should work with bigint", async () => {
     expect(stats).toHaveProperty(k);
     expect(stats[k]).toBeTypeOf("bigint");
   }
-});
-
-it("fs.statfs should work with bigint", async () => {
-  const { promise, resolve } = Promise.withResolvers();
-  fs.statfs(import.meta.path, { bigint: true }, (err, stats) => {
-    if (err) return resolve(err);
-    resolve(stats);
-  });
-  const stats = await promise;
-  expect(stats).toBeDefined();
-  for (const k of ["type", "bsize", "blocks", "bfree", "bavail", "files", "ffree"]) {
-    expect(stats).toHaveProperty(k);
-    expect(stats[k]).toBeTypeOf("bigint");
+  // See "fs.statfsSync should work" above — same regression gate for #31133.
+  if (isPosix) {
+    expect(stats.bsize > 0n).toBe(true);
+    expect(stats.blocks > 0n).toBe(true);
   }
 });
 
@@ -4029,5 +4036,24 @@ describe("synchronous I/O string flags", () => {
     closeSync(fd);
 
     expect(buf.toString("utf8", 0, bytesRead)).toBe("hello");
+  });
+});
+
+describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", () => {
+  it("does not balloon the read buffer", async () => {
+    using dir = tempDir("fs-readfile-fifo", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "fs-readfile-fifo-fixture.js"), String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Pre-fix this never returns (RawVec doubling balloons RSS to multiple GB);
+    // the per-test timeout would fire. Fixed: completes promptly with the full
+    // 400 KB of content intact.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("len=409600 allA=true");
+    expect(exitCode).toBe(0);
   });
 });

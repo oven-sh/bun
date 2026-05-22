@@ -1,7 +1,5 @@
 use bstr::ByteSlice;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_jsc::console_object::Formatter;
 
 use super::{Expect, get_signature};
 
@@ -61,7 +59,6 @@ impl Expect {
         }
 
         let not = this.flags.get().not();
-        let mut pass = false;
 
         let expect_string_as_str_owned = expect_string.to_slice_or_null(global)?;
         let sub_string_as_str_owned = substring.to_slice_or_null(global)?;
@@ -78,7 +75,7 @@ impl Expect {
 
         // std.mem.count(u8, haystack, needle) — non-overlapping occurrence count
         let actual_count = expect_string_as_str.find_iter(sub_string_as_str).count();
-        pass = actual_count == count_as_num as usize;
+        let mut pass = actual_count == count_as_num as usize;
 
         if not {
             pass = !pass;

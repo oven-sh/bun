@@ -29,7 +29,7 @@ pub fn format_later_version_in_cache<'a>(
     this: &'a mut PackageManager,
     package_name: &[u8],
     name_hash: PackageNameHash,
-    resolution: Resolution,
+    resolution: &Resolution,
 ) -> Option<semver::version::Formatter<'a, u64>> {
     this.format_later_version_in_cache(package_name, name_hash, resolution)
 }
@@ -55,7 +55,7 @@ pub fn get_installed_versions_from_disk_cache(
 pub fn resolve_from_disk_cache(
     this: &mut PackageManager,
     package_name: &[u8],
-    version: dependency::Version,
+    version: &dependency::Version,
 ) -> Option<PackageID> {
     this.resolve_from_disk_cache(package_name, version)
 }
@@ -88,7 +88,7 @@ impl PackageManager {
         &mut self,
         package_name: &[u8],
         name_hash: PackageNameHash,
-        resolution: Resolution,
+        resolution: &Resolution,
     ) -> Option<semver::version::Formatter<'_, u64>> {
         // Zig forwards `package_name` → `scopeForPackageName` → `byNameHash`,
         // but the `.load_from_memory` arm never reads scope; keep the param for
@@ -149,7 +149,10 @@ impl PackageManager {
         let mut list: Vec<semver::Version> = Vec::new();
         // Zig: `getCacheDirectory().openDir(package_name, .{ .iterate = true })`.
         let cache_dir = super::get_cache_directory(self);
-        let dir = match bun_sys::open_dir(cache_dir, package_name) {
+        let dir = match bun_sys::Dir::borrow(&cache_dir)
+            .open_at(package_name)
+            .map_err(bun_core::Error::from)
+        {
             Ok(d) => d,
             Err(e)
                 if e == bun_core::err!("FileNotFound")
@@ -161,7 +164,6 @@ impl PackageManager {
             }
             Err(e) => return Err(e),
         };
-        // `defer dir.close()` → explicit close after iteration (Dir has no Drop).
         let mut iter = bun_sys::iterate_dir(dir.fd);
 
         loop {
@@ -169,7 +171,6 @@ impl PackageManager {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
                 Err(e) => {
-                    dir.close();
                     return Err(e.into());
                 }
             };
@@ -205,14 +206,13 @@ impl PackageManager {
             // PERF(port): was `catch unreachable` on append — Vec::push aborts on OOM
         }
 
-        dir.close();
         Ok(list)
     }
 
     pub fn resolve_from_disk_cache(
         &mut self,
         package_name: &[u8],
-        version: dependency::Version,
+        version: &dependency::Version,
     ) -> Option<PackageID> {
         if version.tag != dependency::Tag::Npm {
             // only npm supported right now
@@ -262,7 +262,7 @@ impl PackageManager {
                     Err(err) => {
                         Output::debug(format_args!(
                             "error getting path for cached npm path: {}",
-                            bun_core::Error::from(err).name()
+                            err.name()
                         ));
                         return None;
                     }
@@ -280,7 +280,7 @@ impl PackageManager {
                 };
                 match folder_resolver::get_or_put(
                     GlobalOrRelative::CacheFolder(npm_package_path),
-                    dep_version,
+                    &dep_version,
                     b".",
                     self,
                 ) {

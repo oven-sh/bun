@@ -13,7 +13,7 @@
 // ("overly complex generic constant"); assoc-const projection on a *type*
 // param works under `generic_const_exprs`. `adt_const_params` keeps
 // `JSONOptions: ConstParamTy` for value-level reification.
-#![feature(adt_const_params, generic_const_exprs, allocator_api)]
+#![feature(adt_const_params, generic_const_exprs)]
 #![allow(incomplete_features)]
 
 pub use bun_collections::VecExt as _VecExtReexport;
@@ -137,6 +137,22 @@ pub mod Macro {
             data: *mut core::ffi::c_void,
             path: &[u8],
         ) -> Option<&'static MacroRemapEntry>;
+        // No raw-pointer args; the body is a safe `pub fn` in
+        // `bun_js_parser_jsc`. See [`collect_vm_garbage`] for the call-site
+        // contract.
+        safe fn __bun_macro_collect_vm_garbage();
+    }
+
+    /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
+    /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
+    /// finalized before the worker thread's TLS root vanishes. Only call from
+    /// `bun_bundler::ThreadPool::Worker::deinit` after both per-worker
+    /// `MacroContext` boxes are freed — every other `MacroContext::deinit`
+    /// path is either inside JS execution or inside a GC sweep, where
+    /// re-entering `run_gc(true)` is unsound.
+    #[inline]
+    pub fn collect_vm_garbage() {
+        __bun_macro_collect_vm_garbage();
     }
     impl MacroContext {
         /// Zig: `pub fn call(self: *MacroContext, import_record_path, source_dir,
@@ -176,7 +192,11 @@ pub mod Macro {
             // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
             // retain the pointer past return (the boxed state it allocates owns
             // its own data).
-            unsafe { __bun_macro_context_init(transpiler as *mut T as *mut core::ffi::c_void) }
+            unsafe {
+                __bun_macro_context_init(
+                    core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>(),
+                )
+            }
         }
         /// Free the boxed higher-tier state behind `data`. Only call when the
         /// owning `Transpiler` is a short-lived bytewise clone (e.g. the
@@ -226,10 +246,10 @@ use bun_ast::{Ast, Ref};
 // `Ast` variant collapses `Result` to 16 B so only a thin pointer is moved up
 // the stack — one mimalloc-arena alloc per parsed module is far cheaper than
 // 4+ kilobyte memmoves. The other variants are already tiny.
-pub enum Result {
+pub enum Result<'a> {
     AlreadyBundled(AlreadyBundled),
     Cached,
-    Ast(Box<Ast>),
+    Ast(Box<Ast<'a>>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -382,6 +402,8 @@ pub mod defines {
     // process-lifetime AST stores. `DefineData` is only shared across threads
     // via the read-only `Box<Define>` after init. Never written through.
     unsafe impl Send for DefineData {}
+    // SAFETY: see `Send` impl above — the `StoreRef` targets are immutable and
+    // process-lifetime, and `DefineData` is read-only after init.
     unsafe impl Sync for DefineData {}
 
     impl Default for DefineData {
@@ -396,6 +418,7 @@ pub mod defines {
     }
 
     /// Named-init shim (mirrors Zig anonymous-struct init).
+    #[derive(Clone, Copy)]
     pub struct Options<'a> {
         pub original_name: Option<&'a [u8]>,
         pub value: ExprData,
@@ -479,7 +502,7 @@ pub mod defines {
             }
         }
 
-        pub fn merge(a: DefineData, b: DefineData) -> DefineData {
+        pub fn merge(a: &DefineData, b: DefineData) -> DefineData {
             DefineData {
                 value: b.value,
                 flags: Flags::new(
@@ -496,20 +519,11 @@ pub mod defines {
         }
     }
 
+    #[derive(Default)]
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
         pub drop_debugger: bool,
-    }
-
-    impl Default for Define {
-        fn default() -> Self {
-            Self {
-                identifiers: StringHashMap::default(),
-                dots: StringHashMap::default(),
-                drop_debugger: false,
-            }
-        }
     }
 
     impl Define {
@@ -552,7 +566,7 @@ pub mod defines {
                 if let Some(existing) = self.dots.get_mut(tail) {
                     for part in existing.iter_mut() {
                         if are_parts_equal(&part.parts, &parts) {
-                            part.data = DefineData::merge(part.data.clone(), value);
+                            part.data = DefineData::merge(&part.data, value);
                             return Ok(());
                         }
                     }
@@ -729,7 +743,7 @@ pub mod defines_full_draft {
                 flags |= DefineDataFlags::METHOD_CALL_MUST_BE_REPLACED_WITH_UNDEFINED;
             }
             DefineData {
-                value: b.value.clone(),
+                value: b.value,
                 flags,
                 original_name: b.original_name.clone(),
             }
@@ -960,7 +974,7 @@ pub mod renamer {
     use bun_ast::SlotCounts;
     use bun_ast::base::Ref;
     use bun_ast::scope::Scope;
-    use bun_ast::symbol::{self, INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
+    use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
     use bun_collections::VecExt;
 
     // Round-C alias kept for P.rs/Parser.rs callers.
@@ -1058,14 +1072,14 @@ pub mod renamer {
         }
 
         // Assign slots for the symbols of child scopes
-        let mut slot_counts = slot.clone();
+        let mut slot_counts = slot;
         for child in scope.children.slice() {
             // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
             slot_counts.union_max(assign_nested_scope_slots_helper(
                 sorted_members,
                 child,
                 symbols,
-                slot.clone(),
+                slot,
             ));
         }
 
@@ -1101,8 +1115,6 @@ pub mod renamer {
 
     // The remaining renamer types are only consumed by the printer and bundler
     // — they live in `bun_js_printer`.
-    #[allow(unused_imports)]
-    use symbol as _;
 }
 
 // ported from: src/js_parser/js_parser.zig

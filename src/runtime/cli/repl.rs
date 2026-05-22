@@ -11,6 +11,7 @@
 //!
 //! This replaces the TypeScript-based REPL for faster startup and better integration.
 
+#[cfg(unix)]
 use core::ffi::c_int;
 use core::fmt::Arguments;
 use std::io::Write as _;
@@ -19,7 +20,9 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_core::{Environment, Output, env_var, fmt, tty};
+#[cfg(unix)]
+use bun_core::tty;
+use bun_core::{Environment, Output, env_var, fmt};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
@@ -91,12 +94,15 @@ fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
 /// is the sole driver of `tick()` / `wait_for_promise()` here. The Rust port
 /// stores `&VirtualMachine` for borrowck simplicity and casts at the call site.
 #[inline]
-#[allow(invalid_reference_casting)]
+#[allow(invalid_reference_casting, clippy::mut_from_ref)]
 fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
     // Launder through a raw pointer; rustc's `invalid_reference_casting` lint is
     // silenced above because the Zig spec's `*JSC.VirtualMachine` is a freely-
     // aliasing mutable pointer and `VirtualMachine` is `!Sync` single-thread state.
     let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
+    // SAFETY: `ptr` is non-null and points to a live `VirtualMachine` (derived from
+    // `&'a VirtualMachine`); the REPL is the sole driver on this single JS thread so
+    // no other `&mut` to this VM exists for `'a` (see fn-level SAFETY doc above).
     unsafe { &mut *ptr }
 }
 
@@ -105,12 +111,9 @@ fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
 // ============================================================================
 
 const MAX_HISTORY_SIZE: usize = 1000;
-const MAX_LINE_LENGTH: usize = 16384;
 const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
-const TAB_WIDTH: usize = 2;
 
 // ANSI escape codes
-const ESC: &str = "\x1b";
 const CSI: &str = concat!("\x1b", "[");
 
 // Colors — Color::RESET, Color::CYAN, … resolve unchanged
@@ -119,14 +122,8 @@ use bun_core::output::ansi as Color;
 // Cursor control
 struct Cursor;
 impl Cursor {
-    const HIDE: &'static str = concat!("\x1b", "[", "?25l");
-    const SHOW: &'static str = concat!("\x1b", "[", "?25h");
-    const SAVE: &'static str = concat!("\x1b", "7");
-    const RESTORE: &'static str = concat!("\x1b", "8");
     const HOME: &'static str = concat!("\x1b", "[", "H");
     const CLEAR_LINE: &'static str = concat!("\x1b", "[", "2K");
-    const CLEAR_TO_END: &'static str = concat!("\x1b", "[", "0K");
-    const CLEAR_TO_START: &'static str = concat!("\x1b", "[", "1K");
     const CLEAR_SCREEN: &'static str = concat!("\x1b", "[", "2J");
     const CLEAR_SCROLLBACK: &'static str = concat!("\x1b", "[", "3J");
 }
@@ -291,12 +288,9 @@ impl History {
         }
 
         let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o644) {
-            sys::Result::Ok(fd) => sys::File { handle: fd },
+            sys::Result::Ok(fd) => sys::File::from_fd(fd),
             sys::Result::Err(_) => return,
         };
-        let file = scopeguard::guard(file, |file| {
-            let _ = file.close();
-        });
         match file.write_all(&content) {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => return,
@@ -580,20 +574,15 @@ impl ReplCommand {
     ];
 
     pub fn find(name: &[u8]) -> Option<&'static ReplCommand> {
-        for cmd in &Self::ALL {
-            if strings::eql_long(cmd.name, name, true)
+        Self::ALL.iter().find(|&cmd| {
+            strings::eql_long(cmd.name, name, true)
                 || (name.len() > 1 && cmd.name.starts_with(name))
-            {
-                return Some(cmd);
-            }
-        }
-        None
+        })
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReplResult {
-    ContinueRepl,
     ExitRepl,
     SkipEval,
 }
@@ -775,15 +764,12 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
         sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
         0o644,
     ) {
-        sys::Result::Ok(fd) => sys::File { handle: fd },
+        sys::Result::Ok(fd) => sys::File::from_fd(fd),
         sys::Result::Err(err) => {
             repl.print_error(format_args!("{}\n", err));
             return ReplResult::SkipEval;
         }
     };
-    let file = scopeguard::guard(file, |file| {
-        let _ = file.close();
-    });
     match file.write_all(&content) {
         sys::Result::Ok(()) => {}
         sys::Result::Err(err) => {
@@ -1055,10 +1041,9 @@ impl<'a> Repl<'a> {
             self.stdin_buf_start += 1;
             return Some(b);
         }
-        // Refill buffer
-        let stdin = sys::File {
-            handle: Fd::stdin(),
-        };
+        // Refill buffer (stdio fd: `File::Drop` is a no-op, so this is safe to
+        // re-create on every call).
+        let stdin = sys::File::stdin();
         let n = match stdin.read(&mut self.stdin_buf) {
             sys::Result::Ok(n) => n,
             sys::Result::Err(_) => return None,
@@ -1676,8 +1661,7 @@ impl<'a> Repl<'a> {
         jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &raw const value,
-            1,
+            core::slice::from_ref(&value),
             &mut array,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: false,
@@ -1784,7 +1768,7 @@ impl<'a> Repl<'a> {
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone().into(),
+            vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
@@ -1816,7 +1800,7 @@ impl<'a> Repl<'a> {
         let source = bun_ast::Source::init_path_string(b"[repl]", processed_code);
 
         // Parse with REPL transforms
-        let mut parser = match bun_js_parser::Parser::init(
+        let parser = match bun_js_parser::Parser::init(
             opts,
             &mut log,
             &source,
@@ -1849,8 +1833,12 @@ impl<'a> Repl<'a> {
         // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
         // `ast.symbols` instead — see Symbol.rs PORT NOTE on the dangling-slice
         // hazard.
-        let symbols_map =
-            bun_ast::symbol::Map::init_with_one_list(core::mem::take(&mut ast.symbols));
+        let arena = *ast.symbols.allocator();
+        let symbols_map = bun_ast::symbol::Map::init_with_one_list(
+            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
+                .into_iter()
+                .collect(),
+        );
 
         if bun_js_printer::print_ast::<
             _,
@@ -1858,7 +1846,7 @@ impl<'a> Repl<'a> {
             /* GENERATE_SOURCE_MAP */ false,
         >(
             &mut buffer_printer,
-            &arena,
+            arena,
             &ast,
             symbols_map,
             &source,
@@ -1875,12 +1863,6 @@ impl<'a> Repl<'a> {
         // Get the written buffer
         let written = buffer_printer.ctx.get_written();
         Some(Box::<[u8]>::from(written))
-    }
-
-    fn set_repl_variables(&self) {
-        // For now, we rely on the C++ evaluation to handle this
-        // The C++ code sets _ and _error after each evaluation
-        let _ = self;
     }
 
     fn print_js_error(&self, error_value: JSValue) {
@@ -1906,8 +1888,7 @@ impl<'a> Repl<'a> {
         if jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Error,
             global,
-            &raw const error_value,
-            1,
+            core::slice::from_ref(&error_value),
             &mut buf,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors,
@@ -1941,8 +1922,7 @@ impl<'a> Repl<'a> {
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
             global,
-            &raw const value,
-            1,
+            core::slice::from_ref(&value),
             &mut buf,
             jsc::ConsoleObject::FormatOptions {
                 enable_colors: self.use_colors,
@@ -1966,10 +1946,6 @@ impl<'a> Repl<'a> {
     // ========================================================================
     // Main Loop
     // ========================================================================
-
-    pub fn run(&mut self) -> Result<(), bun_core::Error> {
-        self.run_with_vm(None)
-    }
 
     pub fn run_with_vm(&mut self, vm: Option<&'a VirtualMachine>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
@@ -2175,7 +2151,6 @@ impl<'a> Repl<'a> {
                         self.refresh_line();
                         return Ok(());
                     }
-                    ReplResult::ContinueRepl => {}
                 }
             } else {
                 self.print_error(format_args!("Unknown command: {}\n", BStr::new(cmd_name)));
@@ -2437,12 +2412,13 @@ impl<'a> Drop for Repl<'a> {
 static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
+#[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
     let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
     if !vm.is_null() {
-        // SAFETY: vm was a valid `*mut jsc::VM` when stored (JS thread is
+        // `vm` was a valid `*mut jsc::VM` when stored (JS thread is
         // blocked in wait while the handler runs, so it stays valid).
-        unsafe { vm_set_execution_forbidden(vm, true) };
+        vm_set_execution_forbidden(vm, true);
     }
 }
 
@@ -2505,17 +2481,6 @@ fn is_incomplete_code(code: &[u8]) -> bool {
 }
 
 use crate::api::js_transpiler::is_likely_object_literal;
-
-// ============================================================================
-// Public Entry Point (for CLI integration)
-// ============================================================================
-
-pub fn exec(ctx: crate::cli::Command::Context) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
-    let _ = ctx;
-    let mut repl = Repl::init();
-    repl.run()
-}
 
 const VERSION: &str = Environment::VERSION_STRING;
 

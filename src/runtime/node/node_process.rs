@@ -5,7 +5,7 @@ use core::ffi::c_char;
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
 use bun_jsc::zig_string::ZigString;
-use bun_jsc::{JSGlobalObject, JSValue, WebWorker, ZigStringJsc as _};
+use bun_jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
 
 // TODO(port): move to <area>_sys — extern decls colocated for now
 unsafe extern "C" {
@@ -277,19 +277,19 @@ mod _impl {
             // at compile time, so build the set lazily at runtime from the same
             // `AUTO_PARAMS` table. Could swap this for a phf::Set via
             // build.rs or a proc-macro.
-            static MAP: std::sync::LazyLock<std::collections::HashSet<Vec<u8>>> =
+            static MAP: std::sync::LazyLock<bun_collections::StringSet> =
                 std::sync::LazyLock::new(|| {
-                    let mut set = std::collections::HashSet::new();
+                    let mut set = bun_collections::StringSet::new();
                     for param in crate::cli::arguments::AUTO_PARAMS.iter() {
                         if param.takes_value != bun_clap::Values::None {
                             if let Some(name) = param.names.long {
                                 let mut k = Vec::with_capacity(2 + name.len());
                                 k.extend_from_slice(b"--");
                                 k.extend_from_slice(name);
-                                set.insert(k);
+                                bun_core::handle_oom(set.insert(&k));
                             }
                             if let Some(name) = param.names.short {
-                                set.insert(vec![b'-', name]);
+                                bun_core::handle_oom(set.insert(&[b'-', name]));
                             }
                         }
                     }

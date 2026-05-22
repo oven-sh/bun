@@ -1,6 +1,9 @@
-use core::ffi::{c_int, c_void};
+use core::ffi::c_int;
+#[cfg(windows)]
+use core::ffi::c_void;
 use core::fmt;
 
+#[cfg(debug_assertions)]
 use bun_core::Output;
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
@@ -205,7 +208,7 @@ impl FdExt for Fd {
         {
             if let Some(ref err) = result {
                 if err.errno == sys::E::EBADF as _ {
-                    Output::debug_warn(&format_args!(
+                    Output::debug_warn(format_args!(
                         "close({}) = EBADF. This is an indication of a file descriptor UAF",
                         bstr::BStr::new(fd_fmt),
                     ));
@@ -284,7 +287,8 @@ impl FdExt for Fd {
     }
 
     fn delete_tree(self, subpath: &[u8]) -> Result<(), bun_core::Error> {
-        sys::Dir::from_fd(self).delete_tree(subpath)
+        // Non-owning view: `self` is the caller's fd; we must not close it.
+        sys::Dir::borrow(&self).delete_tree(subpath)
     }
 
     #[inline]

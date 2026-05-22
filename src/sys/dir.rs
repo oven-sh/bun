@@ -1,17 +1,24 @@
 //! `bun.sys.Dir` — directory handle + helpers. Port of the `Dir` half of
 //! `src/sys/sys.zig` (Zig: `bun.sys.Dir` ≈ `std.fs.Dir`).
 //!
-//! `Dir` is `Copy` and does not close on Drop; use [`OwnedDir`] for RAII close.
+//! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and the
+//! `AT_FDCWD` sentinel). Use [`Dir::into_raw`] to hand the fd off,
+//! [`Dir::borrow`] for a non-owning `&Dir` view of someone else's fd.
 
 use super::*;
 
-// ──────────────────────────────────────────────────────────────────────────
-// `Dir` — `std.fs.Dir` replacement. Thin wrapper over `Fd`; close on Drop is
-// NOT done (matches Zig — callers explicitly `.close()` or hold for lifetime).
-// ──────────────────────────────────────────────────────────────────────────
-#[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct Dir {
     pub fd: Fd,
+}
+
+impl Drop for Dir {
+    #[inline]
+    fn drop(&mut self) {
+        if self.fd != Fd::INVALID && self.fd != Fd::cwd() {
+            let _ = close(self.fd);
+        }
+    }
 }
 
 /// Options for `Dir::copy_file` (Zig: `std.fs.Dir.CopyFileOptions`).
@@ -42,9 +49,56 @@ impl Dir {
     pub fn cwd() -> Self {
         Self { fd: Fd::cwd() }
     }
+    /// Open `path` relative to cwd. `O_DIRECTORY | O_RDONLY | O_CLOEXEC`.
+    #[inline]
+    pub fn open(path: &[u8]) -> Maybe<Self> {
+        open_dir_at(Fd::cwd(), path).map(Self::from_fd)
+    }
+    /// Open `path` relative to cwd with explicit flags. `O_DIRECTORY` is
+    /// always added.
+    #[inline]
+    pub fn open_with(path: &[u8], flags: i32) -> Maybe<Self> {
+        openat_a(Fd::cwd(), path, flags | O::DIRECTORY, 0).map(Self::from_fd)
+    }
+    /// Open `sub_path` relative to this dir.
+    #[inline]
+    pub fn open_at(&self, sub_path: &[u8]) -> Maybe<Self> {
+        open_dir_at(self.fd, sub_path).map(Self::from_fd)
+    }
+    /// Open `sub_path` relative to this dir with explicit flags. `O_DIRECTORY`
+    /// is always added.
+    #[inline]
+    pub fn open_at_with(&self, sub_path: &[u8], flags: i32) -> Maybe<Self> {
+        openat_a(self.fd, sub_path, flags | O::DIRECTORY, 0).map(Self::from_fd)
+    }
+    /// Open `sub_path` relative to this dir as a [`File`].
+    #[inline]
+    pub fn open_file(&self, sub_path: &[u8], flags: i32, mode: Mode) -> Maybe<File> {
+        File::openat(self.fd, sub_path, flags, mode)
+    }
+    /// Resolve this dir's absolute path via `/proc/self/fd` (Linux),
+    /// `F_GETPATH` (macOS), or `GetFinalPathNameByHandle` (Windows).
+    #[inline]
+    pub fn get_fd_path<'b>(&self, buf: &'b mut bun_paths::PathBuffer) -> Maybe<&'b mut [u8]> {
+        get_fd_path(self.fd, buf)
+    }
+    /// Close now. Equivalent to dropping `self` but discards the syscall
+    /// result (matches Zig's `Dir.close()`).
     #[inline]
     pub fn close(self) {
-        let _ = close(self.fd);
+        drop(self);
+    }
+    /// Disarm the drop guard and return the raw [`Fd`]. The caller takes over
+    /// the descriptor's lifecycle.
+    #[inline]
+    pub fn into_raw(self) -> Fd {
+        core::mem::ManuallyDrop::new(self).fd
+    }
+    /// Non-owning `&Dir` view of an [`Fd`]. Mirrors `Path::new(&OsStr)`.
+    #[inline]
+    pub fn borrow(fd: &Fd) -> &Dir {
+        // SAFETY: `Dir` is `#[repr(transparent)]` over `Fd`.
+        unsafe { &*(core::ptr::from_ref(fd).cast::<Dir>()) }
     }
 
     /// `std.fs.Dir.makePath` — `mkdir -p` relative to this dir.
@@ -254,7 +308,8 @@ pub const AT_REMOVEDIR: i32 = 0x200;
 
 /// sys.zig:2928 `rmdirat` — `unlinkat(dir, path, AT_REMOVEDIR)`.
 #[inline]
-pub fn rmdirat(dirfd: Fd, path: &ZStr) -> Maybe<()> {
+pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
+    let dirfd = dirfd.as_fd();
     unlinkat_with_flags(dirfd, path, AT_REMOVEDIR)
 }
 
@@ -267,45 +322,6 @@ fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
     // SAFETY: NUL-terminated above.
     let z = ZStr::from_buf(&buf.0[..], len);
     unlinkat_with_flags(dirfd, z, flags)
-}
-
-/// RAII owner for a `Dir` — closes the fd on `Drop`. Use when a directory is
-/// opened for a bounded scope and must be closed on every exit path (Zig:
-/// `defer dir.close()`). `Dir` itself stays `Copy` and never closes implicitly.
-pub struct OwnedDir(Dir);
-impl OwnedDir {
-    #[inline]
-    pub fn new(dir: Dir) -> Self {
-        Self(dir)
-    }
-    #[inline]
-    pub fn dir(&self) -> Dir {
-        self.0
-    }
-    #[inline]
-    pub fn fd(&self) -> Fd {
-        self.0.fd
-    }
-    /// Take the inner `Dir` without closing it.
-    #[inline]
-    pub fn into_inner(self) -> Dir {
-        let d = self.0;
-        core::mem::forget(self);
-        d
-    }
-}
-impl Drop for OwnedDir {
-    #[inline]
-    fn drop(&mut self) {
-        let _ = close(self.0.fd);
-    }
-}
-impl core::ops::Deref for OwnedDir {
-    type Target = Dir;
-    #[inline]
-    fn deref(&self) -> &Dir {
-        &self.0
-    }
 }
 
 /// `std.fs.File.CreateFlags` — subset used by `Dir::createFileZ` callers
@@ -474,15 +490,6 @@ impl Dir {
     }
 }
 
-/// bun.zig — `bun.openDir(dir, path)`. Opens `path` relative to `dir` as a
-/// directory `Dir` handle.
-#[inline]
-pub fn open_dir(dir: Dir, path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
-    open_dir_at(dir.fd, path)
-        .map(Dir::from_fd)
-        .map_err(Into::into)
-}
-
 // `Fd` parity: `Fd::cwd().make_open_path(..)` / `.make_path(..)` are used by
 // `bun_install` and `bun_bundler` directly on `Fd`. Extension trait so we
 // don't fight with `bun_core`'s inherent impl.
@@ -498,10 +505,85 @@ impl FdDirExt for Fd {
     }
     #[inline]
     fn make_open_path(self, sub_path: &[u8]) -> core::result::Result<Dir, bun_core::Error> {
-        Dir::from_fd(self).make_open_path(sub_path, OpenDirOptions::default())
+        Dir::borrow(&self).make_open_path(sub_path, OpenDirOptions::default())
     }
     #[inline]
     fn from_std_dir(dir: &Dir) -> Fd {
         dir.fd
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file::tests::FD_TEST_LOCK;
+
+    fn open_cwd() -> Dir {
+        Dir::open(b".").unwrap()
+    }
+
+    #[test]
+    fn drop_closes_fd() {
+        let _g = FD_TEST_LOCK.lock();
+        let raw = {
+            let dir = open_cwd();
+            dir.fd()
+        };
+        assert!(fstat(raw).is_err());
+    }
+
+    #[test]
+    fn close_disarms_drop() {
+        let _g = FD_TEST_LOCK.lock();
+        let dir = open_cwd();
+        let raw = dir.fd();
+        dir.close();
+        let canary = open_cwd();
+        assert!(fstat(canary.fd()).is_ok());
+        let _ = raw;
+    }
+
+    #[test]
+    fn into_raw_disarms_drop() {
+        let _g = FD_TEST_LOCK.lock();
+        let dir = open_cwd();
+        let raw = dir.into_raw();
+        // `dir` has been forgotten; the fd is still open.
+        assert!(fstat(raw).is_ok());
+        let _ = close(raw);
+    }
+
+    #[test]
+    fn borrow_does_not_close() {
+        let _g = FD_TEST_LOCK.lock();
+        let dir = open_cwd();
+        let raw = dir.fd();
+        {
+            let view = Dir::borrow(&raw);
+            let _ = view;
+        }
+        // The borrow dropped, but the fd is still open.
+        assert!(fstat(raw).is_ok());
+    }
+
+    #[test]
+    fn dropping_cwd_sentinel_is_safe() {
+        let _g = FD_TEST_LOCK.lock();
+        // `Dir::cwd()` wraps `AT_FDCWD`. Dropping it must be a no-op — it must
+        // not close fd 0 (or any other low fd that `AT_FDCWD` could collide
+        // with after a wraparound).
+        for _ in 0..16 {
+            let _ = Dir::cwd();
+        }
+        // Still able to open files relative to cwd.
+        assert!(Dir::cwd().open_at(b".").is_ok());
+    }
+
+    #[test]
+    fn dropping_invalid_fd_is_safe() {
+        let _g = FD_TEST_LOCK.lock();
+        for _ in 0..16 {
+            let _ = Dir::from_fd(Fd::INVALID);
+        }
     }
 }

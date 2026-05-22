@@ -31,20 +31,14 @@ struct VulnerabilityInfo {
 }
 
 #[derive(Default)]
-#[allow(dead_code)]
 struct PackageInfo {
-    package_id: u32,
-    name: Box<[u8]>,
-    version: Box<[u8]>,
     vulnerabilities: Vec<VulnerabilityInfo>,
     dependents: Vec<DependencyPath>,
 }
 
 // In Zig this is `PackageInfo.DependencyPath`; hoisted because Rust has no nested struct types.
-#[allow(dead_code)]
 struct DependencyPath {
     path: Vec<Box<[u8]>>,
-    is_direct: bool,
 }
 
 struct AuditResult {
@@ -114,7 +108,7 @@ impl AuditCommand {
     /// The exception is when you pass --json, it will simply return 0 as that was considered a successful "request
     /// for the audit information"
     pub fn audit(
-        ctx: Command::Context,
+        _ctx: Command::Context,
         pm: &mut PackageManager,
         json_output: bool,
         audit_level: Option<AuditLevel>,
@@ -197,7 +191,7 @@ impl AuditCommand {
     }
 }
 
-fn print_skipped_packages(skipped_packages: &Vec<Box<[u8]>>) {
+fn print_skipped_packages(skipped_packages: &[Box<[u8]>]) {
     if !skipped_packages.is_empty() {
         pretty!("<d>Skipped<r> ");
         for (i, package_name) in skipped_packages.iter().enumerate() {
@@ -603,7 +597,6 @@ fn find_dependency_paths(
         if dep_name == target_package {
             paths.push(DependencyPath {
                 path: vec![Box::<[u8]>::from(target_package)],
-                is_direct: true,
             });
             break;
         }
@@ -636,7 +629,6 @@ fn find_dependency_paths(
                         workspace_prefix.into_boxed_slice(),
                         Box::<[u8]>::from(target_package),
                     ],
-                    is_direct: false,
                 });
                 break;
             }
@@ -693,10 +685,7 @@ fn find_dependency_paths(
         }
 
         if is_root_dep || workspace_name_for_dep.is_some() {
-            let mut path = DependencyPath {
-                path: Vec::new(),
-                is_direct: false,
-            };
+            let mut path = DependencyPath { path: Vec::new() };
 
             let mut trace: Box<[u8]> = current.clone();
             let mut seen_in_trace: StringHashMap<()> = StringHashMap::default();
@@ -714,7 +703,7 @@ fn find_dependency_paths(
 
                 // Get parent for next iteration
                 if let Some(parent) = parent_map.get(&*trace) {
-                    trace = parent.clone();
+                    trace.clone_from(parent);
                 } else {
                     break;
                 }
@@ -853,10 +842,6 @@ fn print_enhanced_audit_report(
                 .get_or_put(&vulnerability.package_name)?;
             if !result.found_existing {
                 *result.value_ptr = PackageInfo {
-                    package_id: 0,
-                    // TODO(port): Zig aliased these slices; cloned here because fields are Box<[u8]>.
-                    name: vulnerability.package_name.clone(),
-                    version: vulnerability.vulnerable_versions.clone(),
                     vulnerabilities: Vec::new(),
                     dependents: paths,
                 };

@@ -220,9 +220,9 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // pointer adopt (Zig `moveFromList`, baby_list.zig:46), not a realloc.
         // Hot Global callers: `FileReader`, `ByteStream`, `shell::Cmd`.
         if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
+            let mut list = core::mem::ManuallyDrop::new(list);
             // SAFETY: `A == Global`, so `Vec<T>` and `Vec<T, A>` have identical
             // layout, allocator, and drop semantics.
-            let mut list = core::mem::ManuallyDrop::new(list);
             return unsafe {
                 Vec::from_raw_parts_in(list.as_mut_ptr(), list.len(), list.capacity(), A::default())
             };
@@ -241,11 +241,11 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     }
     #[inline]
     unsafe fn from_bump_slice(items: &mut [T]) -> Self {
+        let mut v = Vec::with_capacity_in(items.len(), A::default());
         // SAFETY: caller contract — `items` is a leaked bump-arena slice
         // (`into_bump_slice_mut`); bitwise-move elements into a fresh `A`
         // allocation, leaving the arena bytes abandoned (they were already
         // leaked into the bump and will never be element-dropped).
-        let mut v = Vec::with_capacity_in(items.len(), A::default());
         unsafe {
             core::ptr::copy_nonoverlapping(items.as_ptr(), v.as_mut_ptr(), items.len());
             v.set_len(items.len());
@@ -474,9 +474,9 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // path is still required for `AstAlloc` etc. where the buffer must
         // migrate heaps.
         if core::any::TypeId::of::<A>() == core::any::TypeId::of::<std::alloc::Global>() {
+            let mut taken = core::mem::ManuallyDrop::new(taken);
             // SAFETY: `A == Global`, so `Vec<T, A>` and `Vec<T>` have the
             // same layout, allocator, and drop semantics.
-            let mut taken = core::mem::ManuallyDrop::new(taken);
             return unsafe {
                 Vec::from_raw_parts(taken.as_mut_ptr(), taken.len(), taken.capacity())
             };
@@ -652,10 +652,14 @@ impl ByteVecExt for Vec<u8> {
     }
     #[inline]
     unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8] {
+        // SAFETY: caller contract on `uv_alloc_spare_u8` — the returned uninit
+        // bytes are only read after the FFI-written prefix is committed.
         unsafe { bun_core::vec::reserve_spare_bytes(self, suggested) }
     }
     #[inline]
     unsafe fn uv_commit(&mut self, nread: usize) {
+        // SAFETY: caller contract on `uv_commit` — `[len, len+nread)` was
+        // initialised by the preceding write into the spare slice.
         unsafe { bun_core::vec::commit_spare(self, nread) }
     }
 }

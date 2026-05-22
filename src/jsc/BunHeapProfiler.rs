@@ -22,7 +22,7 @@ unsafe extern "C" {
     safe fn Bun__generateHeapSnapshotV8(vm: &mut VM) -> BunString;
 }
 
-pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Result<(), Error> {
+pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> Result<(), Error> {
     // `defer profile_string.deref()` — `bun_core::String` is `Copy` (no Drop);
     // wrap the +1 ref from C++ in `OwnedString` so it's released on every exit path.
     let profile_string = OwnedString::new(if config.text_format {
@@ -43,7 +43,7 @@ pub fn generate_and_write_profile(vm: &mut VM, config: HeapProfilerConfig) -> Re
     let mut path_buf = AutoAbsPath::init_top_level_dir();
     // `defer path_buf.deinit()` — handled by Drop.
 
-    build_output_path(&mut path_buf, &config)?;
+    build_output_path(&mut path_buf, config)?;
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]

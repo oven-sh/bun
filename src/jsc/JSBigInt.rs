@@ -1,5 +1,4 @@
 use core::cmp::Ordering;
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::String as BunString;

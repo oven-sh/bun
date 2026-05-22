@@ -1,8 +1,7 @@
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::String;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 // PORT NOTE: `jsc.markBinding(@src())` calls were dropped — debug-only binding-trace
 // helper with no Rust equivalent; a `mark_binding!()` macro could be added if wanted.

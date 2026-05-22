@@ -1,7 +1,7 @@
 use std::io::Write as _;
 
 use crate::cli::command::Context;
-use bun_ast::{self as js_ast, E, Expr, ExprData, G};
+use bun_ast::{E, Expr, ExprData, G};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
@@ -155,6 +155,8 @@ impl PmPkgCommand {
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        // SAFETY: CLI dispatch is single-threaded; no other borrow of
+        // `ctx.log` is live while `log` is passed to the JSON parser below.
         let log: &mut Log = unsafe { ctx.log_mut() };
         // const generics mirror Zig `.{ .is_json, .allow_comments,
         // .allow_trailing_commas, .guess_indentation = true }` with the
@@ -178,7 +180,7 @@ impl PmPkgCommand {
         };
 
         Ok(PackageJson {
-            root: result.root.into(),
+            root: result.root,
             contents,
             source,
             indentation: result.indentation,
@@ -507,13 +509,13 @@ impl PmPkgCommand {
                     if !matches!(current.data, ExprData::EObject(_)) {
                         return Err(err!("NotFound"));
                     }
-                    current = current.get(prop_name).ok_or(err!("NotFound"))?;
+                    current = current.get(prop_name).ok_or_else(|| err!("NotFound"))?;
                     remaining_part = &part[first_bracket..];
                 }
 
                 while let Some(bracket_start) = strings::index_of(remaining_part, b"[") {
                     let bracket_end = strings::index_of(&remaining_part[bracket_start..], b"]")
-                        .ok_or(err!("InvalidPath"))?;
+                        .ok_or_else(|| err!("InvalidPath"))?;
                     let actual_bracket_end = bracket_start + bracket_end;
                     let index_str = &remaining_part[bracket_start + 1..actual_bracket_end];
 
@@ -536,7 +538,7 @@ impl PmPkgCommand {
                         if !matches!(current.data, ExprData::EObject(_)) {
                             return Err(err!("NotFound"));
                         }
-                        current = current.get(index_str).ok_or(err!("NotFound"))?;
+                        current = current.get(index_str).ok_or_else(|| err!("NotFound"))?;
                     }
 
                     remaining_part = &remaining_part[actual_bracket_end + 1..];
@@ -554,7 +556,7 @@ impl PmPkgCommand {
                             current = arr.items.slice()[index];
                         }
                         ExprData::EObject(_) => {
-                            current = current.get(part).ok_or(err!("NotFound"))?;
+                            current = current.get(part).ok_or_else(|| err!("NotFound"))?;
                         }
                         _ => return Err(err!("NotFound")),
                     }
@@ -562,7 +564,7 @@ impl PmPkgCommand {
                     if !matches!(current.data, ExprData::EObject(_)) {
                         return Err(err!("NotFound"));
                     }
-                    current = current.get(part).ok_or(err!("NotFound"))?;
+                    current = current.get(part).ok_or_else(|| err!("NotFound"))?;
                 }
             }
         }
@@ -791,7 +793,7 @@ impl PmPkgCommand {
             if let Ok(json_expr) =
                 json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
             {
-                return Ok(json_expr.into());
+                return Ok(json_expr);
             } else {
                 let data: &[u8] = dummy_bump().alloc_slice_copy(value);
                 return Ok(Expr::init(E::String::init(data), Loc::EMPTY));
@@ -890,7 +892,7 @@ impl PmPkgCommand {
         // old list, ptr::read kept entries into the new list, then forget the
         // old buffer (CLI is one-shot — leak is intentional, see
         // load_package_json).
-        let old = bun_alloc::AstAlloc::take(&mut e_obj.properties);
+        let old = core::mem::ManuallyDrop::new(bun_alloc::AstAlloc::take(&mut e_obj.properties));
         let mut new_props: G::PropertyList = G::PropertyList::init_capacity(old_len - 1);
         for prop in old.slice() {
             if let Some(k) = &prop.key {
@@ -900,11 +902,10 @@ impl PmPkgCommand {
                     }
                 }
             }
-            // SAFETY: `old` is forgotten below so each Property is moved (not
-            // duplicated) into `new_props`, matching Zig's value-copy loop.
+            // SAFETY: `old` is wrapped in `ManuallyDrop` so each Property is
+            // moved (not duplicated) into `new_props`, matching Zig's value-copy loop.
             new_props.append_assume_capacity(unsafe { core::ptr::read(prop) });
         }
-        core::mem::forget(old);
         e_obj.properties = new_props;
 
         Ok(true)

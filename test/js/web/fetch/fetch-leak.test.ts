@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isCI } from "harness";
+import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -216,7 +216,9 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
 
     const deltaMB = (final - baseline) / 1024 / 1024;
     console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
-    if (deltaMB > 32) {
+    // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
+    // deltas run far higher under bun-asan; widen the threshold there.
+    if (deltaMB > ${isASAN ? 256 : 32}) {
       throw new Error("fetch(data:) leaked " + Math.round(deltaMB) + " MB over 200 iterations");
     }
   `;
@@ -355,7 +357,8 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
         // 32 cycles * 512 Requests * 128 KiB = 2 GiB through the pool. If deinit() is
         // skipped for any heap-backed variant, RSS climbs by ~2 GiB; with the
         // Zig semantics it stays flat. 64 MiB is well above GC/allocator noise.
-        if (deltaMB > 64) {
+        // ASAN's quarantine retains freed allocations so widen the threshold there.
+        if (deltaMB > ${isASAN ? 320 : 64}) {
           throw new Error("Request body (${kind}) leaked " + Math.round(deltaMB) + " MB over 32 cycles of 512 Requests");
         }
       `;
@@ -388,7 +391,9 @@ test("should not leak using readable stream", async () => {
     env: {
       ...bunEnv,
       SERVER_URL: server.url.href,
-      MAX_MEMORY_INCREASE: "5", // in MB
+      // ASAN's quarantine retains freed allocations so RSS stays elevated
+      // under bun-asan; the fixture only allows MAX_MEMORY_INCREASE MiB.
+      MAX_MEMORY_INCREASE: isASAN ? "64" : "5", // in MB
     },
     stdout: "pipe",
     stderr: "pipe",

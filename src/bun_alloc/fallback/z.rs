@@ -60,7 +60,7 @@ impl Z {
 
     // `.remap = Allocator.noRemap` — the mimalloc z_allocator doesn't support remap.
     pub fn remap(
-        &self,
+        self,
         _buf: &mut [u8],
         _alignment: Alignment,
         _new_len: usize,
@@ -70,7 +70,7 @@ impl Z {
     }
 
     pub fn free(
-        &self, // Zig: `_: *anyopaque`
+        self, // Zig: `_: *anyopaque`
         buf: &mut [u8],
         alignment: Alignment,
         return_address: usize,

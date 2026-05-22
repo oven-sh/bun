@@ -1,5 +1,4 @@
 use core::ffi::c_int;
-use core::marker::{PhantomData, PhantomPinned};
 
 use crate::{JSValue, VM};
 use bun_core::{self as bstr, ZigString};

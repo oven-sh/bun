@@ -5,12 +5,6 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 
-// LAYERING: every `Expr` flowing through this file (YAML parse, package.json
-// cache, `CatalogMap::from_pnpm_lockfile`) is the T2 value-shaped tree from
-// `bun_ast::js_ast`, NOT the T4 `bun_ast::Expr`. Importing the T4
-// type here forced a deep-convert at every boundary and broke type unification
-// with `WorkspacePackageJSONCache.root`. Use the lower crate directly; the
-// only T4 hop is the final `print_json` call, which lifts via `.into()`.
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
 use bun_core::strings;
 use bun_semver as semver;
@@ -22,7 +16,7 @@ use crate::dependency::{self, Dependency, DependencyExt as _};
 use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
-use crate::npm::{self, Negatable};
+use crate::npm::{self};
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
 
@@ -562,10 +556,12 @@ pub fn migrate_pnpm_lockfile<'a>(
                     continue;
                 }
 
-                let mut pkg = lockfile::Package::default();
-
-                pkg.resolution =
-                    Resolution::init(TaggedValue::Workspace(sbuf!(lockfile).append(path)?));
+                let mut pkg = lockfile::Package {
+                    resolution: Resolution::init(TaggedValue::Workspace(
+                        sbuf!(lockfile).append(path)?,
+                    )),
+                    ..Default::default()
+                };
 
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.append(path); // OOM/capacity: Zig aborts; port keeps fire-and-forget
@@ -664,7 +660,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
             let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
             'next_dep: for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                let dep_id: DependencyID = _dep_id;
 
                 let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
 
@@ -975,7 +971,7 @@ pub fn migrate_pnpm_lockfile<'a>(
         // resolve root dependencies first
         let root_deps = lockfile.packages.items_dependencies()[0];
         for _dep_id in root_deps.begin()..root_deps.end() {
-            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
 
@@ -1052,7 +1048,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
         for _dep_id in deps.begin()..deps.end() {
-            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
@@ -1109,7 +1105,7 @@ pub fn migrate_pnpm_lockfile<'a>(
 
         let deps = lockfile.packages.items_dependencies()[pkg_id as usize];
         for _dep_id in deps.begin()..deps.end() {
-            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+            let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
             let mut version_maybe_alias = dep.version.literal.slice(string_buf);
@@ -1140,7 +1136,7 @@ pub fn migrate_pnpm_lockfile<'a>(
             write!(
                 &mut res_buf,
                 "{}@{}",
-                bstr::BStr::new(has_alias.unwrap_or(dep.name.slice(string_buf))),
+                bstr::BStr::new(has_alias.unwrap_or_else(|| dep.name.slice(string_buf))),
                 bstr::BStr::new(version_without_suffix)
             )
             .map_err(|_| AllocError)?;
@@ -1503,7 +1499,7 @@ fn parse_append_importer_dependencies(
                     // PORT NOTE: reshaped for borrowck — `CatalogMap::get` needs
                     // both `&mut self.catalogs` and `&self`; temporarily move
                     // catalogs out so the disjoint fields can be borrowed.
-                    let mut catalogs = core::mem::take(&mut lockfile.catalogs);
+                    let catalogs = core::mem::take(&mut lockfile.catalogs);
                     let dep_result = catalogs.get(lockfile, catalog_group_name, name.value);
                     lockfile.catalogs = catalogs;
                     let Some(mut dep) = dep_result else {
@@ -2076,7 +2072,7 @@ fn update_package_json_after_migration(
 
         if bun_js_printer::print_json(
             &mut package_json_writer,
-            json.into(),
+            json,
             &root_pkg_json.source,
             bun_js_printer::PrintJsonOptions {
                 indent: root_pkg_json.indentation,

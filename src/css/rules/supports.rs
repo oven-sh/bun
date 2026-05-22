@@ -3,6 +3,7 @@ use crate::css_rules::{CssRuleList, Location, MinifyContext};
 use crate::error::MinifyErr;
 use crate::properties::PropertyId;
 use crate::{PrintErr, Printer};
+use bun_alloc::ArenaPtr;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
 /// as used in the `@supports` and `@import` rules.
@@ -11,13 +12,13 @@ use crate::{PrintErr, Printer};
 // TODO(refactor): re-thread `'i` once `PropertyId<'i>` and the parser arena are real.
 pub enum SupportsCondition {
     /// A `not` expression.
-    Not(Box<SupportsCondition>),
+    Not(Box<SupportsCondition, ArenaPtr>),
 
     /// An `and` expression.
-    And(Vec<SupportsCondition>),
+    And(Vec<SupportsCondition, ArenaPtr>),
 
     /// An `or` expression.
-    Or(Vec<SupportsCondition>),
+    Or(Vec<SupportsCondition, ArenaPtr>),
 
     /// A declaration to evaluate.
     Declaration(Declaration),
@@ -77,14 +78,25 @@ impl SupportsCondition {
         // `#[derive(DeepClone)]` can't be used while `Selector`/`Unknown`
         // carry `&'static [u8]`; the blanket `&'bump [u8]` impl doesn't unify
         // with a fresh `'__bump`).
+        let alloc = ArenaPtr::new(bump);
         match self {
-            Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
-            Self::And(v) => Self::And(v.iter().map(|c| c.deep_clone(bump)).collect()),
-            Self::Or(v) => Self::Or(v.iter().map(|c| c.deep_clone(bump)).collect()),
+            Self::Not(c) => Self::Not(Box::new_in(c.deep_clone(bump), alloc)),
+            Self::And(v) => Self::And(Self::clone_vec_in(v, bump, alloc)),
+            Self::Or(v) => Self::Or(Self::clone_vec_in(v, bump, alloc)),
             Self::Declaration(d) => Self::Declaration(d.deep_clone(bump)),
             Self::Selector(s) => Self::Selector(s),
             Self::Unknown(s) => Self::Unknown(s),
         }
+    }
+
+    fn clone_vec_in(
+        v: &[SupportsCondition],
+        bump: &bun_alloc::Arena,
+        alloc: ArenaPtr,
+    ) -> Vec<SupportsCondition, ArenaPtr> {
+        let mut out = Vec::with_capacity_in(v.len(), alloc);
+        out.extend(v.iter().map(|c| c.deep_clone(bump)));
+        out
     }
 }
 
@@ -261,13 +273,16 @@ impl SupportsCondition {
 
         if input.try_parse(|i| i.expect_ident_matching(b"not")).is_ok() {
             let in_parens = SupportsCondition::parse_in_parens(input)?;
-            return Ok(SupportsCondition::Not(Box::new(in_parens)));
+            return Ok(SupportsCondition::Not(Box::new_in(
+                in_parens,
+                ArenaPtr::new(input.arena()),
+            )));
         }
 
         let in_parens: SupportsCondition = SupportsCondition::parse_in_parens(input)?;
         let mut expected_type: Option<i32> = None;
-        // PERF(port): was arena-backed ArrayListUnmanaged — profile if it shows up on a hot path
-        let mut conditions: Vec<SupportsCondition> = Vec::new();
+        let mut conditions: Vec<SupportsCondition, ArenaPtr> =
+            Vec::new_in(ArenaPtr::new(input.arena()));
         // PORT NOTE: Zig used std.ArrayHashMap with an inline custom hash/eql context;
         // SeenDeclKey below carries equivalent Hash/Eq impls.
         let mut seen_declarations: ArrayHashMap<SeenDeclKey, usize> = ArrayHashMap::new();
@@ -300,7 +315,6 @@ impl SupportsCondition {
             match _condition {
                 Ok(condition) => {
                     if conditions.is_empty() {
-                        // PERF(port): was arena alloc via input.arena() — profile if it shows up on a hot path
                         conditions.push(in_parens.deep_clone(input.arena()));
                         if let SupportsCondition::Declaration(decl) = &in_parens {
                             let property_id = &decl.property_id;
@@ -392,8 +406,7 @@ impl SupportsCondition {
                 }
             }
             css::Token::OpenParen => {
-                let res =
-                    input.try_parse(|i| i.parse_nested_block(|i2| SupportsCondition::parse(i2)));
+                let res = input.try_parse(|i| i.parse_nested_block(SupportsCondition::parse));
                 if res.is_ok() {
                     return res;
                 }

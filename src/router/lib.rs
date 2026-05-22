@@ -1,4 +1,3 @@
-#![allow(unused, dead_code, non_snake_case, private_interfaces)]
 #![warn(unused_must_use)]
 // This is a Next.js-compatible file-system router.
 // It uses the filesystem to infer entry points.
@@ -10,8 +9,7 @@ use core::cmp::Ordering;
 use core::ptr::NonNull;
 use std::cell::RefCell;
 
-use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
-use bun_core::Output;
+use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_paths::{self, PathBuffer, SEP, SEP_STR};
 use bun_sys::Fd;
@@ -68,10 +66,6 @@ unsafe fn arena_slice(ps: PathString) -> &'static [u8] {
     // artificially-short reborrow.
     unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
 }
-
-// `load_routes` takes the real `bun_ast::Log`. Kept as a re-export so
-// out-of-crate callers don't need a direct `bun_logger` import for the type.
-use bun_ast::Log as RouteLoaderLog;
 
 // ──────────────────────────────────────────────────────────────────────────
 // cross-tier decoupling
@@ -166,7 +160,7 @@ impl RouteConfig {
                 router.routes_enabled = !router.dir.is_empty();
             }
             _ => {
-                router.possible_dirs = router_.dir.clone();
+                router.possible_dirs.clone_from(&router_.dir);
                 for dir in router_.dir.iter() {
                     let trimmed = trim_right(dir, b"/\\");
                     if !trimmed.is_empty() {
@@ -371,6 +365,10 @@ struct RouteIndex {
 // MultiArrayList(RouteIndex)) until the derive exists.
 #[derive(Default)]
 pub struct RouteIndexList {
+    // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
+    // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
+    // would dangle them on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     route: Vec<Box<Route>>,
     name: Vec<&'static [u8]>,
     match_name: Vec<&'static [u8]>,
@@ -389,7 +387,7 @@ impl RouteIndexList {
         self.hash.reserve_exact(cap);
         Ok(())
     }
-    pub fn push(&mut self, item: RouteIndex) {
+    pub(crate) fn push(&mut self, item: RouteIndex) {
         self.route.push(item.route);
         self.name.push(item.name);
         self.match_name.push(item.match_name);
@@ -576,9 +574,7 @@ impl Routes {
         params: &mut route_param::List<'p>,
     ) -> Option<*const Route> {
         // its cleaned, so now we search the big list of strings
-        let Some(start) = self.dynamic_start else {
-            return None;
-        };
+        let start = self.dynamic_start?;
         let end = start + self.dynamic_len;
         let dynamic = &self.list.items_route()[start..end];
         let dynamic_names = &self.list.items_name()[start..end];
@@ -626,6 +622,9 @@ struct RouteLoader<'a> {
     // (self-referential); `Routes` co-owns it with `list`.
     index: Option<NonNull<Route>>,
     static_list: StringHashMap<*const Route>,
+    // `Box` is load-bearing: `index` / `static_list` above hold raw pointers
+    // into the box interiors; unboxing would dangle them on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     all_routes: Vec<Box<Route>>,
 }
 
@@ -754,7 +753,6 @@ impl<'a> RouteLoader<'a> {
             index: None,
             route_dirname_len,
         };
-        // dedupe_dynamic dropped at end of scope (was `defer this.dedupe_dynamic.deinit()`)
         this.load(resolver, root_dir_info, base_dir);
         if this.all_routes.is_empty() {
             return Routes {
@@ -765,7 +763,7 @@ impl<'a> RouteLoader<'a> {
         }
 
         this.all_routes
-            .sort_unstable_by(|a, b| Sorter::sort_by_name_cmp(a, b));
+            .sort_unstable_by(|a, b| sorter::sort_by_name_cmp(a, b));
 
         let mut route_list = RouteIndexList::default();
         route_list
@@ -839,8 +837,8 @@ impl<'a> RouteLoader<'a> {
         let fs = self.fs;
 
         if let Some(entries) = root_dir_info.get_entries_const() {
-            let mut iter = entries.iter();
-            'outer: while let Some(entry_ptr) = iter.next() {
+            let iter = entries.iter();
+            'outer: for entry_ptr in iter {
                 // PORT NOTE: `iter()` yields raw `*mut Entry` (matching Zig's
                 // `*Entry` map value type, fs.zig:117). Reborrow locally for
                 // each access so `&` reads and the `&mut` `kind()` call do not
@@ -856,8 +854,9 @@ impl<'a> RouteLoader<'a> {
                 // it to lazily stat when `need_stat` is true, so null would be
                 // a latent crash / silent route-drop once the stub forwards it.
                 // Zig `Entry.Kind` is exactly `{dir, file}` (resolver/fs.zig:378).
-                // SAFETY: no other live borrow of `*entry_ptr` here.
-                let kind = unsafe { &mut *entry_ptr }.kind(resolver.fs_impl(), false);
+                // SAFETY: no other live borrow of `*entry_ptr` here; entries_mutex
+                // held; `resolver.fs_impl()` points at the process-global RealFS.
+                let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
                 // SAFETY: shared read-only borrow for the match arms; the only
                 // subsequent mutation is via `Route::parse` which takes the raw
                 // pointer and reborrows internally.
@@ -872,7 +871,7 @@ impl<'a> RouteLoader<'a> {
 
                         let abs_parts = [entry.dir(), entry.base()];
                         if let Some(dir_info) =
-                            resolver.read_dir_info_ignore_error(&fs.abs(&abs_parts))
+                            resolver.read_dir_info_ignore_error(fs.abs(&abs_parts))
                         {
                             self.load(resolver, &dir_info, base_dir);
                         }
@@ -899,14 +898,19 @@ impl<'a> RouteLoader<'a> {
                                 // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
                                 let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
-                                if let Some(route) = Route::parse(
-                                    entry.base(),
-                                    extname,
-                                    entry_ptr,
-                                    self.log,
-                                    public_dir,
-                                    self.route_dirname_len,
-                                ) {
+                                // SAFETY: `entry_ptr` is EntryStore-owned (process
+                                // lifetime) with no other live `&mut` borrow here.
+                                let route = unsafe {
+                                    Route::parse(
+                                        entry.base(),
+                                        extname,
+                                        entry_ptr,
+                                        self.log,
+                                        public_dir,
+                                        self.route_dirname_len,
+                                    )
+                                };
+                                if let Some(route) = route {
                                     self.append_route(route);
                                 }
                                 break;
@@ -1030,7 +1034,11 @@ pub type RoutePtr = TinyPtr;
 impl Route {
     pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
-    pub fn parse(
+    /// # Safety
+    /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
+    /// other active `&mut` borrow for the duration of the call. `base_` and
+    /// `extname` may borrow `(*entry).base_`; see the PORT NOTE below.
+    pub unsafe fn parse(
         base_: &[u8],
         extname: &[u8],
         entry: *mut Fs::Entry,
@@ -1067,7 +1075,7 @@ impl Route {
         // the name we actually store will often be this one
         ROUTE_BUFS.with_borrow_mut(|bufs| {
             let route_file_buf = &mut bufs.route_file_buf;
-            let mut public_path: &[u8] = 'brk: {
+            let public_path: &[u8] = 'brk: {
                 if base.is_empty() {
                     break 'brk public_dir;
                 }
@@ -1174,11 +1182,14 @@ impl Route {
                 // PORT NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
                 // Cell so the drop closure can read it while the body still mutates.
+                // The guard is inverted: when the fd belongs to the cache
+                // (`needs_close == false`), `into_raw()` so we do not close
+                // someone else's fd.
                 let needs_close = core::cell::Cell::new(true);
                 let mut file = scopeguard::guard(None::<bun_sys::File>, |f| {
-                    if needs_close.get() {
+                    if !needs_close.get() {
                         if let Some(f) = f {
-                            let _ = f.close();
+                            let _ = f.into_raw();
                         }
                     }
                 });
@@ -1309,7 +1320,7 @@ impl Route {
     }
 }
 
-pub mod Sorter {
+pub mod sorter {
     use super::*;
 
     const fn build_sort_table() -> [u8; 256] {
@@ -1383,7 +1394,7 @@ pub mod Sorter {
 }
 
 // PORT NOTE: Zig nested `Sorter` under `Route`; Rust has no `impl Route { pub use Sorter }`
-// equivalent, so callers use `crate::Sorter` directly.
+// equivalent, so callers use `crate::sorter` directly.
 
 struct RouteBufs {
     route_file_buf: PathBuffer,
@@ -1431,12 +1442,14 @@ impl<'a> Match<'a> {
     /// SAFETY: caller guarantees `self.params` is live and not mutably aliased.
     #[inline]
     pub unsafe fn params(&self) -> &route_param::List<'a> {
+        // SAFETY: caller contract — `self.params` is live and not mutably aliased.
         unsafe { &*self.params }
     }
 
     /// SAFETY: caller guarantees `self.params` is live and uniquely accessed.
     #[inline]
     pub unsafe fn params_mut(&mut self) -> &mut route_param::List<'a> {
+        // SAFETY: caller contract — `self.params` is live and uniquely borrowed.
         unsafe { &mut *self.params }
     }
 
@@ -1475,7 +1488,11 @@ impl<'a> Match<'a> {
             // Raw pointer; lifetime parameter on the pointee is phantom for the
             // pointer value itself.
             params: self.params.cast::<route_param::List<'static>>(),
-            redirect_path: self.redirect_path.map(|s| unsafe { d(s) }),
+            redirect_path: self.redirect_path.map(|s| {
+                // SAFETY: caller contract on `detach_lifetime` — every borrowed
+                // slice outlives the returned `Match<'static>`.
+                unsafe { d(s) }
+            }),
             query_string: d(self.query_string),
         }
     }
@@ -1800,7 +1817,6 @@ pub mod pattern {
 
             let mut i: RoutePathInt = offset;
 
-            let mut tag = Tag::Static;
             let end: RoutePathInt = u16::try_from(input.len() - 1).expect("route path fits in u16");
 
             if offset == end {
@@ -1830,7 +1846,7 @@ pub mod pattern {
                             });
                         }
 
-                        tag = Tag::Dynamic;
+                        let mut tag = Tag::Dynamic;
 
                         let mut param = TinyPtr::default();
 

@@ -39,8 +39,7 @@ impl ScanOpts {
         absolute: bool,
         fn_name: &'static str, // PERF(port): was comptime monomorphization
     ) -> JsResult<Box<[u8]>> {
-        let cwd_string = BunString::from_js(cwd_val, global_this)?;
-        // `cwd_string` drops at scope exit (was `defer cwd_string.deref()`).
+        let cwd_string = bun_core::OwnedString::new(BunString::from_js(cwd_val, global_this)?);
         if cwd_string.is_empty() {
             return Ok(Box::default());
         }
@@ -488,9 +487,7 @@ impl Glob {
             bun_sys::Result::Ok(()) => {}
         }
 
-        let matched_paths = glob_walk_result_to_js(&mut glob_walker, global_this);
-
-        matched_paths
+        glob_walk_result_to_js(&mut glob_walker, global_this)
     }
 
     #[bun_jsc::host_fn(method)]

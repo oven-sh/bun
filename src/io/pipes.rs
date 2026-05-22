@@ -1,8 +1,12 @@
 use core::ffi::c_void;
 
-use bun_sys::{Fd, FdExt};
+use bun_sys::Fd;
+#[cfg(not(windows))]
+use bun_sys::FdExt;
 
-use crate::{FilePollFlag, FilePollRef, Owner};
+#[cfg(target_os = "macos")]
+use crate::FilePollFlag;
+use crate::{FilePollRef, Owner};
 
 pub enum PollOrFd {
     Poll(FilePollRef),
@@ -58,9 +62,13 @@ impl PollOrFd {
     ) where
         F: FnOnce(*mut c_void),
     {
+        #[cfg(windows)]
+        let _ = close_fd;
         let fd = self.get_fd();
-        #[allow(unused_mut)]
+        #[cfg(target_os = "macos")]
         let mut close_async = true;
+        #[cfg(all(not(target_os = "macos"), not(windows)))]
+        let close_async = true;
         if matches!(self, PollOrFd::Poll(_)) {
             // workaround kqueue bug.
             // 1) non-blocking FIFO

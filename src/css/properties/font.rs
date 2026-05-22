@@ -17,7 +17,6 @@
 // carries a `blocked_on:` note so the next round can lift bodies as their
 // deps land.
 
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 
 use crate::PrintResult;
@@ -80,7 +79,7 @@ impl FontWeight {
         FontWeight::Absolute(AbsoluteFontWeight::default())
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontWeight::Absolute(a) => a.is_compatible(browsers),
             FontWeight::Bolder | FontWeight::Lighter => true,
@@ -123,7 +122,7 @@ impl AbsoluteFontWeight {
 
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
-            AbsoluteFontWeight::Weight(weight) => CSSNumberFns::to_css(weight, dest),
+            AbsoluteFontWeight::Weight(weight) => CSSNumberFns::to_css(*weight, dest),
             AbsoluteFontWeight::Normal => {
                 dest.write_str(if dest.minify { "400" } else { "normal" })
             }
@@ -131,7 +130,7 @@ impl AbsoluteFontWeight {
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             // Older browsers only supported 100, 200, 300, ...900 rather than arbitrary values.
             AbsoluteFontWeight::Weight(val) => {
@@ -168,7 +167,7 @@ impl FontSize {
     // parse + to_css — provided by #[derive(css::Parse, css::ToCss)].
     // is_compatible KEPT (custom Rem branch).
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontSize::Length(l) => match l {
                 DimensionPercentage::Dimension(LengthValue::Rem(_)) => {
@@ -210,7 +209,7 @@ pub enum AbsoluteFontSize {
 }
 
 impl AbsoluteFontSize {
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             AbsoluteFontSize::XxxLarge => Feature::FontSizeXXXLarge.is_compatible(browsers),
             _ => true,
@@ -229,7 +228,7 @@ pub enum RelativeFontSize {
 }
 
 /// A value for the [font-stretch](https://www.w3.org/TR/css-fonts-4/#font-stretch-prop) property.
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum FontStretch {
     /// A font stretch keyword.
     Keyword(FontStretchKeyword),
@@ -247,7 +246,7 @@ impl FontStretch {
         Percentage::parse(input).map(FontStretch::Percentage)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         if dest.minify {
             let percentage: Percentage = self.into_percentage();
             return percentage.to_css(dest);
@@ -259,14 +258,14 @@ impl FontStretch {
         }
     }
 
-    pub fn into_percentage(&self) -> Percentage {
+    pub fn into_percentage(self) -> Percentage {
         match self {
-            FontStretch::Percentage(val) => *val,
+            FontStretch::Percentage(val) => val,
             FontStretch::Keyword(kw) => kw.into_percentage(),
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontStretch::Percentage(_) => Feature::FontStretchPercentage.is_compatible(browsers),
             FontStretch::Keyword(_) => true,
@@ -314,7 +313,7 @@ impl FontStretchKeyword {
         FontStretchKeyword::Normal
     }
 
-    pub fn into_percentage(&self) -> Percentage {
+    pub fn into_percentage(self) -> Percentage {
         let val: f32 = match self {
             FontStretchKeyword::UltraCondensed => 0.5,
             FontStretchKeyword::ExtraCondensed => 0.625,
@@ -348,9 +347,7 @@ pub type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if let Ok(value) =
-            input.try_parse(|p| p.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
-        {
+        if let Ok(value) = input.try_parse(|p| p.expect_string().map(std::ptr::from_ref::<[u8]>)) {
             // arena-owned: parser slice lives for 'bump
             return Ok(FontFamily::FamilyName(value));
         }
@@ -365,8 +362,7 @@ impl FontFamily {
         let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
-        while let Ok(ident) =
-            input.try_parse(|p| p.expect_ident().map(|s| std::ptr::from_ref::<[u8]>(s)))
+        while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(std::ptr::from_ref::<[u8]>))
         {
             if string.is_none() {
                 let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
@@ -429,7 +425,7 @@ impl FontFamily {
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontFamily::Generic(g) => g.is_compatible(browsers),
             FontFamily::FamilyName(_) => true,
@@ -521,7 +517,7 @@ pub enum GenericFontFamily {
 }
 
 impl GenericFontFamily {
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             GenericFontFamily::SystemUi => Feature::FontFamilySystemUi.is_compatible(browsers),
             GenericFontFamily::UiSerif
@@ -558,20 +554,20 @@ impl FontStyle {
             b"oblique" => {
                 let angle = input
                     .try_parse(Angle::parse)
-                    .unwrap_or(FontStyle::default_oblique_angle());
+                    .unwrap_or_else(|_| FontStyle::default_oblique_angle());
                 Ok(FontStyle::Oblique(angle))
             },
             _ => Err(location.new_unexpected_token_error(crate::Token::Ident(ident))),
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
+    pub fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             FontStyle::Normal => dest.write_str("normal"),
             FontStyle::Italic => dest.write_str("italic"),
             FontStyle::Oblique(angle) => {
                 dest.write_str("oblique")?;
-                if *angle != FontStyle::default_oblique_angle() {
+                if angle != FontStyle::default_oblique_angle() {
                     dest.write_char(b' ')?;
                     angle.to_css(dest)?;
                 }
@@ -580,10 +576,10 @@ impl FontStyle {
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             FontStyle::Oblique(angle) => {
-                if *angle != FontStyle::default_oblique_angle() {
+                if angle != FontStyle::default_oblique_angle() {
                     Feature::FontStyleObliqueAngle.is_compatible(browsers)
                 } else {
                     true
@@ -625,7 +621,7 @@ impl FontVariantCaps {
         FontVariantCaps::Normal
     }
 
-    fn is_css2(&self) -> bool {
+    fn is_css2(self) -> bool {
         matches!(self, FontVariantCaps::Normal | FontVariantCaps::SmallCaps)
     }
 
@@ -637,7 +633,7 @@ impl FontVariantCaps {
         Ok(value)
     }
 
-    pub fn is_compatible(&self, _: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(self, _: &crate::targets::Browsers) -> bool {
         true
     }
 }
@@ -672,12 +668,12 @@ impl LineHeight {
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             LineHeight::Normal => dest.write_str("normal"),
-            LineHeight::Number(n) => CSSNumberFns::to_css(n, dest),
+            LineHeight::Number(n) => CSSNumberFns::to_css(*n, dest),
             LineHeight::Length(l) => l.to_css(dest),
         }
     }
 
-    pub fn is_compatible(&self, browsers: crate::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool {
         match self {
             LineHeight::Length(l) => l.is_compatible(browsers),
             LineHeight::Normal | LineHeight::Number(_) => true,
@@ -737,7 +733,7 @@ impl Font {
         let mut style: Option<FontStyle> = None;
         let mut weight: Option<FontWeight> = None;
         let mut stretch: Option<FontStretch> = None;
-        let mut size: Option<FontSize> = None;
+        let final_size: FontSize;
         let mut variant_caps: Option<FontVariantCaps> = None;
         let mut count: i32 = 0;
 
@@ -784,18 +780,13 @@ impl Font {
                 }
             }
 
-            size = Some(FontSize::parse(input)?);
+            final_size = FontSize::parse(input)?;
             break;
         }
 
         if count > 4 {
             return Err(input.new_custom_error(ParserError::invalid_declaration));
         }
-
-        let final_size = match size {
-            Some(s) => s,
-            None => return Err(input.new_custom_error(ParserError::invalid_declaration)),
-        };
 
         let line_height = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             Some(LineHeight::parse(input)?)
@@ -966,7 +957,10 @@ impl FontHandler {
                 if $this.$field.is_some()
                     && !crate::generic::eql($this.$field.as_ref().unwrap(), $val)
                     && context.targets.browsers.is_some()
-                    && !crate::generic::is_compatible($val, context.targets.browsers.unwrap())
+                    && !crate::generic::is_compatible(
+                        $val,
+                        context.targets.browsers.as_ref().unwrap(),
+                    )
                 {
                     $this.flush(dest, context);
                 }
@@ -1002,7 +996,7 @@ impl FontHandler {
                 self.size = Some(val.size.clone());
                 self.style = Some(val.style);
                 self.weight = Some(val.weight.clone());
-                self.stretch = Some(val.stretch.clone());
+                self.stretch = Some(val.stretch);
                 self.line_height = Some(val.line_height.clone());
                 self.variant_caps = Some(val.variant_caps);
                 self.has_any = true;

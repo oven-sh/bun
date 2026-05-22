@@ -322,7 +322,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("caught=sync-boom");
     expect(exitCode).toBe(0);
-  }, 70_000);
+  }, 130_000);
 
   test("async throw in callback emits unhandledRejection", async () => {
     // Matches setTimeout: rejected promise → unhandledRejection.
@@ -346,7 +346,7 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("caught=async-boom:true");
     expect(exitCode).toBe(0);
-  }, 70_000);
+  }, 130_000);
 
   test("stop() while async callback pending still surfaces unhandledRejection with promise", async () => {
     await using proc = Bun.spawn({

@@ -5,15 +5,15 @@ use bun_ptr::{BackRef, RawSlice};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
-    JSPromise, JSPromiseStrong, JSType, JSValue, JsError, JsResult, SysErrorJsc, VirtualMachine,
+    JSPromise, JSPromiseStrong, JSType, JSValue, JsResult, SysErrorJsc, VirtualMachine,
 };
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
-use crate::webcore::blob::{Any as AnyBlob, Blob};
-use crate::webcore::sink::{Sink, SinkHandler};
+use crate::webcore::blob::Any as AnyBlob;
+use crate::webcore::sink::Sink;
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // PORT NOTE: scope statics renamed with `Log` suffix so they don't collide with
@@ -49,22 +49,8 @@ pub mod result {
 // Start
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Options payload for the `Start::FileSink` variant. Mirrors
-/// `jsc.WebCore.FileSink.Options` (path-or-fd + chunk size).
-// TODO(port): once `crate::webcore::file_sink::Options` is exported, alias to it.
-pub struct FileSinkOptions {
-    pub chunk_size: BlobSizeType,
-    pub input_path: crate::webcore::PathOrFileDescriptor,
-}
-
-impl Default for FileSinkOptions {
-    fn default() -> Self {
-        Self {
-            chunk_size: 0,
-            input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-        }
-    }
-}
+/// Options payload for the `Start::FileSink` variant.
+pub type FileSinkOptions = crate::webcore::file_sink::Options;
 
 pub enum Start {
     Empty,
@@ -106,15 +92,15 @@ impl Start {
     pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Start::Empty | Start::Ready => Ok(JSValue::UNDEFINED),
-            Start::ChunkSize(chunk) => Ok(JSValue::js_number(chunk as f64)),
+            Start::ChunkSize(chunk) => Ok(JSValue::from(chunk)),
             Start::Err(err) => Err(err.throw(global_this)),
-            Start::OwnedAndDone(mut list) => {
+            Start::OwnedAndDone(list) => {
                 // PORT NOTE: Zig captures `|list|` by bitwise copy with no destructor and
                 // hands the allocation to JSC (no-copy + MarkedArrayBuffer_deallocator). In
                 // Rust `list` is an owned Vec whose Drop would free the same buffer →
-                // double-free. Build the ArrayBuffer, then forget `list` so JSC is sole owner.
+                // double-free. Suppress Drop via ManuallyDrop so JSC is the sole owner.
+                let mut list = core::mem::ManuallyDrop::new(list);
                 let ab = ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array);
-                core::mem::forget(list);
                 ab.to_js(global_this)
             }
             Start::Done(list) => {
@@ -253,6 +239,7 @@ impl Start {
                             // folded into the owning `ZigStringSlice`.
                             path.to_slice(global_this)?,
                         ),
+                        ..Default::default()
                     }));
                 } else if let Some(fd_value) = value.get_truthy(global_this, b"fd")? {
                     if !fd_value.is_any_int() {
@@ -268,6 +255,7 @@ impl Start {
                         return Ok(Start::FileSink(FileSinkOptions {
                             chunk_size,
                             input_path: crate::webcore::PathOrFileDescriptor::Fd(fd),
+                            ..Default::default()
                         }));
                     } else {
                         return Ok(Start::Err(SysError {
@@ -281,6 +269,7 @@ impl Start {
                 return Ok(Start::FileSink(FileSinkOptions {
                     input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
                     chunk_size,
+                    ..Default::default()
                 }));
             }
             StartTag::NetworkSink
@@ -594,12 +583,12 @@ impl Writable {
             Writable::Err(err) => {
                 JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js()
             }
-            Writable::Owned(len) => JSValue::js_number(len as f64),
-            Writable::OwnedAndDone(len) => JSValue::js_number(len as f64),
-            Writable::TemporaryAndDone(len) => JSValue::js_number(len as f64),
-            Writable::Temporary(len) => JSValue::js_number(len as f64),
-            Writable::IntoArray(len) => JSValue::js_number(len as f64),
-            Writable::IntoArrayAndDone(len) => JSValue::js_number(len as f64),
+            Writable::Owned(len) => JSValue::from(len),
+            Writable::OwnedAndDone(len) => JSValue::from(len),
+            Writable::TemporaryAndDone(len) => JSValue::from(len),
+            Writable::Temporary(len) => JSValue::from(len),
+            Writable::IntoArray(len) => JSValue::from(len),
+            Writable::IntoArrayAndDone(len) => JSValue::from(len),
             // false == controller.close()
             // undefined == noop, but we probably won't send it
             Writable::Done => JSValue::TRUE,
@@ -698,6 +687,12 @@ impl Pending {
             .enqueue_task(bun_event_loop::Task::from_boxed(clone));
     }
 
+    /// # Safety
+    /// `this` must be a valid, uniquely-owned pointer previously produced by
+    /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
+    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
@@ -883,18 +878,16 @@ impl StreamResult {
                 // PORT NOTE: Zig overwrites `result.* = .{ .temporary = .{} }` with no
                 // destructor after handing the buffer to JSC. In Rust the later
                 // `*result = Temporary(...)` in fulfill_promise drops the old Vec,
-                // double-freeing the allocation now owned by JSC. Move it out and forget
-                // so JSC's MarkedArrayBuffer_deallocator is the sole owner.
-                let mut taken = core::mem::take(list);
+                // double-freeing the allocation now owned by JSC. Move it out and suppress
+                // Drop so JSC's MarkedArrayBuffer_deallocator is the sole owner.
+                let mut taken = core::mem::ManuallyDrop::new(core::mem::take(list));
                 let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
-                core::mem::forget(taken);
                 ab.to_js(global_this)
             }
             StreamResult::OwnedAndDone(list) => {
                 // PORT NOTE: see Owned arm above — same ownership transfer to JSC.
-                let mut taken = core::mem::take(list);
+                let mut taken = core::mem::ManuallyDrop::new(core::mem::take(list));
                 let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
-                core::mem::forget(taken);
                 ab.to_js(global_this)
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
@@ -902,10 +895,8 @@ impl StreamResult {
                 // back to ArrayBuffer::create (copies) until the no-init path lands.
                 ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, temp.slice())
             }
-            StreamResult::IntoArray(array) => Ok(JSValue::js_number_from_uint64(array.len as u64)),
-            StreamResult::IntoArrayAndDone(array) => {
-                Ok(JSValue::js_number_from_uint64(array.len as u64))
-            }
+            StreamResult::IntoArray(array) => Ok(JSValue::from(array.len)),
+            StreamResult::IntoArrayAndDone(array) => Ok(JSValue::from(array.len)),
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM classification
                 let promise = unsafe { &mut **pending }.promise(global_this);
@@ -1512,7 +1503,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         true
     }
 
-    pub fn start(&mut self, stream_start: Start) -> bun_sys::Result<()> {
+    pub fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
         if self.aborted || self.res.is_none() || self.any_res().unwrap().has_responded() {
             self.mark_done();
             self.signal.close(None);
@@ -1533,19 +1524,15 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                     // SAFETY: pooled_node is a valid pool checkout; `data` was
                     // written by `ByteListPool::push` (or zero-initialized).
                     // Move the Vec<u8> out by bitwise read and reset the slot.
-                    self.buffer = unsafe {
-                        core::mem::replace(
-                            (*pooled_node.as_ptr()).data.assume_init_mut(),
-                            Vec::<u8>::default(),
-                        )
-                    };
+                    self.buffer =
+                        unsafe { core::mem::take((*pooled_node.as_ptr()).data.assume_init_mut()) };
                 }
             }
         }
 
         self.buffer.clear();
 
-        if let Start::ChunkSize(chunk_size) = stream_start {
+        if let &Start::ChunkSize(chunk_size) = stream_start {
             if chunk_size > 0 {
                 self.high_water_mark = chunk_size;
             }
@@ -1563,7 +1550,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn flush_from_js_no_wait(&mut self) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJSNoWait");
-        bun_sys::Result::Ok(JSValue::js_number(self.flush_no_wait() as f64))
+        bun_sys::Result::Ok(JSValue::from(self.flush_no_wait()))
     }
 
     pub fn flush_no_wait(&mut self) -> usize {
@@ -1603,7 +1590,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if self.buffer.len() == 0 || self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 global_this,
-                JSValue::js_number_from_int32(0),
+                JSValue::from(0i32),
             ));
         }
 
@@ -1613,7 +1600,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             if self.send_readable(0) {
                 return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                     global_this,
-                    JSValue::js_number(slice_len as f64),
+                    JSValue::from(slice_len),
                 ));
             }
         }
@@ -1643,7 +1630,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_sys::Result::Ok(())
     }
 
-    pub fn write(&mut self, data: StreamResult) -> Writable {
+    pub fn write(&mut self, data: &StreamResult) -> Writable {
         if self.done || self.requested_end {
             return Writable::Owned(0);
         }
@@ -1683,11 +1670,11 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         Writable::Owned(len)
     }
 
-    pub fn write_bytes(&mut self, data: StreamResult) -> Writable {
+    pub fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         self.write(data)
     }
 
-    pub fn write_latin1(&mut self, data: StreamResult) -> Writable {
+    pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         if self.done || self.requested_end {
             return Writable::Owned(0);
         }
@@ -1745,7 +1732,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         Writable::Owned(len)
     }
 
-    pub fn write_utf16(&mut self, data: StreamResult) -> Writable {
+    pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
         if self.done || self.requested_end {
             return Writable::Owned(0);
         }
@@ -1819,7 +1806,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         bun_core::scoped_log!(HTTPServerWritableLog, "endFromJS()");
 
         if self.requested_end {
-            return bun_sys::Result::Ok(JSValue::js_number(0.0));
+            return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
         if self.done || self.res.is_none() || self.any_res().unwrap().has_responded() {
@@ -1827,7 +1814,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.signal.close(None);
             self.mark_done();
             self.finalize();
-            return bun_sys::Result::Ok(JSValue::js_number(0.0));
+            return bun_sys::Result::Ok(JSValue::from(0i32));
         }
 
         self.requested_end = true;
@@ -1854,7 +1841,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.signal.close(None);
         self.finalize();
 
-        bun_sys::Result::Ok(JSValue::js_number(self.wrote as f64))
+        bun_sys::Result::Ok(JSValue::from(self.wrote))
     }
 
     pub fn sink(&mut self) -> Sink<'_> {
@@ -1884,7 +1871,9 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn register_auto_flusher(&mut self) {
         let Some(res) = self.any_res() else { return };
-        // if we enqueue data we should reset the timeout
+        // Match streams.zig:1231 — reset per-enqueue so a long stream of
+        // sub-highWaterMark writes between auto-flushes still bumps the idle
+        // timeout.
         res.reset_timeout();
         if !self.auto_flusher.registered.get() {
             let vm = self.global_this().bun_vm();
@@ -1914,6 +1903,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         false
     }
 
+    /// # Safety
+    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
+    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
+    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
         // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
@@ -1958,7 +1953,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             debug_assert!(self.pooled_buffer.is_none());
         }
 
-        if let Some(pooled) = self.pooled_buffer {
+        if let Some(mut pooled) = self.pooled_buffer {
             self.buffer.clear();
             if self.buffer.capacity() > 64 * 1024 {
                 self.buffer.clear_and_free();
@@ -1973,7 +1968,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             self.pooled_buffer = None;
             // PORT NOTE: Zig `pooled.release()` → Rust `ObjectPool::release(node)`
             // (the Node `Parent` back-ref was dropped in the port; see pool.rs).
-            ByteListPool::release(pooled.as_ptr());
+            // SAFETY: `pooled` was obtained from `ByteListPool::get_node` and is
+            // exclusively owned by this stream; `data` was rewritten just above,
+            // so it is initialized. Ownership returns to the pool.
+            unsafe { ByteListPool::release(pooled.as_mut()) };
         } else if self.buffer.capacity() == 0 {
             //
         } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
@@ -2045,13 +2043,13 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
     fn finalize(&mut self) {
         Self::finalize(self)
     }
-    fn write_bytes(&mut self, data: StreamResult) -> Writable {
+    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         Self::write(self, data)
     }
-    fn write_utf16(&mut self, data: StreamResult) -> Writable {
+    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
         Self::write_utf16(self, data)
     }
-    fn write_latin1(&mut self, data: StreamResult) -> Writable {
+    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         Self::write_latin1(self, data)
     }
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
@@ -2067,7 +2065,7 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkType
         Self::flush_from_js(self, global, wait)
     }
     fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, config)
+        Self::start(self, &config)
     }
     fn signal(&mut self) -> Option<&mut Signal> {
         Some(&mut self.signal)
@@ -2157,13 +2155,6 @@ impl NetworkSink {
     }
     // TODO(port): bun.TrivialDeinit → relies on Drop; explicit deinit is no-op here
 
-    fn get_high_water_mark(&self) -> BlobSizeType {
-        if let Some(task) = self.task_ref() {
-            return task.part_size_in_bytes() as BlobSizeType;
-        }
-        self.high_water_mark
-    }
-
     pub fn path(&self) -> Option<&[u8]> {
         if let Some(task) = self.task_ref() {
             return Some(&task.path);
@@ -2171,12 +2162,12 @@ impl NetworkSink {
         None
     }
 
-    pub fn start(&mut self, stream_start: Start) -> bun_sys::Result<()> {
+    pub fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
         }
 
-        if let Start::ChunkSize(chunk_size) = stream_start {
+        if let &Start::ChunkSize(chunk_size) = stream_start {
             if chunk_size > 0 {
                 self.high_water_mark = chunk_size;
             }
@@ -2206,7 +2197,7 @@ impl NetworkSink {
 
     fn detach_writable(&mut self) {
         if let Some(task) = self.task.take() {
-            // SAFETY: task is ref-counted; deref releases our ref
+            // task is ref-counted; deref releases our ref
             bun_s3::MultiPartUpload::deref_(task.as_ptr());
         }
     }
@@ -2265,6 +2256,12 @@ impl NetworkSink {
         ))
     }
 
+    /// # Safety
+    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
+    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
+    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn finalize_and_destroy(this: *mut Self) {
         // SAFETY: this was heap-allocated; reclaim sole ownership before
         // touching fields so no `&mut *this` is live alongside the Box.
@@ -2281,7 +2278,7 @@ impl NetworkSink {
         self.finalize();
     }
 
-    pub fn write(&mut self, data: StreamResult) -> Writable {
+    pub fn write(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
@@ -2296,11 +2293,11 @@ impl NetworkSink {
         Writable::Owned(len)
     }
 
-    pub fn write_bytes(&mut self, data: StreamResult) -> Writable {
+    pub fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         self.write(data)
     }
 
-    pub fn write_latin1(&mut self, data: StreamResult) -> Writable {
+    pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
@@ -2316,7 +2313,7 @@ impl NetworkSink {
         Writable::Owned(len)
     }
 
-    pub fn write_utf16(&mut self, data: StreamResult) -> Writable {
+    pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
@@ -2406,13 +2403,13 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     fn finalize(&mut self) {
         Self::finalize(self)
     }
-    fn write_bytes(&mut self, data: StreamResult) -> Writable {
+    fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         Self::write(self, data)
     }
-    fn write_utf16(&mut self, data: StreamResult) -> Writable {
+    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
         Self::write_utf16(self, data)
     }
-    fn write_latin1(&mut self, data: StreamResult) -> Writable {
+    fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         Self::write_latin1(self, data)
     }
     fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
@@ -2428,7 +2425,7 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
         Self::flush_from_js(self, global, wait)
     }
     fn start(&mut self, config: Start) -> bun_sys::Result<()> {
-        Self::start(self, config)
+        Self::start(self, &config)
     }
     fn signal(&mut self) -> Option<&mut Signal> {
         Some(&mut self.signal)
@@ -2494,7 +2491,7 @@ impl BufferAction {
     pub fn reject(
         &mut self,
         global: &JSGlobalObject,
-        err: StreamError,
+        err: &StreamError,
     ) -> core::result::Result<(), jsc::JsTerminated> {
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js_weak(global).0))

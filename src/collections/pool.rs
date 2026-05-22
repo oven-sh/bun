@@ -1,6 +1,6 @@
 use core::cell::RefCell;
 use core::marker::PhantomData;
-use core::mem::{MaybeUninit, offset_of};
+use core::mem::MaybeUninit;
 use core::ptr;
 
 use bun_core::Error;
@@ -138,22 +138,38 @@ impl<T> Default for SinglyLinkedList<T> {
     }
 }
 
+impl<T> Drop for SinglyLinkedList<T> {
+    fn drop(&mut self) {
+        // The free list owns its nodes (each `release()` hands ownership back).
+        // Without this, the TLS-backed pool's `DataStruct` strands every cached
+        // node when the thread exits.
+        let mut next = core::mem::replace(&mut self.first, ptr::null_mut());
+        while !next.is_null() {
+            let node = next;
+            next = Node::next_of(node);
+            // SAFETY: free-list nodes always carry initialized `data`
+            // (`release()` only stores nodes that were used) and are
+            // exclusively owned by the list.
+            unsafe {
+                (*node).data.assume_init_drop();
+                drop(bun_core::heap::take(node));
+            }
+        }
+    }
+}
+
 impl<T> SinglyLinkedList<T> {
     /// Insert a new node at the head.
     ///
-    /// Arguments:
-    ///     new_node: Pointer to the new node to insert.
-    pub fn prepend(&mut self, new_node: *mut Node<T>) {
-        // SAFETY: caller guarantees new_node is a live, exclusively-owned Node
-        unsafe { (*new_node).next = self.first };
+    /// `new_node` must be live and exclusively owned by the caller until popped.
+    pub fn prepend(&mut self, new_node: &mut Node<T>) {
+        new_node.next = self.first;
         self.first = new_node;
     }
 
-    /// Remove a node from the list.
-    ///
-    /// Arguments:
-    ///     node: Pointer to the node to be removed.
-    pub fn remove(&mut self, node: *mut Node<T>) {
+    /// Remove a node from the list. `node` must currently be in this list.
+    pub fn remove(&mut self, node: &Node<T>) {
+        let node = std::ptr::from_ref(node).cast_mut();
         if self.first == node {
             self.first = Node::next_of(node);
         } else {
@@ -297,7 +313,7 @@ impl<T: ObjectPoolType, const TS: bool, const MAX: usize, S> ObjectPoolTrait
 /// pair.
 pub struct PoolGuard<'a, T: ObjectPoolType + 'static> {
     node: *mut Node<T>,
-    release: fn(*mut Node<T>),
+    release: unsafe fn(&mut Node<T>),
     _marker: PhantomData<&'a mut T>,
 }
 
@@ -322,7 +338,12 @@ impl<'a, T: ObjectPoolType> core::ops::DerefMut for PoolGuard<'a, T> {
 
 impl<'a, T: ObjectPoolType> Drop for PoolGuard<'a, T> {
     fn drop(&mut self) {
-        (self.release)(self.node);
+        // SAFETY: `self.node` was obtained from `ObjectPool::get_node` and is
+        // exclusively owned by this guard for its lifetime; ownership returns
+        // to the pool's free list. `data` is initialized: either `T::INIT` is
+        // `Some` (so `get_node` wrote it), or the guard's `DerefMut` already
+        // proved initialization to the borrow checker before any read.
+        unsafe { (self.release)(&mut *self.node) };
     }
 }
 
@@ -380,7 +401,9 @@ where
             next: ptr::null_mut(),
             data: MaybeUninit::new(pooled),
         }));
-        Self::release(new_node);
+        // SAFETY: `new_node` is a freshly heap-allocated `Node<T>` we exclusively
+        // own, and `data` was initialized to `pooled` just above.
+        unsafe { Self::release(&mut *new_node) };
     }
 
     pub fn get_if_exists() -> Option<*mut Node<T>> {
@@ -409,6 +432,10 @@ where
     }
 
     /// Zig `get()` — pop a node from the free list or allocate a fresh one.
+    ///
+    /// When `T::INIT == None` and a fresh node is allocated, the returned
+    /// node's `data` is **uninitialized**; the caller must write a valid `T`
+    /// to it before reading it or passing the node to [`Self::release`].
     pub fn get_node() -> *mut Node<T> {
         let reused = Self::data(|cell| {
             let mut d = cell.borrow_mut();
@@ -459,13 +486,31 @@ where
         }
     }
 
-    pub fn release_value(value: *mut T) {
-        // SAFETY: `value` points to the `data` field of a live `Node<T>`
+    /// `value` must point to the `data` field of a live `Node<T>` previously
+    /// handed out by this pool (e.g. via `first()`).
+    pub fn release_value(value: &mut T) {
+        // SAFETY: `value` points to the `data` field of a live `Node<T>`.
         let node = unsafe { bun_core::from_field_ptr!(Node<T>, data, value) };
-        Self::release(node);
+        // SAFETY: `node` is the parent of the `data` field, exclusively owned.
+        // `data` is initialized: the caller handed us `&mut T`, which is only
+        // possible to form (without UB on the caller's side) if `data` holds a
+        // valid `T`.
+        unsafe { Self::release(&mut *node) };
     }
 
-    pub fn release(node: *mut Node<T>) {
+    /// Return a node to the pool's free list (or free it if the pool is full).
+    ///
+    /// # Safety
+    ///
+    /// `node` must be a live, exclusively-owned `Node<T>` previously handed out
+    /// by this pool (e.g. via `get` / `get_node` / `first`), and `node.data`
+    /// must be initialized. The free list assumes every stored node carries a
+    /// valid `T` so it can `assume_init_mut().reset()` on reuse and
+    /// `assume_init_drop()` on teardown — releasing a node that was obtained
+    /// from `get_node()` with `T::INIT == None` and never written is UB.
+    /// Ownership transfers back to the pool's free list.
+    pub unsafe fn release(node: &mut Node<T>) {
+        let node_ptr: *mut Node<T> = node;
         let overflowed = Self::data(|cell| {
             let mut d = cell.borrow_mut();
             if MAX_COUNT > 0 && d.count >= MAX_COUNT {
@@ -482,13 +527,13 @@ where
             if d.loaded {
                 d.list.prepend(node);
             } else {
-                d.list = SinglyLinkedList { first: node };
+                d.list = SinglyLinkedList { first: node_ptr };
                 d.loaded = true;
             }
             false
         });
         if overflowed {
-            Self::destroy_node(node);
+            Self::destroy_node(node_ptr);
         }
     }
 

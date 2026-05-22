@@ -1,11 +1,14 @@
-use core::mem::offset_of;
-use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use bun_threading::RwLock;
 
 use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
-use crate::timer::{self, ElTimespec, EventLoopTimer, EventLoopTimerState, InHeap, TimerHeap};
+use crate::timer::{
+    self, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
+    TimerObjectInternals, TimeoutObject, TimerHeap,
+};
 
 // TODO(port): move to test_runner_sys / jsc_sys
 unsafe extern "C" {
@@ -13,6 +16,7 @@ unsafe extern "C" {
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
 }
 
+#[derive(Default)]
 pub struct FakeTimers {
     active: bool,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
@@ -20,12 +24,6 @@ pub struct FakeTimers {
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
     /// - count (cannot be implemented efficiently with TimerHeap)
     pub timers: TimerHeap,
-}
-
-impl Default for FakeTimers {
-    fn default() -> Self {
-        Self { active: false, timers: TimerHeap::default() }
-    }
 }
 
 // PORT NOTE: Zig `pub var current_time: struct { ... } = .{}` — anonymous-typed mutable global.
@@ -46,7 +44,7 @@ pub static CURRENT_TIME: CurrentTime = CurrentTime {
 
 impl CurrentTime {
     pub fn get_timespec_now(&self) -> Option<Timespec> {
-        let value = *self.offset_raw.read().unwrap();
+        let value = *self.offset_raw.read();
         if value.eql(&MIN_TIMESPEC) {
             return None;
         }
@@ -58,7 +56,7 @@ impl CurrentTime {
     pub fn set(&self, global: &JSGlobalObject, offset: &Timespec, js: Option<f64>) {
         let vm = global.bun_vm().as_mut();
         {
-            *self.offset_raw.write().unwrap() = *offset;
+            *self.offset_raw.write() = *offset;
         }
         // Mirror into T0 storage so `Timespec::now(.allow_mocked_time)` sees
         // the fake clock (spec bun.zig:3223 — `getRoughTickCount`).
@@ -75,20 +73,18 @@ impl CurrentTime {
         // PORT NOTE: Zig stored `@bitCast(v.offset.ns())` (i128 → u128). The Rust
         // `VirtualMachine.overridden_performance_now` is `Option<u64>` and
         // `Timespec::ns()` already returns `u64`, so no bitcast needed.
-        // SAFETY: `vm` is the live per-thread VirtualMachine (never null).
-        unsafe { (*vm).overridden_performance_now = Some(offset.ns()) };
+        vm.overridden_performance_now = Some(offset.ns());
     }
 
     pub fn clear(&self, global: &JSGlobalObject) {
         let vm = global.bun_vm().as_mut();
         {
-            *self.offset_raw.write().unwrap() = MIN_TIMESPEC;
+            *self.offset_raw.write() = MIN_TIMESPEC;
         }
         bun_core::mock_time::clear();
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
         JSMock__setOverridenDateNow(global, -1.0);
-        // SAFETY: `vm` is the live per-thread VirtualMachine (never null).
-        unsafe { (*vm).overridden_performance_now = None };
+        vm.overridden_performance_now = None;
     }
 }
 
@@ -118,13 +114,6 @@ fn timers_lock_guard() -> bun_threading::MutexGuard {
     unsafe { &(*timer_all()).lock }.lock_guard()
 }
 
-/// Convert `bun_core::Timespec` → the low-tier `bun_event_loop` Timespec stub
-/// (same `{sec,nsec}` shape, different nominal type until they are unified).
-#[inline]
-fn to_el_timespec(t: &Timespec) -> ElTimespec {
-    ElTimespec { sec: t.sec, nsec: t.nsec }
-}
-
 #[inline]
 fn from_el_timespec(t: &ElTimespec) -> Timespec {
     Timespec { sec: t.sec, nsec: t.nsec }
@@ -140,7 +129,7 @@ impl FakeTimers {
             &*(bun_core::from_field_ptr!(timer::All, fake_timers, std::ptr::from_ref::<Self>(self)))
         };
         match mode {
-            AssertMode::Locked => debug_assert!(owner.lock.try_lock() == false),
+            AssertMode::Locked => debug_assert!(!owner.lock.try_lock()),
             // can't assert unlocked because another thread could be holding the lock
             AssertMode::Unlocked => {}
         }
@@ -163,28 +152,55 @@ impl FakeTimers {
         self.assert_valid(AssertMode::Locked);
     }
 
-    fn deactivate(&mut self, global: &JSGlobalObject) {
+    fn deactivate(
+        &mut self,
+        global: &JSGlobalObject,
+    ) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
         self.assert_valid(AssertMode::Locked);
 
-        self.clear();
+        let pinned = self.clear();
         CURRENT_TIME.clear(global);
         self.active = false;
 
         self.assert_valid(AssertMode::Locked);
+        pinned
     }
 
-    fn clear(&mut self) {
+    /// Drain the fake-timer heap. Returns every `TimeoutObject` that was
+    /// linked so the caller can release the heap's `+1` ref and the `Strong`
+    /// JS pin via [`TimerObjectInternals::release_heap_pin`] *after* dropping
+    /// `&mut self` and `All.lock` — that path reaches `&mut All`, which would
+    /// alias `&mut self.fake_timers` here (same hazard `execute_next` notes).
+    ///
+    /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
+    /// refcount sticks at 2 (wrapper +1 from `init_with`, heap +1 from
+    /// `reschedule`) and `internals.this_value` still GC-roots the wrapper, so
+    /// neither side ever frees. The Zig spec (FakeTimers.zig:81-89) has the
+    /// same gap.
+    #[must_use]
+    fn clear(&mut self) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
         self.assert_valid(AssertMode::Locked);
 
+        let mut pinned = Vec::new();
         while let Some(timer) = self.timers.delete_min() {
-            // SAFETY: `delete_min` returns a live `*mut EventLoopTimer` just unlinked.
+            // SAFETY: `delete_min` returns a live `*mut EventLoopTimer` just
+            // unlinked; for `TimeoutObject` the tag invariant means it IS the
+            // `event_loop_timer` field of a live `Box<TimeoutObject>` whose
+            // refcount is ≥ 1 until the caller's release pass.
             unsafe {
                 (*timer).state = EventLoopTimerState::CANCELLED;
                 (*timer).in_heap = InHeap::None;
+                if (*timer).tag == EventLoopTimerTag::TimeoutObject {
+                    let parent = TimeoutObject::from_timer_ptr(timer);
+                    pinned.push(core::ptr::NonNull::new_unchecked(
+                        core::ptr::addr_of_mut!((*parent).internals),
+                    ));
+                }
             }
         }
 
         self.assert_valid(AssertMode::Locked);
+        pinned
     }
 
     // PORT NOTE (noalias re-entrancy): `execute_*` / `fire` do NOT take
@@ -377,12 +393,16 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 #[bun_jsc::host_fn]
 fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
-    // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
 
-    {
+    let pinned = {
+        // SAFETY: per-thread `timer::All`.
+        let this = unsafe { &mut (*timers).fake_timers };
         let _g = timers_lock_guard();
-        this.deactivate(global);
+        this.deactivate(global)
+    };
+    let vm = global.bun_vm_ptr();
+    for p in pinned {
+        TimerObjectInternals::release_heap_pin(p, vm);
     }
 
     // Remove the setTimeout.clock marker when switching back to real timers.
@@ -471,20 +491,24 @@ fn get_timer_count(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVa
 #[bun_jsc::host_fn]
 fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
-    // SAFETY: per-thread `timer::All`.
-    let this = unsafe { &mut (*timers).fake_timers };
     error_unless_fake_timers(global)?;
 
-    {
+    let pinned = {
+        // SAFETY: per-thread `timer::All`.
+        let this = unsafe { &mut (*timers).fake_timers };
         let _g = timers_lock_guard();
-        this.clear();
+        this.clear()
+    };
+    let vm = global.bun_vm_ptr();
+    for p in pinned {
+        TimerObjectInternals::release_heap_pin(p, vm);
     }
 
     Ok(frame.this())
 }
 
 #[bun_jsc::host_fn]
-fn is_fake_timers(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+fn is_fake_timers(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
     // SAFETY: per-thread `timer::All`.
     let this = unsafe { &(*timers).fake_timers };

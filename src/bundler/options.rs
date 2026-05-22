@@ -1,21 +1,15 @@
 //! This file is mostly the API schema but with all the options normalized.
 //! Normalization is necessary because most fields in the API schema are optional
 
-use bun_collections::VecExt;
-use bun_collections::{ArrayHashMap, MultiArrayList, StringArrayHashMap, StringHashMap};
+use bun_collections::{MultiArrayList, StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
-#[allow(unused_imports)]
 use bun_dotenv as DotEnv;
 use bun_js_parser::parser::Runtime;
 use bun_options_types::schema::api;
-#[allow(unused_imports)]
-use bun_resolver as resolver;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-#[allow(unused_imports)]
-use bun_url::URL;
 use std::borrow::Cow;
 // TODO(b2-blocked): bun_analytics — Cargo.toml does not yet list the dep
 // (adding it triggers upstream rebuilds with in-progress breakage). The
@@ -35,14 +29,13 @@ mod analytics {
         pub static external: AtomicUsize = AtomicUsize::new(0);
     }
 }
-use enum_map::{Enum, EnumMap};
+use enum_map::EnumMap;
 
 pub use crate::defines;
 pub use defines::Define;
 // B-3: `Define::init` / `DefineData::{from_input,parse}` are extension-trait
 // methods (the canonical types live in `bun_js_parser::defines`); bring the
 // traits into scope so the associated-fn call syntax below resolves.
-#[allow(unused_imports)]
 use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::global_cache::GlobalCache;
 
@@ -331,23 +324,23 @@ pub trait TargetExt: Copy {
     // fields is empty by default. You must explicitly configure it yourself.
     // array.set(Target.neutral, &listc);
     fn default_main_fields_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        enum_map::enum_map! {
+        EnumMap::from_fn(|k| match k {
             Target::Node => DEFAULT_MAIN_FIELDS_NODE,
             Target::Browser => DEFAULT_MAIN_FIELDS_BROWSER,
             Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
             Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
             Target::BakeServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
-        }
+        })
     }
 
     fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        enum_map::enum_map! {
+        EnumMap::from_fn(|k| match k {
             Target::Node => &[b"node" as &[u8]][..],
             Target::Browser => &[b"browser" as &[u8], b"module"][..],
             Target::Bun => &[b"bun" as &[u8], b"node"][..],
             Target::BakeServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
             Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
-        }
+        })
     }
 }
 
@@ -368,22 +361,20 @@ impl TargetExt for Target {
             b".js", b".cjs", b".mts", b".cts", b".ts", b".tsx", b".jsx", b".json",
         ];
 
-        // PERF(port): keys were `&'static` in Zig; `StringHashMap` owns keys via
-        // `Box<[u8]>` so `put` copies — tiny startup cost.
         if self == Target::Node {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
                 .expect("OOM");
-            for ext in OUT_EXTENSIONS_LIST {
-                exts.put(ext, b".mjs").expect("OOM");
+            for &ext in OUT_EXTENSIONS_LIST {
+                exts.put_static_key(ext, b".mjs").expect("OOM");
             }
         } else {
             exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
                 .expect("OOM");
-            exts.put(b".mjs", b".js").expect("OOM");
+            exts.put_static_key(b".mjs", b".js").expect("OOM");
         }
 
-        for ext in OUT_EXTENSIONS_LIST {
-            exts.put(ext, b".js").expect("OOM");
+        for &ext in OUT_EXTENSIONS_LIST {
+            exts.put_static_key(ext, b".js").expect("OOM");
         }
 
         exts
@@ -397,7 +388,7 @@ pub use bun_options_types::WindowsOptions;
 // Spec options.zig:568 has exactly ONE `Loader`; re-export so the bundler's
 // `BundleOptions.loaders` and the resolver's `Path::loader()` operate on the
 // same nominal type.
-pub(crate) use bun_ast::{Loader, LoaderOptional};
+pub(crate) use bun_ast::Loader;
 
 pub use bun_options_types::LOADER_API_NAMES;
 
@@ -660,13 +651,15 @@ pub fn get_loader_and_virtual_source<'a>(
 
     let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
 
-    let dir = path.name.dir.as_ref();
+    let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
     let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
         jsc_vm
             .read_dir_info_package_json(dir)
+            // SAFETY: the vtable returns a pointer into the resolver's DirInfo
+            // cache owned by `jsc_vm.owner`, which outlives `'a`.
             .map(|p| unsafe { &*p })
     } else {
         None
@@ -682,6 +675,7 @@ pub fn get_loader_and_virtual_source<'a>(
     })
 }
 
+#[cfg(test)]
 const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".jsx", Loader::Jsx),
     (b".json", Loader::Json),
@@ -707,7 +701,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".markdown", Loader::Md),
 ];
 
-#[cfg(windows)]
+#[cfg(all(windows, test))]
 const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh)];
 
 /// File-extension → default [`Loader`] map (options.zig `defaultLoaders`).
@@ -836,35 +830,35 @@ impl ESMConditions {
         style_condition_map.reserve(defaults.len() + 2 + conditions.len());
 
         // PERF(port): was assume_capacity
-        import_condition_map.insert(b"import".as_slice().into(), ());
-        require_condition_map.insert(b"require".as_slice().into(), ());
-        style_condition_map.insert(b"style".as_slice().into(), ());
+        import_condition_map.insert(b"import".as_slice(), ());
+        require_condition_map.insert(b"require".as_slice(), ());
+        style_condition_map.insert(b"style".as_slice(), ());
 
         for condition in conditions {
-            import_condition_map.insert((*condition).into(), ());
-            require_condition_map.insert((*condition).into(), ());
-            default_condition_amp.insert((*condition).into(), ());
+            import_condition_map.insert(*condition, ());
+            require_condition_map.insert(*condition, ());
+            default_condition_amp.insert(*condition, ());
         }
 
         for default in defaults {
-            default_condition_amp.insert((*default).into(), ());
-            import_condition_map.insert((*default).into(), ());
-            require_condition_map.insert((*default).into(), ());
-            style_condition_map.insert((*default).into(), ());
+            default_condition_amp.insert(*default, ());
+            import_condition_map.insert(*default, ());
+            require_condition_map.insert(*default, ());
+            style_condition_map.insert(*default, ());
         }
 
         if allow_addons {
-            default_condition_amp.insert(b"node-addons".as_slice().into(), ());
-            import_condition_map.insert(b"node-addons".as_slice().into(), ());
-            require_condition_map.insert(b"node-addons".as_slice().into(), ());
+            default_condition_amp.insert(b"node-addons".as_slice(), ());
+            import_condition_map.insert(b"node-addons".as_slice(), ());
+            require_condition_map.insert(b"node-addons".as_slice(), ());
 
             // style is not here because you don't import N-API addons inside css files.
         }
 
-        default_condition_amp.insert(b"default".as_slice().into(), ());
-        import_condition_map.insert(b"default".as_slice().into(), ());
-        require_condition_map.insert(b"default".as_slice().into(), ());
-        style_condition_map.insert(b"default".as_slice().into(), ());
+        default_condition_amp.insert(b"default".as_slice(), ());
+        import_condition_map.insert(b"default".as_slice(), ());
+        require_condition_map.insert(b"default".as_slice(), ());
+        style_condition_map.insert(b"default".as_slice(), ());
 
         Ok(ESMConditions {
             default: default_condition_amp,
@@ -897,19 +891,19 @@ impl ESMConditions {
 
         for condition in conditions {
             // PERF(port): was assume_capacity
-            self.default.insert((*condition).into(), ());
-            self.import.insert((*condition).into(), ());
-            self.require.insert((*condition).into(), ());
-            self.style.insert((*condition).into(), ());
+            self.default.insert(*condition, ());
+            self.import.insert(*condition, ());
+            self.require.insert(*condition, ());
+            self.style.insert(*condition, ());
         }
         Ok(())
     }
 
     pub fn append(&mut self, condition: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        self.default.insert(condition.into(), ());
-        self.import.insert(condition.into(), ());
-        self.require.insert(condition.into(), ());
-        self.style.insert(condition.into(), ());
+        self.default.insert(condition, ());
+        self.import.insert(condition, ());
+        self.require.insert(condition, ());
+        self.style.insert(condition, ());
         Ok(())
     }
 }
@@ -1004,6 +998,7 @@ pub fn defines_from_transform_options(
             &default_values,
             behavior,
             &framework.prefix,
+            bump,
         )?;
     }
 
@@ -1087,11 +1082,6 @@ const DEFAULT_LOADER_EXT: &[&[u8]] = &[
 
 // Only set it for browsers by default.
 const DEFAULT_LOADER_EXT_BROWSER: &[&[u8]] = &[b".html"];
-
-const NODE_MODULES_DEFAULT_LOADER_EXT: &[&[u8]] = &[
-    b".jsx", b".js", b".cjs", b".mjs", b".ts", b".mts", b".toml", b".yaml", b".yml", b".txt",
-    b".json", b".jsonc", b".json5", b".css", b".tsx", b".cts", b".wasm", b".text", b".html",
-];
 
 #[derive(Debug, Clone)]
 pub struct ResolveFileExtensions {
@@ -1642,6 +1632,8 @@ impl<'a> BundleOptions<'a> {
     /// holds a live `&mut Log` from one of those aliases concurrently.
     #[inline]
     pub fn log(&self) -> &bun_ast::Log {
+        // SAFETY: `self.log` is non-null after `from_api` and the caller-owned
+        // arena `Log` it points to outlives `self`; see method doc.
         unsafe { &*self.log }
     }
 
@@ -1655,6 +1647,8 @@ impl<'a> BundleOptions<'a> {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log_mut(&self) -> &mut bun_ast::Log {
+        // SAFETY: `self.log` is non-null and outlives `self`; caller upholds
+        // the no-alias contract documented on this method.
         unsafe { &mut *self.log }
     }
 
@@ -1666,6 +1660,8 @@ impl<'a> BundleOptions<'a> {
     /// (`PackageManager::init_with_runtime`) only reads through it.
     #[inline]
     pub fn install(&self) -> Option<&api::BunInstall> {
+        // SAFETY: when `Some`, the `NonNull` points at the process-lifetime
+        // `ctx.install` box (see field doc), never mutated after CLI parsing.
         self.install.map(|p| unsafe { p.as_ref() })
     }
 
@@ -1912,7 +1908,7 @@ impl<'a> BundleOptions<'a> {
             .serve_plugins
             .as_ref()
             .map(|v| v.clone().into_boxed_slice());
-        opts.bunfig_path = transform.bunfig_path.clone();
+        opts.bunfig_path.clone_from(&transform.bunfig_path);
 
         if !transform.env_files.is_empty() {
             opts.env.files = transform.env_files.clone().into_boxed_slice();
@@ -2202,8 +2198,9 @@ impl TransformOptions {
         // PERF(port): was assume_capacity
         define.put_assume_capacity(b"process.env.NODE_ENV", b"development".as_slice().into());
 
+        let entry_point_name = entry_point.path.name();
         let mut loader = Loader::File;
-        if let Some(default_loader) = DEFAULT_LOADERS.get(entry_point.path.name.ext) {
+        if let Some(default_loader) = DEFAULT_LOADERS.get(entry_point_name.ext) {
             loader = *default_loader;
         }
         debug_assert!(!code.is_empty());
@@ -2213,7 +2210,7 @@ impl TransformOptions {
             banner: b"",
             define,
             loader,
-            resolve_dir: Box::from(entry_point.path.name.dir),
+            resolve_dir: Box::from(entry_point_name.dir),
             entry_point,
             // TODO(port): resolve_dir borrows from entry_point in Zig; cloned here
             main_fields: Target::default_main_fields_map()[Target::Browser],
@@ -2324,7 +2321,7 @@ impl Env {
 
     pub fn set_defaults_map(
         &mut self,
-        defaults: api::StringMap,
+        defaults: &api::StringMap,
     ) -> Result<(), bun_alloc::AllocError> {
         self.defaults.shrink_retaining_capacity(0);
 
@@ -2345,10 +2342,10 @@ impl Env {
     }
 
     // For reading from API
-    pub fn set_from_api(&mut self, config: api::EnvConfig) -> Result<(), bun_alloc::AllocError> {
+    pub fn set_from_api(&mut self, config: &api::EnvConfig) -> Result<(), bun_alloc::AllocError> {
         self.set_behavior_from_prefix(config.prefix.as_deref().unwrap_or(b""));
 
-        if let Some(defaults) = config.defaults {
+        if let Some(defaults) = &config.defaults {
             self.set_defaults_map(defaults)?;
         }
         Ok(())
@@ -2378,7 +2375,7 @@ impl Env {
 
         self.prefix = config.prefix;
 
-        self.set_defaults_map(config.defaults)
+        self.set_defaults_map(&config.defaults)
     }
 
     pub fn to_api(&self) -> api::LoadedEnvConfig {
@@ -2510,7 +2507,7 @@ impl EntryPoint {
         }
 
         if let Some(env) = framework_entry_point.env {
-            self.env.set_from_api(env)?;
+            self.env.set_from_api(&env)?;
         }
         Ok(())
     }
@@ -2599,10 +2596,23 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
         };
 
         match field {
-            PlaceholderField::Dir => PathTemplate::write_replacing_slashes_on_windows(
-                writer,
-                if !dir.is_empty() { dir } else { b"." },
-            )?,
+            PlaceholderField::Dir => {
+                if dir.is_empty() {
+                    writer.write_all(b".")?;
+                } else {
+                    // Sanitize leading `..` segments so `[dir]` cannot place output
+                    // above outdir when a source resolves outside `root`.
+                    let mut d: &[u8] = dir;
+                    while matches!(d, [b'.', b'.', b'/' | b'\\', ..]) {
+                        PathTemplate::write_replacing_slashes_on_windows(writer, b"_.._/")?;
+                        d = &d[3..];
+                    }
+                    PathTemplate::write_replacing_slashes_on_windows(
+                        writer,
+                        if d == b".." { b"_.._" } else { d },
+                    )?;
+                }
+            }
             PlaceholderField::Name => {
                 PathTemplate::write_replacing_slashes_on_windows(writer, name)?
             }

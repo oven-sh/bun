@@ -300,9 +300,9 @@ pub struct LexerSnapshot<'a> {
 
 /// The lexer struct produced by `NewLexer_`.
 ///
-/// `'a` is the lifetime of the borrowed `Log` and the source contents (arena/source-owned
-/// slices like `identifier` and `string_literal_raw_content` borrow from the source or from
-/// the parser arena).
+/// `'a` is the lifetime of the source contents (arena/source-owned slices like
+/// `identifier` and `string_literal_raw_content` borrow from the source or from
+/// the parser arena). The `Log` is *not* tied to `'a`; see the `log` field doc.
 pub struct LexerType<
     'a,
     const IS_JSON: bool,
@@ -316,11 +316,12 @@ pub struct LexerType<
 > {
     // err: ?LexerType.Error,
     /// Raw pointer to the caller-owned `Log`. Zig held a `*Log` here while the
-    /// parser held a second aliasing `*Log`; Rust cannot store two `&'a mut Log`
+    /// parser held a second aliasing `*Log`; Rust cannot store two `&mut Log`
     /// to the same allocation (Stacked-Borrows UB), so both the lexer and the
     /// parser keep `NonNull<Log>` and reborrow at use sites via `log()`. The
-    /// pointee must outlive `'a` (enforced by all `init*` constructors taking
-    /// `&'a mut Log`).
+    /// `init*` constructors take a plain `&mut Log` (not tied to `'a`); the
+    /// caller must keep the pointee alive for the lexer's lifetime — see
+    /// `init_without_reading`.
     pub log: core::ptr::NonNull<Log>,
     pub source: &'a Source,
     /// Cached `source.contents()` slice. Zig stores `source: logger.Source` by
@@ -444,6 +445,11 @@ impl<
     type Err = Error;
     #[inline]
     fn log_mut(&mut self) -> &mut Log {
+        // SAFETY: `self.log` is a non-null raw handle stored by the `init*`
+        // constructors from a caller-supplied `&mut Log`; the caller must keep
+        // the pointee alive and unaliased for the lexer's lifetime (see the
+        // `log` field doc and `init_without_reading`). `&mut self` ensures no
+        // overlapping reborrow exists for this call.
         unsafe { self.log.as_mut() }
     }
     #[inline]
@@ -469,18 +475,6 @@ impl<
 }
 
 lexer_impl_header! {
-    #[allow(dead_code)]
-    const JSON: JSONOptions = JSONOptions {
-        is_json: IS_JSON,
-        allow_comments: ALLOW_COMMENTS,
-        allow_trailing_commas: ALLOW_TRAILING_COMMAS,
-        ignore_leading_escape_sequences: IGNORE_LEADING_ESCAPE_SEQUENCES,
-        ignore_trailing_escape_sequences: IGNORE_TRAILING_ESCAPE_SEQUENCES,
-        json_warn_duplicate_keys: JSON_WARN_DUPLICATE_KEYS,
-        was_originally_macro: WAS_ORIGINALLY_MACRO,
-        guess_indentation: GUESS_INDENTATION,
-    };
-
     /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
     /// other `self.*` fields as arguments without a borrow-checker conflict;
     /// callers must not hold two results of `log()` (or a result alongside the
@@ -488,9 +482,11 @@ lexer_impl_header! {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn log(&self) -> &mut Log {
-        // SAFETY: `self.log` was created from an `&'a mut Log` that outlives
-        // `'a` (and therefore `self`). Only one `&mut Log` is materialized at a
-        // time — every call site is `self.log().method(...)` with no overlap.
+        // SAFETY: `self.log` is a non-null raw handle stored by the `init*`
+        // constructors from a caller-supplied `&mut Log`; the caller must keep
+        // the pointee alive and unaliased for the lexer's lifetime. Only one
+        // `&mut Log` is materialized at a time — every call site is
+        // `self.log().method(...)` with no overlap.
         unsafe { &mut *self.log.as_ptr() }
     }
 
@@ -708,9 +704,10 @@ lexer_impl_header! {
                         // legacy octal literals
                         0x30..=0x37 => {
                             let octal_start =
-                                (iter.i as usize + width2 as usize) - 2;
+                                (iter.i as usize + width2 as usize).saturating_sub(2);
                             if IS_JSON {
-                                self.end = start + iter.i as usize - width2 as usize;
+                                self.end = (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -767,10 +764,14 @@ lexer_impl_header! {
 
                             iter.c = i32::try_from(value).expect("int cast");
                             if is_bad {
+                                // `octal_start` is text-relative like `iter.i`;
+                                // map back to absolute source position the same
+                                // way every sibling error path does (e.g.
+                                // `start + hex_start` in the `\u{}` branch).
                                 self.add_range_error(
                                     Range {
                                         loc: Loc {
-                                            start: i32::try_from(octal_start).expect("int cast"),
+                                            start: i32::try_from(start + octal_start).expect("int cast"),
                                         },
                                         len: i32::try_from(
                                             iter.i as usize - octal_start,
@@ -797,10 +798,10 @@ lexer_impl_header! {
                             c3 = iter.c;
                             width3 = iter.width;
                             match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = value * 16 | d as CodePoint,
+                                Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
-                                    self.end =
-                                        start + iter.i as usize - width3 as usize;
+                                    self.end = (start + iter.i as usize)
+                                        .saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -811,10 +812,10 @@ lexer_impl_header! {
                             c3 = iter.c;
                             width3 = iter.width;
                             match hex_digit_value_u32(c3 as u32) {
-                                Some(d) => value = value * 16 | d as CodePoint,
+                                Some(d) => value = (value * 16) | d as CodePoint,
                                 None => {
-                                    self.end =
-                                        start + iter.i as usize - width3 as usize;
+                                    self.end = (start + iter.i as usize)
+                                        .saturating_sub(width3 as usize);
                                     return self.syntax_error();
                                 }
                             }
@@ -835,15 +836,18 @@ lexer_impl_header! {
                             // variable-length
                             if c3 == 0x7B {
                                 if IS_JSON {
-                                    self.end =
-                                        start + iter.i as usize - width2 as usize;
+                                    self.end = (start + iter.i as usize)
+                                        .saturating_sub(width2 as usize);
                                     self.syntax_error()?;
                                 }
 
+                                // `iter.i` is the byte offset of `{` inside `text`;
+                                // back up past `\` and `u` only. `width3` is the
+                                // width of `{` itself, which `iter.i` already points
+                                // at — subtracting it lands one character too early.
                                 let hex_start = (iter.i as usize)
                                     .saturating_sub(width as usize)
-                                    .saturating_sub(width2 as usize)
-                                    .saturating_sub(width3 as usize);
+                                    .saturating_sub(width2 as usize);
                                 let mut is_first = true;
                                 let mut is_out_of_range = false;
                                 'variable_length: loop {
@@ -861,7 +865,7 @@ lexer_impl_header! {
                                         break 'variable_length;
                                     }
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = value * 16 | d as i64,
+                                        Some(d) => value = (value * 16) | d as i64,
                                         None => {
                                             self.end = (start + iter.i as usize)
                                                 .saturating_sub(width3 as usize);
@@ -904,10 +908,10 @@ lexer_impl_header! {
                                 let mut j: usize = 0;
                                 while j < 4 {
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = value * 16 | d as i64,
+                                        Some(d) => value = (value * 16) | d as i64,
                                         None => {
-                                            self.end = start + iter.i as usize
-                                                - width3 as usize;
+                                            self.end = (start + iter.i as usize)
+                                                .saturating_sub(width3 as usize);
                                             return self.syntax_error();
                                         }
                                     }
@@ -928,8 +932,8 @@ lexer_impl_header! {
                         }
                         0x0D => {
                             if IS_JSON {
-                                self.end =
-                                    start + iter.i as usize - width2 as usize;
+                                self.end = (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -943,8 +947,8 @@ lexer_impl_header! {
                         }
                         0x0A | 0x2028 | 0x2029 => {
                             if IS_JSON {
-                                self.end =
-                                    start + iter.i as usize - width2 as usize;
+                                self.end = (start + iter.i as usize)
+                                    .saturating_sub(width2 as usize);
                                 self.syntax_error()?;
                             }
 
@@ -956,8 +960,8 @@ lexer_impl_header! {
                                 match c2 {
                                     0x22 | 0x5C | 0x2F => {}
                                     _ => {
-                                        self.end = start + iter.i as usize
-                                            - width2 as usize;
+                                        self.end = (start + iter.i as usize)
+                                            .saturating_sub(width2 as usize);
                                         self.syntax_error()?;
                                     }
                                 }
@@ -2233,6 +2237,20 @@ lexer_impl_header! {
 
                     self.end = self.current;
                     self.token = T::TSyntaxError;
+                    // Mirror the `next_inside_jsx_element` fix (#30959): advance
+                    // `code_point`/`current` past the bad byte so a subsequent
+                    // recovery `next()` dispatches on the *following* byte rather
+                    // than re-dispatching on the still-in-`code_point` bad byte.
+                    // In the main lexer the byte that falls through to this arm
+                    // is invalid in main-lexer context too, so re-dispatch
+                    // currently stays in `TSyntaxError` and the duplicate-scope
+                    // panic isn't reachable — but keeping the `current > end`
+                    // invariant consistent across both dispatch tables means
+                    // future recovery code doesn't have to reason about one arm
+                    // that leaves the lexer with `current == end`. `end` was
+                    // already advanced above, so the error range `[start, end)`
+                    // is unchanged.
+                    self.step_with(contents);
                 }
             }
 
@@ -2369,7 +2387,6 @@ lexer_impl_header! {
         let mut rest = &text[0..end_comment_text];
 
         while let Some(i) = strings::index_of_any(rest, b"@#") {
-            let i = i as usize;
             let c = rest[i];
             rest = &rest[(i + 1).min(rest.len())..];
             match c {
@@ -2640,7 +2657,7 @@ lexer_impl_header! {
                         0
                     };
             }
-        } else if chunk.len() >= " sourceMappingURL=".len() + 1
+        } else if chunk.len() > " sourceMappingURL=".len()
             && chunk.starts_with(b" sourceMappingURL=")
         {
             // Check includes space for prefix
@@ -2669,7 +2686,7 @@ lexer_impl_header! {
     }
 
     pub fn init_json(
-        log: &'a mut Log,
+        log: &mut Log,
         source: &'a Source,
         arena: &'a Arena,
     ) -> Result<Self, Error> {
@@ -2679,8 +2696,12 @@ lexer_impl_header! {
         Ok(lex)
     }
 
+    /// `log` is *not* tied to `'a`: the lexer stores it as `NonNull<Log>` (see
+    /// the `log` field doc) and the caller must keep the pointee alive for the
+    /// lexer's lifetime. The looser bound lets `'a` (which `Ast<'a>` borrows
+    /// through `arena`) outlive a stack-local scratch log.
     pub fn init_without_reading(
-        log: &'a mut Log,
+        log: &mut Log,
         source: &'a Source,
         arena: &'a Arena,
     ) -> Self {
@@ -2690,7 +2711,7 @@ lexer_impl_header! {
         let contents: &'a [u8] = source.contents();
         Self {
             log: core::ptr::NonNull::from(log),
-            source: source,
+            source,
             contents,
             current: 0,
             start: 0,
@@ -2722,7 +2743,7 @@ lexer_impl_header! {
             string_literal_start: 0,
             string_literal_raw_format: StringLiteralRawFormat::Ascii,
             temp_buffer_u16: Vec::new(),
-            is_ascii_only: if IS_JSON { true } else { false },
+            is_ascii_only: IS_JSON,
             track_comments: false,
             all_comments: Vec::new(),
             indent_info: IndentInfo {
@@ -2733,7 +2754,7 @@ lexer_impl_header! {
     }
 
     pub fn init(
-        log: &'a mut Log,
+        log: &mut Log,
         source: &'a Source,
         arena: &'a Arena,
     ) -> Result<Self, Error> {
@@ -2764,8 +2785,12 @@ lexer_impl_header! {
                 debug_assert!(self.temp_buffer_u16.is_empty());
                 let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
                 tmp.reserve(self.string_literal_raw_content.len());
+                // `string_literal_raw_content` starts one byte after the opening
+                // quote/backtick (see `base` in `parse_string_literal`); pass the
+                // content-start offset so `start + iter.i` inside the decoder
+                // lines up with absolute positions in the source.
                 let res = self.decode_escape_sequences(
-                    self.string_literal_start,
+                    self.string_literal_start + 1,
                     self.string_literal_raw_content,
                     &mut tmp,
                 );
@@ -3048,6 +3073,20 @@ lexer_impl_header! {
 
                     self.end = self.current;
                     self.token = T::TSyntaxError;
+                    // Advance `code_point`/`current` past the bad byte so that a
+                    // subsequent recovery `next()` (e.g. via `expect(...)` inside
+                    // `parse_jsx_prop_value_identifier`) dispatches on the *following*
+                    // byte instead of re-dispatching on the still-in-`code_point` bad
+                    // byte. Without this step the recovery `next()` synthesises a
+                    // zero-length token at the offset of the next byte, and the byte
+                    // after that then gets tokenised a second time at the same
+                    // `start` — the parser pushes two `FunctionArgs` scopes at that
+                    // offset in `parse_paren_expr` and trips the strict-monotonicity
+                    // debug assertion in `push_scope_for_parse_pass` (see #30959).
+                    // `end` was already advanced above, so the step below only moves
+                    // `current`/`code_point` forward and leaves the error range
+                    // `[start, end)` intact.
+                    self.step();
                 }
             }
 
@@ -3266,8 +3305,8 @@ lexer_impl_header! {
             match cursor.c {
                 0x0D | 0x0A | 0x2028 | 0x2029 =>
                 {
-                    if first_non_whitespace.is_some()
-                        && after_last_non_whitespace.is_some()
+                    if let (Some(start), Some(end)) =
+                        (first_non_whitespace, after_last_non_whitespace)
                     {
                         // Newline
                         if !decoded.is_empty() {
@@ -3276,8 +3315,7 @@ lexer_impl_header! {
 
                         // Trim whitespace off the start and end of lines in the middle
                         self.decode_jsx_entities(
-                            &text[first_non_whitespace.unwrap() as usize
-                                ..after_last_non_whitespace.unwrap() as usize],
+                            &text[start as usize..end as usize],
                             decoded,
                         )?;
                     }
@@ -3336,8 +3374,21 @@ lexer_impl_header! {
 
                 // PORT NOTE: std.fmt.parseInt(i32, ..) — bytes-based parser; source bytes are
                 // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
+                // Also reject values outside the Unicode range (0..=0x10FFFF); otherwise
+                // `push_codepoint_utf16` hits `debug_assert`s in `u16_lead`/`u16_trail`
+                // (release builds would silently encode garbage surrogate pairs).
                 cursor.c = match bun_core::parse_int::<i32>(number, base) {
-                    Ok(v) => v,
+                    Ok(v) if (0..=0x10FFFF).contains(&v) => v,
+                    Ok(_) => {
+                        self.add_error(
+                            self.start,
+                            format_args!(
+                                "JSX entity escape is too big: {}",
+                                bstr::BStr::new(entity)
+                            ),
+                        );
+                        strings::UNICODE_REPLACEMENT as CodePoint
+                    }
                     Err(err) => {
                         match err {
                             strings::ParseIntError::InvalidCharacter => {
@@ -4120,7 +4171,7 @@ fn skip_to_interesting_character_in_multiline_comment(text_: &[u8]) -> Option<u3
     // TODO(port): SIMD reimplementation
     let vsize = strings::ASCII_VECTOR_SIZE;
     let text_end_len = text_.len() & !(vsize - 1);
-    debug_assert!(text_end_len % vsize == 0);
+    debug_assert!(text_end_len.is_multiple_of(vsize));
     debug_assert!(text_end_len <= text_.len());
 
     let mut off: usize = 0;

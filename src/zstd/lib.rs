@@ -1,7 +1,6 @@
-#![allow(unused)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
-use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
+use core::ffi::{c_ulonglong, c_void};
 
 use bun_core::ZStr;
 
@@ -10,14 +9,12 @@ use bun_core::ZStr;
 // "If your file has externs and isn't already *_sys, leave them in place".
 #[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 pub mod c {
-    use core::cell::UnsafeCell;
     use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
-    use core::marker::{PhantomData, PhantomPinned};
 
-    /// `ZSTD_DStream` — opaque streaming-decompression context (Nomicon FFI pattern).
-    ///
-    /// `UnsafeCell` makes the type `!Freeze` so a `&ZSTD_DStream` does not assert
-    /// immutability of the C-owned state (zstd mutates internally on every call).
+    // `ZSTD_DStream` — opaque streaming-decompression context (Nomicon FFI pattern).
+    //
+    // `UnsafeCell` makes the type `!Freeze` so a `&ZSTD_DStream` does not assert
+    // immutability of the C-owned state (zstd mutates internally on every call).
     bun_opaque::opaque_ffi! {
         pub struct ZSTD_DStream;
         /// `ZSTD_CCtx` — opaque streaming-compression context.
@@ -315,6 +312,9 @@ pub struct ZstdReaderArrayList<'a> {
     pub state: State,
     pub total_out: usize,
     pub total_in: usize,
+    /// Decompression-bomb guard: `read_all` errors instead of growing the
+    /// output past this many bytes. Defaults to unbounded.
+    pub max_output_size: usize,
 }
 
 impl<'a> ZstdReaderArrayList<'a> {
@@ -346,6 +346,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             state: State::Uninitialized,
             total_out: 0,
             total_in: 0,
+            max_output_size: usize::MAX,
         }))
     }
 
@@ -383,6 +384,14 @@ impl<'a> ZstdReaderArrayList<'a> {
                 return Ok(());
             }
 
+            // Decompression-bomb guard: clamp the output space handed to a single
+            // ZSTD_decompressStream call so one call can never write past the cap.
+            let remaining_output = self.max_output_size.saturating_sub(self.list_ptr.len());
+            if remaining_output == 0 {
+                self.state = State::Error;
+                return Err(ZstdError::ZstdDecompressionError);
+            }
+
             // SAFETY: write-only spare; ZSTD_decompressStream initializes the
             // first `out_buf.pos` bytes.
             let spare = unsafe { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
@@ -393,7 +402,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             };
             let mut out_buf = c::ZSTD_outBuffer {
                 dst: spare.as_mut_ptr().cast::<c_void>(),
-                size: spare.len(),
+                size: spare.len().min(remaining_output),
                 pos: 0,
             };
 

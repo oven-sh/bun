@@ -1,4 +1,3 @@
-use core::fmt::Display;
 use core::marker::ConstParamTy;
 
 use bun_alloc::AllocError;
@@ -6,7 +5,6 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
 use bun_core::ZStr;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_semver::String as SemverString;
 
 use crate::external_slice::ExternalSlice;
 use crate::lockfile::package::PackageColumns as _;
@@ -148,18 +146,10 @@ pub struct ResolveReplace {
     pub dep_id: DependencyID,
 }
 
+#[derive(Default)]
 pub struct Placement {
     pub id: Id,
     pub bundled: bool,
-}
-
-impl Default for Placement {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            bundled: false,
-        }
-    }
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -528,7 +518,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         debug_assert_eq!(trees.len(), dependencies.len());
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
-            // `child` (Vec) drops at end of `slice` scope; explicit deinit removed.
+            let child = core::mem::take(child);
 
             // PERF(port): `dep_ids` is pre-reserved to `total` (sum of all
             // `tree.dependencies.len: u32`), so `len()` is provably < 2^32.
@@ -552,6 +542,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         // queue / sort_buf / pending_optional_peers freed by Drop; explicit deinit removed.
         // TODO(port): if Builder outlives clean(), explicitly clear these fields here.
+
+        slice.deinit_owned();
 
         Ok(CleanResult { trees, dep_ids })
     }
@@ -751,7 +743,7 @@ impl Tree {
         for dep_id in resolution_list.begin()..resolution_list.end() {
             // PERF(port): was assume_capacity. `resolution_list` bounds are u32
             // (`ExternalSlice<u32>`); the range value is already u32-ranged.
-            builder.sort_buf.push(dep_id as u32);
+            builder.sort_buf.push(dep_id);
         }
 
         {

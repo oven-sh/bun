@@ -8,7 +8,7 @@ use bun_core::strings;
 use bun_core::{self as bun, Error, Global, Output, err};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
-use bun_io::{BufferedReader, ReadState};
+use bun_io::BufferedReader;
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
@@ -18,8 +18,10 @@ use crate::run_command::RunCommand;
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under src/runtime/api/bun/process.zig → crate::api::bun::process.
+#[cfg(unix)]
+use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, SpawnResultExt as _, Status,
+    self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
     event_loop_handle_to_ctx,
 };
 // TODO(port): crate path for `bun.DotEnv.Loader`
@@ -125,12 +127,11 @@ impl<'a> ProcessHandle<'a> {
         // spawnProcess. Using *const c_char placeholders.
         let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr().cast::<c_char>(),
-            (if cfg!(unix) {
-                b"-c\0".as_ptr()
+            if cfg!(unix) {
+                c"-c".as_ptr()
             } else {
-                b"exec\0".as_ptr()
-            })
-            .cast::<c_char>(),
+                c"exec".as_ptr()
+            },
             self.config.command.as_ptr().cast::<c_char>(),
             ptr::null(),
         ];
@@ -141,10 +142,7 @@ impl<'a> ProcessHandle<'a> {
         // end; allocates on heap here. Profile if it shows up on a hot path.
         let envp;
         let env_ptr = state.env;
-        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`;
-        // on POSIX `to_process` consumes `self` by value.
-        #[allow(unused_mut)]
-        let mut spawned: SpawnProcessResult = {
+        let spawned: SpawnProcessResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader.
             let env = unsafe { &mut *env_ptr };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
@@ -155,13 +153,22 @@ impl<'a> ProcessHandle<'a> {
             });
             // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
             envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
-            spawn::spawn_process(
-                &self.options,
-                argv.as_ptr(),
-                envp.as_ptr().cast::<*const c_char>(),
-            )?
-            .map_err(|e| Error::from(e))?
+            // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
+            // with argv[0] non-null; valid for this call.
+            unsafe {
+                spawn::spawn_process(
+                    &self.options,
+                    argv.as_ptr(),
+                    envp.as_ptr().cast::<*const c_char>(),
+                )
+            }?
+            .map_err(Error::from)?
         };
+        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`
+        // and the stdout/stderr pipes are `.take()`n below; on POSIX `to_process` consumes
+        // `self` by value.
+        #[cfg(windows)]
+        let mut spawned = spawned;
         // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
         // On Windows the readers are wired via `Source::Pipe` taken from
         // `spawned.stdout/stderr` below, and `WindowsStdioResult` is not `Copy`.
@@ -404,15 +411,15 @@ impl<'a> State<'a> {
         match &handle.process.as_ref().unwrap().status {
             Status::Exited(exited) => {
                 if exited.code != 0 {
-                    write!(writer, "Exited with code {}\n", exited.code)?;
+                    writeln!(writer, "Exited with code {}", exited.code)?;
                 } else {
                     if let (Some(start), Some(end)) = (handle.start_time, handle.end_time) {
                         let duration = end.duration_since(start);
                         let ms = duration.as_nanos() as f64 / 1_000_000.0;
                         if ms > 1000.0 {
-                            write!(writer, "Done in {:.2}s\n", ms / 1000.0)?;
+                            writeln!(writer, "Done in {:.2}s", ms / 1000.0)?;
                         } else {
-                            write!(writer, "Done in {:.0}ms\n", ms)?;
+                            writeln!(writer, "Done in {:.0}ms", ms)?;
                         }
                     } else {
                         writer.write_all(b"Done\n")?;
@@ -421,7 +428,7 @@ impl<'a> State<'a> {
             }
             Status::Signaled(signal) => {
                 let name = bun_sys::SignalCode(*signal).name().unwrap_or("unknown");
-                write!(writer, "Signaled: {}\n", name)?;
+                writeln!(writer, "Signaled: {}", name)?;
             }
             _ => {
                 writer.write_all(b"Error\n")?;
@@ -800,8 +807,11 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader<'static> = this_transpiler.env;
-    let event_loop =
-        bun_event_loop::MiniEventLoop::init_global(Some(unsafe { &mut *env_ptr }), None);
+    let event_loop = bun_event_loop::MiniEventLoop::init_global(
+        // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
+        Some(unsafe { &mut *env_ptr }),
+        None,
+    );
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
@@ -810,10 +820,12 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
     ));
     // shell_bin is NUL-terminated ([:0]const u8) for argv use.
     let shell_bin: Box<[u8]> = if cfg!(unix) {
+        // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
+        // init_global above has been released, so this read does not alias a live &mut.
         let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
         Box::from(
             RunCommand::find_shell(path_env, cwd)
-                .ok_or(err!("MissingShell"))?
+                .ok_or_else(|| err!("MissingShell"))?
                 .as_bytes_with_nul(),
         )
     } else {
@@ -840,6 +852,8 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
 
         let mut root_buf = PathBuffer::uninit();
         let resolve_root = FilterArg::get_candidate_package_patterns(
+            // SAFETY: single-threaded CLI path; the returned `&mut Log` is the only live borrow
+            // of the process-static log for the duration of this call.
             unsafe { ctx.log_mut() },
             &mut patterns,
             cwd,
@@ -925,7 +939,7 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
         // Phase 3: Build configs from sorted packages
         for pkg in &matched_packages {
             for raw_name in &script_names {
-                if raw_name.iter().any(|&b| b == b'*') {
+                if raw_name.contains(&b'*') {
                     // Glob: expand against this package's scripts
                     let mut matches: Vec<&[u8]> = Vec::new();
                     for key in pkg.scripts.keys() {
@@ -1002,14 +1016,12 @@ pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, 
             }
         };
 
-        // SAFETY: read_dir_info returns a borrow into the resolver's directory cache
-        // (process-lifetime).
-        let package_json = unsafe { (*root_dir_info).enclosing_package_json };
+        let package_json = (*root_dir_info).enclosing_package_json;
         let scripts_map: Option<&ScriptsMap> = package_json.and_then(|pkg| pkg.scripts.as_deref());
 
         for raw_name in &script_names {
             // Check if this is a glob pattern
-            if raw_name.iter().any(|&b| b == b'*') {
+            if raw_name.contains(&b'*') {
                 if let Some(sm) = scripts_map {
                     // Collect matching script names
                     let mut matches: Vec<&[u8]> = Vec::new();

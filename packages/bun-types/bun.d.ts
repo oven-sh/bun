@@ -3089,7 +3089,7 @@ declare module "bun" {
       algorithm: "argon2id" | "argon2d" | "argon2i";
 
       /**
-       * Memory cost, which defines the memory usage, given in kibibytes.
+       * Memory cost, which defines the memory usage, given in kibibytes. Minimum 8.
        */
       memoryCost?: number;
       /**

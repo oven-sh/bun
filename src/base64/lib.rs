@@ -136,8 +136,11 @@ pub const fn encode_len_from_size(source: usize) -> usize {
 
 #[inline]
 pub const fn url_safe_encode_len_from_size(n: usize) -> usize {
-    // Copied from WebKit
-    ((n * 4) + 2) / 3
+    // Equivalent to WebKit's `ceil(n * 4 / 3)`, but split so the intermediate
+    // product can't overflow before the divide for large `n`.
+    let full_chunks = n / 3;
+    let leftover = n % 3;
+    full_chunks * 4 + (leftover * 4).div_ceil(3)
 }
 
 #[inline]
@@ -300,8 +303,8 @@ pub mod vlq {
     const U7_MAX: u8 = 127;
 
     // base64 stores values up to 7 bits
-    const BASE64_LUT: [u8; U7_MAX as usize] = {
-        let mut bytes = [U7_MAX; U7_MAX as usize];
+    const BASE64_LUT: [u8; U7_MAX as usize + 1] = {
+        let mut bytes = [U7_MAX; U7_MAX as usize + 1];
         let mut i = 0;
         while i < BASE64.len() {
             bytes[BASE64[i] as usize] = i as u8;
@@ -452,7 +455,7 @@ pub mod zig_base64 {
     // PORT NOTE: dropped `standard_pad_char`/`standard_encoder`/`standard_decoder`
     // @compileError deprecation stubs — no Rust equivalent for use-site compile errors.
 
-    #[derive(Clone)]
+    #[derive(Copy, Clone)]
     pub struct Base64Encoder {
         pub alphabet_chars: [u8; 64],
         pub pad_char: Option<u8>,
@@ -483,10 +486,10 @@ pub mod zig_base64 {
         /// Note: this is wrong for base64url encoding. Do not use it for that.
         pub fn calc_size(&self, source_len: usize) -> usize {
             if self.pad_char.is_some() {
-                (source_len + 2) / 3 * 4
+                source_len.div_ceil(3) * 4
             } else {
                 let leftover = source_len % 3;
-                source_len / 3 * 4 + (leftover * 4 + 2) / 3
+                source_len / 3 * 4 + (leftover * 4).div_ceil(3)
             }
         }
 
@@ -566,7 +569,7 @@ pub mod zig_base64 {
             let mut result = source_len / 4 * 3;
             let leftover = source_len % 4;
             if self.pad_char.is_some() {
-                if leftover % 4 != 0 {
+                if !leftover.is_multiple_of(4) {
                     return Err(Error::InvalidPadding);
                 }
             } else {
@@ -599,7 +602,7 @@ pub mod zig_base64 {
         /// invalid padding results in Error::InvalidPadding.
         #[inline]
         pub fn decode(&self, dest: &mut [u8], source: &[u8]) -> Result<(), Error> {
-            if self.pad_char.is_some() && source.len() % 4 != 0 {
+            if self.pad_char.is_some() && !source.len().is_multiple_of(4) {
                 return Err(Error::InvalidPadding);
             }
             // PORT NOTE: Zig used u12/u4; Rust uses u16/u8 with explicit masking.
@@ -621,10 +624,10 @@ pub mod zig_base64 {
                 acc_len += 6;
                 if acc_len >= 8 {
                     acc_len -= 8;
+                    debug_assert!(dest_idx < dest.len());
                     // SAFETY: callers size `dest` via `calc_size_for_slice(source)` (see doc comment),
                     // which yields exactly the number of output bytes this loop produces; `dest_idx`
                     // therefore stays in-bounds for any input that reaches this branch.
-                    debug_assert!(dest_idx < dest.len());
                     unsafe { *dest.get_unchecked_mut(dest_idx) = (acc >> acc_len) as u8 };
                     dest_idx += 1;
                 }

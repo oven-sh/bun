@@ -25,8 +25,7 @@ pub struct S3HttpDownloadStreamingTask {
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: NonNull<()>,
-    /// this transfers ownership from the chunk
-    pub callback: fn(chunk: MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
+    pub callback: fn(chunk: &MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
     pub has_schedule_callback: AtomicBool,
     pub signal_store: bun_http::signals::Store,
     pub signals: Signals,
@@ -94,20 +93,15 @@ impl S3HttpDownloadStreamingTask {
     fn report_progress(&mut self, state: State) {
         let has_more = state.has_more();
         let mut err: Option<S3Error> = None;
-        let mut failed = false;
+        let failed = match state.status_code() {
+            200 | 204 | 206 => state.request_error() != 0,
+            _ => true,
+        };
 
         // PORT NOTE: reshaped for borrowck — `code`/`message` borrow from
         // `self.reported_response_buffer`, so we compute the chunk after the
         // borrow scope ends rather than inside the labeled block.
         let chunk: MutableString = 'brk: {
-            match state.status_code() {
-                200 | 204 | 206 => {
-                    failed = state.request_error() != 0;
-                }
-                _ => {
-                    failed = true;
-                }
-            }
             if failed {
                 if !has_more {
                     let mut _has_body_code = false;
@@ -169,19 +163,29 @@ impl S3HttpDownloadStreamingTask {
         );
         if failed {
             if !has_more {
-                (self.callback)(chunk, false, err, self.callback_context.as_ptr().cast());
+                (self.callback)(&chunk, false, err, self.callback_context.as_ptr().cast());
             }
         } else {
             // dont report empty chunks if we have more data to read
             if !has_more || chunk.len() > 0 {
-                (self.callback)(chunk, has_more, None, self.callback_context.as_ptr().cast());
+                (self.callback)(
+                    &chunk,
+                    has_more,
+                    None,
+                    self.callback_context.as_ptr().cast(),
+                );
                 self.reported_response_buffer.reset();
             }
         }
     }
 
     /// this is the task callback from the last task result and is always in the main thread
-    pub fn on_response(this: *mut Self) {
+    ///
+    /// # Safety
+    /// `this` must be a live heap pointer produced by `Self::new`; the event loop guarantees
+    /// exclusive main-thread access for the duration of this call. When the loaded state's
+    /// `has_more` is false this call reclaims and drops the allocation exactly once.
+    pub(crate) fn on_response(this: *mut Self) {
         // SAFETY: `this` is a live heap allocation created via `Self::new`; the event loop
         // guarantees exclusive access on the main thread for the duration of this callback.
         let self_ = unsafe { &mut *this };
@@ -224,7 +228,7 @@ impl S3HttpDownloadStreamingTask {
     ) -> bool {
         let is_done = !result.has_more;
         // if we got a error or fail wait until we are done buffering the response body to report
-        let mut wait_until_done = false;
+        let wait_until_done;
         {
             state.set_has_more(!is_done);
 
@@ -327,7 +331,12 @@ impl S3HttpDownloadStreamingTask {
     }
 
     /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
-    pub fn http_callback(
+    ///
+    /// # Safety
+    /// `this` must be a live heap pointer produced by `Self::new`, valid for the duration of the
+    /// HTTP request; `mutex` serializes against `on_response`. `async_http` must be a valid
+    /// pointer to an initialised `AsyncHTTP` for the duration of this call.
+    pub(crate) fn http_callback(
         this: *mut Self,
         async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult,
@@ -339,11 +348,13 @@ impl S3HttpDownloadStreamingTask {
         let async_http = unsafe { &mut *async_http };
         if self_.process_http_callback(async_http, result) {
             // we are always unlocked here and its safe to enqueue
-            let task = std::ptr::from_mut::<ConcurrentTask>(
+            let task = core::ptr::NonNull::from(
                 self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
             // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
             // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
+            // `task` is the inline `concurrent_task` field of this heap request;
+            // the queue takes ownership of its `next` link.
             self_
                 .vm
                 .expect("vm set at task creation")
@@ -364,7 +375,13 @@ impl Drop for S3HttpDownloadStreamingTask {
         // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.
-        unsafe { self.http.assume_init_mut() }.clear_data();
+        let http = unsafe { self.http.assume_init_mut() };
+        http.clear_data();
+        // Zig shared one EntryList allocation between task.headers / request_headers /
+        // client.header_entries; Rust `init` clones, so free the two copies clear_data() skips.
+        // (Same fix as `S3HttpSimpleTask::drop` in simple_request.rs.)
+        http.request_headers = Default::default();
+        http.client.header_entries = Default::default();
     }
 }
 

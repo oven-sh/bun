@@ -10,7 +10,7 @@ use crate::parser::{
 };
 use bun_ast as js_ast;
 use bun_ast::op::Level;
-use bun_ast::{E, Expr, ExprNodeList, Flags, G, S, Stmt};
+use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
 // TODO(port): narrow error set
 type Error = bun_core::Error;

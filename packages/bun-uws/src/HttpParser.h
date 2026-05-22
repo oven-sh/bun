@@ -570,8 +570,9 @@ namespace uWS
             }
 
 
-            bool isHTTPMethod = (__builtin_expect(data[1] == '/', 1));
-            bool isConnect = !isHTTPMethod && ((data - start) == 7 && memcmp(start, "CONNECT", 7) == 0);
+            /* RFC 9112 3: exactly one SP separates method and request-target */
+            bool isHTTPMethod = (__builtin_expect(data[0] == 32 && data[1] == '/', 1));
+            bool isConnect = !isHTTPMethod && ((data - start) == 7 && data[0] == 32 && memcmp(start, "CONNECT", 7) == 0);
             /* Also accept proxy-style absolute URLs (http://... or https://...) as valid request targets */
             bool isProxyStyleURL = !isHTTPMethod && !isConnect && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
             if (isHTTPMethod || isConnect || isProxyStyleURL) [[likely]] {
@@ -748,6 +749,12 @@ namespace uWS
                         return HttpParserResult::shortRead();
                     }
                     /* Error: invalid chars in field name */
+                    return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
+                }
+                /* RFC 9112 5.1: field-name is a non-empty token. An empty name would also
+                 * collide with the end-of-headers sentinel and hide later headers from the
+                 * Content-Length / Transfer-Encoding request-smuggling checks. */
+                if (headers->key.length() == 0) {
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
                 }
                 postPaddedBuffer++;

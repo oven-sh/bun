@@ -122,6 +122,7 @@ impl RouteBundle {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum UnresolvedIndex {
     Framework(framework_router::RouteIndex),
     /// BACKREF (Zig `*HTMLBundle.Route`): `getOrPutRouteBundle` writes

@@ -10,7 +10,7 @@
 // query-string bytes.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 
 test("MySQL: query string is not leaked across query lifecycle", async () => {
   using dir = tempDir("mysql-query-string-leak", {
@@ -117,7 +117,9 @@ test("MySQL: query string is not leaked across query lifecycle", async () => {
   // With the leak, every one of the ~200 x 512 KiB query strings is retained
   // (plus per-string overhead), so RSS grows by >= ~100 MiB. With the fix the
   // strings are freed as each MySQLQuery is finalized and growth stays small.
-  expect(deltaMiB).toBeLessThan(50);
+  // ASAN's quarantine retains freed allocations (default 256 MB) so the delta
+  // runs higher under bun-asan even with the fix; widen the threshold there.
+  expect(deltaMiB).toBeLessThan(isASAN ? 256 : 50);
   expect(exitCode).toBe(0);
   // 200 × 512 KiB round-trips plus ~20 Bun.gc(true) calls in an ASAN debug
   // subprocess take ~6–17s; the 5s default is too tight. Same reason as

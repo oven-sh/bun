@@ -1,5 +1,4 @@
 use core::mem;
-use core::ptr;
 
 use bun_alloc::AllocError;
 
@@ -335,11 +334,6 @@ impl Inlined {
     #[inline]
     fn ptr(&mut self) -> *mut u8 {
         (&raw mut self.0).cast::<u8>()
-    }
-
-    #[inline]
-    fn ptr_const(&self) -> *const u8 {
-        (&raw const self.0).cast::<u8>()
     }
 }
 

@@ -63,16 +63,16 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
 
     /// Returns the raw pointer without decrementing the ref count. Consumes `self`.
     pub fn leak(self) -> *mut T {
-        let ptr = self.ptr.as_ptr();
-        core::mem::forget(self);
-        ptr
+        let this = core::mem::ManuallyDrop::new(self);
+        this.ptr.as_ptr()
     }
 
     /// Consumes `self`, converting into the optional form.
     pub fn into_optional(self) -> ExternalSharedOptional<T> {
-        let ptr = self.ptr;
-        core::mem::forget(self);
-        ExternalSharedOptional { ptr: Some(ptr) }
+        let this = core::mem::ManuallyDrop::new(self);
+        ExternalSharedOptional {
+            ptr: Some(this.ptr),
+        }
     }
 
     // TODO(port): Zig's `ExternalShared(T).Optional` was an inherent associated type.
@@ -157,9 +157,8 @@ impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
 
     /// Returns the raw pointer without decrementing the ref count. Consumes `self`.
     pub fn leak(self) -> Option<*mut T> {
-        let ptr = self.ptr.map(|p| p.as_ptr());
-        core::mem::forget(self);
-        ptr
+        let this = core::mem::ManuallyDrop::new(self);
+        this.ptr.map(|p| p.as_ptr())
     }
 }
 

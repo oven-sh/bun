@@ -474,12 +474,13 @@ pub fn cli_dupe(s: &[u8]) -> &'static [u8] {
 /// caller already owns a large buffer (e.g. tarball, request body) so
 /// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
 pub fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
-    static ADOPTED: std::sync::Mutex<Vec<Box<[u8]>>> = std::sync::Mutex::new(Vec::new());
+    static ADOPTED: bun_threading::Guarded<Vec<Box<[u8]>>> =
+        bun_threading::Guarded::new(Vec::new());
+    let (ptr, len) = (b.as_ptr(), b.len());
+    ADOPTED.lock().push(b);
     // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
     // `Box<[u8]>` pointee address is stable across `Vec` reallocs (only the
     // `Box` pointer-value moves), so the returned slice stays valid `'static`.
-    let (ptr, len) = (b.as_ptr(), b.len());
-    ADOPTED.lock().unwrap().push(b);
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
@@ -1390,7 +1391,7 @@ pub mod command {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
         let graph: &mut bun_standalone_graph::Graph = unsafe { &mut *graph };
-        let mut offset_for_passthrough: usize = 0;
+        let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
             // PORT NOTE: Zig calls `bun.initArgv()` eagerly in `main.zig`
@@ -1960,12 +1961,15 @@ To create a project with the official Next.js scaffolding tool, run\n\
                     }
                 };
                 return super::package_manager_command::PackageManagerCommand::print_hash(
-                    ctx, file,
+                    ctx, &file,
                 );
             }
         }
 
         let entry = ctx.args.entry_points[0].clone();
+        // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
+        // `create_context_data` and no other `&mut Log` borrow is live for the
+        // duration of this `Printer::print` call.
         Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn)
     }
 

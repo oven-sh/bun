@@ -116,12 +116,16 @@ impl CachedStructure {
             // without materialising a typed slice (avoids an unsafe assume-init cast).
             self.set(
                 global_object,
-                Some(JSObject::create_structure(
-                    global_object,
-                    owner,
-                    ids.len() as u32,
-                    ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
-                )),
+                // SAFETY: every `ids[..len]` slot was initialized in the loop
+                // above; the stack buffer outlives the FFI call.
+                Some(unsafe {
+                    JSObject::create_structure(
+                        global_object,
+                        owner,
+                        ids.len() as u32,
+                        ids.as_mut_ptr().cast::<ExternColumnIdentifier>(),
+                    )
+                }),
                 None,
             );
         }

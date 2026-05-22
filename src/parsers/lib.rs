@@ -1,11 +1,5 @@
-#![feature(allocator_api)]
-#![allow(dead_code)]
-#![allow(unused_imports)]
 #![warn(unused_must_use)]
-#![allow(unused_variables)]
-#![allow(unused_assignments)]
 #![allow(unexpected_cfgs)]
-#![allow(clippy::all)]
 // PORTING.md crate-map calls the string crate `bun_str`; the workspace package
 // is `bun_string`. Alias once here so submodule `use bun_core::…` paths resolve.
 #![warn(unreachable_pub)]

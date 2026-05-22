@@ -8,10 +8,7 @@ use std::io::Write as _;
 use bun_core::{SliceWithUnderlyingString, String, Tag, ZigStringSlice, strings};
 
 use crate::zig_string::{self, ZigString};
-use crate::{
-    CallFrame, ExceptionValidationScope, JSGlobalObject, JSValue, JsError, JsResult,
-    ZigStringJsc as _,
-};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
 
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
@@ -24,11 +21,6 @@ use crate::{
 // `Bun__parseDate`) are NOT redeclared here — route through `crate::cpp::*`,
 // which owns the canonical extern decl + per-mode exception scope.
 unsafe extern "C" {
-    safe fn BunString__toJSWithLength(
-        global_object: &JSGlobalObject,
-        in_: &String,
-        len: usize,
-    ) -> JSValue;
     safe fn BunString__toJSDOMURL(global_object: &JSGlobalObject, in_: &mut String) -> JSValue;
     fn BunString__createArray(
         global_object: &JSGlobalObject,
@@ -74,9 +66,9 @@ pub fn from_js(value: JSValue, global_object: &JSGlobalObject) -> JsResult<Strin
     // SAFETY: `global_object` is a valid handle; `out` is a live stack out-param.
     let ok = unsafe {
         crate::cpp::raw::BunString__fromJS(
-            global_object as *const JSGlobalObject as *mut JSGlobalObject,
+            core::ptr::from_ref(global_object).cast_mut(),
             value,
-            &mut out,
+            &raw mut out,
         )
     };
 
@@ -251,11 +243,11 @@ fn slice_with_underlying_string_to_js_with_options(
                 // external string; do not drop it here.
                 let mut utf16 = core::mem::ManuallyDrop::new(utf16);
                 utf16.shrink_to_fit();
-                return Ok(zig_string::to_external_u16(
-                    utf16.as_ptr(),
-                    utf16.len(),
-                    global_object,
-                ));
+                // SAFETY: `utf16` was allocated by the global allocator and is
+                // wrapped in `ManuallyDrop`; ownership transfers to JSC here.
+                return Ok(unsafe {
+                    zig_string::to_external_u16(utf16.as_ptr(), utf16.len(), global_object)
+                });
             } else if let Some((ptr, len)) = this.utf8.take_owned_raw() {
                 // PORT NOTE: ownership of utf8 bytes transferred to JSC via
                 // `to_external_value`; `take_owned_raw` already cleared `utf8`

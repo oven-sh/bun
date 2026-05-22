@@ -6,13 +6,13 @@ use bun_alloc::AllocError;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
+use bun_core::ZStr;
 use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
-use bun_core::{ZStr, strings};
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::lockfile::{self, Format as LockfileFormat, LoadResult, Lockfile};
+use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
-use bun_paths::{self as path, AbsPath, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
 
@@ -27,8 +27,12 @@ use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
 // in the free functions below to keep them callable without an `impl` path.
 
 impl PackageManager {
+    /// Borrowed view of the cached cache-directory fd. Returns `Fd` (not `Dir`)
+    /// because the descriptor is owned by `self.cache_directory_` — handing out
+    /// an owning `Dir` would close the cached fd when the caller drops it.
+    /// Callers that need `Dir` methods should use `Dir::borrow(&fd)`.
     #[inline]
-    pub fn get_cache_directory(&mut self) -> Dir {
+    pub fn get_cache_directory(&mut self) -> Fd {
         get_cache_directory(self)
     }
 
@@ -47,7 +51,7 @@ impl PackageManager {
         crate::package_manifest_map::DiskCacheCtx {
             enable_manifest_cache,
             enable_manifest_cache_control: self.options.enable.manifest_cache_control(),
-            cache_directory: enable_manifest_cache.then(|| get_cache_directory(self).fd()),
+            cache_directory: enable_manifest_cache.then(|| get_cache_directory(self)),
             timestamp_for_manifest_cache_control: self.timestamp_for_manifest_cache_control,
         }
     }
@@ -128,8 +132,12 @@ impl PackageManager {
 
 // ───────────────────────────── cache directory ────────────────────────────────
 
+/// Returns a borrowed view (`Fd`) of the lazily-opened cache directory. The
+/// descriptor is owned by `PackageManager::cache_directory_` (closed only if
+/// the singleton is ever dropped). Callers must not close the returned `Fd`;
+/// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 #[inline]
-pub fn get_cache_directory(this: &mut PackageManager) -> Dir {
+pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
     // SAFETY: `&mut PackageManager` is exclusive over every field the raw
     // path projects.
     unsafe { get_cache_directory_raw(this) }
@@ -146,23 +154,26 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Dir {
 /// `this` must be valid for reads and writes for the call's duration, and the
 /// caller must hold no live borrow that overlaps the fields listed above.
 #[inline]
-pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Dir {
+pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     // SAFETY: caller contract — `cache_directory_` is disjoint from any
     // borrow the caller holds.
-    if let Some(d) = unsafe { (*this).cache_directory_ } {
-        return d;
+    if let Some(d) = unsafe { (*this).cache_directory_.as_ref() } {
+        return d.fd();
     }
+    // SAFETY: caller contract — `this` is valid and no live borrow overlaps
+    // `options.enable`/`options.cache_directory`/`env`/`cache_directory_path`.
     let d = unsafe { ensure_cache_directory(this) };
+    let fd = d.fd();
     // SAFETY: as above; single writer.
     unsafe { (*this).cache_directory_ = Some(d) };
-    d
+    fd
 }
 
 #[inline]
 pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPath) {
     let cache_dir = get_cache_directory(this);
     (
-        Fd::from_std_dir(&cache_dir),
+        cache_dir,
         AbsPath::from(this.cache_directory_path.as_bytes())
             .expect("cache_directory_path is absolute"),
     )
@@ -203,14 +214,15 @@ static GET_TEMPORARY_DIRECTORY_ONCE: std::sync::OnceLock<TemporaryDirectory> =
     std::sync::OnceLock::new();
 
 fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirectory {
-    let cache_directory = get_cache_directory(manager);
+    let cache_directory_fd = get_cache_directory(manager);
+    let cache_directory = Dir::borrow(&cache_directory_fd);
     // The chosen tempdir must be on the same filesystem as the cache directory
     // This makes renameat() work
     let temp_dir_name = FileSystem::get_default_temp_dir();
 
     let mut tried_dot_tmp = false;
     let mut tempdir: Dir =
-        match sys::make_path::make_open_path(Dir::cwd(), temp_dir_name, Default::default()) {
+        match sys::make_path::make_open_path(&Dir::cwd(), temp_dir_name, Default::default()) {
             Ok(d) => d,
             Err(_) => {
                 tried_dot_tmp = true;
@@ -333,11 +345,10 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         let elapsed = timer.as_mut().unwrap().read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
-            let cache_dir_path: &[u8] =
-                match sys::get_fd_path(Fd::from_std_dir(&cache_directory), &mut path_buf) {
-                    Ok(p) => &p[..],
-                    Err(_) => b"it",
-                };
+            let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
+                Ok(p) => &p[..],
+                Err(_) => b"it",
+            };
             Output::pretty_errorln(format_args!(
                 "<r><yellow>warn<r>: Slow filesystem detected. If {} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
                 bun_fmt::s(cache_dir_path)
@@ -393,7 +404,6 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
                     unsafe { (*this).options.enable.set(Enable::CACHE, false) };
-                    // PORT NOTE: allocator.free(this.cache_directory_path) — Box drop handles it
                     // SAFETY: see fn safety contract.
                     unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
                     continue;
@@ -421,8 +431,6 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             }
         }
     }
-    #[allow(unreachable_code)]
-    unreachable!()
 }
 
 pub struct CacheDir {
@@ -818,8 +826,7 @@ pub fn cached_tarball_folder_name(
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(Fd::from_std_dir(&get_cache_directory(this)), folder_path)
-        .unwrap_or(false)
+    sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────
@@ -833,13 +840,17 @@ pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) ->
         .append(result.as_bytes_with_nul())?;
     // SAFETY: `path` includes the trailing NUL (we appended `as_bytes_with_nul`)
     // and lives for program lifetime in the dirname store.
-    manager.options.bin_path = ZStr::from_slice_with_nul(&path[..]);
+    manager.options.bin_path = ZStr::from_slice_with_nul(path);
     Ok(())
 }
 
-pub fn global_link_dir(this: &mut PackageManager) -> Dir {
-    if let Some(d) = this.global_link_dir {
-        return d;
+/// Returns a borrowed view (`Fd`) of the lazily-opened global link directory.
+/// The descriptor is owned by `PackageManager::global_link_dir` (closed only if
+/// the singleton is ever dropped). Callers must not close the returned `Fd`;
+/// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
+pub fn global_link_dir(this: &mut PackageManager) -> Fd {
+    if let Some(d) = this.global_link_dir.as_ref() {
+        return d.fd();
     }
 
     let global_dir = match options::open_global_dir(this.options.explicit_global_directory) {
@@ -856,22 +867,22 @@ pub fn global_link_dir(this: &mut PackageManager) -> Dir {
             Global::exit(1);
         }
     };
+    let link_dir = match global_dir.make_open_path(b"node_modules", Default::default()) {
+        Ok(d) => d,
+        Err(err) => {
+            Output::err(
+                err,
+                "failed to open global link dir node_modules at '{}'",
+                (global_dir.fd(),),
+            );
+            Global::exit(1);
+        }
+    };
+    let link_fd = link_dir.fd();
     this.global_dir = Some(global_dir);
-    this.global_link_dir = Some(
-        match global_dir.make_open_path(b"node_modules", Default::default()) {
-            Ok(d) => d,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to open global link dir node_modules at '{}'",
-                    (Fd::from_std_dir(&global_dir),),
-                );
-                Global::exit(1);
-            }
-        },
-    );
+    this.global_link_dir = Some(link_dir);
     let mut buf = PathBuffer::uninit();
-    let path_ = match sys::get_fd_path(Fd::from_std_dir(&this.global_link_dir.unwrap()), &mut buf) {
+    let path_ = match sys::get_fd_path(link_fd, &mut buf) {
         Ok(p) => p,
         Err(err) => {
             Output::err(
@@ -885,7 +896,7 @@ pub fn global_link_dir(this: &mut PackageManager) -> Dir {
     this.global_link_dir_path = Box::<[u8]>::from(bun_core::handle_oom(
         FileSystem::instance().dirname_store().append(path_),
     ));
-    this.global_link_dir.unwrap()
+    link_fd
 }
 
 pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
@@ -893,7 +904,7 @@ pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
     &this.global_link_dir_path
 }
 
-pub fn global_link_dir_and_path(this: &mut PackageManager) -> (Dir, &[u8]) {
+pub fn global_link_dir_and_path(this: &mut PackageManager) -> (Fd, &[u8]) {
     let dir = global_link_dir(this);
     (dir, &this.global_link_dir_path)
 }
@@ -925,10 +936,11 @@ pub fn path_for_cached_npm_path<'a>(
 
     cache_path_buf[package_name.len()] = SEP;
 
-    let cache_dir: Fd = Fd::from_std_dir(&get_cache_directory(this));
+    let cache_dir: Fd = get_cache_directory(this);
 
     #[cfg(windows)]
     {
+        let _ = cache_dir;
         let mut path_buf = PathBuffer::uninit();
         let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
@@ -963,7 +975,7 @@ pub fn path_for_cached_npm_path<'a>(
 pub fn path_for_resolution<'a>(
     this: &mut PackageManager,
     package_id: PackageID,
-    resolution: Resolution,
+    resolution: &Resolution,
     buf: &'a mut PathBuffer,
 ) -> Result<&'a mut [u8], Error> {
     // TODO(port): narrow error set
@@ -984,7 +996,9 @@ pub fn path_for_resolution<'a>(
 }
 
 pub struct CacheDirAndSubpath<'a> {
-    pub cache_dir: Dir,
+    /// Borrowed view: the descriptor is owned by the `PackageManager` singleton
+    /// (or is `Fd::cwd()`); callers must not close it.
+    pub cache_dir: Fd,
     pub cache_dir_subpath: &'a ZStr,
 }
 
@@ -998,7 +1012,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
     patch_hash: Option<u64>,
 ) -> CacheDirAndSubpath<'a> {
     let name = pkg_name;
-    let mut cache_dir = Dir::cwd();
+    let mut cache_dir = Fd::cwd();
     let mut cache_dir_subpath: &ZStr = ZStr::EMPTY;
 
     match resolution.tag {
@@ -1030,7 +1044,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 folder_path_buf[folder.len()] = 0;
                 cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
             }
-            cache_dir = Dir::cwd();
+            cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball => {
             let tarball = *resolution.local_tarball();
@@ -1053,7 +1067,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 folder_path_buf[folder.len()] = 0;
                 cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
             }
-            cache_dir = Dir::cwd();
+            cache_dir = Fd::cwd();
         }
         ResolutionTag::Symlink => {
             let directory = global_link_dir(manager);
@@ -1068,7 +1082,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
-                cache_dir = Dir::cwd();
+                cache_dir = Fd::cwd();
             } else {
                 let global_link_dir = global_link_dir_path(manager);
                 let ptr = &mut folder_path_buf.0[..];

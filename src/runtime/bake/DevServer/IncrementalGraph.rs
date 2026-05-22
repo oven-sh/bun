@@ -18,5 +18,3 @@
 //! `incremental_graph_body` resolves to the same nominal types. Per-side
 //! `ServerFile`/`ClientFile` are folded into the canonical `File` (see the
 //! `TODO(port)` there for the eventual layout split).
-
-pub use crate::bake::dev_server::incremental_graph::*;

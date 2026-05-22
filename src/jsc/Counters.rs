@@ -19,7 +19,7 @@ impl Counters {
         *slot = slot.saturating_add(1);
     }
 
-    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // PORT NOTE: Zig used `JSObject::create(struct_value, global)` (field reflection
         // builds an object with one property per struct field). Hand-rolled `put` calls here.
         let obj = JSValue::create_empty_object(global, 2);

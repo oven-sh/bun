@@ -21,12 +21,12 @@ identity_hash_int!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
 pub struct IdentityContext<Key>(PhantomData<Key>);
 
 impl<Key: IdentityHash> IdentityContext<Key> {
-    pub fn hash(&self, key: Key) -> u64 {
+    pub fn hash(self, key: Key) -> u64 {
         // Zig: switch (comptime @typeInfo(Key)) { .@"enum" => @intFromEnum(key), .int => key, else => @compileError }
         key.identity_hash()
     }
 
-    pub fn eql(&self, a: Key, b: Key) -> bool {
+    pub fn eql(self, a: Key, b: Key) -> bool {
         a == b
     }
 }
@@ -37,11 +37,11 @@ impl<Key: IdentityHash> IdentityContext<Key> {
 pub struct ArrayIdentityContext;
 
 impl ArrayIdentityContext {
-    pub fn hash(&self, key: u32) -> u32 {
+    pub fn hash(self, key: u32) -> u32 {
         key
     }
 
-    pub fn eql(&self, a: u32, b: u32, _: usize) -> bool {
+    pub fn eql(self, a: u32, b: u32, _: usize) -> bool {
         a == b
     }
 }
@@ -50,11 +50,11 @@ impl ArrayIdentityContext {
 pub struct ArrayIdentityContextU64;
 
 impl ArrayIdentityContextU64 {
-    pub fn hash(&self, key: u64) -> u32 {
+    pub fn hash(self, key: u64) -> u32 {
         key as u32
     }
 
-    pub fn eql(&self, a: u64, b: u64, _: usize) -> bool {
+    pub fn eql(self, a: u64, b: u64, _: usize) -> bool {
         a == b
     }
 }

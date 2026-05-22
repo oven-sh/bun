@@ -1,5 +1,4 @@
 // @link "../deps/libarchive.a"
-#![allow(unused, dead_code, clippy::all)]
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
 // Thin `extern "C"` wrappers over the libarchive C library live in `mod lib`
@@ -7,13 +6,15 @@
 // on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{self as bun_str, MutableString, slice_to_nul, strings};
+use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
-use bun_paths::{self as path, OSPathBuffer, OSPathChar, PathBuffer, SEP, SEP_STR};
+#[cfg(unix)]
+use bun_paths::PathBuffer;
+use bun_paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
@@ -33,11 +34,11 @@ pub mod lib {
     pub type la_int64_t = i64;
     type time_t = isize;
 
-    /// Opaque libarchive `struct archive`. Always used behind `*mut Archive`.
-    /// Contains `UnsafeCell` so that `&Archive` does not assert immutability
-    /// (libarchive mutates through every call), making `&self -> *mut Self`
-    /// sound under Stacked Borrows.
     bun_opaque::opaque_ffi! {
+        /// Opaque libarchive `struct archive`. Always used behind `*mut Archive`.
+        /// Contains `UnsafeCell` so that `&Archive` does not assert immutability
+        /// (libarchive mutates through every call), making `&self -> *mut Self`
+        /// sound under Stacked Borrows.
         pub struct Archive;
         /// Opaque libarchive `struct archive_entry`. Always used behind `*mut Entry`.
         /// Contains `UnsafeCell` for the same reason as `Archive` — the C side
@@ -124,6 +125,7 @@ pub mod lib {
         fn archive_entry_clear(e: *mut Entry) -> *mut Entry;
         fn archive_entry_pathname(e: *mut Entry) -> *const c_char;
         fn archive_entry_pathname_utf8(e: *mut Entry) -> *const c_char;
+        #[cfg(windows)]
         fn archive_entry_pathname_w(e: *mut Entry) -> *const u16;
         fn archive_entry_symlink(e: *mut Entry) -> *const c_char;
         fn archive_entry_perm(e: *mut Entry) -> bun_sys::Mode;
@@ -254,10 +256,14 @@ pub mod lib {
             can_use_pwrite: &mut bool,
             can_use_lseek: &mut bool,
         ) -> Result {
+            #[cfg(windows)]
+            {
+                *can_use_pwrite = false;
+            }
             let mut target_offset: i64 = 0; // Updated by archive.next() — where this block should be written
             let mut actual_offset: i64 = 0; // Where we've actually written to (for write() path)
             let mut final_offset: i64 = 0; // Furthest point the file must extend to
-            let file = bun_sys::File { handle: fd };
+            let file = bun_sys::File::borrow(&fd);
 
             while let Some(block) = self.next(&mut target_offset) {
                 if block.result != Result::Ok {
@@ -306,7 +312,7 @@ pub mod lib {
                         if block.offset > actual_offset {
                             // Write zeros to fill the gap
                             let zero_count = (block.offset - actual_offset) as usize;
-                            let zero_result = Self::write_zeros_to_file(&file, zero_count);
+                            let zero_result = Self::write_zeros_to_file(file, zero_count);
                             if zero_result != Result::Ok {
                                 return zero_result;
                             }
@@ -335,9 +341,12 @@ pub mod lib {
             Result::Ok
         }
 
-        pub fn error_string(this: *mut Archive) -> &'static [u8] {
-            // SAFETY: `this` came from archive_{read,write}_new().
-            let p = unsafe { archive_error_string(this) };
+        // `self` must be a live archive handle from `archive_{read,write}_new()`.
+        // `Archive` is `opaque_ffi!`-backed (UnsafeCell), so `&self → *mut Self`
+        // is sound; libarchive never returns null from `*_new()`.
+        pub fn error_string(&self) -> &'static [u8] {
+            // SAFETY: `self` is a live archive handle.
+            let p = unsafe { archive_error_string(self.as_mut_ptr()) };
             if p.is_null() {
                 return b"";
             }
@@ -451,10 +460,10 @@ pub mod lib {
         }
         /// `archive_entry_new2(archive)` — ties the entry to the archive's
         /// charset-conversion context (preferred over `new()` when an archive
-        /// is available).
-        pub fn new2(archive: *mut Archive) -> *mut Entry {
-            // SAFETY: `archive` came from `Archive::read_new()`/`write_new()`.
-            unsafe { archive_entry_new2(archive) }
+        /// is available). `archive` is a live handle from `read_new()`/`write_new()`.
+        pub fn new2(archive: &Archive) -> *mut Entry {
+            // SAFETY: `archive` is a live handle (opaque_ffi! `&self → *mut Self`).
+            unsafe { archive_entry_new2(archive.as_mut_ptr()) }
         }
         pub fn free(&self) {
             // SAFETY: self came from Entry::new(); not used after this.
@@ -570,8 +579,9 @@ pub mod lib {
         pub fn new() -> Self {
             Self(core::ptr::NonNull::new(Entry::new()).expect("archive_entry_new returned null"))
         }
+        /// `archive` is a live handle from `read_new()`/`write_new()`.
         #[inline]
-        pub fn new2(archive: *mut Archive) -> Self {
+        pub fn new2(archive: &Archive) -> Self {
             Self(
                 core::ptr::NonNull::new(Entry::new2(archive))
                     .expect("archive_entry_new2 returned null"),
@@ -749,25 +759,25 @@ pub mod lib {
     }
 
     impl NextEntry {
-        /// Port of `Iterator.NextEntry.readEntryData`.
+        /// Port of `Iterator.NextEntry.readEntryData`. `archive` is the live
+        /// handle this `NextEntry` was yielded from.
         pub fn read_entry_data(
             &self,
-            archive: *mut Archive,
+            archive: &Archive,
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
             let size = unsafe { (*self.entry).size() };
             if size < 0 || size > 64 * 1024 * 1024 {
                 return Ok(IteratorResult::init_err(
-                    archive,
+                    archive.as_mut_ptr(),
                     b"invalid archive entry size",
                 ));
             }
             let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
-            // SAFETY: archive is valid for the lifetime of the iterator.
-            let read = unsafe { &*archive }.read_data(&mut buf);
+            let read = archive.read_data(&mut buf);
             if read < 0 {
                 return Ok(IteratorResult::init_err(
-                    archive,
+                    archive.as_mut_ptr(),
                     b"failed to read archive data",
                 ));
             }
@@ -785,17 +795,21 @@ pub mod lib {
     pub type archive_close_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
     pub type archive_free_callback = unsafe extern "C" fn(*mut Archive, *mut c_void) -> c_int;
 
+    /// `a` is a live `archive_write_new()` handle. `client_data` is forwarded
+    /// opaquely to the callbacks (never dereferenced here); its lifetime must
+    /// outlast the registered callbacks.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn archive_write_open2(
-        a: *mut Archive,
+        a: &Archive,
         client_data: *mut c_void,
         open: Option<archive_open_callback>,
         write: Option<archive_write_callback>,
         close: Option<archive_close_callback>,
         free: Option<archive_free_callback>,
     ) -> c_int {
-        // SAFETY: `a` came from archive_write_new(); callbacks have correct
-        // ABI; client_data lifetime is caller's responsibility.
-        unsafe { archive_write_open2_raw(a, client_data, open, write, close, free) }
+        // SAFETY: `a` is a live handle (`opaque_ffi!` `&self → *mut Self`);
+        // `client_data` is opaque to libarchive until a callback dereferences it.
+        unsafe { archive_write_open2_raw(a.as_mut_ptr(), client_data, open, write, close, free) }
     }
 
     /// Growing memory buffer for archive writes with libarchive callbacks.
@@ -872,7 +886,9 @@ pub mod lib {
     impl IteratorError {
         #[inline]
         pub fn error_string(&self) -> &[u8] {
-            Archive::error_string(self.archive)
+            // SAFETY: `self.archive` is the live `read_new()` handle this
+            // iterator's error was yielded from (never null).
+            unsafe { &*self.archive }.error_string()
         }
     }
     /// `Iterator.Result(T)` for the std-`Result`-shaped iterator below. Named
@@ -895,23 +911,24 @@ pub mod lib {
         }
         /// Port of `NextEntry.readEntryData` (bindings.zig). Allocates `size`
         /// bytes and reads the current entry's data into it.
+        ///
+        /// `archive` is the live handle this entry was yielded from.
         pub fn read_entry_data(
             &self,
-            archive: *mut Archive,
+            archive: &Archive,
         ) -> core::result::Result<IterResult<Vec<u8>>, bun_core::OOM> {
             let size = self.entry().size();
             if size < 0 || size > 64 * 1024 * 1024 {
                 return Ok(Err(IteratorError {
-                    archive,
+                    archive: archive.as_mut_ptr(),
                     message: b"invalid archive entry size",
                 }));
             }
             let mut buf = vec![0u8; usize::try_from(size).expect("int cast")];
-            // SAFETY: `archive` came from `Archive::read_new()`.
-            let read = unsafe { &*archive }.read_data(&mut buf);
+            let read = archive.read_data(&mut buf);
             if read < 0 {
                 return Ok(Err(IteratorError {
-                    archive,
+                    archive: archive.as_mut_ptr(),
                     message: b"failed to read archive data",
                 }));
             }
@@ -1163,7 +1180,10 @@ impl BufferReadStream {
         0
     }
 
-    pub extern "C" fn archive_read_callback(
+    /// # Safety
+    /// libarchive C callback: `ctx_` is the `*mut BufferReadStream` registered
+    /// via `archive_read_set_callback_data`; `buffer` is a non-null out-param.
+    pub unsafe extern "C" fn archive_read_callback(
         _: *mut Archive,
         ctx_: *mut c_void,
         buffer: *mut *const c_void,
@@ -1182,7 +1202,10 @@ impl BufferReadStream {
         isize::try_from(diff).expect("int cast")
     }
 
-    pub extern "C" fn archive_skip_callback(
+    /// # Safety
+    /// libarchive C callback: `ctx_` is the `*mut BufferReadStream` registered
+    /// via `archive_read_set_callback_data`.
+    pub unsafe extern "C" fn archive_skip_callback(
         _: *mut Archive,
         ctx_: *mut c_void,
         offset: lib::la_int64_t,
@@ -1199,7 +1222,10 @@ impl BufferReadStream {
         (new_pos - pos) as lib::la_int64_t
     }
 
-    pub extern "C" fn archive_seek_callback(
+    /// # Safety
+    /// libarchive C callback: `ctx_` is the `*mut BufferReadStream` registered
+    /// via `archive_read_set_callback_data`.
+    pub unsafe extern "C" fn archive_seek_callback(
         _: *mut Archive,
         ctx_: *mut c_void,
         offset: lib::la_int64_t,
@@ -1283,9 +1309,10 @@ impl Drop for BufferReadStream {
 /// Returns true if the symlink is safe (target stays within extraction dir),
 /// false if it would escape (e.g., via ../ traversal or absolute path).
 ///
-/// The check works by resolving the symlink target relative to the symlink's
-/// directory location using a fake root, then checking if the result stays
-/// within that fake root.
+/// The check works by normalizing `symlink_dir/link_target` as a relative
+/// path with leading `..` preserved; the target is unsafe if the result
+/// climbs above the extraction root.
+#[cfg(unix)]
 fn is_symlink_target_safe(
     symlink_path: &[u8],
     link_target: &ZStr,
@@ -1300,20 +1327,35 @@ fn is_symlink_target_safe(
     // Get the directory containing the symlink
     let symlink_dir = bun_paths::dirname_simple(symlink_path);
 
-    // Use a fake root to resolve the path and check if it escapes
-    let fake_root: &[u8] = b"/packages/";
-
     let join_buf: &mut PathBuffer =
         symlink_join_buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
 
-    let resolved = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Posix>(
-        fake_root,
-        &mut join_buf[..],
-        &[symlink_dir, link_target_bytes],
+    // Normalize symlink_dir/link_target as a relative path. An absolute fake
+    // root cannot be used here: POSIX normalization clamps excess `..` at `/`,
+    // so a target like `../../../packages/x` would normalize back under any
+    // fake root that happens to match a real ancestor directory name.
+    if symlink_dir.len() + 1 + link_target_bytes.len() >= join_buf.len() {
+        return false;
+    }
+    let mut written = 0usize;
+    if !symlink_dir.is_empty() {
+        join_buf[..symlink_dir.len()].copy_from_slice(symlink_dir);
+        written = symlink_dir.len();
+        join_buf[written] = b'/';
+        written += 1;
+    }
+    join_buf[written..written + link_target_bytes.len()].copy_from_slice(link_target_bytes);
+    written += link_target_bytes.len();
+
+    let mut norm_buf = bun_paths::path_buffer_pool::get();
+    let resolved = bun_paths::resolve_path::normalize_string_generic_t::<u8, true, false>(
+        &join_buf[..written],
+        &mut norm_buf[..],
+        b'/',
+        |c| c == b'/',
     );
 
-    // If the resolved path doesn't start with our fake root, it escaped
-    resolved.starts_with(fake_root)
+    !(strings::eql(resolved, b"..") || strings::has_prefix_comptime(resolved, b"../"))
 }
 
 /// Returns true if any leading component of `path` (including the full path)
@@ -1322,7 +1364,7 @@ fn is_symlink_target_safe(
 /// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
 /// rejected rather than resolved.
 #[cfg(unix)]
-fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
+pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
     if created_symlinks.is_empty() {
         return false;
     }
@@ -1331,7 +1373,14 @@ fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> 
     while end <= path.len() {
         if end == path.len() || path[end] == sep {
             let prefix = &path[..end];
-            if !prefix.is_empty() && created_symlinks.iter().any(|s| s.as_slice() == prefix) {
+            // Compare case-insensitively: on case-insensitive filesystems (APFS
+            // default on macOS) an entry `LINK/x` traverses a symlink stored as
+            // `link`, but a byte-exact compare would miss it.
+            if !prefix.is_empty()
+                && created_symlinks
+                    .iter()
+                    .any(|s| strings::eql_case_insensitive_ascii_check_length(s, prefix))
+            {
                 return true;
             }
         }
@@ -1638,8 +1687,8 @@ impl Archiver {
         // PORT NOTE: reshaped for borrowck — ctx is Option<&mut>, rebound as needed
         let mut ctx = ctx;
 
+        #[cfg(unix)]
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
-        // (guard Drop puts the buffer back to the pool)
 
         #[cfg(unix)]
         let mut created_symlinks: Vec<Vec<u8>> = Vec::new();
@@ -1808,7 +1857,7 @@ impl Archiver {
                     #[cfg(unix)]
                     if path_traverses_created_symlink(path_slice, &created_symlinks) {
                         if options.log {
-                            Output::warn(&format_args!(
+                            Output::warn(format_args!(
                                 "Skipping entry that traverses a previously extracted symlink: {}\n",
                                 bun_core::fmt::fmt_os_path(path_slice, Default::default()),
                             ));
@@ -1896,7 +1945,7 @@ impl Archiver {
                                 ) {
                                     // Skip symlinks that would escape the extraction directory
                                     if options.log {
-                                        Output::warn(&format_args!(
+                                        Output::warn(format_args!(
                                             "Skipping symlink with unsafe target: {} -> {}\n",
                                             bun_core::fmt::fmt_os_path(
                                                 path_slice,
@@ -1941,15 +1990,30 @@ impl Archiver {
                             // then https://github.com/npm/cli/blob/feb54f7e9a39bd52519221bae4fafc8bc70f235e/node_modules/pacote/lib/fetcher.js#L402-L411
                             //
                             // we simplify and turn it into `entry.mode || 0o666` because we aren't accepting a umask or fmask option.
-                            #[cfg(windows)]
-                            let mode: bun_sys::Mode = 0;
                             #[cfg(not(windows))]
                             let mode: bun_sys::Mode = bun_sys::Mode::try_from(
                                 // SAFETY: entry valid
-                                lib::Entry::opaque_ref(entry).perm() | 0o666,
+                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
                             )
                             .unwrap();
 
+                            // `path_traverses_created_symlink` is a lexical check: on
+                            // filesystems that alias differently-encoded names (Unicode
+                            // NFC/NFD normalization on APFS/HFS+), a path component can
+                            // reach a created symlink without byte-matching its recorded
+                            // path. Once this extraction has created any symlink, ask the
+                            // kernel to refuse to follow symlinks while opening file
+                            // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets.
+                            #[cfg(unix)]
+                            let flags = {
+                                let mut flags =
+                                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                                if !created_symlinks.is_empty() {
+                                    flags |= bun_sys::O::NOFOLLOW_ANY;
+                                }
+                                flags
+                            };
+                            #[cfg(not(unix))]
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
                             #[cfg(windows)]
@@ -2050,7 +2114,7 @@ impl Archiver {
                                     if A::HAS_APPEND_MUTABLE {
                                         let result = ctx_
                                             .all_files
-                                            .get_or_put_adapted(h, archiver::U64Context)
+                                            .get_or_put_adapted(&h, &archiver::U64Context)
                                             .expect("unreachable");
                                         if !result.found_existing {
                                             *result.value_ptr = appender
@@ -2126,8 +2190,12 @@ impl Archiver {
                                         }
                                         _ => {
                                             if options.log {
-                                                let archive_error =
-                                                    slice_to_nul(Archive::error_string(archive));
+                                                // SAFETY: `archive` is the live
+                                                // `read_new()` handle this
+                                                // extraction loop is iterating.
+                                                let archive_error = slice_to_nul(
+                                                    unsafe { &*archive }.error_string(),
+                                                );
                                                 Output::err(
                                                     "libarchive error",
                                                     "extracting {}: {}",

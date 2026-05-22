@@ -142,11 +142,21 @@ mod _impl {
             let strategy =
                 validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
             // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
-            let write_result = arguments.ptr[4]
-                .as_array_buffer(global)
-                .unwrap()
-                .as_u32()
-                .as_mut_ptr();
+            // `flush_write_result` writes two u32s through this pointer, so the
+            // caller-supplied array must hold at least 2 elements.
+            let mut write_result_buf = arguments.ptr[4].as_array_buffer(global).unwrap();
+            let write_result_slice = write_result_buf.as_u32();
+            if write_result_slice.len() < 2 {
+                return Err(global
+                    .err(
+                        bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "writeResult must be a Uint32Array with at least 2 elements"
+                        ),
+                    )
+                    .throw());
+            }
+            let write_result = write_result_slice.as_mut_ptr();
             let write_callback =
                 validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives

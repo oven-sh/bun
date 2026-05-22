@@ -3390,11 +3390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let original_member_ref = value.ref_;
 
                     if self.symbols[symbol_idx].kind == js_ast::symbol::Kind::HoistedFunction {
-                        // Block-level function declarations behave like "let" in strict mode,
-                        // so they must stay scoped to the block they were declared in. This
-                        // keeps the symbol model in sync with the printed output (the printer
-                        // lowers them to a "let" inside the block), e.g. so that
-                        // "export {f}" of a block-scoped function is reported as an error.
+                        // Block-level function declarations behave like "let" in strict mode
                         if scope_strict_mode != js_ast::StrictModeKind::SloppyMode {
                             continue;
                         }
@@ -3417,9 +3413,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //   }
                         //   f();
                         //
-                        // The two symbols share the same original name, so this form is only
-                        // printable when the renamer runs (bundling/minifying). Otherwise the
-                        // function symbol itself is hoisted below.
                         if self.will_use_renamer() {
                             // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
                             let original_name: &'a [u8] =

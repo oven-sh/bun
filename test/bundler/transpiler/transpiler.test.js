@@ -3806,10 +3806,6 @@ const Layout = () => {
 });
 
 describe("export of a block-scoped function declaration", () => {
-  // In a module, a function declaration inside a block is block-scoped (modules are
-  // strict mode), so "export { name }" at module scope must be rejected up front.
-  // Previously the transpiler accepted it, lowered the function to a "let" inside the
-  // block, and still emitted the top-level export clause - output that fails to parse.
   const code = "{\n  function encrypt() {}\n}\nexport { encrypt }";
 
   function expectNotDeclaredError(loader) {

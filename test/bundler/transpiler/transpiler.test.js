@@ -1000,6 +1000,28 @@ export default class {
         'const b = { xyz: "foo" };\n',
       );
     });
+
+    it("rejects using declarations in ambient contexts", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // These used to crash the parser with an index-out-of-bounds panic
+      // because ambient ("declare") bindings are never declared as symbols.
+      err("declare await using basic;var", 'Cannot use an "await using" declaration in an ambient context');
+      err("declare using basic;var", 'Cannot use a "using" declaration in an ambient context');
+      err("declare using x", 'Cannot use a "using" declaration in an ambient context');
+      err("declare await using x", 'Cannot use an "await using" declaration in an ambient context');
+      err("declare using x = foo()", 'Cannot use a "using" declaration in an ambient context');
+      err("declare await using x = foo()", 'Cannot use an "await using" declaration in an ambient context');
+      err("declare namespace NS { using x; }", 'Cannot use a "using" declaration in an ambient context');
+      err('declare module "m" { using x; }', 'Cannot use a "using" declaration in an ambient context');
+      err("declare global { await using x; }", 'Cannot use an "await using" declaration in an ambient context');
+
+      // "declare" on other declarations is still erased without error
+      exp("declare const x: number; var y", "var y");
+      exp("declare let x: number; var y", "var y");
+      exp("declare var x: number; var y", "var y");
+    });
   });
 
   describe("generated closures", () => {

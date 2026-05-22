@@ -346,9 +346,9 @@ pub struct PosixSpawnOptions {
 impl Default for PosixSpawnOptions {
     fn default() -> Self {
         Self {
-            stdin: PosixStdio::Ignore,
-            stdout: PosixStdio::Ignore,
-            stderr: PosixStdio::Ignore,
+            stdin: PosixStdio::Inherit,
+            stdout: PosixStdio::Inherit,
+            stderr: PosixStdio::Inherit,
             ipc: None,
             extra_fds: Box::default(),
             cwd: Box::default(),

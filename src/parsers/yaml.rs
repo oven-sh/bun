@@ -2900,6 +2900,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // body's result and pop on EVERY exit (including `?` paths).
         let result: Result<Expr, ParseError> = (|| {
             let mut props = MappingProps::init();
+            let mut first_entry_end_line = mapping_line;
 
             {
                 // get the first value
@@ -2914,12 +2915,44 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                         Expr::init(E::Null {}, mapping_value_start.loc())
                     }
-                    _ => 'value: {
-                        self.scan(ScanOptions::default())?;
+                    TokenData::MappingValue => 'value: {
+                        first_entry_end_line = mapping_value_line;
+                        // [191] l-block-map-explicit-value(n) ::= s-indent(n) ':' …
+                        // The `:` must be at exactly the `?` indent (block ctx).
+                        if mapping_value_line != mapping_line
+                            && !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
+                            && self.token.indent != mapping_indent
+                        {
+                            if self.token.indent.is_less_than(mapping_indent) {
+                                // [189] e-node — `:` belongs to an outer
+                                // construct; this entry has no value.
+                                break 'value Expr::init(E::Null {}, mapping_value_start.loc());
+                            }
+                            return Err(Self::unexpected_token());
+                        }
+                        // [191] explicit `:` is on a new line at mapping_indent;
+                        // a same-line `- ` after it is a compact sequence whose
+                        // indent is column-based, not line-based.
+                        let parent_indent = if mapping_value_line != mapping_line {
+                            Some(mapping_indent.add(1))
+                        } else {
+                            None
+                        };
+                        self.scan(ScanOptions {
+                            additional_parent_indent: parent_indent,
+                            ..Default::default()
+                        })?;
 
                         match self.token.data {
                             TokenData::SequenceEntry => {
-                                if self.token.line == mapping_value_line {
+                                // [185] a compact construct on the explicit-`:`
+                                // line must be at indent >= n+1 via s-indent
+                                // (spaces). A tab separator leaves the token at
+                                // the line's natural indent, which fails this.
+                                if self.token.line == mapping_line
+                                    || (self.token.line == mapping_value_line
+                                        && self.token.indent.is_less_than_or_equal(mapping_indent))
+                                {
                                     return Err(Self::unexpected_token());
                                 }
                                 if self.token.indent.is_less_than(mapping_indent) {
@@ -2943,6 +2976,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
                     }
+                    // [189] explicit-value is optional; the current token is the
+                    // next entry (or end of mapping). Implicit first entries
+                    // always arrive here with `:` so this arm is explicit-only.
+                    _ => Expr::init(E::Null {}, mapping_value_start.loc()),
                 };
 
                 props.append_maybe_merge(first_key, value)?;
@@ -2963,7 +3000,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // PORT NOTE: Zig `defer self.context.unset(.block_in)` — same
             // capture-then-unset pattern, nested.
             let inner: Result<Expr, ParseError> = (|| {
-                let mut previous_line = mapping_line;
+                let mut previous_line = first_entry_end_line;
 
                 while !matches!(
                     self.token.data,
@@ -2993,6 +3030,23 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             return Err(Self::unexpected_token());
                         }
+                        TokenData::MappingValue if explicit_key => {
+                            // [191] l-block-map-explicit-value ::= s-indent(n) ':' …
+                            if self.token.indent != mapping_indent {
+                                if self.token.indent.is_less_than(mapping_indent) {
+                                    // [189] e-node — `:` belongs to an outer
+                                    // construct; this entry has no value.
+                                    let value = Expr::init(E::Null {}, self.pos.loc());
+                                    props.append(G::Property {
+                                        key: Some(key),
+                                        value: Some(value),
+                                        ..Default::default()
+                                    })?;
+                                    continue;
+                                }
+                                return Err(Self::unexpected_token());
+                            }
+                        }
                         TokenData::MappingValue => {
                             if key_line != self.token.line {
                                 return Err(ParseError::MultilineImplicitKey);
@@ -3000,12 +3054,28 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                         TokenData::MappingKey => {}
                         _ => {
+                            if explicit_key {
+                                // [189] explicit-value is optional; the current
+                                // token is the next entry's key.
+                                let value = Expr::init(E::Null {}, self.pos.loc());
+                                props.append(G::Property {
+                                    key: Some(key),
+                                    value: Some(value),
+                                    ..Default::default()
+                                })?;
+                                continue;
+                            }
                             return Err(Self::unexpected_token());
                         }
                     }
 
                     let mapping_value_line = self.token.line;
                     let mapping_value_start = self.token.start;
+                    // Mirrors first_entry_end_line: when this entry has an
+                    // explicit `:`, the next entry must start on a later line.
+                    if matches!(self.token.data, TokenData::MappingValue) {
+                        previous_line = mapping_value_line;
+                    }
 
                     let value: Expr = match self.token.data {
                         // it's a !!set entry
@@ -3016,11 +3086,25 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             Expr::init(E::Null {}, mapping_value_start.loc())
                         }
                         _ => 'value: {
-                            self.scan(ScanOptions::default())?;
+                            let parent_indent = if mapping_value_line != key_line {
+                                Some(mapping_indent.add(1))
+                            } else {
+                                None
+                            };
+                            self.scan(ScanOptions {
+                                additional_parent_indent: parent_indent,
+                                ..Default::default()
+                            })?;
 
                             match self.token.data {
                                 TokenData::SequenceEntry => {
-                                    if self.token.line == key_line {
+                                    if self.token.line == key_line
+                                        || (self.token.line == mapping_value_line
+                                            && self
+                                                .token
+                                                .indent
+                                                .is_less_than_or_equal(mapping_indent))
+                                    {
                                         return Err(Self::unexpected_token());
                                     }
                                     if self.token.indent.is_less_than(mapping_indent) {
@@ -3453,6 +3537,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.scan(ScanOptions::default())?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
+                        if self.token.indent.is_less_than(alias_indent)
+                            || (opts.explicit_mapping_key
+                                && alias_line != self.token.line
+                                && self.token.indent.is_less_than_or_equal(alias_indent))
+                        {
+                            break 'node copy;
+                        }
                         if alias_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
                         }
@@ -3482,6 +3573,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let seq = self.parse_flow_sequence()?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
+                        if self.token.indent.is_less_than(sequence_indent)
+                            || (opts.explicit_mapping_key
+                                && sequence_line != self.token.line
+                                && self.token.indent.is_less_than_or_equal(sequence_indent))
+                        {
+                            break 'node seq;
+                        }
                         if sequence_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
                         }
@@ -3550,6 +3648,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let map = self.parse_flow_mapping()?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
+                        if self.token.indent.is_less_than(mapping_indent)
+                            || (opts.explicit_mapping_key
+                                && mapping_line != self.token.line
+                                && self.token.indent.is_less_than_or_equal(mapping_indent))
+                        {
+                            break 'node map;
+                        }
                         if mapping_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
                         }
@@ -3597,15 +3702,55 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     self.block_indents.push(mapping_indent)?;
 
-                    self.scan(ScanOptions::default())?;
-
-                    let key = self.parse_node(ParseNodeOptions {
-                        explicit_mapping_key: true,
-                        current_mapping_indent: Some(
-                            opts.current_mapping_indent.unwrap_or(mapping_indent),
-                        ),
+                    let in_flow = matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
+                    let parent_indent = if in_flow {
+                        None
+                    } else {
+                        Some(mapping_indent.add(1))
+                    };
+                    self.scan(ScanOptions {
+                        additional_parent_indent: parent_indent,
                         ..Default::default()
                     })?;
+
+                    // [185] a compact construct on the `?` line must be at
+                    // indent >= n+1 via s-indent (spaces). A tab separator
+                    // leaves the token at the line's natural indent, which
+                    // fails this.
+                    if !in_flow
+                        && self.token.line == mapping_line
+                        && self.token.indent.is_less_than_or_equal(mapping_indent)
+                        && matches!(
+                            self.token.data,
+                            TokenData::SequenceEntry | TokenData::MappingKey
+                        )
+                    {
+                        self.block_indents.pop();
+                        return Err(Self::unexpected_token());
+                    }
+
+                    let key = if !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
+                        && self.token.line != mapping_line
+                        && self.token.indent.is_less_than_or_equal(mapping_indent)
+                        && !(self.token.indent == mapping_indent
+                            && matches!(self.token.data, TokenData::SequenceEntry))
+                    {
+                        // [185] e-node — `?` followed by nothing more-indented
+                        // has an empty key; the current token is the explicit
+                        // `:`, the next entry, or the end of the mapping.
+                        // Exception: a zero-indented `- ` at the `?` indent is
+                        // the key (block sequences may sit at their parent's
+                        // indent).
+                        Expr::init(E::Null {}, self.token.start.loc())
+                    } else {
+                        self.parse_node(ParseNodeOptions {
+                            explicit_mapping_key: true,
+                            current_mapping_indent: Some(
+                                opts.current_mapping_indent.unwrap_or(mapping_indent),
+                            ),
+                            ..Default::default()
+                        })?
+                    };
 
                     self.block_indents.pop();
 
@@ -3666,6 +3811,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if matches!(self.token.data, TokenData::MappingValue) {
                         // this might be the start of a new object with an implicit key
                         // (see Zig comments for cases 1-4)
+                        if self.token.indent.is_less_than(scalar_indent)
+                            || (opts.explicit_mapping_key
+                                && scalar_line != self.token.line
+                                && self.token.indent.is_less_than_or_equal(scalar_indent))
+                        {
+                            // `:` belongs to an outer construct (e.g. the
+                            // explicit-value indicator after `? - a` or
+                            // `? sky\n: blue`). This scalar is not a key.
+                            break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
+                        }
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
                             if current_mapping_indent == scalar_indent {
                                 // 3
@@ -5336,7 +5491,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 0x09 /* '\t' */ => {
-                    if count_indentation && self.context.get() == Context::BlockIn {
+                    if additional_parent_indent.is_some() {
+                        // The same-line tab after `?`/`:`/`-` is s-separate-in-
+                        // line, not s-indent. [185] compact constructs require
+                        // s-indent (spaces), so the additional-parent-indent
+                        // treatment does not apply — the resulting token gets
+                        // the line's natural indent and the caller's compact-
+                        // indent check catches it.
+                        additional_parent_indent = None;
+                    } else if count_indentation && self.context.get() == Context::BlockIn {
                         return Err(ParseError::UnexpectedCharacter);
                     }
                     count_indentation = false;

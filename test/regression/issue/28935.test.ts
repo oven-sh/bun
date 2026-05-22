@@ -431,3 +431,116 @@ test.concurrent("bun pm version does not silently migrate yarn.lock / package-lo
   expect(await Bun.file(join(dir, "bun.lock")).exists()).toBe(false);
   expect(await Bun.file(join(dir, "bun.lockb")).exists()).toBe(false);
 });
+
+// Regression guard for the case where `bun.lock` is in `.gitignore`
+// (a deliberate pattern for library-style monorepos that regenerate
+// lockfiles per-environment). Passing an explicitly-named ignored path
+// to `git add` makes git exit 1 with `The following paths are ignored
+// by one of your .gitignore files: bun.lock`, which would fail the
+// whole version bump. `bun pm version` must detect this via
+// `git check-ignore` and drop the lockfile arg so only `package.json`
+// is staged.
+//
+// Linux-only for the same reason as the other two git-tagging tests:
+// darwin/windows shards have been flaky with `git init`/`commit` under
+// `test.concurrent`.
+test.concurrent.skipIf(!isLinux)(
+  "bun pm version does not fail when bun.lock is gitignored",
+  async () => {
+    const dir = tempDirWithFiles("issue-28935-gitignore", {
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["packages/*"],
+      }),
+      "packages/first/package.json": JSON.stringify({
+        name: "first",
+        version: "1.0.0",
+      }),
+      ".gitignore": "bun.lock\nbun.lockb\nnode_modules\n",
+    });
+
+    {
+      const { exitCode } = await run([bunExe(), "install"], dir);
+      expect(exitCode).toBe(0);
+    }
+
+    const gitEnv = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      HOME: "",
+      XDG_CONFIG_HOME: "",
+      USERPROFILE: "",
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+    };
+    for (const argv of [
+      ["git", "init", "-q"],
+      // `git add .` respects the .gitignore, so bun.lock stays untracked.
+      ["git", "add", "."],
+      ["git", "commit", "-q", "-m", "init"],
+    ]) {
+      await using gitProc = spawn({
+        cmd: argv,
+        cwd: dir,
+        env: gitEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const stderr = await gitProc.stderr.text();
+      const code = await gitProc.exited;
+      if (code !== 0) throw new Error(`${argv.join(" ")} failed: ${stderr}`);
+    }
+
+    // Sanity: bun.lock was NOT tracked after the initial commit.
+    await using lsProc = spawn({
+      cmd: ["git", "ls-files", "bun.lock"],
+      cwd: dir,
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    expect((await lsProc.stdout.text()).trim()).toBe("");
+    expect(await lsProc.exited).toBe(0);
+
+    // With the fix, `bun pm version` from the workspace subdir must
+    // succeed — the lockfile arg is dropped because git reports it
+    // ignored, so `git add` only gets `package.json`.
+    await using versionProc = spawn({
+      cmd: [bunExe(), "pm", "version", "minor"],
+      cwd: join(dir, "packages", "first"),
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [vStdout, vStderr, vCode] = await Promise.all([
+      versionProc.stdout.text(),
+      versionProc.stderr.text(),
+      versionProc.exited,
+    ]);
+    expect(vStderr).not.toContain("Git add failed");
+    expect(vStdout.trim().split("\n").at(-1)).toBe("v1.1.0");
+    expect(vCode).toBe(0);
+
+    // bun.lock on disk still reflects the bump (lockfile is updated
+    // regardless of whether it's stageable).
+    const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+    const firstIdx = lockfile.indexOf('"packages/first"');
+    expect(firstIdx).toBeGreaterThanOrEqual(0);
+    expect(lockfile.slice(firstIdx)).toMatch(/"name":\s*"first"[\s\S]*?"version":\s*"1\.1\.0"/);
+
+    // bun.lock is still untracked; only package.json was committed.
+    await using showProc = spawn({
+      cmd: ["git", "show", "--name-only", "--pretty=format:", "HEAD"],
+      cwd: dir,
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const changed = (await showProc.stdout.text()).trim().split("\n").filter(Boolean).sort();
+    expect(changed).toEqual(["packages/first/package.json"]);
+    expect(await showProc.exited).toBe(0);
+  },
+);

@@ -279,20 +279,31 @@ impl PmVersionCommand {
         }
 
         if pm.options.git_tag_version {
-            // Only stage the lockfile when it lives inside the repository
-            // that git will actually discover from `package_json_dir`. If
-            // the package has its own nested `.git` (git submodule or a
-            // standalone repo vendored inside the workspace), git will
-            // resolve to that repo and reject the absolute workspace-root
-            // lockfile path with `fatal: ... is outside repository`, which
-            // would fail the entire version bump. Drop the arg in that case
-            // so the nested repo just gets `package.json`.
+            // Only stage the lockfile when git will accept it. Two ways the
+            // caller can trip `git add`:
+            //   1. The package has its own nested `.git` (submodule / vendored
+            //      repo inside the workspace). `git` spawned from the package
+            //      dir resolves to the nested repo, which rejects the absolute
+            //      workspace-root lockfile path with
+            //      `fatal: ... is outside repository`.
+            //   2. `bun.lock` is in `.gitignore` (a deliberate pattern for
+            //      library-style monorepos that regenerate lockfiles per env).
+            //      `git add` refuses explicitly-named ignored paths with
+            //      `The following paths are ignored by one of your .gitignore
+            //      files: bun.lock` and exits 1.
+            // In either case drop the arg so the repo just gets `package.json`.
             let mut root_buf = PathBuffer::uninit();
             let stage_lockfile_path: Option<&[u8]> =
                 saved_lockfile_path.as_deref().and_then(|lp| {
                     let git_root = Self::find_git_root(&package_json_dir, &mut root_buf.0)?;
                     match path::is_parent_or_equal(git_root, lp) {
-                        path::ParentEqual::Parent | path::ParentEqual::Equal => Some(lp),
+                        path::ParentEqual::Parent | path::ParentEqual::Equal => {
+                            if Self::is_path_ignored_by_git(&package_json_dir, lp) {
+                                None
+                            } else {
+                                Some(lp)
+                            }
+                        }
                         path::ParentEqual::Unrelated => None,
                     }
                 });
@@ -525,9 +536,6 @@ impl PmVersionCommand {
         let save_format = load_result.save_format(unsafe { &(*pm_raw).options });
         let filename = save_format.filename().as_bytes();
         let root_dir = bun_paths::fs::FileSystem::instance().top_level_dir();
-
-        // `load_result` ends its lexical borrow of `pm.lockfile` at the
-        // function boundary; no explicit `drop` needed.
 
         let mut join_buf = PathBuffer::uninit();
         let abs = path::join_abs_string_buf_z::<path_platform::Auto>(
@@ -939,6 +947,48 @@ impl PmVersionCommand {
                 Global::exit(1);
             }
             Ok(result) => Ok(result.is_ok() && result.stdout.is_empty()),
+        }
+    }
+
+    /// Returns `true` when `git check-ignore` says `path` is ignored by
+    /// `.gitignore` in the repo rooted at `cwd`. Used by `exec` to drop the
+    /// lockfile argument before calling `git add`: passing an explicitly-named
+    /// ignored path to `git add` exits 1 with
+    /// `The following paths are ignored by one of your .gitignore files: …`,
+    /// which would fail the whole version bump.
+    ///
+    /// `git check-ignore -q` exits 0 when the path matches, 1 when it
+    /// doesn't, and 128 on internal error (e.g. not a git repo). Anything
+    /// other than a clean exit-0 is treated as "not ignored" — we'd rather
+    /// try `git add` (and surface git's own error) than silently skip the
+    /// stage in a broken repo.
+    fn is_path_ignored_by_git(cwd: &[u8], path: &[u8]) -> bool {
+        let mut path_buf = PathBuffer::uninit();
+        let Some(git_path) = which(
+            &mut path_buf,
+            env_var::PATH.get().unwrap_or(b""),
+            cwd,
+            b"git",
+        ) else {
+            return false;
+        };
+
+        let proc = spawn_sync(&SpawnSyncOptions {
+            argv: build_argv(&[git_path.as_bytes(), b"check-ignore", b"-q", b"--", path]),
+            stdout: Stdio::Ignore,
+            stderr: Stdio::Ignore,
+            stdin: Stdio::Ignore,
+            cwd: Box::<[u8]>::from(cwd),
+            envp: None,
+            #[cfg(windows)]
+            windows: spawn_windows_options(),
+            ..Default::default()
+        });
+
+        match proc {
+            Err(_) => false,
+            Ok(Err(_)) => false,
+            Ok(Ok(result)) => result.is_ok(),
         }
     }
 

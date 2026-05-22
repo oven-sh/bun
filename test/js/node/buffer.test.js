@@ -2226,6 +2226,128 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(BufferModule.File).toBe(File);
       });
 
+      describe("transcode", () => {
+        const { transcode } = BufferModule;
+
+        it("is exposed as a function", () => {
+          expect(typeof transcode).toBe("function");
+        });
+
+        // Byte-for-byte vectors from Node's test/parallel/test-icu-transcode.js.
+        describe("matches Node's conformance vectors", () => {
+          const orig = Buffer.from("těst ☕", "utf8");
+
+          it("utf8 -> latin1", () => {
+            expect([...transcode(orig, "utf8", "latin1")]).toEqual([0x74, 0x3f, 0x73, 0x74, 0x20, 0x3f]);
+          });
+
+          it("utf8 -> ascii", () => {
+            expect([...transcode(orig, "utf8", "ascii")]).toEqual([0x74, 0x3f, 0x73, 0x74, 0x20, 0x3f]);
+          });
+
+          it("utf8 -> ucs2", () => {
+            expect([...transcode(orig, "utf8", "ucs2")]).toEqual([
+              0x74, 0x00, 0x1b, 0x01, 0x73, 0x00, 0x74, 0x00, 0x20, 0x00, 0x15, 0x26,
+            ]);
+          });
+
+          it("ucs2 -> utf8 recovers the original string", () => {
+            const ucs2 = transcode(orig, "utf8", "ucs2");
+            expect(transcode(ucs2, "ucs2", "utf8").toString()).toBe("těst ☕");
+          });
+        });
+
+        describe("round-trips text through other encodings", () => {
+          it("utf8 <-> utf16le", () => {
+            const utf16 = transcode(Buffer.from("hello"), "utf8", "utf16le");
+            expect(utf16).toEqual(Buffer.from("hello", "utf16le"));
+            expect(transcode(utf16, "utf16le", "utf8").toString()).toBe("hello");
+          });
+
+          it("ascii -> utf16le", () => {
+            expect(transcode(Buffer.from("hi", "ascii"), "ascii", "utf16le")).toEqual(Buffer.from("hi", "utf16le"));
+          });
+
+          it("latin1 -> utf16le preserves bytes above 0x7f", () => {
+            expect(transcode(Buffer.from("hä", "latin1"), "latin1", "utf16le")).toEqual(Buffer.from("hä", "utf16le"));
+          });
+
+          it("latin1 -> utf8", () => {
+            expect(transcode(Buffer.from([0xc0, 0xe9]), "latin1", "utf8").toString()).toBe("Àé");
+          });
+        });
+
+        describe("substitutes '?' for code points the target can't represent", () => {
+          it("utf8 -> ascii", () => {
+            expect([...transcode(Buffer.from("€"), "utf8", "ascii")]).toEqual([0x3f]);
+          });
+
+          it("utf8 -> latin1", () => {
+            expect([...transcode(Buffer.from("€"), "utf8", "latin1")]).toEqual([0x3f]);
+          });
+
+          it("a supplementary code point collapses to a single '?'", () => {
+            // 😀 (U+1F600) is a surrogate pair in UTF-16 — it must not become two '?'.
+            expect([...transcode(Buffer.from("😀"), "utf8", "latin1")]).toEqual([0x3f]);
+            expect([...transcode(Buffer.from("a😀b"), "utf8", "ascii")]).toEqual([0x61, 0x3f, 0x62]);
+          });
+        });
+
+        it("treats ucs2 as an alias of utf16le", () => {
+          const src = Buffer.from("hi");
+          expect(transcode(src, "utf8", "ucs2")).toEqual(transcode(src, "utf8", "utf16le"));
+        });
+
+        it("accepts a plain Uint8Array, not just a Buffer", () => {
+          const u8 = new Uint8Array([0x68, 0xe4]); // "hä" as latin1
+          expect(transcode(u8, "latin1", "utf16le")).toEqual(Buffer.from("hä", "utf16le"));
+        });
+
+        it("an empty input produces an empty buffer", () => {
+          expect(transcode(Buffer.alloc(0), "utf8", "ascii").length).toBe(0);
+        });
+
+        it("round-trips a large buffer both ways", () => {
+          const text = Buffer.alloc(4000, "€").toString();
+          const utf8 = Buffer.from(text, "utf8");
+          const ucs2 = Buffer.from(text, "ucs2");
+          expect(transcode(utf8, "utf8", "ucs2")).toEqual(ucs2);
+          expect(transcode(ucs2, "ucs2", "utf8")).toEqual(utf8);
+        });
+
+        it("an odd-length utf16le input does not crash", () => {
+          expect(() => transcode(Buffer.allocUnsafeSlow(1), "utf16le", "ucs2")).not.toThrow();
+        });
+
+        describe("rejects bad arguments", () => {
+          it("a non-Buffer source throws ERR_INVALID_ARG_TYPE", () => {
+            let error;
+            try {
+              transcode(null, "utf8", "ascii");
+            } catch (e) {
+              error = e;
+            }
+            expect(error).toBeInstanceOf(TypeError);
+            expect(error.code).toBe("ERR_INVALID_ARG_TYPE");
+            expect(error.message).toBe(
+              'The "source" argument must be an instance of Buffer or Uint8Array. Received null',
+            );
+          });
+
+          it("an unknown source encoding throws", () => {
+            expect(() => transcode(Buffer.from("a"), "nope", "utf8")).toThrow(
+              "Unable to transcode Buffer [U_ILLEGAL_ARGUMENT_ERROR]",
+            );
+          });
+
+          it("an unknown target encoding throws", () => {
+            expect(() => transcode(Buffer.from("a"), "utf8", "nope")).toThrow(
+              "Unable to transcode Buffer [U_ILLEGAL_ARGUMENT_ERROR]",
+            );
+          });
+        });
+      });
+
       it("Buffer.from (Node.js test/test-buffer-from.js)", () => {
         const checkString = "test";
 

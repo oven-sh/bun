@@ -282,9 +282,21 @@ impl ByteStream {
 
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
-            // SAFETY: pending_buffer is either dangling+len=0 or points into a live JS
-            // Uint8Array rooted by `pending_value`.
-            let pending_buf = unsafe { &mut *self.pending_buffer.get() };
+            // Re-derive the destination from the GC-rooted view instead of trusting the
+            // raw pointer captured at pull time: `pending_value` keeps the Uint8Array
+            // wrapper alive, but JS can still detach or transfer the backing ArrayBuffer
+            // (`postMessage(chunk, [chunk.buffer])`, `ArrayBuffer.prototype.transfer()`)
+            // between the pull and the data arriving, leaving `pending_buffer` dangling.
+            // A detached or shrunk view re-derives to a shorter (possibly empty) slice,
+            // so the copy below never writes through freed memory.
+            let global = self.parent_const().global_this();
+            let mut pending_view = self
+                .pending_value
+                .get()
+                .get()
+                .and_then(|view| view.as_array_buffer(global))
+                .unwrap_or_default();
+            let pending_buf = pending_view.slice_mut();
             let to_copy_len = chunk.len().min(pending_buf.len());
             let pending_buffer_len = pending_buf.len();
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());

@@ -3487,10 +3487,15 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         let start = self.j;
         self.append_string_to_str_pool(bunstr)?;
-        // Interpolated values are data, not shell syntax. In the unquoted state,
-        // flush them as a quoted-text token so the parser does not re-interpret
-        // a leading `~` as tilde expansion.
-        if self.chars.state == CharState::Normal {
+        // Interpolated values are data, not shell syntax. If the value would
+        // begin its Text token with `~`, flush it as a quoted-text token so the
+        // parser does not re-interpret it as tilde expansion. Values that
+        // cannot be misread stay coalesced with the surrounding word so that
+        // literal source text after the interpolation (e.g. `${name}~bak`)
+        // keeps its meaning.
+        if self.chars.state == CharState::Normal
+            && self.strpool.get(start as usize) == Some(&b'~')
+        {
             self.tokens
                 .push(Token::DoubleQuotedText(TextRange { start, end: self.j }));
             self.word_start = self.j;

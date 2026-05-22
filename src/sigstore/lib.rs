@@ -656,8 +656,15 @@ fn rekor_entry_to_tlog(e: &serde_json::Value) -> Result<SerializedTlogEntry, Sig
     // deployments omit it), but when Rekor *does* send one it must be
     // well-formed: a partial hash chain or a dropped `rootHash` would
     // produce a corrupt proof that fails verification. So: absent → None;
-    // present-but-malformed → hard error.
-    let inclusion_proof = match verification.and_then(|v| v.get("inclusionProof")) {
+    // present-but-malformed → hard error. `.filter(!is_null)` treats
+    // explicit `"inclusionProof": null` as absent (sigstore-js parity —
+    // `?.inclusionProof ? … : undefined`; public-good Rekor uses Go
+    // `omitempty` and never emits it, but private Rekor via
+    // `BUN_SIGSTORE_REKOR_URL` might).
+    let inclusion_proof = match verification
+        .and_then(|v| v.get("inclusionProof"))
+        .filter(|v| !v.is_null())
+    {
         None => None,
         Some(p) => {
             let parsed = (|| -> Option<SerializedInclusionProof> {

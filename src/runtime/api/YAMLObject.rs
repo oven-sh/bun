@@ -270,11 +270,8 @@ impl Stringifier {
                     self.array_item_counter += 1;
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    // Property names that can't be reused as anchor names fall
-                    // back to the generated `value<counter>` names. Their
-                    // counters are keyed on "value" so they share a sequence
-                    // with properties literally named "value", keeping every
-                    // emitted anchor name unique.
+                    // Unsafe names use generated `value<counter>` anchors, keyed on
+                    // "value" so the counter is shared with literal "value" properties.
                     let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
                         prop_name.byte_slice()
                     } else {
@@ -685,18 +682,8 @@ fn prop_value_needs_newline(value: JSValue) -> bool {
 }
 
 /// Can this property name be emitted verbatim as an anchor/alias name?
-///
-/// Anchor names cannot be quoted or escaped, so the name must re-parse exactly
-/// as written. YAML forbids whitespace, line breaks, and flow indicators
-/// (`,`, `[`, `]`, `{`, `}`) in anchor names; other characters (`#`, `:`,
-/// quotes, non-ASCII, ...) are ambiguous across flow/block contexts or
-/// encodings. Only reuse the property name when it consists entirely of
-/// unambiguously safe characters; otherwise the anchor falls back to a
-/// generated `value<counter>` name, like empty property names do.
-///
-/// Names that textually match a generated anchor name (`root<n>`, `item<n>`,
-/// `value<n>`) are also rejected so a verbatim name can never duplicate a
-/// generated one, which would make aliases resolve to the wrong node.
+/// Anchor names can't be quoted or escaped, so only unambiguously safe characters
+/// are reused; anything else falls back to a generated `value<counter>` name.
 fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
     if str.is_empty() {
         return false;
@@ -717,8 +704,7 @@ fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
     !matches_generated_anchor_name(str)
 }
 
-/// True when `str` is one of the reserved generated-anchor prefixes followed
-/// by one or more digits (`value0`, `item12`, `root1`, ...).
+/// `value0`, `item12`, `root1`, ... — names that could duplicate a generated anchor name.
 fn matches_generated_anchor_name(str: &BunString) -> bool {
     const PREFIXES: [&[u8]; 3] = [b"value", b"item", b"root"];
 

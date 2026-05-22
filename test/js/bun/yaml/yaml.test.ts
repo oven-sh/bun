@@ -2047,9 +2047,6 @@ config:
         expect(parsed.c.type).toBe("second");
       });
 
-      // Anchor names are derived from property names, but characters like
-      // flow indicators or whitespace are not valid in YAML anchor names,
-      // so stringify must not copy them into the anchor name verbatim.
       test("anchors named after keys with special characters re-parse", () => {
         const specialKeys = [
           "\\u{10FFFF}a", // literal backslash-u-braces text, not a codepoint
@@ -2088,9 +2085,6 @@ config:
         expect(YAML.stringify({ "a[b]": shared, other: shared })).toBe('{"a[b]": &value0 [1,2],other: *value0}');
       });
 
-      // Keys that literally look like generated anchor names (value0, item0, ...)
-      // must not produce the same anchor name as a generated one, otherwise the
-      // aliases silently resolve to the wrong node after a round-trip.
       test("generated anchor names cannot collide with keys named like them", () => {
         const cases: Array<{ obj: Record<string, unknown>; expected: Record<string, unknown> }> = [];
 

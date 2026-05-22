@@ -82,7 +82,7 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot;
 
-    static NodeVMSpecialSandbox* create(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject);
+    static NodeVMSpecialSandbox* create(VM& vm, NodeVMGlobalObject* globalObject);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

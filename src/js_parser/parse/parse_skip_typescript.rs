@@ -1417,10 +1417,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut backtrack = false;
         match func(self) {
             Ok(_) => {}
-            Err(e) => {
-                if e == err!("Backtrack") || self.lexer.did_panic {
-                    backtrack = true;
-                }
+            Err(_) => {
+                // Backtrack on *any* error, not just an explicit `Backtrack`: errors raised
+                // while the log is disabled (e.g. an unterminated template literal hitting
+                // EOF mid-scan) are suppressed, so the lexer must be restored rather than
+                // left on a half-scanned token. Normal parsing then re-encounters and
+                // reports the error.
+                backtrack = true;
             }
         }
 
@@ -1447,10 +1450,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut backtrack = false;
         let result = match func(self) {
             Ok(r) => r,
-            Err(e) => {
-                if e == err!("Backtrack") || self.lexer.did_panic {
-                    backtrack = true;
-                }
+            Err(_) => {
+                // See `lexer_backtracker_bool`: restore the lexer on any error.
+                backtrack = true;
                 SkipTypeParameterResult::DidNotSkipAnything
             }
         };
@@ -1468,8 +1470,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     where
         F: FnOnce(&mut Self) -> Result<bool, Error>,
     {
-        // PORT NOTE: matches Zig `lexerBacktrackerWithArgs` — does NOT check `did_panic` on
-        // non-Backtrack errors (unlike `lexerBacktracker`).
         self.mark_type_script_only();
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
@@ -1478,10 +1478,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut backtrack = false;
         match func(self) {
             Ok(_) => {}
-            Err(e) => {
-                if e == err!("Backtrack") {
-                    backtrack = true;
-                }
+            Err(_) => {
+                // See `lexer_backtracker_bool`: restore the lexer on any error.
+                backtrack = true;
             }
         }
 

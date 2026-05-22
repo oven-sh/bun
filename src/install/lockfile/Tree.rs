@@ -304,16 +304,12 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 /// manifest, `package.json`, or lockfile, and is joined into install
 /// destinations as `node_modules/<name>/node_modules/...`. Reject anything
 /// that could resolve outside the `node_modules` directory it is appended to:
-/// `.`/`..` segments, backslashes (path separators on Windows), and embedded
-/// NULs (which would truncate the C path early). Legitimate names are `pkg`
-/// or `@scope/pkg`.
+/// empty/`.`/`..` segments, backslashes (path separators on Windows),
+/// drive-letter colons, and embedded NULs (which would truncate the C path
+/// early). Legitimate names are `pkg` or `@scope/pkg`. Delegates to the same
+/// validator used when building the tree so both code paths agree.
 pub fn folder_name_is_safe(name: &[u8]) -> bool {
-    if name.contains(&b'\\') || name.contains(&0u8) {
-        return false;
-    }
-    !name
-        .split(|&c| c == b'/')
-        .any(|segment| segment == b"." || segment == b"..")
+    crate::dependency::is_safe_install_folder_name(name)
 }
 
 /// Returns relative path and the depth of the tree

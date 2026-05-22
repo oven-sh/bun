@@ -235,6 +235,13 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
       // streaming symlink validation at all.
       expect(stderr).toContain("Streamed ");
 
+      if (exitCode !== 0) {
+        console.error("Install failed with exit code:", exitCode);
+        console.error("stdout:", stdout);
+        console.error("stderr:", stderr);
+      }
+      expect(exitCode).toBe(0);
+
       // No symlink anywhere under the install root (node_modules and the
       // package cache included) may point at the escaping target.
       const escapingSymlinks: string[] = [];
@@ -252,13 +259,6 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
       const pkgDir = join(installDir, "node_modules", "test-package");
       await access(join(pkgDir, "package.json"));
       await access(join(pkgDir, "pad.bin"));
-
-      if (exitCode !== 0) {
-        console.error("Install failed with exit code:", exitCode);
-        console.error("stdout:", stdout);
-        console.error("stderr:", stderr);
-      }
-      expect(exitCode).toBe(0);
     } finally {
       httpServer.closeAllConnections?.();
       await new Promise<void>(resolve => httpServer.close(() => resolve()));

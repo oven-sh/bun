@@ -823,11 +823,9 @@ impl Stringifier {
                                 writer,
                                 "\"{}\", ",
                                 bstr::BStr::new(
-                                    if strings::has_prefix(
+                                    if url_is_under_registry(
                                         url_slice,
-                                        strings::without_trailing_slash(
-                                            Npm::Registry::DEFAULT_URL.as_bytes()
-                                        ),
+                                        Npm::Registry::DEFAULT_URL.as_bytes(),
                                     ) {
                                         b"" as &[u8]
                                     } else {

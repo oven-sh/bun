@@ -698,9 +698,9 @@ it("requires an integrity hash when an npm package entry points at a tarball URL
   [out, err] = await Promise.all([stdout.text(), stderr.text()]);
   expect(err).not.toContain("Missing integrity hash");
   expect(offRegistryRequests).toBe(0);
+  expect(await exited).toBe(0);
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
     name: "no-deps",
     version: "1.0.0",
   });
-  expect(await exited).toBe(0);
 });

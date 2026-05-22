@@ -213,7 +213,7 @@ test("npm lockfile migration skips extraneous packages that also declare inBundl
   const err = stderr.toString();
   expect(err).toContain("migrated lockfile from package-lock.json");
   expect(err).not.toContain("InvalidNPMLockfile");
+  expect(exitCode).toBe(0);
   expect(await Bun.file(join(testDir, "node_modules", "pkg0", "package.json")).json()).toEqual({ name: "pkg0" });
   expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
-  expect(exitCode).toBe(0);
 });

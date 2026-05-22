@@ -1632,7 +1632,11 @@ impl Task {
                         {
                             break 'brk (true, true);
                         }
-                        if lockfile.has_trusted_dependency(dep.name.slice(string_buf), &pkg_res) {
+                        if lockfile.has_trusted_dependency(
+                            dep.name.slice(string_buf),
+                            pkg_name.slice(string_buf),
+                            &pkg_res,
+                        ) {
                             break 'brk (true, false);
                         }
                         break 'brk (false, false);

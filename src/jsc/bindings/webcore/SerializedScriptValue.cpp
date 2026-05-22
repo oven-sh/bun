@@ -4067,9 +4067,15 @@ private:
         if (primeCount < 2)
             return false;
 
+        // Each additional prime is encoded as three length-prefixed byte vectors, so it
+        // requires at least 3 * sizeof(uint32_t) bytes of remaining input. Reject counts
+        // that could not possibly be satisfied to avoid a huge up-front allocation.
+        if (static_cast<uint64_t>(primeCount - 2) > static_cast<uint64_t>(m_end - m_ptr) / (3 * sizeof(uint32_t)))
+            return false;
+
         CryptoKeyRSAComponents::PrimeInfo firstPrimeInfo;
         CryptoKeyRSAComponents::PrimeInfo secondPrimeInfo;
-        Vector<CryptoKeyRSAComponents::PrimeInfo> otherPrimeInfos(primeCount - 2);
+        Vector<CryptoKeyRSAComponents::PrimeInfo> otherPrimeInfos;
 
         if (!read(firstPrimeInfo.primeFactor))
             return false;
@@ -4082,12 +4088,14 @@ private:
         if (!read(secondPrimeInfo.factorCRTCoefficient))
             return false;
         for (unsigned i = 2; i < primeCount; ++i) {
-            if (!read(otherPrimeInfos[i - 2].primeFactor))
+            CryptoKeyRSAComponents::PrimeInfo info;
+            if (!read(info.primeFactor))
                 return false;
-            if (!read(otherPrimeInfos[i - 2].factorCRTExponent))
+            if (!read(info.factorCRTExponent))
                 return false;
-            if (!read(otherPrimeInfos[i - 2].factorCRTCoefficient))
+            if (!read(info.factorCRTCoefficient))
                 return false;
+            otherPrimeInfos.append(WTF::move(info));
         }
 
         auto keyData = CryptoKeyRSAComponents::createPrivateWithAdditionalData(modulus, exponent, privateExponent, firstPrimeInfo, secondPrimeInfo, otherPrimeInfos);
@@ -4637,14 +4645,15 @@ private:
                 return JSValue();
             }
 
-            BIO* bio = nullptr;
-            if (!read(&bio, pemSize)) {
+            BIO* rawBio = nullptr;
+            if (!read(&rawBio, pemSize)) {
                 fail();
                 return JSValue();
             }
+            ncrypto::BIOPointer bio(rawBio);
 
             if (keyType == CryptoKeyType::Public) {
-                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio.get(), nullptr, nullptr, nullptr);
                 if (!pkey) {
                     fail();
                     return JSValue();
@@ -4654,7 +4663,7 @@ private:
                 return JSPublicKeyObject::create(vm, structure, m_globalObject, WTF::move(keyObject));
             }
 
-            EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+            EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, nullptr);
             if (!pkey) {
                 fail();
                 return JSValue();
@@ -4699,6 +4708,11 @@ private:
             m_gcBuffer.appendWithCrashOnOverflow(bigInt);
             return bigInt;
 #endif
+        }
+
+        if (lengthInUint64 > static_cast<uint64_t>(m_end - m_ptr) / sizeof(uint64_t)) {
+            fail();
+            return JSValue();
         }
 
 #if USE(BIGINT32)
@@ -4962,7 +4976,10 @@ private:
             if (!readStringData(flags))
                 return JSValue();
             auto reFlags = Yarr::parseFlags(flags->string());
-            ASSERT(reFlags.has_value());
+            if (!reFlags.has_value()) {
+                fail();
+                return JSValue();
+            }
             VM& vm = m_lexicalGlobalObject->vm();
             RegExp* regExp = RegExp::create(vm, pattern->string(), reFlags.value());
             return RegExpObject::create(vm, m_globalObject->regExpStructure(), regExp);

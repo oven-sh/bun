@@ -912,6 +912,316 @@ folded: >
       });
     });
 
+    describe("explicit mapping keys (?)", () => {
+      describe("basic", () => {
+        test("single explicit entry", () => {
+          expect(YAML.parse("? a\n: 1\n")).toEqual({ a: 1 });
+        });
+
+        test("? alone (empty key, no value)", () => {
+          expect(YAML.parse("?\n")).toEqual({ null: null });
+          expect(YAML.parse("?\n: v\n")).toEqual({ null: "v" });
+        });
+
+        test("bare ? followed by next entry at same indent", () => {
+          // [185] e-node — `?` with nothing more-indented has empty key
+          expect(YAML.parse("?\nb: 2\n")).toEqual({ null: null, b: 2 });
+          expect(YAML.parse("x: 1\n?\nb: 2\n")).toEqual({ x: 1, null: null, b: 2 });
+          expect(YAML.parse("?\n? b\n")).toEqual({ null: null, b: null });
+        });
+
+        test("bare ? followed by more-indented content (the key)", () => {
+          expect(YAML.parse("?\n b: 2\n")).toEqual({ "[object Object]": null });
+          expect(YAML.parse("?\n  b\n: 2\n")).toEqual({ b: 2 });
+        });
+
+        test("bare ? followed by zero-indented sequence (the key)", () => {
+          expect(YAML.parse("?\n- a\n- b\n:\n- c\n- d\n")).toEqual({ "a,b": ["c", "d"] });
+        });
+
+        test("? then EOF (no newline)", () => {
+          expect(YAML.parse("? a")).toEqual({ a: null });
+        });
+
+        test("? with quoted key", () => {
+          expect(YAML.parse('? "a b"\n: 1\n')).toEqual({ "a b": 1 });
+          expect(YAML.parse("? 'a b'\n: 1\n")).toEqual({ "a b": 1 });
+        });
+
+        test("? with multiline plain key in flow", () => {
+          expect(YAML.parse("[\n? foo\n bar : baz\n]\n")).toEqual([{ "foo bar": "baz" }]);
+        });
+      });
+
+      describe("compact collection as key", () => {
+        test("compact sequence", () => {
+          expect(YAML.parse("? - a\n: v\n")).toEqual({ a: "v" });
+          expect(YAML.parse("? - a\n  - b\n: v\n")).toEqual({ "a,b": "v" });
+          expect(YAML.parse("? - a\n  - b\n  - c\n: v\n")).toEqual({ "a,b,c": "v" });
+        });
+
+        test("compact sequence, omitted value", () => {
+          expect(YAML.parse("? - a\n  - b\n")).toEqual({ "a,b": null });
+        });
+
+        test("compact sequence with extra spaces (m>1)", () => {
+          expect(YAML.parse("?  - a\n   - b\n: v\n")).toEqual({ "a,b": "v" });
+          expect(YAML.parse("?   - a\n    - b\n: v\n")).toEqual({ "a,b": "v" });
+        });
+
+        test("compact mapping", () => {
+          expect(YAML.parse("? a: b\n: v\n")).toEqual({ "[object Object]": "v" });
+          expect(YAML.parse("? a: b\n: c: d\n")).toEqual({ "[object Object]": { c: "d" } });
+        });
+
+        test("compact mapping, omitted value", () => {
+          expect(YAML.parse("? a: b\n")).toEqual({ "[object Object]": null });
+        });
+
+        test("compact mapping nested under outer mapping", () => {
+          expect(YAML.parse("a:\n  ? b: c\n")).toEqual({ a: { "[object Object]": null } });
+          expect(YAML.parse("a:\n  ? [1]: 2\n")).toEqual({ a: { "[object Object]": null } });
+          expect(YAML.parse("a:\n  ? b: c\n  : d: e\n")).toEqual({ a: { "[object Object]": { d: "e" } } });
+        });
+
+        test("compact seq key + compact seq value", () => {
+          expect(YAML.parse("? - a\n: - b\n")).toEqual({ a: ["b"] });
+          expect(YAML.parse("? - a\n  - b\n: - c\n  - d\n")).toEqual({ "a,b": ["c", "d"] });
+        });
+
+        test("nested under sequence (V9D5 pattern)", () => {
+          expect(YAML.parse("- ? earth: blue\n  : moon: white\n")).toEqual([{ "[object Object]": { moon: "white" } }]);
+        });
+
+        test("compact ? : (M2N8/00 pattern)", () => {
+          expect(YAML.parse("- ? : x\n")).toEqual([{ "[object Object]": null }]);
+        });
+
+        test("mis-indented compact-seq continuation errors", () => {
+          // second `-` at indent 1 ≠ first `-` at indent 2
+          expect(() => YAML.parse("? - a\n - b\n: v\n")).toThrow("Unexpected token");
+        });
+      });
+
+      describe("tab separation after ?", () => {
+        test("tab before scalar key (s-separate)", () => {
+          expect(YAML.parse("?\ta\n: 1\n")).toEqual({ a: 1 });
+          expect(YAML.parse("a: 1\n?\tb\n: 2\n")).toEqual({ a: 1, b: 2 });
+          expect(YAML.parse("? a\n: b\n?\tc\n: d\n")).toEqual({ a: "b", c: "d" });
+        });
+
+        test("tab then newline after ? is an e-node key", () => {
+          // A trailing tab does not change `?\n…` semantics (s-separate, not content).
+          expect(YAML.parse("?\t\nb: 2\n")).toEqual({ null: null, b: 2 });
+          expect(YAML.parse("?\t\n: v\n")).toEqual({ null: "v" });
+        });
+
+        test("tab in nested context", () => {
+          expect(YAML.parse("outer:\n  a: 1\n  ?\tb\n  : 2\n")).toEqual({ outer: { a: 1, b: 2 } });
+        });
+
+        test("tab before compact construct errors (s-indent requires spaces)", () => {
+          // [185] same-line compact constructs after `?`/`:` need s-indent
+          // (spaces only); a tab is plain s-separate and does not qualify.
+          // All four reference parsers reject these (eemeli/js-yaml/PyYAML/ruamel).
+          expect(() => YAML.parse("?\t- a\n: v\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("? key\n:\t- x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("? a\n: 1\n? b\n:\t- x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("?\t-\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("?\t? a\n: v\n")).toThrow("Unexpected token");
+        });
+      });
+
+      describe("explicit value on same line", () => {
+        test("Y79Y/009 pattern (tab + trailing :) errors", () => {
+          expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow("Unexpected token");
+        });
+
+        test("compact-mapping value via space is valid", () => {
+          // `: key:` after `?`-compact-key is value = {key:null} per [191]+[185]
+          expect(YAML.parse("? key:\n: key:\n")).toEqual({ "[object Object]": { key: null } });
+        });
+
+        test("plain scalar value on : line is fine", () => {
+          expect(YAML.parse("? key:\n: val\n")).toEqual({ "[object Object]": "val" });
+          expect(YAML.parse("? key:\n:\tval\n")).toEqual({ "[object Object]": "val" });
+        });
+      });
+
+      describe("? in flow context", () => {
+        test("flow sequence", () => {
+          expect(YAML.parse("[? a: b]\n")).toEqual([{ a: "b" }]);
+          expect(YAML.parse("[? a\n: b]\n")).toEqual([{ a: "b" }]);
+        });
+
+        test("flow mapping with explicit ? (no indent constraint)", () => {
+          // Locks in current behavior. Spec result per [142]/[143] is {a:"b"}
+          // (matches js-yaml, PyYAML, ruamel.yaml); the [object Object] is a
+          // pre-existing flow-? quirk (routes through parse_block_mapping).
+          // Update to {a:"b"} when flow-? is fixed.
+          expect(YAML.parse("{? a\n  : b}\n")).toEqual({ "[object Object]": null });
+        });
+
+        test.todo("flow mapping with bare ? (DFF7 cluster)", () => {
+          // Was an error before this PR; now produces wrong nested-map result.
+          // Reference parsers split: eemeli/js-yaml return {a:null}; PyYAML/
+          // ruamel error. Should be {a:null}; needs flow-? to bypass
+          // parse_block_mapping. Currently {"[object Object]":null}.
+          expect(YAML.parse("{? a}\n")).toEqual({ a: null });
+        });
+      });
+
+      describe("tab-only blank line in block context", () => {
+        // Tab on an otherwise-blank line is treated as content separation,
+        // not indentation; matches main and eemeli/js-yaml. (PyYAML/ruamel
+        // reject — a 2/2 reference split — but Bun has always accepted these
+        // and changing it broke other suite cases.)
+        test("inside block sequence", () => {
+          expect(YAML.parse("-\n\t\n- b\n")).toEqual([null, "b"]);
+          expect(YAML.parse("- 'a'\n\t\n- b\n")).toEqual(["a", "b"]);
+        });
+
+        test("inside block mapping", () => {
+          expect(YAML.parse("a:\n\t\nb: 2\n")).toEqual({ a: null, b: 2 });
+        });
+
+        test("tab before comment line", () => {
+          expect(YAML.parse("a: \n\t# comment\nb: c\n")).toEqual({ a: null, b: "c" });
+        });
+      });
+
+      describe("CRLF line endings", () => {
+        test("explicit entry", () => {
+          expect(YAML.parse("? a\r\n: 1\r\n")).toEqual({ a: 1 });
+          expect(YAML.parse("? a\r\n: 1\r\n? b\r\n: 2\r\n")).toEqual({ a: 1, b: 2 });
+        });
+
+        test("compact seq key", () => {
+          expect(YAML.parse("? - a\r\n  - b\r\n: v\r\n")).toEqual({ "a,b": "v" });
+        });
+      });
+
+      test("multiple explicit entries", () => {
+        expect(YAML.parse("? a\n: 1\n? b\n: 2\n")).toEqual({ a: 1, b: 2 });
+        expect(YAML.parse("? a\n: 1\n? b\n: 2\n? c\n: 3\n")).toEqual({ a: 1, b: 2, c: 3 });
+      });
+
+      test("explicit key with omitted value", () => {
+        expect(YAML.parse("? a\n")).toEqual({ a: null });
+        expect(YAML.parse("? a\n? b\n")).toEqual({ a: null, b: null });
+        expect(YAML.parse("? a\n? b\n? c\n")).toEqual({ a: null, b: null, c: null });
+      });
+
+      test("explicit key followed by implicit entry", () => {
+        expect(YAML.parse("? a\nb: 2\n")).toEqual({ a: null, b: 2 });
+        expect(YAML.parse("? a\n? b\nc: 3\n")).toEqual({ a: null, b: null, c: 3 });
+        expect(YAML.parse("? a\n: 1\nb: 2\n")).toEqual({ a: 1, b: 2 });
+      });
+
+      test("implicit entry followed by explicit", () => {
+        expect(YAML.parse("a: 1\n? b\n: 2\n")).toEqual({ a: 1, b: 2 });
+        expect(YAML.parse("a: 1\n? b\n")).toEqual({ a: 1, b: null });
+      });
+
+      test("nested under mapping", () => {
+        expect(YAML.parse("outer:\n  ? a\n  : 1\n")).toEqual({ outer: { a: 1 } });
+        expect(YAML.parse("outer:\n  ? a\n  : 1\n  ? b\n  : 2\n")).toEqual({ outer: { a: 1, b: 2 } });
+        expect(YAML.parse("outer:\n  ? a\n  : 1\n  b: 2\n")).toEqual({ outer: { a: 1, b: 2 } });
+      });
+
+      test("nested under sequence", () => {
+        expect(YAML.parse("- ? a\n  : 1\n")).toEqual([{ a: 1 }]);
+      });
+
+      test("block scalar as key", () => {
+        expect(YAML.parse("? |\n  multi\n  line\n: v\n")).toEqual({ "multi\nline\n": "v" });
+        expect(YAML.parse("? >\n  folded\n  key\n: v\n")).toEqual({ "folded key\n": "v" });
+      });
+
+      test("sequence value (compact, : on next line)", () => {
+        expect(YAML.parse("? a\n: - b\n")).toEqual({ a: ["b"] });
+        expect(YAML.parse("? a\n: - b\n  - c\n")).toEqual({ a: ["b", "c"] });
+        expect(YAML.parse("? a\n:\n  - b\n  - c\n")).toEqual({ a: ["b", "c"] });
+      });
+
+      test("block scalar value", () => {
+        expect(YAML.parse("? a\n: |\n  v\n")).toEqual({ a: "v\n" });
+      });
+
+      test("mapping value", () => {
+        expect(YAML.parse("? a\n: b: c\n")).toEqual({ a: { b: "c" } });
+      });
+
+      test("tagged key", () => {
+        expect(YAML.parse("? !!str a\n: !!int 47\n")).toEqual({ a: 47 });
+      });
+
+      test("anchored key", () => {
+        expect(YAML.parse("? &x a\n: v\n")).toEqual({ a: "v" });
+      });
+
+      test("comments", () => {
+        expect(YAML.parse("? a # c\n: 1\n")).toEqual({ a: 1 });
+        expect(YAML.parse("? a\n: # c\n  1\n")).toEqual({ a: 1 });
+      });
+
+      test("rejects implicit compact-seq value on key line", () => {
+        expect(() => YAML.parse("a: - b\n")).toThrow("Unexpected token");
+      });
+
+      test("rejects nested implicit on key line", () => {
+        expect(() => YAML.parse("a: b: c\n")).toThrow("Unexpected token");
+      });
+
+      test("rejects explicit : at deeper indent than ?", () => {
+        // [191] requires `:` at exactly the `?` indent
+        expect(() => YAML.parse("? a\n  : b\n")).toThrow("Unexpected token");
+        expect(() => YAML.parse("x: 1\n? a\n  : b\n")).toThrow("Unexpected token");
+        expect(() => YAML.parse("x: 1\n? a\n    : b\n")).toThrow("Unexpected token");
+        // tab after `:` does not bypass the [191] check
+        expect(() => YAML.parse("? a\n  :\tb\n")).toThrow("Unexpected token");
+        expect(() => YAML.parse("x: 1\n? a\n  :\tb\n")).toThrow("Unexpected token");
+      });
+
+      test("explicit : at lesser indent ends the entry (e-node value)", () => {
+        // [189] explicit-value is optional; a `:` at lesser indent belongs to
+        // an outer construct. Reference parsers split 2-2 on this.
+        expect(YAML.parse("outer:\n  ? a\n: v\n")).toEqual({ outer: { a: null }, null: "v" });
+        expect(YAML.parse("outer:\n  x: 1\n  ? a\n: v\n")).toEqual({ outer: { x: 1, a: null }, null: "v" });
+        expect(YAML.parse("?\n  ? inner\n: outer\n")).toEqual({ "[object Object]": "outer" });
+        // tab after the lesser-indent `:` does not change the e-node decision
+        expect(YAML.parse("outer:\n  ? a\n:\tv\n")).toEqual({ outer: { a: null }, null: "v" });
+      });
+
+      test("Y79Y/009 pattern in loop entries", () => {
+        // The first-entry guard must also apply in the loop: a second entry
+        // on the same line as the explicit `:` is rejected in all positions.
+        expect(() => YAML.parse("? key:\n:\tkey:\n")).toThrow("Unexpected token");
+        expect(() => YAML.parse("x: 1\n? key:\n:\tkey:\n")).toThrow("Unexpected token");
+      });
+
+      test("flow collection inside ? - …", () => {
+        expect(YAML.parse("? - [1]\n: b\n")).toEqual({ 1: "b" });
+        expect(YAML.parse("? - {k: 1}\n: b\n")).toEqual({ "[object Object]": "b" });
+      });
+
+      test("alias / flow collection as nested explicit key", () => {
+        expect(YAML.parse("outer:\n  ? [1]\n  : v\n")).toEqual({ outer: { 1: "v" } });
+        expect(YAML.parse("outer:\n  ? {k: 1}\n  : v\n")).toEqual({ outer: { "[object Object]": "v" } });
+        expect(YAML.parse("x: &a 1\nouter:\n  ? *a\n  : v\n")).toEqual({ x: 1, outer: { 1: "v" } });
+      });
+
+      test("pnpm-lock style", () => {
+        expect(
+          YAML.parse(
+            "packages:\n  ? /@types/node@20.0.0\n  : dependencies:\n      undici-types: 5.0.0\n    dev: true\n",
+          ),
+        ).toEqual({
+          packages: { "/@types/node@20.0.0": { dependencies: { "undici-types": "5.0.0" }, dev: true } },
+        });
+      });
+    });
+
     test("handles empty values", () => {
       const yaml = `
 empty_string: ""

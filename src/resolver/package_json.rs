@@ -1666,9 +1666,6 @@ impl PackageJSON {
                     let js_ast::ExprData::EObject(obj) = &prop.expr.data else {
                         return None;
                     };
-                    if obj.properties.len_u32() == 0 {
-                        return None;
-                    }
                     let mut map = StringArrayHashMap::<&'static [u8]>::default();
                     map.ensure_total_capacity(obj.properties.len_u32() as usize)
                         .ok()?;
@@ -1681,13 +1678,26 @@ impl PackageJSON {
                         else {
                             continue;
                         };
-                        if key.is_empty() {
+                        // Zig `asPropertyStringMap` drops entries where the key
+                        // OR the value is empty (expr.zig: `key.len > 0 and
+                        // value.len > 0`). An empty-valued script
+                        // (`{"scripts":{"build":""}}`) must NOT become a real
+                        // (empty) script — Zig reports "Script not found".
+                        // (npm actually runs empty scripts and exits 0; we
+                        // intentionally diverge here to match released Bun.)
+                        if key.is_empty() || value.is_empty() {
                             continue;
                         }
                         // SAFETY: `key`/`value` borrow `contents_static`; see SAFETY note
                         // on `contents_static` above (owned by the returned PackageJSON).
                         let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
                         map.put_assume_capacity(key, value);
+                    }
+                    // Zig returns null when the FILTERED map is empty
+                    // (expr.zig: `if (count == 0) return null;`), not just when
+                    // the raw object had no properties.
+                    if map.is_empty() {
+                        return None;
                     }
                     Some(Box::new(map))
                 };

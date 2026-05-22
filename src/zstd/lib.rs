@@ -312,6 +312,9 @@ pub struct ZstdReaderArrayList<'a> {
     pub state: State,
     pub total_out: usize,
     pub total_in: usize,
+    /// Decompression-bomb guard: `read_all` errors instead of growing the
+    /// output past this many bytes. Defaults to unbounded.
+    pub max_output_size: usize,
 }
 
 impl<'a> ZstdReaderArrayList<'a> {
@@ -343,6 +346,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             state: State::Uninitialized,
             total_out: 0,
             total_in: 0,
+            max_output_size: usize::MAX,
         }))
     }
 
@@ -380,6 +384,14 @@ impl<'a> ZstdReaderArrayList<'a> {
                 return Ok(());
             }
 
+            // Decompression-bomb guard: clamp the output space handed to a single
+            // ZSTD_decompressStream call so one call can never write past the cap.
+            let remaining_output = self.max_output_size.saturating_sub(self.list_ptr.len());
+            if remaining_output == 0 {
+                self.state = State::Error;
+                return Err(ZstdError::ZstdDecompressionError);
+            }
+
             // SAFETY: write-only spare; ZSTD_decompressStream initializes the
             // first `out_buf.pos` bytes.
             let spare = unsafe { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
@@ -390,7 +402,7 @@ impl<'a> ZstdReaderArrayList<'a> {
             };
             let mut out_buf = c::ZSTD_outBuffer {
                 dst: spare.as_mut_ptr().cast::<c_void>(),
-                size: spare.len(),
+                size: spare.len().min(remaining_output),
                 pos: 0,
             };
 

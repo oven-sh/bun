@@ -1289,6 +1289,12 @@ pub mod O {
     pub const EVTONLY: i32 = libc::O_EVTONLY;
     #[cfg(not(target_os = "macos"))]
     pub const EVTONLY: i32 = 0;
+    // Darwin-only: fail with ELOOP if *any* path component is a symlink, not
+    // just the final one like O_NOFOLLOW. 0 elsewhere so the bit-or is a no-op.
+    #[cfg(target_os = "macos")]
+    pub const NOFOLLOW_ANY: i32 = libc::O_NOFOLLOW_ANY;
+    #[cfg(not(target_os = "macos"))]
+    pub const NOFOLLOW_ANY: i32 = 0;
 }
 // ──────────────────────────────────────────────────────────────────────────
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs

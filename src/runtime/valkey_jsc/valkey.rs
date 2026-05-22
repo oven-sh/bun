@@ -280,6 +280,8 @@ pub struct ValkeyClient {
     // Buffer management
     pub write_buffer: OffsetByteList,
     pub read_buffer: OffsetByteList,
+    /// Resumable end-of-reply scanner over `read_buffer.remaining()`.
+    pub reply_scanner: protocol::ReplyScanner,
 
     /// In-flight commands, after the data has been written to the network socket
     // TODO(port): `Queue` is `std.fifo.LinearFifo(PromisePair, .Dynamic)` in Zig — assume
@@ -777,25 +779,40 @@ impl ValkeyClient {
                     break; // Buffer processed completely
                 }
 
+                // Incrementally check whether a complete reply is buffered
+                // before running the allocating tree parser. The scanner
+                // resumes from its saved position, so the elements of a
+                // partially-received aggregate are not re-parsed on every
+                // socket callback (which is quadratic in the element count).
+                match self.reply_scanner.scan(remaining_buffer) {
+                    Ok(protocol::ScanResult::Complete) => {}
+                    Ok(protocol::ScanResult::NeedMoreData) => {
+                        // Need more data in the buffer, wait for next onData call
+                        if cfg!(debug_assertions) {
+                            debug!(
+                                "read_buffer: needs more data ({} bytes available)",
+                                remaining_buffer.len()
+                            );
+                        }
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        return Ok(());
+                    }
+                }
+
                 let mut reader = protocol::ValkeyReader::init(remaining_buffer);
                 let before_read_pos = reader_pos(&reader);
 
                 let value = match reader.read_value() {
                     Ok(v) => v,
                     Err(err) => {
-                        if err == RedisError::InvalidResponse {
-                            // Need more data in the buffer, wait for next onData call
-                            if cfg!(debug_assertions) {
-                                debug!(
-                                    "read_buffer: needs more data ({} bytes available)",
-                                    remaining_buffer.len()
-                                );
-                            }
-                            return Ok(());
-                        } else {
-                            self.fail(b"Failed to read data (buffer path)", err)?;
-                            return Ok(());
-                        }
+                        // The scanner verified a complete reply is buffered, so
+                        // a parse failure here (including `InvalidResponse`) is
+                        // a protocol error, not a short read.
+                        self.fail(b"Failed to read data (buffer path)", err)?;
+                        return Ok(());
                     }
                 };
                 // PORT NOTE: `defer value.deinit(allocator)` — RESPValue should impl Drop.
@@ -810,6 +827,7 @@ impl ValkeyClient {
                 }
 
                 self.read_buffer.consume(bytes_consumed as u32);
+                self.reply_scanner.reset();
 
                 let mut value_to_handle = value; // Use temp var for defer
                 // TODO(port): narrow error set — Zig caller passes err to fail() which takes RedisError;
@@ -843,6 +861,7 @@ impl ValkeyClient {
                                 current_data_slice.len() - before_read_pos
                             );
                         }
+                        self.reply_scanner.reset();
                         self.read_buffer
                             .write(&current_data_slice[before_read_pos..])
                             .expect("failed to write remaining stack data to buffer");
@@ -1265,6 +1284,7 @@ impl ValkeyClient {
         self.socket = socket;
         self.write_buffer.clear_and_free();
         self.read_buffer.clear_and_free();
+        self.reply_scanner.reset();
         // A fresh socket has opened, so reset per-connection state. Without
         // this, `send()` would permanently reject with "Connection has failed"
         // after a previous connection exhausted retries (#29925), and the

@@ -1051,8 +1051,9 @@ pub fn initialize_mini_store() {
             // Spec checks `stack_allocator.fixed_buffer_allocator.end_index >=
             // buffer.len() - 1`; the equivalent size gate is
             // `reset_retain_with_limit` — only pay `mi_heap_destroy + mi_heap_new`
-            // once accumulated bytes exceed 8 MiB. `push()` re-publishes the
-            // (possibly unchanged) `heap_ptr()` to `AST_HEAP`.
+            // once accumulated bytes exceed 8 MiB. The `AstAlloc` state stays
+            // installed across the re-arm (`push()` without `pop()`), so
+            // `reset_retain_with_limit` resets it in place when it recycles.
             let _ = &mini_store.heap;
             mini_store
                 .memory_store

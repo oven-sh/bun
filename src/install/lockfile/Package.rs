@@ -3484,6 +3484,40 @@ pub mod serializer {
                         }
                     }
                 }
+                if matches!(field, PackageField::Meta) {
+                    // Same hardening as `Resolution` above: `Meta` embeds two
+                    // `#[repr(u8)]` enums (`Origin` = 0..=2 and
+                    // `HasInstallScript` = 0..=2). Copying an out-of-range byte
+                    // into either field and reading it back as the enum would
+                    // be immediate UB, so check the raw stream bytes first.
+                    let stride = mem::size_of::<Meta>();
+                    let origin_at = mem::offset_of!(Meta, origin);
+                    let install_script_at = mem::offset_of!(Meta, has_install_script);
+                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
+                    for raw in src.chunks_exact(stride) {
+                        if !matches!(raw[origin_at], 0 | 1 | 2)
+                            || !matches!(raw[install_script_at], 0 | 1 | 2)
+                        {
+                            return Err(bun_core::err!(
+                                "Lockfile validation failed: invalid package meta"
+                            ));
+                        }
+                    }
+                }
+                if matches!(field, PackageField::Bin) {
+                    // `Bin.tag` is a `#[repr(u8)]` enum with discriminants
+                    // 0..=4; validate it the same way before the copy.
+                    let stride = mem::size_of::<Bin>();
+                    let tag_at = mem::offset_of!(Bin, tag);
+                    debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
+                    for raw in src.chunks_exact(stride) {
+                        if !matches!(raw[tag_at], 0 | 1 | 2 | 3 | 4) {
+                            return Err(bun_core::err!(
+                                "Lockfile validation failed: invalid bin tag"
+                            ));
+                        }
+                    }
+                }
                 bytes.copy_from_slice(src);
                 stream.pos = end_pos;
                 if matches!(field, PackageField::Meta) {

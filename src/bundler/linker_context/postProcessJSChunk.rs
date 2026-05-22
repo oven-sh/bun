@@ -680,8 +680,19 @@ pub fn post_process_js_chunk(
                 }
             }
 
-            j.push_static(pretty);
-            line_offset.advance(pretty);
+            // A `*/` in the path would terminate the block comment early and
+            // turn the rest of the path into generated JavaScript.
+            if matches!(comment_type, CommentType::Multiline) && strings::contains(pretty, b"*/") {
+                let mut sanitized = pretty.to_vec();
+                while let Some(i) = strings::index_of(&sanitized, b"*/") {
+                    sanitized[i + 1] = b'_';
+                }
+                line_offset.advance(&sanitized);
+                j.push_owned(sanitized.into_boxed_slice());
+            } else {
+                j.push_static(pretty);
+                line_offset.advance(pretty);
+            }
 
             if emit_targets_in_commands {
                 j.push_static(b" (");

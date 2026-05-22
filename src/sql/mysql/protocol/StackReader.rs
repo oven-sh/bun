@@ -27,7 +27,10 @@ impl<'a> StackReader<'a> {
     }
 
     pub fn ensure_capacity(&self, length: usize) -> bool {
-        self.buffer.len() >= (self.offset.get() + length)
+        self.offset
+            .get()
+            .checked_add(length)
+            .is_some_and(|end| self.buffer.len() >= end)
     }
 
     pub fn init(

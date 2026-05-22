@@ -18,7 +18,13 @@ function jscSerializeRoundtripCrossProcess(original: any) {
       "-e",
       `
     import {deserialize, serialize} from "bun:jsc";
-    const serialized = deserialize(await Bun.stdin.bytes());
+    let serialized;
+    try {
+      serialized = deserialize(await Bun.stdin.bytes());
+    } catch {
+      process.stdout.write("DESERIALIZE_THREW");
+      process.exit(0);
+    }
     const cloned = serialize(serialized);
     process.stdout.write(cloned);
     `,
@@ -28,6 +34,11 @@ function jscSerializeRoundtripCrossProcess(original: any) {
     stdout: "pipe",
     stderr: "inherit",
   });
+  if (result.stdout.toString() === "DESERIALIZE_THREW") {
+    // The child's deserialize rejected the payload (e.g. a file-backed Blob
+    // record arriving as external bytes); return a sentinel that is not a Blob.
+    return "DESERIALIZE_THREW";
+  }
   return deserialize(result.stdout);
 }
 

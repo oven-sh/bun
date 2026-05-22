@@ -566,8 +566,7 @@ fn add_dependencies_to_set(
         let dep = &lockfile.buffers.dependencies[dep_id as usize];
         let entry = handle_oom(names.get_or_put(dep.name_hash as TruncatedPackageNameHash));
         if !entry.found_existing {
-            *entry.value_ptr =
-                Box::from(dep.name.slice(lockfile.buffers.string_bytes.as_slice()));
+            *entry.value_ptr = Box::from(dep.name.slice(lockfile.buffers.string_bytes.as_slice()));
             let dependency_slice = lockfile.packages.items_dependencies()[package_id as usize];
             add_dependencies_to_set(names, lockfile, dependency_slice);
         }

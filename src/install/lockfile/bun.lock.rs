@@ -1563,7 +1563,10 @@ pub fn parse_into_binary_lockfile(
                     StringBuilder::string_hash(name) as TruncatedPackageNameHash;
                 trusted_dependencies.insert(name_hash, Box::from(name));
             } else {
-                debug_assert!(false, "trustedDependencies: UTF-16 EString from JSON parser");
+                debug_assert!(
+                    false,
+                    "trustedDependencies: UTF-16 EString from JSON parser"
+                );
                 let bump = bun_alloc::Arena::new();
                 let name = s.string(&bump)?;
                 let name_hash: TruncatedPackageNameHash =

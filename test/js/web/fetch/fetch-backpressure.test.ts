@@ -17,9 +17,9 @@
 // debug-build subprocess and the existing protocol-specific suites run
 // under `describe.concurrent` with tight timeouts.
 
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, tls } from "harness";
 import { setSocketOptions } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tls } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import nodetls from "node:tls";

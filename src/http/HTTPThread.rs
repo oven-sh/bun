@@ -843,7 +843,8 @@ impl HttpThread {
                             }
                             if let Some(session) = tagged.session_mut() {
                                 // HTTP/2: releases per-stream WINDOW_UPDATE.
-                                session.consume_response_body_by_http_id(msg.async_http_id, msg.bytes);
+                                session
+                                    .consume_response_body_by_http_id(msg.async_http_id, msg.bytes);
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -852,7 +853,8 @@ impl HttpThread {
                                 client.consume_response_body::<false>(socket, msg.bytes);
                             }
                             if let Some(session) = tagged.session_mut() {
-                                session.consume_response_body_by_http_id(msg.async_http_id, msg.bytes);
+                                session
+                                    .consume_response_body_by_http_id(msg.async_http_id, msg.bytes);
                             }
                         }
                     }
@@ -860,7 +862,10 @@ impl HttpThread {
                     // HTTP/3: QUIC streams aren't in the TCP-socket tracker;
                     // dispatch via the session registry. May resume a
                     // lsquic `want_read(false)` pause.
-                    h3::ClientContext::consume_response_body_by_http_id(msg.async_http_id, msg.bytes);
+                    h3::ClientContext::consume_response_body_by_http_id(
+                        msg.async_http_id,
+                        msg.bytes,
+                    );
                 }
             }
             let len = queued.len();

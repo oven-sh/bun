@@ -561,7 +561,8 @@ impl ClientSession {
             // `bytes` is decompressed; clamp the running total to wire bytes
             // still outstanding so a compression surplus isn't banked to
             // credit later DATA the reader hasn't touched.
-            s.consumed_bytes = core::cmp::min(s.consumed_bytes.saturating_add(bytes), s.unacked_bytes);
+            s.consumed_bytes =
+                core::cmp::min(s.consumed_bytes.saturating_add(bytes), s.unacked_bytes);
             found = true;
             break;
         }

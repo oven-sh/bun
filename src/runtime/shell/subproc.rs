@@ -146,7 +146,6 @@ impl FileSinkPtr {
     /// `ptr` is non-null, points to a live `FileSink` from
     /// `FileSink::create*`, and the caller transfers its single owned ref to
     /// this handle.
-    #[cfg(windows)]
     #[inline]
     unsafe fn adopt(ptr: *mut FileSink) -> Self {
         // SAFETY: caller contract — `ptr` is non-null.

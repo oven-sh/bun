@@ -168,6 +168,8 @@ mod linux {
     // (atomic), and `vm` to post onto the thread-safe concurrent-task queue;
     // `thread` is only touched by the JS thread in install/uninstall.
     unsafe impl Send for State {}
+    // SAFETY: shared access is limited to the atomic `shutdown` flag and the
+    // thread-safe concurrent-task queue reached through `vm`; see `Send` above.
     unsafe impl Sync for State {}
 
     pub(super) fn install(vm: *mut VirtualMachine) {
@@ -374,6 +376,9 @@ mod darwin {
     // `dispatch_source_get_data`), `drained` (opaque, for semaphore signal),
     // atomics, and `vm` to post onto the thread-safe concurrent-task queue.
     unsafe impl Send for State {}
+    // SAFETY: shared access from the libdispatch worker is limited to opaque
+    // dispatch handles, atomics, and the thread-safe concurrent-task queue
+    // reached through `vm`; see `Send` above.
     unsafe impl Sync for State {}
 
     pub(super) fn install(vm: *mut VirtualMachine) {
@@ -705,6 +710,8 @@ mod windows {
     // SAFETY: the NT threadpool callback only calls `wake.send()` (libuv
     // uv_async_send is thread-safe). Everything else runs on the JS thread.
     unsafe impl Send for State {}
+    // SAFETY: the only cross-thread access is the NT threadpool callback's
+    // `wake.send()` (thread-safe uv_async_send); see `Send` above.
     unsafe impl Sync for State {}
 
     pub(super) fn install(vm: *mut VirtualMachine) {

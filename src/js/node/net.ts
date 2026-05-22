@@ -936,6 +936,9 @@ Socket.prototype.connect = function connect(...args) {
         tls.requestCert = true;
         tls.session = session || tls.session;
         this.servername = tls.servername;
+        if (checkServerIdentity !== undefined) {
+          validateFunction(checkServerIdentity, "options.checkServerIdentity");
+        }
         tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
         this[bunTLSConnectOptions] = tls;
         if (!connection && tls.socket) {

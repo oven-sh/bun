@@ -915,6 +915,22 @@ var require_wasi = __commonJS({
           }
           return stats;
         };
+        // Resolve a guest-supplied path against the directory backing `stats` and
+        // reject anything that escapes it (absolute paths, ".." traversal).
+        const RESOLVE_PATH = (stats, p) => {
+          if (!stats.path) {
+            throw new types_1.WASIError(constants_1.WASI_EINVAL);
+          }
+          const base = path.resolve(stats.path);
+          const resolved = path.resolve(base, p);
+          if (resolved !== base) {
+            const rel = path.relative(base, resolved);
+            if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+              throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
+            }
+          }
+          return resolved;
+        };
         const CPUTIME_START = Bun.nanoseconds();
         const timeOrigin = Math.trunc(performance.timeOrigin * 1e6);
         const now = clockId => {
@@ -1357,7 +1373,7 @@ var require_wasi = __commonJS({
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            fs.mkdirSync(path.resolve(stats.path, p));
+            fs.mkdirSync(RESOLVE_PATH(stats, p));
             return constants_1.WASI_ESUCCESS;
           }),
           path_filestat_get: wrap((fd, flags, pathPtr, pathLen, bufPtr) => {
@@ -1367,11 +1383,12 @@ var require_wasi = __commonJS({
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
+            const resolved = RESOLVE_PATH(stats, p);
             let rstats;
             if (flags) {
-              rstats = fs.statSync(path.resolve(stats.path, p));
+              rstats = fs.statSync(resolved);
             } else {
-              rstats = fs.lstatSync(path.resolve(stats.path, p));
+              rstats = fs.lstatSync(resolved);
             }
             this.view.setBigUint64(bufPtr, BigInt(rstats.dev), true);
             bufPtr += 8;
@@ -1419,7 +1436,7 @@ var require_wasi = __commonJS({
               mtim = n;
             }
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            fs.utimesSync(path.resolve(stats.path, p), new Date(atim), new Date(mtim));
+            fs.utimesSync(RESOLVE_PATH(stats, p), new Date(atim), new Date(mtim));
             return constants_1.WASI_ESUCCESS;
           }),
           path_link: wrap((oldFd, _oldFlags, oldPath, oldPathLen, newFd, newPath, newPathLen) => {
@@ -1431,13 +1448,13 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            fs.linkSync(path.resolve(ostats.path, op), path.resolve(nstats.path, np));
+            fs.linkSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
             return constants_1.WASI_ESUCCESS;
           }),
           path_open: wrap(
             (dirfd, _dirflags, pathPtr, pathLen, oflags, fsRightsBase, fsRightsInheriting, fsFlags, fdPtr) => {
               try {
-                CHECK_FD(dirfd, constants_1.WASI_RIGHT_PATH_OPEN);
+                const stats = CHECK_FD(dirfd, constants_1.WASI_RIGHT_PATH_OPEN);
                 fsRightsBase = BigInt(fsRightsBase);
                 fsRightsInheriting = BigInt(fsRightsInheriting);
                 const read =
@@ -1512,15 +1529,59 @@ var require_wasi = __commonJS({
                 if (p.startsWith("proc/")) {
                   throw new types_1.WASIError(constants_1.WASI_EBADF);
                 }
-                const fullUnresolved = path.resolve(p);
+                const fullUnresolved = RESOLVE_PATH(stats, p);
                 let full;
                 try {
                   full = fs.realpathSync(fullUnresolved);
                 } catch (e) {
                   if (e?.code === "ENOENT") {
-                    full = fullUnresolved;
+                    // The final component may legitimately not exist yet (e.g.
+                    // O_CREAT), but the rest of the path must not be redirected
+                    // by symlinks: resolve the parent directory and re-attach
+                    // the final component. A dangling symlink as the final
+                    // component would still redirect the create, so reject it.
+                    const parentDir = path.dirname(fullUnresolved);
+                    const lastComponent = path.basename(fullUnresolved);
+                    let realParent = parentDir;
+                    try {
+                      realParent = fs.realpathSync(parentDir);
+                    } catch (e2) {
+                      if (e2?.code !== "ENOENT") throw e2;
+                    }
+                    full = path.join(realParent, lastComponent);
+                    let finalIsLink = false;
+                    try {
+                      finalIsLink = fs.lstatSync(full).isSymbolicLink();
+                    } catch {}
+                    if (finalIsLink) {
+                      throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
+                    }
                   } else {
                     throw e;
+                  }
+                }
+                // RESOLVE_PATH is a lexical check on the guest-supplied path;
+                // realpathSync above follows symlinks on disk, so a symlink
+                // inside the directory can still point the resolved path
+                // outside of it. Re-check containment before the path is
+                // opened or recorded as a new directory base in FD_MAP. The
+                // resolved path must stay under the directory's lexical
+                // location or its own resolved location (the latter matters
+                // when the preopened directory is itself reached via a
+                // symlink).
+                {
+                  const contained = base => {
+                    if (full === base) return true;
+                    const rel = path.relative(base, full);
+                    return rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+                  };
+                  const lexicalBase = path.resolve(stats.path);
+                  let realBase = lexicalBase;
+                  try {
+                    realBase = fs.realpathSync(lexicalBase);
+                  } catch {}
+                  if (!contained(lexicalBase) && !contained(realBase)) {
+                    throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
                   }
                 }
                 let isDirectory;
@@ -1548,6 +1609,9 @@ var require_wasi = __commonJS({
                 stat(this, newfd);
                 this.view.setUint32(fdPtr, newfd, true);
               } catch (e) {
+                if (e instanceof types_1.WASIError) {
+                  return e.errno;
+                }
                 console.error(e);
               }
               return constants_1.WASI_ESUCCESS;
@@ -1560,7 +1624,7 @@ var require_wasi = __commonJS({
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            const full = path.resolve(stats.path, p);
+            const full = RESOLVE_PATH(stats, p);
             const r = fs.readlinkSync(full);
             const used = Buffer.from(this.memory.buffer).write(r, buf, bufLen);
             this.view.setUint32(bufused, used, true);
@@ -1573,7 +1637,7 @@ var require_wasi = __commonJS({
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            fs.rmdirSync(path.resolve(stats.path, p));
+            fs.rmdirSync(RESOLVE_PATH(stats, p));
             return constants_1.WASI_ESUCCESS;
           }),
           path_rename: wrap((oldFd, oldPath, oldPathLen, newFd, newPath, newPathLen) => {
@@ -1585,7 +1649,7 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            fs.renameSync(path.resolve(ostats.path, op), path.resolve(nstats.path, np));
+            fs.renameSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
             return constants_1.WASI_ESUCCESS;
           }),
           path_symlink: wrap((oldPath, oldPathLen, fd, newPath, newPathLen) => {
@@ -1596,7 +1660,7 @@ var require_wasi = __commonJS({
             this.refreshMemory();
             const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
             const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-            fs.symlinkSync(op, path.resolve(stats.path, np));
+            fs.symlinkSync(op, RESOLVE_PATH(stats, np));
             return constants_1.WASI_ESUCCESS;
           }),
           path_unlink_file: wrap((fd, pathPtr, pathLen) => {
@@ -1606,7 +1670,7 @@ var require_wasi = __commonJS({
             }
             this.refreshMemory();
             const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-            fs.unlinkSync(path.resolve(stats.path, p));
+            fs.unlinkSync(RESOLVE_PATH(stats, p));
             return constants_1.WASI_ESUCCESS;
           }),
           poll_oneoff: (sin, sout, nsubscriptions, neventsPtr) => {

@@ -792,7 +792,7 @@ impl<'a> TransformTask<'a> {
 
         // TODO(port): ASTMemoryAllocator scope — typed_arena in AST crates; here we just
         // construct one and enter it. Model as RAII guard.
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
@@ -1390,7 +1390,7 @@ impl JSTranspiler {
             prev_macro_context: None,
         };
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
@@ -1553,7 +1553,7 @@ impl JSTranspiler {
             None
         };
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         // PORT NOTE: spec snapshots the WHOLE `this.transpiler` by value
@@ -1772,7 +1772,7 @@ impl JSTranspiler {
             prev_macro_context: None,
         };
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new(&arena);
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
         let source = bun_ast::Source::init_path_string(loader.stdin_name(), code);

@@ -1428,6 +1428,11 @@ impl CreateCommand {
 
         let mut npm_client_: Option<NPMClient> = None;
 
+        // Remember whether the user explicitly opted out (`--no-install`)
+        // before this is widened to also cover dependency-less templates:
+        // the flag must skip template tasks, but a template with no
+        // dependencies should still run its documented postinstall hooks.
+        let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
         if !create_options.skip_git {
@@ -1511,7 +1516,7 @@ impl CreateCommand {
             let _ = process?;
         }
 
-        if !postinstall_tasks.is_empty() {
+        if !user_skipped_install && !postinstall_tasks.is_empty() {
             for task in &postinstall_tasks {
                 exec_task(task, destination, path_env, npm_client_);
             }

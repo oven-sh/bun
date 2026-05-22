@@ -706,13 +706,14 @@ impl MySQLConnection {
             self.tls_status = TLSStatus::SslNotAvailable;
 
             match self.ssl_mode {
-                SSLMode::VerifyCa | SSLMode::VerifyFull => {
+                // The server did not advertise CLIENT_SSL. `require` and
+                // stricter must fail rather than silently continue in
+                // plaintext (matches the Postgres driver's TLSNotAvailable
+                // handling).
+                SSLMode::Require | SSLMode::VerifyCa | SSLMode::VerifyFull => {
                     return Err(AnyMySQLError::AuthenticationFailed);
                 }
-                // require behaves like prefer for postgres.js compatibility,
-                // allowing graceful fallback to non-SSL when the server
-                // doesn't support it.
-                SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
+                SSLMode::Prefer | SSLMode::Disable => {}
             }
         }
         // Send auth response
@@ -1413,6 +1414,14 @@ impl MySQLConnection {
                     header.decode_internal(reader)?;
                     if header.field_count == 0 {
                         // Can't be 0
+                        return Err(AnyMySQLError::UnexpectedPacket);
+                    }
+                    // field_count is a server-controlled lenenc int (up to 2^64-1) and is
+                    // used below to size a Vec<ColumnDefinition41> (~256 bytes each). MySQL
+                    // hard-caps a result set at 4096 columns (MAX_FIELDS), so anything
+                    // larger is a malformed/hostile packet trying to make us commit
+                    // gigabytes from a ~13-byte response.
+                    if header.field_count > 4096 {
                         return Err(AnyMySQLError::UnexpectedPacket);
                     }
                     if statement.columns.len() as u64 != header.field_count {

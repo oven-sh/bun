@@ -7,14 +7,14 @@
 //!
 //! ### Relationship to `AstAlloc`
 //! `StackFallback` is a **standalone** [`Allocator`]; it is **not** composed
-//! under [`crate::ast_alloc::AstAlloc`] / `AST_HEAP`. In Zig, `stackFallback`
-//! and `ASTMemoryAllocator` are orthogonal — none of the 20 `stackFallback`
+//! under [`crate::ast_alloc::AstAlloc`]. In Zig, `stackFallback` and
+//! `ASTMemoryAllocator` are orthogonal — none of the 20 `stackFallback`
 //! callsites route AST-node allocation through it (the two `js_parser` uses
-//! pass `bun.default_allocator` as fallback, not the AST arena). A bump
-//! front-end on `AST_HEAP` was previously shipped and reverted (#53599 UAF;
-//! see the `PERF NOTE` on [`crate::ast_alloc::set_thread_heap`]). Under this
-//! standalone design `AstVec<T>` stays 24 B; only vecs that explicitly want
-//! stack-first storage become `Vec<T, &StackFallback<N, A>>` (32 B).
+//! pass `bun.default_allocator` as fallback, not the AST arena). `AstAlloc`
+//! has its own inline-buffer-with-heap-fallback state
+//! ([`crate::ast_alloc::AstAllocState`]). Under this standalone design
+//! `AstVec<T>` stays 24 B; only vecs that explicitly want stack-first storage
+//! become `Vec<T, &StackFallback<N, A>>` (32 B).
 //!
 //! ### Callsite shape
 //! ```ignore
@@ -291,7 +291,8 @@ unsafe impl<const N: usize, A: Allocator> Allocator for &StackFallback<N, A> {
 // `ASTMemoryAllocator` is published into raw thread-locals and may outlive any
 // nameable `'a`, so `&'a MimallocArena` (which already implements `Allocator`)
 // cannot be used directly. The caller guarantees the pointee outlives every
-// allocation — same invariant `ast_alloc::set_thread_arena` already requires.
+// allocation — same invariant the `ast_alloc` install/uninstall protocol
+// already requires.
 //
 // `arena == null` routes to global `mi_malloc`/`mi_free`, matching
 // [`crate::ast_alloc::AstAlloc`] when no AST scope is active.

@@ -707,8 +707,12 @@ template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMS
         [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMSpecialSandbox = std::forward<decltype(space)>(space); });
 }
 
-NodeVMSpecialSandbox* NodeVMSpecialSandbox::create(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject)
+NodeVMSpecialSandbox* NodeVMSpecialSandbox::create(VM& vm, NodeVMGlobalObject* globalObject)
 {
+    // The structure's prototype must be the sandbox realm's Object.prototype so that the
+    // prototype chain of globalThis inside a DONT_CONTEXTIFY context never reaches the
+    // host realm. This can't be cached on the host global because it differs per sandbox.
+    auto* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
     NodeVMSpecialSandbox* ptr = new (NotNull, allocateCell<NodeVMSpecialSandbox>(vm)) NodeVMSpecialSandbox(vm, structure, globalObject);
     ptr->finishCreation(vm);
     return ptr;
@@ -1405,7 +1409,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
 
     if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, zigGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
         RETURN_IF_EXCEPTION(scope, {});
         targetContext->setSpecialSandbox(specialSandbox);
         return JSValue::encode(targetContext->specialSandbox());
@@ -1614,11 +1618,6 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
     globalObject->m_cachedNodeVMGlobalObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(createNodeVMGlobalObjectStructure(init.vm));
-        });
-
-    globalObject->m_cachedNodeVMSpecialSandboxStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(NodeVMSpecialSandbox::createStructure(init.vm, init.owner, init.owner->objectPrototype())); // TODO(@heimskr): or maybe jsNull() for the prototype?
         });
 }
 

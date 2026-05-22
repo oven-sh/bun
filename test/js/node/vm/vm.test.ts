@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { compileFunction, createContext, runInContext, runInNewContext, runInThisContext, Script } from "node:vm";
+import {
+  compileFunction,
+  constants,
+  createContext,
+  runInContext,
+  runInNewContext,
+  runInThisContext,
+  Script,
+} from "node:vm";
 
 function capture(_: any, _1?: any) {}
 
@@ -853,6 +861,56 @@ describe("codeGeneration options", () => {
     // Test that eval works by default
     const evalResult = runInContext("eval('5 + 5');", context);
     expect(evalResult).toBe(10);
+  });
+});
+
+describe("DONT_CONTEXTIFY", () => {
+  test("globalThis prototype chain stays inside the sandbox realm", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const sandboxObjectPrototype = runInContext("Object.prototype", ctx);
+
+    expect(sandboxObjectPrototype).not.toBe(Object.prototype);
+    expect(Object.getPrototypeOf(ctx)).not.toBe(Object.prototype);
+    expect(Object.getPrototypeOf(ctx)).toBe(sandboxObjectPrototype);
+
+    // globalThis.constructor.constructor must resolve to the sandbox's Function,
+    // so code it creates runs in the sandbox realm where host globals are absent.
+    expect(runInContext(`globalThis.constructor.constructor("return typeof Bun")()`, ctx)).toBe("undefined");
+    expect(runInContext(`globalThis.constructor.constructor("return typeof process")()`, ctx)).toBe("undefined");
+    expect(runInContext(`globalThis.constructor.constructor`, ctx)).toBe(runInContext(`Function`, ctx));
+    expect(runInContext(`globalThis.constructor.constructor`, ctx)).not.toBe(Function);
+
+    // Script#runInNewContext takes the same code path.
+    expect(
+      new Script(`globalThis.constructor.constructor("return typeof Bun")()`).runInNewContext(
+        constants.DONT_CONTEXTIFY,
+      ),
+    ).toBe("undefined");
+  });
+
+  test("writing to Object.getPrototypeOf(globalThis) does not leak to the host realm", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    try {
+      runInContext(`Object.getPrototypeOf(globalThis).__vmDontContextifyLeakCheck = true`, ctx);
+      expect(({} as any).__vmDontContextifyLeakCheck).toBeUndefined();
+      expect((Object.prototype as any).__vmDontContextifyLeakCheck).toBeUndefined();
+      // The write should land on the sandbox's own Object.prototype.
+      expect(runInContext(`({}).__vmDontContextifyLeakCheck`, ctx)).toBe(true);
+    } finally {
+      delete (Object.prototype as any).__vmDontContextifyLeakCheck;
+    }
+  });
+
+  test("basic usage still works", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    expect(runInContext("globalThis", ctx)).toBe(ctx);
+    expect(typeof ctx.Array).toBe("function");
+
+    runInContext("globalThis.fromInside = 123", ctx);
+    expect(ctx.fromInside).toBe(123);
+
+    ctx.fromOutside = 456;
+    expect(runInContext("fromOutside", ctx)).toBe(456);
   });
 });
 

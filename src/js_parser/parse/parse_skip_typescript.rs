@@ -1459,33 +1459,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
-    #[inline]
-    fn lexer_backtracker_with_args_bool<F>(&mut self, func: F) -> bool
-    where
-        F: FnOnce(&mut Self) -> Result<bool, Error>,
-    {
-        self.mark_type_script_only();
-        let old_lexer = self.lexer.snapshot();
-        let old_log_disabled = self.lexer.is_log_disabled;
-        self.lexer.is_log_disabled = true;
-
-        let mut backtrack = false;
-        match func(self) {
-            Ok(_) => {}
-            Err(_) => {
-                backtrack = true;
-            }
-        }
-
-        if backtrack {
-            self.lexer.restore(&old_lexer);
-        }
-        self.lexer.is_log_disabled = old_log_disabled;
-
-        // FnReturnType == anyerror!bool path: returns true on success, false on backtrack.
-        !backtrack
-    }
-
     pub fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
     ) -> Result<SkipTypeParameterResult, Error> {
@@ -1575,7 +1548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         flags: SkipTypeOptionsBitset,
     ) -> bool {
-        self.lexer_backtracker_with_args_bool(|p| {
+        self.lexer_backtracker_bool(|p| {
             p.skip_type_script_constraint_of_infer_type_with_backtracking(flags)
         })
     }

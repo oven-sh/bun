@@ -1621,47 +1621,48 @@ mod draft {
         if ctx.is_null() {
             return None;
         }
-        let uc = ctx as *const libc::ucontext_t;
+        let uc = ctx.cast::<libc::ucontext_t>().cast_const();
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
-            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-            {
-                let mc = &(*uc).uc_mcontext;
-                let pc = mc.gregs[libc::REG_RIP as usize] as usize;
-                let fp = mc.gregs[libc::REG_RBP as usize] as usize;
-                Some((pc, fp))
+            let mc = &(*uc).uc_mcontext;
+            let pc = mc.gregs[libc::REG_RIP as usize] as usize;
+            let fp = mc.gregs[libc::REG_RBP as usize] as usize;
+            Some((pc, fp))
+        }
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
+        unsafe {
+            let mc = &(*uc).uc_mcontext;
+            Some((mc.pc as usize, mc.regs[29] as usize))
+        }
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
+        unsafe {
+            let mc = (*uc).uc_mcontext;
+            if mc.is_null() {
+                return None;
             }
-            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-            {
-                let mc = &(*uc).uc_mcontext;
-                Some((mc.pc as usize, mc.regs[29] as usize))
+            Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
+        unsafe {
+            let mc = (*uc).uc_mcontext;
+            if mc.is_null() {
+                return None;
             }
-            #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-            {
-                let mc = (*uc).uc_mcontext;
-                if mc.is_null() {
-                    return None;
-                }
-                Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
-            }
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                let mc = (*uc).uc_mcontext;
-                if mc.is_null() {
-                    return None;
-                }
-                Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
-            }
-            #[cfg(not(any(
-                all(target_os = "linux", target_arch = "x86_64"),
-                all(target_os = "linux", target_arch = "aarch64"),
-                all(target_os = "macos", target_arch = "x86_64"),
-                all(target_os = "macos", target_arch = "aarch64"),
-            )))]
-            {
-                let _ = uc;
-                None
-            }
+            Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
+        }
+        #[cfg(not(any(
+            all(target_os = "linux", target_arch = "x86_64"),
+            all(target_os = "linux", target_arch = "aarch64"),
+            all(target_os = "macos", target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64"),
+        )))]
+        {
+            let _ = uc;
+            None
         }
     }
 

@@ -1,7 +1,3 @@
-#![recursion_limit = "256"]
-// ↑ `provenance::gitlab_statement` expands `zstr!` × ~75 inside `json!` —
-//   the default limit (128) trips on the nested macro depth.
-
 //! npm provenance via Sigstore keyless signing.
 //!
 //! Produces a Sigstore bundle (DSSE envelope + Fulcio cert + Rekor

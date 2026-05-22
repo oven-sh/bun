@@ -1148,6 +1148,54 @@ folded: >
           // in flow context that excludes c-flow-indicator.
           expect(() => YAML.parse("{a: b:,c: d}\n")).toThrow("Unexpected token");
         });
+      });
+
+      // Pre-existing flow-context over-accepts surfaced by adversarial review.
+      // Each `test.todo` asserts the spec result (per ≥3/4 reference parsers);
+      // the comment documents what Bun currently produces.
+      describe("known flow over-accepts (pre-existing)", () => {
+        test.todo("flow-map requires `,` between entries", () => {
+          // [140] ns-s-flow-map-entries — entry must be followed by `,` or `}`.
+          // Currently: {"a":"b",":1":null}
+          expect(() => YAML.parse('{a: "b":1}\n')).toThrow();
+          // Currently: {"a":{"1 b":2}}
+          expect(() => YAML.parse("{a: 1 b: 2}\n")).toThrow();
+        });
+
+        test.todo("flow-map value is ns-flow-node, not a pair", () => {
+          // [147] c-ns-flow-map-separate-value — value is ns-flow-node only.
+          // Currently: {"a":{"b":"c"}}
+          expect(() => YAML.parse("{a: b: c}\n")).toThrow();
+          expect(() => YAML.parse("{? a: b: c}\n")).toThrow();
+        });
+
+        test.todo("multiline JSON-style key check ordering", () => {
+          // [148] c-ns-flow-map-json-key-entry uses s-separate which spans
+          // lines; either accept all JSON-style multiline keys (eemeli) or
+          // reject all (js-yaml/PyYAML/ruamel). Currently inconsistent: quoted
+          // accepts ({"a":1}), flow-seq/map rejects.
+          expect(YAML.parse("{[1]\n:2}\n")).toEqual({ 1: 2 });
+          expect(YAML.parse("{{k:1}\n:2}\n")).toEqual({ "[object Object]": 2 });
+        });
+
+        test.todo("tab before block construct after `?`/`:` (Y79Y/008 family)", () => {
+          // [185] s-l+block-indented requires s-indent (spaces only) before a
+          // same-line compact construct. Currently `?\ta: b` accepts as
+          // {"a":"b"} (compact mapping reached via tab); refs error.
+          expect(() => YAML.parse("?\ta: b\n")).toThrow();
+          expect(() => YAML.parse("? a\n:\t? b\n")).toThrow();
+          expect(() => YAML.parse("?\t: x\n")).toThrow();
+        });
+
+        test.todo("`---` inside a plain scalar (issue #25660)", () => {
+          // [128] ns-plain-char admits `-`; a `---` not at column 0 (or not
+          // followed by /[ \t\r\n]|$/) is content, not c-directives-end.
+          // Currently splits into [{"name":"some-text"},{"description":"x"}].
+          expect(YAML.parse("name: some-text---\ndescription: x\n")).toEqual({
+            name: "some-text---",
+            description: "x",
+          });
+        });
 
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are

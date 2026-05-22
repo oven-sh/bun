@@ -11,7 +11,9 @@ mod _impl {
     };
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
+    use crate::node::node_zlib_binding::{
+        CompressionStream, CountedKeepAlive, Error, PinnedWriteBuffers,
+    };
     use crate::node::util::validators;
     // `bun.zlib.NodeMode` — #[repr(u8)] enum shared by all native-zlib stream types.
     use bun_zlib::NodeMode;
@@ -46,6 +48,7 @@ mod _impl {
         pub write_result: Cell<Option<*mut u32>>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+        pub pinned_buffers: JsCell<PinnedWriteBuffers>,
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
         pub pending_reset: Cell<bool>,
@@ -104,6 +107,7 @@ mod _impl {
                 write_result: Cell::new(None),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
+                pinned_buffers: JsCell::new(PinnedWriteBuffers::default()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
                 pending_reset: Cell::new(false),

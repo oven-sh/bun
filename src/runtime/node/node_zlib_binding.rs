@@ -73,6 +73,60 @@ impl Error {
     }
 }
 
+// TODO(port): move to <area>_sys
+unsafe extern "C" {
+    /// Pin the backing `ArrayBuffer` of a typed array / `ArrayBuffer` /
+    /// `DataView` so `transfer()`/detach throw while a worker thread holds a
+    /// pointer into it. By-value `JSValue`; the C++ side null-checks and only
+    /// touches its own heap state -> `safe fn`. Returns false (and pins
+    /// nothing) if `v` has no `ArrayBuffer` impl.
+    safe fn JSC__JSValue__pinArrayBuffer(v: JSValue) -> bool;
+    safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+}
+
+/// GC + detach protection for the `in`/`out` typed arrays handed to the
+/// worker thread by [`CompressionStream::write`]. The call stack stops
+/// rooting the arguments as soon as the host fn returns, but the worker
+/// reads/writes through the raw `next_in`/`next_out` pointers until
+/// `run_from_js_thread` runs. Each value is held `Strong` (so GC cannot free
+/// the backing store) and its `ArrayBuffer` is pinned (so
+/// `transfer()`/`postMessage` detach cannot free it either).
+#[derive(Default)]
+pub struct PinnedWriteBuffers {
+    in_: StrongOptional,
+    out: StrongOptional,
+}
+
+impl PinnedWriteBuffers {
+    /// Pin + hold `in_`/`out` for the duration of an async write. `in_` may
+    /// be JS `null` for a flush-only write.
+    pub fn pin(&mut self, global: &JSGlobalObject, in_: JSValue, out: JSValue) {
+        debug_assert!(!self.in_.has() && !self.out.has());
+        if !in_.is_null() {
+            JSC__JSValue__pinArrayBuffer(in_);
+            self.in_.set(global, in_);
+        }
+        JSC__JSValue__pinArrayBuffer(out);
+        self.out.set(global, out);
+    }
+
+    /// Release the pins + strong handles. Idempotent.
+    pub fn unpin(&mut self) {
+        if let Some(v) = self.in_.try_swap() {
+            JSC__JSValue__unpinArrayBuffer(v);
+        }
+        if let Some(v) = self.out.try_swap() {
+            JSC__JSValue__unpinArrayBuffer(v);
+        }
+    }
+}
+
+impl Drop for PinnedWriteBuffers {
+    fn drop(&mut self) {
+        self.unpin();
+    }
+}
+
 // ─── local shims (upstream-crate gaps) ────────────────────────────────────
 
 /// Local `JSValue::toU32` shim — `bun_jsc::JSValue` doesn't expose `to_u32()`
@@ -245,6 +299,9 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
 
     fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
     fn this_value(&self) -> &JsCell<StrongOptional>;
+    /// In/out typed arrays held alive + pinned for the duration of an async
+    /// `write()`. See [`PinnedWriteBuffers`].
+    fn pinned_buffers(&self) -> &JsCell<PinnedWriteBuffers>;
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pending_close(&self) -> &Cell<bool>;
@@ -300,7 +357,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         let in_off: u32;
         let in_len: u32;
-        let in_: Option<&[u8]>;
 
         let this_value = callframe.this();
 
@@ -322,15 +378,15 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
 
-        // Hoisted so `in_` can borrow it past the `else` arm (mirrors `out_buf`).
-        let in_buf: jsc::ArrayBuffer;
+        // Validate types and bounds only -- the worker-visible slices are
+        // captured after the buffers are pinned below, because pinning can
+        // re-point a fast-mode typed array's backing vector.
         if arguments[1].is_null() {
             // just a flush
-            in_ = None;
             in_len = 0;
             in_off = 0;
         } else {
-            in_buf = match arguments[1].as_array_buffer(global_this) {
+            let in_buf = match arguments[1].as_array_buffer(global_this) {
                 Some(b) => b,
                 None => {
                     return Err(global_this
@@ -355,12 +411,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                     )
                     .throw());
             }
-            // Bounds checked above; `byte_slice` is the safe accessor for the JS
-            // ArrayBuffer's backing store (rooted via `arguments[1]` on the call stack).
-            in_ = Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         }
 
-        let Some(mut out_buf) = arguments[4].as_array_buffer(global_this) else {
+        let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -382,11 +435,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
-        // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
-        let out: Option<&mut [u8]> = Some(
-            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
-        );
         let _ = (in_off, in_len, out_off, out_len);
 
         if this.write_in_progress().get() {
@@ -404,6 +452,35 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         this.write_in_progress().set(true);
         this.ref_();
+
+        // The worker thread reads/writes through the raw `next_in`/`next_out`
+        // pointers until `run_from_js_thread`, but the call stack stops
+        // rooting `arguments` once this host fn returns. Hold each typed
+        // array `Strong` (so GC cannot free the backing store) and pin its
+        // `ArrayBuffer` (so `transfer()`/detach cannot free it either).
+        // Released in `run_from_js_thread` after `do_work()` has finished.
+        this.pinned_buffers()
+            .with_mut(|p| p.pin(global_this, arguments[1], arguments[4]));
+
+        // Capture the worker-visible slices only now: pinning a fast-mode
+        // typed array reifies its `ArrayBuffer`, which may re-point the
+        // backing vector. Types and bounds were validated above and no JS has
+        // run since, so the second lookup cannot fail.
+        let in_buf: jsc::ArrayBuffer;
+        let in_: Option<&[u8]> = if arguments[1].is_null() {
+            None
+        } else {
+            in_buf = arguments[1]
+                .as_array_buffer(global_this)
+                .expect("in was validated as an ArrayBuffer above");
+            Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
+        };
+        let mut out_buf = arguments[4]
+            .as_array_buffer(global_this)
+            .expect("out was validated as an ArrayBuffer above");
+        let out: Option<&mut [u8]> = Some(
+            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
+        );
 
         this.stream().with_mut(|s| {
             s.set_buffers(in_, out);
@@ -492,6 +569,11 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // call them explicitly on every return path.
 
         this.write_in_progress().set(false);
+
+        // The worker is done with the `next_in`/`next_out` pointers -- release
+        // the GC + detach protection taken in `write()` before any callbacks
+        // run.
+        this.pinned_buffers().with_mut(|p| p.unpin());
 
         // Clear the strong handle before we call any callbacks.
         let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
@@ -980,6 +1062,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn write_result_ptr(&self) -> Option<*mut u32> { self.write_result.get().map(|p| p.cast::<u32>()) }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
+            #[inline] fn pinned_buffers(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::PinnedWriteBuffers> { &self.pinned_buffers }
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }

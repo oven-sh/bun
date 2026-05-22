@@ -270,13 +270,15 @@ impl Stringifier {
                     self.array_item_counter += 1;
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    // Property names that can't be reused as anchor names all
-                    // share the generated `value<counter>` namespace (keyed on
-                    // the empty name), so their counters can't collide.
+                    // Property names that can't be reused as anchor names fall
+                    // back to the generated `value<counter>` names. Their
+                    // counters are keyed on "value" so they share a sequence
+                    // with properties literally named "value", keeping every
+                    // emitted anchor name unique.
                     let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
                         prop_name.byte_slice()
                     } else {
-                        b""
+                        b"value"
                     };
                     let name_entry = self.prop_names.get_or_put(key)?;
                     if name_entry.found_existing {
@@ -691,6 +693,10 @@ fn prop_value_needs_newline(value: JSValue) -> bool {
 /// encodings. Only reuse the property name when it consists entirely of
 /// unambiguously safe characters; otherwise the anchor falls back to a
 /// generated `value<counter>` name, like empty property names do.
+///
+/// Names that textually match a generated anchor name (`root<n>`, `item<n>`,
+/// `value<n>`) are also rejected so a verbatim name can never duplicate a
+/// generated one, which would make aliases resolve to the wrong node.
 fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
     if str.is_empty() {
         return false;
@@ -708,7 +714,35 @@ fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
         }
     }
 
-    true
+    !matches_generated_anchor_name(str)
+}
+
+/// True when `str` is one of the reserved generated-anchor prefixes followed
+/// by one or more digits (`value0`, `item12`, `root1`, ...).
+fn matches_generated_anchor_name(str: &BunString) -> bool {
+    const PREFIXES: [&[u8]; 3] = [b"value", b"item", b"root"];
+
+    'next_prefix: for prefix in PREFIXES {
+        if str.length() <= prefix.len() {
+            continue;
+        }
+
+        for (i, &byte) in prefix.iter().enumerate() {
+            if str.char_at(i) != u16::from(byte) {
+                continue 'next_prefix;
+            }
+        }
+
+        for i in prefix.len()..str.length() {
+            if !matches!(str.char_at(i), 0x30..=0x39 /* '0'..='9' */) {
+                continue 'next_prefix;
+            }
+        }
+
+        return true;
+    }
+
+    false
 }
 
 fn string_needs_quotes(str: &BunString) -> bool {

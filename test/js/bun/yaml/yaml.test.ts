@@ -2088,6 +2088,48 @@ config:
         expect(YAML.stringify({ "a[b]": shared, other: shared })).toBe('{"a[b]": &value0 [1,2],other: *value0}');
       });
 
+      // Keys that literally look like generated anchor names (value0, item0, ...)
+      // must not produce the same anchor name as a generated one, otherwise the
+      // aliases silently resolve to the wrong node after a round-trip.
+      test("generated anchor names cannot collide with keys named like them", () => {
+        const cases: Array<{ obj: Record<string, unknown>; expected: Record<string, unknown> }> = [];
+
+        {
+          // literal "value0" key vs generated name for an unsafe key
+          const a = [1];
+          const b = [2];
+          cases.push({
+            obj: { value0: a, "[k]": b, x: a, y: b },
+            expected: { value0: [1], "[k]": [2], x: [1], y: [2] },
+          });
+        }
+        {
+          // literal "value0" key vs generated name for an empty key
+          const a = [1];
+          const b = [2];
+          cases.push({
+            obj: { "": a, value0: b, x: a, y: b },
+            expected: { "": [1], value0: [2], x: [1], y: [2] },
+          });
+        }
+        {
+          // literal "item0" key vs array item anchor names
+          const a = [1];
+          const b = [2];
+          cases.push({
+            obj: { item0: a, list: [b, b], x: a },
+            expected: { item0: [1], list: [[2], [2]], x: [1] },
+          });
+        }
+
+        for (const { obj, expected } of cases) {
+          for (const space of [undefined, 2]) {
+            const parsed = YAML.parse(YAML.stringify(obj, null, space));
+            expect(parsed).toEqual(expected);
+          }
+        }
+      });
+
       test("round-trips parsed documents whose aliased keys contain flow indicators", () => {
         const doc = "\\u{10FFFF}a: &x [1, 2]\nb: *x";
         const value = YAML.parse(doc);

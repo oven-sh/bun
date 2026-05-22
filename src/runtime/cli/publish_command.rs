@@ -1009,7 +1009,7 @@ impl PublishCommand {
             }
         };
 
-        let payload = bun_sigstore::provenance::generate(provider, subject);
+        let payload = bun_sigstore::provenance::generate(provider, &subject);
         let endpoints = bun_sigstore::Endpoints::from_env();
 
         let att = match bun_sigstore::attest(&payload, &endpoints) {

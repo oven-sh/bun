@@ -186,16 +186,10 @@ describe("Bun.Transpiler", () => {
       // Fuzz-found crash: the whole `declare = <arrow>` assignment used to be
       // replaced with a TS no-op, orphaning the arrow function's scopes and
       // panicking in the visit pass once later statements pushed nested scopes.
-      exp(
-        "declare = (...t) => R;e((a) => {(u=> uge);\r\n})",
-        "declare = (...t) => R;\ne((a) => {});\n",
-      );
+      exp("declare = (...t) => R;e((a) => {(u=> uge);\r\n})", "declare = (...t) => R;\ne((a) => {});\n");
       exp("declare = t => 0; () => () => 0", "declare = (t) => 0;\n");
       exp("declare = function () {}; () => () => 0", "declare = function() {};\n");
-      exp(
-        "declare = t => 0; function f() { () => 0; }\nf();",
-        "declare = (t) => 0;\nfunction f() {}\nf();\n",
-      );
+      exp("declare = t => 0; function f() { () => 0; }\nf();", "declare = (t) => 0;\nfunction f() {}\nf();\n");
 
       // The same scope desync used to panic through the other contextual
       // keywords when the token after the parsed expression happened to satisfy

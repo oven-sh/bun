@@ -175,3 +175,85 @@ it("recovers from a corrupted binary lockfile instead of panicking", async () =>
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(true);
   expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBe(true);
 });
+
+it("rejects a binary lockfile whose patched-dependency flag byte is out of range", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  // `optional-peer-deps@1.0.0` from the local registry, patched via
+  // `patchedDependencies` so the lockfile gains a `pAtChEdD` section.
+  const patch = `diff --git a/package.json b/package.json
+index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519694f850d 100644
+--- a/package.json
++++ b/package.json
+@@ -1,6 +1,7 @@
+ {
+     "name": "optional-peer-deps",
+     "version": "1.0.0",
++    "hi": true,
+     "peerDependencies": {
+         "no-deps": "*"
+     },
+`;
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "patched-lockb",
+      version: "1.0.0",
+      dependencies: {
+        "optional-peer-deps": "1.0.0",
+      },
+      patchedDependencies: {
+        "optional-peer-deps@1.0.0": "patches/optional-peer-deps@1.0.0.patch",
+      },
+    }),
+  );
+  await write(join(packageDir, "patches", "optional-peer-deps@1.0.0.patch"), patch);
+
+  await runBunInstall(env, packageDir);
+  const lockbPath = join(packageDir, "bun.lockb");
+  expect(await exists(lockbPath)).toBe(true);
+
+  // A valid lockfile with a patched dependency still loads cleanly
+  // (runBunInstall asserts no "error:" / "warn:" on stderr).
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+
+  // The patched-dependencies section is the `pAtChEdD` tag followed by two
+  // arrays, each stored as [start: u64][end: u64][type-name prefix][padding]
+  // [data] where start/end are absolute file offsets. The second array holds
+  // 24-byte PatchedDep records laid out as:
+  //   path (8) | padding (7) | patchfile_hash_is_null (1) | patchfile_hash (8)
+  const lockb = Buffer.from(await file(lockbPath).arrayBuffer());
+  const tagOff = lockb.indexOf("pAtChEdD");
+  expect(tagOff).toBeGreaterThan(0);
+  const hashesEnd = Number(lockb.readBigUInt64LE(tagOff + 16));
+  const depsStart = Number(lockb.readBigUInt64LE(hashesEnd));
+  const depsEnd = Number(lockb.readBigUInt64LE(hashesEnd + 8));
+  expect(depsEnd - depsStart).toBe(24);
+  // Sanity: the flag byte of the only entry is currently a valid bool
+  // (0 = patchfile hash present).
+  expect(lockb[depsStart + 15]).toBe(0);
+  // Any value other than 0 or 1 is not a valid bool and must be rejected by
+  // the parser, never reinterpreted.
+  lockb[depsStart + 15] = 0x42;
+  await write(lockbPath, lockb);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--no-progress"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  const err = stderrForInstall(rawErr);
+
+  // The out-of-range flag byte must fail lockfile parsing so the install
+  // falls back to a fresh resolve instead of consuming the bad byte.
+  expect(err).toContain("Ignoring lockfile");
+  expect(out).toContain("optional-peer-deps@1.0.0");
+  expect(code).toBe(0);
+  expect(await exists(join(packageDir, "node_modules", "optional-peer-deps"))).toBe(true);
+});

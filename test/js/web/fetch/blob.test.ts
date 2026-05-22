@@ -324,3 +324,49 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
 });
+
+test("Blob constructor copies typed array parts before later parts run user code", async () => {
+  // Constructing a Blob from [typedArray, objectWithToString] must snapshot the
+  // typed array's bytes when that part is visited. Stringifying a later part
+  // runs arbitrary user JS (toString / Symbol.toPrimitive / proxy traps) which
+  // can transfer or resize the earlier part's backing store before the Blob's
+  // contents are assembled. The resulting Blob must contain the bytes the view
+  // held at construction time, not whatever ends up at that address afterwards.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const ab = new ArrayBuffer(64, { maxByteLength: 1024 });
+        const view = new Uint8Array(ab);
+        view.fill(0x41); // "A"
+        const blob = new Blob([
+          view,
+          {
+            toString() {
+              // Detach the first part's buffer and overwrite the moved
+              // backing store while the Blob is still being assembled.
+              const moved = ab.transfer();
+              new Uint8Array(moved).fill(0x42); // "B"
+              return "tail";
+            },
+          },
+        ]);
+        const text = await blob.text();
+        const expected = "A".repeat(64) + "tail";
+        if (text !== expected) {
+          throw new Error("unexpected blob contents: " + JSON.stringify(text));
+        }
+        console.log("OK", blob.size);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK 68");
+  expect(exitCode).toBe(0);
+});

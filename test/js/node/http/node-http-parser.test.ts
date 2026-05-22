@@ -36,6 +36,34 @@ describe("HTTPParser.prototype.close", () => {
 });
 
 describe("HTTPParser.prototype.finish", () => {
+  test("reports bytesParsed of 0 when finish() fails after a paused parse", () => {
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {});
+
+    // Returning HPE_PAUSED (21) from the headers-complete callback makes
+    // llhttp pause mid-message and record a position inside the input buffer
+    // as its error position.
+    parser[kOnHeadersComplete] = function () {
+      return 21;
+    };
+
+    const paused = parser.execute(Buffer.from("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"));
+    expect(paused).toMatchObject({ code: "HPE_PAUSED" });
+
+    // Resuming clears the pause, but llhttp keeps the stale error position
+    // from the previous buffer.
+    parser.resume();
+
+    // finish() mid-message reports an EOF error. bytesParsed must be exactly
+    // 0 rather than a value derived from the stale error position.
+    const result = parser.finish();
+    expect(result).toMatchObject({
+      code: "HPE_INVALID_EOF_STATE",
+      reason: "Invalid EOF state",
+    });
+    expect(result.bytesParsed).toBe(0);
+  });
+
   test("returns error for invalid state", async () => {
     const parser = new HTTPParser();
     parser.initialize(HTTPParser.REQUEST, {});

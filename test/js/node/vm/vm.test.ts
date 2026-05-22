@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -938,4 +939,61 @@ test("Loader is not defined in vm context", () => {
   expect(runInContext("Object.hasOwn(globalThis, 'Loader');", customContext)).toBe(true);
   // Ensure internal JSC Loader properties are not leaking through
   expect(runInContext("typeof Loader.registry;", customContext)).toBe("undefined");
+});
+
+test("node:vm native Module prototype methods reject non-module receivers", async () => {
+  // The native NodeVMModule prototype (reachable via the kNative own-symbol on a
+  // vm.SourceTextModule instance) must validate its receiver. Calling its methods
+  // with a plain object as `this` must throw a TypeError instead of reinterpreting
+  // the object's inline property storage as native module fields.
+  const fixture = `
+    const vm = require("node:vm");
+    const mod = new vm.SourceTextModule('import "./dep.js"; export const a = 1;');
+    const kNative = Object.getOwnPropertySymbols(mod).find(s => s.description === "kNative");
+    const native = mod[kNative];
+    const proto = Object.getPrototypeOf(native);
+    const fake = { p1: 1n, p2: 0x41414141n };
+
+    const results = [];
+    for (const name of ["getStatus", "getStatusCode", "getModuleRequests", "createModuleRecord", "getError"]) {
+      try {
+        const value = proto[name].call(fake);
+        results.push(name + ": returned " + String(value));
+      } catch (e) {
+        results.push(name + ": " + (e instanceof TypeError ? "TypeError" : "unexpected " + e));
+      }
+    }
+    try {
+      const value = Object.getOwnPropertyDescriptor(proto, "identifier").get.call(fake);
+      results.push("identifier: returned " + String(value));
+    } catch (e) {
+      results.push("identifier: " + (e instanceof TypeError ? "TypeError" : "unexpected " + e));
+    }
+
+    // The legitimate receiver still works through the same native entry points.
+    results.push("status: " + proto.getStatus.call(native));
+    results.push("requests: " + JSON.stringify(proto.getModuleRequests.call(native).map(r => r[0])));
+    console.log(results.join("\\n"));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "getStatus: TypeError
+    getStatusCode: TypeError
+    getModuleRequests: TypeError
+    createModuleRecord: TypeError
+    getError: TypeError
+    identifier: TypeError
+    status: unlinked
+    requests: [\"./dep.js\"]"
+  `);
+  expect(exitCode).toBe(0);
 });

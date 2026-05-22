@@ -900,3 +900,95 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
   expect(exitCode).toBe(0);
   expect(stdout).toContain("RSS growth:");
 });
+
+// On Windows, fs.watch() registered every watcher into a single process-global
+// PathWatcherManager bound to the first caller's VM/uv_loop. A Worker thread
+// calling fs.watch() reused that manager: it mutated the watcher map and drove
+// the main thread's uv_loop from a foreign thread (debug builds tripped a
+// debug_assert and aborted; release builds raced). The manager is now
+// re-allocated per VM, so a Worker's watcher never aliases the main thread's.
+//
+// Must run in a subprocess: on an unpatched debug build the Worker's
+// fs.watch() call aborts the whole runtime.
+test.skipIf(!isWindows)(
+  "fs.watch works from both the main thread and a Worker (windows)",
+  async () => {
+    using dir = tempDir("fswatch-worker", {
+      "main-watched/.keep": "",
+      "worker-watched/.keep": "",
+      "worker.js": /* js */ `
+        import fs from "node:fs";
+        import path from "node:path";
+        import { parentPort } from "node:worker_threads";
+
+        const dir = path.join(import.meta.dir, "worker-watched");
+        // Before the fix this call registered into the main thread's manager.
+        const watcher = fs.watch(dir, () => {
+          clearInterval(interval);
+          watcher.close();
+          parentPort.postMessage("worker-saw-change");
+        });
+        const interval = setInterval(() => {
+          fs.writeFileSync(path.join(dir, "touch.txt"), String(Date.now()));
+        }, 20);
+      `,
+      "main.js": /* js */ `
+        import fs from "node:fs";
+        import path from "node:path";
+        import { Worker } from "node:worker_threads";
+
+        const mainDir = path.join(import.meta.dir, "main-watched");
+
+        function watchForOneChange(dir) {
+          return new Promise((resolve, reject) => {
+            const watcher = fs.watch(dir, () => {
+              clearInterval(interval);
+              watcher.close();
+              resolve();
+            });
+            watcher.on("error", err => {
+              clearInterval(interval);
+              reject(err);
+            });
+            const interval = setInterval(() => {
+              fs.writeFileSync(path.join(dir, "touch.txt"), String(Date.now()));
+            }, 20);
+          });
+        }
+
+        // 1. The main thread registers the first watcher, creating the watcher
+        //    manager bound to the main VM.
+        await watchForOneChange(mainDir);
+
+        // 2. A Worker registers its own watcher and must observe a change.
+        const worker = new Worker(path.join(import.meta.dir, "worker.js"));
+        const msg = await new Promise((resolve, reject) => {
+          worker.on("message", resolve);
+          worker.on("error", reject);
+        });
+        if (msg !== "worker-saw-change") throw new Error("unexpected worker message: " + msg);
+        await worker.terminate();
+
+        // 3. The main thread's watching must keep working after the Worker
+        //    registered (and tore down) its own watcher.
+        await watchForOneChange(mainDir);
+
+        console.log("OK");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0); // unpatched debug builds abort in the Worker's fs.watch()
+  },
+  30000,
+);

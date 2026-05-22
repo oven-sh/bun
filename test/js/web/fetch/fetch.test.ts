@@ -2462,3 +2462,84 @@ it("should allow to follow redirect if connection is closed, abort should work e
     }
   }
 });
+
+it("rejects a response with an unparseable Content-Length instead of treating it as empty", async () => {
+  // RFC 9112 section 6.3: an invalid Content-Length (or duplicate Content-Length
+  // headers with differing values) is an unrecoverable framing error. Falling
+  // back to "0" would deliver an empty body and return a desynchronized socket
+  // to the keep-alive pool with the unread response bytes still in flight,
+  // where they would be read as the response to the next request.
+  await using server = net.createServer(socket => {
+    socket.once("data", data => {
+      const path = data.toString("utf8").split(" ")[1];
+      if (path === "/invalid") {
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: x\r\nConnection: keep-alive\r\n\r\n" +
+            "HTTP/1.1 200 OK\r\nContent-Length: 25\r\n\r\ninjected follow-up bytes!",
+        );
+      } else if (path === "/conflicting") {
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!",
+        );
+      } else {
+        socket.end(
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+        );
+      }
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  for (const path of ["invalid", "conflicting"]) {
+    const result = await fetch(`http://localhost:${port}/${path}`)
+      .then(res => res.text())
+      .catch(e => e);
+    expect(result).toBeInstanceOf(Error);
+    expect((result as any).code).toBe("InvalidHTTPResponse");
+  }
+
+  // A well-formed Content-Length is still delivered normally.
+  const ok = await fetch(`http://localhost:${port}/valid`);
+  expect(await ok.text()).toBe("hello");
+});
+
+it("drops a custom Host header when following a cross-origin redirect", async () => {
+  // A per-request Host override must not survive a change of origin: the
+  // follow-up request's Host header (and the TLS SNI / certificate identity
+  // derived from the same field) has to be re-computed from the redirect
+  // target's URL, not carried over from the previous origin.
+  await using target = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      return new Response(request.headers.get("host") ?? "<no host header>");
+    },
+  });
+
+  await using origin = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      if (new URL(request.url).pathname === "/redirect") {
+        return new Response(null, {
+          status: 302,
+          headers: { "Location": `http://${target.hostname}:${target.port}/landed` },
+        });
+      }
+      return new Response(request.headers.get("host") ?? "<no host header>");
+    },
+  });
+
+  // Cross-origin redirect: the redirect target must see its own authority,
+  // not the caller-supplied Host override naming the previous origin.
+  const redirected = await fetch(`http://${origin.hostname}:${origin.port}/redirect`, {
+    headers: { "Host": "tenant.shared-cdn.example" },
+  });
+  expect(redirected.redirected).toBe(true);
+  expect(await redirected.text()).toBe(`${target.hostname}:${target.port}`);
+
+  // Without a redirect the explicit Host header is still honored.
+  const direct = await fetch(`http://${origin.hostname}:${origin.port}/direct`, {
+    headers: { "Host": "tenant.shared-cdn.example" },
+  });
+  expect(await direct.text()).toBe("tenant.shared-cdn.example");
+});

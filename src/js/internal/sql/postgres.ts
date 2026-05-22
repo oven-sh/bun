@@ -773,8 +773,17 @@ class PostgresAdapter
     };
   }
 
-  validateTransactionOptions(_options: string): { valid: boolean; error?: string } {
-    // PostgreSQL accepts any transaction options
+  validateTransactionOptions(options: string): { valid: boolean; error?: string } {
+    // Transaction modes are keyword lists like `ISOLATION LEVEL SERIALIZABLE, READ ONLY`
+    // — letters, spaces and commas only. The string is interpolated into a
+    // simple-protocol `BEGIN ${options}` command, so refuse anything that could
+    // terminate the statement or start a new one.
+    if (!/^[A-Za-z ,]*$/.test(options)) {
+      return {
+        valid: false,
+        error: "Transaction options can only contain letters, spaces, and commas.",
+      };
+    }
     return { valid: true };
   }
 

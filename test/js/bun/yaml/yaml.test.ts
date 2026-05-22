@@ -1135,6 +1135,20 @@ folded: >
           expect(() => YAML.parse("[? [1]: [2]: 3]\n")).toThrow("Unexpected token");
         });
 
+        test("e-node pair value is gated to pair-allowed positions", () => {
+          // The [149] e-node arm in parse_block_mapping must not fire when
+          // reached via a flow-map value (where ns-flow-pair is not allowed).
+          expect(() => YAML.parse('{a: "b":,c: d}\n')).toThrow("Unexpected token");
+          expect(() => YAML.parse("{a: [1]:,c: d}\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse('{x: "a":,b}\n')).toThrow("Unexpected token");
+        });
+
+        test("plain scalar in flow-in terminates at : followed by flow indicator", () => {
+          // [130] `:` is ns-plain-char only when followed by ns-plain-safe(c);
+          // in flow context that excludes c-flow-indicator.
+          expect(() => YAML.parse("{a: b:,c: d}\n")).toThrow("Unexpected token");
+        });
+
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
           // pre-existing over-accepts on main (refs error); preserved as-is.

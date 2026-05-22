@@ -2996,6 +2996,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         mapping_start: Pos,
         mapping_indent: Indent,
         mapping_line: Line,
+        flow_pair_allowed: bool,
     ) -> Result<Expr, ParseError> {
         if let Some(explicit_document_start_line) = self.explicit_document_start_line {
             if mapping_line == explicit_document_start_line {
@@ -3074,11 +3075,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 })?;
                             }
                             // [149] e-node value in flow (`"a":,` / `"a":]`).
+                            // Gated on flow_pair_allowed so this only fires
+                            // for [139] ns-flow-seq-entry positions, not for
+                            // a flow-map [147] value reaching here via the
+                            // pre-existing implicit-mapping fallthrough.
                             TokenData::CollectEntry | TokenData::SequenceEnd
-                                if matches!(
-                                    self.context.get(),
-                                    Context::FlowIn | Context::FlowKey
-                                ) =>
+                                if flow_pair_allowed
+                                    && matches!(
+                                        self.context.get(),
+                                        Context::FlowIn | Context::FlowKey
+                                    ) =>
                             {
                                 break 'value Expr::init(E::Null {}, mapping_value_start.loc());
                             }
@@ -3683,7 +3689,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
 
                         let map =
-                            self.parse_block_mapping(copy, alias_start, alias_indent, alias_line)?;
+                            self.parse_block_mapping(copy, alias_start, alias_indent, alias_line, opts.flow_pair_allowed)?;
                         return Ok(map);
                     }
 
@@ -3733,6 +3739,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             sequence_start,
                             sequence_indent,
                             sequence_line,
+                            opts.flow_pair_allowed,
                         )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
@@ -3811,6 +3818,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             mapping_start,
                             mapping_indent,
                             mapping_line,
+                            opts.flow_pair_allowed,
                         )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {
@@ -3896,6 +3904,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         mapping_start,
                         mapping_indent,
                         mapping_line,
+                        opts.flow_pair_allowed,
                     )?;
                 }
 
@@ -3914,6 +3923,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.token.start,
                         self.token.indent,
                         self.token.line,
+                        opts.flow_pair_allowed,
                     )?;
                 }
 
@@ -4000,6 +4010,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             scalar_start,
                             scalar_indent,
                             scalar_line,
+                            opts.flow_pair_allowed,
                         )?;
 
                         if let Some(mapping_anchor) = implicit_key_anchors.mapping_anchor {

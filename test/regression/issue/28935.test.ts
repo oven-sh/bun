@@ -261,9 +261,8 @@ test.concurrent.skipIf(!isLinux)(
 // discovers that inner repo, and git spawned from `packages/first`
 // resolves to it. The workspace-root `bun.lock` lives outside that
 // nested repo, so staging it as an absolute path would fail with
-// `fatal: ... is outside repository`. The fix drops the lockfile arg
-// in that case and lets the nested repo commit just `package.json`,
-// matching the pre-PR behavior for that package.
+// `fatal: ... is outside repository`. When that happens the lockfile
+// arg is dropped and the nested repo commits just `package.json`.
 test.concurrent.skipIf(!isLinux)("bun pm version succeeds when packages/* has its own nested git repo", async () => {
   const dir = tempDirWithFiles("issue-28935-nested-git", {
     "package.json": JSON.stringify({

@@ -286,8 +286,7 @@ impl PmVersionCommand {
             // resolve to that repo and reject the absolute workspace-root
             // lockfile path with `fatal: ... is outside repository`, which
             // would fail the entire version bump. Drop the arg in that case
-            // so the nested repo just gets `package.json` (same as before
-            // this PR).
+            // so the nested repo just gets `package.json`.
             let mut root_buf = PathBuffer::uninit();
             let stage_lockfile_path: Option<&[u8]> =
                 saved_lockfile_path.as_deref().and_then(|lp| {

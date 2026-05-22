@@ -28,22 +28,6 @@ use super::pwhash;
 use bun_sha_hmac::SHA512;
 
 // ───────────────────────────────────────────────────────────────────────────
-// gated upstream in bun_jsc; provide a file-local shim matching the Zig
-// `globalObject.throwNotEnoughArguments(name, expected, got)` shape.
-// ───────────────────────────────────────────────────────────────────────────
-
-trait JSGlobalObjectPasswordExt {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> JsError;
-}
-impl JSGlobalObjectPasswordExt for JSGlobalObject {
-    fn throw_not_enough_arguments(&self, name_: &str, expected: usize, got: usize) -> JsError {
-        self.throw_invalid_arguments(format_args!(
-            "Not enough arguments to '{name_}'. Expected {expected}, got {got}."
-        ))
-    }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
 // PasswordObject
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -182,10 +166,6 @@ impl AlgorithmValue {
                         });
                     }
                 }
-                #[allow(unreachable_code)]
-                {
-                    unreachable!()
-                }
             } else {
                 return Err(global_object.throw_invalid_argument_type(
                     "hash",
@@ -220,10 +200,6 @@ impl AlgorithmValue {
             }
         } else {
             return Err(global_object.throw_invalid_argument_type("hash", "algorithm", "string"));
-        }
-        #[allow(unreachable_code)]
-        {
-            unreachable!()
         }
     }
 }
@@ -586,7 +562,7 @@ impl PasswordOp for VerifyOp {
 
 /// Build the JS `Error` instance for a failed hash/verify, with `code` set
 /// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>` (Zig: `toErrorInstance`).
-fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
+fn password_error_instance(err: HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
     let mut error_code: Vec<u8> = Vec::new();
     write!(
         &mut error_code,
@@ -627,6 +603,9 @@ impl<Op: PasswordOp> Drop for PasswordJob<Op> {
 bun_threading::owned_task!([Op: PasswordOp] PasswordJob<Op>, task);
 
 impl<Op: PasswordOp> PasswordJob<Op> {
+    // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
+    // is a false positive on this macro contract.
+    #[allow(clippy::boxed_local)]
     fn run_owned(mut self: Box<Self>) {
         let value = self.op.compute(&self.password);
         let result = bun_core::heap::into_raw(Box::new(PasswordResult::<Op> {
@@ -684,7 +663,7 @@ impl<Op: PasswordOp> PasswordResult<Op> {
         r#ref.unref(bun_io::js_vm_ctx());
         match value {
             Err(err) => {
-                let error_instance = password_error_instance(&err, Op::ERR_VERB, global);
+                let error_instance = password_error_instance(err, Op::ERR_VERB, global);
                 promise.reject_with_async_stack(global, Ok(error_instance))?;
             }
             Ok(v) => {
@@ -712,7 +691,7 @@ impl JSPasswordObject {
         if SYNC {
             return match op.compute(&password) {
                 Err(err) => {
-                    let error_instance = password_error_instance(&err, Op::ERR_VERB, global_object);
+                    let error_instance = password_error_instance(err, Op::ERR_VERB, global_object);
                     Err(global_object.throw_value(error_instance))
                 }
                 Ok(v) => Ok(Op::to_js(v, global_object)),

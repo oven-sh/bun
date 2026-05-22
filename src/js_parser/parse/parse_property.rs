@@ -1,9 +1,6 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
-use core::ptr::NonNull;
 
 use bun_collections::VecExt;
-use bun_core::strings;
 use bun_core::{self, err};
 
 use crate::lexer as js_lexer;
@@ -20,7 +17,7 @@ use bun_ast::scope::Kind as ScopeKind;
 use bun_ast::ts::Metadata as TsMetadata;
 use js_ast::{
     E, Expr, ExprNodeList,
-    G::{self, Property, PropertyKind},
+    G::{self, PropertyKind},
     Stmt, symbol,
 };
 use js_lexer::T;
@@ -594,11 +591,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         // Destructuring patterns have an optional default value
                         let mut initializer: Option<Expr> = None;
-                        if errors.is_some() && p.lexer.token == T::TEquals {
-                            errors.as_mut().unwrap().invalid_expr_default_value =
-                                Some(p.lexer.range());
-                            p.lexer.next()?;
-                            initializer = Some(p.parse_expr(Level::Comma)?);
+                        if let Some(errors) = errors.as_mut() {
+                            if p.lexer.token == T::TEquals {
+                                errors.invalid_expr_default_value = Some(p.lexer.range());
+                                p.lexer.next()?;
+                                initializer = Some(p.parse_expr(Level::Comma)?);
+                            }
                         }
 
                         return Ok(Some(G::Property {

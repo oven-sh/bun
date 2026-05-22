@@ -97,7 +97,7 @@ impl<C: WriterContext> NewWriterWrap<C> {
     /// logic from `PreparedStatement.zig::writeNullBitmap`, keyed on
     /// `Data::Empty` instead of `Value::Null`.
     pub fn write_null_bitmap(self, params: &[crate::shared::Data]) -> Result<(), AnyMySQLError> {
-        let bitmap_bytes = (params.len() + 7) / 8;
+        let bitmap_bytes = params.len().div_ceil(8);
         // PERF(port): Zig sized this from `(u16::MAX / 8) + 1` on the stack;
         // here a small Vec keeps stack usage bounded for the never-taken path.
         let mut null_bitmap = vec![0u8; bitmap_bytes];

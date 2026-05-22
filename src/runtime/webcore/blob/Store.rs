@@ -7,25 +7,25 @@
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
-use crate::webcore::node_types::{self as node, PathLike, PathOrFileDescriptor};
+use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::client::S3ErrorJsc as _;
 use crate::webcore::s3::client::{
-    ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, S3DeleteResult,
-    S3ListObjectsOptions, S3ListObjectsResult, StorageClass,
+    S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
+    S3ListObjectsResult,
 };
 use bun_collections::HashMap;
-use bun_core::{PathString, ZigString, strings};
+use bun_core::{ZigString, strings};
 use bun_http_types::MimeType::MimeType;
 use bun_url::URL;
 
-use super::{Blob, SizeType};
+#[cfg(unix)]
+use super::SizeType;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical data types from `bun_jsc`.
@@ -50,7 +50,7 @@ pub trait StoreExt {
     fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
-        credentials: Arc<S3Credentials>,
+        credentials: Rc<S3Credentials>,
     ) -> Result<Box<Store>, bun_core::Error>
     where
         Self: Sized;
@@ -144,7 +144,7 @@ impl StoreExt for Store {
     fn init_s3_with_referenced_credentials(
         pathlike: PathLike,
         mime_type: Option<MimeType>,
-        credentials: Arc<S3Credentials>,
+        credentials: Rc<S3Credentials>,
     ) -> Result<Box<Store>, bun_core::Error> {
         let mut path = pathlike;
         // this actually protects/refs the pathlike

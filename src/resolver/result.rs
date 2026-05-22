@@ -57,8 +57,11 @@ pub struct PathPairIter<'a> {
 impl<'a> PathPairIter<'a> {
     pub fn next(&mut self) -> Option<&mut Path> {
         if let Some(path_) = self.next_() {
-            // SAFETY: reshaped for borrowck — recurse via raw ptr to avoid double &mut.
             let p: *mut Path = path_;
+            // SAFETY: `p` is the exclusive `&mut Path` just returned by `next_()`,
+            // coerced to a raw pointer so `self` can be re-borrowed for the
+            // recursive call; `p` is not dereferenced after that call, so no two
+            // live `&mut` into `self.ctx` overlap.
             unsafe {
                 if (*p).is_disabled {
                     return self.next();
@@ -162,7 +165,7 @@ bitflags::bitflags! {
 // Convenience accessors mirroring the Zig packed-struct field syntax.
 impl ResultFlags {
     #[inline]
-    pub fn is_external(&self) -> bool {
+    pub fn is_external(self) -> bool {
         self.contains(Self::IS_EXTERNAL)
     }
     #[inline]
@@ -170,7 +173,7 @@ impl ResultFlags {
         self.set(Self::IS_EXTERNAL, v)
     }
     #[inline]
-    pub fn is_external_and_rewrite_import_path(&self) -> bool {
+    pub fn is_external_and_rewrite_import_path(self) -> bool {
         self.contains(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH)
     }
     #[inline]
@@ -178,11 +181,11 @@ impl ResultFlags {
         self.set(Self::IS_EXTERNAL_AND_REWRITE_IMPORT_PATH, v)
     }
     #[inline]
-    pub fn is_standalone_module(&self) -> bool {
+    pub fn is_standalone_module(self) -> bool {
         self.contains(Self::IS_STANDALONE_MODULE)
     }
     #[inline]
-    pub fn is_from_node_modules(&self) -> bool {
+    pub fn is_from_node_modules(self) -> bool {
         self.contains(Self::IS_FROM_NODE_MODULES)
     }
     #[inline]
@@ -190,7 +193,7 @@ impl ResultFlags {
         self.set(Self::IS_FROM_NODE_MODULES, v)
     }
     #[inline]
-    pub fn emit_decorator_metadata(&self) -> bool {
+    pub fn emit_decorator_metadata(self) -> bool {
         self.contains(Self::EMIT_DECORATOR_METADATA)
     }
     #[inline]
@@ -198,7 +201,7 @@ impl ResultFlags {
         self.set(Self::EMIT_DECORATOR_METADATA, v)
     }
     #[inline]
-    pub fn experimental_decorators(&self) -> bool {
+    pub fn experimental_decorators(self) -> bool {
         self.contains(Self::EXPERIMENTAL_DECORATORS)
     }
     #[inline]
@@ -503,11 +506,24 @@ impl Default for MatchResult {
     }
 }
 
-pub enum MatchResultUnion {
+/// Discriminant-only return for the resolver call chain. The `MatchResult`
+/// payload (~300 bytes) is written through an `out: &mut MatchResult` parameter
+/// instead of being moved by value through every nested level. **`out` is only
+/// valid to read when the returned status is `Success`**; on `NotFound` /
+/// `Pending` / `Failure` it may hold partially-written state from an earlier
+/// attempt and must be ignored.
+pub enum MatchStatus {
     NotFound,
-    Success(MatchResult),
-    Pending(PendingResolution),
+    Success,
+    Pending(Box<PendingResolution>),
     Failure(bun_core::Error),
+}
+
+impl MatchStatus {
+    #[inline]
+    pub fn is_success(&self) -> bool {
+        matches!(self, MatchStatus::Success)
+    }
 }
 
 pub struct PendingResolution {

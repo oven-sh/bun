@@ -7,7 +7,6 @@ use std::io::Write as _;
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::HashMap;
-use bun_collections::VecExt;
 use bun_paths::{self, SEP};
 // PORT NOTE: two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
@@ -104,6 +103,8 @@ struct ImportPathsListPtr(core::ptr::NonNull<ImportPathsList>);
 // the allocation is process-lifetime (never freed). The pointer is therefore
 // safe to publish and dereference from any thread.
 unsafe impl Send for ImportPathsListPtr {}
+// SAFETY: same invariant as `Send` — internal mutex serializes mutation and the
+// allocation is process-lifetime, so shared `&` access from any thread is sound.
 unsafe impl Sync for ImportPathsListPtr {}
 
 static RELATIVE_PATHS_LIST: std::sync::LazyLock<ImportPathsListPtr> =
@@ -162,17 +163,14 @@ pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     // the inner mutex, copies `src` into its owned backing buffer and returns
     // a slice borrowing that storage; the returned borrow is `'static`-valid
     // by construction.
-    unsafe { ImportPathsList::append(relative_paths_list_ptr(), src).expect("OOM") }
+    unsafe { ImportPathsList::append(relative_paths_list_ptr(), &src).expect("OOM") }
 }
 #[inline]
 fn intern(buf: Vec<u8>) -> &'static [u8] {
-    dupe(buf.as_slice())
+    let r = dupe(buf.as_slice());
+    drop(buf);
+    r
 }
-#[inline]
-fn intern_box(buf: Box<[u8]>) -> &'static [u8] {
-    dupe(&buf[..])
-}
-
 impl Linker {
     // ── raw-pointer field accessors ──────────────────────────────────────
     // The pointer fields are self-referential backrefs into the owning
@@ -196,6 +194,9 @@ impl Linker {
             !self.options.is_null(),
             "Linker.options used before configure_linker"
         );
+        // SAFETY: non-null sibling backref into the owning `Transpiler` set in
+        // `configure_linker*`; the `Transpiler` outlives every `Linker` call and
+        // `options` is not mutated while this borrow is live.
         unsafe { &*self.options }
     }
 
@@ -207,6 +208,8 @@ impl Linker {
     #[inline]
     pub fn fs(&self) -> &Fs::FileSystem {
         debug_assert!(!self.fs.is_null());
+        // SAFETY: `self.fs` is the process-lifetime `FileSystem::instance()`
+        // singleton, set at `Transpiler::init` and never freed or mutated.
         unsafe { &*self.fs }
     }
 
@@ -220,6 +223,9 @@ impl Linker {
     #[inline]
     pub fn log_mut(&mut self) -> &mut Log {
         debug_assert!(!self.log.is_null());
+        // SAFETY: non-null backref to `Transpiler.log` set in `configure_linker*`;
+        // callers borrow `&mut self.linker` field-disjointly so no other live
+        // borrow of `*self.log` exists for the returned lifetime.
         unsafe { &mut *self.log }
     }
 
@@ -236,6 +242,9 @@ impl Linker {
             !self.resolve_results.is_null(),
             "Linker.resolve_results used before configure_linker"
         );
+        // SAFETY: non-null sibling backref wired in `configure_linker*`; the sole
+        // caller holds no other borrow of `Transpiler.resolve_results` across the
+        // call, so the `&mut` is exclusive.
         unsafe { &mut *self.resolve_results }
     }
 
@@ -251,6 +260,9 @@ impl Linker {
             !self.resolve_queue.is_null(),
             "Linker.resolve_queue used before configure_linker"
         );
+        // SAFETY: non-null sibling backref wired in `configure_linker*`; disjoint
+        // from `resolve_results` and the sole caller holds no other borrow of
+        // `Transpiler.resolve_queue`, so the `&mut` is exclusive.
         unsafe { &mut *self.resolve_queue }
     }
 
@@ -327,12 +339,21 @@ impl Linker {
         file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
     ) -> Result<Fs::ModKey, bun_core::Error> {
-        let file: bun_sys::File = if let Some(f) = fd {
-            bun_sys::File::from_fd(f)
-        } else {
-            bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?
+        // Borrow the cached fd; own the freshly-opened one.
+        let _owned: Option<bun_sys::File>;
+        let raw_fd = match fd {
+            Some(f) => {
+                _owned = None;
+                f
+            }
+            None => {
+                let f = bun_sys::open_file(file_path.text, bun_sys::OpenFlags::READ_ONLY)?;
+                let raw = f.handle();
+                _owned = Some(f);
+                raw
+            }
         };
-        let _close = fd.is_none().then(|| bun_sys::CloseOnDrop::file(&file));
+        let file = bun_sys::File::borrow(&raw_fd);
         Fs::FileSystem::set_max_fd(file.handle().native());
         // PORT NOTE: spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
         // path, file)`; both leading args are unread (fs.rs:1386). The inline
@@ -340,7 +361,7 @@ impl Linker {
         // `fs_full::RealFS` are distinct types, so route through the
         // RealFS-agnostic `from_file` wrapper added alongside the `ModKey`
         // re-export.
-        Fs::ModKey::from_file(&file)
+        Fs::ModKey::from_file(file)
     }
 
     pub fn get_hashed_filename(
@@ -412,7 +433,7 @@ impl Linker {
                 // borrows (`&result.source` + `&mut result.ast.*`) where
                 // needed, and hoist `is_pending_import` (which borrows the
                 // whole `result`) before any `ast` mut borrow.
-                let len = result.ast.import_records.slice().len();
+                let len = result.ast.import_records.as_slice().len();
                 for record_i in 0..len {
                     let record_index = u32::try_from(record_i).expect("int cast");
 
@@ -422,7 +443,7 @@ impl Linker {
                     // Field-split borrow: `source` ⟂ `ast`.
                     let source = &result.source;
                     let ast = &mut result.ast;
-                    let import_record = &mut ast.import_records.slice_mut()[record_i];
+                    let import_record = &mut ast.import_records.as_mut_slice()[record_i];
 
                     if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) || skip_deferred {
                         continue;
@@ -432,13 +453,7 @@ impl Linker {
                         if import_record.path.namespace == b"runtime" {
                             if import_path_format == ImportPathFormat::AbsoluteUrl {
                                 import_record.path = PFs::Path::init_with_namespace(
-                                    intern_box(origin.join_alloc(
-                                        b"",
-                                        b"",
-                                        b"bun:wrap",
-                                        b"",
-                                        b"",
-                                    )?),
+                                    dupe(&origin.join_alloc(b"", b"", b"bun:wrap", b"", b"")?),
                                     b"bun",
                                 );
                             } else {
@@ -510,7 +525,7 @@ impl Linker {
                     }
 
                     if let Some(runner) = self.plugin_runner {
-                        let import_record = &mut result.ast.import_records.slice_mut()[record_i];
+                        let import_record = &mut result.ast.import_records.as_mut_slice()[record_i];
                         if PluginRunner::could_be_plugin(import_record.path.text) {
                             // SAFETY: `plugin_runner` is `Some` only when set
                             // by the owning `Transpiler` to a live JSC-heap
@@ -600,7 +615,7 @@ impl Linker {
                         bstr::BStr::new(import_record.path.text)
                     ),
                     import_record.path.text,
-                    import_record.kind.into(),
+                    import_record.kind,
                     bun_core::err!("ModuleNotFound"),
                 );
             } else {
@@ -612,7 +627,7 @@ impl Linker {
                         bstr::BStr::new(import_record.path.text)
                     ),
                     import_record.path.text,
-                    import_record.kind.into(),
+                    import_record.kind,
                     bun_core::err!("ModuleNotFound"),
                 );
             }
@@ -625,7 +640,7 @@ impl Linker {
                     bstr::BStr::new(import_record.path.text)
                 ),
                 import_record.path.text,
-                import_record.kind.into(),
+                import_record.kind,
                 bun_core::err!("ModuleNotFound"),
             );
         }
@@ -668,19 +683,20 @@ impl Linker {
                 if use_hashed_name {
                     let basepath = PFs::Path::init(source_path);
                     let basename = self.get_hashed_filename(&basepath, None)?;
-                    let dir = basepath.name.dir_with_trailing_slash();
+                    let name = basepath.name();
+                    let dir = name.dir_with_trailing_slash();
                     let mut _pretty: Vec<u8> =
-                        Vec::with_capacity(dir.len() + basename.len() + basepath.name.ext.len());
+                        Vec::with_capacity(dir.len() + basename.len() + name.ext.len());
                     _pretty.extend_from_slice(dir);
                     _pretty.extend_from_slice(basename);
-                    _pretty.extend_from_slice(basepath.name.ext);
+                    _pretty.extend_from_slice(name.ext);
                     pretty = intern(_pretty);
                     relative_name_out = dupe(relative_name);
                 } else {
                     if relative_name.len() > 1
                         && !(relative_name[0] == SEP || relative_name[0] == b'.')
                     {
-                        pretty = intern_box(strings::concat(&[b"./", relative_name]));
+                        pretty = dupe(&strings::concat(&[b"./", relative_name]));
                     } else {
                         pretty = dupe(relative_name);
                     }
@@ -705,7 +721,7 @@ impl Linker {
                         bstr::BStr::new(bun_paths::strings::without_leading_slash(source_path)),
                     )
                     .map_err(|_| bun_core::err!("OutOfMemory"))?;
-                    Ok(PFs::Path::init(intern(buf)))
+                    Ok(PFs::Path::init(dupe(&buf)))
                 } else {
                     let mut absolute_pathname = PFs::PathName::init(source_path);
 
@@ -734,7 +750,7 @@ impl Linker {
                         basename = self.get_hashed_filename(&basepath, None)?;
                     }
 
-                    Ok(PFs::Path::init(intern_box(origin.join_alloc(
+                    Ok(PFs::Path::init(dupe(&origin.join_alloc(
                         b"",
                         dirname,
                         basename,

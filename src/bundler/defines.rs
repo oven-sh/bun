@@ -1,9 +1,7 @@
 use bun_ast::ExprData;
 use bun_ast::Ref;
 use bun_collections::StringHashMap;
-use bun_collections::VecExt;
 use bun_core::strings;
-use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
 
 use crate::defines_table::{
@@ -79,17 +77,20 @@ pub type Data = DefineData;
 
 fn env_string_store_put(
     store: &mut UserDefinesArray,
+    bump: &bun_alloc::Arena,
     key: &[u8],
     value: &[u8],
 ) -> Result<(), bun_core::Error> {
     // Zig (env_loader.zig:461) allocates the `E.String` slab via the passed
-    // `allocator` (= `bun.default_allocator`), NOT the thread-local
+    // `allocator` (= `Transpiler.allocator`), NOT the thread-local
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
-    // the env-define payloads must outlive it. Mirror with `StoreRef::from_box`
-    // (process-lifetime). Value bytes alias the long-lived env-map storage.
-    let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_box(Box::new(
-        bun_ast::E::EString::init(value),
-    )));
+    // the env-define payloads must outlive it. Mirror with `bump` (the
+    // transpiler arena) so the slab is bulk-freed with the `Define` table
+    // instead of leaking a `Box` per env var. Value bytes alias the long-lived
+    // env-map storage.
+    let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
+        bump.alloc(bun_ast::E::EString::init(value)),
+    ));
     let data = DefineData::init(Options {
         value,
         can_be_removed_if_unused: true,
@@ -115,6 +116,7 @@ pub fn copy_env_for_define(
     framework_defaults_values: &[&[u8]],
     behavior: bun_dotenv::DotEnvBehavior,
     prefix: &[u8],
+    bump: &bun_alloc::Arena,
 ) -> Result<(), bun_core::Error> {
     use bun_dotenv::DotEnvBehavior;
     const INVALID_HASH: u64 = u64::MAX - 1;
@@ -168,19 +170,24 @@ pub fn copy_env_for_define(
                         key_buf.clear();
                         key_buf.extend_from_slice(PROCESS_ENV);
                         key_buf.extend_from_slice(k);
-                        env_string_store_put(to_string, &key_buf, value)?;
+                        env_string_store_put(to_string, bump, &key_buf, value)?;
                     } else {
                         let hash = bun_wyhash::hash(k);
                         debug_assert!(hash != INVALID_HASH);
                         if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
-                            env_string_store_put(to_string, framework_defaults_keys[key_i], value)?;
+                            env_string_store_put(
+                                to_string,
+                                bump,
+                                framework_defaults_keys[key_i],
+                                value,
+                            )?;
                         }
                     }
                 } else {
                     key_buf.clear();
                     key_buf.extend_from_slice(PROCESS_ENV);
                     key_buf.extend_from_slice(k);
-                    env_string_store_put(to_string, &key_buf, value)?;
+                    env_string_store_put(to_string, bump, &key_buf, value)?;
                 }
             }
         }
@@ -239,12 +246,10 @@ impl DefineExt for Define {
             // Zig: define.arena.free(gpe.value_ptr.*); — handled by Vec drop on assign
             *existing = list;
         } else {
-            let mut list: Vec<DotDefine> = Vec::with_capacity(1);
-            // PERF(port): was appendAssumeCapacity — profile if hot.
-            list.push(DotDefine {
+            let list: Vec<DotDefine> = vec![DotDefine {
                 parts,
                 data: value_define.clone(),
-            });
+            }];
             self.dots.put_assume_capacity(key, list);
         }
         Ok(())
@@ -596,10 +601,6 @@ impl DefineDataExt for DefineData {
         Ok(user_defines)
     }
 }
-
-// var nan_val = try arena.create(js_ast.E.Number);
-#[allow(dead_code)]
-const NAN_VAL: bun_ast::E::Number = bun_ast::E::Number { value: f64::NAN };
 
 // Zig `deinit` freed `dots` values, cleared maps, and destroyed `self`.
 // In Rust: `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their

@@ -341,14 +341,6 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path(wbuf, path)
 }
 
-fn is_unc_path<T: Ch>(path: &[T]) -> bool {
-    path.len() >= 3
-        && crate::Platform::Windows.is_separator_t(path[0])
-        && crate::Platform::Windows.is_separator_t(path[1])
-        && !crate::Platform::Windows.is_separator_t(path[2])
-        && path[2] != ch(b'.')
-}
-
 pub fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     wbuf: &'a mut [u16],
     utf8: &[u8],

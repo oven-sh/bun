@@ -1,5 +1,4 @@
 use bun_collections::VecExt;
-use core::ffi::c_void;
 use std::io::Write as _;
 
 use crate::bun_json as JSON;
@@ -9,11 +8,10 @@ use bun_collections::{HashMap, StringSet};
 use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
-use bun_http::{self as http, AsyncHTTP, HTTPClient, HeaderBuilder};
+use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_sys::{self, CloseOnDrop, Fd, File};
-use bun_threading::ThreadPool;
+use bun_sys::{self, Fd, File};
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
@@ -21,8 +19,8 @@ use crate::bin::{self, Bin};
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
-    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, IdentityContext, PackageManager,
-    PackageNameHash, VersionSlice, initialize_mini_store as initialize_store,
+    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
+    VersionSlice, initialize_mini_store as initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -84,12 +82,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
         write!(
             &mut print_buf,
-            "{} {} {} workspaces/{}{}{}",
+            "{} {} {} workspaces/false{}{}",
             Global::user_agent,
             Global::os_name,
             Global::arch_name,
-            // TODO: figure out how npm determines workspaces=true
-            false,
             if ci_name.is_some() { " ci/" } else { "" },
             bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
@@ -121,11 +117,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
         write!(
             &mut print_buf,
-            "{} {} {} workspaces/{}{}{}",
+            "{} {} {} workspaces/false{}{}",
             Global::user_agent,
             Global::os_name,
             Global::arch_name,
-            false,
             if ci_name.is_some() { " ci/" } else { "" },
             bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
@@ -246,11 +241,12 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         res.status_code,
         if !res.status.is_empty() { " " } else { "" },
         bstr::BStr::new(&res.status),
-        bun_fmt::redacted_npm_url(&req.url.href),
+        bun_fmt::redacted_npm_url(req.url.href),
     ));
 
-    if res.status_code == 404 && pkg_id.is_some() {
-        let (package_name, package_version) = pkg_id.unwrap();
+    if res.status_code == 404
+        && let Some((package_name, package_version)) = pkg_id
+    {
         Output::pretty_errorln(format_args!(
             "\n - '{}@{}' does not exist in this registry",
             bstr::BStr::new(package_name),
@@ -372,8 +368,8 @@ pub mod registry {
                         // defer { url.pathname = pathname; url.path = pathname; } — applied below
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {
-                            let mut segment = &pathname[colon as usize + 1..];
-                            pathname = &pathname[..colon as usize];
+                            let mut segment = &pathname[colon + 1..];
+                            pathname = &pathname[..colon];
                             needs_to_check_slash = false;
                             needs_normalize = true;
                             if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
@@ -390,15 +386,15 @@ pub mod registry {
                             // Bearer Token
                             if segment == b"_authToken" {
                                 registry.token = value.into();
-                                url.pathname = pathname.into();
-                                url.path = pathname.into();
+                                url.pathname = pathname;
+                                url.path = pathname;
                                 break 'outer;
                             }
 
                             if segment == b"_auth" {
                                 auth = value;
-                                url.pathname = pathname.into();
-                                url.path = pathname.into();
+                                url.pathname = pathname;
+                                url.path = pathname;
                                 break 'outer;
                             }
 
@@ -416,7 +412,7 @@ pub mod registry {
                         // In this case, there is only one.
                         if needs_to_check_slash {
                             if let Some(last_slash) = strings::last_index_of_char(pathname, b'/') {
-                                let remain = &pathname[last_slash as usize + 1..];
+                                let remain = &pathname[last_slash + 1..];
                                 if let Some(eql_i) = strings::index_of_char(remain, b'=') {
                                     let segment = &remain[..eql_i as usize];
                                     let value = &remain[eql_i as usize + 1..];
@@ -425,37 +421,37 @@ pub mod registry {
                                     // Bearer Token
                                     if segment == b"_authToken" {
                                         registry.token = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
                                     if segment == b"_auth" {
                                         auth = value;
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
                                     if segment == b"username" {
                                         registry.username = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
                                     if segment == b"_password" {
                                         registry.password = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
                                 }
@@ -464,8 +460,8 @@ pub mod registry {
 
                         // PORT NOTE: reshaped for borrowck — Zig's `defer { url.pathname = pathname; url.path = pathname; }`
                         // is applied at every `break 'outer` above and once more here at fallthrough.
-                        url.pathname = pathname.into();
-                        url.path = pathname.into();
+                        url.pathname = pathname;
+                        url.path = pathname;
                     }
 
                     registry.username = env.get_auto(&registry.username).into();
@@ -579,7 +575,7 @@ pub mod registry {
                     &package,
                     scope,
                     package_manager.get_temporary_directory().handle.fd,
-                    package_manager.get_cache_directory().fd,
+                    package_manager.get_cache_directory(),
                 );
             }
 
@@ -1076,6 +1072,8 @@ pub mod package_manifest {
             let path_to_use_for_opening_file = tmp_path;
             #[cfg(not(windows))]
             let _ = &mut realpath_buf;
+            #[cfg(windows)]
+            let _ = cache_dir;
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut is_using_o_tmpfile = false;
@@ -1132,19 +1130,11 @@ pub mod package_manifest {
                 )?
             };
 
-            {
-                // errdefer file.close()
-                let guard = CloseOnDrop::file(&file);
-                file.write_all(&buffer)?;
-                let _ = guard.into_inner();
-            }
+            file.write_all(&buffer)?;
 
             #[cfg(windows)]
             {
                 let mut realpath2_buf = bun_paths::PathBuffer::uninit();
-                // errdefer if (!did_close) file.close() — disarmed once we close explicitly below.
-                let guard = CloseOnDrop::file(&file);
-
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
                 let cache_path_abs =
                     bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
@@ -1152,7 +1142,6 @@ pub mod package_manifest {
                         &mut realpath2_buf[..],
                         &[cache_dir_abs, outpath.as_bytes()],
                     );
-                let _ = guard.into_inner();
                 // Zig spec discards the close error too — the renameat
                 // immediately below surfaces a usable error if the temp
                 // file is in a bad state, and on POSIX the close cannot
@@ -1169,7 +1158,6 @@ pub mod package_manifest {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
-                let _close = CloseOnDrop::file(&file);
                 // Attempt #1.
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
                     // Attempt #2: the file may already exist. Let's unlink and try again.
@@ -1182,7 +1170,6 @@ pub mod package_manifest {
 
             #[cfg(not(windows))]
             {
-                let _close = CloseOnDrop::file(&file);
                 // Attempt #1. Rename the file.
                 let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
 
@@ -1199,16 +1186,15 @@ pub mod package_manifest {
                         // Rust `Errno::EOPNOTSUPP` resolves to 102 on Darwin,
                         // so match `ENOTSUP` as well to keep the macOS
                         // `renameat2(.exchange)` fallback reachable. On
-                        // Linux/FreeBSD the two names alias the same value;
-                        // the redundant arm is intentional.
-                        #[allow(unreachable_patterns)]
-                        if matches!(
-                            err.get_errno(),
-                            bun_sys::Errno::EEXIST
-                                | bun_sys::Errno::ENOTEMPTY
-                                | bun_sys::Errno::ENOTSUP
-                                | bun_sys::Errno::EOPNOTSUPP
-                        ) {
+                        // Linux/FreeBSD the two names alias the same value,
+                        // so compare by equality (a `matches!` pattern would
+                        // flag the alias as unreachable).
+                        let errno = err.get_errno();
+                        if errno == bun_sys::Errno::EEXIST
+                            || errno == bun_sys::Errno::ENOTEMPTY
+                            || errno == bun_sys::Errno::ENOTSUP
+                            || errno == bun_sys::Errno::EOPNOTSUPP
+                        {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
                                 tmpdir,
@@ -1231,6 +1217,7 @@ pub mod package_manifest {
                 rc?;
             }
 
+            #[cfg(not(windows))]
             Ok(())
         }
 
@@ -1323,7 +1310,6 @@ pub mod package_manifest {
             file_id: u64,
             scope: &registry::Scope,
         ) -> Result<&'b bun_core::ZStr, Error> {
-            use core::fmt::Write as _;
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
             let mut stream = bun_io::FixedBufferStream::new_mut(buf);
             if scope.url_hash == *registry::DEFAULT_URL_HASH {
@@ -1379,7 +1365,6 @@ pub mod package_manifest {
             let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
                 return Ok(None);
             };
-            let _close_cache_file = CloseOnDrop::file(&cache_file);
 
             'delete: {
                 match Self::load_by_file(scope, &cache_file) {
@@ -2026,7 +2011,7 @@ impl PackageManifest {
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
 
         let mut bundled_deps_set = StringSet::init();
-        let mut bundle_all_deps = false;
+        let mut bundle_all_deps: bool;
 
         let mut bundled_deps_count: usize = 0;
 
@@ -2826,8 +2811,6 @@ impl PackageManifest {
                             }
                         };
                     if items.len() > 0 || has_meta_only_peers {
-                        let mut count = items.len();
-
                         // PORT NOTE: reshaped for borrowck — index into all_extern_strings / version_extern_strings
                         let names_base = dependency_names_cursor;
                         let values_base = dependency_values_cursor;
@@ -2874,11 +2857,6 @@ impl PackageManifest {
                                                     meta_key,
                                                 ),
                                             );
-
-                                            // Reserve a slot for a meta-only synthesised peer.
-                                            // The slot is unused if `meta_key` also appears in
-                                            // `peerDependencies` below.
-                                            count += 1;
                                         }
                                     }
                                 }
@@ -3047,7 +3025,7 @@ impl PackageManifest {
                             }
                         }
 
-                        count = i;
+                        let count = i;
                         // The peer slice was over-reserved by the
                         // number of `peerDependenciesMeta` entries (so
                         // meta-only synthesised peers had room); trim
@@ -3259,7 +3237,7 @@ impl PackageManifest {
         );
         result.pkg.releases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_releases_range.clone()],
+            &versioned_packages[all_versioned_package_releases_range],
         );
 
         result.pkg.prereleases.keys = VersionSlice::init(
@@ -3268,7 +3246,7 @@ impl PackageManifest {
         );
         result.pkg.prereleases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_prereleases_range.clone()],
+            &versioned_packages[all_versioned_package_prereleases_range],
         );
 
         let max_versions_count = all_release_versions_range
@@ -3295,7 +3273,7 @@ impl PackageManifest {
             n => {
                 // ceil(log2_int_ceil(n) / 8)
                 let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
-                (bits + 7) / 8
+                bits.div_ceil(8)
             }
         };
 
@@ -3381,7 +3359,7 @@ impl PackageManifest {
             2 => sort_with_int!(u16),
             3 => sort_with_int!(u32), // TODO(port): Zig used u24; Rust has no u24, use u32
             4 => sort_with_int!(u32),
-            5 | 6 | 7 | 8 => sort_with_int!(u64),
+            5..=8 => sort_with_int!(u64),
             _ => {
                 debug_assert!(max_versions_count == 0);
             }

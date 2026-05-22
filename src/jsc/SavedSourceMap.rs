@@ -1,4 +1,3 @@
-#![allow(unused_imports, unused_variables, dead_code)]
 #![warn(unused_must_use)]
 
 use core::ffi::c_void;
@@ -7,8 +6,7 @@ use std::sync::Arc;
 
 use bun_collections::{HashMap, TaggedPtrUnion};
 use bun_core::MutableString;
-use bun_core::{Ordinal, Output};
-use bun_paths::PathBuffer;
+use bun_core::Ordinal;
 use bun_sourcemap::internal_source_map::FindCache;
 use bun_sourcemap::{
     self as SourceMap, BakeSourceProvider, DevServerSourceProvider, InternalSourceMap,
@@ -44,7 +42,7 @@ impl Default for SavedSourceMap {
 
 impl SavedSourceMap {
     // TODO(port): in-place init — `this` is a pre-allocated field on VirtualMachine; `map` is a sibling field backref.
-    pub fn init(this: &mut core::mem::MaybeUninit<Self>, map: *mut HashTable) {
+    pub unsafe fn init(this: &mut core::mem::MaybeUninit<Self>, map: *mut HashTable) {
         this.write(Self {
             map,
             mutex: Mutex::default(),
@@ -182,14 +180,14 @@ impl SavedSourceMap {
         };
         let old_value = Value::from(Some(ptr));
         if let Some(prov) = old_value.get::<DevServerSourceProvider>() {
-            if (prov as usize) == (opaque_source_provider as usize) {
+            if core::ptr::eq(prov.cast::<c_void>(), opaque_source_provider) {
                 // there is nothing to unref or deinit
                 map.remove(&key);
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
             if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
-                if (prov.ptr() as usize) == (opaque_source_provider as usize) {
+                if core::ptr::eq(prov.ptr(), opaque_source_provider) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
                     unsafe { ParsedSourceMap::deref(parsed) };
@@ -218,14 +216,14 @@ impl SavedSourceMap {
         };
         let old_value = Value::from(Some(ptr));
         if let Some(prov) = old_value.get::<SourceProviderMap>() {
-            if (prov as usize) == (opaque_source_provider as usize) {
+            if core::ptr::eq(prov.cast::<c_void>(), opaque_source_provider) {
                 // there is nothing to unref or deinit
                 map.remove(&key);
             }
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
             if let Some(prov) = unsafe { (*parsed).underlying_provider }.provider() {
-                if (prov.ptr() as usize) == (opaque_source_provider as usize) {
+                if core::ptr::eq(prov.ptr(), opaque_source_provider) {
                     map.remove(&key);
                     // SAFETY: we held a strong ref while in the table; release it.
                     unsafe { ParsedSourceMap::deref(parsed) };
@@ -330,7 +328,7 @@ impl SavedSourceMap {
         // errdefer: on error, reconstitute and drop the Box.
         match self.put_value(
             source.path.text,
-            Value::init(blob_ptr.cast::<u8>().cast::<InternalSourceMap>()),
+            Value::init(blob_ptr.cast::<c_void>().cast::<InternalSourceMap>()),
         ) {
             Ok(()) => Ok(()),
             Err(e) => {

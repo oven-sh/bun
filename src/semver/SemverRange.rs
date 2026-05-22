@@ -32,21 +32,16 @@ impl fmt::Display for Range {
         if self.right.op == Op::Unset {
             // TODO(port): Zig used `{}` on Comparator directly but Comparator has no
             // top-level `format` in the source — likely dead/broken upstream. Mirroring shape.
-            write!(f, "{}", ComparatorDisplay(&self.left))
+            write!(f, "{}", ComparatorDisplay)
         } else {
-            write!(
-                f,
-                "{} {}",
-                ComparatorDisplay(&self.left),
-                ComparatorDisplay(&self.right),
-            )
+            write!(f, "{} {}", ComparatorDisplay, ComparatorDisplay,)
         }
     }
 }
 
 // PORT NOTE: helper for Range's Display impl above (Zig relied on default struct formatting).
-struct ComparatorDisplay<'a>(#[allow(dead_code)] &'a Comparator);
-impl fmt::Display for ComparatorDisplay<'_> {
+struct ComparatorDisplay;
+impl fmt::Display for ComparatorDisplay {
     fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // TODO(port): no buffer available here; upstream Zig path appears unused.
         Ok(())
@@ -148,7 +143,7 @@ impl Range {
     /// Is the Range equal to another Range
     /// This does not evaluate the range.
     #[inline]
-    pub fn eql(self, rhs: Range) -> bool {
+    pub fn eql(self, rhs: &Range) -> bool {
         self.left.eql(rhs.left) && self.right.eql(rhs.right)
     }
 

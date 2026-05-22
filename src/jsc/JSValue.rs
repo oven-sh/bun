@@ -633,7 +633,12 @@ impl JSValue {
     /// `JSValue.createBufferWithCtx` (JSValue.zig) — wrap a foreign-owned byte
     /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
     /// runs when the Buffer's backing store is collected.
-    pub fn create_buffer_with_ctx(
+    ///
+    /// # Safety
+    /// `bytes` must describe a valid allocation whose ownership transfers to
+    /// JSC; `ctx` is forwarded to `free` on collection and must remain valid
+    /// until then.
+    pub unsafe fn create_buffer_with_ctx(
         global: &JSGlobalObject,
         bytes: core::ptr::NonNull<[u8]>,
         ctx: *mut c_void,
@@ -1148,6 +1153,19 @@ impl JSValue {
         // JSValue.zig:1625 truthyPropertyValue: filters undef/null AND empty strings.
         Ok(self
             .get(global, property)?
+            .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
+    }
+    /// JSValue.zig:1649 `getTruthyComptime` — `fast_get` (precached `JSC::Identifier`,
+    /// no StringImpl alloc / atom-table probe) followed by the same `truthyPropertyValue`
+    /// filter as `get_truthy`. Use this when the property name is a `BuiltinName`.
+    pub fn fast_get_truthy(
+        self,
+        global: &JSGlobalObject,
+        builtin_name: BuiltinName,
+    ) -> JsResult<Option<JSValue>> {
+        // JSValue.zig:1625 truthyPropertyValue: filters undef/null AND empty strings.
+        Ok(self
+            .fast_get(global, builtin_name)?
             .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
     }
     /// JSValue.zig:1866 `getBooleanLoose` — missing/undefined → `None`; otherwise
@@ -1937,7 +1955,6 @@ pub type PropertyIteratorFn = unsafe extern "C" fn(
 // ──────────────────────────────────────────────────────────────────────────
 unsafe extern "C" {
     safe fn JSC__JSValue__isAnyInt(this: JSValue) -> bool;
-    safe fn JSC__JSValue__jsType(this: JSValue) -> JSType;
     safe fn JSC__JSValue__jsNumberFromDouble(n: f64) -> JSValue;
     safe fn JSC__JSValue__jsEmptyString(global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__createEmptyObject(global: &JSGlobalObject, len: usize) -> JSValue;
@@ -2095,12 +2112,6 @@ unsafe extern "C" {
         out: &mut bun_core::ZigString,
         global: &JSGlobalObject,
     );
-    fn JSC__JSValue__getIfPropertyExistsImpl(
-        target: JSValue,
-        global: *const JSGlobalObject,
-        ptr: *const u8,
-        len: usize,
-    ) -> JSValue;
     safe fn JSC__JSValue__isTerminationException(this: JSValue) -> bool;
     safe fn JSC__JSValue__isException(this: JSValue, vm: &crate::VM) -> bool;
     fn Bun__JSValue__call(

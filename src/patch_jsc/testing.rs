@@ -36,6 +36,7 @@ impl TestingAPIs {
         // PORT NOTE: Zig `gitDiffInternal` used `std.process.Child` (no uv loop).
         // Rust routes through `bun_spawn::sync`, which on Windows derefs
         // `WindowsOptions.loop_` — supply the JS event loop.
+        // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
         let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
         let diff = match git_diff_internal(old_folder.slice(), new_folder.slice(), &mut loop_) {
             Ok(d) => d,
@@ -91,7 +92,7 @@ impl TestingAPIs {
                 "TestingAPIs.parse: expected at least 1 argument, got 0"
             )));
         };
-        let patchfile_src_bunstr = patchfile_src_js.to_bun_string(global)?;
+        let patchfile_src_bunstr = OwnedString::new(patchfile_src_js.to_bun_string(global)?);
         let patchfile_src = patchfile_src_bunstr.to_utf8();
 
         let patchfile = match parse_patch_file(patchfile_src.slice()) {

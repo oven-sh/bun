@@ -9,7 +9,7 @@ use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{join_abs_string_z, platform};
-use bun_paths::{self as Path, AutoAbsPath, EnvPath};
+use bun_paths::{AutoAbsPath, EnvPath};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 use bun_threading::Mutex;
@@ -17,7 +17,6 @@ use bun_threading::Mutex;
 use crate::bun_fs::FileSystem;
 
 use super::directories;
-use super::package_manager_options::Do;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
@@ -29,6 +28,7 @@ use bun_install::{
     PackageID, PackageManager, PreinstallState, TruncatedPackageNameHash, invalid_package_id,
 };
 
+#[derive(Default)]
 pub struct LifecycleScriptTimeLog {
     mutex: Mutex,
     list: Vec<LifecycleScriptTimeLogEntry>,
@@ -45,15 +45,6 @@ pub struct LifecycleScriptTimeLogEntry {
     pub duration: u64,
 }
 
-impl Default for LifecycleScriptTimeLog {
-    fn default() -> Self {
-        Self {
-            mutex: Mutex::default(),
-            list: Vec::new(),
-        }
-    }
-}
-
 impl LifecycleScriptTimeLog {
     pub fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
         self.mutex.lock();
@@ -63,7 +54,7 @@ impl LifecycleScriptTimeLog {
     }
 
     /// this can be called if .start was never called
-    pub fn print_and_deinit(mut self) {
+    pub fn print_and_deinit(self) {
         if cfg!(debug_assertions) {
             if !self.mutex.try_lock() {
                 panic!("LifecycleScriptTimeLog.print is not intended to be thread-safe");
@@ -302,7 +293,7 @@ impl PackageManager {
             bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
                 // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
                 // for the duration of `sleep`.
-                let this = unsafe { bun_ptr::callback_ctx::<PackageManager>(ctx) };
+                let this = bun_ptr::callback_ctx::<PackageManager>(ctx);
                 this.has_no_more_pending_lifecycle_scripts()
             });
         }

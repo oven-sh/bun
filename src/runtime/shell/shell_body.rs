@@ -1,20 +1,12 @@
 //! Port of src/shell/shell.zig
 //! Shell lexer, parser, AST, and JS-bridge utilities for Bun's shell.
 
-#![allow(
-    non_camel_case_types,
-    non_snake_case,
-    dead_code,
-    clippy::too_many_arguments
-)]
+#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
 
-use core::ffi::{c_char, c_int};
 use core::fmt;
-use core::mem::size_of;
 use std::io::Write as _;
 
-use bun_alloc::{Arena as Bump, ArenaVec};
-use bun_collections::{IntegerBitSet, VecExt};
+use bun_alloc::Arena as Bump;
 use bun_core::{self, Output};
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
@@ -76,6 +68,9 @@ pub const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 // ───────────────────────────── ShellErr ─────────────────────────────
 
 /// The strings in this type are allocated with event loop ctx allocator
+// `Sys(SystemError)` is constructed/matched directly in subproc.rs, Builtin.rs,
+// and builtin/cp.rs; boxing it would ripple through those call sites.
+#[allow(clippy::large_enum_variant)]
 pub enum ShellErr {
     Sys(SystemError),
     Custom(Box<[u8]>),
@@ -85,7 +80,7 @@ pub enum ShellErr {
 
 impl ShellErr {
     /// Spec `ShellErr.newSys(bun.sys.Error)` — wrap a low-level syscall error.
-    pub fn new_sys(e: sys::Error) -> Self {
+    pub fn new_sys(e: &sys::Error) -> Self {
         ShellErr::Sys(e.to_shell_system_error())
     }
     /// Spec `ShellErr.newSys(jsc.SystemError)` — already JS-shaped.
@@ -186,7 +181,7 @@ impl fmt::Display for ShellErr {
 
 pub enum ShellResult<T> {
     Result(T),
-    Err(ShellErr),
+    Err(Box<ShellErr>),
 }
 
 impl<T: Default> ShellResult<T> {
@@ -201,7 +196,7 @@ impl<T: Default> ShellResult<T> {
 impl<T> ShellResult<T> {
     pub fn as_err(self) -> Option<ShellErr> {
         match self {
-            ShellResult::Err(e) => Some(e),
+            ShellResult::Err(e) => Some(*e),
             ShellResult::Result(_) => None,
         }
     }
@@ -217,24 +212,6 @@ pub enum ShellError {
     GlobalThisThrown,
     #[error("Spawn")]
     Spawn,
-}
-
-// TODO(port): move to <area>_sys
-unsafe extern "C" {
-    // PRECONDITION: `name`/`value` must be valid NUL-terminated C strings for
-    // the call duration; `setenv` is not thread-safe wrt concurrent
-    // `getenv`/`setenv` (POSIX) — caller must hold the env lock or be on the
-    // single JS thread. Cannot be `safe fn`.
-    fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
-}
-
-fn set_env(name: *const c_char, value: *const c_char) {
-    // TODO: windows
-    // SAFETY: name/value are valid NUL-terminated C strings provided by callers; setenv is
-    // not called concurrently with getenv on this thread (single-threaded JS event loop).
-    unsafe {
-        let _ = setenv(name, value, 1);
-    }
 }
 
 /// `[0]` => read end, `[1]` => write end
@@ -276,7 +253,7 @@ impl<'a> GlobalJS<'a> {
     }
 
     #[inline]
-    pub fn throw_error(self, err: sys::Error) {
+    pub fn throw_error(self, err: &sys::Error) {
         self.global_this.throw_value(err.to_js(self.global_this));
     }
 
@@ -320,8 +297,8 @@ impl<'a> GlobalJS<'a> {
             .cast_const()
             .cast_mut();
         let concurrent = bun_event_loop::ConcurrentTask::create(bun_event_loop::Task::init(task));
-        // SAFETY: see above — `enqueue_task_concurrent` only touches the lock-free queue.
-        unsafe { (*vm).enqueue_task_concurrent(concurrent) };
+        // SAFETY: see above — `vm` is a live VM pointer.
+        unsafe { &mut *vm }.enqueue_task_concurrent(concurrent);
     }
 
     #[inline]
@@ -433,10 +410,11 @@ impl<'a> GlobalMini<'a> {
         let anytask = bun_core::heap::into_raw(Box::new(AnyTaskWithExtraContext::default()));
         // SAFETY: `anytask` was just heap-allocated and is exclusively owned here.
         unsafe { (*anytask).from(task, run_from_main_thread_mini) };
-        // SAFETY: `mini` is a long-lived loop; the concurrent queue is thread-safe.
+        // SAFETY: `mini` is a long-lived loop; `anytask` was just heap-allocated
+        // (non-null); the concurrent queue is thread-safe.
         unsafe {
             (*(std::ptr::from_ref::<MiniEventLoop<'a>>(self.mini) as *mut MiniEventLoop<'a>))
-                .enqueue_task_concurrent(anytask)
+                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(anytask))
         };
     }
 
@@ -519,9 +497,9 @@ impl<'a> CmdEnvIter<'a> {
     pub fn from_env(env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>) -> Self {
         // PORT NOTE: `iterator()` borrows `&mut self`; rebind through a raw ptr so the
         // struct can hold both the map ref and the iterator (Zig had no aliasing rules).
+        let env_ptr: *mut _ = env;
         // SAFETY: `env` outlives `'a` and is not mutated through `self.env` while `iter`
         // walks the backing arrays.
-        let env_ptr: *mut _ = env;
         let iter = unsafe { (*env_ptr).iterator() };
         Self { env, iter }
     }
@@ -776,9 +754,8 @@ pub fn shell_cmd_from_js(
                     return Err(global.throw(format_args!("Shell script is missing JSValue arg")));
                 }
             };
-            // PORT NOTE: reshaped for borrowck — builder holds &mut out_script/jsstrings;
-            // drop and re-create around the recursive call.
-            drop(builder);
+            // PORT NOTE: builder holds &mut out_script/jsstrings; NLL releases the
+            // borrow here (builder is reassigned below before next use).
             handle_template_value(
                 global,
                 template_value,
@@ -816,7 +793,6 @@ pub fn handle_template_value(
             write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
                 .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
-            drop(builder);
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
         }
@@ -854,7 +830,6 @@ pub fn handle_template_value(
             write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
                 .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
-            drop(builder);
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
         }
@@ -867,7 +842,6 @@ pub fn handle_template_value(
             write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
                 .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
-            drop(builder);
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
         }
@@ -880,7 +854,6 @@ pub fn handle_template_value(
             write!(cursor, "{}{}", bstr::BStr::new(LEX_JS_OBJREF_PREFIX), idx)
                 .map_err(|_| global.throw_out_of_memory())?;
             let n = cursor.position() as usize;
-            drop(builder);
             out_script.extend_from_slice(&jsobjref_buf[..n]);
             return Ok(());
         }
@@ -898,7 +871,6 @@ pub fn handle_template_value(
             let mut array = template_value.array_iterator(global)?;
             let last = array.len.saturating_sub(1);
             let mut i: u32 = 0;
-            drop(builder);
             while let Some(arr) = array.next()? {
                 handle_template_value(
                     global,
@@ -1120,7 +1092,6 @@ impl<'a> ShellSrcBuilder<'a> {
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub mod testing_apis {
     use super::*;
-    use crate::test_runner::expect::JSGlobalObjectTestExt as _;
 
     #[bun_jsc::host_fn]
     pub fn disabled_on_this_platform(
@@ -1129,6 +1100,7 @@ pub mod testing_apis {
     ) -> JsResult<JSValue> {
         #[cfg(windows)]
         {
+            let _ = (global, callframe);
             return Ok(JSValue::FALSE);
         }
         #[cfg(not(windows))]

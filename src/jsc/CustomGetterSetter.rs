@@ -1,5 +1,3 @@
-use core::marker::{PhantomData, PhantomPinned};
-
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `JSC::CustomGetterSetter`.
     pub struct CustomGetterSetter;

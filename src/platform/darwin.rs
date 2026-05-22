@@ -3,8 +3,7 @@
 //! If an API can be implemented on multiple platforms,
 //! it does not belong in this namespace.
 
-use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
+use core::ffi::c_char;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Non-cancellable versions of various libc functions are undocumented

@@ -1,11 +1,9 @@
 //! Port of `src/jsc/AsyncModule.zig`.
 
-use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::c_void;
 use core::sync::atomic::AtomicU32;
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_bundler::options;
 use bun_bundler::transpiler::ParseResult;
 use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
@@ -26,7 +24,7 @@ use crate::{
 bun_core::declare_scope!(AsyncModule, hidden);
 
 pub struct InitOpts<'a> {
-    pub parse_result: ParseResult,
+    pub parse_result: ParseResult<'static>,
     pub referrer: &'a [u8],
     pub specifier: &'a [u8],
     pub path: Fs::Path<'a>,
@@ -36,11 +34,14 @@ pub struct InitOpts<'a> {
     pub loader: bun_ast::Loader,
     pub hash: u32,
     pub arena: Box<ArenaAllocator>,
+    /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
+    /// alive alongside `arena` until the module finishes loading.
+    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
 }
 
 pub struct AsyncModule {
     // This is all the state used by the printer to print the module
-    pub parse_result: ParseResult,
+    pub parse_result: ParseResult<'static>,
     pub promise: StrongOptional, // Strong.Optional, default .empty
     /// Packed `referrer ++ specifier ++ path.text`. Owns the bytes that the
     /// Zig version aliased via `buf.allocatedSlice()`. Stored as offsets so
@@ -60,6 +61,8 @@ pub struct AsyncModule {
     pub hash: u32, // default = u32::MAX
     pub global_this: crate::GlobalRef,
     pub arena: Box<ArenaAllocator>,
+    /// See [`InitOpts::ast_alloc_state`].
+    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
 
     // This is the specific state for making it async
     pub poll_ref: KeepAlive,
@@ -82,7 +85,6 @@ pub struct PackageResolveError<'a> {
     pub version: bun_install::dependency::Version,
 }
 
-#[allow(dead_code)]
 pub struct DeferredDependencyError {
     pub dependency: Dependency,
     pub root_dependency_id: DependencyID,
@@ -176,9 +178,14 @@ impl AsyncModule {
         // passed to FFI below is dead by the time the guard runs.
         let sp: *mut BunString = &raw mut specifier;
         let rp: *mut BunString = &raw mut referrer;
-        let _strings_guard = scopeguard::guard((), move |()| unsafe {
-            (*sp).deref();
-            (*rp).deref();
+        let _strings_guard = scopeguard::guard((), move |()| {
+            // SAFETY: `sp`/`rp` point at `specifier`/`referrer` declared above
+            // this guard; locals drop in reverse order so they outlive it, and
+            // the `&mut` reborrows passed to FFI are dead by the time this runs.
+            unsafe {
+                (*sp).deref();
+                (*rp).deref();
+            }
         });
 
         let mut errorable: ErrorableResolvedSource;
@@ -268,7 +275,7 @@ use std::io::Write as _;
 
 use bun_core::strings;
 use bun_install::package_manager::run_tasks;
-use bun_install::{self as install, LogLevel, PackageID, PackageManager};
+use bun_install::{self as install, LogLevel, PackageID};
 
 use crate::event_loop::{AnyTask, ConcurrentTaskItem, Task};
 
@@ -322,7 +329,10 @@ impl Queue {
         self.vm().package_manager().drain_dependency_list();
     }
 
-    pub fn on_dependency_error(
+    /// # Safety
+    /// `ctx` must point to a live [`Queue`] (the `WakeHandler::context`
+    /// registered in `runtime::jsc_hooks`).
+    pub unsafe fn on_dependency_error(
         ctx: *mut c_void,
         dependency: &Dependency,
         root_dependency_id: DependencyID,
@@ -342,7 +352,7 @@ impl Queue {
         this.map.retain_mut(|module| {
             // PORT NOTE: Zig `MultiArrayList.items(.root_dependency_id)` →
             // `Vec<PendingResolution>` field walk.
-            for (dep_i, pending) in module.parse_result.pending_imports.iter().enumerate() {
+            for pending in module.parse_result.pending_imports.iter() {
                 if pending.root_dependency_id != root_dependency_id {
                     continue;
                 }
@@ -362,7 +372,7 @@ impl Queue {
                     .resolve_error(
                         vm,
                         import_record_id,
-                        PackageResolveError {
+                        &PackageResolveError {
                             name: name.slice(),
                             err,
                             url: b"",
@@ -380,7 +390,7 @@ impl Queue {
         bun_core::scoped_log!(AsyncModule, "onWake");
         let queue = ctx.cast::<Queue>();
         let task = ConcurrentTaskItem::create_from(queue);
-        // Runs on thread-pool / HTTP-callback threads (PackageManager::wake_raw)
+        // SAFETY: runs on thread-pool / HTTP-callback threads (PackageManager::wake_raw)
         // where the per-thread `VirtualMachine::get()` singleton is NOT
         // installed — using it here would panic. `ctx` was registered as
         // `addr_of_mut!((*vm).modules)` from a raw `*mut VirtualMachine`
@@ -435,7 +445,7 @@ impl Queue {
         self.map.retain_mut(|module| {
             // PORT NOTE: Zig `MultiArrayList.items(.tag)` etc. →
             // `Vec<PendingResolution>` field walk.
-            for (tag_i, pending) in module.parse_result.pending_imports.iter().enumerate() {
+            for pending in module.parse_result.pending_imports.iter() {
                 if pending.tag == bun_resolver::PendingResolutionTag::Resolve {
                     if pending.esm.name.slice(&pending.string_buf) != name {
                         continue;
@@ -450,7 +460,7 @@ impl Queue {
                         .resolve_error(
                             vm,
                             import_record_id,
-                            PackageResolveError {
+                            &PackageResolveError {
                                 name,
                                 err,
                                 url,
@@ -510,9 +520,9 @@ impl Queue {
                     .download_error(
                         vm,
                         import_record_id,
-                        PackageDownloadError {
+                        &PackageDownloadError {
                             name,
-                            resolution: resolution.clone(),
+                            resolution: *resolution,
                             err,
                             url,
                         },
@@ -687,6 +697,7 @@ impl AsyncModule {
             // .expr_blocks = expr_blocks,
             global_this: crate::GlobalRef::new(global_object),
             arena: opts.arena,
+            ast_alloc_state: opts.ast_alloc_state,
             poll_ref: KeepAlive::default(),
             any_task: AnyTask::AnyTask::default(),
         })
@@ -711,6 +722,8 @@ impl AsyncModule {
             (*clone).any_task = AnyTask::AnyTask {
                 ctx: Some(core::ptr::NonNull::new_unchecked(clone).cast()),
                 callback: |p| {
+                    // SAFETY: `p` is the `clone` heap allocation registered as
+                    // `ctx` above; `on_done` reclaims it via `heap::take`.
                     Self::on_done(p.cast());
                     Ok(())
                 },
@@ -719,7 +732,10 @@ impl AsyncModule {
         }
     }
 
-    pub fn on_done(this: *mut AsyncModule) {
+    /// # Safety
+    /// `this` must be the heap allocation produced by [`AsyncModule::done`]
+    /// (via `bun_core::heap::into_raw`); this fn reclaims and drops it.
+    pub unsafe fn on_done(this: *mut AsyncModule) {
         jsc::mark_binding();
         // SAFETY: `this` was heap-allocated in `done`; reclaimed at end of this fn.
         let this = unsafe { &mut *this };
@@ -788,7 +804,7 @@ impl AsyncModule {
         &mut self,
         vm: &mut VirtualMachine,
         import_record_id: u32,
-        result: PackageResolveError<'_>,
+        result: &PackageResolveError<'_>,
     ) -> Result<(), bun_core::Error> {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut self` reborrows below; `GlobalRef::deref` is the safe
@@ -938,11 +954,7 @@ impl AsyncModule {
         );
         let location = bun_ast::range_data(
             Some(&self.parse_result.source),
-            self.parse_result
-                .ast
-                .import_records
-                .at(import_record_id as usize)
-                .range,
+            self.parse_result.ast.import_records[import_record_id as usize].range,
             b"",
         )
         .location
@@ -1005,7 +1017,7 @@ impl AsyncModule {
         &mut self,
         vm: &mut VirtualMachine,
         import_record_id: u32,
-        result: PackageDownloadError<'_>,
+        result: &PackageDownloadError<'_>,
     ) -> Result<(), bun_core::Error> {
         // Copy the `GlobalRef` out so the borrow of `self` ends before
         // `&mut vm` / `&mut self` reborrows below; `GlobalRef::deref` is the
@@ -1162,11 +1174,7 @@ impl AsyncModule {
 
         let location = bun_ast::range_data(
             Some(&self.parse_result.source),
-            self.parse_result
-                .ast
-                .import_records
-                .at(import_record_id as usize)
-                .range,
+            self.parse_result.ast.import_records[import_record_id as usize].range,
             b"",
         )
         .location
@@ -1175,10 +1183,7 @@ impl AsyncModule {
             global_this,
             b"specifier",
             ZigString::from_bytes(
-                self.parse_result
-                    .ast
-                    .import_records
-                    .at(import_record_id as usize)
+                self.parse_result.ast.import_records[import_record_id as usize]
                     .path
                     .text,
             )
@@ -1241,13 +1246,17 @@ impl AsyncModule {
         // back. Rust takes-by-value via `mem::take` then restores below to
         // satisfy borrowck around `linker.link(&mut parse_result)` while
         // `self` is also borrowed.
-        let mut parse_result = core::mem::take(&mut self.parse_result);
+        let arena = *self.parse_result.ast.parts.allocator();
+        let mut parse_result =
+            core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
         // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
         // stable for the lifetime of `*self`; this fn never replaces it, so
         // slices into it remain valid across the `&mut self` reborrows below
         // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
         // tie `path`/`specifier` to `&self`.
         let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
+        // SAFETY: same `string_buf` stability invariant as `specifier` above —
+        // the backing `Box<[u8]>` is never replaced in this fn.
         let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
         let path = Fs::Path::init(path_text);
         let jsc_vm = VirtualMachine::get_mut_ptr();
@@ -1300,7 +1309,8 @@ impl AsyncModule {
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
         let input_fd = self.parse_result.input_fd;
-        let parse_result = core::mem::take(&mut self.parse_result);
+        let arena = *self.parse_result.ast.parts.allocator();
+        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
         // PORT NOTE: `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); Zig dereferenced to
@@ -1344,6 +1354,12 @@ impl AsyncModule {
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(
+                    // `self.arena` is the same per-call arena that built
+                    // `parse_result.ast` (handed to the queue via
+                    // `InitOpts::arena` after the original parse). The
+                    // printer's rope-flattening scratch belongs in it, not
+                    // in the per-VM `transpiler_arena`.
+                    &self.arena,
                     parse_result,
                     &mut printer,
                     bun_js_printer::Format::EsmAscii,
@@ -1354,13 +1370,12 @@ impl AsyncModule {
         }
 
         #[cfg(feature = "dump_source")]
-        {
-            crate::runtime_transpiler_store::dump_source_string(
-                jsc_vm as *mut VirtualMachine,
-                specifier,
-                printer.ctx.get_written(),
-            );
-        }
+        crate::runtime_transpiler_store::dump_source_string(
+            // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF, non-null).
+            unsafe { core::ptr::NonNull::new_unchecked(jsc_vm) },
+            specifier,
+            printer.ctx.get_written(),
+        );
         // TODO(port): Environment.dump_source mapped to cfg feature; confirm flag name.
 
         // SAFETY: per-thread VM.

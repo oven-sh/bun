@@ -45,7 +45,6 @@ pub use bun_install_jsc::ini_jsc::ini_testing_parse as ini_ini_ini_testing_ap_is
 pub use bun_jsc::bindgen_test::get_bindgen_test_functions as jsc_bindgen_test_get_bindgen_test_functions;
 pub use bun_jsc::counters::create_counters_object as jsc_counters_create_counters_object;
 pub use bun_jsc::event_loop::get_active_tasks as jsc_event_loop_get_active_tasks;
-#[allow(non_snake_case)]
 pub use bun_jsc::virtual_machine_exports::Bun__setSyntheticAllocationLimitForTesting as jsc_virtual_machine_exports_bun__set_synthetic_allocation_limit_for_testing;
 // `src/jsc/ipc.zig emitHandleIPCMessage` is implemented in this crate
 // (`ipc_host.rs`) because it dereferences `Subprocess`, a runtime type.

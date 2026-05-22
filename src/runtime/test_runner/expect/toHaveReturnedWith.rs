@@ -1,6 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-#[allow(unused_imports)] use bun_core::Output;
 
 use super::DiffFormatter;
 use super::mock;
@@ -39,7 +37,7 @@ pub fn to_have_returned_with(
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = result_type.to_bun_string(global)?;
+                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
 
                 if type_str.eql_comptime("return") {
                     let result_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);

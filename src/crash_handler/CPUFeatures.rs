@@ -1,4 +1,4 @@
-use core::ffi::c_void as _; // (no c types needed; kept for FFI clarity)
+// (no c types needed; kept for FFI clarity)
 use core::fmt;
 
 // TODO(port): move to crash_handler_sys

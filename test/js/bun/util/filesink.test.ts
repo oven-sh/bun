@@ -278,3 +278,33 @@ it("start() without path/fd on an already-open writer does not crash", async () 
   await writer.end();
   expect(await Bun.file(path).text()).toBe("hello");
 });
+
+it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {
+  const dir = tmpdirSync();
+  const target = join(dir, "ro.txt");
+  fs.writeFileSync(target, "");
+  const writer = Bun.file(target).writer();
+  // Re-point the writer at a read-only fd so the buffered flush in end() fails.
+  const fd = fs.openSync(target, "r");
+  try {
+    writer.start({ fd });
+  } finally {
+    fs.closeSync(fd);
+  }
+  writer.write("x");
+  let endErr: unknown;
+  try {
+    await writer.end();
+  } catch (e) {
+    endErr = e;
+  }
+  expect(endErr).toBeDefined();
+  // Previously this would attempt to write to an invalid fd and crash with a
+  // debug assertion; now it should behave as if the sink is closed.
+  expect(() => writer.write("y")).not.toThrow();
+  expect(() => writer.start({})).not.toThrow();
+  expect(() => writer.write("z")).not.toThrow();
+  expect(() => writer.flush()).not.toThrow();
+  await Promise.resolve(writer.end()).catch(() => {});
+  await 1;
+});

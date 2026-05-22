@@ -7,8 +7,7 @@ use crate::mysql::protocol::Signature;
 use crate::shared::CachedStructure;
 use crate::shared::sql_data_cell::Flags as DataCellFlags;
 
-use bun_sql::mysql::mysql_types as types;
-use bun_sql::mysql::protocol::column_definition41::{ColumnDefinition41, ColumnFlags};
+use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::shared::ColumnIdentifier;
 
@@ -154,7 +153,7 @@ impl MySQLStatement {
                 }
                 ColumnIdentifier::Index(index) => {
                     let index = *index;
-                    if seen_numbers.iter().any(|&n| n == index) {
+                    if seen_numbers.contains(&index) {
                         field.name_or_index = ColumnIdentifier::Duplicate;
                         flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     } else {
@@ -204,12 +203,6 @@ impl Drop for MySQLStatement {
         //   - signature.deinit()                 → field Drop
         //   - bun.destroy(this)                  → handled by IntrusiveRc when refcount hits 0
     }
-}
-
-#[allow(dead_code)]
-struct ParamUnused {
-    r#type: types::FieldType,
-    flags: ColumnFlags,
 }
 
 // ported from: src/sql_jsc/mysql/MySQLStatement.zig

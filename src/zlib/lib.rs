@@ -367,6 +367,9 @@ pub struct ZlibReaderArrayList<'a> {
     pub zlib: zStream_struct,
     // PORT NOTE: allocator field dropped (global mimalloc)
     pub state: ZlibReaderArrayListState,
+    /// Decompression-bomb guard: `read_all` errors instead of growing the
+    /// output past this many bytes. Defaults to unbounded.
+    pub max_output_size: usize,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -414,6 +417,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             list_ptr: list,
             zlib: bun_core::ffi::zeroed(),
             state: ZlibReaderArrayListState::Uninitialized,
+            max_output_size: usize::MAX,
         });
 
         let list_len = zlib_reader.list_ptr.len();
@@ -510,10 +514,20 @@ impl<'a> ZlibReaderArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
+                    let produced = self.zlib.total_out as usize;
+                    let remaining_budget = self.max_output_size.saturating_sub(produced);
+                    if remaining_budget == 0 {
+                        self.state = ZlibReaderArrayListState::Error;
+                        return Err(ZlibError::ZlibError);
+                    }
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    let (next_out, avail_out) = unsafe {
+                        self.list_ptr
+                            .reserve_expand_tail(remaining_budget.min(4096))
+                    };
                     self.zlib.next_out = next_out;
-                    self.zlib.avail_out = avail_out as uInt;
+                    // Clamp so a single inflate call cannot write past `max_output_size`.
+                    self.zlib.avail_out = avail_out.min(remaining_budget) as uInt;
                 }
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream

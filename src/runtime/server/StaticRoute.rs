@@ -11,12 +11,11 @@ use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::{HTTPHeaderName, JsClass};
+use bun_jsc::HTTPHeaderName;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{AnyServer, write_status};
-use crate::webcore::BlobExt as _;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
@@ -41,6 +40,7 @@ pub struct StaticRoute {
     pub headers: Headers,
 }
 
+#[derive(Clone, Copy)]
 pub struct InitFromBytesOptions<'a> {
     pub server: Option<AnyServer>,
     pub mime_type: Option<&'a MimeType>,
@@ -164,7 +164,7 @@ impl StaticRoute {
             let was_string = body_value.was_string();
             body_value.to_blob_if_possible();
 
-            let mut blob: AnyBlob = 'brk: {
+            let blob: AnyBlob = 'brk: {
                 match body_value {
                     BodyValue::Used => {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -188,7 +188,7 @@ impl StaticRoute {
                                     .throw_todo(b"TODO: support Bun.file(path) in static routes"));
                             }
                         }
-                        let mut blob = body_value.use_();
+                        let blob = body_value.use_();
                         blob.global_this
                             .set(std::ptr::from_ref::<JSGlobalObject>(global_this));
                         debug_assert!(

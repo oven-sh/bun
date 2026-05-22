@@ -1,7 +1,6 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::JSValue;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for JSC's `MarkedArgumentBuffer` (a GC-rooted argument list).
@@ -34,10 +33,11 @@ impl MarkedArgumentBuffer {
         where
             F: FnOnce(&mut MarkedArgumentBuffer) -> R,
         {
-            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below; `args` is the
-            // live stack-allocated buffer C++ hands us.
+            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below.
             let ctx = unsafe { &mut *ctx };
             let f = ctx.f.take().unwrap();
+            // SAFETY: `args` is the live stack-allocated `MarkedArgumentBuffer` C++
+            // hands us for the duration of this callback.
             ctx.r = Some(f(unsafe { &mut *args }));
         }
         let mut ctx = Ctx {

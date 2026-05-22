@@ -1,6 +1,5 @@
 //! Port of src/shell/builtin/rm.zig
 
-use core::ffi::CStr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use bun_core::{ZBox, ZStr};
@@ -427,7 +426,10 @@ impl Rm {
     }
 
     /// Spec: rm.zig `onShellRmTaskDone`.
-    pub fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
+    ///
+    /// # Safety
+    /// `task` must be a live `heap::alloc`'d [`ShellRmTask`]; main thread.
+    pub(crate) fn on_shell_rm_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellRmTask) {
         // In verbose mode the root DirTask may also be queued for write_verbose;
         // both callbacks hold a pending count and the last one to run frees the
         // ShellRmTask.
@@ -711,6 +713,10 @@ pub struct DirTask {
 // them (worker pool / main thread); the surrounding atomics + `err` mutex
 // provide the necessary synchronisation.
 unsafe impl Send for ShellRmTask {}
+// SAFETY: `task_manager` / `parent_task` point at heap allocations kept alive
+// by the `subtask_count` / `pending_main_callbacks` atomic protocol; non-atomic
+// fields are single-owner per the `need_to_wait` handoff (see
+// `verbose_deleted`).
 unsafe impl Send for DirTask {}
 
 impl ShellRmTask {
@@ -796,10 +802,7 @@ impl ShellRmTask {
         // heap-allocated task; the worker thread has exclusive access to
         // `root_task` until it spawns subtasks.
         unsafe {
-            let this = task
-                .cast::<u8>()
-                .sub(<Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET)
-                .cast::<ShellRmTask>();
+            let this = <Self as crate::shell::interpreter::ShellTaskCtx>::from_work_task(task);
             DirTask::run_from_thread_pool_impl((*this).root_task);
         }
     }
@@ -815,10 +818,15 @@ impl ShellRmTask {
         unsafe { ShellTask::on_finish::<ShellRmTask>(this) };
     }
 
-    pub fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap-allocated task.
-        let cmd = unsafe { (*this).cmd };
-        Rm::on_shell_rm_task_done(interp, cmd, this);
+    /// # Safety
+    /// `this` must be a live `heap::alloc`'d [`ShellRmTask`] posted via
+    /// [`finish_concurrently`]; main thread.
+    pub(crate) fn run_from_main_thread(this: *mut ShellRmTask, interp: &Interpreter) {
+        // SAFETY: caller contract.
+        unsafe {
+            let cmd = (*this).cmd;
+            Rm::on_shell_rm_task_done(interp, cmd, this);
+        }
     }
 
     /// Spec: rm.zig `decrPendingAndMaybeDeinit`.
@@ -973,7 +981,7 @@ impl ShellRmTask {
 
     /// Spec: rm.zig `errorWithPath`.
     #[inline]
-    fn error_with_path(&self, e: bun_sys::Error, path: &[u8]) -> bun_sys::Error {
+    fn error_with_path(&self, e: &bun_sys::Error, path: &[u8]) -> bun_sys::Error {
         e.with_path(path)
     }
 
@@ -1032,12 +1040,12 @@ impl ShellRmTask {
         // If `-d` is specified without `-r` then we can just use `rmdirat`.
         if self.opts.remove_empty_dirs && !self.opts.recursive {
             let mut state = RemoveFileParent {
-                task: self,
                 treat_as_dir: true,
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 allow_enqueue: false,
                 enqueued: false,
             };
-            'out_to_iter: while state.treat_as_dir {
+            if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
                     Ok(()) => return Ok(()),
                     Err(e) => match e.get_errno() {
@@ -1045,7 +1053,7 @@ impl ShellRmTask {
                             if self.opts.force {
                                 return self.verbose_deleted(dir_task, path.as_bytes());
                             }
-                            return Err(self.error_with_path(e, path.as_bytes()));
+                            return Err(self.error_with_path(&e, path.as_bytes()));
                         }
                         E::ENOTDIR => {
                             state.treat_as_dir = false;
@@ -1053,9 +1061,8 @@ impl ShellRmTask {
                             if !state.treat_as_dir {
                                 return Ok(());
                             }
-                            break 'out_to_iter;
                         }
-                        _ => return Err(self.error_with_path(e, path.as_bytes())),
+                        _ => return Err(self.error_with_path(&e, path.as_bytes())),
                     },
                 }
             }
@@ -1075,19 +1082,19 @@ impl ShellRmTask {
                     if self.opts.force {
                         return self.verbose_deleted(dir_task, path.as_bytes());
                     }
-                    return Err(self.error_with_path(e, path.as_bytes()));
+                    return Err(self.error_with_path(&e, path.as_bytes()));
                 }
                 E::ENOTDIR => {
                     let mut dummy = DummyRemoveFile;
                     return self.remove_entry_file(dir_task, path, is_absolute, buf, &mut dummy);
                 }
-                _ => return Err(self.error_with_path(e, path.as_bytes())),
+                _ => return Err(self.error_with_path(&e, path.as_bytes())),
             },
         };
 
         // On posix we can close the fd whenever, but on Windows we need to
         // close it BEFORE we delete.
-        let mut close_fd = scopeguard::guard(Some(fd), |fd| {
+        let mut _close_fd = scopeguard::guard(Some(fd), |fd| {
             if let Some(fd) = fd {
                 fd.close();
             }
@@ -1109,7 +1116,7 @@ impl ShellRmTask {
         let mut i: usize = 0;
         loop {
             let current = match iterator.next() {
-                Err(e) => return Err(self.error_with_path(e, path.as_bytes())),
+                Err(e) => return Err(self.error_with_path(&e, path.as_bytes())),
                 Ok(None) => break,
                 Ok(Some(ent)) => ent,
             };
@@ -1175,7 +1182,7 @@ impl ShellRmTask {
         #[cfg(windows)]
         {
             // Close BEFORE deleting on Windows.
-            if let Some(f) = close_fd.take() {
+            if let Some(f) = _close_fd.take() {
                 f.close();
             }
         }
@@ -1187,7 +1194,7 @@ impl ShellRmTask {
                     if self.opts.force {
                         return self.verbose_deleted(dir_task, path.as_bytes());
                     }
-                    Err(self.error_with_path(e, path.as_bytes()))
+                    Err(self.error_with_path(&e, path.as_bytes()))
                 }
                 _ => Err(e),
             },
@@ -1202,8 +1209,8 @@ impl ShellRmTask {
         // SAFETY: `dir_task` is live; this thread owns it.
         let (path, is_abs) = unsafe { ((*dir_task).path.as_zstr(), (*dir_task).is_absolute) };
         let mut state = RemoveFileParent {
-            task: self,
             treat_as_dir: true,
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
             allow_enqueue: true,
             enqueued: false,
         };
@@ -1220,13 +1227,13 @@ impl ShellRmTask {
                                 let _ = self.verbose_deleted(dir_task, path.as_bytes());
                                 return Ok(true);
                             }
-                            return Err(self.error_with_path(e, path.as_bytes()));
+                            return Err(self.error_with_path(&e, path.as_bytes()));
                         }
                         E::ENOTDIR => {
                             state.treat_as_dir = false;
                             continue;
                         }
-                        _ => return Err(self.error_with_path(e, path.as_bytes())),
+                        _ => return Err(self.error_with_path(&e, path.as_bytes())),
                     },
                 }
             } else {
@@ -1260,7 +1267,7 @@ impl ShellRmTask {
                     if self.opts.force {
                         return self.verbose_deleted(parent_dir_task, path.as_bytes());
                     }
-                    Err(self.error_with_path(e, path.as_bytes()))
+                    Err(self.error_with_path(&e, path.as_bytes()))
                 }
                 E::EISDIR => vtable.on_is_dir(parent_dir_task, path, is_absolute, buf),
                 // This might happen if the file is actually a directory.
@@ -1302,8 +1309,8 @@ impl ShellRmTask {
                                         buf,
                                     ),
                                     // actually a file, the error is a permissions error
-                                    E::ENOTDIR => Err(self.error_with_path(e, path.as_bytes())),
-                                    _ => Err(self.error_with_path(e2, path.as_bytes())),
+                                    E::ENOTDIR => Err(self.error_with_path(&e, path.as_bytes())),
+                                    _ => Err(self.error_with_path(&e2, path.as_bytes())),
                                 },
                             };
                         }
@@ -1312,10 +1319,20 @@ impl ShellRmTask {
                         // as a directory.
                         return vtable.on_is_dir(parent_dir_task, path, is_absolute, buf);
                     }
-                    #[allow(unreachable_code)]
-                    Err(self.error_with_path(e, path.as_bytes()))
+                    #[cfg(not(any(
+                        target_os = "macos",
+                        target_os = "ios",
+                        target_os = "freebsd",
+                        target_os = "netbsd",
+                        target_os = "dragonfly",
+                        target_os = "openbsd",
+                        target_os = "solaris",
+                        target_os = "illumos",
+                        windows,
+                    )))]
+                    Err(self.error_with_path(&e, path.as_bytes()))
                 }
-                _ => Err(self.error_with_path(e, path.as_bytes())),
+                _ => Err(self.error_with_path(&e, path.as_bytes())),
             },
         }
     }
@@ -1574,10 +1591,12 @@ impl DirTask {
     /// Reached only via `runtime::dispatch::run_task` for
     /// `task_tag::ShellRmDirTask` (or the mini-loop trampoline below), which
     /// always passes a live DirTask posted via [`queue_for_write`].
-    pub fn run_from_main_thread(this: *mut DirTask) {
-        // SAFETY: dispatch contract — `this` is a live DirTask posted via
-        // `queue_for_write`; pending count keeps `task_manager` alive; `interp`
-        // set at create.
+    ///
+    /// # Safety
+    /// `this` must be a live [`DirTask`] posted via [`queue_for_write`]; the
+    /// pending count keeps `task_manager` alive; main thread.
+    pub(crate) fn run_from_main_thread(this: *mut DirTask) {
+        // SAFETY: caller contract — `interp` set at create.
         let (interp, cmd) = unsafe {
             let tm = (*this).task_manager;
             (&*(*tm).task.interp, (*tm).cmd)
@@ -1601,6 +1620,7 @@ impl DirTask {
 }
 
 fn dir_task_run_from_main_thread_mini(this: *mut DirTask, _: *mut ()) {
+    // SAFETY: mini-loop trampoline for a DirTask posted via `queue_for_write`.
     DirTask::run_from_main_thread(this);
 }
 
@@ -1614,6 +1634,7 @@ trait RemoveFileHandler {
         is_absolute: bool,
         buf: &mut bun_paths::PathBuffer,
     ) -> bun_sys::Maybe<()>;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     fn on_dir_not_empty(
         &mut self,
         parent_dir_task: *mut DirTask,
@@ -1634,6 +1655,7 @@ impl RemoveFileHandler for DummyRemoveFile {
     ) -> bun_sys::Maybe<()> {
         Ok(())
     }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     fn on_dir_not_empty(
         &mut self,
         _: *mut DirTask,
@@ -1679,6 +1701,7 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
             .expect("set when child_of_dir == false");
         self.task.remove_entry_dir(parent, is_absolute, buf, out)
     }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     fn on_dir_not_empty(
         &mut self,
         parent: *mut DirTask,
@@ -1703,13 +1726,13 @@ impl RemoveFileHandler for RemoveFileVTable<'_> {
     }
 }
 
-struct RemoveFileParent<'a> {
-    task: &'a ShellRmTask,
+struct RemoveFileParent {
     treat_as_dir: bool,
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     allow_enqueue: bool,
     enqueued: bool,
 }
-impl RemoveFileHandler for RemoveFileParent<'_> {
+impl RemoveFileHandler for RemoveFileParent {
     fn on_is_dir(
         &mut self,
         _: *mut DirTask,
@@ -1720,6 +1743,7 @@ impl RemoveFileHandler for RemoveFileParent<'_> {
         self.treat_as_dir = true;
         Ok(())
     }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     fn on_dir_not_empty(
         &mut self,
         parent: *mut DirTask,
@@ -1729,7 +1753,10 @@ impl RemoveFileHandler for RemoveFileParent<'_> {
     ) -> bun_sys::Maybe<()> {
         self.treat_as_dir = true;
         if self.allow_enqueue {
-            self.task.enqueue_no_join(
+            // SAFETY: `parent` is a live DirTask; `task_manager` is live until
+            // `pending_main_callbacks` hits 0.
+            let task = unsafe { &*(*parent).task_manager };
+            task.enqueue_no_join(
                 parent,
                 ZBox::from_bytes(path.as_bytes()),
                 EntryKindHint::Dir,
@@ -1762,6 +1789,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
         );
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+        // SAFETY: `ShellTask::run_from_main_thread` dispatch contract.
         Self::run_from_main_thread(this, interp)
     }
 }

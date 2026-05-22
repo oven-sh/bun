@@ -9,7 +9,6 @@
 
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::String as BunString;
@@ -1024,8 +1023,10 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // `bun_test.DescribeScope`, which live in `bun_runtime::test_runner`
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `agent` is a live C++ handle (just stored above).
-            unsafe { (hooks.retroactively_report_discovered_tests)(agent) };
+            // SAFETY: `handle` is the live C++ agent just stored above.
+            unsafe {
+                (hooks.retroactively_report_discovered_tests)(dbg.test_reporter_agent.handle)
+            };
         }
     }
 }

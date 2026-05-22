@@ -24,10 +24,13 @@ pub struct SourceLocation {
 }
 
 // SAFETY: both pointers always reference `'static` data — either compile-time literals
-// from `concat!(file!(), "\0")` / `c"…"`, or leaked interned `CString`s from
-// `intern_location_file`. They are never freed and never written through, so sharing
-// across threads is sound.
+// from `concat!(file!(), "\0")` / `c"…"`, or interned `CString`s owned by
+// `intern_location_file`'s process-level `static` cache. The cache only ever inserts
+// (never removes or shrinks), and Rust never drops `static`s, so the boxed bytes live
+// for the rest of the process and are never written through. Sharing across threads is
+// therefore sound.
 unsafe impl Send for SourceLocation {}
+// SAFETY: same invariant as `Send` above — both pointers reference immutable `'static` data.
 unsafe impl Sync for SourceLocation {}
 
 impl SourceLocation {
@@ -47,30 +50,40 @@ impl SourceLocation {
     }
 }
 
-/// Intern a `&'static str` (from `Location::file()`) as a leaked NUL-terminated C string.
-/// Thread-local cache keyed by string-data pointer identity — `Location::file()` always
-/// returns the same `&'static str` for a given call site, so the cache is bounded by the
-/// number of distinct `#[track_caller]` sites that reach a scope ctor.
+/// Intern a `&'static str` (from `Location::file()`) as a NUL-terminated C string.
+/// Cache keyed by string-data pointer identity — `Location::file()` always returns the
+/// same `&'static str` for a given call site, so the cache is bounded by the number of
+/// distinct `#[track_caller]` sites that reach a scope ctor.
+///
+/// The cache is a process-level `static` (not `thread_local!`) on purpose: long-lived
+/// threadpool/worker threads are still parked when the main thread calls `exit()`, so
+/// their TLS destructors never run and LSan does not trace those threads' TLS slots as
+/// roots — every `Box<CStr>` interned from a worker was reported as leaked. A `static`
+/// lives in `.data`/`.bss` (a built-in LSan root), is never dropped, and reaches the
+/// boxed `CStr` data transitively via the `HashMap`'s bucket allocation. It also closes
+/// a latent UAF: `SourceLocation` is `Copy + Send + Sync`, so a value handed across
+/// threads could outlive a per-thread cache that *did* run its destructor. The returned
+/// pointer is stable across rehash because the `HashMap` value is `Box<CStr>` — the
+/// boxed bytes never move.
+///
+/// Only compiled under `cfg(any(debug_assertions, bun_asan))`; after warmup the critical
+/// section is a single `HashMap::get`, and this never runs on a release path.
 #[cfg(any(debug_assertions, bun_asan))]
 fn intern_location_file(file: &'static str) -> *const c_char {
-    use std::cell::RefCell;
-    use std::collections::HashMap;
-    use std::ffi::CString;
-    thread_local! {
-        static CACHE: RefCell<HashMap<usize, *const c_char>> = RefCell::new(HashMap::new());
-    }
-    CACHE.with(|c| {
-        *c.borrow_mut()
-            .entry(file.as_ptr() as usize)
-            .or_insert_with(|| {
-                // `file!()` paths never contain interior NULs; fall back gracefully if one
-                // somehow does.
-                let cs = CString::new(file).unwrap_or_else(|_| CString::new("<rust>").unwrap());
-                // Bounded leak — same lifetime semantics as the `concat!(file!(), "\0")` literals
-                // the [`src!`] macro emits.
-                Box::leak(cs.into_boxed_c_str()).as_ptr()
-            })
-    })
+    use bun_collections::HashMap;
+    use bun_threading::Guarded;
+    use std::ffi::{CStr, CString};
+    static CACHE: Guarded<Option<HashMap<usize, Box<CStr>>>> = Guarded::new(None);
+    let mut guard = CACHE.lock();
+    guard
+        .get_or_insert_with(HashMap::new)
+        .entry(file.as_ptr() as usize)
+        .or_insert_with(|| {
+            CString::new(file)
+                .unwrap_or_else(|_| CString::new("<rust>").unwrap())
+                .into_boxed_c_str()
+        })
+        .as_ptr()
 }
 #[cfg(not(any(debug_assertions, bun_asan)))]
 #[inline(always)]
@@ -248,11 +261,12 @@ impl TopExceptionScope {
 
     /// Generate a useful message including where the exception was thrown.
     /// Only intended to be called when there is a pending exception.
+    #[cfg(any(debug_assertions, bun_asan))]
     #[cold]
     fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
         let _ = proof;
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__assertNoException(&mut self.bytes);
         unreachable!("assertionFailure called without a pending exception");
     }
@@ -264,20 +278,20 @@ impl TopExceptionScope {
     /// Get the thrown exception if it exists (like scope.exception() in C++)
     pub fn exception(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         NonNull::new(TopExceptionScope__pureException(&mut self.bytes))
     }
 
     pub fn clear_exception(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__clearException(&mut self.bytes)
     }
 
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
     pub fn exception_including_traps(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(self.location, &self.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         NonNull::new(TopExceptionScope__exceptionIncludingTraps(&mut self.bytes))
     }
 
@@ -352,7 +366,7 @@ impl TopExceptionScope {
         // SAFETY: caller contract.
         let this = unsafe { &mut *this };
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(this.location, &this.bytes[0]));
+        debug_assert!(core::ptr::eq(this.location, &raw const this.bytes[0]));
         // SAFETY: bytes was initialized by init().
         unsafe { TopExceptionScope__destruct(&raw mut this.bytes) };
         // this.bytes = undefined; — no-op in Rust
@@ -376,7 +390,6 @@ macro_rules! top_scope {
     ($scope:ident, $global:expr) => {
         let mut __bun_top_scope_storage =
             ::core::mem::MaybeUninit::<$crate::TopExceptionScope>::uninit();
-        #[allow(unused_mut)]
         let mut $scope = $crate::TopExceptionScope::init_guard_at(
             &mut __bun_top_scope_storage,
             $global,
@@ -402,7 +415,6 @@ macro_rules! validation_scope {
     ($scope:ident, $global:expr) => {
         let mut __bun_validation_scope_storage =
             ::core::mem::MaybeUninit::<$crate::ExceptionValidationScope>::uninit();
-        #[allow(unused_mut)]
         let mut $scope = $crate::ExceptionValidationScope::init_guard_at(
             &mut __bun_validation_scope_storage,
             $global,
@@ -424,7 +436,7 @@ pub struct ExceptionValidationScope {
     #[cfg(any(debug_assertions, bun_asan))]
     scope: TopExceptionScope,
     #[cfg(not(any(debug_assertions, bun_asan)))]
-    scope: (),
+    _scope: (),
 }
 
 /// RAII guard for an [`ExceptionValidationScope`]. See [`TopExceptionScopeGuard`].
@@ -494,8 +506,8 @@ impl ExceptionValidationScope {
             );
             // SAFETY: layout assertion above; `MaybeUninit<T>` is `repr(transparent)`.
             let inner = unsafe {
-                &mut *(storage as *mut core::mem::MaybeUninit<Self>
-                    as *mut core::mem::MaybeUninit<TopExceptionScope>)
+                &mut *core::ptr::from_mut(storage)
+                    .cast::<core::mem::MaybeUninit<TopExceptionScope>>()
             };
             TopExceptionScope::init_at(inner, global, src);
             // SAFETY: `init_at` fully initialized the sole field.
@@ -504,7 +516,7 @@ impl ExceptionValidationScope {
         #[cfg(not(any(debug_assertions, bun_asan)))]
         {
             let _ = (global, src);
-            storage.write(Self { scope: () })
+            storage.write(Self { _scope: () })
         }
     }
 
@@ -575,8 +587,10 @@ impl ExceptionValidationScope {
     /// Prefer dropping an [`ExceptionValidationScopeGuard`] instead.
     pub unsafe fn destroy(this: *mut Self) {
         #[cfg(any(debug_assertions, bun_asan))]
+        // SAFETY: caller contract — `this` points to a scope initialized via `init()` and not
+        // yet destroyed; under this cfg the wrapper's sole field is the inner scope.
         unsafe {
-            TopExceptionScope::destroy(&mut (*this).scope)
+            TopExceptionScope::destroy(&raw mut (*this).scope)
         };
         #[cfg(not(any(debug_assertions, bun_asan)))]
         let _ = this;
@@ -622,7 +636,7 @@ pub fn call_zero_is_throw_at(
 
 /// `[[ZIG_EXPORT(zero_is_throw)]]` — `#[track_caller]` convenience wrapper.
 /// Prefer [`call_zero_is_throw_at`] with [`src!`](crate::src) in hot paths (avoids the
-/// debug-build thread-local intern of `Location::file()`).
+/// debug-build process-level intern of `Location::file()`).
 #[track_caller]
 #[inline]
 pub fn call_zero_is_throw(
@@ -723,7 +737,7 @@ pub fn call_check_slow<R>(global: &JSGlobalObject, f: impl FnOnce() -> R) -> JsR
 
 /// Macro forms of the per-mode wrappers — expand [`src!`](crate::src) at the *call site* so
 /// the debug-build diagnostic `SourceLocation` is a NUL-terminated literal (zero-cost),
-/// not a `#[track_caller]` `Location::file()` interned through a thread-local HashMap.
+/// not a `#[track_caller]` `Location::file()` interned through a process-level HashMap.
 /// Prefer these over the bare `call_*_is_throw` fns in hand-written hot-path shims.
 #[macro_export]
 macro_rules! call_zero_is_throw {
@@ -773,6 +787,7 @@ unsafe extern "C" {
     /// returns if an exception was already thrown, or if a trap (like another thread requesting
     /// termination) causes an exception to be thrown
     safe fn TopExceptionScope__exceptionIncludingTraps(ptr: &mut [u8; SIZE]) -> *mut Exception;
+    #[cfg(any(debug_assertions, bun_asan))]
     safe fn TopExceptionScope__assertNoException(ptr: &mut [u8; SIZE]);
     fn TopExceptionScope__destruct(ptr: *mut [u8; SIZE]);
 }

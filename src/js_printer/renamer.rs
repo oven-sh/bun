@@ -217,8 +217,10 @@ pub struct InlineString {
 
 impl InlineString {
     pub fn init(str_: &[u8]) -> InlineString {
-        let mut this = InlineString::default();
-        this.len = u8::try_from(str_.len().min(15)).expect("int cast");
+        let mut this = InlineString {
+            len: u8::try_from(str_.len().min(15)).expect("int cast"),
+            ..Default::default()
+        };
         for (b, c) in this.bytes[0..this.len as usize]
             .iter_mut()
             .zip(&str_[0..this.len as usize])
@@ -271,11 +273,19 @@ pub struct MinifyRenamer {
     pub reserved_names: StringHashMap<u32>,
     pub slots: SymbolSlotList,
     pub top_level_symbol_to_slot: TopLevelSymbolSlotMap,
-    // PORT NOTE: see `NoOpRenamer.symbols` — non-owning view; Zig
-    // `MinifyRenamer.deinit` (renamer.zig:156) never frees `symbols`.
     pub symbols: ManuallyDrop<symbol::Map>,
+    pub owns_symbols: bool,
     /// Backs `TinyString::String` slot-name allocations (Zig: `this.allocator`).
     pub arena: Bump,
+}
+
+impl Drop for MinifyRenamer {
+    fn drop(&mut self) {
+        if self.owns_symbols {
+            // SAFETY: `owns_symbols` is only set on the owned-Map path; dropped exactly once.
+            unsafe { ManuallyDrop::drop(&mut self.symbols) };
+        }
+    }
 }
 
 // TODO(port): Zig used `std.HashMapUnmanaged(Ref, usize, RefCtx, 80)` —
@@ -285,7 +295,7 @@ pub type TopLevelSymbolSlotMap = HashMap<Ref, usize>;
 impl MinifyRenamer {
     pub fn init(
         symbols: symbol::Map,
-        first_top_level_slots: js_ast::SlotCounts,
+        first_top_level_slots: &js_ast::SlotCounts,
         reserved_names: StringHashMap<u32>,
     ) -> Result<Box<MinifyRenamer>, bun_alloc::AllocError> {
         let mut slots = SymbolSlotList::default();
@@ -299,6 +309,7 @@ impl MinifyRenamer {
 
         Ok(Box::new(MinifyRenamer {
             symbols: ManuallyDrop::new(symbols),
+            owns_symbols: false,
             reserved_names,
             slots,
             top_level_symbol_to_slot: TopLevelSymbolSlotMap::default(),
@@ -443,7 +454,7 @@ impl MinifyRenamer {
                 slot: u32::try_from(i).expect("int cast"),
                 count: slot.count,
             }));
-            sorted.sort_unstable_by(SlotAndCount::less_than);
+            sorted.sort_unstable_by(|a, b| SlotAndCount::less_than(*a, *b));
 
             let mut next_name: isize = 0;
 
@@ -579,14 +590,14 @@ pub fn assign_nested_scope_slots_helper(
     }
 
     // Assign slots for the symbols of child scopes
-    let mut slot_counts = slot.clone();
+    let mut slot_counts = slot;
     for child in scope.children.slice() {
         // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
         slot_counts.union_max(assign_nested_scope_slots_helper(
             sorted_members,
             child,
             symbols,
-            slot.clone(),
+            slot,
         ));
     }
 
@@ -631,15 +642,10 @@ struct SlotAndCount {
     count: u32,
 }
 
-type SlotAndCountArray = Vec<SlotAndCount>;
-
 impl SlotAndCount {
-    fn less_than(a: &SlotAndCount, b: &SlotAndCount) -> Ordering {
-        if a.count > b.count || (a.count == b.count && a.slot < b.slot) {
-            Ordering::Less
-        } else {
-            Ordering::Greater
-        }
+    fn less_than(a: SlotAndCount, b: SlotAndCount) -> Ordering {
+        // Sort by descending count, then ascending slot.
+        b.count.cmp(&a.count).then_with(|| a.slot.cmp(&b.slot))
     }
 }
 
@@ -708,7 +714,7 @@ impl NumberRenamer {
 
     pub fn init(
         symbols: symbol::Map,
-        root_names: StringHashMap<u32>,
+        root_names: &StringHashMap<u32>,
     ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
         let len = symbols.symbols_for_source.len();
         let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
@@ -754,14 +760,13 @@ impl NumberRenamer {
         parent: Option<bun_ptr::ParentRef<NumberScope>>,
         sorted: &mut Vec<u32>,
     ) {
-        let s: *mut NumberScope = self.number_scope_pool.get();
-        // SAFETY: `s` is a valid pool slot (HiveArrayFallback::get never returns null).
-        unsafe {
-            s.write(NumberScope {
+        let s: *mut NumberScope = self
+            .number_scope_pool
+            .get_init(NumberScope {
                 parent,
                 name_counts: NameCountMap::default(),
-            });
-        }
+            })
+            .as_ptr();
 
         self.assign_names_recursive_with_number_scope(s, scope, source_index, sorted);
 
@@ -789,14 +794,7 @@ impl NumberRenamer {
             sorted.sort_unstable();
 
             for &inner_index in sorted.iter() {
-                self.assign_name(
-                    s,
-                    Ref::init(
-                        u32::try_from(inner_index).expect("int cast"),
-                        source_index,
-                        false,
-                    ),
-                );
+                self.assign_name(s, Ref::init(inner_index, source_index, false));
             }
         }
 
@@ -819,10 +817,9 @@ impl NumberRenamer {
         loop {
             let symbol_count = scope.members.count() + scope.generated.len_u32() as usize;
             if symbol_count > 0 {
-                let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
-                // SAFETY: `new_child_scope` is a valid pool slot.
-                unsafe {
-                    new_child_scope.write(NumberScope {
+                let new_child_scope: *mut NumberScope = self
+                    .number_scope_pool
+                    .get_init(NumberScope {
                         // `s` is non-null (either `initial_scope` or a fresh
                         // pool slot from a prior iteration); the new child
                         // outlives this `ParentRef` only until `put()` below.
@@ -840,8 +837,8 @@ impl NumberRenamer {
                             symbol_count,
                             Default::default(),
                         ),
-                    });
-                }
+                    })
+                    .as_ptr();
                 s = new_child_scope;
 
                 // SAFETY: s is a valid pool slot just initialized above
@@ -957,10 +954,9 @@ impl NameUse {
         // same precomputed hash via hashbrown's raw-entry API; the previous
         // `get_adapted`/`contains_adapted` calls re-hashed `name` per scope.
         let hash = {
-            use core::hash::{BuildHasher, Hash, Hasher};
-            let mut state = <bun_wyhash::BuildHasher as Default>::default().build_hasher();
-            name.hash(&mut state);
-            state.finish()
+            use core::hash::BuildHasher;
+
+            <bun_wyhash::BuildHasher as Default>::default().hash_one(name)
         };
 
         if let Some((_, &count)) = this

@@ -3,7 +3,6 @@ use core::fmt;
 
 use bstr::BStr;
 
-use bun_alloc::AllocError;
 use bun_core::fmt::{PathFormatOptions, PathSep, fmt_path_u8 as fmt_path};
 use bun_semver as semver;
 use bun_semver::String;
@@ -12,7 +11,7 @@ use bun_core::strings;
 use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
 
-use crate::dependency::{self, DependencyExt as _, TagExt as _};
+use crate::dependency::{self, TagExt as _};
 use crate::repository::{Repository, RepositoryExt as _};
 use crate::versioned_url::VersionedURLType;
 
@@ -46,7 +45,7 @@ impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
 /// used by [`ResolutionType::init`] / [`value_init`] to construct a zero-padded union.
 // `Tag` is a `#[repr(transparent)] struct Tag(u8)` with sparse `pub const`
 // associated values; the derive maps `Self::Variant` → `Tag::Variant` by name.
-#[derive(bun_core::EnumTag)]
+#[derive(Clone, Copy, bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
 pub enum TaggedValue<SemverInt: VersionInt> {
     Uninitialized,
@@ -328,17 +327,17 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             Tag::Npm => self.npm().order(rhs.npm(), lhs_buf, rhs_buf),
             Tag::LocalTarball => self
                 .local_tarball()
-                .order(rhs.local_tarball(), lhs_buf, rhs_buf),
-            Tag::Folder => self.folder().order(rhs.folder(), lhs_buf, rhs_buf),
+                .order(*rhs.local_tarball(), lhs_buf, rhs_buf),
+            Tag::Folder => self.folder().order(*rhs.folder(), lhs_buf, rhs_buf),
             Tag::RemoteTarball => {
                 self.remote_tarball()
-                    .order(rhs.remote_tarball(), lhs_buf, rhs_buf)
+                    .order(*rhs.remote_tarball(), lhs_buf, rhs_buf)
             }
-            Tag::Workspace => self.workspace().order(rhs.workspace(), lhs_buf, rhs_buf),
-            Tag::Symlink => self.symlink().order(rhs.symlink(), lhs_buf, rhs_buf),
+            Tag::Workspace => self.workspace().order(*rhs.workspace(), lhs_buf, rhs_buf),
+            Tag::Symlink => self.symlink().order(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::SingleFileModule => {
                 self.single_file_module()
-                    .order(rhs.single_file_module(), lhs_buf, rhs_buf)
+                    .order(*rhs.single_file_module(), lhs_buf, rhs_buf)
             }
             Tag::Git => self.git().order(rhs.git(), lhs_buf, rhs_buf),
             Tag::Github => self.github().order(rhs.github(), lhs_buf, rhs_buf),

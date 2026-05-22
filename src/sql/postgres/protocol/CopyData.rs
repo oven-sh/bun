@@ -1,7 +1,5 @@
-use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
 use super::new_writer::NewWriter;
-use super::write_wrap::WriteWrap;
 use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
 
@@ -25,7 +23,7 @@ impl CopyData {
     // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
-        mut reader: NewReader<Container>,
+        reader: NewReader<Container>,
     ) -> Result<(), bun_core::Error> {
         *self = Self::decode_internal(reader)?;
         Ok(())

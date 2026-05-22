@@ -28,13 +28,6 @@ const TODO_ERRNO: Int = Int::MAX - 1;
 
 pub(crate) type Int = u16;
 
-/// TODO: convert to function
-// TODO(port): was `pub const oom` in Zig; Box<[u8]> fields prevent a true `const` item.
-#[inline]
-pub(crate) fn oom() -> Error {
-    Error::from_code(E::ENOMEM, Tag::read)
-}
-
 #[derive(Clone, Debug)]
 pub struct Error {
     pub errno: Int,

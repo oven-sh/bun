@@ -46,6 +46,8 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// BACKREF: parent process is notified on close; never owned/destroyed here.
     pub process: *mut P,
     pub event_loop: EventLoopHandle,
+    /// True while `start()`'s `+1` ref is outstanding.
+    pub started: bool,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
     // TODO(refactor): self-borrow into `self.source`; consider storing an
     // offset+len pair and re-slicing from `self.source` instead of a raw self-pointer.
@@ -139,6 +141,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             source,
             process: subprocess,
             event_loop,
+            started: false,
             buffer: RawSlice::EMPTY,
         }));
         // SAFETY: `this` was just allocated above and is non-null.
@@ -182,14 +185,33 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         self.buffer = RawSlice::new(self.source.slice());
         #[cfg(windows)]
         {
-            return self.writer.start_with_current_pipe();
+            let r = self.writer.start_with_current_pipe();
+            self.started = r.is_ok();
+            if r.is_err() {
+                // start() failed: `started` stays false so no release site
+                // fires — release start()'s `+1` here.
+                // SAFETY: `self` is the live `Self` we ref'd at the top of
+                // `start()`; the caller's `IntrusiveRc` keeps it alive and
+                // `started` is false so no other site re-derefs.
+                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+            }
+            return r;
         }
         #[cfg(not(windows))]
         {
             // Zig: `this.stdio_result.?` — on POSIX `StdioResult` is `?bun.FD`.
             match self.writer.start(self.stdio_result.unwrap(), true) {
-                bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
+                bun_sys::Result::Err(err) => {
+                    // start() failed: `started` stays false so no release
+                    // site fires — release start()'s `+1` here.
+                    // SAFETY: `self` is the live `Self` we ref'd at the top
+                    // of `start()`; the caller's `IntrusiveRc` keeps it alive
+                    // and `started` is false so no other site re-derefs.
+                    unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+                    bun_sys::Result::Err(err)
+                }
                 bun_sys::Result::Ok(()) => {
+                    self.started = true;
                     #[cfg(unix)]
                     {
                         // Zig: `const poll = this.writer.handle.poll; poll.flags.insert(.socket);`
@@ -221,11 +243,22 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         let len = self.buffer.len();
         self.buffer = RawSlice::new(&self.buffer.slice()[amount.min(len)..]);
         if status == WriteStatus::EndOfFile || self.buffer.is_empty() {
+            #[cfg(not(windows))]
+            let release_start_ref = self.started && status != WriteStatus::EndOfFile;
+            #[cfg(not(windows))]
+            if release_start_ref {
+                self.started = false;
+            }
             self.writer.close();
+            #[cfg(not(windows))]
+            if release_start_ref {
+                // SAFETY: start()'s +1 was still outstanding; `started` cleared above so no other site re-derefs.
+                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+            }
         }
     }
 
-    pub fn on_error(&mut self, err: bun_sys::Error) {
+    pub fn on_error(&mut self, err: &bun_sys::Error) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onError(err={})",
@@ -233,6 +266,8 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             err
         );
         self.source.detach();
+        // Can't release start()'s +1 here: `drain_buffered_data` calls on_error() then
+        // Parent::on_write(); freeing here would UAF.
     }
 
     pub fn on_close(&mut self) {

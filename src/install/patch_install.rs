@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::ptr;
 
 use bstr::BStr;
 
@@ -12,15 +11,13 @@ use bun_resolver::fs::FileSystem;
 use bun_semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::IntrusiveWorkTask as _;
-use bun_threading::thread_pool::{
-    self as thread_pool, Batch, Node as ThreadPoolNode, Task as ThreadPoolTask,
-};
+use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_wyhash::Wyhash11;
 
 use crate::package_install::PackageInstall;
 use crate::package_manager;
 use crate::{
-    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Lockfile, lockfile::Package,
+    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Package,
     resolution::Resolution,
 };
 
@@ -42,8 +39,10 @@ pub const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).le
 pub const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
 pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
-// `std.fs.Dir` → `bun_sys::Dir` (thin `Fd` wrapper, see sys/lib.rs).
-type StdFsDir = sys::Dir;
+// `std.fs.Dir` aliases on `PatchTask`/`ApplyPatch` are *borrowed views* of the
+// `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
+// so the task's drop never closes a descriptor it doesn't own. Use
+// `Dir::borrow(&fd)` where a `&Dir` is needed.
 
 pub struct PatchTask {
     /// BACKREF (Zig: `*PackageManager`). Stored as `BackRef` because the task
@@ -54,7 +53,8 @@ pub struct PatchTask {
     /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
     /// writes the event-loop wake flag.
     pub manager: bun_ptr::BackRef<PackageManager>,
-    pub tempdir: StdFsDir,
+    /// Borrowed view of the manager's temp directory fd (see comment at top of file).
+    pub tempdir: Fd,
     pub project_dir: &'static [u8],
     pub callback: Callback,
     pub task: ThreadPoolTask,
@@ -130,7 +130,8 @@ pub struct ApplyPatch {
     pub patchfilepath: Box<[u8]>,
     pub pkgname: SemverString,
 
-    pub cache_dir: StdFsDir,
+    /// Borrowed view of the manager's cache directory fd (see comment at top of file).
+    pub cache_dir: Fd,
     pub cache_dir_subpath: ZBox,
     pub cache_dir_subpath_without_patch_hash: ZBox,
 
@@ -163,16 +164,17 @@ impl PatchTask {
     /// ownership must be returned here exactly once.
     pub unsafe fn destroy(this: *mut Self) {
         // TODO: how to deinit `this.callback.calc_hash.network_task` (carried over from Zig)
+        // SAFETY: caller contract — `this` was produced by `heap::into_raw` in
+        // `new_calc_patch_hash`/`new_apply_patch_hash` and is reclaimed exactly once.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    // Safe-fn: only ever invoked by `ThreadPool` via the `callback` fn-pointer
-    // with the `*mut ThreadPoolTask` we registered in `new_calc_patch_hash` /
-    // `new_apply_patch_hash`. The thread-pool contract — not the Rust caller —
-    // guarantees `task` is live and points at `PatchTask.task`, so the
-    // precondition is discharged locally. Safe `fn` coerces to the
-    // `unsafe fn(*mut Task)` field type.
-    pub fn run_from_thread_pool(task: *mut ThreadPoolTask) {
+    /// # Safety
+    /// Only invoked by `ThreadPool` via the `callback` fn-pointer registered in
+    /// `new_calc_patch_hash` / `new_apply_patch_hash`. `task` must be live and
+    /// point at the `task` field of a heap-allocated `PatchTask`, with the pool
+    /// granting exclusive access for the duration of the call.
+    pub unsafe fn run_from_thread_pool(task: *mut ThreadPoolTask) {
         // SAFETY: thread-pool callback contract — `task` points to the `task`
         // field of a live `PatchTask` (set at construction); the pool runs
         // each task at most once with exclusive access for the call.
@@ -202,15 +204,15 @@ impl PatchTask {
                 self.apply().expect("OOM");
             }
         }
+        let mgr = self.manager.as_ptr();
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
         // the worker thread only touches the lock-free `patch_task_queue` and the
         // event-loop wake atomics, neither of which alias data the main thread
         // holds an exclusive borrow on.
-        let mgr = self.manager.as_ptr();
         unsafe {
             (*mgr)
                 .patch_task_queue
-                .push(std::ptr::from_mut::<Self>(self));
+                .push(core::ptr::NonNull::from(&mut *self));
             PackageManager::wake_raw(mgr);
         }
     }
@@ -372,7 +374,7 @@ impl PatchTask {
                             url,
                             is_required,
                             dep_id,
-                            pkg_again,
+                            &pkg_again,
                             Some(name_and_version_hash),
                             match pkg_resolution_tag {
                                 crate::resolution_real::Tag::Npm => {
@@ -401,7 +403,9 @@ impl PatchTask {
                     );
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        package_manager::enqueue_patch_task(manager, patch_task);
+                        // SAFETY: `patch_task` is a fresh `heap::alloc` from
+                        // `new_apply_patch_hash`; ownership transfers to the fifo.
+                        unsafe { package_manager::enqueue_patch_task(manager, patch_task) };
                     }
                 }
                 _ => {}
@@ -531,7 +535,12 @@ impl PatchTask {
             lockfile,
         };
 
-        match pkg_install.install(true, system_tmpdir, InstallMethod::Copyfile, resolution_tag) {
+        match pkg_install.install(
+            true,
+            sys::Dir::borrow(&system_tmpdir),
+            InstallMethod::Copyfile,
+            resolution_tag,
+        ) {
             InstallResult::Success => {}
             InstallResult::Failure(reason) => {
                 log.add_error_fmt_opts(
@@ -548,7 +557,7 @@ impl PatchTask {
 
         {
             let patch_pkg_dir = match sys::openat(
-                system_tmpdir.fd,
+                system_tmpdir,
                 tempdir_name,
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
@@ -613,9 +622,9 @@ impl PatchTask {
 
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
         if let Err(e) = sys::renameat_concurrently(
-            system_tmpdir.fd,
+            system_tmpdir,
             path_in_tmpdir,
-            patch.cache_dir.fd,
+            patch.cache_dir,
             cache_dir_subpath_z,
             sys::RenameOptions {
                 move_fallback: true,
@@ -712,7 +721,6 @@ impl PatchTask {
             }
             sys::Result::Ok(f) => f,
         };
-        let _close_guard = sys::CloseOnDrop::file(&file);
 
         let mut hasher = Wyhash11::init(0);
 
@@ -748,13 +756,13 @@ impl PatchTask {
 
     pub fn notify(&mut self) {
         // PORT NOTE: Zig `defer this.manager.wake()` then `push`. No early returns; inline order.
+        let mgr = self.manager.as_ptr();
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
         // only touches the lock-free queue and event-loop wake atomics.
-        let mgr = self.manager.as_ptr();
         unsafe {
             (*mgr)
                 .patch_task_queue
-                .push(std::ptr::from_mut::<Self>(self));
+                .push(core::ptr::NonNull::from(&mut *self));
             PackageManager::wake_raw(mgr);
         }
     }
@@ -778,7 +786,7 @@ impl PatchTask {
         // TODO(port): Zig used `dupeZ` (NUL-terminated). The field is typed `[]const u8` and only
         // used as a byte slice, so `Box<[u8]>` without trailing NUL should be equivalent. Verify.
 
-        let tempdir = manager.get_temporary_directory().handle;
+        let tempdir = manager.get_temporary_directory().handle.fd();
         let pt = Box::new(PatchTask {
             tempdir,
             callback: Callback::CalcHash(CalcPatchHash {
@@ -850,7 +858,7 @@ impl PatchTask {
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);
         let cache_dir = stuff.cache_dir;
 
-        let tempdir = pkg_manager.get_temporary_directory().handle;
+        let tempdir = pkg_manager.get_temporary_directory().handle.fd();
         let pt = Box::new(PatchTask {
             tempdir,
             callback: Callback::Apply(ApplyPatch {

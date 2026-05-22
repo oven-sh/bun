@@ -1,6 +1,5 @@
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::io::Write as _;
 
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
@@ -98,6 +97,7 @@ const fn noop_callback() -> HTTPClientResultCallback {
     HTTPClientResultCallback {
         ctx: core::ptr::null_mut(),
         function: noop_result_callback,
+        release_at_shutdown: None,
     }
 }
 
@@ -220,25 +220,6 @@ fn make_client<'a>(
         hostname,
         unix_socket_path: ZigStringSlice::EMPTY,
     }
-}
-
-/// A drop-safe placeholder `HTTPClient` used when we need to move the real
-/// client out of an `AsyncHTTP` (e.g. to run its `Drop` before the user
-/// callback) without leaving the field uninitialized.
-#[inline]
-fn blank_client<'a>() -> HTTPClient<'a> {
-    make_client(
-        Method::GET,
-        URL::default(),
-        headers::EntryList::default(),
-        b"",
-        None,
-        Signals::default(),
-        0,
-        None,
-        None,
-        FetchRedirect::Follow,
-    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -609,35 +590,6 @@ impl<'a> AsyncHTTP<'a> {
         )
     }
 
-    fn reset(&mut self) {
-        // PORT NOTE: Zig rebuilt `self.client` from scratch via `HTTPClient.init()`
-        // (which only sets method/url/header_entries/header_buf/signals). The
-        // previous client's `Drop` runs on assignment.
-        let header_entries = self.client.header_entries.clone().expect("OOM");
-        let header_buf = self.client.header_buf;
-        let signals = self.client.signals;
-        self.client = make_client(
-            self.method,
-            self.client.url.clone(),
-            header_entries,
-            header_buf,
-            None,
-            signals,
-            0,
-            self.http_proxy.clone(),
-            None,
-            FetchRedirect::Follow,
-        );
-
-        if let Some(proxy) = &self.http_proxy {
-            // TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
-            self.client.flags.disable_keepalive = self.url.is_https();
-            if let Some(auth) = build_proxy_authorization(proxy) {
-                self.client.proxy_authorization = Some(auth);
-            }
-        }
-    }
-
     pub fn schedule(&mut self, batch: &mut Batch) {
         self.state.store(State::Scheduled, Ordering::Relaxed);
         batch.push(Batch::from(core::ptr::addr_of_mut!(self.task)));
@@ -853,6 +805,15 @@ impl<'a> AsyncHTTP<'a> {
                 // to `this`/`async_http`; only static state is touched afterward.
                 let threadlocal_http: *mut ThreadlocalAsyncHTTP =
                     bun_core::from_field_ptr!(ThreadlocalAsyncHTTP, async_http, async_http);
+                {
+                    let in_flight = &mut crate::http_thread().in_flight;
+                    if let Some(i) = in_flight
+                        .iter()
+                        .position(|n| n.as_ptr() == threadlocal_http)
+                    {
+                        in_flight.swap_remove(i);
+                    }
+                }
                 // PORT NOTE: Zig `defer threadlocal_http.deinit()` is
                 // `bun.TrivialDeinit` — it frees the heap slot WITHOUT running
                 // any field destructors. Reclaiming as `Box<_>` here would

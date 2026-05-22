@@ -4,8 +4,6 @@
 //! is not found, exit code becomes 1, but continues execution until all args
 //! are processed.
 
-use core::ffi::CStr;
-
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::env_str::EnvStr;
 use crate::shell::interpreter::{Interpreter, NodeId};
@@ -197,10 +195,15 @@ impl Which {
     /// Look up `$PATH` from the export env and the cwd from the shell env.
     fn path_and_cwd(interp: &Interpreter, cmd: NodeId) -> (Vec<u8>, Vec<u8>) {
         let shell = Builtin::shell(interp, cmd);
+        // `EnvMap::get` refs the returned string; balance it (Zig: `defer PATH.deref()`).
         let path = shell
             .export_env
             .get(EnvStr::init_slice(b"PATH"))
-            .map(|s| s.slice().to_vec())
+            .map(|s| {
+                let v = s.slice().to_vec();
+                s.deref();
+                v
+            })
             .unwrap_or_default();
         (path, shell.cwd().to_vec())
     }

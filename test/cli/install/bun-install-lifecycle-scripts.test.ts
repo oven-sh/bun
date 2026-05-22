@@ -16,8 +16,9 @@ import { join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
 
+setDefaultTimeout(1000 * 60 * 5);
+
 beforeAll(async () => {
-  setDefaultTimeout(1000 * 60 * 5);
   await verdaccio.start();
 });
 

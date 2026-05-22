@@ -306,6 +306,10 @@ impl Image {
         Ok(img.to_js(global))
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| Image::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         self.this_ref.with_mut(|r| r.finalize());
         // `source` is dropped by Box drop.
@@ -360,7 +364,7 @@ fn source_from_js(
 ) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
-        let str = value.to_bun_string(global)?;
+        let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
         let utf8 = str.to_utf8();
         let s = utf8.slice();
         // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
@@ -489,7 +493,7 @@ impl Image {
         // coerce_int for the same NaN/Inf/huge-finite reasons as everywhere else;
         // ±1e15 is plenty of headroom for "any multiple of 90 a user might pass".
         let raw: i64 = coerce_int!(i64, args[0].as_number(), -1e15, 1e15);
-        let deg: u32 = u32::try_from(((raw % 360) + 360) % 360).unwrap();
+        let deg: u32 = u32::try_from(raw.rem_euclid(360)).unwrap();
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "rotate: only multiples of 90 are supported"
@@ -523,7 +527,7 @@ impl Image {
                 if v.is_number() {
                     let x = v.as_number();
                     m.brightness = if x.is_finite() {
-                        x.max(0.0).min(1e4) as f32
+                        x.clamp(0.0, 1e4) as f32
                     } else {
                         1.0
                     };
@@ -533,7 +537,7 @@ impl Image {
                 if v.is_number() {
                     let x = v.as_number();
                     m.saturation = if x.is_finite() {
-                        x.max(0.0).min(1e4) as f32
+                        x.clamp(0.0, 1e4) as f32
                     } else {
                         1.0
                     };
@@ -551,10 +555,13 @@ impl Image {
         fmt: codecs::Format,
     ) -> JsResult<JSValue> {
         let mut enc: codecs::EncodeOptions =
-            self.pipeline.get().output.unwrap_or(codecs::EncodeOptions {
-                format: fmt,
-                ..Default::default()
-            });
+            self.pipeline
+                .get()
+                .output
+                .unwrap_or_else(|| codecs::EncodeOptions {
+                    format: fmt,
+                    ..Default::default()
+                });
         enc.format = fmt;
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
@@ -661,8 +668,6 @@ fn error_with_code(global: &JSGlobalObject, code: &ZStr, msg: &ZStr) -> JSValue 
 enum PinError {
     #[error("detached")]
     Detached,
-    #[error("out of memory")]
-    OutOfMemory,
 }
 
 impl Image {
@@ -1008,7 +1013,7 @@ impl Image {
         // `"color"` without growing methods. Anything else throws so the
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
-            let s = args[0].to_bun_string(global)?;
+            let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
             if !s.eql_utf8(b"dataurl") {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
@@ -1038,7 +1043,7 @@ impl Image {
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
         if output.is_none() && args[0].is_string() {
-            let str = args[0].to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {
@@ -1080,13 +1085,10 @@ impl Image {
         }
         let input = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
-            Err(e) => {
+            Err(PinError::Detached) => {
                 // `deliver` may own a Strong; the task that would have freed it
                 // in Drop is never created on this branch.
                 drop(deliver);
-                if matches!(e, PinError::OutOfMemory) {
-                    bun_core::out_of_memory();
-                }
                 return Ok(JSPromise::rejected_promise(
                     global,
                     error_with_code(
@@ -1176,10 +1178,7 @@ impl Image {
         }
         let input = match self.pin_for_task(this_value, global) {
             Ok(i) => i,
-            Err(e) => {
-                if matches!(e, PinError::OutOfMemory) {
-                    bun_core::out_of_memory();
-                }
+            Err(PinError::Detached) => {
                 return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
         };
@@ -1289,13 +1288,12 @@ impl<'a> BlobReadChain<'a> {
         let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and uniquely owned by the read
         // dispatch; reclaimed in `<BlobReadChain as ReadBytesHandler>::on_read_bytes`.
-        blob.read_bytes_to_handler(unsafe { &raw mut *raw }, global)
-            .map_err(jsc::JsError::from)?;
+        unsafe { blob.read_bytes_to_handler(&raw mut *raw, global) }.map_err(jsc::JsError::from)?;
         Ok(promise)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    fn on_read_bytes_impl(self: Box<Self>, r: ReadBytesResult) {
+    fn on_read_bytes_impl(self, r: ReadBytesResult) {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —
@@ -1494,7 +1492,7 @@ impl<'a> PipelineTask<'a> {
         // `self.input` was prepared on the JS thread by `pin_for_task`: either a
         // pinned ArrayBuffer slice (pin lives until `then()` unpins), an owned
         // buffer, or a path to read here.
-        let mut owned_file: Option<Vec<u8>> = None;
+        let owned_file: Option<Vec<u8>>;
         let input: &[u8] = if let Some(p) = self.input.path {
             // SAFETY: `p` borrows `image.source.path`, which outlives the task
             // because `this_ref` is held Strong while pending_tasks > 0.
@@ -1532,7 +1530,7 @@ impl<'a> PipelineTask<'a> {
                     return;
                 }
             };
-            if !sys::S::ISREG(u32::try_from(st.st_mode).expect("int cast") as _) {
+            if !sys::S::ISREG(st.st_mode as _) {
                 self.result = TaskResult::IoErr(sys::Error {
                     errno: sys::E::ENODEV as _,
                     syscall: sys::Tag::read,
@@ -1768,19 +1766,24 @@ impl<'a> PipelineTask<'a> {
                     // here by construction, not omission.
                     Deliver::Buffer => promise.resolve(
                         global,
-                        JSValue::create_buffer_with_ctx(
-                            global,
-                            out.bytes,
-                            core::ptr::null_mut(),
-                            out.free,
-                        ),
+                        // SAFETY: `out.bytes` is the codec-owned allocation whose
+                        // ownership transfers to JSC; `ctx` is null and `out.free`
+                        // ignores it.
+                        unsafe {
+                            JSValue::create_buffer_with_ctx(
+                                global,
+                                out.bytes,
+                                core::ptr::null_mut(),
+                                out.free,
+                            )
+                        },
                     )?,
                     Deliver::Blob => {
                         // Blob.Store frees via an Allocator; dupe for that path.
                         let owned = out_slice.to_vec();
                         // SAFETY: explicit free in lieu of suppressed `Drop`.
                         unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
-                        let mut blob = Blob::init(owned, global);
+                        let blob = Blob::init(owned, global);
                         blob.content_type
                             .set(std::ptr::from_ref::<[u8]>(format.mime().as_bytes()));
                         blob.content_type_was_set.set(true);
@@ -1831,12 +1834,17 @@ impl<'a> PipelineTask<'a> {
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
-                        let data = JSValue::create_buffer_with_ctx(
-                            global,
-                            out.bytes,
-                            core::ptr::null_mut(),
-                            out.free,
-                        );
+                        // SAFETY: `out.bytes` is the codec-owned allocation whose
+                        // ownership transfers to JSC; `ctx` is null and `out.free`
+                        // ignores it.
+                        let data = unsafe {
+                            JSValue::create_buffer_with_ctx(
+                                global,
+                                out.bytes,
+                                core::ptr::null_mut(),
+                                out.free,
+                            )
+                        };
                         // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachine`
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];

@@ -6,6 +6,7 @@
 #include <wtf/dtoa.h>
 #include <wtf/NumberOfCores.h>
 #include <atomic>
+#include <cassert>
 
 #include "wtf/SIMDUTF.h"
 #if OS(WINDOWS)
@@ -15,6 +16,7 @@
 #if !OS(WINDOWS)
 #include <stdatomic.h>
 
+#include <cassert>
 #include <signal.h>
 #include <termios.h>
 static int orig_termios_fd = -1;

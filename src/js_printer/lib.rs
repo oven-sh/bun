@@ -10,13 +10,11 @@
 //! ESM-to-CJS __export emission path, `print_dev_server_module`, the source-map
 //! self-borrow in `init`, and the `print_ast` minify-renamer driver / `print_json`.
 
-#![allow(unused, nonstandard_style, clippy::all)]
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
 
 use bun_collections::VecExt;
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, ImportRecord};
@@ -81,7 +79,7 @@ pub type MangledProps = bun_collections::ArrayHashMap<Ref, Box<[u8]>>;
 /// js_printer is the sole producer of ModuleInfo records; the bundler/runtime
 /// only consume the serialized form.
 pub mod analyze_transpiled_module {
-    use bun_collections::{ArrayHashMap, HashMap, VecExt};
+    use bun_collections::HashMap;
     use bun_core::slice_as_bytes;
 
     #[repr(u8)]
@@ -105,6 +103,12 @@ pub mod analyze_transpiled_module {
         ExportInfoNamespace,
         /// module_name
         ExportInfoStar,
+        /// module_name, import_name = '*', local_name
+        ///
+        /// `import defer * as ns from "mod"` — same payload as
+        /// `ImportInfoNamespace` but the resulting `ImportEntry` carries
+        /// `ModulePhase::Defer`.
+        ImportInfoNamespaceDefer,
     }
     impl RecordKind {
         pub fn len(self) -> usize {
@@ -113,6 +117,7 @@ pub mod analyze_transpiled_module {
                 Self::ImportInfoSingle => 3,
                 Self::ImportInfoSingleTypeScript => 3,
                 Self::ImportInfoNamespace => 3,
+                Self::ImportInfoNamespaceDefer => 3,
                 Self::ExportInfoIndirect => 3,
                 Self::ExportInfoLocal => 3,
                 Self::ExportInfoNamespace => 2,
@@ -131,6 +136,7 @@ pub mod analyze_transpiled_module {
                 6 => Self::ExportInfoLocal,
                 7 => Self::ExportInfoNamespace,
                 8 => Self::ExportInfoStar,
+                9 => Self::ImportInfoNamespaceDefer,
                 _ => return None,
             })
         }
@@ -203,6 +209,18 @@ pub mod analyze_transpiled_module {
         Lexical,
     }
 
+    /// `AbstractModuleRecord::ModulePhase` — only `Evaluation` and `Defer`
+    /// exist. Stored as a `u8` parallel to `requested_modules_keys` so the
+    /// serialized format stays dense.
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum ModulePhase {
+        Evaluation = 0,
+        Defer = 1,
+    }
+    // SAFETY: `#[repr(u8)]` enum with no fields → single initialized byte, no padding.
+    unsafe impl bytemuck::NoUninit for ModulePhase {}
+
     /// Borrowing view over a finalized/serialized `ModuleInfo`.
     /// Zig kept this self-referentially inside `ModuleInfo`; Rust builds it on demand
     /// (`ModuleInfo::as_deserialized`) or borrows from an owned byte buffer
@@ -212,6 +230,7 @@ pub mod analyze_transpiled_module {
         pub strings_lens: &'a [u32],
         pub requested_modules_keys: &'a [StringID],
         pub requested_modules_values: &'a [FetchParameters],
+        pub requested_modules_phases: &'a [ModulePhase],
         pub buffer: &'a [StringID],
         pub record_kinds: &'a [RecordKind],
         pub flags: Flags,
@@ -238,6 +257,9 @@ pub mod analyze_transpiled_module {
             )?;
             w.write_all(slice_as_bytes(self.requested_modules_keys))?;
             w.write_all(slice_as_bytes(self.requested_modules_values))?;
+            w.write_all(slice_as_bytes(self.requested_modules_phases))?;
+            let pad = (4 - (self.requested_modules_phases.len() % 4)) % 4;
+            w.write_all(&[0u8; 4][..pad])?; // alignment padding
 
             w.write_all(&[self.flags.to_byte()])?;
             w.write_all(&[0u8; 3])?; // alignment padding
@@ -289,12 +311,13 @@ pub mod analyze_transpiled_module {
     /// Owns a duplicated byte buffer and exposes a `ModuleInfoDeserialized` view into it.
     /// Replaces Zig's `.owner = .allocated_slice` arm.
     pub struct ModuleInfoDeserializedOwned {
-        #[allow(dead_code)]
         backing: AlignedBytes,
         // `RecordKind` is a `#[repr(u8)]` enum (not all bit patterns valid), so
         // the validated discriminants are decoded once in `create()` and owned
         // here instead of being reinterpreted from `backing` on every `as_ref()`.
         record_kinds: Box<[RecordKind]>,
+        // Same story for `ModulePhase` — validated once.
+        requested_modules_phases: Box<[ModulePhase]>,
         // Offsets/lengths into `backing` — reconstructed as slices in `as_ref()`.
         buffer: (usize, usize),
         requested_modules_keys: (usize, usize),
@@ -332,7 +355,7 @@ pub mod analyze_transpiled_module {
             let record_kinds_len = eat_u32!();
             let (rk_off, rk_len) = eat!(record_kinds_len * core::mem::size_of::<RecordKind>());
             // Validate + decode every record-kind byte into an owned `Box<[RecordKind]>`.
-            // `RecordKind` is a `#[repr(u8)]` enum, so any byte outside 0..=8 is invalid;
+            // `RecordKind` is a `#[repr(u8)]` enum, so out-of-range bytes are invalid;
             // `source` may come from an on-disk cache (`create_from_cached_record`), so it
             // is untrusted. Decoding once here lets `as_ref()` hand out `&[RecordKind]`
             // without an `unsafe` reinterpret.
@@ -354,6 +377,17 @@ pub mod analyze_transpiled_module {
                 eat!(requested_modules_len * core::mem::size_of::<StringID>());
             let requested_modules_values =
                 eat!(requested_modules_len * core::mem::size_of::<FetchParameters>());
+            let (ph_off, ph_len) = eat!(requested_modules_len);
+            let mut requested_modules_phases = Vec::with_capacity(ph_len);
+            for &b in &duped[ph_off..ph_off + ph_len] {
+                requested_modules_phases.push(match b {
+                    0 => ModulePhase::Evaluation,
+                    1 => ModulePhase::Defer,
+                    _ => return Err(BadModuleInfo),
+                });
+            }
+            let requested_modules_phases = requested_modules_phases.into_boxed_slice();
+            let _ = eat!((4 - (requested_modules_len % 4)) % 4); // alignment padding
 
             let (flags_off, _) = eat!(1);
             let flags = Flags::from_byte(duped[flags_off]);
@@ -366,6 +400,7 @@ pub mod analyze_transpiled_module {
             Ok(Box::new(Self {
                 backing: duped,
                 record_kinds,
+                requested_modules_phases,
                 buffer,
                 requested_modules_keys,
                 requested_modules_values,
@@ -395,6 +430,7 @@ pub mod analyze_transpiled_module {
                     bytes,
                     self.requested_modules_values,
                 ),
+                requested_modules_phases: &self.requested_modules_phases,
                 strings_lens: sub::<u32>(bytes, self.strings_lens),
                 strings_buf: &bytes[self.strings_buf.0..self.strings_buf.0 + self.strings_buf.1],
                 flags: self.flags,
@@ -405,60 +441,60 @@ pub mod analyze_transpiled_module {
     #[derive(Debug)]
     pub struct BadModuleInfo;
 
-    /// Insertion-ordered (key, value) store with O(1) duplicate-key rejection.
-    /// Stand-in for Zig's `AutoArrayHashMapUnmanaged` until `bun_collections::ArrayHashMap`
-    /// grows slice-yielding `keys()`/`values()`.
-    // PERF(port): two allocations + a side HashMap; revisit with a real IndexMap.
-    struct OrderedMap<K: Eq + core::hash::Hash + Copy, V> {
-        keys: Vec<K>,
-        values: Vec<V>,
-        index: HashMap<K, usize>,
+    /// Insertion-ordered list of requested modules. Dedup key is
+    /// `(specifier, phase)` to match JSC's `ModuleAnalyzer::appendRequestedModule`,
+    /// which appends one entry per unique pair — so the same specifier can be
+    /// requested at both Evaluation and Defer phase.
+    // PERF(port): three allocations + a side HashMap; revisit with a real IndexMap.
+    #[derive(Default)]
+    struct RequestedModules {
+        keys: Vec<StringID>,
+        values: Vec<FetchParameters>,
+        phases: Vec<ModulePhase>,
+        index: HashMap<(StringID, ModulePhase), usize>,
     }
-    impl<K: Eq + core::hash::Hash + Copy, V> Default for OrderedMap<K, V> {
-        fn default() -> Self {
-            Self {
-                keys: Vec::new(),
-                values: Vec::new(),
-                index: HashMap::default(),
-            }
-        }
-    }
-    impl<K: Eq + core::hash::Hash + Copy, V> OrderedMap<K, V> {
-        fn keys(&self) -> &[K] {
+    impl RequestedModules {
+        fn keys(&self) -> &[StringID] {
             &self.keys
         }
-        fn values(&self) -> &[V] {
+        fn values(&self) -> &[FetchParameters] {
             &self.values
         }
-        /// Returns `true` if `key` was already present (Zig `getOrPut().found_existing`).
-        fn insert_if_absent(&mut self, key: K, value: V) -> bool {
-            if self.index.contains_key(&key) {
+        fn phases(&self) -> &[ModulePhase] {
+            &self.phases
+        }
+        /// Returns `true` if `(key, phase)` was already present.
+        fn insert_if_absent(
+            &mut self,
+            key: StringID,
+            value: FetchParameters,
+            phase: ModulePhase,
+        ) -> bool {
+            if self.index.contains_key(&(key, phase)) {
                 return true;
             }
-            self.index.insert(key, self.keys.len());
+            self.index.insert((key, phase), self.keys.len());
             self.keys.push(key);
             self.values.push(value);
+            self.phases.push(phase);
             false
         }
-        #[allow(dead_code)]
-        fn swap_remove(&mut self, key: &K) -> Option<V> {
-            let i = self.index.remove(key)?;
-            self.keys.swap_remove(i);
-            let v = self.values.swap_remove(i);
-            if i < self.keys.len() {
-                self.index.insert(self.keys[i], i);
+        /// Replace every occurrence of `old` with `new` **in place**,
+        /// preserving insertion order. Mirrors Zig `keys()[idx] = new; reIndex()`.
+        fn rename_key(&mut self, old: StringID, new: StringID) {
+            let mut touched = false;
+            for k in self.keys.iter_mut() {
+                if *k == old {
+                    *k = new;
+                    touched = true;
+                }
             }
-            Some(v)
-        }
-        /// Replace `old` with `new` **in place**, preserving insertion order.
-        /// Mirrors Zig `keys()[idx] = new; reIndex()`.
-        fn rename_key(&mut self, old: &K, new: K) -> bool {
-            let Some(i) = self.index.remove(old) else {
-                return false;
-            };
-            self.keys[i] = new;
-            self.index.insert(new, i);
-            true
+            if touched {
+                self.index.clear();
+                for (i, (&k, &p)) in self.keys.iter().zip(self.phases.iter()).enumerate() {
+                    self.index.insert((k, p), i);
+                }
+            }
         }
     }
 
@@ -470,7 +506,7 @@ pub mod analyze_transpiled_module {
         strings_map: HashMap<Vec<u8>, u32>,
         strings_buf: Vec<u8>,
         strings_lens: Vec<u32>,
-        requested_modules: OrderedMap<StringID, FetchParameters>,
+        requested_modules: RequestedModules,
         buffer: Vec<StringID>,
         record_kinds: Vec<RecordKind>,
         pub flags: Flags,
@@ -487,7 +523,7 @@ pub mod analyze_transpiled_module {
                 strings_map: HashMap::default(),
                 strings_buf: Vec::new(),
                 strings_lens: Vec::new(),
-                requested_modules: OrderedMap::default(),
+                requested_modules: RequestedModules::default(),
                 buffer: Vec::new(),
                 record_kinds: Vec::new(),
                 flags: Flags {
@@ -509,6 +545,7 @@ pub mod analyze_transpiled_module {
                 strings_lens: &self.strings_lens,
                 requested_modules_keys: self.requested_modules.keys(),
                 requested_modules_values: self.requested_modules.values(),
+                requested_modules_phases: self.requested_modules.phases(),
                 buffer: &self.buffer,
                 record_kinds: &self.record_kinds,
                 flags: self.flags,
@@ -553,6 +590,16 @@ pub mod analyze_transpiled_module {
         pub fn add_import_info_namespace(&mut self, module_name: StringID, local_name: StringID) {
             self.add_record(
                 RecordKind::ImportInfoNamespace,
+                &[module_name, StringID::STAR_NAMESPACE, local_name],
+            );
+        }
+        pub fn add_import_info_namespace_defer(
+            &mut self,
+            module_name: StringID,
+            local_name: StringID,
+        ) {
+            self.add_record(
+                RecordKind::ImportInfoNamespaceDefer,
                 &[module_name, StringID::STAR_NAMESPACE, local_name],
             );
         }
@@ -621,8 +668,21 @@ pub mod analyze_transpiled_module {
             fetch_parameters: FetchParameters,
         ) {
             // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
+            self.requested_modules.insert_if_absent(
+                import_record_path,
+                fetch_parameters,
+                ModulePhase::Evaluation,
+            );
+        }
+
+        pub fn request_module_with_phase(
+            &mut self,
+            import_record_path: StringID,
+            fetch_parameters: FetchParameters,
+            phase: ModulePhase,
+        ) {
             self.requested_modules
-                .insert_if_absent(import_record_path, fetch_parameters);
+                .insert_if_absent(import_record_path, fetch_parameters, phase);
         }
 
         /// Replace all occurrences of `old_id` with `new_id` in records and requested_modules.
@@ -636,7 +696,7 @@ pub mod analyze_transpiled_module {
             }
             // Zig: `requested_modules.keys()[idx] = new_id; reIndex()` — must preserve
             // insertion order (serialized verbatim into ModuleInfo for JSC).
-            self.requested_modules.rename_key(&old_id, new_id);
+            self.requested_modules.rename_key(old_id, new_id);
         }
 
         /// find any exports marked as 'local' that are actually 'indirect' and fix them
@@ -881,7 +941,7 @@ pub fn estimate_length_for_utf8(input: &[u8], ascii_only: bool, quote_char: u8) 
             4 => [remaining[0], remaining[1], remaining[2], remaining[3]],
             _ => unreachable!(),
         };
-        let c = strings::decode_wtf8_rune_t::<i32>(&bytes, char_len, 0);
+        let c = strings::decode_wtf8_rune_t::<i32>(bytes, char_len, 0);
         if can_print_without_escape(c, ascii_only) {
             len += char_len as usize;
         } else if c <= 0xFFFF {
@@ -988,7 +1048,7 @@ where
                     4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
                     _ => unreachable!(),
                 };
-                strings::decode_wtf8_rune_t::<i32>(&bytes, width, 0)
+                strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
             }
             Encoding::Ascii => {
                 debug_assert!(text[i] <= 0x7F);
@@ -1015,7 +1075,6 @@ where
                         i += clamped_width + j;
                     } else {
                         writer.write_all(&text[i..])?;
-                        i = n;
                         break;
                     }
                 }
@@ -1285,7 +1344,7 @@ pub struct Options<'a> {
     /// not be consumed. `get_source_map_builder` shallow-copies it into the
     /// builder (`ManuallyDrop`, never freed on the bundler path — matches
     /// Zig `printWithWriter`).
-    pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List>,
+    pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 }
@@ -1356,7 +1415,7 @@ use bun_ast::{Indentation, IndentationCharacter};
 /// Downstream-compat: `print_json` callers pass this. The Zig spec passes the
 /// full `Options` struct; only the fields any caller actually sets are surfaced
 /// here and forwarded into `Options { .. }` inside `print_json`.
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
@@ -1629,7 +1688,7 @@ pub mod __gated_printer {
     use bun_ast::ImportRecordTag;
     use bun_ptr::BackRef;
     use js_ast::Symbol;
-    use js_ast::binding::{Binding, Data as BindingData, Tag as BindingTag};
+    use js_ast::binding::{Binding, Data as BindingData};
     use js_ast::expr::{Data as ExprData, Expr};
     use js_ast::op::{Level, Op as OpInfo};
     use js_ast::stmt::{Data as StmtData, Stmt, Tag as StmtTag};
@@ -1948,15 +2007,6 @@ pub mod __gated_printer {
 
         pub fn print_buffer(&mut self, str: &[u8]) {
             self.writer.print_slice(str);
-        }
-
-        /// Fixed-size raw write into pre-reserved space (mirrors Zig's
-        /// `p.writer.reserve(N) ...; p.writer.advance(N)` open-code on the
-        /// number/identifier hot path). Skips the short-write/error bookkeeping
-        /// in `print_slice`.
-        #[inline(always)]
-        fn print_reserved_n<const N: usize>(&mut self, bytes: &[u8; N]) {
-            self.writer.write_reserved(bytes).expect("unreachable");
         }
 
         /// Polymorphic print: bytes or single char.
@@ -2955,7 +3005,7 @@ pub mod __gated_printer {
                             .flags
                             .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                     {
-                        self.print_require_error(&record.path.text);
+                        self.print_require_error(record.path.text);
                         if wrap {
                             self.print(b")");
                         }
@@ -2982,7 +3032,7 @@ pub mod __gated_printer {
                         self.print(b".require(");
                     }
                     let path = &record.path;
-                    self.print_string_literal_utf8(&path.pretty, false);
+                    self.print_string_literal_utf8(path.pretty, false);
                     self.print(b")");
                     if wrap {
                         self.print(b")");
@@ -3029,7 +3079,7 @@ pub mod __gated_printer {
                 self.print_symbol(self.options.hmr_ref);
                 self.print(b".dynamicImport(");
                 let path = &record.path;
-                self.print_string_literal_utf8(&path.pretty, false);
+                self.print_string_literal_utf8(path.pretty, false);
             }
 
             if !import_options.is_missing() {
@@ -3171,7 +3221,7 @@ pub mod __gated_printer {
             //
             let mut ascii_start: usize = 0;
             let mut is_ascii = false;
-            let mut iter = CodepointIterator::init(bytes);
+            let iter = CodepointIterator::init(bytes);
             let mut cursor = strings::Cursor::default();
 
             while iter.next(&mut cursor) {
@@ -3179,7 +3229,7 @@ pub mod __gated_printer {
                     // unlike other versions, we only want to mutate > 0x7F
                     0..=LAST_ASCII => {
                         if !is_ascii {
-                            ascii_start = (cursor.i as usize);
+                            ascii_start = cursor.i as usize;
                             is_ascii = true;
                         }
                     }
@@ -3516,7 +3566,7 @@ pub mod __gated_printer {
                         }
                     }
                     // We only want to generate an unbound eval() in CommonJS
-                    self.call_target = Some(e.target.data.clone());
+                    self.call_target = Some(e.target.data);
 
                     let is_unbound_eval = !e.is_direct_eval
                         && self.is_unbound_eval_identifier(e.target)
@@ -3625,7 +3675,7 @@ pub mod __gated_printer {
 
                     self.print(b"(");
                     self.print_string_literal_utf8(
-                        &self.import_record(e.import_record_index as usize).path.text,
+                        self.import_record(e.import_record_index as usize).path.text,
                         true,
                     );
                     self.print(b")");
@@ -3897,7 +3947,7 @@ pub mod __gated_printer {
                             ))
                         }));
                     }
-                    self.print_class(&e);
+                    self.print_class(e);
                     if wrap {
                         self.print(b")");
                     }
@@ -4112,7 +4162,7 @@ pub mod __gated_printer {
                         // Convert no-substitution template literals into strings if it's smaller
                         if e.parts().is_empty() {
                             self.add_source_mapping(expr.loc);
-                            self.print_string_characters_e_string(&e.head.cooked(), b'`');
+                            self.print_string_characters_e_string(e.head.cooked(), b'`');
                             return;
                         }
                     }
@@ -4253,7 +4303,7 @@ pub mod __gated_printer {
                                     .flags
                                     .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
                                 {
-                                    self.print_require_error(&import_record.path.text);
+                                    self.print_require_error(import_record.path.text);
                                 } else {
                                     self.print_disabled_import();
                                 }
@@ -4560,13 +4610,13 @@ pub mod __gated_printer {
                 // Translate any non-ASCII to unicode escape sequences
                 let mut ascii_start: usize = 0;
                 let mut is_ascii = false;
-                let mut iter = CodepointIterator::init(&e.value);
+                let iter = CodepointIterator::init(&e.value);
                 let mut cursor = strings::Cursor::default();
                 while iter.next(&mut cursor) {
                     match cursor.c as u32 {
                         FIRST_ASCII..=LAST_ASCII => {
                             if !is_ascii {
-                                ascii_start = (cursor.i as usize);
+                                ascii_start = cursor.i as usize;
                                 is_ascii = true;
                             }
                         }
@@ -5928,7 +5978,7 @@ pub mod __gated_printer {
 
                     if IS_BUN_PLATFORM {
                         if record.tag == ImportRecordTag::Bun {
-                            self.print_global_bun_import_statement(&s);
+                            self.print_global_bun_import_statement(s);
                             self.prev_stmt_tag = new_tag;
                             return Ok(());
                         }
@@ -6011,6 +6061,20 @@ pub mod __gated_printer {
                     }
 
                     self.print(b"import");
+
+                    // `import defer` grammatically requires `* as ns`; if a
+                    // later pass stripped the star binding (or disabled it on
+                    // the record) the statement can no longer be printed as a
+                    // phase import, so drop the `defer` token rather than emit
+                    // `import defer"./x";`. scan_imports preserves the binding
+                    // for `phase_defer` imports, so this is belt-and-suspenders.
+                    let phase_defer = record.flags.contains(ImportRecordFlags::PHASE_DEFER)
+                        && record
+                            .flags
+                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                    if phase_defer {
+                        self.print(b" defer");
+                    }
 
                     let mut item_count: usize = 0;
 
@@ -6198,7 +6262,12 @@ pub mod __gated_printer {
                             } else {
                                 FP::None
                             };
-                            mi.request_module(irp_id, fetch_parameters);
+                            let phase = if phase_defer {
+                                analyze_transpiled_module::ModulePhase::Defer
+                            } else {
+                                analyze_transpiled_module::ModulePhase::Evaluation
+                            };
+                            mi.request_module_with_phase(irp_id, fetch_parameters, phase);
                             irp_id
                         };
 
@@ -6230,7 +6299,11 @@ pub mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
-                            mi.add_import_info_namespace(irp_id, local_name_id);
+                            if phase_defer {
+                                mi.add_import_info_namespace_defer(irp_id, local_name_id);
+                            } else {
+                                mi.add_import_info_namespace(irp_id, local_name_id);
+                            }
                         }
                     }
                 }
@@ -6330,25 +6403,25 @@ pub mod __gated_printer {
                 unreachable!();
             }
 
-            let quote = best_quote_char_for_string(&import_record.path.text, false);
+            let quote = best_quote_char_for_string(import_record.path.text, false);
             if import_record
                 .flags
                 .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
                 && !import_record.path.is_file()
             {
                 self.print(quote);
-                self.print_string_characters_utf8(&import_record.path.namespace, quote);
+                self.print_string_characters_utf8(import_record.path.namespace, quote);
                 self.print(b":");
-                self.print_string_characters_utf8(&import_record.path.text, quote);
+                self.print_string_characters_utf8(import_record.path.text, quote);
                 self.print(quote);
             } else {
                 self.print(quote);
-                self.print_string_characters_utf8(&import_record.path.text, quote);
+                self.print_string_characters_utf8(import_record.path.text, quote);
                 self.print(quote);
             }
         }
 
-        pub fn print_bundled_import(&mut self, record: ImportRecord, s: &S::Import) {
+        pub fn print_bundled_import(&mut self, record: &ImportRecord, s: &S::Import) {
             if record.flags.contains(ImportRecordFlags::IS_INTERNAL) {
                 return;
             }
@@ -6364,7 +6437,7 @@ pub mod __gated_printer {
                 }
             }
 
-            match ImportVariant::determine(&record, s) {
+            match ImportVariant::determine(record, s) {
                 ImportVariant::PathOnly => {
                     if !is_disabled {
                         self.print_call_module_id(module_id);
@@ -6824,13 +6897,13 @@ pub mod __gated_printer {
 
             let mut ascii_start: usize = 0;
             let mut is_ascii = false;
-            let mut iter = CodepointIterator::init(identifier);
+            let iter = CodepointIterator::init(identifier);
             let mut cursor = strings::Cursor::default();
             while iter.next(&mut cursor) {
                 match cursor.c as u32 {
                     FIRST_ASCII..=LAST_ASCII => {
                         if !is_ascii {
-                            ascii_start = (cursor.i as usize);
+                            ascii_start = cursor.i as usize;
                             is_ascii = true;
                         }
                     }
@@ -6984,7 +7057,7 @@ pub mod __gated_printer {
             renamer: rename::Renamer<'a, 'a>,
             source_map_builder: SourceMap::chunk::Builder,
         ) -> Self {
-            let mut printer = Self {
+            let printer = Self {
                 bump,
                 import_records,
                 needs_semicolon: false,
@@ -7084,7 +7157,7 @@ pub mod __gated_printer {
                         self.print_indent();
                         let import = stmt.data.s_import().unwrap();
                         let record = self.import_record(import.import_record_index as usize);
-                        self.print_string_literal_utf8(&record.path.pretty, false);
+                        self.print_string_literal_utf8(record.path.pretty, false);
 
                         let item_count = u32::from(import.default_name.is_some())
                             + u32::try_from(slice_of(import.items).len()).expect("int cast");
@@ -7146,7 +7219,7 @@ pub mod __gated_printer {
                     had_any_stars = true;
                     self.print_newline();
                     self.print_indent();
-                    self.print_string_literal_utf8(&record.path.pretty, false);
+                    self.print_string_literal_utf8(record.path.pretty, false);
                     self.print(b",");
                 }
                 self.unindent();
@@ -7853,7 +7926,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
             // copy aliases that storage; it is wrapped in `ManuallyDrop` and
             // never dropped, so ownership stays with the caller.
             Some(borrowed) => unsafe { core::ptr::read(borrowed) },
-            None => SourceMap::line_offset_table::List::EMPTY,
+            None => SourceMap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
         }),
         ..Default::default()
     };
@@ -7926,11 +7999,10 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         }
 
         rename::compute_reserved_names_for_scope(module_scope, &symbols, &mut reserved_names);
-        minify_renamer = rename::MinifyRenamer::init(
-            symbols,
-            tree.nested_scope_slot_counts.clone(),
-            reserved_names,
-        )?;
+        minify_renamer =
+            rename::MinifyRenamer::init(symbols, &tree.nested_scope_slot_counts, reserved_names)?;
+        // `symbols` is owned here (transpiler path) — let Drop free it.
+        minify_renamer.owns_symbols = true;
 
         let mut top_level_symbols = rename::StableSymbolCountArray::new();
 
@@ -7973,7 +8045,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             )?;
         }
 
-        for part in parts.slice() {
+        for part in parts.iter() {
             minify_renamer.accumulate_symbol_use_counts(
                 &mut top_level_symbols,
                 &part.symbol_uses,
@@ -7992,8 +8064,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         top_level_symbols.sort_unstable_by(rename::StableSymbolCount::less_than);
 
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols)?;
-        let mut minifier = tree.char_freq.as_ref().unwrap().compile();
-        minify_renamer.assign_names_by_frequency(&mut minifier)?;
+        let minifier = tree.char_freq.as_ref().unwrap().compile();
+        minify_renamer.assign_names_by_frequency(&minifier)?;
 
         renamer = rename::Renamer::MinifyRenamer(&mut *minify_renamer);
     } else {
@@ -8023,34 +8095,17 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
-        tree.import_records.slice(),
+        tree.import_records.as_slice(),
         opts,
         renamer,
         source_map_builder,
     );
     // `defer { if (generate_source_map) printer.source_map_builder.line_offset_tables.deinit(opts.allocator); }`
-    // — `Builder.line_offset_tables` is `ManuallyDrop` (see field comment), and
-    // on this path it was freshly generated by `get_source_map_builder` (no
-    // caller of `print_ast` supplies a borrowed table), so free it explicitly.
-    let _line_offset_tables_guard = scopeguard::guard(
-        &raw mut printer.source_map_builder.line_offset_tables,
-        |p| {
-            if GENERATE_SOURCE_MAP {
-                // SAFETY: `p` points into `printer`, which outlives this guard;
-                // dropped exactly once here.
-                let tables = unsafe { &mut *p };
-                // `MultiArrayList::Drop` only frees the column buffer — it does
-                // NOT drop column elements (Zig allocated these into the arena
-                // so it didn't matter there). The per-row `columns_for_non_ascii`
-                // Box<[i32]>s live on the global heap in the Rust port; drain them
-                // before dropping the SoA storage to avoid leaking them.
-                for v in tables.items_mut::<"columns_for_non_ascii", Box<[i32]>>() {
-                    core::mem::take(v);
-                }
-                unsafe { core::mem::ManuallyDrop::drop(tables) };
-            }
-        },
-    );
+    // — no longer needed: `Builder.line_offset_tables` is `List<AstAlloc>` and on
+    // this path is always EMPTY (`get_source_map_builder` defers generation to
+    // the `Global`-backed `lazy_line_offset_tables`, freed by `Printer`'s drop
+    // via `OwnedLineOffsetTables::Drop`). No caller of `print_ast` supplies a
+    // precomputed table.
     printer.was_lazy_export = tree.has_lazy_export;
     // PORT NOTE: borrowck reshape — `opts` was moved into `Printer::init`; mirror
     // Zig's post-init `printer.module_info = opts.module_info` by taking it back
@@ -8085,7 +8140,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         }
     }
 
-    for part in tree.parts.slice() {
+    for part in tree.parts.iter() {
         for stmt in slice_of(part.stmts).iter() {
             printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
             printer.writer.get_error()?;
@@ -8400,37 +8455,17 @@ pub fn print_common_js<
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
-        tree.import_records.slice(),
+        tree.import_records.as_slice(),
         opts,
         renamer.to_renamer(),
         source_map_builder,
     );
     // `defer { if (generate_source_map) printer.source_map_builder.line_offset_tables.deinit(opts.allocator); }`
-    // — `Builder.line_offset_tables` is `ManuallyDrop` (see field comment), and
-    // on this path it was freshly generated by `get_source_map_builder`, so
-    // free it explicitly. Mirrors `print_ast` above; this was missing here and
-    // leaked the SoA buffer + every per-row `columns_for_non_ascii` Vec on the
-    // CommonJS print path.
-    let _line_offset_tables_guard = scopeguard::guard(
-        &raw mut printer.source_map_builder.line_offset_tables,
-        |p| {
-            if GENERATE_SOURCE_MAP {
-                // SAFETY: `p` points into `printer`, which outlives this guard;
-                // dropped exactly once here.
-                let tables = unsafe { &mut *p };
-                // `MultiArrayList::Drop` does not drop column elements; drain
-                // the global-heap Box<[i32]>s before dropping the SoA storage.
-                for v in tables.items_mut::<"columns_for_non_ascii", Box<[i32]>>() {
-                    core::mem::take(v);
-                }
-                unsafe { core::mem::ManuallyDrop::drop(tables) };
-            }
-        },
-    );
+    // — no longer needed: see `print_ast` above.
     // PERF(port): was stack-fallback allocator
     printer.binary_expression_stack = Vec::new();
 
-    for part in tree.parts.slice() {
+    for part in tree.parts.iter() {
         for stmt in slice_of(part.stmts).iter() {
             printer.print_stmt(*stmt, TopLevel::init(IsTopLevel::Yes))?;
             printer.writer.get_error()?;

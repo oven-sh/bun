@@ -11,7 +11,6 @@ use bun_bundler::bundle_v2::BundleV2;
 use bun_bundler::bundle_v2::DependenciesScannerResult;
 use bun_bundler::mal_prelude::*;
 use bun_collections::StringSet;
-use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_core::strings;
 use bun_core::{Global, Output};
@@ -19,7 +18,7 @@ use bun_js_parser::js_lexer;
 use bun_paths as path;
 use bun_paths::fs::FileSystem;
 use bun_paths::resolve_path;
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd};
 
 // Generate project files based on the entry point and dependencies
 pub fn generate(
@@ -114,7 +113,7 @@ pub fn generate(
         entry_point,
         result.dependencies.keys(),
         dev_dependencies,
-        template,
+        &template,
         react_component_export,
     )?;
 
@@ -134,24 +133,17 @@ fn create_file(filename: &[u8], contents: &[u8]) -> bun_sys::Result<bool> {
     // Create parent directories if needed
     let dirname = resolve_path::dirname::<path::platform::Auto>(filename);
     if !dirname.is_empty() {
-        let _ = bun_sys::make_path(bun_sys::Dir::cwd(), dirname);
+        let _ = bun_sys::Dir::cwd().make_path(dirname);
     }
 
     // Open file for writing
-    let fd = match bun_sys::openat_a(
+    let fd = bun_sys::openat_a(
         Fd::cwd(),
         filename,
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
         0o644,
-    ) {
-        bun_sys::Result::Ok(fd) => fd,
-        bun_sys::Result::Err(err) => return bun_sys::Result::Err(err),
-    };
-    // TODO(port): RAII fd guard — `defer fd.close()` semantics
-    let close_guard = scopeguard::guard(fd, |fd| fd.close());
-
-    // Write contents
-    match bun_sys::File::from_fd(*close_guard).write_all(contents) {
+    )?;
+    match bun_sys::File::from_fd(fd).write_all(contents) {
         bun_sys::Result::Ok(()) => bun_sys::Result::Ok(true),
         bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
     }
@@ -249,7 +241,7 @@ pub fn generate_files(
     entry_point: &[u8],
     dependencies: &[Box<[u8]>],
     dev_dependencies: &[&[u8]],
-    template: Template,
+    template: &Template,
     react_component_export: &[u8],
 ) -> Result<(), bun_core::Error> {
     let mut log = template.logger();
@@ -349,11 +341,7 @@ pub fn generate_files(
     }
 
     if !dev_dependencies.is_empty() {
-        let mut argv: Vec<&[u8]> = Vec::new();
-        argv.push(b"bun");
-        argv.push(b"--only-missing");
-        argv.push(b"add");
-        argv.push(b"-d");
+        let mut argv: Vec<&[u8]> = vec![b"bun", b"--only-missing", b"add", b"-d"];
         argv.extend_from_slice(dev_dependencies);
         run_install(&mut argv)?;
     }
@@ -622,7 +610,7 @@ fn get_shadcn_components(
         match loaders[file.get() as usize] {
             bun_ast::Loader::Tsx | bun_ast::Loader::Jsx => {
                 let import_records = &all[file.get() as usize];
-                for import_record in import_records.slice() {
+                for import_record in import_records.as_slice() {
                     if import_record.path.text.starts_with(b"@/components/ui/") {
                         icons.insert(&import_record.path.text[b"@/components/ui/".len()..])?;
                     }
@@ -660,7 +648,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 return Some(b"default");
             }
 
-            let export_names: &[Box<[u8]>] = exports.keys();
+            let export_names = exports.keys();
             if export_names.len() == 1 {
                 // If there's only one export it can only be this.
                 return Some(&export_names[0][..]);
@@ -671,7 +659,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 continue;
             }
 
-            let filename = source.path.name.non_unique_name_string_base();
+            let filename = source.path.name().non_unique_name_string_base();
             if filename.is_empty() {
                 bun_core::hint::cold();
                 continue;
@@ -693,7 +681,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                 // lifetime CLI arena to match the returned-slice lifetime; the
                 // fall-through `free` is a no-op (arena-backed).
                 let duped: &'static mut [u8] = crate::cli::cli_arena().alloc_slice_copy(filename);
-                duped[0] = duped[0] - 32;
+                duped[0] -= 32;
                 if js_lexer::is_identifier(duped) {
                     if exports.contains(duped) {
                         return Some(duped);
@@ -748,7 +736,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                         for c in &mut duped[1..output_index] {
                             match *c {
                                 b'A'..=b'Z' => {
-                                    *c = *c + 32;
+                                    *c += 32;
                                 }
                                 _ => {}
                             }

@@ -98,6 +98,10 @@ impl ParsedShellScript {
 
     /// Called from the generated C++ wrapper's `finalize()`. Runs on the mutator
     /// thread during lazy sweep — must not touch live JS cells.
+    // Codegen's `host_fn_finalize` thunk calls `ParsedShellScript::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
         // Per PORTING.md §JSC: flip the self-wrapper ref to `.Finalized` first; other
         // cells may already be swept so the weak JSValue must not be touched again.

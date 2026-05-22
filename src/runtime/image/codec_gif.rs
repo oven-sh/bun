@@ -217,7 +217,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::
                 if i >= bytes.len() {
                     return Err(codecs::Error::DecodeFailed);
                 }
-                let min_code: u8 = bytes[i].max(2).min(11);
+                let min_code: u8 = bytes[i].clamp(2, 11);
                 i += 1;
                 return decode_frame(bytes, i, w, h, interlace, ct, min_code, trns);
             }

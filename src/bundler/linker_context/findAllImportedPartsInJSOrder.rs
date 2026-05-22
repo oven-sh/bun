@@ -3,12 +3,10 @@ use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{AutoBitSet, HashMap, VecExt};
 
 use crate::{
-    Chunk, Index, IndexInt, JSMeta, LinkerContext, Part, PartRange,
+    Chunk, Index, IndexInt, LinkerContext, PartRange,
     chunk::{self, EntryPoint, Order},
     js_meta::Wrap,
-    linker_graph::FileColumns as _,
 };
-use bun_ast as js_ast;
 use bun_core::perf;
 
 pub fn find_all_imported_parts_in_js_order(
@@ -150,8 +148,8 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
 pub struct FindImportedPartsVisitor<'a, 'ctx> {
     pub entry_bits: &'a AutoBitSet,
     pub flags: &'a [crate::js_meta::Flags],
-    pub parts: &'a [Vec<Part>],
-    pub import_records: &'a [Vec<ImportRecord>],
+    pub parts: &'a [bun_ast::PartList<'ctx>],
+    pub import_records: &'a [bun_ast::import_record::List<'ctx>],
     pub files: Vec<IndexInt>,
     pub part_ranges: Vec<PartRange>,
     pub visited: HashMap<IndexInt, ()>,
@@ -215,10 +213,11 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
         // Wrapped files can't be split because they are all inside the wrapper
         let can_be_split = self.flags[source_index as usize].wrap == Wrap::None;
 
-        let parts = self.parts[source_index as usize].slice();
+        let parts = self.parts[source_index as usize].as_slice();
+        let parts_live = &self.c.graph.parts_live[source_index as usize];
         if can_be_split
             && is_file_in_chunk
-            && parts[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize].is_live
+            && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
         {
             Self::append_or_extend_range(
                 &mut self.part_ranges,
@@ -227,12 +226,12 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
             );
         }
 
-        let records = self.import_records[source_index as usize].slice();
+        let records = self.import_records[source_index as usize].as_slice();
 
         for part_index_ in 0..parts.len() {
             let part = &parts[part_index_];
             let part_index = part_index_ as u32;
-            let is_part_in_this_chunk = is_file_in_chunk && part.is_live;
+            let is_part_in_this_chunk = is_file_in_chunk && parts_live.is_set(part_index_);
             for &record_id in part.import_record_indices.slice() {
                 let record: &ImportRecord = &records[record_id as usize];
                 if record.source_index.is_valid()

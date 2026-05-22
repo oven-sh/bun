@@ -8,11 +8,10 @@ use bstr::BStr;
 use crate::ShellCompletions;
 use crate::bun_fs::FileSystem;
 use crate::bun_json as json;
-use bun_core::{Error, Global, Output, err};
+use bun_core::{Error, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_install::PackageNameHash;
 use bun_js_printer as js_printer;
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
 
 use super::{
@@ -23,7 +22,6 @@ use super::{
 // its functions directly on the `package_json_editor` module.
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
-use super::patch_package::{do_patch_commit, prepare_patch};
 use super::update_request::Array as UpdateRequestArray;
 
 pub fn update_package_json_and_install_with_manager(
@@ -172,7 +170,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
     // disjoint manager fields.
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
-    let mut current_package_json_root: bun_ast::Expr = current_package_json.root.into();
+    let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     let current_package_json_indent = current_package_json.indentation;
 
     // If there originally was a newline at the end of their package.json, preserve it
@@ -281,7 +279,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
                             let changed = new_len != dependencies.len();
                             if changed {
-                                e_object.properties.truncate((new_len) as usize);
+                                e_object.properties.truncate(new_len);
 
                                 // If the dependencies list is now empty, remove it from the package.json
                                 // since we're swapRemove, we have to re-sort it
@@ -419,10 +417,10 @@ fn update_package_json_and_install_with_manager_with_updates(
     // must store an *owning* copy to avoid a dangling borrow. PERF(port): one extra
     // alloc+copy vs Zig's single dupe — profile if hot.
     current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
-    // PORT NOTE: Zig edited `current_package_json.root` in place above; we edited a
-    // promoted T4 copy (`current_package_json_root`). Re-parse the printed source so
-    // the cached T2 AST (consumed by `FolderResolver` for workspace members during
-    // `install_with_manager`) reflects the new dependency list.
+    // PORT NOTE: Zig edited `current_package_json.root` in place above; the Rust
+    // port edited a promoted copy (`current_package_json_root`), so re-parse the
+    // printed source so the cached AST (consumed by `FolderResolver` for workspace
+    // members during `install_with_manager`) reflects the new dependency list.
     if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
         Output::pretty_errorln(format_args!(
             "package.json failed to parse due to error {}",
@@ -487,9 +485,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
 
         if let Some(stuff) = &not_in_workspace_root {
-            // PORT NOTE (layering): see `current_package_json_root` above — promote
-            // T2 → T4 for `PackageJSONEditor` / `print_json`.
-            let mut root_package_json_root: bun_ast::Expr = root_package_json.root.into();
+            let mut root_package_json_root: bun_ast::Expr = root_package_json.root;
             PackageJSONEditor::edit_patched_dependencies(
                 manager,
                 &mut root_package_json_root,
@@ -563,7 +559,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         let json_arena = bun_alloc::Arena::new();
         let mut new_package_json: bun_ast::Expr =
             match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
-                Ok(v) => v.into(),
+                Ok(v) => v,
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
                         "package.json failed to parse due to error {}",
@@ -810,7 +806,7 @@ pub fn update_package_json_and_install_and_cli(
     // SAFETY: `super::init` returns a `*mut PackageManager` to the process-static
     // singleton (Zig `*PackageManager`). We are on the single CLI thread; no worker
     // threads deref `get()` until `install_with_manager` spawns the HTTP thread.
-    let manager: &mut PackageManager = unsafe { &mut *manager_ptr };
+    let manager: &mut PackageManager = &mut *manager_ptr;
 
     if manager.options.should_print_command_name() {
         // Zig: `"..." ++ Global.package_json_version_with_sha ++ "..."` (comptime concat).

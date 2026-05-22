@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_parser::{CssResult as Result, EnumProperty, Parser, Token};
+use crate::css_parser::{CssResult as Result, Parser, Token};
 use crate::generics::{CssEql as _, DeepClone as _};
 use crate::values::angle::{Angle, AnglePercentage};
 use crate::values::color::{ColorFallbackKind, CssColor};
@@ -11,7 +11,6 @@ use crate::values::position::{
 };
 use crate::{PrintErr, Printer, VendorPrefix};
 use bun_alloc::Arena;
-use bun_core::strings;
 
 // `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
 // `Vec<_>` (matches `Parser::parse_comma_separated → Vec<T>`); re-thread once
@@ -76,7 +75,7 @@ impl GradientSideKeyword for HorizontalPositionKeyword {
     }
     #[inline]
     fn into_length_percentage(&self) -> LengthPercentage {
-        HorizontalPositionKeyword::into_length_percentage(self)
+        HorizontalPositionKeyword::into_length_percentage(*self)
     }
 }
 impl GradientSideKeyword for VerticalPositionKeyword {
@@ -90,7 +89,7 @@ impl GradientSideKeyword for VerticalPositionKeyword {
     }
     #[inline]
     fn into_length_percentage(&self) -> LengthPercentage {
-        VerticalPositionKeyword::into_length_percentage(self)
+        VerticalPositionKeyword::into_length_percentage(*self)
     }
 }
 
@@ -203,8 +202,8 @@ impl Gradient {
     }
 
     /// Returns the vendor prefixes needed for the given browser targets.
-    pub fn get_necessary_prefixes(&self, targets: css::targets::Targets) -> VendorPrefix {
-        let get_prefixes = |tgts: css::targets::Targets,
+    pub fn get_necessary_prefixes(&self, targets: &css::targets::Targets) -> VendorPrefix {
+        let get_prefixes = |tgts: &css::targets::Targets,
                             feature: css::prefixes::Feature,
                             prefix: VendorPrefix|
          -> VendorPrefix { tgts.prefixes(prefix, feature) };
@@ -275,7 +274,7 @@ impl Gradient {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         match self {
             Gradient::Linear(linear) | Gradient::RepeatingLinear(linear) => {
@@ -312,9 +311,8 @@ pub struct LinearGradient {
 
 impl LinearGradient {
     pub fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<LinearGradient> {
-        let direction: LineDirection = if let Some(dir) = input
-            .try_parse(|i| LineDirection::parse(i, vendor_prefix != VendorPrefix::NONE))
-            .ok()
+        let direction: LineDirection = if let Ok(dir) =
+            input.try_parse(|i| LineDirection::parse(i, vendor_prefix != VendorPrefix::NONE))
         {
             input.expect_comma()?;
             dir
@@ -406,7 +404,7 @@ impl LinearGradient {
                 }
             }
 
-            if let Err(_) = serialize_items::<LengthPercentage>(&flipped_items, dest) {
+            if serialize_items::<LengthPercentage>(&flipped_items, dest).is_err() {
                 return Err(dest.add_fmt_error());
             }
         } else {
@@ -417,14 +415,14 @@ impl LinearGradient {
                 dest.delim(b',', false)?;
             }
 
-            if let Err(_) = serialize_items::<LengthPercentage>(&self.items, dest) {
+            if serialize_items::<LengthPercentage>(&self.items, dest).is_err() {
                 return Err(dest.add_fmt_error());
             }
         }
         Ok(())
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         for item in self.items.iter() {
             if !item.is_compatible(browsers) {
                 return false;
@@ -518,7 +516,7 @@ impl RadialGradient {
         serialize_items::<LengthPercentage>(&self.items, dest)
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         for item in self.items.iter() {
             if !item.is_compatible(browsers) {
                 return false;
@@ -588,7 +586,7 @@ impl ConicGradient {
         let items = parse_items::<AnglePercentage>(input)?;
         Ok(ConicGradient {
             angle: angle.unwrap_or(Angle::Deg(0.0)),
-            position: position.unwrap_or(Position::center()),
+            position: position.unwrap_or_else(|_| Position::center()),
             items,
         })
     }
@@ -614,7 +612,7 @@ impl ConicGradient {
         serialize_items::<AnglePercentage>(&self.items, dest)
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         for item in self.items.iter() {
             if !item.is_compatible(browsers) {
                 return false;
@@ -631,7 +629,7 @@ impl ConicGradient {
             .collect();
 
         ConicGradient {
-            angle: self.angle.clone(),
+            angle: self.angle,
             position: self.position.deep_clone(bump),
             items,
         }
@@ -643,7 +641,7 @@ impl ConicGradient {
             items.push(in_.deep_clone(bump));
         }
         ConicGradient {
-            angle: self.angle.clone(),
+            angle: self.angle,
             position: self.position.deep_clone(bump),
             items,
         }
@@ -773,11 +771,11 @@ impl WebKitGradient {
                 dest.delim(b',', false)?;
                 radial.from.to_css(dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&radial.r0, dest)?;
+                CSSNumberFns::to_css(radial.r0, dest)?;
                 dest.delim(b',', false)?;
                 radial.to.to_css(dest)?;
                 dest.delim(b',', false)?;
-                CSSNumberFns::to_css(&radial.r1, dest)?;
+                CSSNumberFns::to_css(radial.r1, dest)?;
                 for stop in radial.stops.iter() {
                     dest.delim(b',', false)?;
                     stop.to_css(dest)?;
@@ -881,10 +879,7 @@ impl WebKitGradient {
                 // Webkit radial gradients are always circles, not ellipses, and must be specified in pixels.
                 let radius = match &radial.shape {
                     EndingShape::Circle(circle) => match circle {
-                        Circle::Radius(r) => match r.to_px() {
-                            Some(px) => px,
-                            None => return None,
-                        },
+                        Circle::Radius(r) => r.to_px()?,
                         _ => return None,
                     },
                     _ => return None,
@@ -915,7 +910,7 @@ impl WebKitGradient {
 }
 
 /// The corner payload for [`LineDirection::Corner`].
-#[derive(Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub struct LineDirectionCorner {
     /// A horizontal position keyword, e.g. `left` or `right`.
     pub horizontal: HorizontalPositionKeyword,
@@ -924,8 +919,8 @@ pub struct LineDirectionCorner {
 }
 
 impl LineDirectionCorner {
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        self.clone()
+    pub fn deep_clone(self, _bump: &Arena) -> Self {
+        self
     }
 }
 
@@ -952,7 +947,7 @@ impl LineDirection {
     pub fn parse(input: &mut css::Parser, is_prefixed: bool) -> Result<LineDirection> {
         // Spec allows unitless zero angles for gradients.
         // https://w3c.github.io/csswg-drafts/css-images-3/#linear-gradient-syntax
-        if let Some(angle) = input.try_parse(Angle::parse_with_unitless_zero).ok() {
+        if let Ok(angle) = input.try_parse(Angle::parse_with_unitless_zero) {
             return Ok(LineDirection::Angle(angle));
         }
 
@@ -960,8 +955,8 @@ impl LineDirection {
             input.expect_ident_matching(b"to")?;
         }
 
-        if let Some(x) = input.try_parse(HorizontalPositionKeyword::parse).ok() {
-            if let Some(y) = input.try_parse(VerticalPositionKeyword::parse).ok() {
+        if let Ok(x) = input.try_parse(HorizontalPositionKeyword::parse) {
+            if let Ok(y) = input.try_parse(VerticalPositionKeyword::parse) {
                 return Ok(LineDirection::Corner(LineDirectionCorner {
                     horizontal: x,
                     vertical: y,
@@ -971,7 +966,7 @@ impl LineDirection {
         }
 
         let y = VerticalPositionKeyword::parse(input)?;
-        if let Some(x) = input.try_parse(HorizontalPositionKeyword::parse).ok() {
+        if let Ok(x) = input.try_parse(HorizontalPositionKeyword::parse) {
             return Ok(LineDirection::Corner(LineDirectionCorner {
                 horizontal: x,
                 vertical: y,
@@ -1053,7 +1048,7 @@ impl<D: GradientPosition> GradientItem<D> {
         self.clone()
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             GradientItem::ColorStop(c) => c.color.is_compatible(browsers),
             GradientItem::Hint(_) => {
@@ -1074,7 +1069,7 @@ impl<D: GradientPosition> GradientItem<D> {
     }
 
     /// Returns the color fallback types needed for the given browser targets.
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         match self {
             GradientItem::ColorStop(stop) => stop.color.get_necessary_fallbacks(targets),
             GradientItem::Hint(_) => ColorFallbackKind::empty(),
@@ -1152,7 +1147,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
             return Ok(WebKitGradientPointComponent::Center);
         }
 
-        if let Some(number) = input.try_parse(NumberOrPercentage::parse).ok() {
+        if let Ok(number) = input.try_parse(NumberOrPercentage::parse) {
             return Ok(WebKitGradientPointComponent::Number(number));
         }
 
@@ -1190,7 +1185,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
     /// Attempts to convert a standard position to a webkit gradient point.
     pub fn from_position(
         this: &PositionComponent<S>,
-        bump: &Arena,
+        _bump: &Arena,
     ) -> Option<WebKitGradientPointComponent<S>> {
         match this {
             PositionComponent::Center => Some(WebKitGradientPointComponent::Center),
@@ -1198,10 +1193,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
                 Some(WebKitGradientPointComponent::Number(match len {
                     LengthPercentage::Percentage(p) => NumberOrPercentage::Percentage(*p),
                     // Webkit gradient points can only be specified in pixels.
-                    LengthPercentage::Dimension(d) => match d.to_px() {
-                        Some(px) => NumberOrPercentage::Number(px),
-                        None => return None,
-                    },
+                    LengthPercentage::Dimension(d) => NumberOrPercentage::Number(d.to_px()?),
                     _ => return None,
                 }))
             }
@@ -1209,7 +1201,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
                 if s.offset.is_some() {
                     None
                 } else {
-                    Some(WebKitGradientPointComponent::Side(s.side.clone()))
+                    Some(WebKitGradientPointComponent::Side(s.side))
                 }
             }
         }
@@ -1258,7 +1250,7 @@ impl WebKitColorStop {
             self.color.to_css(dest)?;
         } else {
             dest.write_str(b"color-stop(")?;
-            CSSNumberFns::to_css(&self.position, dest)?;
+            CSSNumberFns::to_css(self.position, dest)?;
             dest.delim(b',', false)?;
             self.color.to_css(dest)?;
         }
@@ -1342,7 +1334,7 @@ pub enum Ellipse {
 
 impl Ellipse {
     pub fn parse(input: &mut css::Parser) -> Result<Ellipse> {
-        if let Some(extent) = input.try_parse(ShapeExtent::parse).ok() {
+        if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
             // The `ellipse` keyword is optional, but only if the `circle` keyword is not present.
             // If it is, then we'll re-parse as a circle.
             if input
@@ -1355,7 +1347,7 @@ impl Ellipse {
             return Ok(Ellipse::Extent(extent));
         }
 
-        if let Some(x) = input.try_parse(LengthPercentage::parse).ok() {
+        if let Ok(x) = input.try_parse(LengthPercentage::parse) {
             let y = LengthPercentage::parse(input)?;
             // The `ellipse` keyword is optional if there are two lengths.
             let _ = input.try_parse(|i| i.expect_ident_matching(b"ellipse"));
@@ -1366,11 +1358,11 @@ impl Ellipse {
             .try_parse(|i| i.expect_ident_matching(b"ellipse"))
             .is_ok()
         {
-            if let Some(extent) = input.try_parse(ShapeExtent::parse).ok() {
+            if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
                 return Ok(Ellipse::Extent(extent));
             }
 
-            if let Some(x) = input.try_parse(LengthPercentage::parse).ok() {
+            if let Ok(x) = input.try_parse(LengthPercentage::parse) {
                 let y = LengthPercentage::parse(input)?;
                 return Ok(Ellipse::Size(EllipseSize { x, y }));
             }
@@ -1412,8 +1404,8 @@ pub enum ShapeExtent {
 }
 
 impl ShapeExtent {
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        *self
+    pub fn deep_clone(self, _bump: &Arena) -> Self {
+        self
     }
 }
 
@@ -1430,13 +1422,13 @@ pub enum Circle {
 
 impl Circle {
     pub fn parse(input: &mut css::Parser) -> Result<Circle> {
-        if let Some(extent) = input.try_parse(ShapeExtent::parse).ok() {
+        if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
             // The `circle` keyword is required. If it's not there, then it's an ellipse.
             input.expect_ident_matching(b"circle")?;
             return Ok(Circle::Extent(extent));
         }
 
-        if let Some(length) = input.try_parse(Length::parse).ok() {
+        if let Ok(length) = input.try_parse(Length::parse) {
             // The `circle` keyword is optional if there is only a single length.
             // We are assuming here that Ellipse.parse ran first.
             let _ = input.try_parse(|i| i.expect_ident_matching(b"circle"));
@@ -1447,11 +1439,11 @@ impl Circle {
             .try_parse(|i| i.expect_ident_matching(b"circle"))
             .is_ok()
         {
-            if let Some(extent) = input.try_parse(ShapeExtent::parse).ok() {
+            if let Ok(extent) = input.try_parse(ShapeExtent::parse) {
                 return Ok(Circle::Extent(extent));
             }
 
-            if let Some(length) = input.try_parse(Length::parse).ok() {
+            if let Ok(length) = input.try_parse(Length::parse) {
                 return Ok(Circle::Radius(length));
             }
 
@@ -1511,7 +1503,7 @@ pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<G
             css::Delimiters::COMMA,
             |i: &mut css::Parser| -> Result<()> {
                 if seen_stop {
-                    if let Some(hint) = i.try_parse(D::parse).ok() {
+                    if let Ok(hint) = i.try_parse(D::parse) {
                         seen_stop = false;
                         items.push(GradientItem::Hint(hint));
                         return Ok(());
@@ -1520,7 +1512,7 @@ pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<G
 
                 let stop = ColorStop::<D>::parse(i)?;
 
-                if let Some(position) = i.try_parse(D::parse).ok() {
+                if let Ok(position) = i.try_parse(D::parse) {
                     let color = stop.color.clone();
                     items.push(GradientItem::ColorStop(stop));
                     items.push(GradientItem::ColorStop(ColorStop {
@@ -1569,14 +1561,13 @@ pub fn serialize_items<D: GradientPosition>(
                 if let (GradientItem::ColorStop(prev_cs), GradientItem::ColorStop(item_cs)) =
                     (prev, item)
                 {
-                    if prev_cs.position.is_some()
-                        && item_cs.position.is_some()
-                        && prev_cs.color.eql(&item_cs.color)
-                    {
-                        dest.write_char(b' ')?;
-                        item_cs.position.as_ref().unwrap().to_css(dest)?;
-                        last = None;
-                        continue;
+                    if let Some(pos) = &item_cs.position {
+                        if prev_cs.position.is_some() && prev_cs.color.eql(&item_cs.color) {
+                            dest.write_char(b' ')?;
+                            pos.to_css(dest)?;
+                            last = None;
+                            continue;
+                        }
                     }
                 }
             }

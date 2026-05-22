@@ -156,8 +156,7 @@ impl TextDecoder {
         &self,
         bytes: &[u8],
     ) -> Result<(Vec<u16>, bool), AllocError> {
-        let mut output: Vec<u16> = Vec::new();
-        output.reserve(bytes.len() / 2);
+        let mut output: Vec<u16> = Vec::with_capacity(bytes.len() / 2);
 
         let mut remain = bytes;
         let mut saw_error = false;
@@ -287,11 +286,15 @@ impl TextDecoder {
 
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
                 // PERF(port): heap::alloc transfers a tight allocation (no excess capacity).
-                Ok(jsc::zig_string::to_external_u16(
-                    bun_core::heap::into_raw(bytes).cast::<u16>(),
-                    out.written as usize,
-                    global_this,
-                ))
+                // SAFETY: `bytes` was allocated by the global allocator; `into_raw`
+                // transfers ownership of the buffer to JSC's external-string finalizer.
+                Ok(unsafe {
+                    jsc::zig_string::to_external_u16(
+                        bun_core::heap::into_raw(bytes).cast::<u16>(),
+                        out.written as usize,
+                        global_this,
+                    )
+                })
             }
             EncodingLabel::Utf8 => {
                 // PORT NOTE: reshaped for borrowck — Zig used a labeled tuple-destructuring block.
@@ -362,9 +365,22 @@ impl TextDecoder {
                         }
                     }
                     let len = decoded.len();
+                    // `to_external_u16` returns `jsEmptyString` and never
+                    // calls `free_global_string` for `len == 0`, so a
+                    // zero-length decode (e.g. a buffered partial sequence
+                    // with `stream: true`, or all-replaced bytes when
+                    // `fatal: false`) would strand the `Vec`'s reserved
+                    // backing store. Drop it here and return the canonical
+                    // empty string instead.
+                    if len == 0 {
+                        drop(decoded);
+                        return Ok(ZigString::EMPTY.to_js(global_this));
+                    }
                     // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
                     let ptr = decoded.leak().as_mut_ptr();
-                    return Ok(jsc::zig_string::to_external_u16(ptr, len, global_this));
+                    // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
+                    // ownership transfers to JSC's external-string finalizer.
+                    return Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) });
                 }
 
                 debug_assert!(input.is_empty() || !deinit);
@@ -418,7 +434,9 @@ impl TextDecoder {
                 let len = decoded.len();
                 // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
                 let ptr = decoded.leak().as_mut_ptr();
-                Ok(jsc::zig_string::to_external_u16(ptr, len, global_this))
+                // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
+                // ownership transfers to JSC's external-string finalizer.
+                Ok(unsafe { jsc::zig_string::to_external_u16(ptr, len, global_this) })
             }
 
             // Handle all other encodings using WebKit's TextCodec

@@ -96,7 +96,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         // drop(this) — Box freed at scope exit
     }
 
-    pub fn run_from_thread_pool(task: *mut WorkPoolTask) {
+    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
         crate::mark_binding();
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `task` field initialised in
@@ -111,10 +111,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         Context::run(ctx, this);
     }
 
-    pub fn run_from_js(this: *mut Self) -> Result<(), crate::JsTerminated> {
-        // SAFETY: `this` is the live heap allocation from create_on_js_thread,
-        // exclusively owned by the JS thread at this point.
-        let this = unsafe { &mut *this };
+    pub fn run_from_js(this: &mut Self) -> Result<(), crate::JsTerminated> {
         let ctx = this.ctx;
         let tracker = this.async_task_tracker;
         let global_this = this.global_this.get();
@@ -124,27 +121,25 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         Context::then(ctx, global_this)
     }
 
-    pub fn schedule(this: *mut Self) {
-        // SAFETY: `this` is the live heap allocation from create_on_js_thread.
-        let this = unsafe { &mut *this };
+    pub fn schedule(this: &mut Self) {
         this.ref_.ref_(Async::js_vm_ctx());
         this.async_task_tracker.did_schedule(this.global_this.get());
         WorkPool::schedule(&raw mut this.task);
     }
 
-    pub fn on_finish(this: *mut Self) {
-        // SAFETY: `this` is alive (called from `Context::run` on the thread pool).
+    pub fn on_finish(this: &mut Self) {
         // `concurrent_task` is an intrusive field of `*this`; `from`
         // re-initializes it in place and returns the same address. Passing
-        // `this` while holding `&mut *this` is sound because `from` only stores
-        // the pointer (does not dereference it).
-        let this_ref = unsafe { &mut *this };
-        let event_loop = this_ref.event_loop;
-        let task = std::ptr::from_mut(
-            this_ref
-                .concurrent_task
-                .from(this, AutoDeinit::ManualDeinit),
+        // `this_ptr` while holding `&mut *this` is sound because `from` only
+        // stores the pointer (does not dereference it).
+        let event_loop = this.event_loop;
+        let this_ptr: *mut Self = this;
+        let task = core::ptr::NonNull::from(
+            this.concurrent_task
+                .from(this_ptr, AutoDeinit::ManualDeinit),
         );
+        // `task` is the inline `concurrent_task` field of the live
+        // heap-allocated `*this`; `event_loop` is the JS-thread loop stored at init.
         event_loop.enqueue_task_concurrent(task);
     }
 }

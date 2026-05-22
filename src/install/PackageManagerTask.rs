@@ -7,7 +7,7 @@ use bun_ast::{Loc, Log};
 use bun_core::Output;
 use bun_core::StringOrTinyString;
 use bun_semver as semver;
-use bun_sys::{Fd, FdDirExt as _, File};
+use bun_sys::{Fd, File};
 use bun_threading::thread_pool;
 use bun_wyhash::Wyhash11;
 
@@ -56,10 +56,12 @@ pub struct Task<'a> {
 pub fn uninit() -> Task<'static> {
     Task {
         // Overwritten by every caller; zero/garbage matches Zig `undefined`.
+        tag: Tag::PackageManifest,
         // SAFETY: untagged unions of `ManuallyDrop<_>` — any bit pattern is
         // valid storage and is never read before the caller overwrites it.
-        tag: Tag::PackageManifest,
         request: unsafe { bun_core::ffi::zeroed_unchecked() },
+        // SAFETY: untagged unions of `ManuallyDrop<_>` — any bit pattern is
+        // valid storage and is never read before the caller overwrites it.
         data: unsafe { bun_core::ffi::zeroed_unchecked() },
         // Every Zig caller passes `logger.Log.init(allocator)` for this field.
         // `Log` contains `Vec<Msg>` (NonNull invariant) so it cannot be
@@ -182,7 +184,6 @@ impl<'a> Task<'a> {
 
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: data;
-        PackageManifest => data_package_manifest @ package_manifest: npm::PackageManifest;
         GitCheckout     => data_git_checkout     @ git_checkout:     ExtractData, mut data_git_checkout_mut;
     }
 
@@ -207,10 +208,37 @@ impl<'a> Task<'a> {
         // SAFETY: tag-guarded; `Fd` is `Copy`.
         unsafe { *self.data.git_clone }
     }
+
+    pub fn deinit_payload(&mut self) {
+        // SAFETY: `tag` discriminates both unions, set once at enqueue.
+        unsafe {
+            match self.tag {
+                Tag::PackageManifest => {
+                    ManuallyDrop::drop(&mut self.request.package_manifest);
+                    ManuallyDrop::drop(&mut self.data.package_manifest);
+                }
+                Tag::Extract => {
+                    ManuallyDrop::drop(&mut self.request.extract);
+                    ManuallyDrop::drop(&mut self.data.extract);
+                }
+                Tag::GitClone => {
+                    ManuallyDrop::drop(&mut self.request.git_clone);
+                }
+                Tag::GitCheckout => {
+                    ManuallyDrop::drop(&mut self.request.git_checkout);
+                    ManuallyDrop::drop(&mut self.data.git_checkout);
+                }
+                Tag::LocalTarball => {
+                    ManuallyDrop::drop(&mut self.request.local_tarball);
+                    ManuallyDrop::drop(&mut self.data.extract);
+                }
+            }
+        }
+    }
 }
 
 impl<'a> Task<'a> {
-    pub fn callback(task: *mut thread_pool::Task) {
+    pub unsafe fn callback(task: *mut thread_pool::Task) {
         Output::Source::configure_thread();
 
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
@@ -252,7 +280,10 @@ impl<'a> Task<'a> {
 
                     let Some(metadata) = &network.response.metadata else {
                         // Handle the case when metadata is null (e.g., network failure before receiving headers)
-                        let err = network.response.fail.unwrap_or(bun_core::err!("HTTPError"));
+                        let err = network
+                            .response
+                            .fail
+                            .unwrap_or_else(|| bun_core::err!("HTTPError"));
                         this.log.add_error_fmt(
                             None,
                             Loc::EMPTY,
@@ -281,6 +312,8 @@ impl<'a> Task<'a> {
                         ..
                     } = &network.callback
                     else {
+                        // SAFETY: tag == PackageManifest ⇒ the network task was
+                        // built by `NetworkTask::for_manifest` with this variant.
                         unsafe { core::hint::unreachable_unchecked() }
                     };
                     let loaded_manifest = loaded_manifest.clone();
@@ -459,7 +492,7 @@ impl<'a> Task<'a> {
 
                     this.err = None;
                     this.data = Data {
-                        git_clone: ManuallyDrop::new(Fd::from_std_dir(&dir)),
+                        git_clone: ManuallyDrop::new(dir.into_raw()),
                     };
                     this.status = Status::Success;
                 }
@@ -471,7 +504,7 @@ impl<'a> Task<'a> {
                         &mut this.log,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
                         unsafe { &mut *manager }.get_cache_directory(),
-                        bun_sys::Dir::from_fd(git_checkout.repo_dir),
+                        git_checkout.repo_dir,
                         git_checkout.name.slice(),
                         git_checkout.url.slice(),
                         git_checkout.resolved.slice(),
@@ -539,6 +572,8 @@ impl<'a> Task<'a> {
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
+                    // SAFETY: `apply_patch_task` is only ever populated with the
+                    // Apply variant (see `new_apply_patch_hash`).
                     unsafe { core::hint::unreachable_unchecked() }
                 };
                 if apply.logger.errors > 0 {
@@ -550,14 +585,14 @@ impl<'a> Task<'a> {
                 }
             }
         }
+        let task = core::ptr::NonNull::from(this).cast::<Task<'static>>();
         // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
         // a phantom on `&mut NetworkTask` borrows that the queue never reads
         // through); erasing to `'static` matches Zig's lifetime-less queue.
         // `UnboundedQueue::push` takes `&self` (lock-free), so reach it via a
         // shared raw deref — no `&mut PackageManager` is formed.
         unsafe {
-            (*core::ptr::addr_of!((*manager).resolve_tasks))
-                .push(std::ptr::from_mut::<Task<'a>>(this).cast::<Task<'static>>());
+            (*core::ptr::addr_of!((*manager).resolve_tasks)).push(task);
             PackageManager::wake_raw(manager);
         }
 
@@ -610,14 +645,6 @@ pub enum Status {
     Success,
     Fail,
 }
-
-// PORT NOTE: matches Zig — `Task` has no `deinit`; the active `Data`/`Request`
-// payload (`PackageManifest` blob, `ExtractData` paths, `ExtractTarball`
-// name/url) is intentionally leaked per `preallocated_resolve_tasks` put/get
-// cycle (Zig `HiveArray.Fallback.put` is `value.* = undefined` / raw
-// `allocator.destroy`). A Rust `impl Drop for Task` cannot recover this without
-// breaking the `..Task::uninit()` struct-update callers and risking drop of the
-// zeroed-`uninit()` union storage.
 
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
 /// // TODO(port): Phase B — consider folding `Tag` + `Request` + `Data` into a

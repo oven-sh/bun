@@ -16,7 +16,7 @@ pub fn decode<C: Copy, R: ReaderContext>(
     let mut _remaining_bytes = reader.length()?;
     _remaining_bytes = _remaining_bytes.saturating_sub(4);
 
-    let remaining_fields: usize = usize::try_from(reader.short()?.max(0)).expect("int cast");
+    let remaining_fields: usize = usize::from(reader.short()?);
 
     for index in 0..remaining_fields {
         let byte_length = reader.int4()?;

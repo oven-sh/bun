@@ -10,10 +10,10 @@ use crate::jsc::{
 use crate::shared::CachedStructure;
 use bun_boringssl_sys as boringssl;
 use bun_core::strings;
-use bun_core::{TimespecMockMode, err, fmt as bun_fmt, timespec};
+use bun_core::{TimespecMockMode, timespec};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
-use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError, Error as AnyMySQLErrorT};
+use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 use bun_sql::mysql::protocol::new_reader::NewReader;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
@@ -32,8 +32,6 @@ use super::my_sql_statement::MySQLStatement;
 use super::protocol::result_set::{self as ResultSet};
 
 bun_core::declare_scope!(MySQLConnection, visible);
-
-use bun_core::time::NS_PER_MS;
 
 // PORT NOTE: #[bun_jsc::JsClass] proc-macro is not applied because this type
 // already has its `to_js`/`from_js` wired through `crate::jsc::codegen::
@@ -126,10 +124,6 @@ impl JSMySQLConnection {
     #[inline]
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
-    }
-    #[inline]
-    fn vm_ptr(&self) -> *mut VirtualMachine {
-        self.vm.as_ptr()
     }
     /// Short-lived `&mut VirtualMachine` for the few `vm.timer()` callers
     /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
@@ -479,13 +473,12 @@ impl JSMySQLConnection {
         // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
         let arguments = callframe.arguments();
-        let hostname_str = arguments[0].to_bun_string(global_object)?;
-        // defer hostname_str.deref() — Drop on bun_core::String
+        let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
         let port = arguments[1].coerce::<i32>(global_object)?;
 
-        let username_str = arguments[2].to_bun_string(global_object)?;
-        let password_str = arguments[3].to_bun_string(global_object)?;
-        let database_str = arguments[4].to_bun_string(global_object)?;
+        let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
+        let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
+        let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
         // TODO: update this to match MySQL.
         let ssl_mode: SSLMode = match arguments[5].to_int32() {
             0 => SSLMode::Disable,
@@ -527,7 +520,7 @@ impl JSMySQLConnection {
             let mut err = uws::create_bun_socket_error_t::none;
             secure = vm
                 .ssl_ctx_cache()
-                .get_or_create_opts(tls_config.as_usockets_for_client_verification(), &mut err);
+                .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
             if secure.is_none() {
                 drop(tls_config);
                 return Err(
@@ -542,7 +535,7 @@ impl JSMySQLConnection {
         // below. Ownership passes to `MySQLConnection.init` once `Box::new`
         // succeeds — we null the locals at that point so the connect-fail path
         // (which `deref()`s the connection) doesn't double-free.
-        let mut tls_guard = scopeguard::guard((secure, tls_config), |(s, cfg)| {
+        let tls_guard = scopeguard::guard((secure, tls_config), |(s, cfg)| {
             if let Some(s) = s {
                 // SAFETY: secure was created by ssl_ctx_cache; we own one ref until transferred.
                 unsafe { boringssl::SSL_CTX_free(s) };
@@ -550,8 +543,8 @@ impl JSMySQLConnection {
             drop(cfg);
         });
 
-        let options_str = arguments[7].to_bun_string(global_object)?;
-        let path_str = arguments[8].to_bun_string(global_object)?;
+        let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
+        let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
 
         // PORT NOTE: Zig packed all five strings into one `StringBuilder`-owned
         // arena and handed `[]const u8` slices into it to `MySQLConnection.init`.
@@ -588,6 +581,7 @@ impl JSMySQLConnection {
         let use_unnamed_prepared_statements = arguments[14].as_boolean();
         // MySQL doesn't support unnamed prepared statements
         let _ = use_unnamed_prepared_statements;
+        let allow_public_key_retrieval = callframe.argument(15).to_boolean();
 
         // Ownership transferred into `ptr.connection`; disarm the errdefer so the
         // connect-fail `ptr.deref()` is the sole cleanup path from here on.
@@ -608,6 +602,7 @@ impl JSMySQLConnection {
                 tls_config,
                 secure,
                 ssl_mode,
+                allow_public_key_retrieval,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
@@ -655,10 +650,10 @@ impl JSMySQLConnection {
             let socket = match result {
                 Ok(s) => s,
                 Err(e) => {
+                    let _ = this;
                     // SAFETY: `ptr` is the freshly-boxed allocation; sole owner.
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
-                    let _ = this;
                     unsafe { Self::deref(ptr) };
                     return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
                 }
@@ -863,7 +858,7 @@ impl JSMySQLConnection {
             .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
     }
 
-    pub fn on_query_result(&self, request: &JSMySQLQuery, result: MySQLQueryResult) {
+    pub fn on_query_result(&self, request: &JSMySQLQuery, result: &MySQLQueryResult) {
         request.resolve(self.get_queries_array(), result);
     }
 
@@ -969,7 +964,7 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: ErrorPacket) {
+    pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {
                 request.mark_as_failed();

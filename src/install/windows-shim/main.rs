@@ -31,10 +31,10 @@
 #![no_std]
 #![no_main]
 #![allow(
-    unused,
     nonstandard_style,
     ambiguous_glob_reexports,
-    incomplete_features
+    incomplete_features,
+    dead_code
 )]
 #![feature(adt_const_params)]
 

@@ -136,8 +136,10 @@ mod _impl {
                 ));
             }
 
-            let mut stream = Context::default();
-            stream.mode = bun_zlib::NodeMode::from_int(mode_int as u8);
+            let stream = Context {
+                mode: bun_zlib::NodeMode::from_int(mode_int as u8),
+                ..Default::default()
+            };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
                 // JSC_BORROW backref — the global outlives this m_ctx payload.

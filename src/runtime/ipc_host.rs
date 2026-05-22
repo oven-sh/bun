@@ -88,7 +88,7 @@ pub fn do_send(
         global_object.validate_object("options", options_, Default::default())?;
     }
 
-    let connected = ipc.as_ref().map_or(false, |i| i.is_connected());
+    let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
     if !connected {
         let msg = match from {
             FromEnum::Process => "process.send() can only be used if the IPC channel is open.",
@@ -198,7 +198,7 @@ pub fn emit_handle_ipc_message(
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-        unsafe { (*ipc).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
+        unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) };
     } else {
         if !target.is_cell() {
             return Ok(JSValue::UNDEFINED);
@@ -208,7 +208,7 @@ pub fn emit_handle_ipc_message(
         };
         // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS
         // wrapper holds it alive for the call.
-        unsafe { (*subprocess).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
+        unsafe { (*subprocess).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) };
     }
     Ok(JSValue::UNDEFINED)
 }

@@ -110,7 +110,7 @@ fn parse_macros_json(
                 continue;
             };
             let remap_value_str = match &remap_value.data {
-                ExprData::EString(s) if s.len() > 0 => estring_to_owned(&*s, bump),
+                ExprData::EString(s) if s.len() > 0 => estring_to_owned(s, bump),
                 _ => {
                     log.add_warning_fmt(
                         Some(json_source),
@@ -267,9 +267,7 @@ impl<'a> Parser<'a> {
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(1);
-                    preloads.push(estring_to_owned(s, self.bump));
-                    self.ctx.preloads = preloads;
+                    self.ctx.preloads = vec![estring_to_owned(s, self.bump)];
                 }
             }
             ExprData::ENull(_) => {}
@@ -344,8 +342,8 @@ impl<'a> Parser<'a> {
             else {
                 continue;
             };
-            keys.push(estring_to_owned(&*k, self.bump));
-            values.push(estring_to_owned(&*v, self.bump));
+            keys.push(estring_to_owned(k, self.bump));
+            values.push(estring_to_owned(v, self.bump));
         }
         Ok(api::StringMap { keys, values })
     }
@@ -627,7 +625,7 @@ impl<'a> Parser<'a> {
                                     )?;
                                     return Ok(());
                                 }
-                                patterns.push(estring_to_owned(&*s, self.bump));
+                                patterns.push(estring_to_owned(s, self.bump));
                             }
                             self.ctx.test_options.concurrent_test_glob = Some(patterns);
                         }
@@ -662,7 +660,7 @@ impl<'a> Parser<'a> {
                                         )?;
                                         return Ok(());
                                     };
-                                    patterns.push(estring_to_owned(&*s, self.bump));
+                                    patterns.push(estring_to_owned(s, self.bump));
                                 }
                                 self.ctx.test_options.coverage.ignore_patterns = patterns;
                             }
@@ -702,7 +700,7 @@ impl<'a> Parser<'a> {
                                         )?;
                                         return Ok(());
                                     };
-                                    patterns.push(estring_to_owned(&*s, self.bump));
+                                    patterns.push(estring_to_owned(s, self.bump));
                                 }
                                 self.ctx.test_options.path_ignore_patterns = patterns;
                             }
@@ -933,7 +931,7 @@ impl<'a> Parser<'a> {
                         let ExprData::EString(k) = &key_expr.data else {
                             continue;
                         };
-                        let path = estring_to_owned(&*k, self.bump);
+                        let path = estring_to_owned(k, self.bump);
 
                         if !bun_resolver::is_package_path(&path) {
                             self.add_error(key_expr.loc, b"Expected package name")?;
@@ -996,17 +994,7 @@ impl<'a> Parser<'a> {
             }
         }
         {
-            if self.ctx.args.jsx.is_none() {
-                self.ctx.args.jsx = Some(api::Jsx {
-                    factory: jsx_factory,
-                    fragment: jsx_fragment,
-                    import_source: jsx_import_source,
-                    runtime: jsx_runtime,
-                    development: jsx_dev,
-                    ..Default::default()
-                });
-            } else {
-                let jsx: &mut api::Jsx = self.ctx.args.jsx.as_mut().unwrap();
+            if let Some(jsx) = self.ctx.args.jsx.as_mut() {
                 if !jsx_factory.is_empty() {
                     jsx.factory = jsx_factory;
                 }
@@ -1018,6 +1006,15 @@ impl<'a> Parser<'a> {
                 }
                 jsx.runtime = jsx_runtime;
                 jsx.development = jsx_dev;
+            } else {
+                self.ctx.args.jsx = Some(api::Jsx {
+                    factory: jsx_factory,
+                    fragment: jsx_fragment,
+                    import_source: jsx_import_source,
+                    runtime: jsx_runtime,
+                    development: jsx_dev,
+                    ..Default::default()
+                });
             }
         }
 
@@ -1031,7 +1028,7 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = json.get(b"macros") {
             if let ExprData::EBoolean(b) = expr.data {
-                if b.value == false {
+                if !b.value {
                     self.ctx.debug.macros = MacroOptions::Disable;
                 }
             } else {
@@ -1117,6 +1114,9 @@ impl Bunfig {
         // (Parser later needs `&mut ctx` alongside `&mut log`).
         let log_ptr: *mut bun_ast::Log = ctx.log;
         debug_assert!(!log_ptr.is_null());
+        // SAFETY: `log_ptr` is non-null (asserted above) and points to the Log
+        // owned by single-threaded CLI startup; Parser only touches the log via
+        // this borrow (never via `ctx.log`), so the `&mut` is exclusive.
         let log: &mut bun_ast::Log = unsafe { &mut *log_ptr };
         let log_count = log.errors + log.warnings;
 
@@ -1128,7 +1128,7 @@ impl Bunfig {
         // Zig. Parsed config lives for the process lifetime either way.
         let bump = Bump::borrowing_default();
 
-        let ext = source.path.name.ext;
+        let ext = source.path.name().ext;
         // Zig: `if (strings.eqlComptime(source.path.name.ext[1..], "toml"))`
         let is_toml = ext.len() > 1 && &ext[1..] == b"toml";
 
@@ -1342,7 +1342,7 @@ impl<'a> Parser<'a> {
                 }
                 let name = if name_[0] == b'@' { &name_[1..] } else { name_ };
                 let registry = self.parse_registry(value)?;
-                registry_map.scopes.insert(name.into(), registry);
+                registry_map.scopes.insert(name, registry);
             }
             install.scoped = Some(registry_map);
         }
@@ -1529,7 +1529,7 @@ impl<'a> Parser<'a> {
                             self.bump,
                         ));
                     }
-                    install.minimum_release_age_excludes = Some(list.into());
+                    install.minimum_release_age_excludes = Some(list);
                 }
                 _ => {
                     self.add_error(

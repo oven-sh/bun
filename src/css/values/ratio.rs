@@ -35,11 +35,11 @@ impl Ratio {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        CSSNumberFns::to_css(&self.numerator, dest)?;
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        CSSNumberFns::to_css(self.numerator, dest)?;
         if self.denominator != 1.0 {
             dest.delim(b'/', true)?;
-            CSSNumberFns::to_css(&self.denominator, dest)?;
+            CSSNumberFns::to_css(self.denominator, dest)?;
         }
         Ok(())
     }
@@ -52,7 +52,7 @@ impl Ratio {
         }
     }
 
-    pub fn eql(&self, rhs: &Self) -> bool {
+    pub fn eql(self, rhs: Self) -> bool {
         // Zig: css.implementEql(@This(), lhs, rhs) — field-wise equality via reflection.
         // Rust: covered by #[derive(PartialEq)].
         self == rhs

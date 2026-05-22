@@ -1,7 +1,6 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //!
 //! Ported from `src/css/properties/custom.zig`.
-use bun_collections::VecExt;
 //
 // `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
@@ -347,8 +346,7 @@ impl TokenList {
                         && !url.is_absolute(dest.get_import_records()?)
                     {
                         let pretty = std::ptr::from_ref::<[u8]>(
-                            dest.get_import_records()?
-                                .at(url.import_record_idx as usize)
+                            dest.get_import_records()?[url.import_record_idx as usize]
                                 .path
                                 .pretty,
                         );
@@ -428,7 +426,7 @@ impl TokenList {
                         has_whitespace = false;
                     }
                     Token::Number(v) => {
-                        CSSNumberFns::to_css(&v.value, dest)?;
+                        CSSNumberFns::to_css(v.value, dest)?;
                         has_whitespace = false;
                     }
                     _ => {
@@ -744,7 +742,7 @@ impl TokenList {
     pub fn get_fallbacks(
         &mut self,
         bump: &Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
     ) -> css::SmallList<Fallbacks, 2> {
         // Get the full list of possible fallbacks, and remove the lowest one, which will replace
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
@@ -796,7 +794,7 @@ impl TokenList {
         res
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         for token_or_value in self.v.iter() {
             match token_or_value {
@@ -910,7 +908,7 @@ impl UnresolvedColor {
                     .should_compile_same(css::compat::Feature::SpaceSeparatedColorNotation)
                 {
                     dest.write_str("hsla(")?;
-                    CSSNumberFns::to_css(h, dest)?;
+                    CSSNumberFns::to_css(*h, dest)?;
                     dest.delim(b',', false)?;
                     Percentage { v: *s }.to_css(dest)?;
                     dest.delim(b',', false)?;
@@ -922,7 +920,7 @@ impl UnresolvedColor {
                 }
 
                 dest.write_str("hsl(")?;
-                CSSNumberFns::to_css(h, dest)?;
+                CSSNumberFns::to_css(*h, dest)?;
                 dest.write_char(b' ')?;
                 Percentage { v: *s }.to_css(dest)?;
                 dest.write_char(b' ')?;
@@ -1002,13 +1000,13 @@ impl UnresolvedColor {
     }
 
     pub fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {
-        let mut lightlist: Vec<TokenOrValue> = Vec::with_capacity(1);
-        lightlist.push(TokenOrValue::UnresolvedColor(light));
-        let mut darklist: Vec<TokenOrValue> = Vec::with_capacity(1);
-        darklist.push(TokenOrValue::UnresolvedColor(dark));
         UnresolvedColor::LightDark {
-            light: TokenList { v: lightlist },
-            dark: TokenList { v: darklist },
+            light: TokenList {
+                v: vec![TokenOrValue::UnresolvedColor(light)],
+            },
+            dark: TokenList {
+                v: vec![TokenOrValue::UnresolvedColor(dark)],
+            },
         }
     }
 }
@@ -1139,7 +1137,7 @@ impl EnvironmentVariable {
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         EnvironmentVariable {
-            name: self.name.clone(),
+            name: self.name,
             indices: self.indices.clone(),
             fallback: self
                 .fallback
@@ -1230,12 +1228,12 @@ pub enum UAEnvironmentVariable {
 // hash — via `#[derive(CssHash)]` (the derive emits UFCS, so no inherent shim needed).
 impl UAEnvironmentVariable {
     #[inline]
-    pub fn eql(&self, other: &Self) -> bool {
-        *self == *other
+    pub fn eql(self, other: Self) -> bool {
+        self == other
     }
     #[inline]
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        *self
+    pub fn deep_clone(self, _bump: &Arena) -> Self {
+        self
     }
 }
 
@@ -1368,7 +1366,7 @@ impl Clone for TokenOrValue {
             TokenOrValue::Time(v) => TokenOrValue::Time(*v),
             TokenOrValue::Resolution(v) => TokenOrValue::Resolution(*v),
             TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(*v),
-            TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(v.clone()),
+            TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(*v),
         }
     }
 }
@@ -1461,7 +1459,7 @@ impl UnparsedProperty {
     pub fn get_prefixed(
         &self,
         bump: &Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
         feature: css::prefixes::Feature,
     ) -> UnparsedProperty {
         let mut clone = self.deep_clone(bump);

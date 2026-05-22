@@ -15,7 +15,7 @@ use bun_windows_sys as windows;
 use bun_windows_sys::externs;
 
 use crate as bun_sys;
-use crate::{E, Fd, FdExt, MaybeExt, SystemErrno};
+use crate::{E, Fd, MaybeExt, SystemErrno};
 
 pub use bun_windows_sys::externs::SetFilePointerEx;
 pub use bun_windows_sys::kernel32::GetLastError;
@@ -29,8 +29,7 @@ pub use bun_windows_sys::ws2_32;
 pub mod kernel32 {
     use super::{
         BOOL, CONDITION_VARIABLE, DWORD, FileNotifyChangeFilter, HANDLE, LPCWSTR, LPOVERLAPPED,
-        LPOVERLAPPED_COMPLETION_ROUTINE, LPVOID, LPWSTR, OVERLAPPED, PWSTR, SRWLOCK, ULONG,
-        ULONG_PTR,
+        LPOVERLAPPED_COMPLETION_ROUTINE, OVERLAPPED, SRWLOCK, ULONG, ULONG_PTR,
     };
     pub use bun_windows_sys::externs::SetEndOfFile;
     pub use bun_windows_sys::externs::{GetConsoleMode, GetExitCodeProcess, SetConsoleMode};
@@ -464,7 +463,6 @@ impl Win32ErrorUnwrap for Win32Error {
 #[cfg(any())]
 mod _win32error_full_table {
     use super::Win32Error;
-    #[allow(dead_code)]
     impl Win32Error {
         /// The operation completed successfully.
         pub const SUCCESS: Win32Error = Win32Error(0);
@@ -3773,8 +3771,6 @@ impl Default for DeleteFileOptions {
 
 const FILE_DISPOSITION_DELETE: ULONG = 0x00000001;
 const FILE_DISPOSITION_POSIX_SEMANTICS: ULONG = 0x00000002;
-const FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK: ULONG = 0x00000004;
-const FILE_DISPOSITION_ON_CLOSE: ULONG = 0x00000008;
 const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: ULONG = 0x00000010;
 
 // Copy-paste of the standard library function except without unreachable.
@@ -4023,7 +4019,7 @@ pub enum Subsystem {
 }
 
 pub fn edit_win32_binary_subsystem(
-    fd: bun_sys::File,
+    fd: &bun_sys::File,
     subsystem: Subsystem,
 ) -> Result<(), bun_core::Error> {
     const _: () = assert!(cfg!(windows));
@@ -4690,7 +4686,9 @@ pub fn move_opened_file_at(
     const STRUCT_BUF_LEN: usize =
         size_of::<win32::FILE_RENAME_INFORMATION_EX>() + (bun_paths::PATH_MAX_WIDE * 2 - 1);
     #[repr(align(8))] // align_of FILE_RENAME_INFORMATION_EX
-    struct AlignedBuf([u8; STRUCT_BUF_LEN]);
+    struct AlignedBuf {
+        _buf: [u8; STRUCT_BUF_LEN],
+    }
     let mut rename_info_buf = MaybeUninit::<AlignedBuf>::uninit();
 
     let struct_len = size_of::<win32::FILE_RENAME_INFORMATION_EX>() - 1 + new_file_name.len() * 2;

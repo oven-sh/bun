@@ -210,14 +210,14 @@ unsafe impl Send for HpackHandle {}
 // pointer type is safe; `free` retains a caller contract because `mi_free`
 // requires "ptr is mimalloc-owned or null" — discharged by the C wrapper,
 // not by Rust's type system.
-type lshpack_wrapper_alloc = extern "C" fn(size: usize) -> *mut c_void;
-type lshpack_wrapper_free = unsafe extern "C" fn(ptr: *mut c_void);
+type LshpackWrapperAlloc = extern "C" fn(size: usize) -> *mut c_void;
+type LshpackWrapperFree = unsafe extern "C" fn(ptr: *mut c_void);
 
 // TODO(port): move to bun_http_sys
 unsafe extern "C" {
     safe fn lshpack_wrapper_init(
-        alloc: lshpack_wrapper_alloc,
-        free: lshpack_wrapper_free,
+        alloc: LshpackWrapperAlloc,
+        free: LshpackWrapperFree,
         capacity: usize,
     ) -> *mut HPACK;
     // Only precondition is a valid non-null `*HPACK`; `&mut HPACK` (ABI-identical

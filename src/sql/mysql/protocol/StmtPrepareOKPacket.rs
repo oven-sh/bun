@@ -1,5 +1,6 @@
 use super::new_reader::{NewReader, ReaderContext};
 
+#[derive(Default)]
 pub struct StmtPrepareOKPacket {
     pub status: u8,
     pub statement_id: u32,
@@ -8,20 +9,6 @@ pub struct StmtPrepareOKPacket {
     pub warning_count: u16,
     // TODO(port): Zig type is u24; Rust has no native u24. Value is bounded to 24 bits.
     pub packet_length: u32,
-}
-
-impl Default for StmtPrepareOKPacket {
-    fn default() -> Self {
-        Self {
-            status: 0,
-            statement_id: 0,
-            num_columns: 0,
-            num_params: 0,
-            warning_count: 0,
-            // packet_length has no default in Zig; caller must set it before decode.
-            packet_length: 0,
-        }
-    }
 }
 
 impl StmtPrepareOKPacket {

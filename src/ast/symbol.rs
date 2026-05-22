@@ -1,8 +1,6 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 
-use bun_collections::VecExt;
-
 use crate::ImportItemStatus;
 use crate::base::Ref;
 use crate::g as G;
@@ -388,8 +386,12 @@ pub struct Use {
     pub count_estimate: u32,
 }
 
-pub type List = Vec<Symbol>;
-pub type NestedList = Vec<List>;
+pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
+/// `Map.symbols_for_source` storage. Decoupled from [`List`] (which is
+/// arena-backed): the linker clones every per-source symbol table here so it
+/// can mutate them independently of the parsed `BundledAst.symbols`, and those
+/// clones are owned for the link lifetime — global allocator, no arena tag.
+pub type NestedList = Vec<Vec<Symbol>>;
 
 impl Symbol {
     pub fn merge_contents_with(&mut self, old: &mut Symbol) {
@@ -418,9 +420,9 @@ pub struct Map {
 impl Map {
     // Debug-only dump of the symbol table.
     pub fn dump(&self) {
-        for (i, symbols) in self.symbols_for_source.slice().iter().enumerate() {
+        for (i, symbols) in self.symbols_for_source.iter().enumerate() {
             bun_core::prettyln!("\n\n-- Source ID: {} ({} symbols) --\n", i, symbols.len(),);
-            for (inner_index, symbol) in symbols.slice().iter().enumerate() {
+            for (inner_index, symbol) in symbols.iter().enumerate() {
                 let display_ref = if symbol.has_link() {
                     symbol.link.get()
                 } else {
@@ -517,12 +519,12 @@ impl Map {
         self.get_const(old).unwrap().link.set(new);
         // `merge_contents_with` mutates non-Cell fields (use_count_estimate,
         // must_not_be_renamed, original_name) on `new` while reading `old`.
+        let old_symbol = self.get(old).unwrap();
+        let new_symbol = self.get(new).unwrap();
         // SAFETY: `old != new` (checked above) so the two slots are disjoint
         // elements of the NestedList; `get()` derives `*mut` from Vec's raw
         // `NonNull` (write provenance preserved). Neither `&mut` outlives this
         // block (cf. split_at_mut).
-        let old_symbol = self.get(old).unwrap();
-        let new_symbol = self.get(new).unwrap();
         unsafe {
             (&mut *new_symbol).merge_contents_with(&mut *old_symbol);
         }
@@ -550,7 +552,7 @@ impl Map {
         // SAFETY: src in-bounds (parser-produced ref); raw-ptr field read — no `&` to the
         // element is created. idx in-bounds of the inner list.
         unsafe {
-            let inner: *mut List = self.symbols_for_source.as_ptr().cast_mut().add(src);
+            let inner: *mut Vec<Symbol> = self.symbols_for_source.as_ptr().cast_mut().add(src);
             debug_assert!(idx < (*inner).len());
             Some((*inner).as_mut_ptr().add(idx))
         }
@@ -585,11 +587,10 @@ impl Map {
 
     pub fn init(source_count: usize) -> Map {
         // Zig: `arena.alloc([]Symbol, sourceCount)` (default_allocator) then NestedList.init.
-        // Per PORTING.md §Allocators (non-arena path), use Vec → Vec.
-        let mut v: Vec<List> = Vec::with_capacity(source_count);
-        v.resize_with(source_count, List::default);
+        let mut v: NestedList = Vec::with_capacity(source_count);
+        v.resize_with(source_count, Vec::new);
         Map {
-            symbols_for_source: NestedList::move_from_list(v),
+            symbols_for_source: v,
         }
     }
 
@@ -598,8 +599,10 @@ impl Map {
     // box it into a one-element NestedList instead.
     // PERF(port): one extra allocation vs Zig — profile (single
     // caller is the printer one-shot, cold).
-    pub fn init_with_one_list(list: List) -> Map {
-        Self::init_list(NestedList::move_from_list(vec![list]))
+    // OWNERSHIP: returned `Map` is *owned*; the `Vec<List>` allocated here leaks if a
+    // consumer parks it in `ManuallyDrop` (e.g. renamer.rs `MinifyRenamer.symbols`).
+    pub fn init_with_one_list(list: Vec<Symbol>) -> Map {
+        Self::init_list(vec![list])
     }
 
     pub fn init_list(list: NestedList) -> Map {
@@ -645,8 +648,8 @@ impl Map {
         // `link` is `Cell<Ref>`, so we can iterate the table by shared ref and
         // mutate `link` in place; `follow()` only takes `&self` and only touches
         // `link`, so the nested shared borrows coexist.
-        for symbols in self.symbols_for_source.slice().iter() {
-            for symbol in symbols.slice().iter() {
+        for symbols in self.symbols_for_source.iter() {
+            for symbol in symbols.iter() {
                 if !symbol.has_link() {
                     continue;
                 }
@@ -688,10 +691,10 @@ impl Map {
         // such refs satisfy the in-bounds contract (see `get_const`):
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
         // never `SourceContentsSlice` and never the null source sentinel.
-        let outer = self.symbols_for_source.slice();
+        let outer = self.symbols_for_source.as_slice();
         let lookup = |r: Ref| -> &Symbol {
             debug_assert!(!r.is_source_contents_slice());
-            &outer[r.source_index() as usize].slice()[r.inner_index() as usize]
+            &outer[r.source_index() as usize][r.inner_index() as usize]
         };
 
         let mut root = link;

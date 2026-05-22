@@ -19,6 +19,9 @@ pub struct MaxHeapAllocator {
 // SAFETY: `MaxHeapAllocator` owns its buffer exclusively; no interior shared
 // state. Same Send/Sync story as `Vec<u8>`.
 unsafe impl Send for MaxHeapAllocator {}
+// SAFETY: `&MaxHeapAllocator` exposes no interior mutability — the raw `ptr`
+// is only dereferenced via `&mut self` methods, so sharing `&Self` across
+// threads cannot race on the buffer. Same `Sync` story as `Vec<u8>`.
 unsafe impl Sync for MaxHeapAllocator {}
 
 impl MaxHeapAllocator {

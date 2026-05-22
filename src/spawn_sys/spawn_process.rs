@@ -14,10 +14,9 @@ use core::sync::atomic::Ordering;
 use bun_core::Output;
 use bun_sys::{self, Fd, FdExt as _};
 
-#[allow(unused_imports)]
+#[cfg(not(windows))]
 use crate::posix_spawn::posix_spawn;
 #[cfg(unix)]
-#[allow(unused_imports)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
 
 #[cfg(unix)]
@@ -179,9 +178,11 @@ pub trait RusageFields {
 
 #[cfg(unix)]
 impl RusageFields for libc::rusage {
+    // `tv_sec`/`tv_usec` are `i64` on linux but `i32` on darwin (`suseconds_t`);
+    // the `as i64` is required for the latter and a no-op on the former.
     #[inline]
     fn utime_sec(&self) -> i64 {
-        self.ru_utime.tv_sec as i64
+        self.ru_utime.tv_sec
     }
     #[inline]
     fn utime_usec(&self) -> i64 {
@@ -189,7 +190,7 @@ impl RusageFields for libc::rusage {
     }
     #[inline]
     fn stime_sec(&self) -> i64 {
-        self.ru_stime.tv_sec as i64
+        self.ru_stime.tv_sec
     }
     #[inline]
     fn stime_usec(&self) -> i64 {
@@ -436,6 +437,7 @@ impl PosixStdio {
     }
 }
 
+#[derive(Default)]
 pub struct PosixSpawnResult {
     pub pid: PidT,
     pub pidfd: Option<PidFdType>,
@@ -447,22 +449,6 @@ pub struct PosixSpawnResult {
     pub memfds: [bool; 3],
     // ESRCH can happen when requesting the pidfd
     pub has_exited: bool,
-}
-
-impl Default for PosixSpawnResult {
-    fn default() -> Self {
-        Self {
-            pid: 0,
-            pidfd: None,
-            stdin: None,
-            stdout: None,
-            stderr: None,
-            ipc: None,
-            extra_pipes: Vec::new(),
-            memfds: [false, false, false],
-            has_exited: false,
-        }
-    }
 }
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
@@ -593,38 +579,6 @@ pub const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEF
 #[cfg(target_os = "macos")]
 pub const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
-/// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
-/// Replaces the Zig `defer if (fd != .invalid) fd.close()` pattern; [`Fd`]
-/// itself is `Copy` (a thin handle) and so cannot impl `Drop`.
-#[cfg(unix)]
-struct AutoCloseFd(Fd);
-
-#[cfg(unix)]
-impl AutoCloseFd {
-    #[inline]
-    const fn new(fd: Fd) -> Self {
-        Self(fd)
-    }
-    #[inline]
-    const fn invalid() -> Self {
-        Self(Fd::INVALID)
-    }
-    /// Borrow the inner handle (`Fd` is `Copy`).
-    #[inline]
-    fn fd(&self) -> Fd {
-        self.0
-    }
-}
-
-#[cfg(unix)]
-impl Drop for AutoCloseFd {
-    fn drop(&mut self) {
-        if self.0 != Fd::INVALID {
-            self.0.close();
-        }
-    }
-}
-
 /// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
 /// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`
 /// runs on *every* exit (set CLOEXEC on `to_set_cloexec`, then close
@@ -667,8 +621,13 @@ impl Drop for PosixSpawnFdGuard {
     }
 }
 
+/// # Safety
+/// `argv` must point to a null-terminated array of NUL-terminated C strings
+/// with at least one non-null element (`argv[0]`); `envp` must point to a
+/// null-terminated array of NUL-terminated C strings. Both must remain valid
+/// for the duration of the call.
 #[cfg(unix)]
-pub fn spawn_process_posix(
+pub unsafe fn spawn_process_posix(
     options: &PosixSpawnOptions,
     argv: Argv,
     envp: Envp,
@@ -684,47 +643,50 @@ pub fn spawn_process_posix(
     // but not for Android. Bionic's `<spawn.h>` uses the same values as glibc
     // (`0x04`/`0x08`) — they're POSIX-mandated bit flags, not OS-specific.
     #[cfg(not(target_os = "android"))]
-    let (setsigdef, setsigmask) = (
-        libc::POSIX_SPAWN_SETSIGDEF as i32,
-        libc::POSIX_SPAWN_SETSIGMASK as i32,
-    );
+    let (setsigdef, setsigmask) = (libc::POSIX_SPAWN_SETSIGDEF, libc::POSIX_SPAWN_SETSIGMASK);
     #[cfg(target_os = "android")]
     let (setsigdef, setsigmask) = (0x04_i32, 0x08_i32);
-    let mut flags: i32 = setsigdef | setsigmask;
+    let flags: i32 = {
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        let mut f: i32 = setsigdef | setsigmask;
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        let f: i32 = setsigdef | setsigmask;
 
-    #[cfg(target_os = "macos")]
-    {
-        flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
-
-        if options.use_execve_on_macos {
-            flags |= POSIX_SPAWN_SETEXEC;
-
-            if matches!(options.stdin, PosixStdio::Buffer)
-                || matches!(options.stdout, PosixStdio::Buffer)
-                || matches!(options.stderr, PosixStdio::Buffer)
-            {
-                Output::panic(format_args!(
-                    "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
-                ));
-            }
-        }
-    }
-
-    if options.detached {
-        // TODO(port): @hasDecl check — assume present on platforms that define it.
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
-            // the libc crate only exposes it for `target_os = "linux"`.
-            flags |= 0x80;
-        }
         #[cfg(target_os = "macos")]
         {
-            // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
-            flags |= 0x0400;
+            f |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+
+            if options.use_execve_on_macos {
+                f |= POSIX_SPAWN_SETEXEC;
+
+                if matches!(options.stdin, PosixStdio::Buffer)
+                    || matches!(options.stdout, PosixStdio::Buffer)
+                    || matches!(options.stderr, PosixStdio::Buffer)
+                {
+                    Output::panic(format_args!(
+                        "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
+                    ));
+                }
+            }
         }
-        attr.detached = true;
-    }
+
+        if options.detached {
+            // TODO(port): @hasDecl check — assume present on platforms that define it.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
+                // the libc crate only exposes it for `target_os = "linux"`.
+                f |= 0x80;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
+                f |= 0x0400;
+            }
+            attr.detached = true;
+        }
+        f
+    };
 
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;

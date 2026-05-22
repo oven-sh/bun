@@ -27,7 +27,7 @@ impl Percentage {
         Ok(Percentage { v: percent })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let x = self.v * 100.0;
         let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
             // PORT NOTE: Rust `as` saturates on overflow/NaN where Zig is UB.
@@ -52,9 +52,9 @@ impl Percentage {
             let buf = fbs.get_written();
             if self.v < 0.0 {
                 dest.write_char(b'-')?;
-                dest.write_str(bun_core::strings::trim_leading_pattern2(&buf, b'-', b'0'))?;
+                dest.write_str(bun_core::strings::trim_leading_pattern2(buf, b'-', b'0'))?;
             } else {
-                dest.write_str(bun_core::trim_leading_char(&buf, b'0'))?;
+                dest.write_str(bun_core::trim_leading_char(buf, b'0'))?;
             }
             Ok(())
         } else {
@@ -63,7 +63,7 @@ impl Percentage {
     }
 
     #[inline]
-    pub fn eql(&self, other: &Percentage) -> bool {
+    pub fn eql(self, other: Percentage) -> bool {
         self.v == other.v
     }
 
@@ -84,27 +84,27 @@ impl Percentage {
         Percentage { v: self.v * other }
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub fn is_zero(self) -> bool {
         self.v == 0.0
     }
 
-    pub fn sign(&self) -> f32 {
+    pub fn sign(self) -> f32 {
         css::signfns::sign_f32(self.v)
     }
 
-    pub fn try_sign(&self) -> Option<f32> {
+    pub fn try_sign(self) -> Option<f32> {
         Some(self.sign())
     }
 
-    pub fn partial_cmp(&self, other: &Percentage) -> Option<Ordering> {
-        crate::generic::partial_cmp_f32(&self.v, &other.v)
+    pub fn partial_cmp(self, other: Percentage) -> Option<Ordering> {
+        crate::generic::partial_cmp_f32(self.v, other.v)
     }
 
     pub fn try_from_angle(_: Angle) -> Option<Percentage> {
         None
     }
 
-    pub fn try_map(&self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
+    pub fn try_map(self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
         // Percentages cannot be mapped because we don't know what they will resolve to.
         // For example, they might be positive or negative depending on what they are a
         // percentage of, which we don't know.
@@ -112,8 +112,8 @@ impl Percentage {
     }
 
     pub fn op<C>(
-        &self,
-        other: &Percentage,
+        self,
+        other: Percentage,
         ctx: C,
         op_fn: impl Fn(C, f32, f32) -> f32,
     ) -> Percentage {
@@ -122,13 +122,13 @@ impl Percentage {
         }
     }
 
-    pub fn op_to<R, C>(&self, other: &Percentage, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> R {
+    pub fn op_to<R, C>(self, other: Percentage, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> R {
         op_fn(ctx, self.v, other.v)
     }
 
     pub fn try_op<C>(
-        &self,
-        other: &Percentage,
+        self,
+        other: Percentage,
         ctx: C,
         op_fn: impl Fn(C, f32, f32) -> f32,
     ) -> Option<Percentage> {
@@ -164,7 +164,7 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a == b,
-            (Self::Percentage(a), Self::Percentage(b)) => a.eql(b),
+            (Self::Percentage(a), Self::Percentage(b)) => a.eql(*b),
             (Self::Calc(a), Self::Calc(b)) => **a == **b,
             _ => false,
         }
@@ -217,7 +217,7 @@ where
         }
     }
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::IsCompatible,
@@ -477,7 +477,7 @@ where
     {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a.partial_cmp(b),
-            (Self::Percentage(a), Self::Percentage(b)) => a.partial_cmp(b),
+            (Self::Percentage(a), Self::Percentage(b)) => Percentage::partial_cmp(*a, *b),
             _ => None,
         }
     }
@@ -580,7 +580,7 @@ impl NumberOrPercentage {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(n, dest),
+            NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(*n, dest),
             NumberOrPercentage::Percentage(p) => p.to_css(dest),
         }
     }

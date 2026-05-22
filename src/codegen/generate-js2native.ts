@@ -355,6 +355,7 @@ export function getJS2NativeRust() {
     `// Calling convention: \`jsc.conv\` is plain \`extern "C"\` on every target except`,
     `// Windows-x64 (\`extern "sysv64"\`); see generated_classes.rs for the same note.`,
     ``,
+    `#[allow(unused_imports)] // emitted for thunk shapes that vary per build`,
     `use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};`,
     ``,
     ...thunks,

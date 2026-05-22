@@ -128,6 +128,8 @@ impl StringArrayJsc for [BunString] {
                 len: usize,
             ) -> JSValue;
         }
+        // SAFETY: `self` is a live slice, so `self.as_ptr()` is valid for `self.len()`
+        // reads of `BunString` for the duration of the FFI call.
         crate::host_fn::from_js_host_call(global, || unsafe {
             BunString__createArray(global, self.as_ptr(), self.len())
         })

@@ -45,7 +45,7 @@ use bun_js_printer::Encoding;
 use bun_paths::resolve_path::relative_normalized;
 use bun_resolver::fs::FileSystem;
 
-use crate::Graph::{Graph, InputFileColumns as _};
+use crate::Graph::Graph;
 use crate::chunk::{Content, Flags};
 use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
@@ -56,9 +56,9 @@ use crate::{BundleV2, Chunk, LinkerGraph};
 #[derive(Clone, Copy)]
 pub struct HTMLImportManifest<'a> {
     pub index: u32,
-    pub graph: &'a Graph,
+    pub graph: &'a Graph<'a>,
     pub chunks: &'a [Chunk],
-    pub linker_graph: &'a LinkerGraph,
+    pub linker_graph: &'a LinkerGraph<'a>,
 }
 
 impl<'a> fmt::Display for HTMLImportManifest<'a> {
@@ -134,7 +134,7 @@ fn write_entry_item<W: Write + ?Sized>(
 pub fn write_escaped_json<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
-    linker_graph: &LinkerGraph,
+    linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
     writer: &mut W,
 ) -> Result<(), bun_core::Error> {
@@ -178,7 +178,7 @@ impl<'a> HTMLImportManifest<'a> {
 pub fn write<W: Write + ?Sized>(
     index: u32,
     graph: &Graph,
-    linker_graph: &LinkerGraph,
+    linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
     writer: &mut W,
 ) -> Result<(), bun_core::Error> {

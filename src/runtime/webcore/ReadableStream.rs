@@ -6,11 +6,10 @@ use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use bun_sys as syscall;
 
 use crate::webcore::streams;
-#[allow(unused_imports)]
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
 
 #[derive(Copy, Clone)]
@@ -125,7 +124,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         reason: JSValue,
     );
-    safe fn ReadableStream__abort(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
     safe fn ZigGlobalObject__createNativeReadableStream(
         global: &JSGlobalObject,
@@ -227,7 +225,9 @@ impl ReadableStream {
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
             Source::Blob(source) => unsafe { (*(*source).parent()).cancel() },
+            // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
             Source::File(source) => unsafe { (*(*source).parent()).cancel() },
+            // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
             Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
             _ => {}
         }
@@ -357,8 +357,6 @@ impl ReadableStream {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
-                        // SAFETY: bun_vm() returns a non-null *mut VirtualMachine; event_loop()
-                        // returns a non-null *mut EventLoop. Both outlive this call.
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
                         )),
@@ -420,7 +418,6 @@ impl ReadableStream {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_ptr::BackRef::new(global_this)),
                     context: FileReader {
-                        // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
                         )),
@@ -447,7 +444,6 @@ impl ReadableStream {
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             context: FileReader {
-                // SAFETY: bun_vm()/event_loop() return non-null ptrs that outlive this call.
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
                     global_this.bun_vm().as_mut().event_loop().cast(),
                 )),
@@ -624,6 +620,10 @@ pub trait SourceContext: Sized {
     /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
     /// here would deallocate the storage backing the live `&mut self` borrow (UAF).
     fn deinit_fn(&mut self);
+
+    fn finalize_detach(&mut self) -> bool {
+        false
+    }
 
     /// `setRefUnrefFn` — default no-op (Zig: `?fn`, null ⇒ ref/unref are no-ops).
     fn set_ref_unref(&mut self, _enable: bool) {}
@@ -1203,6 +1203,11 @@ impl<C: SourceContext> NewSource<C> {
         let this = Box::into_raw(self);
         // SAFETY: `this` is live — just unwrapped from `Box`.
         unsafe { (*this).this_jsvalue = JSValue::ZERO };
+        // SAFETY: `this` is live; the JS-wrapper ref below still pins the count.
+        if unsafe { (*this).context.finalize_detach() } {
+            // SAFETY: `this` is live; the JS-wrapper +1 (released below) keeps ref_count > 0.
+            let _ = unsafe { Self::decrement_count(this) };
+        }
         // SAFETY: `this` came from `Box::into_raw`; not accessed after.
         let _ = unsafe { Self::decrement_count(this) };
     }
@@ -1220,7 +1225,7 @@ impl<C: SourceContext> NewSource<C> {
             // `Vec::Drop` so the same allocation isn't freed twice (once
             // here on scope exit, once by the GC). Mirrors `streams::Start::to_js`.
             let ab = jsc::ArrayBuffer::from_bytes(list.slice_mut(), jsc::JSType::Uint8Array);
-            core::mem::forget(list);
+            let _ = core::mem::ManuallyDrop::new(list);
             return ab.to_js(global_this);
         }
         Ok(JSValue::UNDEFINED)

@@ -442,8 +442,6 @@ struct Components {
 
 struct ParseStackEntry {
     children: JSValue,
-    block_type: Option<md::BlockType>,
-    span_type: Option<md::SpanType>,
     data: u32,
     flags: u32,
     // PORT NOTE: `SpanDetail` borrows from `src_text`; the `RendererImpl`
@@ -457,8 +455,6 @@ impl Default for ParseStackEntry {
     fn default() -> Self {
         Self {
             children: JSValue::ZERO,
-            block_type: None,
-            span_type: None,
             data: 0,
             flags: 0,
             detail: md::SpanDetail::default(),
@@ -524,7 +520,6 @@ impl<'a> ParseRenderer<'a> {
         self_.marked_args.append(root_array);
         self_.stack.push(ParseStackEntry {
             children: root_array,
-            block_type: Some(md::BlockType::Doc),
             ..Default::default()
         });
         Ok(self_)
@@ -651,7 +646,6 @@ impl<'a> ParseRenderer<'a> {
         self.marked_args.append(array);
         self.stack.push(ParseStackEntry {
             children: array,
-            block_type: Some(block_type),
             data,
             flags,
             ..Default::default()
@@ -860,19 +854,19 @@ impl<'a> ParseRenderer<'a> {
         // Set metadata props
         match span_type {
             md::SpanType::A => {
-                props.put(g, b"href", create_utf8_for_js(g, &entry.detail.href)?);
+                props.put(g, b"href", create_utf8_for_js(g, entry.detail.href)?);
                 if !entry.detail.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, &entry.detail.title)?);
+                    props.put(g, b"title", create_utf8_for_js(g, entry.detail.title)?);
                 }
             }
             md::SpanType::Img => {
-                props.put(g, b"src", create_utf8_for_js(g, &entry.detail.href)?);
+                props.put(g, b"src", create_utf8_for_js(g, entry.detail.href)?);
                 if !entry.detail.title.is_empty() {
-                    props.put(g, b"title", create_utf8_for_js(g, &entry.detail.title)?);
+                    props.put(g, b"title", create_utf8_for_js(g, entry.detail.title)?);
                 }
             }
             md::SpanType::Wikilink => {
-                props.put(g, b"target", create_utf8_for_js(g, &entry.detail.href)?);
+                props.put(g, b"target", create_utf8_for_js(g, entry.detail.href)?);
             }
             md::SpanType::LatexmathDisplay => {
                 props.put(g, b"display", JSValue::TRUE);
@@ -1250,7 +1244,7 @@ impl<'a> JsCallbackRenderer<'a> {
                 data: self.stack.last().unwrap().data,
                 flags: self.stack.last().unwrap().flags,
                 child_index: self.stack.last().unwrap().child_index,
-                detail: self.stack.last().unwrap().detail.clone(),
+                detail: self.stack.last().unwrap().detail,
             }
         } else {
             CallbackStackEntry::default()
@@ -1288,7 +1282,7 @@ impl<'a> JsCallbackRenderer<'a> {
 
         let callback = self.get_span_callback(span_type);
         let detail = if self.stack.len() > 1 {
-            self.stack.last().unwrap().detail.clone()
+            self.stack.last().unwrap().detail
         } else {
             md::SpanDetail::default()
         };
@@ -1535,9 +1529,9 @@ impl<'a> JsCallbackRenderer<'a> {
         let g = self.global_object;
         match span_type {
             md::SpanType::A => {
-                let href = create_utf8_for_js(g, &detail.href)?;
+                let href = create_utf8_for_js(g, detail.href)?;
                 let title = if !detail.title.is_empty() {
-                    create_utf8_for_js(g, &detail.title)?
+                    create_utf8_for_js(g, detail.title)?
                 } else {
                     JSValue::UNDEFINED
                 };
@@ -1550,9 +1544,9 @@ impl<'a> JsCallbackRenderer<'a> {
                 // second slot, so just fall back to the generic path here —
                 // images are rare enough that it doesn't matter.
                 let obj = JSValue::create_empty_object(g, 2);
-                obj.put(g, b"src", create_utf8_for_js(g, &detail.href)?);
+                obj.put(g, b"src", create_utf8_for_js(g, detail.href)?);
                 if !detail.title.is_empty() {
-                    obj.put(g, b"title", create_utf8_for_js(g, &detail.title)?);
+                    obj.put(g, b"title", create_utf8_for_js(g, detail.title)?);
                 }
                 Ok(Some(obj))
             }

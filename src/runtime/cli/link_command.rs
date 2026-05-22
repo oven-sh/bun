@@ -10,7 +10,7 @@ use bun_install::Features;
 use bun_install::bin_real as bin;
 use bun_install::lockfile_real::{Lockfile, package::Package};
 use bun_install::package_manager_real::{
-    self as pm, CommandLineArguments, PackageManager, Subcommand, attempt_to_create_package_json,
+    self as pm, CommandLineArguments, Subcommand, attempt_to_create_package_json,
     options::LogLevel, package_manager_options, setup_global_dir,
     update_package_json_and_install_with_manager,
 };
@@ -128,6 +128,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
             match manager
                 .global_dir
+                .as_ref()
                 .unwrap()
                 .make_open_path(b"node_modules", Default::default())
             {

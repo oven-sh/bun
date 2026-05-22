@@ -96,7 +96,7 @@ pub fn field_type_from_js(
                 *unsigned = true;
                 return Ok(FieldType::MYSQL_TYPE_LONG);
             }
-            if int >= i64::MAX {
+            if int == i64::MAX {
                 *unsigned = true;
                 return Ok(FieldType::MYSQL_TYPE_LONGLONG);
             }
@@ -187,7 +187,7 @@ impl Drop for Bytes {
 impl Value {
     pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
         let mut buffer = [0u8; 15]; // Large enough for all fixed-size types
-        let mut pos: usize = 0;
+        let pos: usize;
         match self {
             Value::Null => return Ok(Data::Empty),
             Value::Bool(b) => {
@@ -840,7 +840,7 @@ impl Decimal {
 
 // Helper functions for date calculations
 fn is_leap_year(year: u16) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
 }
 
 fn days_in_month(year: u16, month: u8) -> u8 {

@@ -577,10 +577,7 @@ pub fn escape_html_for_utf16_input(utf16: &[u16]) -> Result<Escaped<u16>, AllocE
                         'lazy: {
                             while (i as usize) < ASCII_U16_VECTOR_SIZE {
                                 match remaining[i as usize] {
-                                    c if matches!(
-                                        c,
-                                        0x22 /* " */ | 0x26 /* & */ | 0x27 /* ' */ | 0x3C /* < */ | 0x3E /* > */
-                                    ) =>
+                                    0x22 /* " */ | 0x26 /* & */ | 0x27 /* ' */ | 0x3C /* < */ | 0x3E /* > */ =>
                                     {
                                         any_needs_escape = true;
                                         break 'lazy;

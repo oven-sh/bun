@@ -212,9 +212,7 @@ impl ClientEntryPoint {
 
         // TODO(port): self-referential — `code` borrows `entry.code_buffer` and is stored into
         // `entry.source`. See note in FallbackEntryPoint::generate.
-        let code: &[u8];
-
-        if disable_css_imports {
+        let code: &[u8] = if disable_css_imports {
             let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
             write!(
                 &mut cursor,
@@ -228,7 +226,7 @@ impl ClientEntryPoint {
             )
             .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let n = cursor.position() as usize;
-            code = &entry.code_buffer[..n];
+            &entry.code_buffer[..n]
         } else {
             let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[..]);
             write!(
@@ -243,8 +241,8 @@ impl ClientEntryPoint {
             )
             .map_err(|_| bun_core::err!("NoSpaceLeft"))?;
             let n = cursor.position() as usize;
-            code = &entry.code_buffer[..n];
-        }
+            &entry.code_buffer[..n]
+        };
 
         // `bun_paths::fs::PathName<'static>` → `bun_paths::fs::PathName<'static>`: field-identical
         // mirrors (see `#[repr(C)]` note on both); spell out the copy instead of a cast.

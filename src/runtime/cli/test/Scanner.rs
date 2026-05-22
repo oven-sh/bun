@@ -3,11 +3,13 @@ use std::collections::VecDeque;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
+use bun_core::PathString;
+#[cfg(not(windows))]
+use bun_core::ZStr;
 use bun_core::err;
-use bun_core::{PathString, ZStr};
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::{self, PathBuffer, SEP_STR};
+use bun_paths::{self, PathBuffer};
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
 use bun_sys::{self, Fd};
 
@@ -101,9 +103,6 @@ impl<'a> Scanner<'a> {
         })
     }
 
-    // Zig `deinit` only freed `test_files` and `dirs_to_scan`; both are owned
-    // containers in Rust and drop automatically. No explicit Drop impl needed.
-
     /// Take the list of test files out of this scanner. Caller owns the returned
     /// allocation.
     pub fn take_found_test_files(&mut self) -> Result<Box<[PathString]>, AllocError> {
@@ -171,8 +170,7 @@ impl<'a> Scanner<'a> {
                 entry_ptrs.sort_by(|a, b| {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
-                    let an = unsafe { (**a).base_lowercase() };
-                    let bn = unsafe { (**b).base_lowercase() };
+                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
                     an.cmp(bn)
                 });
                 for entry_ptr in entry_ptrs {
@@ -254,15 +252,10 @@ impl<'a> Scanner<'a> {
         // `RealFS.entries_mutex` inside the callee.
         let real_fs = core::ptr::from_ref(&self.fs.fs).cast_mut();
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
+        let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
         #[allow(invalid_reference_casting)]
-        unsafe { &mut *real_fs }.read_directory_with_iterator(
-            name,
-            handle.map(|d| d.fd),
-            0,
-            true,
-            iter,
-        )
+        unsafe { &mut *real_fs }.read_directory_with_iterator(name, raw, 0, true, iter)
     }
 
     pub fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
@@ -323,7 +316,7 @@ impl<'a> Scanner<'a> {
         // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
         let mut buf = [0u8; 4096];
         let rel_with_slash: Option<&[u8]> = if !rel_path.is_empty()
-            && rel_path.len() + 1 <= buf.len()
+            && rel_path.len() < buf.len()
             && rel_path[rel_path.len() - 1] != b'/'
         {
             buf[..rel_path.len()].copy_from_slice(rel_path);
@@ -363,7 +356,8 @@ impl<'a> Scanner<'a> {
         // `Entry::kind` takes `*mut RealFS` (Zig `*Implementation`); cast the
         // shared singleton ref — `kind()` only stat()s through it.
         let real_fs = (&raw const self.fs.fs).cast_mut();
-        match entry.kind(real_fs, true) {
+        // SAFETY: entries_mutex held; real_fs points at the process-global RealFS.
+        match unsafe { entry.kind(real_fs, true) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;

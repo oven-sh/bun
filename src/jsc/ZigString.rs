@@ -59,15 +59,14 @@ pub fn static_(s: &'static [u8]) -> ZigString {
 /// transfers to JSC on success; on the too-long path the buffer is freed
 /// here, a `STRING_TOO_LONG` error is thrown, and `.zero` is returned.
 ///
-/// SAFETY: `ptr` must have been allocated by the global mimalloc allocator
+/// # Safety
+/// `ptr` must have been allocated by the global mimalloc allocator
 /// (via `heap::alloc`/`Vec::into_raw_parts`/`bun.default_allocator`) and
 /// must not be used by the caller after this returns.
-pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
+pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
     if len > BunString::max_length() {
-        // SAFETY: caller contract — `ptr` came from the global mimalloc
-        // allocator. `mi_free` accepts the raw block pointer regardless of
-        // element size.
-        unsafe { bun_alloc::mimalloc::mi_free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
+        // SAFETY: caller contract — `ptr` came from the default (global) allocator.
+        unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
         // TODO(port): Zig used `global.ERR(.STRING_TOO_LONG, msg).throw()`;
         // the codegen'd `ErrorCode::ERR_STRING_TOO_LONG` builder hasn't landed
         // yet, so throw a plain RangeError with the same message. Propagation
@@ -83,8 +82,10 @@ pub fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> 
     unsafe { ZigString__toExternalU16(ptr, len, global) }
 }
 
+/// # Safety
+/// `raw` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
-pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
+pub unsafe extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
     let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
         return;
     };
@@ -94,16 +95,19 @@ pub extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c
     // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
     let s = unsafe { bun_core::ffi::slice(raw, len) };
     let ptr = ZigString::init(s).slice().as_ptr();
-    #[cfg(debug_assertions)]
-    // SAFETY: read-only heap-region probe.
-    debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+    if bun_alloc::USE_MIMALLOC {
+        // SAFETY: read-only heap-region probe.
+        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+    }
     let _ = len;
-    // SAFETY: ptr was allocated by mimalloc; mi_free is size-agnostic.
-    unsafe { bun_alloc::mimalloc::mi_free(ptr.cast_mut().cast::<c_void>()) };
+    // SAFETY: ptr was allocated by the default allocator.
+    unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<c_void>()) };
 }
 
+/// # Safety
+/// `ptr` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
-pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
+pub unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
     // SAFETY: ptr/len describe a valid slice.
     let s = unsafe { bun_core::ffi::slice(ptr, len) };
     let untagged = ZigString::init(s)
@@ -111,12 +115,13 @@ pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
         .as_ptr()
         .cast_mut()
         .cast::<c_void>();
-    #[cfg(debug_assertions)]
-    // SAFETY: read-only heap-region probe.
-    debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+    if bun_alloc::USE_MIMALLOC {
+        // SAFETY: read-only heap-region probe.
+        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
+    }
     // we must untag the string pointer
-    // SAFETY: untagged ptr was allocated by mimalloc.
-    unsafe { bun_alloc::mimalloc::mi_free(untagged) };
+    // SAFETY: untagged ptr was allocated by the default allocator.
+    unsafe { bun_alloc::default_alloc::free(untagged) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -125,74 +130,5 @@ pub extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {
 // `super::Slice`). Kept for FFI surfaces that need the raw `{allocator, ptr,
 // len}` layout; the enum form is preferred for pure-Rust callers.
 // ──────────────────────────────────────────────────────────────────────────
-mod _slice_struct {
-    use super::*;
-    use bun_alloc::{AllocError, NullableAllocator};
-    use core::slice;
-
-    /// A maybe-owned byte slice. Tracks its allocator so it can free on drop and so
-    /// callers can ask `is_wtf_allocated()`.
-    pub struct Slice {
-        pub allocator: NullableAllocator,
-        pub ptr: *const u8,
-        pub len: u32,
-    }
-
-    impl Default for Slice {
-        fn default() -> Self {
-            Self {
-                allocator: NullableAllocator::null(),
-                ptr: b"".as_ptr(),
-                len: 0,
-            }
-        }
-    }
-
-    impl Slice {
-        pub const EMPTY: Slice = Slice {
-            allocator: NullableAllocator::NULL,
-            ptr: b"".as_ptr(),
-            len: 0,
-        };
-
-        pub fn is_wtf_allocated(&self) -> bool {
-            self.allocator.is_wtf_allocator()
-        }
-
-        pub fn init(input: &[u8]) -> Slice {
-            Slice {
-                ptr: input.as_ptr(),
-                len: input.len() as u32,
-                allocator: NullableAllocator::default_alloc(),
-            }
-        }
-
-        pub fn from_utf8_never_free(input: &[u8]) -> Slice {
-            Slice {
-                ptr: input.as_ptr(),
-                len: input.len() as u32,
-                allocator: NullableAllocator::null(),
-            }
-        }
-
-        #[inline]
-        pub fn is_allocated(&self) -> bool {
-            !self.allocator.is_null()
-        }
-
-        pub fn slice(&self) -> &[u8] {
-            // SAFETY: ptr/len are kept in sync by all constructors.
-            unsafe { slice::from_raw_parts(self.ptr, self.len as usize) }
-        }
-    }
-
-    impl Drop for Slice {
-        fn drop(&mut self) {
-            // Reuse the safe accessor instead of re-deriving the slice from raw
-            // parts; `slice()` already encapsulates the ptr/len invariant.
-            self.allocator.free(self.slice());
-        }
-    }
-} // mod _slice_struct
 
 // ported from: src/jsc/ZigString.zig

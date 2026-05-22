@@ -22,7 +22,6 @@ pub use store::Store;
 pub use store::entry::Id as EntryId;
 
 use crate::lockfile::package::PackageColumns as _;
-use std::hash::Hasher as _;
 use std::io::Write as _;
 use std::sync::atomic::Ordering;
 
@@ -236,6 +235,9 @@ pub fn install_isolated_packages(
     // passing `*PackageManager` (which owns it); take a raw pointer so column
     // borrows below don't tie up `&mut manager`.
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
+    // SAFETY: `lockfile` was just derived from `&raw mut *manager.lockfile`;
+    // `manager` outlives this function and no other `&mut Lockfile` is formed
+    // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
     let store: Store = 'store: {
@@ -284,7 +286,7 @@ pub fn install_isolated_packages(
         }
         let peer_name_count: u32 = u32::try_from(peer_name_idx.count()).expect("int cast");
 
-        let mut leaking_peers: DynamicBitSetList =
+        let leaking_peers: DynamicBitSetList =
             DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
 
         if peer_name_count != 0 {
@@ -309,15 +311,15 @@ pub fn install_isolated_packages(
             // Per-package bits computed once: own peer-dep names, and non-peer
             // dependency names that will appear in `node_dependencies` (i.e., not
             // filtered out by bundled/disabled/unresolved).
-            let mut own_peers: DynamicBitSetList =
+            let own_peers: DynamicBitSetList =
                 DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
-            let mut provides: DynamicBitSetList =
+            let provides: DynamicBitSetList =
                 DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
             for pkg_idx in 0..lockfile.packages.len() {
                 let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
                 let deps = pkg_dependency_slices[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
-                    let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                    let dep_id: DependencyID = _dep_id;
                     let dep = &dependencies[dep_id as usize];
                     let Some(bit) = peer_name_idx.get_index(&dep.name_hash) else {
                         continue;
@@ -350,7 +352,7 @@ pub fn install_isolated_packages(
                     scratch.copy_into(&own_peers.at(pkg_id as usize));
 
                     for _dep_id in deps.begin()..deps.end() {
-                        let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                        let dep_id: DependencyID = _dep_id;
                         let dep = &dependencies[dep_id as usize];
                         if dep.behavior.is_peer() {
                             if let Some(bit) = peer_name_idx.get_index(&dep.name_hash) {
@@ -383,7 +385,7 @@ pub fn install_isolated_packages(
 
         let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len())?;
         for _dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
-            let dep_idx: DependencyID = u32::try_from(_dep_idx).expect("int cast");
+            let dep_idx: DependencyID = _dep_idx;
             if !dependencies[dep_idx as usize].behavior.is_workspace() {
                 continue;
             }
@@ -600,11 +602,8 @@ pub fn install_isolated_packages(
                         };
                         // PORT NOTE: reshaped for borrowck — clone the dedupe peers slice
                         // before mutating node_peers.
-                        let dedupe_peers: Vec<_> = node_peers[dedupe_node_id.get() as usize]
-                            .list
-                            .iter()
-                            .copied()
-                            .collect();
+                        let dedupe_peers: Vec<_> =
+                            node_peers[dedupe_node_id.get() as usize].list.clone();
                         for peer in dedupe_peers {
                             let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
                             let mut curr_id = entry.parent_id;
@@ -670,7 +669,7 @@ pub fn install_isolated_packages(
             dep_ids_sort_buf.clear();
             dep_ids_sort_buf.reserve(pkg_deps.len as usize);
             for _dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                let dep_id: DependencyID = _dep_id;
                 dep_ids_sort_buf.push(dep_id);
                 // PERF(port): was appendAssumeCapacity — profile if hot.
             }
@@ -1046,9 +1045,7 @@ pub fn install_isolated_packages(
                     )?
                 };
 
-            let mut new_entry_parents: Vec<store::entry::Id> = Vec::with_capacity(1);
-            new_entry_parents.push(entry.entry_parent_id);
-            // PERF(port): was appendAssumeCapacity — profile if hot.
+            let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
             let hoisted = 'hoisted: {
                 if new_entry_dep_id == invalid_dependency_id {
@@ -1308,10 +1305,12 @@ pub fn install_isolated_packages(
                                         pkg_name_hashes[pkg_id as usize],
                                     )
                                 };
-                                if lockfile.has_trusted_dependency(dep_name, pkg_res)
-                                    || trusted_from_update.contains(
-                                        &(dep_name_hash as crate::TruncatedPackageNameHash),
-                                    )
+                                if lockfile.has_trusted_dependency(
+                                    dep_name,
+                                    pkg_names[pkg_id as usize].slice(string_buf),
+                                    pkg_res,
+                                ) || trusted_from_update
+                                    .contains(&(dep_name_hash as crate::TruncatedPackageNameHash))
                                 {
                                     break 'eligible false;
                                 }
@@ -1958,9 +1957,9 @@ pub fn install_isolated_packages(
     {
         // TODO(port): Progress.Node locals are conditionally initialized in Zig;
         // model with Option.
-        let mut download_node: ProgressNode = ProgressNode::default();
+        let mut download_node: ProgressNode;
         let mut install_node: ProgressNode = ProgressNode::default();
-        let mut scripts_node: ProgressNode = ProgressNode::default();
+        let mut scripts_node: ProgressNode;
         let progress: *mut Progress = &raw mut manager.progress;
         // SAFETY: `progress` aliases `manager.progress`; reborrows below are
         // disjoint from the other `manager.*` field accesses (Zig holds the
@@ -2089,13 +2088,17 @@ pub fn install_isolated_packages(
                 .as_deref()
                 .map(|b: &[u8]| -> &bun_core::ZStr {
                     // SAFETY: `global_store_path` was built with a trailing NUL above.
-                    bun_core::ZStr::from_slice_with_nul(&b[..])
+                    bun_core::ZStr::from_slice_with_nul(b)
                 }),
             global_store_tmp_suffix: fast_random(),
             summary: Default::default(),
             task_queue: Default::default(),
         };
-        let manager = unsafe { &mut *manager_ptr };
+        // No long-lived `&mut PackageManager` reborrow here — `installer.start_task()`,
+        // `on_task_complete()`, and `on_task_fail()` below all reach the manager through
+        // `installer.manager_mut()` (the BACKREF), so a shadow `&mut` held across those
+        // calls would alias. Use `installer.manager()` / `installer.manager_mut()`
+        // per-statement instead.
         // (Drop handles installer.deinit())
 
         // PORT NOTE: reshaped for borrowck — Zig writes `installer: &installer`
@@ -2122,11 +2125,15 @@ pub fn install_isolated_packages(
             .iter()
             .any(|r| r.tag == ResolutionTag::Symlink)
         {
-            let _ = crate::package_manager_real::directories::global_link_dir_path(manager);
+            let _ = crate::package_manager_real::directories::global_link_dir_path(
+                installer.manager_mut(),
+            );
         }
 
         // add the pending task count upfront
-        manager.increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
+        installer
+            .manager_mut()
+            .increment_pending_tasks(u32::try_from(store.entries.len()).expect("int cast"));
         for _entry_id in 0..store.entries.len() {
             let entry_id = store::entry::Id::from(u32::try_from(_entry_id).expect("int cast"));
 
@@ -2234,16 +2241,14 @@ pub fn install_isolated_packages(
                             #[cfg(not(windows))]
                             {
                                 break 'stale if let Ok(st) = sys::lstat(local.slice_z()) {
-                                    sys::posix::s_islnk(
-                                        u32::try_from(st.st_mode).expect("int cast"),
-                                    )
+                                    sys::posix::s_islnk(st.st_mode as u32)
                                 } else {
                                     false
                                 };
                             }
                         };
 
-                    let needs_install = manager.options.enable.force_install()
+                    let needs_install = installer.manager().options.enable.force_install()
                         // A freshly-created `node_modules/.bun` only implies the
                         // *project-local* entries are missing; global virtual-
                         // store entries persist across `rm -rf node_modules` and
@@ -2302,7 +2307,7 @@ pub fn install_isolated_packages(
                                         .store(installer::Step::Done as u32, Ordering::Relaxed);
                                     installer.on_task_fail(
                                         entry_id,
-                                        installer::TaskError::SymlinkDependencies(err),
+                                        &installer::TaskError::SymlinkDependencies(err),
                                     );
                                     continue;
                                 }
@@ -2322,29 +2327,29 @@ pub fn install_isolated_packages(
                     // (== `pkg_res.tag`) names as active.
                     let cache_subpath_z: &bun_core::ZStr = match pkg_res_tag {
                         ResolutionTag::Npm => package_manager::cached_npm_package_folder_name(
-                            manager,
+                            installer.manager(),
                             pkg_name.slice(string_buf),
                             pkg_res.npm().version,
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::Git => package_manager::cached_git_folder_name(
-                            manager,
+                            installer.manager(),
                             pkg_res.git(),
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::Github => package_manager::cached_github_folder_name(
-                            manager,
+                            installer.manager(),
                             pkg_res.github(),
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::LocalTarball => package_manager::cached_tarball_folder_name(
-                            manager,
+                            installer.manager(),
                             *pkg_res.local_tarball(),
                             patch_info.contents_hash(),
                         ),
                         ResolutionTag::RemoteTarball => {
                             package_manager::cached_tarball_folder_name(
-                                manager,
+                                installer.manager(),
                                 *pkg_res.remote_tarball(),
                                 patch_info.contents_hash(),
                             )
@@ -2355,10 +2360,12 @@ pub fn install_isolated_packages(
                     let mut pkg_cache_dir_subpath: AutoRelPath =
                         AutoRelPath::from(cache_subpath_z.as_bytes()).assume_ok();
 
-                    let (cache_dir, cache_dir_path) = manager.get_cache_directory_and_abs_path();
+                    let (cache_dir, cache_dir_path) =
+                        installer.manager_mut().get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit (Zig: defer cache_dir_path.deinit())
 
-                    let missing_from_cache = match manager.get_preinstall_state(pkg_id) {
+                    let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
+                    {
                         install::PreinstallState::Done => false,
                         _ => 'missing_from_cache: {
                             if matches!(patch_info, installer::PatchInfo::None) {
@@ -2382,7 +2389,7 @@ pub fn install_isolated_packages(
                                     .unwrap_or(false),
                                 };
                                 if exists {
-                                    manager.set_preinstall_state(
+                                    installer.manager_mut().set_preinstall_state(
                                         pkg_id,
                                         install::PreinstallState::Done,
                                     );
@@ -2406,7 +2413,7 @@ pub fn install_isolated_packages(
                                     .store(installer::Step::Done as u32, Ordering::Relaxed);
                                 installer.on_task_fail(
                                     entry_id,
-                                    installer::TaskError::Patching(patch_log),
+                                    &installer::TaskError::Patching(patch_log),
                                 );
                                 continue;
                             }
@@ -2421,7 +2428,7 @@ pub fn install_isolated_packages(
 
                     match pkg_res_tag {
                         ResolutionTag::Npm => {
-                            match manager.enqueue_package_for_download(
+                            match installer.manager_mut().enqueue_package_for_download(
                                 pkg_name.slice(string_buf),
                                 dep_id,
                                 pkg_id,
@@ -2445,7 +2452,7 @@ pub fn install_isolated_packages(
                                         ),
                                     );
                                     Output::flush();
-                                    if manager.options.enable.fail_early() {
+                                    if installer.manager().options.enable.fail_early() {
                                         Global::exit(1);
                                     }
                                     // .monotonic is okay because an error means the task isn't
@@ -2459,7 +2466,7 @@ pub fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::Git => {
-                            manager.enqueue_git_for_checkout(
+                            installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
@@ -2472,9 +2479,9 @@ pub fn install_isolated_packages(
                             // a raw union pun (`git`/`github` arms share `Repository` layout);
                             // Rust's `.git()` accessor adds a `debug_assert_eq!(tag, Git)` that
                             // fires under `Github`, so use the tag-correct `.github()` instead.
-                            let url = manager.alloc_github_url(pkg_res.github());
+                            let url = installer.manager().alloc_github_url(pkg_res.github());
                             // (Drop frees url)
-                            match manager.enqueue_tarball_for_download(
+                            match installer.manager_mut().enqueue_tarball_for_download(
                                 dep_id,
                                 pkg_id,
                                 &url,
@@ -2495,7 +2502,7 @@ pub fn install_isolated_packages(
                                         ),
                                     );
                                     Output::flush();
-                                    if manager.options.enable.fail_early() {
+                                    if installer.manager().options.enable.fail_early() {
                                         Global::exit(1);
                                     }
                                     // .monotonic is okay because an error means the task isn't
@@ -2509,7 +2516,7 @@ pub fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::LocalTarball => {
-                            manager.enqueue_tarball_for_reading(
+                            installer.manager_mut().enqueue_tarball_for_reading(
                                 dep_id,
                                 pkg_id,
                                 dep.name.slice(string_buf),
@@ -2518,7 +2525,7 @@ pub fn install_isolated_packages(
                             );
                         }
                         ResolutionTag::RemoteTarball => {
-                            match manager.enqueue_tarball_for_download(
+                            match installer.manager_mut().enqueue_tarball_for_download(
                                 dep_id,
                                 pkg_id,
                                 pkg_res.remote_tarball().slice(string_buf),
@@ -2539,7 +2546,7 @@ pub fn install_isolated_packages(
                                         ),
                                     );
                                     Output::flush();
-                                    if manager.options.enable.fail_early() {
+                                    if installer.manager().options.enable.fail_early() {
                                         Global::exit(1);
                                     }
                                     // .monotonic is okay because an error means the task isn't
@@ -2568,15 +2575,15 @@ pub fn install_isolated_packages(
             }
         }
 
-        if manager.pending_task_count() > 0 {
-            let mgr: *mut PackageManager = manager;
+        if installer.manager().pending_task_count() > 0 {
+            let mgr: *mut PackageManager = manager_ptr;
             let mut wait = Wait {
                 installer: &mut installer,
                 err: None,
             };
-            // SAFETY: `mgr` derived from the live exclusive `manager` borrow;
-            // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
-            // `Wait::is_done`.
+            // SAFETY: `mgr` is the same raw `manager_ptr` stored in
+            // `installer.manager`; `sleep_until` + `tick_raw` hold no
+            // `&mut PackageManager` across `Wait::is_done`.
             unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
 
             if let Some(err) = wait.err {
@@ -2585,14 +2592,14 @@ pub fn install_isolated_packages(
             }
         }
 
-        if manager.options.log_level.show_progress() {
+        if installer.manager().options.log_level.show_progress() {
             progress.root.end();
             *progress = Progress::default();
         }
         // Defensive: clear the stack-local progress-node pointers so the
         // accessors can't observe dangling pointers after this frame returns.
-        manager.scripts_node = None;
-        manager.downloads_node = None;
+        installer.manager_mut().scripts_node = None;
+        installer.manager_mut().downloads_node = None;
 
         if Environment::CI_ASSERT {
             let mut done = true;

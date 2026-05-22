@@ -106,10 +106,10 @@ fn process_workspace_name(
     let name_expr = workspace_json
         .root
         .get(b"name")
-        .ok_or(bun_core::err!("MissingPackageName"))?;
+        .ok_or_else(|| bun_core::err!("MissingPackageName"))?;
     let name = name_expr
         .as_string_cloned(&scratch)?
-        .ok_or(bun_core::err!("MissingPackageName"))?;
+        .ok_or_else(|| bun_core::err!("MissingPackageName"))?;
 
     let entry = Entry {
         name: Box::<[u8]>::from(name),
@@ -186,7 +186,7 @@ impl WorkspaceMap {
 
             let abs_package_json_path: &ZStr =
                 resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    source.path.name.dir,
+                    source.path.name().dir,
                     filepath_buf,
                     &[input_path.as_bytes(), b"package.json"],
                 );
@@ -194,7 +194,7 @@ impl WorkspaceMap {
             // skip root package.json
             if strings::eql_long(
                 resolve_path::dirname::<path::platform::Auto>(abs_package_json_path.as_bytes()),
-                source.path.name.dir,
+                source.path.name().dir,
                 true,
             ) {
                 continue;
@@ -252,7 +252,7 @@ impl WorkspaceMap {
             }
 
             let rel_input_path = resolve_path::relative_platform::<path::platform::Auto, true>(
-                source.path.name.dir,
+                source.path.name().dir,
                 strings::without_suffix_comptime(
                     abs_package_json_path.as_bytes(),
                     const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
@@ -314,7 +314,7 @@ impl WorkspaceMap {
                     arena.alloc_slice_copy(resolve_path::join::<path::platform::Auto>(&parts))
                 };
 
-                let mut cwd = resolve_path::dirname::<path::platform::Auto>(&source.path.text);
+                let mut cwd = resolve_path::dirname::<path::platform::Auto>(source.path.text);
                 if cwd.is_empty() {
                     cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
                 }
@@ -480,7 +480,7 @@ impl WorkspaceMap {
 
                     let workspace_path: &[u8] =
                         resolve_path::relative_platform::<path::platform::Auto, true>(
-                            source.path.name.dir,
+                            source.path.name().dir,
                             abs_workspace_dir_path,
                         );
                     #[cfg(windows)]

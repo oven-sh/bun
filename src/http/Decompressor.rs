@@ -38,7 +38,7 @@ pub enum Decompressor {
 /// overwrites `list_ptr`).
 #[inline(always)]
 unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'static mut Vec<u8>) {
-    // SAFETY (`Interned::assume` — Population B, holder-backed): `input` is
+    // SAFETY: (`Interned::assume` — Population B, holder-backed) `input` is
     // `InternalState::compressed_body` (or the caller's body chunk), owned by
     // the surrounding `HTTPClient` request and freed in `InternalState::deinit`
     // strictly after the `Decompressor` is dropped/reset. NOT process-lifetime;
@@ -53,6 +53,11 @@ unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'s
         )
     }
 }
+
+/// Decompression-bomb guard for response bodies inflated on the HTTP thread:
+/// a hostile server must not be able to expand a tiny compressed payload into
+/// an unbounded allocation.
+const MAX_DECOMPRESSED_BODY_SIZE: usize = 1024 * 1024 * 1024;
 
 impl Decompressor {
     // PORT NOTE: Zig `deinit` called `that.deinit()` on the active reader and
@@ -77,7 +82,7 @@ impl Decompressor {
             let (input, out) = unsafe { seat(buffer, &mut body_out_str.list) };
             match encoding {
                 Encoding::Gzip | Encoding::Deflate => {
-                    let reader = ZlibReaderArrayList::init_with_options_and_list_allocator(
+                    let mut reader = ZlibReaderArrayList::init_with_options_and_list_allocator(
                         input,
                         out,
                         // PORT NOTE: Zig passed `body_out_str.allocator` and
@@ -97,26 +102,29 @@ impl Decompressor {
                             ..Default::default()
                         },
                     )?;
+                    reader.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
                     *self = Decompressor::Zlib(reader);
                     return Ok(());
                 }
                 Encoding::Brotli => {
-                    let reader = BrotliReaderArrayList::new_with_options(
+                    let mut reader = BrotliReaderArrayList::new_with_options(
                         input,
                         out,
                         // PORT NOTE: Zig passed `body_out_str.allocator`; dropped per §Allocators.
-                        Default::default(),
+                        &Default::default(),
                     )?;
+                    reader.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
                     *self = Decompressor::Brotli(reader);
                     return Ok(());
                 }
                 Encoding::Zstd => {
-                    let reader = ZstdReaderArrayList::init_with_list_allocator(
+                    let mut reader = ZstdReaderArrayList::init_with_list_allocator(
                         input,
                         out,
                         // PORT NOTE: Zig passed `body_out_str.allocator` and
                         // `bun.http.default_allocator`; dropped per §Allocators.
                     )?;
+                    reader.max_output_size = MAX_DECOMPRESSED_BODY_SIZE;
                     *self = Decompressor::Zstd(reader);
                     return Ok(());
                 }

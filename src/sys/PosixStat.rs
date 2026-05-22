@@ -35,10 +35,12 @@ unsafe impl bun_core::ffi::Zeroable for PosixStat {}
 //
 // TODO(port): Zig used `@typeInfo(@TypeOf(value)).int.signedness` reflection.
 // Rust has no equivalent; expressed here as a trait impl'd per primitive int.
-trait ToU64: Copy {
-    fn to_u64(self) -> u64;
-}
-macro_rules! impl_to_u64_signed {
+#[cfg(not(windows))]
+mod to_u64_impl {
+    pub(super) trait ToU64: Copy {
+        fn to_u64(self) -> u64;
+    }
+    macro_rules! impl_to_u64_signed {
     ($($t:ty),*) => {$(
         impl ToU64 for $t {
             #[inline]
@@ -50,7 +52,7 @@ macro_rules! impl_to_u64_signed {
         }
     )*};
 }
-macro_rules! impl_to_u64_unsigned {
+    macro_rules! impl_to_u64_unsigned {
     ($($t:ty),*) => {$(
         impl ToU64 for $t {
             #[inline]
@@ -58,12 +60,13 @@ macro_rules! impl_to_u64_unsigned {
         }
     )*};
 }
-impl_to_u64_signed!(i8, i16, i32, i64, isize);
-impl_to_u64_unsigned!(u8, u16, u32, u64, usize);
-
+    impl_to_u64_signed!(i8, i16, i32, i64, isize);
+    impl_to_u64_unsigned!(u8, u16, u32, u64, usize);
+}
+#[cfg(not(windows))]
 #[inline]
-fn to_u64<T: ToU64>(value: T) -> u64 {
-    value.to_u64()
+fn to_u64<T: to_u64_impl::ToU64>(value: T) -> u64 {
+    to_u64_impl::ToU64::to_u64(value)
 }
 
 /// Platform-specific accessors over `libc::stat` mirroring Zig's
@@ -80,8 +83,8 @@ pub fn stat_atime(s: &Stat) -> Timespec {
     #[cfg(unix)]
     {
         Timespec {
-            sec: s.st_atime as i64,
-            nsec: s.st_atime_nsec as i64,
+            sec: s.st_atime,
+            nsec: s.st_atime_nsec,
         }
     }
     #[cfg(windows)]
@@ -97,8 +100,8 @@ pub fn stat_mtime(s: &Stat) -> Timespec {
     #[cfg(unix)]
     {
         Timespec {
-            sec: s.st_mtime as i64,
-            nsec: s.st_mtime_nsec as i64,
+            sec: s.st_mtime,
+            nsec: s.st_mtime_nsec,
         }
     }
     #[cfg(windows)]
@@ -114,8 +117,8 @@ pub fn stat_ctime(s: &Stat) -> Timespec {
     #[cfg(unix)]
     {
         Timespec {
-            sec: s.st_ctime as i64,
-            nsec: s.st_ctime_nsec as i64,
+            sec: s.st_ctime,
+            nsec: s.st_ctime_nsec,
         }
     }
     #[cfg(windows)]

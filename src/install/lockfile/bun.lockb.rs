@@ -387,6 +387,20 @@ pub fn load(
 
     lockfile.packages = packages_load_result.list;
 
+    // `meta.id` is memcpy'd verbatim from disk with no range validation; a
+    // corrupt `bun.lockb` can make it garbage and trip `panic_bounds_check`
+    // in `Package::clone` / `preinstall_state` indexing later. Surface it
+    // here as a parse error so the installer can warn + re-resolve instead
+    // of aborting.
+    {
+        let len = lockfile.packages.len();
+        for meta in lockfile.packages.items_meta() {
+            if meta.id as usize >= len {
+                return Err(bun_core::err!("InvalidLockfile"));
+            }
+        }
+    }
+
     res.packages_need_update = packages_load_result.needs_update;
     res.migrated_from_lockb_v2 = migrate_from_v2;
 
@@ -646,7 +660,6 @@ pub fn load(
                         package_manager: manager.as_deref_mut(),
                     };
                     let value = dependency::to_dependency(*dep, &mut context);
-                    drop(context);
                     // PERF(port): was assume_capacity
                     catalogs.default.put_assume_capacity_context(
                         *dep_name,
@@ -674,7 +687,7 @@ pub fn load(
                     } else {
                         let entry = catalogs
                             .groups
-                            .get_or_put_adapted(*catalog_name, StringCtxAdapter(&str_ctx))?;
+                            .get_or_put_adapted(catalog_name, &StringCtxAdapter(&str_ctx))?;
                         if !entry.found_existing {
                             *entry.key_ptr = *catalog_name;
                             *entry.value_ptr = super::catalog_map::Map::default();
@@ -692,7 +705,6 @@ pub fn load(
                             package_manager: manager.as_deref_mut(),
                         };
                         let value = dependency::to_dependency(*dep, &mut context);
-                        drop(context);
                         // PERF(port): was assume_capacity
                         group.put_assume_capacity_context(
                             *dep_name,

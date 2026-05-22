@@ -2,7 +2,7 @@ use std::io::Write as _;
 
 use bun_core::ZBox;
 
-use bun_collections::{StringHashMap, VecExt};
+use bun_collections::StringHashMap;
 use bun_core::strings;
 use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
@@ -210,7 +210,7 @@ impl StaticRouteEntry {
     /// `sort_by` callsite uses `strings::order` directly so it can return
     /// `Ordering::Equal` (Rust 1.81+ panics on a comparator that never does).
     pub fn is_less_than(_: (), this: &StaticRouteEntry, other: &StaticRouteEntry) -> bool {
-        strings::cmp_strings_desc(&(), &this.path, &other.path)
+        strings::cmp_strings_desc((), &this.path, &other.path)
     }
 }
 
@@ -341,6 +341,14 @@ impl ServerConfig {
 // `extern "C"` fns per `<SSL, T>` and registers them via the raw
 // `c::uws_method_handler` overload — equivalent to the Zig `handler_wrap` struct.
 
+/// # Safety
+/// `entry` must be a live route pointer that outlives `app` — it is registered
+/// as the uWS userdata and dereferenced from request callbacks for the lifetime
+/// of the app.
+// Forwards `entry` to `T::set_server` and to uWS as opaque userdata without
+// dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
+// opaque-token forwarding.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
@@ -373,6 +381,9 @@ pub fn apply_static_route<const SSL: bool, T>(
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
+        // SAFETY: `route`, `req`, and `resp` are non-null and valid for the
+        // duration of this uWS callback (see invariants established above);
+        // `on_request` only dereferences them while this frame is live.
         unsafe { T::on_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
@@ -389,6 +400,8 @@ pub fn apply_static_route<const SSL: bool, T>(
         } else {
             bun_uws_sys::AnyResponse::TCP(resp.cast())
         };
+        // SAFETY: `route`, `req`, and `resp` validity is guaranteed by uWS for
+        // the callback's duration — same invariants as `handler` above.
         unsafe { T::on_head_request(route, bun_uws_sys::AnyRequest::H1(req), any_resp) };
     }
 
@@ -407,6 +420,14 @@ pub fn apply_static_route<const SSL: bool, T>(
     }
 }
 
+/// # Safety
+/// `entry` must be a live route pointer that outlives `app` — it is registered
+/// as the uWS userdata and dereferenced from request callbacks for the lifetime
+/// of the app.
+// Forwards `entry` to `T::set_server` and to uWS as opaque userdata without
+// dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
+// opaque-token forwarding.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
@@ -1177,7 +1198,7 @@ impl ServerConfig {
             arg.get_stringish(global, "host")?
         };
         if let Some(host) = host {
-            // host derefs on drop
+            let host = bun_core::OwnedString::new(host);
             let host_str = host.to_utf8();
 
             if !host_str.slice().is_empty() {

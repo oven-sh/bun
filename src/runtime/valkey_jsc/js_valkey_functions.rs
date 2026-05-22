@@ -1,6 +1,6 @@
 use crate::node::BlobOrStringOrBuffer as JSArgument;
 use bun_collections::VecExt as _;
-use bun_core::{OwnedString, strings};
+use bun_core::OwnedString;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
     JsRef, JsResult,
@@ -19,6 +19,8 @@ type Slice = bun_jsc::ZigStringSlice;
 /// static ASCII byte-string literal, so it is always valid UTF-8.
 #[inline(always)]
 const fn bname(b: &'static [u8]) -> &'static str {
+    // SAFETY: every caller passes a `b"..."` ASCII literal (command/method
+    // names from the `cmd_*!` macros), which is guaranteed valid UTF-8.
     unsafe { core::str::from_utf8_unchecked(b) }
 }
 
@@ -141,8 +143,6 @@ pub(crate) mod compile {
 
     #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
     pub enum ClientStateRequirement {
-        /// The client must be a subscriber (in subscription mode).
-        Subscriber,
         /// The client must not be a subscriber (not in subscription mode).
         NotSubscriber,
         /// We don't care about the client state (subscriber or not).
@@ -154,9 +154,6 @@ pub(crate) mod compile {
         js_client_prototype_function_name: &[u8],
     ) -> JsResult<()> {
         match REQ {
-            ClientStateRequirement::Subscriber => {
-                require_subscriber(this, js_client_prototype_function_name)
-            }
             ClientStateRequirement::NotSubscriber => {
                 require_not_subscriber(this, js_client_prototype_function_name)
             }
@@ -1112,7 +1109,7 @@ impl JSValkeyClient {
             }
 
             let field_value_count = args_count - 1; // Exclude key
-            if field_value_count % 2 != 0 {
+            if !field_value_count.is_multiple_of(2) {
                 return Err(global.throw(format_args!(
                     "HSET requires field-value pairs (even number of arguments after key)"
                 )));

@@ -4,7 +4,6 @@
 //! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.zig`?
 
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, AutoBitSet};
 use bun_core::env_var;
 
@@ -39,7 +38,7 @@ impl<'a> StaticRouteVisitor<'a> {
         // the `&mut self` call below. `parse_graph()` is the safe backref
         // accessor (one centralized `unsafe`, see `LinkerContext::parse_graph`).
         let parse_graph = self.c.parse_graph();
-        let all_import_records: &[import_record::List] = parse_graph.ast.items_import_records();
+        let all_import_records: &[import_record::List<'_>] = parse_graph.ast.items_import_records();
         let referenced_source_indices: &[u32] = parse_graph
             .server_component_boundaries
             .list
@@ -65,7 +64,7 @@ impl<'a> StaticRouteVisitor<'a> {
     ///    static.
     fn has_transitive_use_client_impl(
         &mut self,
-        all_import_records: &[import_record::List],
+        all_import_records: &[import_record::List<'_>],
         referenced_source_indices: &[u32],
         use_directives: &[UseDirective],
         source_index: Index,
@@ -81,7 +80,7 @@ impl<'a> StaticRouteVisitor<'a> {
         let import_records = &all_import_records[source_index.get() as usize];
 
         let result = 'result: {
-            for import_record in import_records.slice() {
+            for import_record in import_records.as_slice() {
                 if !import_record.source_index.is_valid() {
                     continue;
                 }

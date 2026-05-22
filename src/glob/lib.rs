@@ -1,11 +1,5 @@
 // Port of src/glob/glob.zig
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 #[path = "GlobWalker.rs"]
@@ -34,11 +28,11 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     }
 
     // In descending order of how popular the token is
-    const SPECIAL_SYNTAX: [u8; 4] = [b'*', b'{', b'[', b'?'];
+    const SPECIAL_SYNTAX: [u8; 4] = *b"*{[?";
 
     // PERF(port): was `inline for` (unrolled at comptime).
     for &token in SPECIAL_SYNTAX.iter() {
-        let mut slice = &potential_pattern[..];
+        let mut slice = potential_pattern;
         while !slice.is_empty() {
             if let Some(idx) = slice.iter().position(|&b| b == token) {
                 // Check for even number of backslashes preceding the
@@ -51,7 +45,7 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
                     i -= 1;
                 }
 
-                if backslash_count % 2 == 0 {
+                if backslash_count.is_multiple_of(2) {
                     return true;
                 }
                 slice = &slice[idx + 1..];

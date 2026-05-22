@@ -7,7 +7,7 @@
 //! read/written directly by C (loop.c walks `head_sockets`/`iterator`,
 //! context.c flips `linked`).
 
-use core::ffi::{c_char, c_int, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use crate::{
@@ -323,10 +323,6 @@ unsafe extern "C" {
     // `close_all` reenters Rust callbacks that touch this group via aliasing
     // pointers (`us_socket_group(s)`).
     fn us_socket_group_close_all(group: *mut SocketGroup);
-    #[allow(dead_code)]
-    fn us_socket_group_timestamp(group: *mut SocketGroup) -> c_ushort;
-    #[allow(dead_code)]
-    fn us_socket_group_loop(group: *mut SocketGroup) -> *mut Loop;
     fn us_socket_group_listen(
         group: *mut SocketGroup,
         kind: u8,

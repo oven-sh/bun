@@ -8,8 +8,6 @@
 //! `FIRE_TIMER` dispatch path (Timeout/Immediate arms). `init()` backs the
 //! `TimeoutObject::init` / `ImmediateObject::init` constructors.
 
-use core::mem::offset_of;
-
 use bun_core::{Timespec, TimespecMockMode};
 
 use crate::jsc::JsCell;
@@ -138,6 +136,24 @@ impl TimerObjectInternals {
             // SAFETY: as above.
             TimerParent::Timeout(p) => unsafe { TimeoutObject::ref_(p) },
         }
+    }
+
+    /// Release a `TimeoutObject`/`ImmediateObject` that was unlinked from a
+    /// timer heap by something other than [`Self::cancel`] (e.g.
+    /// `FakeTimers::clear`'s `delete_min` drain). Downgrades the `Strong` JS
+    /// pin and releases the `+1` taken by `reschedule()`, so GC can collect
+    /// the wrapper and the box frees on the final deref.
+    ///
+    /// `cancel()` skips its own `remove`/`deref` because `state` is already
+    /// `CANCELLED`, which is why the explicit `deref` follows.
+    ///
+    /// `vm` is the live per-thread VM; `All.lock` must NOT be held (the
+    /// `set_enable_keeping_event_loop_alive` write reaches `&mut All`).
+    pub(crate) fn release_heap_pin(this: core::ptr::NonNull<Self>, vm: *mut VirtualMachine) {
+        // SAFETY: caller guarantees the parent box is live (refcount ≥ 1).
+        let internals = unsafe { this.as_ref() };
+        internals.cancel(vm);
+        internals.deref();
     }
 
     /// Decrement the parent container's intrusive refcount; frees on 0.
@@ -373,7 +389,7 @@ impl TimerObjectInternals {
         let Some(timer) = s.this_value.get().try_get() else {
             #[cfg(debug_assertions)]
             panic!("TimerObjectInternals.runImmediateTask: this_object is null");
-            #[allow(unreachable_code)]
+            #[cfg(not(debug_assertions))]
             {
                 s.set_enable_keeping_event_loop_alive(vm, false);
                 s.deref();
@@ -423,6 +439,16 @@ impl TimerObjectInternals {
         }
 
         exception_thrown
+    }
+
+    /// # Safety
+    /// `this` must be the live `internals` of a queued `ImmediateObject`.
+    pub unsafe fn cancel_pending_immediate(this: *mut Self, vm: *mut VirtualMachine) {
+        // SAFETY: per fn contract.
+        let s = unsafe { &*this };
+        s.set_enable_keeping_event_loop_alive(vm, false);
+        s.this_value.with_mut(|r| r.downgrade());
+        s.deref();
     }
 
     /// Spec TimerObjectInternals.zig `fire` — `EventLoopTimer.fire` dispatch
@@ -482,7 +508,6 @@ impl TimerObjectInternals {
             return;
         };
 
-        #[allow(unused_assignments)]
         let (callback, arguments, mut idle_timeout, mut repeat): (
             JSValue,
             JSValue,

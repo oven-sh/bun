@@ -36,19 +36,28 @@ fn dupe_path_like(path: &[u8]) -> PathLike {
 #[inline]
 fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
     if let Some(store) = blob.store.get().as_ref() {
+        let store_ptr = store.as_ptr();
         // SAFETY: `store` is the freshly-allocated backing store uniquely owned
         // by `blob`; no other borrow exists yet.
-        let store_ptr = store.as_ptr();
-        unsafe { (*store_ptr).mime_type = mime };
-        blob.content_type.set(std::ptr::from_ref::<[u8]>(unsafe {
-            (*store_ptr).mime_type.value.as_ref()
-        }));
+        unsafe {
+            (*store_ptr).mime_type = mime;
+            blob.content_type.set(std::ptr::from_ref::<[u8]>(
+                (*store_ptr).mime_type.value.as_ref(),
+            ));
+        }
     } else {
-        // No store (empty bytes). Zig still assigns `blob.content_type` from the
-        // loader's mime so `contentTypeOrMimeType()` keeps returning a value.
-        let owned: Box<[u8]> = Box::from(mime.value.as_ref());
-        blob.content_type.set(bun_core::heap::into_raw(owned));
-        blob.content_type_allocated.set(true);
+        // No store (empty bytes). Loader-derived `mime.value` is `'static` — point at it
+        // directly; boxing it leaked because `BuildArtifact`'s drop never runs `Blob::deinit`.
+        match mime.value {
+            std::borrow::Cow::Borrowed(s) => {
+                blob.content_type.set(std::ptr::from_ref::<[u8]>(s));
+            }
+            std::borrow::Cow::Owned(s) => {
+                blob.content_type
+                    .set(bun_core::heap::into_raw(s.into_boxed_slice()));
+                blob.content_type_allocated.set(true);
+            }
+        }
     }
 }
 
@@ -67,7 +76,7 @@ impl SavedFile {
         )
         .expect("unreachable");
 
-        let mut blob = Blob::init_with_store(store, global_this);
+        let blob = Blob::init_with_store(store, global_this);
         // PORT NOTE: Zig overwrites `blob.content_type = mime.value` here;
         // `init_with_store` already populated it from the store's `File`
         // mime (which is the same value), so the overwrite is a no-op.
@@ -143,7 +152,7 @@ impl OutputFileJsc for OutputFile {
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
             OutputFileValue::Saved(_) => {
-                let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text.as_ref());
+                let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
 
                 // `Store::drop` frees a `PathLike::String` payload via
                 // `PathString::deinit_owned`, so the backing buffer must be
@@ -151,7 +160,7 @@ impl OutputFileJsc for OutputFile {
                 // caller drops its `Box<[u8]>` after this returns), so dupe it.
                 let store_path = match owned_pathname {
                     Some(p) => PathLike::String(PathString::init_owned(p.to_vec())),
-                    None => dupe_path_like(self.src_path.text.as_ref()),
+                    None => dupe_path_like(self.src_path.text),
                 };
                 let file_blob = match BlobStore::init_file(
                     PathOrFileDescriptor::Path(store_path),
@@ -184,7 +193,7 @@ impl OutputFileJsc for OutputFile {
 
                 let path: Box<[u8]> = match owned_pathname {
                     Some(p) => Box::from(p),
-                    None => Box::from(self.src_path.text.as_ref()),
+                    None => Box::from(self.src_path.text),
                 };
 
                 let build_output = Box::new(BuildArtifact {
@@ -224,7 +233,7 @@ impl OutputFileJsc for OutputFile {
 
         let mime = self
             .loader
-            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text.as_ref()]);
+            .to_mime_type(&[self.dest_path.as_ref(), self.src_path.text]);
 
         match value {
             OutputFileValue::Copy(copy) => {
@@ -240,7 +249,7 @@ impl OutputFileJsc for OutputFile {
             }
             OutputFileValue::Saved(_) => {
                 let file_blob = BlobStore::init_file(
-                    PathOrFileDescriptor::Path(dupe_path_like(self.src_path.text.as_ref())),
+                    PathOrFileDescriptor::Path(dupe_path_like(self.src_path.text)),
                     Some(mime),
                 )?;
                 Ok(Blob::init_with_store(file_blob, global_this))

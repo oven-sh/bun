@@ -76,11 +76,11 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 
     // TODO(markovejnovic): This feels like there's too much going on all
     // to give us a slice. Maybe there's a better way to code this up.
-    let npa_str = arg0.to_bun_string(go)?;
+    let npa_str = bun_core::OwnedString::new(arg0.to_bun_string(go)?);
     // PORT NOTE: Zig used `ZigString.Slice.mut()` to get a mutable view; the Rust
     // `ZigStringSlice` is read-only, so own a mutable copy via `into_vec()`.
     let mut as_utf8 = npa_str.to_utf8().into_vec();
-    let mut parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
+    let parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
         Ok(p) => p,
         Err(err) => {
             return Err(go.throw(format_args!(
@@ -115,7 +115,7 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
     // Maybe there's a better way to code this up.
-    let npa_str = arg0.to_bun_string(go)?;
+    let npa_str = bun_core::OwnedString::new(arg0.to_bun_string(go)?);
     // PORT NOTE: Zig used `ZigString.Slice.mut()`; own a mutable copy.
     let mut as_utf8 = npa_str.to_utf8().into_vec();
     let parsed = match HostedGitInfo::from_url(as_utf8.as_mut_slice()) {

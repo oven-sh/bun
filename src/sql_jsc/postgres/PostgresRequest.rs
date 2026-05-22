@@ -218,7 +218,9 @@ pub fn write_bind<Context: WriterContext>(
             }
 
             _ => {
-                let str = BunString::from_js(value, global).map_err(js_error_to_postgres)?;
+                let str = bun_core::OwnedString::new(
+                    BunString::from_js(value, global).map_err(js_error_to_postgres)?,
+                );
                 if str.tag() == bun_core::Tag::Dead {
                     return Err(AnyPostgresError::OutOfMemory);
                 }
@@ -226,7 +228,6 @@ pub fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
             }
         }
 
@@ -468,7 +469,10 @@ pub fn on_data<Context: ReaderContext>(
                 if matches!(connection.tls_status.get(), TlsStatus::MessageSent(_)) {
                     connection.tls_status.set(TlsStatus::SslNotAvailable);
                     bun_core::scoped_log!(Postgres, "Server does not support SSL");
-                    if connection.ssl_mode == SslMode::Require {
+                    if matches!(
+                        connection.ssl_mode,
+                        SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull
+                    ) {
                         connection.fail(
                             b"Server does not support SSL",
                             AnyPostgresError::TLSNotAvailable,

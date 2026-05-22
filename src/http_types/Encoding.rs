@@ -10,17 +10,14 @@ pub enum Encoding {
 
 impl Encoding {
     pub fn can_use_lib_deflate(self) -> bool {
-        match self {
-            Encoding::Gzip | Encoding::Deflate => true,
-            _ => false,
-        }
+        matches!(self, Encoding::Gzip | Encoding::Deflate)
     }
 
     pub fn is_compressed(self) -> bool {
-        match self {
-            Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd
+        )
     }
 }
 

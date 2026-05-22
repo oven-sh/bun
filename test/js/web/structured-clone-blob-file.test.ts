@@ -1,6 +1,8 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { openSync } from "node:fs";
+import { join } from "node:path";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -510,5 +512,161 @@ describe("structuredClone with Blob and File", () => {
       // measured window still grows under bun-asan; widen the threshold there.
       expect(deltaMiB).toBeLessThan(isASAN ? 128 : 32);
     }, 30_000);
+
+    // A file-backed Blob record in the wire format names a path, an open file
+    // descriptor, or an s3:// URL to re-open. `deserialize()` accepts bytes
+    // from anywhere (a cache, an IPC peer, a client upload), so honoring that
+    // record would turn attacker-controlled bytes into a live read/write
+    // handle over any path or descriptor in the process. Only the in-process
+    // structured-clone path (structuredClone, postMessage) may carry file
+    // references; every byte-stream entry point must reject them.
+    describe("file-backed Blob payloads from external bytes", () => {
+      test("file-path Blob payload does not grant a file handle via deserialize", async () => {
+        const sentinel = "TOP-SECRET-SENTINEL-1f2e3d";
+        using dir = tempDir("blob-deser-path", {
+          "secret.txt": sentinel,
+        });
+        const secretPath = join(String(dir), "secret.txt");
+        // The serializer still emits the File/Path wire record for a
+        // path-backed Bun.file(); this is byte-for-byte what an attacker
+        // would craft by hand.
+        const payload = serialize(Bun.file(secretPath));
+
+        expect(() => deserialize(payload)).toThrow();
+        expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+
+        // The same payload handed to a *fresh* process (the cache/IPC-shaped
+        // attack) must not mint a file handle there either.
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const { deserialize } = require("bun:jsc");
+            const payload = await Bun.stdin.bytes();
+            let blob;
+            try {
+              blob = deserialize(payload);
+            } catch (e) {
+              console.log("DESERIALIZE_THREW");
+              process.exit(0);
+            }
+            console.log("DESERIALIZE_OK");
+            console.log(await blob.text());
+            `,
+          ],
+          env: bunEnv,
+          stdin: new Uint8Array(payload),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).not.toContain(sentinel);
+        expect(stdout).toContain("DESERIALIZE_THREW");
+        expect(exitCode).toBe(0);
+      });
+
+      test("fd Blob payload does not alias an open descriptor", async () => {
+        using dir = tempDir("blob-deser-fd", {
+          "fd-target.txt": "fd sentinel contents",
+        });
+        const fd = openSync(join(String(dir), "fd-target.txt"), "r");
+        const payload = serialize(Bun.file(fd));
+
+        expect(() => deserialize(payload)).toThrow();
+        expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+
+        // In a fresh process that fd number refers to a different (or no)
+        // descriptor; deserialize must refuse rather than alias it.
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const { deserialize } = require("bun:jsc");
+            const payload = await Bun.stdin.bytes();
+            try {
+              deserialize(payload);
+            } catch (e) {
+              console.log("DESERIALIZE_THREW");
+              process.exit(0);
+            }
+            console.log("DESERIALIZE_OK");
+            `,
+          ],
+          env: bunEnv,
+          stdin: new Uint8Array(payload),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toContain("DESERIALIZE_THREW");
+        expect(exitCode).toBe(0);
+      });
+
+      test("s3 path Blob payload is rejected", () => {
+        // `Bun.file("s3://...")` uses a dedicated S3 store that serializes
+        // under the Bytes tag, so to get a File/Path record whose path is an
+        // s3:// URL we patch the path bytes of a regular file payload in
+        // place (same length, so the length prefix stays valid). This is the
+        // payload an attacker would craft to make the deserializer mint an
+        // S3-backed Blob using the process's ambient credentials.
+        using dir = tempDir("blob-deser-s3", { "abcdefgh.txt": "x" });
+        const realPath = join(String(dir), "abcdefgh.txt");
+        const payload = new Uint8Array(serialize(Bun.file(realPath)));
+
+        const pathBytes = new TextEncoder().encode(realPath);
+        const s3Url = "s3://bucket/" + "k".repeat(pathBytes.length - "s3://bucket/".length);
+        const s3Bytes = new TextEncoder().encode(s3Url);
+        expect(s3Bytes.length).toBe(pathBytes.length);
+
+        // Locate the path string inside the payload and overwrite it.
+        let at = -1;
+        outer: for (let i = 0; i + pathBytes.length <= payload.length; i++) {
+          for (let j = 0; j < pathBytes.length; j++) {
+            if (payload[i + j] !== pathBytes[j]) continue outer;
+          }
+          at = i;
+          break;
+        }
+        expect(at).toBeGreaterThanOrEqual(0);
+        payload.set(s3Bytes, at);
+
+        expect(() => deserialize(payload)).toThrow();
+        expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+      });
+
+      test("in-process structuredClone of a file-backed Blob still works", async () => {
+        const sentinel = "structured-clone-keeps-working";
+        using dir = tempDir("blob-clone-inproc", {
+          "kept.txt": sentinel,
+        });
+        const path = join(String(dir), "kept.txt");
+        const blob = Bun.file(path);
+        const clone = structuredClone(blob);
+        expect(clone.name).toBe(blob.name);
+        expect(clone.size).toBe(blob.size);
+        expect(clone.lastModified).toBe(blob.lastModified);
+        expect(await clone.text()).toBe(sentinel);
+      });
+
+      test("bytes-backed Blob and File payloads still round-trip through external bytes", async () => {
+        const blob = new Blob(["hello bytes"], { type: "application/octet-stream" });
+        const blobClone = deserialize(serialize(blob));
+        expect(blobClone).toBeInstanceOf(Blob);
+        expect(blobClone.type).toBe("application/octet-stream");
+        expect(await blobClone.text()).toBe("hello bytes");
+
+        const file = new File(["file bytes"], "n.txt", {
+          type: "application/octet-stream",
+          lastModified: 1234,
+        });
+        const fileClone = v8.deserialize(v8.serialize(file));
+        expect(fileClone).toBeInstanceOf(File);
+        expect(fileClone.name).toBe("n.txt");
+        expect(fileClone.lastModified).toBe(1234);
+        expect(await fileClone.text()).toBe("file bytes");
+      });
+    });
   });
 });

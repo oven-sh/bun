@@ -184,20 +184,41 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         const cloned = structuredCloneFn(blob);
         await compareBlobs(blob, cloned);
       });
+      // File-backed Blobs may only be re-created by the in-process
+      // structured-clone path. The byte-stream entry points (bun:jsc
+      // deserialize, cross-process IPC) must reject them: a file/fd record in
+      // an untrusted byte stream would otherwise mint a live handle over any
+      // path or descriptor.
       test("file from path", async () => {
         const blob = Bun.file(join(import.meta.dir, "example.txt"));
-        const cloned = structuredCloneFn(blob);
-        expect(cloned.lastModified).toBe(blob.lastModified);
-        expect(cloned.name).toBe(blob.name);
-        expect(cloned.size).toBe(blob.size);
+        if (structuredCloneFn === structuredClone) {
+          const cloned = structuredCloneFn(blob);
+          expect(cloned.lastModified).toBe(blob.lastModified);
+          expect(cloned.name).toBe(blob.name);
+          expect(cloned.size).toBe(blob.size);
+        } else if (structuredCloneFn === jscSerializeRoundtrip) {
+          expect(() => structuredCloneFn(blob)).toThrow();
+        } else {
+          // Cross-process: the child's deserialize rejects the file record,
+          // so no file-backed Blob ever comes back.
+          expect(structuredCloneFn(blob)).not.toBeInstanceOf(Blob);
+        }
       });
       test("file from fd", async () => {
         const fd = openSync(join(import.meta.dir, "example.txt"), "r");
         const blob = Bun.file(fd);
-        const cloned = structuredCloneFn(blob);
-        expect(cloned.lastModified).toBe(blob.lastModified);
-        expect(cloned.name).toBe(blob.name);
-        expect(cloned.size).toBe(blob.size);
+        if (structuredCloneFn === structuredClone) {
+          const cloned = structuredCloneFn(blob);
+          expect(cloned.lastModified).toBe(blob.lastModified);
+          expect(cloned.name).toBe(blob.name);
+          expect(cloned.size).toBe(blob.size);
+        } else if (structuredCloneFn === jscSerializeRoundtrip) {
+          expect(() => structuredCloneFn(blob)).toThrow();
+        } else {
+          // Cross-process: the child's deserialize rejects the file record,
+          // so no file-backed Blob ever comes back.
+          expect(structuredCloneFn(blob)).not.toBeInstanceOf(Blob);
+        }
       });
       describe("dom file", async () => {
         test("without lastModified", async () => {

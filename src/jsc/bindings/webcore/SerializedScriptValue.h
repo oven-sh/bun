@@ -175,7 +175,12 @@ public:
     // IDBValue writeBlobsToDiskForIndexedDBSynchronously();
     static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data)
     {
-        return adoptRef(*new SerializedScriptValue(WTF::move(data)));
+        auto result = adoptRef(*new SerializedScriptValue(WTF::move(data)));
+        // These bytes did not come from this process's serializer, so the
+        // deserializer must not honor tags that confer new capabilities
+        // (e.g. file-backed Blobs).
+        result->m_constructedFromWireBytes = true;
+        return result;
     }
     const Vector<uint8_t>& wireBytes() const { return m_data; }
 
@@ -285,6 +290,12 @@ private:
     String m_fastPathString;
     FastPath m_fastPath { FastPath::None };
     size_t m_memoryCost { 0 };
+
+    // True only when this SerializedScriptValue was built from raw bytes that
+    // arrived from outside this process's serializer (createFromWireBytes).
+    // The deserializer uses this to reject tags that would mint new
+    // capabilities from attacker-controlled bytes.
+    bool m_constructedFromWireBytes { false };
 
     FixedVector<SimpleInMemoryPropertyTableEntry> m_simpleInMemoryPropertyTable {};
     // m_simpleArrayElements and m_arrayButterflyData/m_arrayLength are used exclusively:

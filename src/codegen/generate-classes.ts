@@ -434,7 +434,7 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(
         typeName,
         "onStructuredCloneDeserialize",
-      )}(JSC::JSGlobalObject*, uint8_t**, const uint8_t*);` + "\n";
+      )}(JSC::JSGlobalObject*, uint8_t**, const uint8_t*, bool);` + "\n";
   }
   if (obj.finalize) {
     externs +=
@@ -2391,9 +2391,9 @@ const JavaScriptCoreBindings = struct {
       exports.set("structuredCloneDeserialize", symbolName(typeName, "onStructuredCloneDeserialize"));
 
       output += `
-      pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
+      pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8, from_wire_bytes: bool) callconv(jsc.conv) jsc.JSValue {
         if (comptime Environment.enable_logs) log_zig_structured_clone_deserialize("${typeName}");
-        return @call(bun.callmod_inline, jsc.toJSHostCall, .{ globalObject, @src(), ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end} });
+        return @call(bun.callmod_inline, jsc.toJSHostCall, .{ globalObject, @src(), ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end, from_wire_bytes} });
       }
       `;
     } else {
@@ -3057,8 +3057,8 @@ function generateRust(
     }
     thunk(
       symbolName(typeName, "onStructuredCloneDeserialize"),
-      `(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
-      `    host_fn::host_fn_result(global, || ${T}::on_structured_clone_deserialize(global, ptr, end))`,
+      `(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8, from_wire_bytes: bool) -> JSValue`,
+      `    host_fn::host_fn_result(global, || ${T}::on_structured_clone_deserialize(global, ptr, end, from_wire_bytes))`,
     );
   }
 
@@ -3484,7 +3484,7 @@ class StructuredCloneableSerialize {
 
 class StructuredCloneableDeserialize {
   public:
-    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*&, const uint8_t*);
+    static std::optional<JSC::EncodedJSValue> fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject*, const uint8_t*&, const uint8_t*, bool fromWireBytes);
 };
 
 }
@@ -3512,7 +3512,7 @@ function writeCppSerializers() {
   function fromTagDeserializeForEachClass(klass) {
     return `
     if (tag == ${klass.structuredClone.tag}) {
-      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, (uint8_t**)&ptr, end);
+      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, (uint8_t**)&ptr, end, fromWireBytes);
     }
     `;
   }
@@ -3526,7 +3526,7 @@ function writeCppSerializers() {
   `;
 
   output += `
-  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t*& ptr, const uint8_t* end)
+  std::optional<JSC::EncodedJSValue> StructuredCloneableDeserialize::fromTagDeserialize(uint8_t tag, JSC::JSGlobalObject* globalObject, const uint8_t*& ptr, const uint8_t* end, bool fromWireBytes)
   {
     ${structuredClonable.map(fromTagDeserializeForEachClass).join("\n").trim()}
     return std::nullopt;

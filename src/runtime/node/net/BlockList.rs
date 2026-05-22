@@ -421,6 +421,7 @@ impl BlockList {
         global: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
+        _from_wire_bytes: bool,
     ) -> JsResult<JSValue> {
         // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
         // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a

@@ -270,7 +270,15 @@ impl Stringifier {
                     self.array_item_counter += 1;
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    let name_entry = self.prop_names.get_or_put(prop_name.byte_slice())?;
+                    // Property names that can't be reused as anchor names all
+                    // share the generated `value<counter>` namespace (keyed on
+                    // the empty name), so their counters can't collide.
+                    let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
+                        prop_name.byte_slice()
+                    } else {
+                        b""
+                    };
+                    let name_entry = self.prop_names.get_or_put(key)?;
                     if name_entry.found_existing {
                         *name_entry.value_ptr += 1;
                     } else {
@@ -408,7 +416,7 @@ impl Stringifier {
                     self.builder.append_usize(*counter);
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    if prop_name.length() == 0 {
+                    if !can_use_prop_name_as_anchor(prop_name) {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
@@ -672,6 +680,35 @@ impl Stringifier {
 /// Does this object property value need a newline? True for arrays and objects.
 fn prop_value_needs_newline(value: JSValue) -> bool {
     !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
+}
+
+/// Can this property name be emitted verbatim as an anchor/alias name?
+///
+/// Anchor names cannot be quoted or escaped, so the name must re-parse exactly
+/// as written. YAML forbids whitespace, line breaks, and flow indicators
+/// (`,`, `[`, `]`, `{`, `}`) in anchor names; other characters (`#`, `:`,
+/// quotes, non-ASCII, ...) are ambiguous across flow/block contexts or
+/// encodings. Only reuse the property name when it consists entirely of
+/// unambiguously safe characters; otherwise the anchor falls back to a
+/// generated `value<counter>` name, like empty property names do.
+fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
+    if str.is_empty() {
+        return false;
+    }
+
+    for i in 0..str.length() {
+        match str.char_at(i) {
+            0x30..=0x39 /* '0'..='9' */
+            | 0x41..=0x5a /* 'A'..='Z' */
+            | 0x61..=0x7a /* 'a'..='z' */
+            | 0x2d /* '-' */
+            | 0x2e /* '.' */
+            | 0x5f /* '_' */ => {}
+            _ => return false,
+        }
+    }
+
+    true
 }
 
 fn string_needs_quotes(str: &BunString) -> bool {

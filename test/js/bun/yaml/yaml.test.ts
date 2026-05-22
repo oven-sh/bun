@@ -1,5 +1,6 @@
 import { YAML, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import { join } from "path";
 
 describe("Bun.YAML", () => {
@@ -1959,7 +1960,9 @@ config:
         },
       };
 
-      for (let i = 0; i < 10000; i++) {
+      // Debug/ASAN builds are much slower; keep this stress test within the default test timeout.
+      const iterations = isDebug || isASAN ? 1000 : 10000;
+      for (let i = 0; i < iterations; i++) {
         expect(YAML.stringify(config)).toBeString();
       }
     });
@@ -2042,6 +2045,58 @@ config:
         expect(parsed.a).not.toBe(parsed.c);
         expect(parsed.a.type).toBe("first");
         expect(parsed.c.type).toBe("second");
+      });
+
+      // Anchor names are derived from property names, but characters like
+      // flow indicators or whitespace are not valid in YAML anchor names,
+      // so stringify must not copy them into the anchor name verbatim.
+      test("anchors named after keys with special characters re-parse", () => {
+        const specialKeys = [
+          "\\u{10FFFF}a", // literal backslash-u-braces text, not a codepoint
+          "{",
+          "}",
+          "[",
+          "]",
+          ",",
+          "{a}",
+          "key[0]",
+          "a,b",
+          "a\\b",
+          "a b",
+          "a\tb",
+          "a\nb",
+          " ",
+          "key:with#chars",
+          "🙂emoji",
+        ];
+
+        for (const key of specialKeys) {
+          const shared = [1, 2];
+          const obj = { [key]: shared, other: shared };
+
+          for (const space of [undefined, 2]) {
+            const yaml = YAML.stringify(obj, null, space);
+            const parsed = YAML.parse(yaml);
+            expect(parsed).toEqual({ [key]: [1, 2], other: [1, 2] });
+            expect(parsed[key]).toBe(parsed.other);
+          }
+        }
+      });
+
+      test("falls back to generated anchor names for unsafe keys", () => {
+        const shared = [1, 2];
+        expect(YAML.stringify({ "a[b]": shared, other: shared })).toBe('{"a[b]": &value0 [1,2],other: *value0}');
+      });
+
+      test("round-trips parsed documents whose aliased keys contain flow indicators", () => {
+        const doc = "\\u{10FFFF}a: &x [1, 2]\nb: *x";
+        const value = YAML.parse(doc);
+        expect(value).toEqual({ "\\u{10FFFF}a": [1, 2], b: [1, 2] });
+
+        const yaml = YAML.stringify(value);
+        const reparsed = YAML.parse(yaml);
+        expect(reparsed).toEqual(value);
+        expect(reparsed["\\u{10FFFF}a"]).toBe(reparsed.b);
       });
     });
 

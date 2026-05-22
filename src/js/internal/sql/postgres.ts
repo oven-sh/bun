@@ -211,10 +211,12 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined):
   }
   if (typeOfType === "string") {
     const type = (typeNameOrID as string).toUpperCase();
-    // Allow `NUMERIC(10,2)`, `CHARACTER VARYING(255)`, `MYSCHEMA.MY_ENUM`
-    // — alnum, underscore, space, dot, comma, parens. The only goal is to
-    // refuse anything that could break out of the `$N::${type}[]` cast.
-    if (!/^[A-Z_][A-Z0-9_ .,()]*$/.test(type)) {
+    // Allow `NUMERIC(10,2)`, `CHARACTER VARYING(255)`, `MYSCHEMA.MY_ENUM`,
+    // `TIMESTAMP(3) WITH TIME ZONE`: identifier words separated by spaces or
+    // dots, each optionally followed by a `(digits[,digits])` modifier.
+    // Parentheses may only wrap digit lists so the value can never close the
+    // enclosing expression and break out of the `$N::${type}[]` cast.
+    if (!/^[A-Z_][A-Z0-9_]*(\([0-9]+(,[0-9]+)*\))?([ .][A-Z_][A-Z0-9_]*(\([0-9]+(,[0-9]+)*\))?)*$/.test(type)) {
       throw $ERR_INVALID_ARG_VALUE("type", typeNameOrID, "must be a valid PostgreSQL type name");
     }
     return type;

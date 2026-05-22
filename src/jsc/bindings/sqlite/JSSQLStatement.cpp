@@ -1211,6 +1211,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
 
     sqlite3* db = nullptr;
     if (sqlite3_open_v2(":memory:", &db, openFlags, nullptr) != SQLITE_OK) {
+        // Ownership of `data` is only transferred by sqlite3_deserialize below;
+        // on open failure it must be released here. A failed open can still
+        // return a partially-initialized handle that needs sqlite3_close().
+        sqlite3_free(data);
+        sqlite3_close(db);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Failed to open SQLite"_s));
         return {};
     }
@@ -1228,12 +1233,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     // SQLITE_DESERIALIZE_FREEONCLOSE transfers ownership of `data` to SQLite,
     // which frees it itself when deserialization fails. Do not free it again here.
     if (status == SQLITE_BUSY) {
+        sqlite3_close(db);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLITE_BUSY"_s));
         return {};
     }
 
     if (status != SQLITE_OK) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, status == SQLITE_ERROR ? "unable to deserialize database"_s : sqliteString(sqlite3_errstr(status))));
+        auto message = status == SQLITE_ERROR ? "unable to deserialize database"_s : sqliteString(sqlite3_errstr(status));
+        sqlite3_close(db);
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, message));
         return {};
     }
 

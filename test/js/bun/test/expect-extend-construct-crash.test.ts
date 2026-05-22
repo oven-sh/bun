@@ -30,11 +30,14 @@ test("new on an expect.extend custom matcher throws instead of crashing", async 
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "ignore",
+    stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  if (exitCode !== 0) {
+    console.error(stderr);
+  }
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });

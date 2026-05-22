@@ -302,7 +302,7 @@ test(".raw() strips length-prefix bytes (#30039) — binary protocol", async () 
 // The first bytes of the 251-byte payload deliberately form a valid
 // length-encoded string ("admin") so a desynchronized decoder would surface
 // it as the *next* column's value instead of "user".
-const bio251 = "\x05admin" + "x".repeat(251 - 6);
+const bio251 = "\x05admin" + Buffer.alloc(251 - 6, "x").toString();
 const realRole = "user";
 
 function textResultSet251(startSeq: number): Buffer {

@@ -12564,10 +12564,15 @@ console.log("FIXTURE_DONE");
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
 
   expect(stdout).toContain("REJECTED {falsy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
   expect(stdout).toContain("REJECTED {truthy} => ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT");
   expect(stdout).toContain("ROWS {false,true} => [false,true]");
   expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);

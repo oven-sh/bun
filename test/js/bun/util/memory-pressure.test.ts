@@ -62,7 +62,13 @@ describe.concurrent("MemoryPressureWatcher", () => {
       const aliveAfter = ref.deref() !== undefined;
       process.stdout.write(JSON.stringify({ aliveAfter, counter }));
     `;
-    const { out, debug, stderr, exitCode } = await run(flagOn, code);
+    // Flag OFF: simulate() calls respond() directly and doesn't need the real
+    // watcher. With the flag on, a level-triggered OS signal (e.g. Windows'
+    // LowMemoryResourceNotification on an already-low-memory runner) could run
+    // respond() during startup and make the counter 2 instead of exactly 1.
+    const env = { ...flagOn };
+    delete env.BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER;
+    const { out, debug, stderr, exitCode } = await run(env, code);
     expect({ debug, stderr }).toEqual({
       debug: expect.stringContaining("shrinking footprint"),
       stderr: expect.not.stringContaining("error"),

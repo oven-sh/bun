@@ -922,10 +922,7 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test("top-level `this` evaluates to globalThis (issue #31225)", async () => {
-      const { stdout, stderr, exitCode } = await runReplWith([
-        "-e",
-        "console.log(typeof this, this === globalThis)",
-      ]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "console.log(typeof this, this === globalThis)"]);
       expect(stderr).toBe("");
       expect(stdout).toBe("object true\n");
       expect(exitCode).toBe(0);
@@ -933,10 +930,7 @@ describe.concurrent("Bun REPL", () => {
 
     test("member access on top-level `this` hits the global (issue #31225)", async () => {
       // `Math` lives on the global, so `this.Math` should be the same object.
-      const { stdout, stderr, exitCode } = await runReplWith([
-        "-e",
-        "console.log(this.Math === Math)",
-      ]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "console.log(this.Math === Math)"]);
       expect(stderr).toBe("");
       expect(stdout).toBe("true\n");
       expect(exitCode).toBe(0);

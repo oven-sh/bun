@@ -603,7 +603,20 @@ impl MySQLConnection {
 
             // Process packet based on connection state
             match self.status {
-                ConnectionState::Handshaking => self.handle_handshake(reader)?,
+                ConnectionState::Handshaking => {
+                    self.handle_handshake(reader)?;
+                    // If the handshake negotiated TLS, the SSLRequest has been sent and
+                    // everything after this packet must arrive over the encrypted channel.
+                    // Any bytes already buffered behind the handshake packet are plaintext
+                    // a man-in-the-middle could have injected (CVE-2021-23222 class), so
+                    // reject them instead of feeding them to the auth/command handlers.
+                    if self.tls_status == TLSStatus::MessageSent {
+                        reader.set_offset_from_start(packet_length);
+                        if !reader.peek().is_empty() {
+                            return Err(AnyMySQLError::UnexpectedPacket);
+                        }
+                    }
+                }
                 ConnectionState::Authenticating | ConnectionState::AuthenticationAwaitingPk => {
                     self.handle_auth(reader, header_length)?
                 }

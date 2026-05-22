@@ -1458,8 +1458,8 @@ pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
 }
 
 /// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).
-/// Malformed authorities (missing `]`, non-numeric port, trailing garbage)
-/// yield an empty slice so callers fail closed.
+/// Malformed authorities (missing `]`, empty or non-numeric port, trailing
+/// garbage) yield an empty slice so callers fail closed.
 fn host_without_port(host: &[u8]) -> &[u8] {
     let (host, rest) = if host.first() == Some(&b'[') {
         match strings::index_of_scalar(host, b']') {
@@ -1474,7 +1474,7 @@ fn host_without_port(host: &[u8]) -> &[u8] {
     };
     match rest {
         [] => host,
-        [b':', port @ ..] if port.iter().all(u8::is_ascii_digit) => host,
+        [b':', port @ ..] if !port.is_empty() && port.iter().all(u8::is_ascii_digit) => host,
         _ => b"",
     }
 }

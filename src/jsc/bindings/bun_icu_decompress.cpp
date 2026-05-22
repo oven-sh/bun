@@ -28,28 +28,70 @@ static_assert(ZSTD_MAGICNUMBER == 0xFD2FB528);
 extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
 extern "C" __attribute__((weak)) const unsigned int bun_icu_zstd_dict_size;
 
-namespace {
+namespace Bun {
 
-WTF::Lock g_lock;
-ZSTD_DCtx* g_dctx WTF_GUARDED_BY_LOCK(g_lock);
-ZSTD_DDict* g_ddict WTF_GUARDED_BY_LOCK(g_lock);
+class ICUDecompressor {
+public:
+    static ICUDecompressor& get()
+    {
+        static LazyNeverDestroyed<ICUDecompressor> instance;
+        static std::once_flag once;
+        std::call_once(once, [] { instance.construct(); });
+        return instance.get();
+    }
 
-WTF::HashMap<const void*, void*>& cache() WTF_REQUIRES_LOCK(g_lock)
-{
-    static NeverDestroyed<WTF::HashMap<const void*, void*>> map;
-    return map;
-}
+    const void* decompress(const void* p, int32_t* length)
+    {
+        Locker locker { m_lock };
 
-void ensureInit() WTF_REQUIRES_LOCK(g_lock)
-{
-    if (g_dctx) [[likely]]
-        return;
-    g_dctx = ZSTD_createDCtx();
-    if (&bun_icu_zstd_dict_size && bun_icu_zstd_dict_size)
-        g_ddict = ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size);
-}
+        if (auto it = m_cache.find(p); it != m_cache.end()) {
+            *length = static_cast<int32_t>(ZSTD_getFrameContentSize(p, frameBound(*length)));
+            return it->value;
+        }
 
-} // namespace
+        size_t clen = ZSTD_findFrameCompressedSize(p, frameBound(*length));
+        if (ZSTD_isError(clen))
+            return p;
+        auto dlen = ZSTD_getFrameContentSize(p, clen);
+        if (dlen == ZSTD_CONTENTSIZE_UNKNOWN || dlen == ZSTD_CONTENTSIZE_ERROR)
+            return p;
+
+        void* buf = MimallocMalloc::tryAlignedMalloc(static_cast<size_t>(dlen), 16);
+        if (!buf)
+            return p;
+        size_t r = m_ddict
+            ? ZSTD_decompress_usingDDict(m_dctx, buf, static_cast<size_t>(dlen), p, clen, m_ddict)
+            : ZSTD_decompressDCtx(m_dctx, buf, static_cast<size_t>(dlen), p, clen);
+        if (ZSTD_isError(r)) {
+            MimallocMalloc::free(buf);
+            return p;
+        }
+
+        m_cache.add(p, buf);
+        *length = static_cast<int32_t>(dlen);
+        return buf;
+    }
+
+private:
+    ICUDecompressor()
+        : m_dctx(ZSTD_createDCtx())
+        , m_ddict(&bun_icu_zstd_dict_size && bun_icu_zstd_dict_size
+                ? ZSTD_createDDict_byReference(bun_icu_zstd_dict, bun_icu_zstd_dict_size)
+                : nullptr)
+    {
+    }
+
+    static size_t frameBound(int32_t tocLength) { return tocLength > 0 ? static_cast<size_t>(tocLength) : (1u << 20); }
+
+    friend class WTF::LazyNeverDestroyed<ICUDecompressor>;
+
+    WTF::Lock m_lock;
+    WTF::HashMap<const void*, void*> m_cache WTF_GUARDED_BY_LOCK(m_lock);
+    ZSTD_DCtx* const m_dctx;
+    ZSTD_DDict* const m_ddict;
+};
+
+} // namespace Bun
 
 extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
 {
@@ -59,37 +101,5 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
     std::memcpy(&magic, p, sizeof(magic));
     if (magic != ZSTD_MAGICNUMBER) [[likely]]
         return p;
-
-    Locker locker { g_lock };
-    ensureInit();
-
-    if (auto it = cache().find(p); it != cache().end()) {
-        auto d = ZSTD_getFrameContentSize(p, *length > 0 ? static_cast<size_t>(*length) : 64);
-        if (d != ZSTD_CONTENTSIZE_UNKNOWN && d != ZSTD_CONTENTSIZE_ERROR)
-            *length = static_cast<int32_t>(d);
-        return it->value;
-    }
-
-    size_t bound = *length > 0 ? static_cast<size_t>(*length) : (1u << 20);
-    size_t clen = ZSTD_findFrameCompressedSize(p, bound);
-    if (ZSTD_isError(clen))
-        return p;
-    auto dlen = ZSTD_getFrameContentSize(p, clen);
-    if (dlen == ZSTD_CONTENTSIZE_UNKNOWN || dlen == ZSTD_CONTENTSIZE_ERROR)
-        return p;
-
-    void* buf = Bun::MimallocMalloc::tryAlignedMalloc(static_cast<size_t>(dlen), 16);
-    if (!buf)
-        return p;
-    size_t r = g_ddict
-        ? ZSTD_decompress_usingDDict(g_dctx, buf, static_cast<size_t>(dlen), p, clen, g_ddict)
-        : ZSTD_decompressDCtx(g_dctx, buf, static_cast<size_t>(dlen), p, clen);
-    if (ZSTD_isError(r)) {
-        Bun::MimallocMalloc::free(buf);
-        return p;
-    }
-
-    cache().add(p, buf);
-    *length = static_cast<int32_t>(dlen);
-    return buf;
+    return Bun::ICUDecompressor::get().decompress(p, length);
 }

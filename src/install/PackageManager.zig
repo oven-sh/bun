@@ -992,7 +992,15 @@ pub fn initWithRuntime(
         cli,
         env,
     });
-    return PackageManager.get();
+    // `init_with_runtime_once` installs whatever `log` the first caller
+    // passed. Subsequent calls would otherwise leave the singleton pointing
+    // at a stale/freed log — e.g. `Bun.build()`'s per-completion log is
+    // freed when the task is dropped. Refresh on every call so error paths
+    // in `runTasks.zig` / `PackageManagerEnqueue.zig` always write through
+    // the live log.
+    const pm = PackageManager.get();
+    pm.log = log;
+    return pm;
 }
 
 var init_with_runtime_once = bun.once(initWithRuntimeOnce);

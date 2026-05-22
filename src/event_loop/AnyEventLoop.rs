@@ -120,10 +120,6 @@ impl<'a> AnyEventLoop<'a> {
         }
     }
 
-<<<<<<< HEAD
-    // All callers pass a pointer, so we take the erased fn-ptr form directly;
-    // callers cast.
-=======
     /// Like `js_current`, but falls back to a fresh `Mini` event loop when no
     /// VM is bound on the calling thread. Used by `bun_install::PackageManager`
     /// so auto-install works from the `bun build` CLI and the bundler's worker
@@ -131,7 +127,7 @@ impl<'a> AnyEventLoop<'a> {
     pub fn js_current_or_mini() -> AnyEventLoop<'static> {
         let ptr = __bun_js_event_loop_current_or_null();
         if ptr.is_null() {
-            AnyEventLoop::Mini(MiniEventLoop::init())
+            AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
         } else {
             AnyEventLoop::Js {
                 owner: JsEventLoop::current(),
@@ -139,10 +135,8 @@ impl<'a> AnyEventLoop<'a> {
         }
     }
 
-    // PORT NOTE: Zig `context: anytype` + `@ptrCast(isDone)` erases the fn-ptr
-    // type at the call into `mini.tick(ctx, *const fn(*anyopaque) bool)`. All
-    // callers pass a pointer, so we take the erased form directly; callers cast.
->>>>>>> b57303fd33 (Enable auto-install for bun build and Bun.build())
+    // All callers pass a pointer, so we take the erased fn-ptr form directly;
+    // callers cast.
     pub fn tick(
         &mut self,
         context: *mut core::ffi::c_void,

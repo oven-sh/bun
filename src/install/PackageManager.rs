@@ -2264,6 +2264,7 @@ pub(crate) fn init_with_runtime(
     cli: CommandLineArguments,
     env: &mut dot_env::Loader<'static>,
 ) -> Result<*mut PackageManager, bun_core::Error> {
+    let log_ptr: *mut bun_ast::Log = log;
     // NB: not `bun_core::run_once!` — the body is fallible (reading the root
     // directory hits ENOENT/EACCES at runtime when the cwd was deleted or is
     // unreadable), and the failure must be sticky: `holder::RAW_PTR` stays
@@ -2279,7 +2280,19 @@ pub(crate) fn init_with_runtime(
         }
     });
     match INIT_ERROR.load(core::sync::atomic::Ordering::Acquire) {
-        0 => Ok(get()),
+        0 => {
+            let pm = get();
+            // The once-init installs whatever `log` the first caller passed.
+            // Subsequent callers would otherwise leave the singleton pointing
+            // at a stale/freed log — e.g. `Bun.build()`'s per-completion log
+            // is freed when the task is dropped. Refresh on every call so
+            // error paths in `PackageManagerEnqueue` / `runTasks` always
+            // write through the live log.
+            // SAFETY: `pm` is the process-lifetime singleton; `log_ptr`
+            // aliases the caller's `log` which outlives this call.
+            unsafe { (*pm).log = log_ptr };
+            Ok(pm)
+        }
         code => Err(bun_core::Error::from_raw(code)),
     }
 }
@@ -2494,9 +2507,13 @@ pub(crate) fn init_with_runtime_once(
         // uSockets timers / lifecycle waiters can recover the mini loop via
         // `EventLoopHandle::from_tag_ptr`. Mirrors the `init()` path above.
         let uws_loop = manager.event_loop.r#loop();
+        // SAFETY: `uws_loop` is the live process-global `uws::Loop` just
+        // returned by `r#loop()`; backref is `manager.event_loop` owned by the
+        // singleton.
+        let uws_loop = unsafe { &mut *uws_loop };
         EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
         if let AnyEventLoop::Mini(mini) = &mut manager.event_loop {
-            let mini_ptr: *mut MiniEventLoop<'static> = mini;
+            let mini_ptr: *mut MiniEventLoop<'static> = &raw mut **mini;
             mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
         }
     }

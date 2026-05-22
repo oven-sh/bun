@@ -3210,31 +3210,8 @@ pub fn get_total_memory_size() -> usize {
     Bun__ramSize()
 }
 
-/// C-ABI stack capture for `Global::StoredTrace` / `bun_crash_handler`.
-/// Frame-pointer walk of the current thread (see `debug::capture_current`).
-/// `begin` is a `first_address` trim point (a return address); `0` means "no
-/// trim, start from here".
-///
-/// # Safety
-/// `out` must be writable for `cap` `usize` slots (or null/`cap == 0`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__captureStackTrace(
-    begin: usize,
-    out: *mut usize,
-    cap: usize,
-) -> usize {
-    if out.is_null() || cap == 0 {
-        return 0;
-    }
-    // SAFETY: `out` is non-null (checked) and valid for `cap` `usize` writes.
-    let slice = unsafe { core::slice::from_raw_parts_mut(out, cap) };
-    let first = if begin == 0 { None } else { Some(begin) };
-    debug::capture_current(first, slice)
-}
-
-/// Safe wrapper over `Bun__captureStackTrace`. Single canonical entry point —
-/// `StoredTrace::capture` and `bun_crash_handler::debug::capture_stack_trace`
-/// both route through this so no caller re-declares the `extern "C"` import.
+/// Capture the current thread's call stack into `addrs`. `begin` is a
+/// `first_address` trim point (a return address); `0` means "no trim".
 #[inline]
 pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
     let first = if begin == 0 { None } else { Some(begin) };
@@ -3329,7 +3306,7 @@ pub mod debug {
     /// Reads memory from any address of the current process, tolerating unmapped
     /// or corrupt pages so a damaged stack can't fault the walker itself. Port of
     /// `std.debug.MemoryAccessor`.
-    pub struct MemoryAccessor {
+    struct MemoryAccessor {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         mem: core::ffi::c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -3390,7 +3367,9 @@ pub mod debug {
                             &path_buf[..n]
                         };
                         // SAFETY: path is NUL-terminated.
-                        let fd = unsafe { libc::open(path.as_ptr().cast(), libc::O_RDONLY) };
+                        let fd = unsafe {
+                            libc::open(path.as_ptr().cast(), libc::O_RDONLY | libc::O_CLOEXEC)
+                        };
                         if fd < 0 {
                             self.mem = -2;
                             break;
@@ -3449,42 +3428,20 @@ pub mod debug {
         }
         #[cfg(windows)]
         {
-            #[repr(C)]
-            struct MemoryBasicInformation {
-                base_address: *mut core::ffi::c_void,
-                allocation_base: *mut core::ffi::c_void,
-                allocation_protect: u32,
-                partition_id: u16,
-                region_size: usize,
-                state: u32,
-                protect: u32,
-                type_: u32,
-            }
-            const MEM_FREE: u32 = 0x10000;
-            unsafe extern "system" {
-                fn VirtualQuery(
-                    lpAddress: *const core::ffi::c_void,
-                    lpBuffer: *mut MemoryBasicInformation,
-                    dwLength: usize,
-                ) -> usize;
-            }
-            let mut mbi: MemoryBasicInformation = unsafe { core::mem::zeroed() };
-            // SAFETY: `mbi` is a valid out-param of the size we pass; VirtualQuery
-            // only inspects the address-space mapping at `aligned_address`.
+            use bun_windows_sys::kernel32::{VirtualQuery, MEMORY_BASIC_INFORMATION, MEM_FREE};
+            // SAFETY: MEMORY_BASIC_INFORMATION is a plain Win32 POD; all-zeros is
+            // a valid representation. `mbi` is a valid out-param of the size we
+            // pass; VirtualQuery only inspects the address-space mapping at
+            // `aligned_address`.
+            let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { crate::ffi::zeroed_unchecked() };
             let rc = unsafe {
                 VirtualQuery(
                     aligned_address as *const core::ffi::c_void,
                     &mut mbi,
-                    core::mem::size_of::<MemoryBasicInformation>(),
+                    core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
                 )
             };
-            if rc == 0 {
-                return false;
-            }
-            if mbi.state == MEM_FREE {
-                return false;
-            }
-            true
+            rc != 0 && mbi.State != MEM_FREE
         }
         #[cfg(not(windows))]
         {
@@ -3505,7 +3462,6 @@ pub mod debug {
 
     /// Port of `std.debug.StackIterator`. Walks the frame-pointer chain.
     pub struct StackIterator {
-        first_address: Option<usize>,
         pub fp: usize,
         ma: MemoryAccessor,
     }
@@ -3524,32 +3480,16 @@ pub mod debug {
             core::mem::size_of::<usize>()
         };
 
-        pub fn init(first_address: Option<usize>, fp: Option<usize>) -> StackIterator {
-            StackIterator {
-                first_address,
-                // Call `frame_address` directly (not as a fn-pointer) so the
-                // `#[inline(always)]` read happens in this frame; passing it to
-                // `unwrap_or_else` would defeat inlining. Prefer an explicit `fp`.
-                fp: match fp {
-                    Some(fp) => fp,
-                    None => frame_address(),
-                },
-                ma: MemoryAccessor::INIT,
-            }
+        /// `fp` is required: this function is not `#[inline(always)]`, so a
+        /// `frame_address()` call from inside it would read this frame's own rbp —
+        /// a frame that no longer exists by the time `next()` dereferences it. Pass
+        /// `frame_address()` from the caller (where it inlines) or a context-seeded
+        /// value.
+        pub fn init(fp: usize) -> StackIterator {
+            StackIterator { fp, ma: MemoryAccessor::INIT }
         }
 
         pub fn next(&mut self) -> Option<usize> {
-            let mut address = self.next_internal()?;
-            if let Some(first_address) = self.first_address {
-                while address != first_address {
-                    address = self.next_internal()?;
-                }
-                self.first_address = None;
-            }
-            Some(address)
-        }
-
-        fn next_internal(&mut self) -> Option<usize> {
             let fp = self.fp.checked_sub(Self::FP_OFFSET)?;
 
             // Sanity check.
@@ -3600,13 +3540,10 @@ pub mod debug {
         } as usize;
         #[cfg(not(windows))]
         let n = {
-            // Read THIS frame's pointer inline (`frame_address` is `#[inline(always)]`,
-            // so this reads `capture_current`'s own fp) and seed the walk explicitly.
-            // `StackIterator::init(_, None)` is not `#[inline(always)]`, so a
-            // `frame_address()` call from inside it would read `init`'s own rbp —
-            // a frame that no longer exists by the time `next()` dereferences it.
+            // `frame_address` is `#[inline(always)]`, so this reads
+            // `capture_current`'s own fp and seeds the walk from this frame.
             let fp = frame_address();
-            let mut it = StackIterator::init(None, Some(fp));
+            let mut it = StackIterator::init(fp);
             let mut n = 0usize;
             while n < out.len() {
                 match it.next() {
@@ -3681,7 +3618,7 @@ pub mod debug {
         }
         #[cfg(not(windows))]
         {
-            let mut it = StackIterator::init(None, Some(fp));
+            let mut it = StackIterator::init(fp);
             while n < out.len() {
                 match it.next() {
                     Some(addr) => {

@@ -585,10 +585,28 @@ pub mod advapi32 {}
 pub mod kernel32 {
     use super::*;
 
+    #[repr(C)]
+    pub struct MEMORY_BASIC_INFORMATION {
+        pub BaseAddress: *mut core::ffi::c_void,
+        pub AllocationBase: *mut core::ffi::c_void,
+        pub AllocationProtect: u32,
+        pub PartitionId: u16,
+        pub RegionSize: usize,
+        pub State: u32,
+        pub Protect: u32,
+        pub Type: u32,
+    }
+    pub const MEM_FREE: u32 = 0x10000;
+
     #[link(name = "kernel32")]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
+        pub fn VirtualQuery(
+            lpAddress: *const core::ffi::c_void,
+            lpBuffer: *mut MEMORY_BASIC_INFORMATION,
+            dwLength: usize,
+        ) -> usize;
         /// No preconditions; terminates the process (cf. `std::process::exit`).
         pub safe fn ExitProcess(exit_code: u32) -> !;
         /// No preconditions; returns the cached console/std handle (or

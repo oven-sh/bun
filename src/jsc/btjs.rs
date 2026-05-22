@@ -8,102 +8,10 @@ use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
 use bun_core::{self, Error, err};
 
 // Port of the subset of Zig `std.debug.*` used by btjs.zig: `SelfInfo`, `StackIterator`,
-// `ThreadContext`, `MemoryAccessor`, plus the symbol-lookup helpers. The frame-pointer
-// unwinder is ported verbatim from `vendor/zig/lib/std/debug.zig`; the DWARF-backed
-// unwind path is omitted (`supports_unwinding = false` here) so `StackIterator` falls
-// through to fp-walking exactly as Zig does on targets without DWARF support.
+// plus the symbol-lookup helpers. The frame-pointer unwinder lives in `bun_core::debug`.
 #[cfg(debug_assertions)]
 mod zig_std_debug {
     pub use bun_core::debug::{StackIterator, frame_address};
-
-    // ── ThreadContext / have_ucontext ────────────────────────────────────
-    // Zig: `pub const ThreadContext = if (windows) windows.CONTEXT else if (have_ucontext) posix.ucontext_t else void;`
-    #[cfg(not(windows))]
-    pub type ThreadContext = libc::ucontext_t;
-    #[cfg(windows)]
-    pub type ThreadContext = bun_sys::windows::CONTEXT;
-
-    // Zig: `pub const have_getcontext = @TypeOf(posix.system.getcontext) != void;`
-    // Android / OpenBSD / Haiku lack getcontext; everywhere else we link libc's.
-    #[cfg(not(windows))]
-    const HAVE_GETCONTEXT: bool = cfg!(all(
-        not(windows),
-        not(target_os = "android"),
-        not(target_os = "openbsd")
-    ));
-
-    // ── std.debug.getContext ─────────────────────────────────────────────
-    /// Port of `std.debug.getContext`. Captures the current register state.
-    /// Returns `false` if the platform has no `getcontext`.
-    #[inline(always)]
-    pub fn get_context(context: *mut ThreadContext) -> bool {
-        #[cfg(windows)]
-        {
-            // SAFETY: context is a valid out-param; RtlCaptureContext writes to it.
-            unsafe {
-                core::ptr::write(context, bun_core::ffi::zeroed_unchecked());
-                bun_sys::windows::ntdll_context::RtlCaptureContext(context);
-            }
-            return true;
-        }
-        #[cfg(not(windows))]
-        {
-            if !HAVE_GETCONTEXT {
-                return false;
-            }
-            #[cfg(any(target_os = "android", target_os = "openbsd"))]
-            {
-                let _ = context;
-                return false;
-            }
-            #[cfg(not(any(target_os = "android", target_os = "openbsd")))]
-            {
-                // The `libc` crate omits the getcontext(3) binding on Darwin
-                // and the BSDs (it exists in libSystem / libc); declare locally.
-                // On Linux/glibc the crate does provide it, but we use the same
-                // local decl for uniformity.
-                unsafe extern "C" {
-                    fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int;
-                }
-                // SAFETY: context points to a valid `ucontext_t`; getcontext(3) fills it.
-                let result = unsafe { getcontext(context) } == 0;
-                // On aarch64-macos, the system getcontext doesn't write anything into the pc
-                // register slot, it only writes lr. This makes the context consistent with
-                // other aarch64 getcontext implementations which write the current lr
-                // (where getcontext will return to) into both the lr and pc slot of the context.
-                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-                {
-                    // SAFETY: getcontext just initialized `*context`; mcontext is non-null.
-                    unsafe {
-                        let mctx = (*context).uc_mcontext;
-                        if !mctx.is_null() {
-                            (*mctx).__ss.__pc = (*mctx).__ss.__lr;
-                        }
-                    }
-                }
-                return result;
-            }
-        }
-    }
-
-    /// Port of `std.debug.StackIterator.initWithContext`. The DWARF unwind path
-    /// is not ported (`SUPPORTS_UNWINDING == false` in the Zig sense), so on every
-    /// target except apple-aarch64 — where the system `getcontext` yields a usable
-    /// fp — this falls back to fp-walking from the caller's frame.
-    #[inline(always)]
-    pub fn init_with_context(context: *mut ThreadContext) -> StackIterator {
-        #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
-        {
-            // SAFETY: caller passes a `getcontext`-initialized ucontext; mcontext is non-null.
-            let fp = unsafe { (*(*context).uc_mcontext).__ss.__fp } as usize;
-            StackIterator::init(fp)
-        }
-        #[cfg(not(all(target_vendor = "apple", target_arch = "aarch64")))]
-        {
-            let _ = context;
-            StackIterator::init(frame_address())
-        }
-    }
 
     // ── SelfInfo (vendor/zig/lib/std/debug/SelfInfo.zig) ─────────────────
     // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
@@ -114,7 +22,7 @@ mod zig_std_debug {
     };
 }
 #[cfg(debug_assertions)]
-use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo, ThreadContext};
+use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo};
 
 // Port of the subset of `std.io.tty.{Config,Color,detectConfig}` used by btjs.zig
 // (vendor/zig/lib/std/Io/tty.zig). The `windows_api` variant is omitted because
@@ -264,16 +172,7 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
 
     let tty_config = tty::detect_config_stdout();
 
-    // SAFETY: Zig used `= undefined`; getcontext fully initializes.
-    let mut context: ThreadContext = unsafe { bun_core::ffi::zeroed_unchecked() };
-    let has_context = get_context(&mut context);
-
-    let mut it: StackIterator = if has_context && !cfg!(windows) {
-        zig_std_debug::init_with_context(&mut context)
-    } else {
-        StackIterator::init(zig_std_debug::frame_address())
-    };
-    // defer it.deinit() — handled by Drop
+    let mut it = StackIterator::init(zig_std_debug::frame_address());
 
     while let Some(return_address) = it.next() {
         // On arm64 macOS, the address of the last frame is 0x0 rather than 0x1 as on x86_64 macOS,
@@ -574,11 +473,6 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
 #[inline]
 fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
     zig_std_debug::get_self_debug_info()
-}
-#[cfg(debug_assertions)]
-#[inline(always)]
-fn get_context(ctx: &mut ThreadContext) -> bool {
-    zig_std_debug::get_context(ctx)
 }
 #[cfg(debug_assertions)]
 #[inline]

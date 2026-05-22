@@ -474,7 +474,7 @@ pub mod ntdll {
         pub fn RtlCaptureStackBackTrace(
             FramesToSkip: u32,
             FramesToCapture: u32,
-            BackTrace: *mut *mut core::ffi::c_void,
+            BackTrace: *mut *mut c_void,
             BackTraceHash: *mut u32,
         ) -> u16;
         pub fn NtCreateFile(
@@ -587,8 +587,8 @@ pub mod kernel32 {
 
     #[repr(C)]
     pub struct MEMORY_BASIC_INFORMATION {
-        pub BaseAddress: *mut core::ffi::c_void,
-        pub AllocationBase: *mut core::ffi::c_void,
+        pub BaseAddress: LPVOID,
+        pub AllocationBase: LPVOID,
         pub AllocationProtect: u32,
         pub PartitionId: u16,
         pub RegionSize: usize,
@@ -603,7 +603,7 @@ pub mod kernel32 {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
         pub fn VirtualQuery(
-            lpAddress: *const core::ffi::c_void,
+            lpAddress: LPCVOID,
             lpBuffer: *mut MEMORY_BASIC_INFORMATION,
             dwLength: usize,
         ) -> usize;

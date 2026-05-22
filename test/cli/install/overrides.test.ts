@@ -311,6 +311,70 @@ test("nested override with dot and child handles both rules", async () => {
   ensureLockfileDoesntChangeOnBunI(String(tmp));
 });
 
+test("nested override added after install re-resolves child with parent context", async () => {
+  using tmp = tempDir("overrides-nested-added-later", {});
+  const packageJSON = join(String(tmp), "package.json");
+  writeFileSync(
+    packageJSON,
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).not.toBe("1.0.0");
+
+  writeFileSync(
+    packageJSON,
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      overrides: {
+        "raw-body": {
+          bytes: "1.0.0",
+        },
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("nested override removed after install re-resolves child without scoped rule", async () => {
+  using tmp = tempDir("overrides-nested-removed-later", {});
+  const packageJSON = join(String(tmp), "package.json");
+  writeFileSync(
+    packageJSON,
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      overrides: {
+        "raw-body": {
+          bytes: "1.0.0",
+        },
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
+
+  writeFileSync(
+    packageJSON,
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).not.toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
 test("Yarn-style nested resolution applies only under matching parent", async () => {
   using tmp = tempDir("resolutions-nested-parent-match", {});
   writeFileSync(
@@ -329,6 +393,25 @@ test("Yarn-style nested resolution applies only under matching parent", async ()
   ensureLockfileDoesntChangeOnBunI(String(tmp));
 });
 
+test("Yarn-style nested resolution does not apply under different parent", async () => {
+  using tmp = tempDir("resolutions-nested-parent-mismatch", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        lodash: "4.17.21",
+        "raw-body": "2.5.2",
+      },
+      resolutions: {
+        "lodash/bytes": "1.0.0",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).not.toBe("1.0.0");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
 test("Yarn-style nested resolution with scoped parent package", async () => {
   using tmp = tempDir("resolutions-nested-scoped-parent", {});
   writeFileSync(
@@ -344,6 +427,24 @@ test("Yarn-style nested resolution with scoped parent package", async () => {
   );
   install(String(tmp), ["install"]);
   expect(versionOf(String(tmp), "node_modules/semver/package.json")).toBe("7.5.4");
+  ensureLockfileDoesntChangeOnBunI(String(tmp));
+});
+
+test("Yarn-style nested resolution with version-qualified parent key strips version suffix", async () => {
+  using tmp = tempDir("resolutions-version-qualified-parent", {});
+  writeFileSync(
+    join(String(tmp), "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "raw-body": "2.5.2",
+      },
+      resolutions: {
+        "raw-body@2.5.2/bytes": "1.0.0",
+      },
+    }),
+  );
+  install(String(tmp), ["install"]);
+  expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
   ensureLockfileDoesntChangeOnBunI(String(tmp));
 });
 
@@ -366,4 +467,3 @@ test("nested override with version-qualified parent key strips version suffix", 
   expect(versionOf(String(tmp), "node_modules/bytes/package.json")).toBe("1.0.0");
   ensureLockfileDoesntChangeOnBunI(String(tmp));
 });
-

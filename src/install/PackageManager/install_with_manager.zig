@@ -247,15 +247,27 @@ pub fn installWithManager(
                         all_name_hashes_orig_len = total;
                         var result = try bun.default_allocator.alloc(PackageNameHash, total);
                         var idx: usize = 0;
-                        for (manager.lockfile.overrides.global.keys()) |k| { result[idx] = k; idx += 1; }
-                        for (lockfile.overrides.global.keys()) |k| { result[idx] = k; idx += 1; }
-                        for (manager.lockfile.overrides.scoped.keys()) |k| { result[idx] = k.child_name_hash; idx += 1; }
-                        for (lockfile.overrides.scoped.keys()) |k| { result[idx] = k.child_name_hash; idx += 1; }
+                        for (manager.lockfile.overrides.global.keys()) |k| {
+                            result[idx] = k;
+                            idx += 1;
+                        }
+                        for (lockfile.overrides.global.keys()) |k| {
+                            result[idx] = k;
+                            idx += 1;
+                        }
+                        for (manager.lockfile.overrides.scoped.keys()) |k| {
+                            result[idx] = k.child_name_hash;
+                            idx += 1;
+                        }
+                        for (lockfile.overrides.scoped.keys()) |k| {
+                            result[idx] = k.child_name_hash;
+                            idx += 1;
+                        }
                         var i: usize = 0;
                         while (i < result.len) {
                             if (std.mem.indexOfScalar(PackageNameHash, result[0..i], result[i]) != null) {
                                 result[i] = result[result.len - 1];
-                                result = result[0..result.len - 1];
+                                result = result[0 .. result.len - 1];
                             } else {
                                 i += 1;
                             }
@@ -377,50 +389,60 @@ pub fn installWithManager(
                     // ever reads through a pointer into the old backing storage.
                     if (manager.summary.overrides_changed and all_name_hashes.len > 0) {
                         const dependencies_len = manager.lockfile.buffers.dependencies.items.len;
-                    // Resolve each affected dependency, using the correct parent context
-                    // so that scoped overrides are re-evaluated with their owning package.
-                    const owner_map = owner_map: {
-                        // Build a temporary DependencyID -> PackageID map so that when we
-                        // re-enqueue dependencies whose overrides changed, we can pass the
-                        // correct parent context to scoped override lookup.
-                        var map = try bun.default_allocator.alloc(?PackageID, dependencies_len);
-                        @memset(map, null);
-                        const packages_len = manager.lockfile.packages.len;
-                        for (0..packages_len) |pkg_id| {
-                            const dep_slice = manager.lockfile.packages.items(.dependencies)[pkg_id];
-                            const dep_off = dep_slice.off;
-                            const dep_len = dep_slice.len;
-                            if (dep_len == 0) continue;
-                            for (0..dep_len) |j| {
-                                const dep_id = dep_off + j;
-                                if (dep_id < dependencies_len) {
-                                    map[dep_id] = @truncate(pkg_id);
+
+                        // Build a temporary DependencyID -> PackageID map (the "owner map")
+                        // so that when we re-enqueue dependencies whose overrides changed,
+                        // we can pass the correct parent context for scoped override lookup.
+                        // Only populated when scoped overrides exist — when none do, we skip
+                        // the allocation and simply pass null as parent context.
+                        //
+                        // Note: this map only carries context for direct children of each
+                        // package. Transitive dependencies within the re-resolved package
+                        // receive no override context during this re-resolution pass (their
+                        // scoped overrides were already applied on the first resolution pass).
+                        const owner_map = owner_map: {
+                            if (manager.lockfile.overrides.scoped.count() == 0)
+                                break :owner_map null;
+
+                            var map = try bun.default_allocator.alloc(?PackageID, dependencies_len);
+                            @memset(map, null);
+                            const packages_len = manager.lockfile.packages.len;
+                            for (0..packages_len) |pkg_id| {
+                                const dep_slice = manager.lockfile.packages.items(.dependencies)[pkg_id];
+                                const dep_off = dep_slice.off;
+                                const dep_len = dep_slice.len;
+                                if (dep_len == 0) continue;
+                                for (0..dep_len) |j| {
+                                    const dep_id = dep_off + j;
+                                    if (dep_id < dependencies_len) {
+                                        map[dep_id] = @truncate(pkg_id);
+                                    }
                                 }
                             }
-                        }
-                        break :owner_map map;
-                    };
-                    defer bun.default_allocator.free(owner_map);
+                            break :owner_map map;
+                        };
+                        defer if (owner_map) |map| bun.default_allocator.free(map);
 
-                    for (0..dependencies_len) |dependency_i| {
-                        const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
-                        if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
-                            manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
-                            // Use the owner map to recover the parent package context for
-                            // scoped override re-resolution. Falls back to null for orphaned
-                            // dependencies that are not declared by any known package.
-                            const parent_package_id = owner_map[dependency_i];
-                            manager.enqueueDependencyWithMain(
-                                @truncate(dependency_i),
-                                &dependency,
-                                invalid_package_id,
-                                false,
-                                parent_package_id,
-                            ) catch |err| {
-                                addDependencyError(manager, &dependency, err);
-                            };
+                        for (0..dependencies_len) |dependency_i| {
+                            const dependency = manager.lockfile.buffers.dependencies.items[dependency_i];
+                            if (std.mem.indexOfScalar(PackageNameHash, all_name_hashes, dependency.name_hash)) |_| {
+                                manager.lockfile.buffers.resolutions.items[dependency_i] = invalid_package_id;
+                                // Use the owner map to recover the parent package context for
+                                // scoped override re-resolution. Falls back to null for orphaned
+                                // dependencies that are not declared by any known package, or
+                                // when no scoped overrides exist at all.
+                                const parent_package_id = if (owner_map) |map| map[dependency_i] else null;
+                                manager.enqueueDependencyWithMain(
+                                    @truncate(dependency_i),
+                                    &dependency,
+                                    invalid_package_id,
+                                    false,
+                                    parent_package_id,
+                                ) catch |err| {
+                                    addDependencyError(manager, &dependency, err);
+                                };
+                            }
                         }
-                    }
                     }
 
                     if (manager.summary.catalogs_changed) {

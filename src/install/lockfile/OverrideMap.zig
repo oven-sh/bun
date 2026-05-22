@@ -499,6 +499,9 @@ pub fn parseOverrideValue(
 /// Strip a version qualifier from a package name so the hash matches what
 /// get() looks up from the installed package's name_hash. For example:
 /// "foo@1.0.0" -> "foo", "@scope/pkg" -> "@scope/pkg" (no version).
+/// Also handles scoped + versioned: "@scope/pkg@1.0.0" -> "@scope/pkg".
+/// Assumes `@` only appears as a version qualifier after the package name,
+/// never in the scope. npm registry scopes never contain `@`.
 /// This allows version-qualified parent keys in npm overrides and Yarn
 /// resolutions to match the installed parent package by name alone.
 fn stripVersionSuffix(name: []const u8) []const u8 {

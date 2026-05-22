@@ -1086,6 +1086,35 @@ folded: >
           expect(YAML.parse('{"a":b}\n')).toEqual({ a: "b" });
           expect(YAML.parse("{{a: 1}:b}\n")).toEqual({ "[object Object]": "b" });
         });
+
+        test("e-node value after : in flow-seq pair", () => {
+          // [149] adjacent value may be e-node
+          expect(YAML.parse('["a":]\n')).toEqual([{ a: null }]);
+          expect(YAML.parse('["a":,"b":]\n')).toEqual([{ a: null }, { b: null }]);
+          expect(YAML.parse("[a: ]\n")).toEqual([{ a: null }]);
+          expect(YAML.parse("[[x]:]\n")).toEqual([{ x: null }]);
+        });
+
+        test("? with e-node key in flow sequence", () => {
+          // [143] ns-flow-map-explicit-entry ::= … | (e-node e-node)
+          expect(YAML.parse("[? ]\n")).toEqual([{ null: null }]);
+          expect(YAML.parse("[?,]\n")).toEqual([{ null: null }]);
+          expect(YAML.parse("[? , ? ]\n")).toEqual([{ null: null }, { null: null }]);
+          expect(YAML.parse("[? : x]\n")).toEqual([{ null: "x" }]);
+        });
+
+        test("JSON-adjacent does not apply in flow-map value position", () => {
+          // [147] flow-map value is ns-flow-node, not ns-flow-pair. These are
+          // pre-existing over-accepts on main (refs error); preserved as-is.
+          expect(YAML.parse('{a: "b":c}\n')).toEqual({ a: "b", ":c": null });
+          expect(YAML.parse("{x: [a]:b}\n")).toEqual({ x: ["a"], ":b": null });
+        });
+
+        test("leading/double comma in flow sequence still errors", () => {
+          // [138] ns-s-flow-seq-entries — entry must precede `,`
+          expect(() => YAML.parse("[ , a]\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("[a, , b]\n")).toThrow("Unexpected token");
+        });
       });
 
       describe("tab-only blank line in block context", () => {

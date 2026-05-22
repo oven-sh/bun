@@ -2578,8 +2578,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// so an adjacent `:` with no separation is recognized. Returns true iff
     /// FlowKey was pushed; the caller must then `unset_json_key()` once after
     /// the relevant scan, regardless of its result.
-    fn maybe_set_json_key(&mut self) -> Result<bool, ParseError> {
-        if self.context.get() == Context::FlowIn {
+    fn maybe_set_json_key(&mut self, allowed: bool) -> Result<bool, ParseError> {
+        if allowed && self.context.get() == Context::FlowIn {
             self.context.set(Context::FlowKey)?;
             return Ok(true);
         }
@@ -2608,7 +2608,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let result: Result<(), ParseError> = (|| {
             self.scan(ScanOptions::default())?;
             while !matches!(self.token.data, TokenData::SequenceEnd) {
-                let item = self.parse_node(ParseNodeOptions::default())?;
+                let item = self.parse_node(ParseNodeOptions {
+                    flow_pair_allowed: true,
+                    ..Default::default()
+                })?;
                 seq.push(item);
 
                 if matches!(self.token.data, TokenData::SequenceEnd) {
@@ -3012,6 +3015,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                     current_mapping_indent: Some(mapping_indent),
                                     ..Default::default()
                                 })?;
+                            }
+                            // [149] e-node value in flow (`"a":,` / `"a":]`).
+                            TokenData::CollectEntry
+                            | TokenData::SequenceEnd
+                            | TokenData::MappingEnd
+                                if matches!(
+                                    self.context.get(),
+                                    Context::FlowIn | Context::FlowKey
+                                ) =>
+                            {
+                                break 'value Expr::init(E::Null {}, mapping_value_start.loc());
                             }
                             _ => {
                                 if self.token.line != mapping_value_line
@@ -3444,6 +3458,10 @@ impl<Enc: Encoding> NodeProperties<Enc> {
 pub struct ParseNodeOptions<Enc: Encoding> {
     pub current_mapping_indent: Option<Indent>,
     pub explicit_mapping_key: bool,
+    /// [139] ns-flow-seq-entry may be a [150] ns-flow-pair, so a JSON-style
+    /// node followed by an adjacent `:` is a key. Set by parse_flow_sequence;
+    /// flow-mapping values are plain ns-flow-node and must not become a pair.
+    pub flow_pair_allowed: bool,
     pub scanned_tag: Option<Token<Enc>>,
     pub scanned_anchor: Option<Token<Enc>>,
 }
@@ -3453,6 +3471,7 @@ impl<Enc: Encoding> Default for ParseNodeOptions<Enc> {
         Self {
             current_mapping_indent: None,
             explicit_mapping_key: false,
+            flow_pair_allowed: false,
             scanned_tag: None,
             scanned_anchor: None,
         }
@@ -3620,7 +3639,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let sequence_start = self.token.start;
                     let sequence_indent = self.token.indent;
                     let sequence_line = self.token.line;
-                    let json_key = self.maybe_set_json_key()?;
+                    let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
                     let seq = self.parse_flow_sequence();
                     self.unset_json_key(json_key);
                     let seq = seq?;
@@ -3698,7 +3717,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping_indent = self.token.indent;
                     let mapping_line = self.token.line;
 
-                    let json_key = self.maybe_set_json_key()?;
+                    let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
                     let map = self.parse_flow_mapping();
                     self.unset_json_key(json_key);
                     let map = map?;
@@ -3785,8 +3804,27 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Err(Self::unexpected_token());
                     }
 
-                    let key = if !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
-                        && self.token.line != mapping_line
+                    let key = if in_flow {
+                        // [143] e-node key in flow when nothing follows `?`
+                        // before `,` / `}` / `]` / `:`.
+                        if matches!(
+                            self.token.data,
+                            TokenData::CollectEntry
+                                | TokenData::MappingEnd
+                                | TokenData::SequenceEnd
+                                | TokenData::MappingValue
+                        ) {
+                            Expr::init(E::Null {}, self.token.start.loc())
+                        } else {
+                            self.parse_node(ParseNodeOptions {
+                                explicit_mapping_key: true,
+                                current_mapping_indent: Some(
+                                    opts.current_mapping_indent.unwrap_or(mapping_indent),
+                                ),
+                                ..Default::default()
+                            })?
+                        }
+                    } else if self.token.line != mapping_line
                         && self.token.indent.is_less_than_or_equal(mapping_indent)
                         && !(self.token.indent == mapping_indent
                             && matches!(self.token.data, TokenData::SequenceEntry))
@@ -3859,7 +3897,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     };
 
                     let json_key = if scalar.is_quoted {
-                        self.maybe_set_json_key()?
+                        self.maybe_set_json_key(opts.flow_pair_allowed)?
                     } else {
                         false
                     };

@@ -2870,8 +2870,15 @@ void JSC__VM__collectAsync(JSC::VM* vm)
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);
-    if (vm->watchdog()) {
-        return vm->watchdog()->hasTimeLimit();
+    if (auto* watchdog = vm->watchdog()) {
+        // The bun:test runner relaxes the watchdog to INT32_MAX seconds
+        // between test callbacks (see run_test_callback in bun_test.rs)
+        // instead of clearing it, to keep Watchdog's internal state
+        // consistent across stale dispatchAfter callbacks. Treat that idle
+        // sentinel as "no limit" so it doesn't permanently opt spawnSync
+        // out of its blocking fast path; no real caller sets a limit in
+        // this range.
+        return watchdog->hasTimeLimit() && watchdog->getTimeLimit() < WTF::Seconds { static_cast<double>(INT32_MAX) };
     }
 
     return false;

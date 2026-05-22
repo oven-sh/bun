@@ -233,21 +233,32 @@ import { readFileSync } from "node:fs";
 
 describe("exhaustive locale sweep (every compressed item)", () => {
   const all = readFileSync(new URL("./icu-locales.txt", import.meta.url), "utf8")
-    .split("\n").map(s => s.trim()).filter(Boolean)
+    .split("\n")
+    .map(s => s.trim())
+    .filter(Boolean)
     // ICU's tree includes legacy/alias tags (e.g. no_NO_NY) that aren't valid
     // BCP-47; getCanonicalLocales throws on those, so drop them up front.
-    .filter(tag => { try { Intl.getCanonicalLocales(tag); return true; } catch { return false; } });
+    .filter(tag => {
+      try {
+        Intl.getCanonicalLocales(tag);
+        return true;
+      } catch {
+        return false;
+      }
+    });
 
   const locales = Intl.DisplayNames.supportedLocalesOf(all);
 
   type Tree = "region" | "lang" | "curr" | "unit" | "zone";
   const probe: Record<Tree, (loc: string) => string | undefined> = {
     region: loc => new Intl.DisplayNames(loc, { type: "region" }).of("US"),
-    lang:   loc => new Intl.DisplayNames(loc, { type: "language" }).of("en"),
-    curr:   loc => new Intl.DisplayNames(loc, { type: "currency" }).of("USD"),
-    unit:   loc => new Intl.NumberFormat(loc, { style: "unit", unit: "meter", unitDisplay: "long" }).format(1),
-    zone:   loc => new Intl.DateTimeFormat(loc, { timeZone: "America/Los_Angeles", timeZoneName: "long" })
-                     .formatToParts(0).find(p => p.type === "timeZoneName")?.value,
+    lang: loc => new Intl.DisplayNames(loc, { type: "language" }).of("en"),
+    curr: loc => new Intl.DisplayNames(loc, { type: "currency" }).of("USD"),
+    unit: loc => new Intl.NumberFormat(loc, { style: "unit", unit: "meter", unitDisplay: "long" }).format(1),
+    zone: loc =>
+      new Intl.DateTimeFormat(loc, { timeZone: "America/Los_Angeles", timeZoneName: "long" })
+        .formatToParts(0)
+        .find(p => p.type === "timeZoneName")?.value,
   };
 
   for (const tree of Object.keys(probe) as Tree[]) {

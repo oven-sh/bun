@@ -322,6 +322,44 @@ impl<'a> ImportScanner<'a> {
                         st.star_name_loc = None;
                     }
 
+                    // In TypeScript, a later declaration is allowed to re-declare the
+                    // name of an import binding on the assumption that the import is
+                    // type-only and will be elided (see `Scope::can_merge_symbol_kinds`).
+                    // Any such import binding that is still around at this point will be
+                    // printed next to the other declaration, so report the duplicate
+                    // declaration instead of emitting output that fails to re-parse.
+                    if is_typescript_enabled && !p.redeclared_import_bindings.is_empty() {
+                        let default_binding = st
+                            .default_name
+                            .map(|name| (name.ref_.expect("infallible: ref bound"), name.loc));
+                        let star_binding = st.star_name_loc.map(|loc| (st.namespace_ref, loc));
+                        let item_bindings = st.items.slice().iter().map(|item| {
+                            (item.name.ref_.expect("infallible: ref bound"), item.name.loc)
+                        });
+
+                        for (name_ref, import_loc) in default_binding
+                            .into_iter()
+                            .chain(star_binding)
+                            .chain(item_bindings)
+                        {
+                            // `remove` so a second scan pass doesn't report it again.
+                            if let Some(redeclared_loc) =
+                                p.redeclared_import_bindings.remove(&name_ref)
+                            {
+                                // SAFETY: arena-owned slice valid for 'p.
+                                let name = p.symbols[name_ref.inner_index() as usize]
+                                    .original_name
+                                    .slice();
+                                p.log().add_symbol_already_declared_error(
+                                    p.source,
+                                    name,
+                                    redeclared_loc,
+                                    import_loc,
+                                );
+                            }
+                        }
+                    }
+
                     if st.default_name.is_some() {
                         record!()
                             .flags

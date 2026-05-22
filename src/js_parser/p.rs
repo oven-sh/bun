@@ -432,6 +432,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub enclosing_class_keyword: bun_ast::Range,
     pub import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub is_import_item: RefMap,
+    /// Import bindings whose name was re-declared by a later declaration in the
+    /// same scope. TypeScript allows the collision because the import may be
+    /// type-only and elided (see `Scope::can_merge_symbol_kinds`), but if the
+    /// import binding survives import elision it would be printed next to the
+    /// other declaration, so `ImportScanner::scan` reports a duplicate
+    /// declaration error using the re-declaration's location stored here.
+    pub redeclared_import_bindings: HashMap<Ref, bun_ast::Loc>,
     pub named_imports: NamedImportsType<'a>,
     pub named_exports: bun_ast::ast_result::NamedExports,
     pub import_namespace_cc_map: Map<ImportNamespaceCallOrConstruct, bool>,
@@ -4989,6 +4996,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
                             self.symbols[symbol_idx].remove_overwritten_function_declaration = true;
                         }
+
+                        // In TypeScript, an import binding may be silently re-declared
+                        // because the import might be type-only and elided (see
+                        // `Scope::can_merge_symbol_kinds`). Remember the collision so
+                        // `ImportScanner::scan` can report a duplicate declaration error
+                        // if the import binding is actually kept in the output.
+                        if TYPESCRIPT
+                            && self.symbols[symbol_idx].kind == js_ast::symbol::Kind::Import
+                        {
+                            self.redeclared_import_bindings.insert(existing.ref_, loc);
+                        }
                     }
                     MR::BecomePrivateGetSetPair => {
                         ref_ = existing.ref_;
@@ -9301,6 +9319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
+            redeclared_import_bindings: Default::default(),
             import_namespace_cc_map: Default::default(),
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),

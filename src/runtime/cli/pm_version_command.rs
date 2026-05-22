@@ -960,8 +960,7 @@ impl PmVersionCommand {
     /// `git check-ignore -q` exits 0 when the path matches, 1 when it
     /// doesn't, and 128 on internal error (e.g. not a git repo). Anything
     /// other than a clean exit-0 is treated as "not ignored" — we'd rather
-    /// try `git add` (and surface git's own error) than silently skip the
-    /// stage in a broken repo.
+    /// try `git add` than silently skip the stage in a broken repo.
     fn is_path_ignored_by_git(cwd: &[u8], path: &[u8]) -> bool {
         let mut path_buf = PathBuffer::uninit();
         let Some(git_path) = which(

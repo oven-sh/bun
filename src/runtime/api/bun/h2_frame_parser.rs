@@ -5919,7 +5919,7 @@ impl H2FrameParser {
                 return Err(global_object.throw_value(exception));
             }
             let validated_name =
-                match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
+                match Self::to_valid_header_name(name, &mut name_buffer[..]) {
                     Ok(n) => n,
                     Err(_) => {
                         let exception = global_object.to_type_error(
@@ -6551,7 +6551,7 @@ impl H2FrameParser {
                 let name = name_slice.slice();
 
                 let validated_name =
-                    match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
+                    match Self::to_valid_header_name(name, &mut name_buffer[..]) {
                         Ok(n) => n,
                         Err(_) => {
                             let exception = global_object.to_type_error(

@@ -1,7 +1,7 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
-import { openSync } from "node:fs";
+import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import v8 from "node:v8";
 
@@ -571,18 +571,19 @@ describe("structuredClone with Blob and File", () => {
           "fd-target.txt": "fd sentinel contents",
         });
         const fd = openSync(join(String(dir), "fd-target.txt"), "r");
-        const payload = serialize(Bun.file(fd));
+        try {
+          const payload = serialize(Bun.file(fd));
 
-        expect(() => deserialize(payload)).toThrow();
-        expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+          expect(() => deserialize(payload)).toThrow();
+          expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
 
-        // In a fresh process that fd number refers to a different (or no)
-        // descriptor; deserialize must refuse rather than alias it.
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `
+          // In a fresh process that fd number refers to a different (or no)
+          // descriptor; deserialize must refuse rather than alias it.
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `
             const { deserialize } = require("bun:jsc");
             const payload = await Bun.stdin.bytes();
             try {
@@ -593,15 +594,18 @@ describe("structuredClone with Blob and File", () => {
             }
             console.log("DESERIALIZE_OK");
             `,
-          ],
-          env: bunEnv,
-          stdin: new Uint8Array(payload),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-        expect(stdout).toContain("DESERIALIZE_THREW");
-        expect(exitCode).toBe(0);
+            ],
+            env: bunEnv,
+            stdin: new Uint8Array(payload),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          expect(stdout).toContain("DESERIALIZE_THREW");
+          expect(exitCode).toBe(0);
+        } finally {
+          closeSync(fd);
+        }
       });
 
       test("s3 path Blob payload is rejected", () => {

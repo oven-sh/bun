@@ -327,7 +327,9 @@ pub mod vlq {
         let encoded_ = &encoded[start..][0..(encoded.len() - start).min(VLQ_MAX_IN_BYTES + 1)];
 
         // inlining helps for the 1 or 2 byte case, hurts a little for larger
-        for i in 0..(VLQ_MAX_IN_BYTES + 1) {
+        // `encoded_.len()` is already capped at `VLQ_MAX_IN_BYTES + 1`; bounding the
+        // loop by it avoids an out-of-bounds panic on truncated input.
+        for i in 0..encoded_.len() {
             if ASSERT_VALID {
                 debug_assert!(encoded_[i] < U7_MAX); // invalid base64 character
             }

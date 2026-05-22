@@ -421,17 +421,21 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     if (dsaSigEnc == DSASigEnc::P1363 && keyPtr.isSigVariant()) {
         WTF::Vector<uint8_t> derBuffer;
 
-        if (convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
-            // Conversion succeeded, perform verification with the converted signature
-            ncrypto::Buffer<const uint8_t> derSigBuf {
-                .data = derBuffer.begin(),
-                .len = derBuffer.size(),
-            };
-
-            bool result = pkctx.verify(derSigBuf, data);
-            return JSValue::encode(jsBoolean(result));
+        // The caller requested IEEE P1363 encoding. If the signature cannot be
+        // converted to DER (e.g. its length is not 2 * bytesOfRS), reject it
+        // instead of reinterpreting the raw bytes as a DER signature. This
+        // matches Node.js, which fails verification when the conversion fails.
+        if (!convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
+            return JSValue::encode(jsBoolean(false));
         }
-        // If conversion failed, fall through to use the original signature
+
+        ncrypto::Buffer<const uint8_t> derSigBuf {
+            .data = derBuffer.begin(),
+            .len = derBuffer.size(),
+        };
+
+        bool result = pkctx.verify(derSigBuf, data);
+        return JSValue::encode(jsBoolean(result));
     }
 
     // Perform verification with the original signature

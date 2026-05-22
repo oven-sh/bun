@@ -704,23 +704,36 @@ impl ReplyScanner {
                     return Err(RedisError::NestingDepthExceeded);
                 }
                 let len = reader.read_integer()?;
-                Ok(Some(u64::try_from(len).unwrap_or(0)))
+                // Mirror the tree parser: only `*-1` (RESP2 null array) is a
+                // legal non-positive aggregate length here.
+                match ty {
+                    RESPType::Array if len < 0 => Ok(Some(0)),
+                    RESPType::Set if len < 0 => Err(RedisError::InvalidSet),
+                    RESPType::Push if len <= 0 => Err(RedisError::InvalidPush),
+                    _ => Ok(Some(u64::try_from(len).expect("int cast"))),
+                }
             }
             RESPType::Map => {
                 if depth >= ValkeyReader::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
                 let len = reader.read_integer()?;
-                Ok(Some(u64::try_from(len).unwrap_or(0).saturating_mul(2)))
+                if len < 0 {
+                    return Err(RedisError::InvalidMap);
+                }
+                Ok(Some(u64::try_from(len).expect("int cast").saturating_mul(2)))
             }
             RESPType::Attribute => {
                 if depth >= ValkeyReader::MAX_NESTING_DEPTH {
                     return Err(RedisError::NestingDepthExceeded);
                 }
                 let len = reader.read_integer()?;
+                if len < 0 {
+                    return Err(RedisError::InvalidAttribute);
+                }
                 Ok(Some(
                     u64::try_from(len)
-                        .unwrap_or(0)
+                        .expect("int cast")
                         .saturating_mul(2)
                         .saturating_add(1),
                 ))

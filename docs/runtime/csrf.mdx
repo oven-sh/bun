@@ -17,8 +17,7 @@ console.log(isValid); // true
 <Callout type="warning">
   Always pass a `sessionId` (the requester's session identifier or user ID) to both `generate()` and `verify()`. Without
   it, a token is only bound to the secret — any token the server has ever issued validates for every user, so an
-  attacker can obtain a token in their own session and replay it in a forged cross-site request from a victim's
-  browser.
+  attacker can obtain a token in their own session and replay it in a forged cross-site request from a victim's browser.
 </Callout>
 
 ---
@@ -36,11 +35,11 @@ const token = Bun.CSRF.generate("my-secret-key");
 - `secret` (string, optional) — The secret key used to sign the token. If not provided, Bun generates a random in-memory default secret (unique per thread).
 - `options` (object, optional):
 
-| Option      | Type     | Default       | Description                                                                                                                                              |
-| ----------- | -------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `expiresIn` | `number` | `86400000`    | Milliseconds until the token expires. Defaults to 24 hours.                                                                                              |
-| `encoding`  | `string` | `"base64url"` | Token encoding format: `"base64"`, `"base64url"`, or `"hex"`.                                                                                            |
-| `algorithm` | `string` | `"sha256"`    | HMAC algorithm: `"sha256"`, `"sha384"`, `"sha512"`, `"sha512-256"`, `"blake2b256"`, or `"blake2b512"`.                                                   |
+| Option      | Type     | Default       | Description                                                                                                                                                     |
+| ----------- | -------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `expiresIn` | `number` | `86400000`    | Milliseconds until the token expires. Defaults to 24 hours.                                                                                                     |
+| `encoding`  | `string` | `"base64url"` | Token encoding format: `"base64"`, `"base64url"`, or `"hex"`.                                                                                                   |
+| `algorithm` | `string` | `"sha256"`    | HMAC algorithm: `"sha256"`, `"sha384"`, `"sha512"`, `"sha512-256"`, `"blake2b256"`, or `"blake2b512"`.                                                          |
 | `sessionId` | `string` | (none)        | Binds the token to the requesting principal (session ID, user ID, or equivalent). The token will only verify when the same `sessionId` is passed to `verify()`. |
 
 **Returns:** `string` — the encoded token.
@@ -75,12 +74,12 @@ const isValid = Bun.CSRF.verify(token, { secret: "my-secret-key" });
 - `token` (string, required) — The token to verify.
 - `options` (object, optional):
 
-| Option      | Type     | Default       | Description                                                                                                                              |
-| ----------- | -------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `secret`    | `string` | (auto)        | The secret used to sign the token. If not provided, uses the same in-memory default as `generate()`.                                     |
-| `maxAge`    | `number` | `86400000`    | Maximum token age in milliseconds, independent of the token's own `expiresIn`.                                                           |
-| `encoding`  | `string` | `"base64url"` | Must match the encoding used during `generate()`.                                                                                        |
-| `algorithm` | `string` | `"sha256"`    | Must match the algorithm used during `generate()`.                                                                                       |
+| Option      | Type     | Default       | Description                                                                                                                                                                                                          |
+| ----------- | -------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `secret`    | `string` | (auto)        | The secret used to sign the token. If not provided, uses the same in-memory default as `generate()`.                                                                                                                 |
+| `maxAge`    | `number` | `86400000`    | Maximum token age in milliseconds, independent of the token's own `expiresIn`.                                                                                                                                       |
+| `encoding`  | `string` | `"base64url"` | Must match the encoding used during `generate()`.                                                                                                                                                                    |
+| `algorithm` | `string` | `"sha256"`    | Must match the algorithm used during `generate()`.                                                                                                                                                                   |
 | `sessionId` | `string` | (none)        | Must match the `sessionId` used during `generate()`. A token bound to one principal fails verification for any other principal, and a token generated without a `sessionId` fails verification when one is supplied. |
 
 **Returns:** `boolean`

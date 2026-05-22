@@ -264,7 +264,12 @@ pub fn verify(options: &VerifyOptions<'_>) -> bool {
         let mut msg = Vec::with_capacity(payload.len() + options.session_id.len());
         msg.extend_from_slice(payload);
         msg.extend_from_slice(options.session_id);
-        hmac::generate(options.secret, &msg, options.algorithm, &mut expected_signature)
+        hmac::generate(
+            options.secret,
+            &msg,
+            options.algorithm,
+            &mut expected_signature,
+        )
     };
     let signature = match signature {
         Some(s) => s,

@@ -989,7 +989,7 @@ impl PublishCommand {
                         bstr::BStr::new(cfg.provenance_file),
                     ));
                     Some(ProvenanceAttachment {
-                        media_type: att.media_type.to_owned(),
+                        media_type: att.media_type,
                         bundle_json: att.bundle_json,
                     })
                 }

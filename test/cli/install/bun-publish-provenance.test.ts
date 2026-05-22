@@ -161,6 +161,7 @@ describe("--provenance", () => {
     expect(out + err).toContain("Signed provenance statement");
     expect(out + err).toContain("Transparency log");
     expect(err).not.toContain("error:");
+    if (exitCode !== 0) expect(err).toBe("");
     expect(exitCode).toBe(0);
 
     // ── OIDC flow ────────────────────────────────────────────────────

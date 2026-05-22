@@ -826,12 +826,12 @@ struct SerializedEnvelopeSignature<'a> {
 /// `HeaderBuilder`, drive `AsyncHTTP::init_sync` + `send_sync`. Returns the
 /// raw response body on 2xx, or a `SigstoreError::{who}` otherwise.
 ///
-/// All borrowed inputs to `init_sync` must outlive the request; since
-/// `AsyncHTTP<'a>` ties everything to a single lifetime (including its own
-/// `URL` parse), and CLI-path callers in this repo satisfy that with
-/// process-lifetime leaks (`cli_dupe`/`cli_adopt`), we do the same here via
-/// `Box::leak` — the number of calls per `bun publish --provenance` is
-/// fixed (≤3), and the buffers are small.
+/// `AsyncHTTP<'a>` ties the URL / headers-buf / body borrows to a single
+/// lifetime `'a` that only needs to span `init_sync` + `send_sync`. We own
+/// the URL bytes and `HeaderBuilder` locally and borrow from them — no
+/// `Box::leak` (CI runs `bun publish` under `ASAN_OPTIONS=detect_leaks=1:
+/// abort_on_error=1`, so unrooted leaks → SIGABRT). The caller's `body`
+/// slice participates in the same unified lifetime.
 fn http_json(
     method: http::Method,
     url: &str,
@@ -839,14 +839,9 @@ fn http_json(
     body: &[u8],
     who: &'static str,
 ) -> Result<Vec<u8>, SigstoreError> {
-    let url_static: &'static [u8] = Box::leak(url.as_bytes().to_vec().into_boxed_slice());
-    let body_static: &'static [u8] = if body.is_empty() {
-        b""
-    } else {
-        Box::leak(body.to_vec().into_boxed_slice())
-    };
-
-    let parsed_url = URL::parse(url_static);
+    // `URL<'a>` borrows into its input; keep the bytes alive past `req`.
+    let url_bytes = url.as_bytes().to_vec();
+    let parsed_url = URL::parse(&url_bytes);
     let host = parsed_url.host;
 
     let mut hb = HeaderBuilder::default();
@@ -857,8 +852,8 @@ fn http_json(
     hb.count(b"Connection", b"keep-alive");
     hb.count(b"Host", host);
     let len_s; // keep alive across count+append
-    if !body_static.is_empty() {
-        len_s = body_static.len().to_string();
+    if !body.is_empty() {
+        len_s = body.len().to_string();
         hb.count(b"Content-Length", len_s.as_bytes());
     } else {
         len_s = String::new();
@@ -870,23 +865,24 @@ fn http_json(
     hb.append(b"User-Agent", user_agent());
     hb.append(b"Connection", b"keep-alive");
     hb.append(b"Host", host);
-    if !body_static.is_empty() {
+    if !body.is_empty() {
         hb.append(b"Content-Length", len_s.as_bytes());
     }
 
-    // HeaderBuilder owns its backing buffer; leak it so the `&'a [u8]` the
-    // client holds remains valid for the (synchronous) request lifetime.
-    let hb = Box::leak(Box::new(hb));
+    // `init_sync` holds `&'a [u8]` into `hb.content`; clone the entry list
+    // out first so the only live borrow of `hb` is the shared content slice.
+    let entries = hb.entries.clone().map_err(|_| SigstoreError::OutOfMemory)?;
+    let headers_buf = hb.content.written_slice();
 
     let mut response_buf = MutableString::init(1024).map_err(|_| SigstoreError::OutOfMemory)?;
 
     let mut req = http::AsyncHTTP::init_sync(
         method,
         parsed_url,
-        hb.entries.clone().map_err(|_| SigstoreError::OutOfMemory)?,
-        hb.content.written_slice(),
+        entries,
+        headers_buf,
         &raw mut response_buf,
-        body_static,
+        body,
         None,
         None,
         http::FetchRedirect::Follow,

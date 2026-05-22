@@ -2673,9 +2673,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     r?;
                     if matches!(
                         self.token.data,
-                        TokenData::MappingValue
-                            | TokenData::CollectEntry
-                            | TokenData::MappingEnd
+                        TokenData::MappingValue | TokenData::CollectEntry | TokenData::MappingEnd
                     ) {
                         // [143] e-node key (`?,` / `?}` / `? :`)
                         Expr::init(E::Null {}, self.token.start.loc())

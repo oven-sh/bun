@@ -3761,9 +3761,8 @@ where
             // Count the drained pre-stream bytes against maxRequestBodySize so
             // the streaming-path limit check sees the full body length, not
             // just the chunks that arrive after the stream becomes active.
-            self.request_body_streamed_len = self
-                .request_body_streamed_len
-                .saturating_add(emptied.len());
+            self.request_body_streamed_len =
+                self.request_body_streamed_len.saturating_add(emptied.len());
             let cap = emptied.capacity();
             return WebCore::DrainResult::Owned {
                 list: emptied,

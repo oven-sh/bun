@@ -2930,12 +2930,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             return Err(Self::unexpected_token());
                         }
-                        // [185] same-line compact construct after `:` requires
-                        // s-indent (spaces only); a tab after `:` does not get
-                        // the compact-construct treatment.
-                        let parent_indent = if mapping_value_line != mapping_line
-                            && Enc::wide(self.next()) != 0x09
-                        {
+                        // [191] explicit `:` is on a new line at mapping_indent;
+                        // a same-line `- ` after it is a compact sequence whose
+                        // indent is column-based, not line-based.
+                        let parent_indent = if mapping_value_line != mapping_line {
                             Some(mapping_indent.add(1))
                         } else {
                             None
@@ -2947,12 +2945,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         match self.token.data {
                             TokenData::SequenceEntry => {
-                                // Compact construct on the explicit-`:` line is
-                                // valid only via [185] s-indent (parent_indent
-                                // set above); a tab separator does not qualify.
+                                // [185] a compact construct on the explicit-`:`
+                                // line must be at indent >= n+1 via s-indent
+                                // (spaces). A tab separator leaves the token at
+                                // the line's natural indent, which fails this.
                                 if self.token.line == mapping_line
                                     || (self.token.line == mapping_value_line
-                                        && parent_indent.is_none())
+                                        && self.token.indent.is_less_than_or_equal(mapping_indent))
                                 {
                                     return Err(Self::unexpected_token());
                                 }
@@ -3087,9 +3086,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             Expr::init(E::Null {}, mapping_value_start.loc())
                         }
                         _ => 'value: {
-                            let parent_indent = if mapping_value_line != key_line
-                                && Enc::wide(self.next()) != 0x09
-                            {
+                            let parent_indent = if mapping_value_line != key_line {
                                 Some(mapping_indent.add(1))
                             } else {
                                 None
@@ -3103,7 +3100,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 TokenData::SequenceEntry => {
                                     if self.token.line == key_line
                                         || (self.token.line == mapping_value_line
-                                            && parent_indent.is_none())
+                                            && self
+                                                .token
+                                                .indent
+                                                .is_less_than_or_equal(mapping_indent))
                                     {
                                         return Err(Self::unexpected_token());
                                     }
@@ -3702,27 +3702,25 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     self.block_indents.push(mapping_indent)?;
 
-                    // [185] same-line compact construct after `?` requires
-                    // s-indent (spaces only); a tab is plain s-separate.
-                    let parent_indent =
-                        if matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
-                            || Enc::wide(self.next()) == 0x09
-                        {
-                            None
-                        } else {
-                            Some(mapping_indent.add(1))
-                        };
+                    let in_flow =
+                        matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
+                    let parent_indent = if in_flow {
+                        None
+                    } else {
+                        Some(mapping_indent.add(1))
+                    };
                     self.scan(ScanOptions {
                         additional_parent_indent: parent_indent,
                         ..Default::default()
                     })?;
 
-                    // Compact construct on the `?` line is valid only via [185]
-                    // s-indent (parent_indent set above); a tab separator does
-                    // not qualify.
-                    if parent_indent.is_none()
-                        && !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
+                    // [185] a compact construct on the `?` line must be at
+                    // indent >= n+1 via s-indent (spaces). A tab separator
+                    // leaves the token at the line's natural indent, which
+                    // fails this.
+                    if !in_flow
                         && self.token.line == mapping_line
+                        && self.token.indent.is_less_than_or_equal(mapping_indent)
                         && matches!(
                             self.token.data,
                             TokenData::SequenceEntry | TokenData::MappingKey
@@ -5494,7 +5492,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 0x09 /* '\t' */ => {
-                    if count_indentation && self.context.get() == Context::BlockIn {
+                    if additional_parent_indent.is_some() {
+                        // The same-line tab after `?`/`:`/`-` is s-separate-in-
+                        // line, not s-indent. [185] compact constructs require
+                        // s-indent (spaces), so the additional-parent-indent
+                        // treatment does not apply — the resulting token gets
+                        // the line's natural indent and the caller's compact-
+                        // indent check catches it.
+                        additional_parent_indent = None;
+                    } else if count_indentation && self.context.get() == Context::BlockIn {
                         return Err(ParseError::UnexpectedCharacter);
                     }
                     count_indentation = false;

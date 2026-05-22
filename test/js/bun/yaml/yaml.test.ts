@@ -1028,6 +1028,7 @@ folded: >
           expect(() => YAML.parse("? key\n:\t- x\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("? a\n: 1\n? b\n:\t- x\n")).toThrow("Unexpected token");
           expect(() => YAML.parse("?\t-\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("?\t? a\n: v\n")).toThrow("Unexpected token");
         });
       });
 

@@ -133,10 +133,20 @@ fn gitlab_statement(subject: &Value) -> Value {
     // npm threads a large fixed set of CI_* vars into `invocation.parameters`.
     // Keep this list in lockstep with `libnpmpublish/lib/provenance.js` — the
     // predicate is consumed by tooling that pattern-matches on these keys.
+    // npm builds this as `{ CI: env.CI, ... }` where unset → `undefined` →
+    // `JSON.stringify` omits the key; match that by skipping unset vars
+    // (several `CI_REGISTRY*`/`CI_PAGES_*`/`CI_COMMIT_BRANCH` are routinely
+    // unset depending on pipeline type / enabled features).
     macro_rules! ci_params {
-        ($($k:literal),* $(,)?) => {
-            json!({ $( $k: e!($k), )* })
-        };
+        ($($k:literal),* $(,)?) => {{
+            let mut m = serde_json::Map::new();
+            $(
+                if let Some(v) = bun_core::getenv_z(bun_core::zstr!($k)) {
+                    m.insert($k.into(), String::from_utf8_lossy(v).into_owned().into());
+                }
+            )*
+            serde_json::Value::Object(m)
+        }};
     }
     let parameters = ci_params![
         "CI",

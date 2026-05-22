@@ -197,7 +197,21 @@ mod _impl {
             // as `_handle[owner_symbol]`.
             // `flush_write_result` writes two u32s through this pointer, so the
             // caller-supplied array must hold at least 2 elements.
-            let mut write_result_buf = arguments.ptr[1].as_array_buffer(global_this).unwrap();
+            let write_result_value = arguments.ptr[1];
+            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            };
+            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            }
             let write_result_slice = write_result_buf.as_u32();
             if write_result_slice.len() < 2 {
                 return Err(global_this

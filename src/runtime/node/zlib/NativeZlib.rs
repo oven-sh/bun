@@ -146,7 +146,21 @@ mod _impl {
             // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
             // `flush_write_result` writes two u32s through this pointer, so the
             // caller-supplied array must hold at least 2 elements.
-            let mut write_result_buf = arguments.ptr[4].as_array_buffer(global).unwrap();
+            let write_result_value = arguments.ptr[4];
+            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
+                return Err(global.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            };
+            if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global.throw_invalid_argument_type_value(
+                    "writeResult",
+                    "Uint32Array",
+                    write_result_value,
+                ));
+            }
             let write_result_slice = write_result_buf.as_u32();
             if write_result_slice.len() < 2 {
                 return Err(global

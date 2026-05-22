@@ -521,8 +521,10 @@ impl<'a> ZlibReaderArrayList<'a> {
                         return Err(ZlibError::ZlibError);
                     }
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) =
-                        unsafe { self.list_ptr.reserve_expand_tail(remaining_budget.min(4096)) };
+                    let (next_out, avail_out) = unsafe {
+                        self.list_ptr
+                            .reserve_expand_tail(remaining_budget.min(4096))
+                    };
                     self.zlib.next_out = next_out;
                     // Clamp so a single inflate call cannot write past `max_output_size`.
                     self.zlib.avail_out = avail_out.min(remaining_budget) as uInt;

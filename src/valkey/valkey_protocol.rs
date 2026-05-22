@@ -721,7 +721,9 @@ impl ReplyScanner {
                 if len < 0 {
                     return Err(RedisError::InvalidMap);
                 }
-                Ok(Some(u64::try_from(len).expect("int cast").saturating_mul(2)))
+                Ok(Some(
+                    u64::try_from(len).expect("int cast").saturating_mul(2),
+                ))
             }
             RESPType::Attribute => {
                 if depth >= ValkeyReader::MAX_NESTING_DEPTH {

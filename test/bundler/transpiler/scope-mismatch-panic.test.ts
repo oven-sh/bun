@@ -125,7 +125,7 @@ describe("TypeScript 'declare' statements discard scopes of dropped statements",
     ],
   ];
 
-  test.each(cases)("%s", async (_name, source, expected) => {
+  test.concurrent.each(cases)("%s", async (_name, source, expected) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

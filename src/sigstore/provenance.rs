@@ -47,8 +47,10 @@ pub fn subject(name: &[u8], version: &[u8], sha512_hex: &str) -> Value {
 }
 
 /// Produce the in-toto statement JSON bytes for the given provider.
-/// `subject` is the value returned by [`subject`].
-pub fn generate(provider: CiProvider, subject: Value) -> Vec<u8> {
+/// `subject` is the value returned by [`subject`]. Taken by reference
+/// since `json!` embeds it via `to_value(&expr)` (serialize-clone) rather
+/// than moving — owning it here would be `clippy::needless_pass_by_value`.
+pub fn generate(provider: CiProvider, subject: &Value) -> Vec<u8> {
     let stmt = match provider {
         CiProvider::GithubActions => github_statement(subject),
         CiProvider::GitlabCi => gitlab_statement(subject),
@@ -69,7 +71,7 @@ macro_rules! e {
     };
 }
 
-fn github_statement(subject: Value) -> Value {
+fn github_statement(subject: &Value) -> Value {
     let repo = e!("GITHUB_REPOSITORY");
     let server = e!("GITHUB_SERVER_URL");
     let workflow_ref = e!("GITHUB_WORKFLOW_REF");
@@ -127,7 +129,7 @@ fn github_statement(subject: Value) -> Value {
     })
 }
 
-fn gitlab_statement(subject: Value) -> Value {
+fn gitlab_statement(subject: &Value) -> Value {
     // npm threads a large fixed set of CI_* vars into `invocation.parameters`.
     // Keep this list in lockstep with `libnpmpublish/lib/provenance.js` — the
     // predicate is consumed by tooling that pattern-matches on these keys.

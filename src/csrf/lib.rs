@@ -35,6 +35,9 @@ bun_core::named_error_set!(Error);
 pub struct GenerateOptions<'a> {
     /// Secret key to use for signing
     pub secret: &'a [u8],
+    /// Per-principal associated data mixed into the HMAC; an empty slice
+    /// means the token is not bound to any principal
+    pub session_id: &'a [u8],
     /// How long the token should be valid (in milliseconds)
     pub expires_in_ms: u64, // = DEFAULT_EXPIRATION_MS
     /// Format to encode the token in
@@ -50,6 +53,9 @@ pub struct VerifyOptions<'a> {
     pub token: &'a [u8],
     /// Secret key used to sign the token
     pub secret: &'a [u8],
+    /// Per-principal associated data mixed into the HMAC; an empty slice
+    /// means the token is not bound to any principal
+    pub session_id: &'a [u8],
     /// Maximum age of the token in milliseconds
     pub max_age_ms: u64, // = DEFAULT_EXPIRATION_MS
     /// Encoding to use for the token
@@ -106,14 +112,25 @@ pub fn generate<'a>(
     payload_buf[8..24].copy_from_slice(&nonce);
     payload_buf[24..32].copy_from_slice(&expires_in_bytes);
 
-    // Sign the payload
+    // Sign the payload. When a session id is provided, it is mixed into the
+    // HMAC input as associated data (`payload || session_id`) but never
+    // written to the token, so the token only verifies for that principal.
+    // The fixed 32-byte payload prefix keeps the concatenation unambiguous.
     let mut digest_buf = [0u8; boring::EVP_MAX_MD_SIZE as usize];
-    let digest = match hmac::generate(
-        options.secret,
-        &payload_buf,
-        options.algorithm,
-        &mut digest_buf,
-    ) {
+    let digest = if options.session_id.is_empty() {
+        hmac::generate(
+            options.secret,
+            &payload_buf,
+            options.algorithm,
+            &mut digest_buf,
+        )
+    } else {
+        let mut msg = Vec::with_capacity(payload_buf.len() + options.session_id.len());
+        msg.extend_from_slice(&payload_buf);
+        msg.extend_from_slice(options.session_id);
+        hmac::generate(options.secret, &msg, options.algorithm, &mut digest_buf)
+    };
+    let digest = match digest {
         Some(d) => d,
         None => return Err(Error::TokenCreationFailed),
     };
@@ -232,14 +249,24 @@ pub fn verify(options: &VerifyOptions<'_>) -> bool {
     let payload = &decoded[0..32]; // timestamp + nonce + expires_in
     let received_signature = &decoded[32..];
 
-    // Verify the signature
+    // Verify the signature. The session id (if any) is appended to the
+    // payload exactly as in `generate`, so a token bound to one principal
+    // fails verification for any other principal or for no principal.
     let mut expected_signature = [0u8; boring::EVP_MAX_MD_SIZE as usize];
-    let signature = match hmac::generate(
-        options.secret,
-        payload,
-        options.algorithm,
-        &mut expected_signature,
-    ) {
+    let signature = if options.session_id.is_empty() {
+        hmac::generate(
+            options.secret,
+            payload,
+            options.algorithm,
+            &mut expected_signature,
+        )
+    } else {
+        let mut msg = Vec::with_capacity(payload.len() + options.session_id.len());
+        msg.extend_from_slice(payload);
+        msg.extend_from_slice(options.session_id);
+        hmac::generate(options.secret, &msg, options.algorithm, &mut expected_signature)
+    };
+    let signature = match signature {
         Some(s) => s,
         None => return false,
     };

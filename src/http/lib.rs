@@ -2308,6 +2308,14 @@ impl<'a> HTTPClient<'a> {
         } else if self.state.request_stage == RequestStage::Done
             && self.is_keep_alive_possible()
             && !socket.is_closed_or_has_error()
+            // A direct TLS socket whose handshake may have been verified
+            // against a Host-header override (get_tls_hostname) must not be
+            // pooled here: this.url has already been repointed at the
+            // redirect destination, so proxy_auth_hash() can no longer
+            // compute the override relative to the hostname the socket was
+            // actually connected to. Close it instead (same reasoning as the
+            // tunnel branch above).
+            && (!IS_SSL || self.http_proxy.is_some() || self.hostname.is_none())
         {
             // request_stage == .done: a 303 to a streaming POST can arrive before
             // the chunked upload's terminating 0\r\n\r\n is written. Pooling that
@@ -3626,7 +3634,11 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         0
                     },
-                    if had_tunnel {
+                    if had_tunnel || (IS_SSL && self.http_proxy.is_none()) {
+                        // Direct TLS: the handshake verified the peer against
+                        // the Host-header override (get_tls_hostname), so the
+                        // override hash must be part of the pool key. Matches
+                        // the lookup in HTTPContext::connect.
                         self.proxy_auth_hash()
                     } else {
                         0

@@ -4681,6 +4681,15 @@ impl<'a> HTTPClient<'a> {
                             }
                         }
 
+                        // Cross-origin redirect: drop the per-request Host
+                        // override so TLS SNI, certificate verification, and
+                        // the Host header for the follow-up connection are
+                        // re-derived from the redirect target's URL instead of
+                        // the previous origin's Host header.
+                        if !is_same_origin {
+                            self.hostname = None;
+                        }
+
                         // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
                         // If request's current URL's origin is not same origin with
                         // locationURL's origin, then for each headerName of CORS
@@ -4693,7 +4702,7 @@ impl<'a> HTTPClient<'a> {
                             }
                             // PORT NOTE: was a `const` table in Zig; LazyLock hashes
                             // aren't const, so build at runtime.
-                            let headers_to_remove: [H; 3] = [
+                            let headers_to_remove: [H; 4] = [
                                 H {
                                     name: b"Authorization",
                                     hash: *AUTHORIZATION_HEADER_HASH,
@@ -4705,6 +4714,13 @@ impl<'a> HTTPClient<'a> {
                                 H {
                                     name: b"Cookie",
                                     hash: *COOKIE_HEADER_HASH,
+                                },
+                                // A user-supplied Host header names the previous
+                                // origin; keeping it would also suppress the
+                                // default Host header derived from the new URL.
+                                H {
+                                    name: HOST_HEADER_NAME,
+                                    hash: hash_header_const(HOST_HEADER_NAME),
                                 },
                             ];
                             for to_remove in headers_to_remove.iter() {

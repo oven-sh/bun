@@ -605,11 +605,18 @@ pub fn migrate_npm_lockfile<'a>(
             continue;
         }
 
+        // Must skip exactly the packages the counting pass skipped: `inBundle`
+        // truthy OR `extraneous` truthy. `or_else` would short-circuit on a
+        // present-but-false `inBundle` and never consult `extraneous`, letting
+        // this pass append more packages than were counted.
         if pkg
             .get(b"inBundle")
-            .or_else(|| pkg.get(b"extraneous"))
             .map(|x| matches!(x.data, ExprData::EBoolean(b) if b.value))
             .unwrap_or(false)
+            || pkg
+                .get(b"extraneous")
+                .map(|x| matches!(x.data, ExprData::EBoolean(b) if b.value))
+                .unwrap_or(false)
         {
             continue;
         }
@@ -919,10 +926,17 @@ pub fn migrate_npm_lockfile<'a>(
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 
+        // Same skip predicate as the counting pass: `inBundle` truthy OR
+        // `extraneous` truthy (not `or_else`, which never consults
+        // `extraneous` when `inBundle` is present). The dependency cursors
+        // below assume this pass writes no more entries than were counted.
         if pkg.get(b"link").is_some()
             || pkg
                 .get(b"inBundle")
-                .or_else(|| pkg.get(b"extraneous"))
+                .map(|x| matches!(x.data, ExprData::EBoolean(b) if b.value))
+                .unwrap_or(false)
+            || pkg
+                .get(b"extraneous")
                 .map(|x| matches!(x.data, ExprData::EBoolean(b) if b.value))
                 .unwrap_or(false)
         {

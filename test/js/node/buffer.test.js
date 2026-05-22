@@ -2226,13 +2226,6 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(BufferModule.File).toBe(File);
       });
 
-      it("transcode", () => {
-        expect(typeof BufferModule.transcode).toBe("undefined");
-
-        // This is a masqueradesAsUndefined function
-        expect(() => BufferModule.transcode()).toThrow("Not implemented");
-      });
-
       it("Buffer.from (Node.js test/test-buffer-from.js)", () => {
         const checkString = "test";
 

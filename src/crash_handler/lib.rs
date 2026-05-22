@@ -2071,45 +2071,12 @@ mod draft {
 
             _ => return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH,
         };
-        crash_handler(
-            reason,
-            None,
-            None,
-            fault_context_from_windows(info.ContextRecord),
-        );
-    }
-
-    /// Extract `(pc, fp)` from a Windows `CONTEXT` (`EXCEPTION_POINTERS.Context
-    /// Record`). `bun_sys::windows::CONTEXT` is opaque, so read the registers at
-    /// their stable winnt.h byte offsets. Returns `None` if the record is null.
-    #[cfg(windows)]
-    fn fault_context_from_windows(ctx: *mut c_void) -> Option<(usize, usize)> {
-        if ctx.is_null() {
-            return None;
-        }
-        // SAFETY: the kernel passes a valid CONTEXT; we read aligned u64 register
-        // slots at fixed offsets within it.
-        unsafe {
-            let read = |off: usize| {
-                core::ptr::read_unaligned((ctx as *const u8).add(off) as *const u64) as usize
-            };
-            #[cfg(target_arch = "x86_64")]
-            {
-                // winnt.h `_CONTEXT` (x64): Rbp @ 0xA0, Rip @ 0xF8.
-                Some((read(0xF8), read(0xA0)))
-            }
-            #[cfg(target_arch = "aarch64")]
-            {
-                // winnt.h `ARM64_NT_CONTEXT`: ContextFlags@0, Cpsr@4, X[31]@0x08
-                // (X29/Fp @ 0xF0, X30/Lr @ 0xF8), Sp @ 0x100, Pc @ 0x108.
-                Some((read(0x108), read(0xF0)))
-            }
-            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            {
-                let _ = read;
-                None
-            }
-        }
+        // SAFETY: kernel provides a valid EXCEPTION_RECORD; ExceptionAddress is
+        // the faulting instruction.
+        let pc = unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize;
+        // Windows: capture_from_context uses RtlCaptureStackBackTrace and trims
+        // by `pc`; the frame-pointer slot is unused.
+        crash_handler(reason, None, None, Some((pc, 0)));
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]

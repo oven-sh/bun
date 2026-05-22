@@ -3574,7 +3574,10 @@ pub mod debug {
 
     pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
 
-    /// Capture the current thread's call stack via frame-pointer walking.
+    /// Capture the current thread's call stack.
+    ///
+    /// POSIX: walk frame pointers. Windows: `RtlCaptureStackBackTrace` via
+    /// `.pdata` (rbp is not a reliable frame pointer across all linked code).
     ///
     /// `first_address`, when present, trims every frame above (and including) the
     /// capture machinery: frames are dropped until one matches `first_address`.
@@ -3582,24 +3585,41 @@ pub mod debug {
     /// trace is returned rather than an empty one — a noisier trace beats none.
     #[inline(never)]
     pub fn capture_current(first_address: Option<usize>, out: &mut [usize]) -> usize {
-        // Read THIS frame's pointer inline (`frame_address` is `#[inline(always)]`,
-        // so this reads `capture_current`'s own fp) and seed the walk explicitly.
-        // Do NOT route through `StackIterator::init(_, None)` — that passes
-        // `frame_address` as a fn-pointer to `unwrap_or_else`, which forces a
-        // non-inlined `frame_address` frame whose own frame setup is unreliable and
-        // corrupts the very first link of the walk.
-        let fp = frame_address();
-        let mut it = StackIterator::init(None, Some(fp));
-        let mut n = 0usize;
-        while n < out.len() {
-            match it.next() {
-                Some(addr) => {
-                    out[n] = addr;
-                    n += 1;
-                }
-                None => break,
+        #[cfg(windows)]
+        let n = {
+            let cap = out.len().min(u16::MAX as usize) as u32;
+            // SAFETY: out is valid for `cap` writes; hash ptr may be null.
+            unsafe {
+                bun_windows_sys::kernel32::RtlCaptureStackBackTrace(
+                    0,
+                    cap,
+                    out.as_mut_ptr() as *mut *mut core::ffi::c_void,
+                    core::ptr::null_mut(),
+                )
             }
-        }
+        } as usize;
+        #[cfg(not(windows))]
+        let n = {
+            // Read THIS frame's pointer inline (`frame_address` is `#[inline(always)]`,
+            // so this reads `capture_current`'s own fp) and seed the walk explicitly.
+            // Do NOT route through `StackIterator::init(_, None)` — that passes
+            // `frame_address` as a fn-pointer to `unwrap_or_else`, which forces a
+            // non-inlined `frame_address` frame whose own frame setup is unreliable
+            // and corrupts the very first link of the walk.
+            let fp = frame_address();
+            let mut it = StackIterator::init(None, Some(fp));
+            let mut n = 0usize;
+            while n < out.len() {
+                match it.next() {
+                    Some(addr) => {
+                        out[n] = addr;
+                        n += 1;
+                    }
+                    None => break,
+                }
+            }
+            n
+        };
         if let Some(target) = first_address {
             if let Some(skip) = out[..n].iter().position(|&a| a == target) {
                 out.copy_within(skip..n, 0);
@@ -3609,25 +3629,68 @@ pub mod debug {
         n
     }
 
-    /// Capture a faulting thread's call stack, seeded from the saved register
-    /// context (`pc`/`fp` read from a `ucontext_t` / `CONTEXT`). `pc` is the exact
-    /// faulting instruction and becomes frame 0; the remaining frames are walked
-    /// from `fp`. No trimming is needed because the walk starts on the faulting
-    /// stack — the signal handler's own frames are never in the chain.
+    /// Capture a faulting thread's call stack from the fault context. `pc` is the
+    /// exact faulting instruction (`ExceptionAddress` / `mcontext` PC) and becomes
+    /// frame 0.
+    ///
+    /// POSIX: walk frame pointers from `fp` (the saved frame pointer register).
+    /// No trimming is needed — the walk starts on the faulting stack, so the
+    /// signal handler's own frames (on the altstack) are never in the chain.
+    ///
+    /// Windows: `rbp` is not a reliable frame pointer across all linked code (the
+    /// prebuilt JavaScriptCore and LLInt assembly do not maintain it), so an
+    /// fp-walk derails at the C++ boundary. Use the native `.pdata`-based
+    /// `RtlCaptureStackBackTrace` instead — it works with or without unwind tables
+    /// since `.pdata` is always emitted — and trim the handler's own frames by
+    /// scanning for `pc`. `fp` is unused on Windows.
     pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
         if out.is_empty() {
             return 0;
         }
         out[0] = pc;
         let mut n = 1usize;
-        let mut it = StackIterator::init(None, Some(fp));
-        while n < out.len() {
-            match it.next() {
-                Some(addr) => {
-                    out[n] = addr;
-                    n += 1;
+        #[cfg(windows)]
+        {
+            let _ = fp;
+            let cap = (out.len() - 1).min(u16::MAX as usize) as u32;
+            // SAFETY: out[1..] is valid for `cap` writes; hash ptr may be null.
+            let got = unsafe {
+                bun_windows_sys::kernel32::RtlCaptureStackBackTrace(
+                    0,
+                    cap,
+                    out[1..].as_mut_ptr() as *mut *mut core::ffi::c_void,
+                    core::ptr::null_mut(),
+                )
+            } as usize;
+            // VEH runs on the faulting thread's stack, so the captured trace is
+            // [handler frames…][fault frame][callers…]. Trim everything above the
+            // first frame whose return address sits within a small tolerance of
+            // the fault `pc` (the call-site/return-address may be a few bytes
+            // off). If no match, keep the full trace rather than discard it.
+            const TOLERANCE: usize = 256;
+            let frames = &out[1..1 + got];
+            let skip = frames
+                .iter()
+                .take(12)
+                .position(|&a| a.abs_diff(pc) <= TOLERANCE)
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            if skip > 0 {
+                out.copy_within(1 + skip..1 + got, 1);
+            }
+            n += got - skip;
+        }
+        #[cfg(not(windows))]
+        {
+            let mut it = StackIterator::init(None, Some(fp));
+            while n < out.len() {
+                match it.next() {
+                    Some(addr) => {
+                        out[n] = addr;
+                        n += 1;
+                    }
+                    None => break,
                 }
-                None => break,
             }
         }
         n

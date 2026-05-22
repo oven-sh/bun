@@ -140,6 +140,7 @@
 
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
+#include "JavaScriptCore/JSAsyncFunctionGenerator.h"
 #include "JavaScriptCore/JSGenerator.h"
 #include "JavaScriptCore/JSPromiseReaction.h"
 #include "JavaScriptCore/FunctionExecutable.h"
@@ -2264,11 +2265,11 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return *out != nullptr;
     };
 
-    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSGenerator* {
+    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSAsyncFunctionGenerator* {
         JSC::InternalFieldTuple* tuple = nullptr;
         if (dynamicCastValue(context, &tuple))
             context = tuple->getInternalField(0);
-        JSC::JSGenerator* generator = nullptr;
+        JSC::JSAsyncFunctionGenerator* generator = nullptr;
         dynamicCastValue(context, &generator);
         return generator;
     };
@@ -2285,7 +2286,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     //    payloadCell() and the handler in m_slot.
     //  - As a heap-allocated JSPromiseReaction list once a second handler is
     //    attached, headed at payloadCell().
-    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSGenerator* {
+    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSAsyncFunctionGenerator* {
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
@@ -2293,6 +2294,16 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
             case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
                 if (auto* generator = unwrapGeneratorFromContext(p->inlineReactionContext()))
                     return generator;
+                // No generator in the context. For the resolve-with-promise fast
+                // path (`return promise` without await inside an async function),
+                // the reaction's cell payload is the outer promise being resolved —
+                // follow it to the next promise in the chain. Combinator reactions
+                // store a JSPromiseCombinatorsGlobalContext there, so the downcast
+                // fails and we stop, as before.
+                if (auto* next = dynamicDowncast<JSC::JSPromise>(p->payloadCell())) {
+                    p = next;
+                    continue;
+                }
                 return nullptr;
             }
             case JSC::JSPromise::InlineReactionKind::FulfillHandler:
@@ -2316,9 +2327,9 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSGenerator* generator) -> JSC::BytecodeIndex {
+    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
         JSC::BytecodeIndex bytecodeIndex(0);
-        JSC::JSValue stateValue = generator->internalField(JSC::JSGenerator::Field::State).get();
+        JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
         if (stateValue.isInt32()) {
             int32_t state = stateValue.asInt32();
             size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
@@ -2333,7 +2344,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return bytecodeIndex;
     };
 
-    auto appendFrame = [&](JSC::JSGenerator* generator) {
+    auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {
         JSC::JSFunction* asyncFunction = nullptr;
         if (!dynamicCastValue(generator->next(), &asyncFunction))
             return;
@@ -2350,7 +2361,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         }
     };
 
-    JSC::JSGenerator* gen = getAwaitingGenerator(promise);
+    JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
     while (gen && results.size() < maxStackSize) {
         appendFrame(gen);
         JSC::JSPromise* returnPromise = nullptr;
@@ -4577,9 +4588,9 @@ void JSC__JSValue__getSymbolDescription(JSC::EncodedJSValue symbolValue_, JSC::J
 
     JSC::Symbol* symbol = JSC::asSymbol(symbolValue);
 
-    auto result = symbol->description();
-    if (!result.isEmpty()) {
-        *arg2 = Zig::toZigString(result);
+    auto& uid = symbol->uid();
+    if (!uid.isNullSymbol() && !uid.isEmpty()) {
+        *arg2 = Zig::toZigString(static_cast<WTF::StringImpl&>(uid));
     } else {
         *arg2 = ZigStringEmpty;
     }

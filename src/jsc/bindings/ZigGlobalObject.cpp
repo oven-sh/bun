@@ -1992,7 +1992,12 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            init.set(result.toObject(globalObject));
+            if (result.isEmpty() || !result.isObject()) [[unlikely]] {
+                // Creating the test module failed and an exception is pending.
+                init.set(JSC::constructEmptyObject(globalObject));
+                return;
+            }
+            init.set(JSC::asObject(result));
         });
 
     m_testMatcherUtilsObject.initLater(

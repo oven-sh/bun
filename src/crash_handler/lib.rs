@@ -38,7 +38,12 @@ pub mod handle_oom;
 #[cold]
 #[inline(never)]
 pub(crate) fn out_of_memory() -> ! {
-    draft::crash_handler(draft::CrashReason::OutOfMemory, None, None, None)
+    draft::crash_handler(
+        draft::CrashReason::OutOfMemory,
+        None,
+        Some(bun_core::return_address()),
+        None,
+    )
 }
 
 /// `extern "Rust"` symbol resolved by `bun_alloc::out_of_memory()` at link

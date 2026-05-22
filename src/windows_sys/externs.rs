@@ -471,6 +471,12 @@ pub mod ntdll {
 
     #[link(name = "ntdll")]
     unsafe extern "system" {
+        pub fn RtlCaptureStackBackTrace(
+            FramesToSkip: u32,
+            FramesToCapture: u32,
+            BackTrace: *mut *mut core::ffi::c_void,
+            BackTraceHash: *mut u32,
+        ) -> u16;
         pub fn NtCreateFile(
             FileHandle: *mut HANDLE,
             DesiredAccess: ACCESS_MASK,
@@ -583,12 +589,6 @@ pub mod kernel32 {
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
         pub safe fn GetLastError() -> DWORD;
-        pub fn RtlCaptureStackBackTrace(
-            FramesToSkip: u32,
-            FramesToCapture: u32,
-            BackTrace: *mut *mut core::ffi::c_void,
-            BackTraceHash: *mut u32,
-        ) -> u16;
         /// No preconditions; terminates the process (cf. `std::process::exit`).
         pub safe fn ExitProcess(exit_code: u32) -> !;
         /// No preconditions; returns the cached console/std handle (or

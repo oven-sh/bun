@@ -3247,10 +3247,19 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
 /// captures (`capture_current` falls back to the full trace if it doesn't match).
 #[inline(never)]
 pub fn return_address() -> usize {
-    let fp = debug::frame_address();
-    // SAFETY: `fp` is this function's own valid frame pointer; the return-address
-    // slot at `[fp + PC_OFFSET]` is always mapped.
-    unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        let fp = debug::frame_address();
+        // SAFETY: `fp` is this function's own valid frame pointer; the
+        // return-address slot at `[fp + PC_OFFSET]` is always mapped.
+        unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        // No frame-pointer asm! mapping for this arch; capture_current treats 0
+        // as "no trim".
+        0
+    }
 }
 
 /// Ports of `std.debug.{SourceLocation,SymbolInfo}` — pure data structs shared by
@@ -3285,9 +3294,6 @@ pub mod debug {
     // the correct mechanism. Lives in `bun_core` (libc/std/bun_alloc only) so the
     // crash handler, `StoredTrace`, and `btjs` can all share one implementation.
     // ──────────────────────────────────────────────────────────────────────
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    use core::sync::atomic::{AtomicI32, Ordering};
-
     /// Port of Zig `@frameAddress()`. Reads the frame-pointer register directly.
     #[inline(always)]
     pub fn frame_address() -> usize {
@@ -3329,9 +3335,6 @@ pub mod debug {
         _mem: (),
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    static CACHED_PID: AtomicI32 = AtomicI32::new(-1);
-
     impl MemoryAccessor {
         pub const INIT: Self = Self {
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3346,15 +3349,10 @@ pub mod debug {
                 match self.mem {
                     -2 => break,
                     -1 => {
-                        let pid = match CACHED_PID.load(Ordering::Relaxed) {
-                            -1 => {
-                                // SAFETY: getpid has no preconditions.
-                                let pid = unsafe { libc::getpid() };
-                                CACHED_PID.store(pid, Ordering::Relaxed);
-                                pid
-                            }
-                            pid => pid,
-                        };
+                        // SAFETY: getpid has no preconditions. Don't cache across
+                        // calls — it's served from the vDSO and a stale cache after
+                        // fork() would target the wrong process.
+                        let pid = unsafe { libc::getpid() };
                         let local = libc::iovec {
                             iov_base: buf.as_mut_ptr().cast(),
                             iov_len: buf.len(),
@@ -3559,9 +3557,10 @@ pub mod debug {
             }
             let new_fp = self.ma.load_usize(fp)?;
 
-            // The stack grows down, so parent frames must be at addresses greater
-            // than the previous one. A zero frame pointer signals the last frame.
-            if new_fp != 0 && new_fp < self.fp {
+            // The stack grows down, so parent frames must be at addresses strictly
+            // greater than the previous one (a self-linked frame would loop). A
+            // zero frame pointer signals the last frame.
+            if new_fp != 0 && new_fp <= self.fp {
                 return None;
             }
             let new_pc = self.ma.load_usize(fp.checked_add(Self::PC_OFFSET)?)?;
@@ -3590,7 +3589,7 @@ pub mod debug {
             let cap = out.len().min(u16::MAX as usize) as u32;
             // SAFETY: out is valid for `cap` writes; hash ptr may be null.
             unsafe {
-                bun_windows_sys::kernel32::RtlCaptureStackBackTrace(
+                bun_windows_sys::ntdll::RtlCaptureStackBackTrace(
                     0,
                     cap,
                     out.as_mut_ptr() as *mut *mut core::ffi::c_void,
@@ -3655,7 +3654,7 @@ pub mod debug {
             let cap = (out.len() - 1).min(u16::MAX as usize) as u32;
             // SAFETY: out[1..] is valid for `cap` writes; hash ptr may be null.
             let got = unsafe {
-                bun_windows_sys::kernel32::RtlCaptureStackBackTrace(
+                bun_windows_sys::ntdll::RtlCaptureStackBackTrace(
                     0,
                     cap,
                     out[1..].as_mut_ptr() as *mut *mut core::ffi::c_void,

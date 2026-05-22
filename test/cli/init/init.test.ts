@@ -318,8 +318,8 @@ import path from "path";
     // proves the child's stdout reached us.
     expect(stdout).toContain("bun install");
     expect(stdout).toContain("packages installed");
-    expect(exitCode).toBe(0);
     expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
+    expect(exitCode).toBe(0);
   }, 30_000);
 
   test("bun init --minimal only creates package.json and tsconfig.json", async () => {

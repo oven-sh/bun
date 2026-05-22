@@ -2592,6 +2592,38 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
     }
 
+    /// [142]/[143] Consume the `?` and parse the flow explicit-entry key.
+    /// Returns e-node `null` when nothing precedes `,` / `}` / `]` / `:`.
+    /// The caller (parse_flow_mapping / parse_flow_sequence) then handles the
+    /// optional `:` and value with its normal entry path.
+    fn parse_flow_explicit_key(&mut self) -> Result<Expr, ParseError> {
+        debug_assert!(matches!(self.token.data, TokenData::MappingKey));
+        let start = self.token.start;
+
+        self.context.set(Context::FlowKey)?;
+        let r = self.scan(ScanOptions::default());
+        self.context.unset(Context::FlowKey);
+        r?;
+
+        if matches!(
+            self.token.data,
+            TokenData::MappingValue
+                | TokenData::CollectEntry
+                | TokenData::MappingEnd
+                | TokenData::SequenceEnd
+        ) {
+            return Ok(Expr::init(E::Null {}, start.loc()));
+        }
+
+        self.context.set(Context::FlowKey)?;
+        let k = self.parse_node(ParseNodeOptions {
+            explicit_mapping_key: true,
+            ..Default::default()
+        });
+        self.context.unset(Context::FlowKey);
+        k
+    }
+
     fn parse_flow_sequence(&mut self) -> Result<Expr, ParseError> {
         let sequence_start = self.token.start;
         let _sequence_indent = self.token.indent;
@@ -2608,10 +2640,38 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let result: Result<(), ParseError> = (|| {
             self.scan(ScanOptions::default())?;
             while !matches!(self.token.data, TokenData::SequenceEnd) {
-                let item = self.parse_node(ParseNodeOptions {
-                    flow_pair_allowed: true,
-                    ..Default::default()
-                })?;
+                let item = if matches!(self.token.data, TokenData::MappingKey) {
+                    // [150] ns-flow-pair ::= '?' s-separate ns-flow-map-explicit-entry
+                    let pair_start = self.token.start;
+                    let key = self.parse_flow_explicit_key()?;
+                    let value = if matches!(self.token.data, TokenData::MappingValue) {
+                        self.scan(ScanOptions::default())?;
+                        if matches!(
+                            self.token.data,
+                            TokenData::CollectEntry | TokenData::SequenceEnd
+                        ) {
+                            Expr::init(E::Null {}, self.token.start.loc())
+                        } else {
+                            self.parse_node(ParseNodeOptions::default())?
+                        }
+                    } else {
+                        Expr::init(E::Null {}, self.token.start.loc())
+                    };
+                    let mut props = MappingProps::init();
+                    props.append_maybe_merge(key, value)?;
+                    Expr::init(
+                        E::Object {
+                            properties: props.move_list(),
+                            ..Default::default()
+                        },
+                        pair_start.loc(),
+                    )
+                } else {
+                    self.parse_node(ParseNodeOptions {
+                        flow_pair_allowed: true,
+                        ..Default::default()
+                    })?
+                };
                 seq.push(item);
 
                 if matches!(self.token.data, TokenData::SequenceEnd) {
@@ -2669,26 +2729,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 // never reaches parse_node's MappingKey arm (which routes
                 // through block-mapping logic).
                 let key = if matches!(self.token.data, TokenData::MappingKey) {
-                    // Consume `?`, then parse the entry's key (or e-node).
-                    self.context.set(Context::FlowKey)?;
-                    let r = self.scan(ScanOptions::default());
-                    self.context.unset(Context::FlowKey);
-                    r?;
-                    if matches!(
-                        self.token.data,
-                        TokenData::MappingValue | TokenData::CollectEntry | TokenData::MappingEnd
-                    ) {
-                        // [143] e-node key (`?,` / `?}` / `? :`)
-                        Expr::init(E::Null {}, self.token.start.loc())
-                    } else {
-                        self.context.set(Context::FlowKey)?;
-                        let k = self.parse_node(ParseNodeOptions {
-                            explicit_mapping_key: true,
-                            ..Default::default()
-                        });
-                        self.context.unset(Context::FlowKey);
-                        k?
-                    }
+                    self.parse_flow_explicit_key()?
                 } else if matches!(self.token.data, TokenData::MappingValue) {
                     // [147] e-node key followed by `:`
                     Expr::init(E::Null {}, self.token.start.loc())
@@ -3017,9 +3058,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 })?;
                             }
                             // [149] e-node value in flow (`"a":,` / `"a":]`).
-                            TokenData::CollectEntry
-                            | TokenData::SequenceEnd
-                            | TokenData::MappingEnd
+                            TokenData::CollectEntry | TokenData::SequenceEnd
                                 if matches!(
                                     self.context.get(),
                                     Context::FlowIn | Context::FlowKey
@@ -3805,8 +3844,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
 
                     let key = if in_flow {
-                        // [143] e-node key in flow when nothing follows `?`
-                        // before `,` / `}` / `]` / `:`.
+                        // Only reachable when a flow `?` appears in a position
+                        // where ns-flow-pair is not allowed (e.g. as a flow-map
+                        // value). Both parse_flow_mapping and parse_flow_sequence
+                        // intercept `?` themselves for the legitimate paths.
                         if matches!(
                             self.token.data,
                             TokenData::CollectEntry

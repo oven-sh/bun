@@ -1101,6 +1101,15 @@ folded: >
           expect(YAML.parse("[?,]\n")).toEqual([{ null: null }]);
           expect(YAML.parse("[? , ? ]\n")).toEqual([{ null: null }, { null: null }]);
           expect(YAML.parse("[? : x]\n")).toEqual([{ null: "x" }]);
+          expect(YAML.parse("[\n?\n]\n")).toEqual([{ null: null }]);
+        });
+
+        test("? with JSON-adjacent key in flow sequence", () => {
+          // [150] flow-seq `?` key parse is in flow-key context, so the
+          // post-JSON-node `:` lookahead recognizes adjacency.
+          expect(YAML.parse('[? "a":1]\n')).toEqual([{ a: 1 }]);
+          expect(YAML.parse("[? [x]:1]\n")).toEqual([{ x: 1 }]);
+          expect(YAML.parse("[? {a:1}:2]\n")).toEqual([{ "[object Object]": 2 }]);
         });
 
         test("JSON-adjacent does not apply in flow-map value position", () => {

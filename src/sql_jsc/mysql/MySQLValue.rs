@@ -838,45 +838,35 @@ impl Decimal {
     // }
 }
 
-// Helper functions for date calculations
-fn is_leap_year(year: u16) -> bool {
-    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
-}
-
-fn days_in_month(year: u16, month: u8) -> u8 {
-    const DAYS: [u8; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    if month == 2 && is_leap_year(year) {
-        return 29;
-    }
-    DAYS[month as usize - 1]
-}
-
 struct Date {
     year: u16,
     month: u8,
     day: u8,
 }
 
+/// Civil year/month/day from a signed days-since-1970-01-01 count.
+///
+/// Uses Howard Hinnant's `civil_from_days` (400-year-era arithmetic) so
+/// negative day counts — i.e. any pre-1970 `Date` parameter — yield the
+/// correct calendar date instead of falling through loops that only walk
+/// forwards from 1970. The MySQL wire format stores the year as a `u16`,
+/// so out-of-range proleptic years are clamped rather than panicking.
 fn gregorian_date(days: i32) -> Date {
-    // Convert days since 1970-01-01 to year/month/day
-    let mut d = days;
-    let mut y: u16 = 1970;
-
-    while d >= 365 + is_leap_year(y) as i32 {
-        d -= 365 + is_leap_year(y) as i32;
-        y += 1;
-    }
-
-    let mut m: u8 = 1;
-    while d >= days_in_month(y, m) as i32 {
-        d -= days_in_month(y, m) as i32;
-        m += 1;
-    }
+    let z = i64::from(days) + 719468;
+    let era = z.div_euclid(146097);
+    let doe = (z - era * 146097) as u32; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = i64::from(yoe) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    let year = y + i64::from(m <= 2);
 
     Date {
-        year: y,
-        month: m,
-        day: u8::try_from(d + 1).expect("int cast"),
+        year: year.clamp(0, i64::from(u16::MAX)) as u16,
+        month: m as u8,
+        day: d as u8,
     }
 }
 

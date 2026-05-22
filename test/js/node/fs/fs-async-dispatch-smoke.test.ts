@@ -16,9 +16,9 @@
 //   - watcher tasks (FSWatchTask, StatWatcherScheduler)
 
 import { describe, expect, test } from "bun:test";
-import * as fs from "node:fs/promises";
+import { isWindows, tempDir } from "harness";
 import * as fscb from "node:fs";
-import { tempDir, isWindows } from "harness";
+import * as fs from "node:fs/promises";
 import { join } from "node:path";
 
 describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` arm", () => {
@@ -173,9 +173,7 @@ describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` ar
     // exercise via the callback form where available so the Lchmod dispatch
     // arm is hit.
     if (typeof fscb.lchmod === "function") {
-      await new Promise<void>((resolve, reject) =>
-        fscb.lchmod(p, 0o644, err => (err ? reject(err) : resolve())),
-      );
+      await new Promise<void>((resolve, reject) => fscb.lchmod(p, 0o644, err => (err ? reject(err) : resolve())));
     }
   });
 
@@ -232,9 +230,7 @@ describe.concurrent("node:fs async dispatch — every `for_each_fs_async_op!` ar
   test("exists", async () => {
     using dir = tempDir("fs-disp-ex", { "f.txt": "" });
     // `fs.exists` (callback, deprecated) hits the dedicated `Exists` arm.
-    const exists = await new Promise<boolean>(resolve =>
-      fscb.exists(join(String(dir), "f.txt"), resolve),
-    );
+    const exists = await new Promise<boolean>(resolve => fscb.exists(join(String(dir), "f.txt"), resolve));
     expect(exists).toBe(true);
   });
 

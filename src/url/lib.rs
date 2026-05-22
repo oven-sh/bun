@@ -1063,6 +1063,9 @@ impl QueryStringMap {
         let mut buf_writer_pos: u32 = 0;
 
         while let Some(result) = scanner.pathname.next() {
+            if list.len() >= MAX_QUERY_STRING_PARAMS {
+                break;
+            }
             let mut name = result.name;
             let mut value = result.value;
             let name_slice = result.raw_name(scanner.pathname.routename);
@@ -1095,6 +1098,9 @@ impl QueryStringMap {
         let route_parameter_begin = list.len();
 
         while let Some(result) = scanner.query.next() {
+            if list.len() >= MAX_QUERY_STRING_PARAMS {
+                break;
+            }
             let mut name = result.name;
             let mut value = result.value;
             let name_hash: u64;
@@ -1187,6 +1193,9 @@ impl QueryStringMap {
         if nothing_needs_decoding {
             scanner = Scanner::init(query_string);
             while let Some(result) = scanner.next() {
+                if list.len() >= MAX_QUERY_STRING_PARAMS {
+                    break;
+                }
                 debug_assert!(!result.name_needs_decoding);
                 debug_assert!(!result.value_needs_decoding);
 
@@ -1216,6 +1225,9 @@ impl QueryStringMap {
         // PORT NOTE: reshaped for borrowck — Zig captured `list.slice()` once outside
         // the loop; here we re-slice per iteration to avoid holding a borrow across push().
         while let Some(result) = scanner.next() {
+            if list.len() >= MAX_QUERY_STRING_PARAMS {
+                break;
+            }
             let mut name = result.name;
             let mut value = result.value;
             let name_hash: u64;
@@ -1275,12 +1287,16 @@ impl QueryStringMap {
     }
 }
 
-// Assume no query string param map will exceed 2048 keys
 // Browsers typically limit URL lengths to around 64k
 // PORT NOTE: Zig `StaticBitSet(2048)` resolves to `ArrayBitSet(usize, 2048)`.
 // bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
 // pick ArrayBitSet directly. 2048 / 64 == 32 masks.
-type VisitedMap = ArrayBitSet<2048, { num_masks_for(2048) }>;
+/// Hard cap on the number of parsed query-string parameters.
+/// `QueryStringMap::init` / `init_with_scanner` enforce this so the iterator's
+/// fixed-size `VisitedMap` bitset can never be indexed out of bounds (which
+/// would panic and abort the process on an attacker-controlled query string).
+const MAX_QUERY_STRING_PARAMS: usize = 2048;
+type VisitedMap = ArrayBitSet<MAX_QUERY_STRING_PARAMS, { num_masks_for(MAX_QUERY_STRING_PARAMS) }>;
 
 pub struct Iterator<'a> {
     pub i: usize,
@@ -1295,6 +1311,7 @@ pub struct IteratorResult<'a, 't> {
 
 impl<'a> Iterator<'a> {
     pub fn init(map: &'a QueryStringMap) -> Iterator<'a> {
+        debug_assert!(map.list.len() <= MAX_QUERY_STRING_PARAMS);
         Iterator {
             i: 0,
             map,
@@ -1307,7 +1324,7 @@ impl<'a> Iterator<'a> {
     where
         'a: 't,
     {
-        while self.visited.is_set(self.i) {
+        while self.i < self.map.list.len() && self.visited.is_set(self.i) {
             self.i += 1;
         }
         if self.i >= self.map.list.len() {

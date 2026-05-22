@@ -4252,6 +4252,19 @@ impl<'a> HTTPClient<'a> {
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
+                    // RFC 9110 section 9.3.6: a client MUST ignore
+                    // Content-Length in a successful response to CONNECT —
+                    // the connection becomes an opaque tunnel and is never
+                    // released back to the keep-alive pool, so the
+                    // framing-desync concern below does not apply. Without
+                    // this, a proxy sending a malformed Content-Length on its
+                    // 200 would have the tunnel rejected before it is set up.
+                    if self.flags.proxy_tunneling
+                        && self.proxy_tunnel.is_none()
+                        && response.status_code == 200
+                    {
+                        continue;
+                    }
                     // byte-level parse — header.value() is network bytes, not &str
                     //
                     // RFC 9112 section 6.3: an invalid Content-Length, or
@@ -4743,7 +4756,7 @@ impl<'a> HTTPClient<'a> {
                     }
                     _ => {}
                 }
-            } else if self.redirect_type == FetchRedirect::Error {
+            } else if !is_proxy_connect_failure && self.redirect_type == FetchRedirect::Error {
                 // error out if redirect is not allowed
                 return Err(err!(UnexpectedRedirect));
             }

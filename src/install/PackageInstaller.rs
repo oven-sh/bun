@@ -105,7 +105,12 @@ pub struct PackageInstaller<'a> {
     pub tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
-    pub trusted_dependencies_from_update_requests: ArrayHashMap<TruncatedPackageNameHash, ()>,
+    /// Keyed by truncated name hash; the value is the exact alias bytes the
+    /// hash was computed from. Lookups must compare the name so a
+    /// hash-colliding alias can't be trusted (or written back to
+    /// package.json/the lockfile) through `--trust`.
+    pub trusted_dependencies_from_update_requests:
+        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
 
     /// uses same ids as lockfile.trees
     pub trees: Box<[TreeContext]>,
@@ -1772,7 +1777,8 @@ impl<'a> PackageInstaller<'a> {
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if self
                             .trusted_dependencies_from_update_requests
-                            .contains(&truncated_dep_name_hash)
+                            .get(&truncated_dep_name_hash)
+                            .is_some_and(|n| **n == *alias.slice(string_buf!()))
                         {
                             break 'brk (true, true);
                         }
@@ -1849,7 +1855,10 @@ impl<'a> PackageInstaller<'a> {
                                         .trusted_dependencies
                                         .as_mut()
                                         .unwrap()
-                                        .put(truncated_dep_name_hash, ())
+                                        .put(
+                                            truncated_dep_name_hash,
+                                            Box::<[u8]>::from(alias.slice(string_buf!())),
+                                        )
                                         .unwrap_or_oom();
                                 }
                             }
@@ -2077,19 +2086,22 @@ impl<'a> PackageInstaller<'a> {
                 // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
                 if self
                     .trusted_dependencies_from_update_requests
-                    .contains(&truncated_dep_name_hash)
+                    .get(&truncated_dep_name_hash)
+                    .is_some_and(|n| **n == *alias.slice(string_buf!()))
                 {
                     break 'brk (true, true, true);
                 }
 
-                if let Some(should_add_to_lockfile) = self
+                if let Some(added) = self
                     .manager()
                     .summary
                     .added_trusted_dependencies
                     .get(&truncated_dep_name_hash)
                 {
                     // is a new trusted dependency. need to enqueue scripts and maybe add to lockfile
-                    break 'brk (true, false, *should_add_to_lockfile);
+                    if *added.name == *alias.slice(string_buf!()) {
+                        break 'brk (true, false, added.add_to_lockfile);
+                    }
                 }
                 break 'brk (false, false, false);
             };
@@ -2154,7 +2166,10 @@ impl<'a> PackageInstaller<'a> {
                                 .trusted_dependencies
                                 .as_mut()
                                 .unwrap()
-                                .put(truncated_dep_name_hash, ())
+                                .put(
+                                    truncated_dep_name_hash,
+                                    Box::<[u8]>::from(alias.slice(string_buf!())),
+                                )
                                 .unwrap_or_oom();
                         }
                     }

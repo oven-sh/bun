@@ -499,11 +499,15 @@ impl PackageManager {
         Ok(())
     }
 
+    /// Returns a map keyed by truncated name hash whose value is the exact
+    /// alias bytes the hash was computed from. Callers must compare the name
+    /// before trusting an entry: the truncated hash alone is not a sufficient
+    /// identity check.
     pub fn find_trusted_dependencies_from_update_requests(
         &mut self,
-    ) -> ArrayHashMap<TruncatedPackageNameHash, ()> {
+    ) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
         // find all deps originating from --trust packages from cli
-        let mut set: ArrayHashMap<TruncatedPackageNameHash, ()> = ArrayHashMap::default();
+        let mut set: ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> = ArrayHashMap::default();
         if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
             let root_id = self
                 .root_package_id
@@ -524,6 +528,11 @@ impl PackageManager {
                             set.get_or_put(root_dep.name_hash as TruncatedPackageNameHash),
                         );
                         if !entry.found_existing {
+                            *entry.value_ptr = Box::from(
+                                root_dep
+                                    .name
+                                    .slice(self.lockfile.buffers.string_bytes.as_slice()),
+                            );
                             let dependency_slice =
                                 self.lockfile.packages.items_dependencies()[package_id as usize];
                             add_dependencies_to_set(&mut set, &self.lockfile, dependency_slice);
@@ -540,7 +549,7 @@ impl PackageManager {
 }
 
 fn add_dependencies_to_set(
-    names: &mut ArrayHashMap<TruncatedPackageNameHash, ()>,
+    names: &mut ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
     lockfile: &Lockfile,
     dependencies_slice: lockfile::DependencySlice,
 ) {
@@ -557,6 +566,8 @@ fn add_dependencies_to_set(
         let dep = &lockfile.buffers.dependencies[dep_id as usize];
         let entry = handle_oom(names.get_or_put(dep.name_hash as TruncatedPackageNameHash));
         if !entry.found_existing {
+            *entry.value_ptr =
+                Box::from(dep.name.slice(lockfile.buffers.string_bytes.as_slice()));
             let dependency_slice = lockfile.packages.items_dependencies()[package_id as usize];
             add_dependencies_to_set(names, lockfile, dependency_slice);
         }
@@ -643,7 +654,7 @@ pub fn spawn_package_lifecycle_scripts(
 #[inline]
 pub fn find_trusted_dependencies_from_update_requests(
     this: &mut PackageManager,
-) -> ArrayHashMap<TruncatedPackageNameHash, ()> {
+) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
     this.find_trusted_dependencies_from_update_requests()
 }
 

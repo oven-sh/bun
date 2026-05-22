@@ -108,7 +108,12 @@ pub struct Installer<'a> {
     /// round-trip via `Method::from_u8` at the load sites below.
     pub supported_backend: AtomicU8,
 
-    pub trusted_dependencies_from_update_requests: ArrayHashMap<TruncatedPackageNameHash, ()>,
+    /// Keyed by truncated name hash; the value is the exact alias bytes the
+    /// hash was computed from. Lookups must compare the name so a
+    /// hash-colliding alias can't be trusted through `--trust`. Built before
+    /// tasks spawn and only read concurrently afterwards.
+    pub trusted_dependencies_from_update_requests:
+        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
 
     /// Absolute path to the global virtual store (`<cache_dir>/links`). When
     /// non-null, npm/git/tarball entries are materialized once into this
@@ -1628,7 +1633,8 @@ impl Task {
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if installer
                             .trusted_dependencies_from_update_requests
-                            .contains_key(&truncated_dep_name_hash)
+                            .get(&truncated_dep_name_hash)
+                            .is_some_and(|n| **n == *dep.name.slice(string_buf))
                         {
                             break 'brk (true, true);
                         }
@@ -1737,10 +1743,10 @@ impl Task {
                                 if trusted.is_none() {
                                     *trusted = Some(Default::default());
                                 }
-                                trusted
-                                    .as_mut()
-                                    .unwrap()
-                                    .insert(truncated_dep_name_hash, ());
+                                trusted.as_mut().unwrap().insert(
+                                    truncated_dep_name_hash,
+                                    Box::from(dep.name.slice(string_buf)),
+                                );
                             }
 
                             if first_index != 0 {

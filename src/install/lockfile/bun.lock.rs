@@ -384,10 +384,21 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if trusted_dependencies
-                            .contains(&(dep.name_hash as TruncatedPackageNameHash))
+                        if let Some(trusted_name) =
+                            trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
                         {
-                            found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                            // Only persist the entry under this dependency's name when
+                            // the stored name matches; a truncated-hash collision must
+                            // not launder a different alias into the lockfile. The
+                            // `is_empty()` arm exists for entries loaded from a legacy
+                            // bun.lockb (no name stored): it persists that hash-only
+                            // grant under the colliding graph dep's name when migrating
+                            // bun.lockb -> bun.lock, preserving today's migration
+                            // behavior so existing binary-lockfile projects don't
+                            // silently lose trusted entries.
+                            if trusted_name.is_empty() || **trusted_name == *dep.name.slice(buf) {
+                                found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                            }
                         }
                     }
                 }
@@ -1537,14 +1548,28 @@ pub fn parse_into_binary_lockfile(
             .items
             .slice()
         {
-            if !dep.is_string() {
+            let ExprData::EString(s) = &dep.data else {
                 log.add_error(Some(source), dep.loc, b"Expected a string");
                 return Err(ParseError::InvalidTrustedDependenciesSet);
+            };
+            // Store the exact bytes the hash is computed from so trust lookups
+            // can confirm the name instead of relying on the truncated hash
+            // alone. JSON-parsed strings are always UTF-8; keep the UTF-16
+            // fallback from `as_string_hash_utf8` for the unreachable branch
+            // (transcode so the stored name and the hash agree).
+            if s.is_utf8() {
+                let name = s.slice8();
+                let name_hash: TruncatedPackageNameHash =
+                    StringBuilder::string_hash(name) as TruncatedPackageNameHash;
+                trusted_dependencies.insert(name_hash, Box::from(name));
+            } else {
+                debug_assert!(false, "trustedDependencies: UTF-16 EString from JSON parser");
+                let bump = bun_alloc::Arena::new();
+                let name = s.string(&bump)?;
+                let name_hash: TruncatedPackageNameHash =
+                    StringBuilder::string_hash(name) as TruncatedPackageNameHash;
+                trusted_dependencies.insert(name_hash, Box::from(name));
             }
-            let name_hash: TruncatedPackageNameHash =
-                dep.as_string_hash_utf8(StringBuilder::string_hash)?
-                    .unwrap() as TruncatedPackageNameHash;
-            trusted_dependencies.insert(name_hash, ());
         }
 
         lockfile.trusted_dependencies = Some(trusted_dependencies);

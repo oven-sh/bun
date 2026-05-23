@@ -1217,6 +1217,25 @@ folded: >
           expect(YAML.parse("&x\nb\n")).toEqual("b");
           expect(YAML.parse("&x\n")).toEqual(null);
         });
+
+        test("nested explicit `?` key uses its own indent for sibling detection", () => {
+          // The `?` key parse passes the `?`'s indent as n, not the outer
+          // mapping's, so `:` at the inner indent terminates the entry.
+          expect(YAML.parse("x:\n  ? a\n  : b\ny: z\n")).toEqual({
+            x: { a: "b" },
+            y: "z",
+          });
+          expect(YAML.parse("? a\n:\n  ? b\n  : c\n")).toEqual({ a: { b: "c" } });
+        });
+
+        test.todo("seq-item property followed by non-`- ` at parent indent", () => {
+          // parse_block_sequence's property loop only checks SequenceEntry at
+          // indent ≤ n; other tokens (Scalar, MappingKey) at parent indent
+          // still fall through to parse_node and consume sibling content.
+          // Pre-existing; same [185] production as the helper.
+          expect(() => YAML.parse("- &a\nk: v\n")).toThrow();
+          expect(() => YAML.parse("- &a\nb\n")).toThrow();
+        });
       });
 
       // Pre-existing flow-context over-accepts surfaced by adversarial review.

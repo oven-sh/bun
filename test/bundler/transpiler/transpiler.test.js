@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -153,6 +153,47 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it("contextual keywords used as plain identifiers keep their statements", () => {
+      const exp = ts.expectPrinted_;
+
+      exp("declare = t => 0;", "declare = (t) => 0;\n");
+      exp("declare = (...t) => R;", "declare = (...t) => R;\n");
+      exp("declare.foo = 1;", "declare.foo = 1;\n");
+      exp("interface = t => 0;", "interface = (t) => 0;\n");
+      exp("type = t => 0;", "type = (t) => 0;\n");
+      exp("namespace = t => 0;", "namespace = (t) => 0;\n");
+      exp("module = t => 0;", "module = (t) => 0;\n");
+      exp("abstract = t => 0;", "abstract = (t) => 0;\n");
+      exp("global = t => 0;", "global = (t) => 0;\n");
+      exp(
+        "abstract = () => {}\nclass Foo { m() { return 1 } }",
+        "abstract = () => {};\n\nclass Foo {\n  m() {\n    return 1;\n  }\n}",
+      );
+
+      exp("declare const x: number", "");
+      exp("declare let x: number", "");
+      exp("declare function f(): void", "");
+      exp("declare class Foo {}", "");
+    });
+
+    it("scope tracking stays balanced when a contextual keyword starts a larger expression", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("declare = (...t) => R;e((a) => {(u=> uge);\r\n})", "declare = (...t) => R;\ne((a) => {});\n");
+      exp("declare = t => 0; () => () => 0", "declare = (t) => 0;\n");
+      exp("declare = function () {}; () => () => 0", "declare = function() {};\n");
+      exp("declare = t => 0; function f() { () => 0; }\nf();", "declare = (t) => 0;\nfunction f() {}\nf();\n");
+
+      exp(
+        "abstract = (t) => 0\nclass Foo { m() { return () => () => 0 } }",
+        "abstract = (t) => 0;\n\nclass Foo {\n  m() {\n    return () => () => 0;\n  }\n}",
+      );
+      err("type = (t) => 0 Foo = number; () => () => 0", 'Expected ";" but found "Foo"');
+      err("namespace = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
+      err("module = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
+    });
+
     it("should parse empty type parameters", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -161,6 +202,16 @@ describe("Bun.Transpiler", () => {
       err("class Foo<> {}", 'Expected identifier but found ">"');
       err("function foo<>(): void {}", 'Expected identifier but found ">"');
       err("const x: Foo<> = {}", "Unexpected >");
+    });
+
+    it("does not crash on an unterminated template literal after type arguments", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      err("new C<T>\n`", "Unterminated string literal");
+      err("new C<T>`", "Unterminated string literal");
+      err("f<T>`", "Unterminated string literal");
+      exp("new C<T>`ok`", "new C`ok`;\n");
+      exp("f<T>`ok`", "f`ok`;\n");
     });
 
     it("should parse infer extends ternary correctly #9959", () => {
@@ -999,6 +1050,28 @@ export default class {
         'const b: { xyz: "baz" } = { xyz: "foo" } satisfies { xyz: "foo" | "bar" };',
         'const b = { xyz: "foo" };\n',
       );
+    });
+
+    it("rejects using declarations in ambient (declare) contexts", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // These used to crash the parser with an index-out-of-bounds panic
+      // because ambient ("declare") bindings are never declared as symbols.
+      err("declare await using basic;var", 'Cannot use "declare" with an "await using" declaration');
+      err("declare using basic;var", 'Cannot use "declare" with a "using" declaration');
+      err("declare using x", 'Cannot use "declare" with a "using" declaration');
+      err("declare await using x", 'Cannot use "declare" with an "await using" declaration');
+      err("declare using x = foo()", 'Cannot use "declare" with a "using" declaration');
+      err("declare await using x = foo()", 'Cannot use "declare" with an "await using" declaration');
+      err("declare namespace NS { using x; }", 'Cannot use "declare" with a "using" declaration');
+      err('declare module "m" { using x; }', 'Cannot use "declare" with a "using" declaration');
+      err("declare global { await using x; }", 'Cannot use "declare" with an "await using" declaration');
+
+      // "declare" on other declarations is still erased without error
+      exp("declare const x: number; var y", "var y");
+      exp("declare let x: number; var y", "var y");
+      exp("declare var x: number; var y", "var y");
     });
   });
 
@@ -2190,6 +2263,36 @@ console.log(resolve.length)
       expectParseError("[{a = {}}]\nof()", 'Unexpected "="');
       expectParseError("for ([...a, b] in c) {}", 'Unexpected "," after rest pattern');
       expectParseError("for ([...a, b] of c) {}", 'Unexpected "," after rest pattern');
+    });
+
+    it("for-in and for-of loop initializers", () => {
+      // Annex B: a plain identifier "var" binding may keep its initializer in a sloppy-mode for-in
+      expectPrintedNoTrim("for (var x = 1 in y) ;", "x = 1;\nfor (x in y)\n  ;\nvar x;\n");
+
+      // A destructuring binding can never have an initializer in a for-in/for-of head
+      expectParseError("for (var [a] = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (var {a} = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (var [a] = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (var {a} = 1 of y) ;", "for-of loop variables cannot have an initializer");
+
+      // "let" and "const" bindings can never have an initializer in a for-in/for-of head
+      expectParseError("for (let x = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (let x = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (let [a] = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (let {a} = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (const x = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (const x = 1 of y) ;", "for-of loop variables cannot have an initializer");
+
+      // for-in/for-of heads must have exactly one declaration
+      expectParseError("for (var x, y in z) ;", "for-in loops must have a single declaration");
+      expectParseError("for (let x, y in z) ;", "for-in loops must have a single declaration");
+      expectParseError("for (let x, y of z) ;", "for-of loops must have a single declaration");
+
+      // Declarations without an initializer are still allowed
+      expectPrintedNoTrim("for (var x in y) ;", "for (x in y)\n  ;\nvar x;\n");
+      expectPrintedNoTrim("for (var [a] in y) ;", "for ([a] in y)\n  ;\nvar a;\n");
+      expectPrintedNoTrim("for (let [a] of y) ;", "for (let [a] of y)\n  ;\n");
+      expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
     });
 
     it("regexp", () => {
@@ -3802,5 +3905,68 @@ const Layout = () => {
     const result = transpiler.transformSync(code);
     expect(result).toContain("a: 1");
     expect(result).not.toContain("fn(");
+  });
+});
+
+describe("export of a block-scoped function declaration", () => {
+  const code = "{\n  function encrypt() {}\n}\nexport { encrypt }";
+
+  function expectNotDeclaredError(loader) {
+    const transpiler = new Bun.Transpiler({ loader });
+    try {
+      transpiler.transformSync(code);
+      expect.unreachable();
+    } catch (e) {
+      const error = e instanceof AggregateError ? e.errors[0] : e;
+      expect(error.message).toBe('"encrypt" is not declared in this file');
+    }
+  }
+
+  it("is a parse error for JavaScript", () => {
+    expectNotDeclaredError("js");
+  });
+
+  it("is a parse error for JSX", () => {
+    expectNotDeclaredError("jsx");
+  });
+
+  it("is stripped like a type-only export for TypeScript", () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const out = transpiler.transformSync(code);
+    expect(out).not.toContain("export { encrypt }");
+  });
+
+  it("still allows exporting a top-level function declaration", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("function encrypt() {}\nexport { encrypt }");
+    expect(out).toContain("export { encrypt }");
+  });
+
+  it("still allows exporting a var declared inside a block", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("{\n  var encrypt = 1;\n}\nexport { encrypt }");
+    expect(out).toContain("export { encrypt }");
+  });
+
+  it("does not affect block-level function declarations in sloppy mode", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("{\n  function f() {}\n}\nmodule.exports = f;");
+    expect(out).toContain("let f = function");
+    expect(out).toContain("module.exports = f");
+  });
+
+  it("reports the error when running a module with this pattern", async () => {
+    using dir = tempDir("block-scoped-fn-export", {
+      "mod.mjs": code + "\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "mod.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('"encrypt" is not declared in this file');
+    expect(exitCode).toBe(1);
   });
 });

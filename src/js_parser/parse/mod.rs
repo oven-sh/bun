@@ -837,7 +837,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 opts.is_using_statement = true;
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
                 let decls_slice = bun_collections::RawSlice::new(decls.slice());
-                if !opts.is_for_loop_init {
+                if opts.is_typescript_declare {
+                    // TypeScript does not allow "using" declarations in ambient
+                    // contexts ("declare using x", "declare namespace { using x }").
+                    // Their bindings are also never declared as symbols, so
+                    // require_initializers (which looks up the binding's symbol)
+                    // must not run here.
+                    p.log().add_error(
+                        Some(p.source),
+                        token_range.loc,
+                        b"Cannot use \"declare\" with a \"using\" declaration",
+                    );
+                } else if !opts.is_for_loop_init {
                     p.require_initializers(js_ast::LocalKind::KUsing, decls.slice())?;
                 }
                 return Ok(ExprOrLetStmt {
@@ -886,7 +897,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let decls =
                             p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
                         let decls_slice = bun_collections::RawSlice::new(decls.slice());
-                        if !opts.is_for_loop_init {
+                        if opts.is_typescript_declare {
+                            p.log().add_error(
+                                Some(p.source),
+                                token_range.loc,
+                                b"Cannot use \"declare\" with an \"await using\" declaration",
+                            );
+                        } else if !opts.is_for_loop_init {
                             p.require_initializers(js_ast::LocalKind::KAwaitUsing, decls.slice())?;
                         }
                         return Ok(ExprOrLetStmt {

@@ -37,7 +37,10 @@ pub mod handle_oom;
 #[cold]
 #[inline(never)]
 pub(crate) fn out_of_memory() -> ! {
-    draft::crash_handler(draft::CrashReason::OutOfMemory, None, None)
+    draft::crash_handler(
+        draft::CrashReason::OutOfMemory,
+        draft::TraceSeed::BeginAddr(bun_core::return_address()),
+    )
 }
 
 /// `extern "Rust"` symbol resolved by `bun_alloc::out_of_memory()` at link
@@ -830,59 +833,25 @@ mod draft {
         ActionGuard(prev)
     }
 
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    fn capture_libc_backtrace(
-        begin_addr: usize,
-        addrs: &mut [usize],
-        stack_trace: &mut StackTrace<'_>,
-    ) {
-        unsafe extern "C" {
-            fn backtrace(buffer: *mut *mut c_void, size: c_int) -> c_int;
-        }
-
-        // SAFETY: addrs is a valid mutable slice of usize, which is layout-compatible with *mut c_void
-        let count = unsafe {
-            backtrace(
-                addrs.as_mut_ptr().cast(),
-                i32::try_from(addrs.len()).expect("int cast"),
-            )
-        };
-        stack_trace.index = usize::try_from(count).expect("int cast");
-
-        // Skip frames until we find begin_addr (or close to it)
-        // backtrace() captures everything including crash handler frames
-        const TOLERANCE: usize = 128;
-        let skip: usize = 'search: {
-            for (i, &addr) in addrs[0..stack_trace.index].iter().enumerate() {
-                // Check if this address is close to begin_addr (within tolerance)
-                let delta = addr.abs_diff(begin_addr);
-                if delta <= TOLERANCE {
-                    break 'search i;
-                }
-                // Give up searching after 8 frames
-                if i >= 8 {
-                    break 'search 0;
-                }
-            }
-            0
-        };
-
-        // Shift the addresses to skip crash handler frames
-        // If begin_addr was not found, use the complete backtrace
-        if skip > 0 {
-            addrs.copy_within(skip..stack_trace.index, 0);
-            stack_trace.index -= skip;
-        }
+    /// Where the crash trace is seeded from. Each call site has exactly one.
+    #[derive(Clone, Copy)]
+    pub enum TraceSeed<'a> {
+        /// Signal/exception handler saved the fault register context: walk frame
+        /// pointers from `fp` (POSIX) / RtlCapture and trim by `pc` (Windows). `pc`
+        /// becomes frame 0.
+        Fault { pc: usize, fp: usize },
+        /// A trace was already captured upstream (Zig error return traces).
+        ErrorReturn(&'a StackTrace<'a>),
+        /// Walk the current stack and trim the capture machinery above this PC.
+        BeginAddr(usize),
+        /// Walk the current stack with no trim (the handler's own `return_address()`
+        /// is used as a best-effort trim point).
+        None,
     }
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
     #[cold]
-    pub fn crash_handler(
-        reason: CrashReason,
-        // TODO: if both of these are specified, what is supposed to happen?
-        error_return_trace: Option<&StackTrace>,
-        begin_addr: Option<usize>,
-    ) -> ! {
+    pub fn crash_handler(reason: CrashReason, seed: TraceSeed<'_>) -> ! {
         if cfg!(debug_assertions) {
             Output::disable_scoped_debug_writer();
         }
@@ -1137,40 +1106,24 @@ mod draft {
                     let mut addr_buf: [usize; 20] = [0; 20];
                     let trace_buf: StackTrace;
 
-                    // If a trace was not provided, compute one now
-                    // PORT NOTE: reshaped for borrowck — Zig held a StackTrace
-                    // borrowing addr_buf while overwriting addr_buf; here we capture
-                    // the index into a scalar, drop the borrow, mutate, then rebuild.
                     let trace: &StackTrace = 'blk: {
-                        if let Some(ert) = error_return_trace {
-                            if ert.index > 0 {
-                                break 'blk ert;
+                        let idx: usize = match seed {
+                            TraceSeed::ErrorReturn(ert) => break 'blk ert,
+                            // For an actual fault the signal/exception handler hands
+                            // us the saved register context. Seeding the walk from
+                            // the fault `pc`/`fp` is the only reliable way to recover
+                            // the faulting stack: the POSIX handler runs on an
+                            // `SA_ONSTACK` altstack, so its own frame chain is
+                            // disjoint from the faulting thread's, and release builds
+                            // strip the unwind tables a CFI-based capture would need.
+                            TraceSeed::Fault { pc, fp } => {
+                                bun_core::debug::capture_from_context(pc, fp, &mut addr_buf)
                             }
-                        }
-                        let desired_begin_addr = begin_addr.unwrap_or_else(debug::return_address);
-                        let idx: usize =
-                            debug::capture_stack_trace(desired_begin_addr, &mut addr_buf);
-
-                        #[cfg(all(target_os = "linux", target_env = "gnu"))]
-                        let idx = {
-                            let mut addr_buf_libc: [usize; 20] = [0; 20];
-                            // capture_libc_backtrace only writes `.index` on the StackTrace and
-                            // writes frames into `addrs`; pass an empty-slice trace for the index.
-                            let mut idx_holder = StackTrace {
-                                index: 0,
-                                instruction_addresses: &[],
-                            };
-                            capture_libc_backtrace(
-                                desired_begin_addr,
-                                &mut addr_buf_libc,
-                                &mut idx_holder,
-                            );
-                            // Use stack trace from glibc's backtrace() if it has more frames
-                            if idx_holder.index > idx {
-                                addr_buf = addr_buf_libc;
-                                idx_holder.index
-                            } else {
-                                idx
+                            TraceSeed::BeginAddr(addr) => {
+                                debug::capture_stack_trace(addr, &mut addr_buf)
+                            }
+                            TraceSeed::None => {
+                                debug::capture_stack_trace(debug::return_address(), &mut addr_buf)
                             }
                         };
                         trace_buf = StackTrace {
@@ -1598,8 +1551,10 @@ mod draft {
                 // SAFETY: process is about to abort; the borrow is never invalidated.
                 CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
             },
-            error_return_trace,
-            Some(begin_addr.unwrap_or_else(debug::return_address)),
+            match error_return_trace {
+                Some(ert) if ert.index > 0 => TraceSeed::ErrorReturn(ert),
+                _ => TraceSeed::BeginAddr(begin_addr.unwrap_or_else(debug::return_address)),
+            },
         );
     }
 
@@ -1656,8 +1611,60 @@ mod draft {
         },
     );
 
+    /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
+    /// handler. Seeds the frame-pointer walk from the faulting frame. Returns
+    /// `None` on arch/OS combos we don't have register offsets for (the caller
+    /// then falls back to a current-stack capture).
     #[cfg(unix)]
-    extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, _: *mut c_void) {
+    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize)> {
+        debug_assert!(!ctx.is_null());
+        let uc = ctx.cast::<libc::ucontext_t>().cast_const();
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
+        unsafe {
+            let mc = &(*uc).uc_mcontext;
+            let pc = mc.gregs[libc::REG_RIP as usize] as usize;
+            let fp = mc.gregs[libc::REG_RBP as usize] as usize;
+            Some((pc, fp))
+        }
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
+        unsafe {
+            let mc = &(*uc).uc_mcontext;
+            Some((mc.pc as usize, mc.regs[29] as usize))
+        }
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
+        unsafe {
+            let mc = (*uc).uc_mcontext;
+            if mc.is_null() {
+                return None;
+            }
+            Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
+        unsafe {
+            let mc = (*uc).uc_mcontext;
+            if mc.is_null() {
+                return None;
+            }
+            Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
+        }
+        #[cfg(not(any(
+            all(target_os = "linux", target_arch = "x86_64"),
+            all(target_os = "linux", target_arch = "aarch64"),
+            all(target_os = "macos", target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64"),
+        )))]
+        {
+            let _ = uc;
+            None
+        }
+    }
+
+    #[cfg(unix)]
+    extern "C" fn handle_segfault_posix(sig: c_int, info: *mut libc::siginfo_t, ctx: *mut c_void) {
         // SAFETY: kernel provides a valid siginfo_t; `si_addr` reads the per-platform
         // sigfault address field (Zig: `info.fields.sigfault.addr` / `info.addr`).
         let addr: usize = unsafe { (*info).si_addr() as usize };
@@ -1671,8 +1678,10 @@ mod draft {
                 // we do not register this handler for other signals
                 _ => unreachable!(),
             },
-            None,
-            Some(debug::return_address()),
+            match fault_context_from_ucontext(ctx) {
+                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+                None => TraceSeed::None,
+            },
         );
     }
 
@@ -1822,8 +1831,10 @@ mod draft {
         }
         PANIC_STAGE.with(|s| s.set(1));
 
-        // Build "msg (file:line:col)" into a stack buffer so `CrashReason::Panic`
-        // can borrow it — matches Zig `@panic(msg)` payload shape.
+        // Just the panic message — no `(file:line:col)` suffix. The call site is
+        // captured in the backtrace and symbolized there (matching Zig, which
+        // never appended a location to the message). With `-Zlocation-detail=none`
+        // in release the location would be `<redacted>:0:0` anyway.
         let mut msg_buf = BoundedArray::<u8, 1024>::default();
         {
             let payload = info.payload();
@@ -1834,17 +1845,7 @@ mod draft {
             } else {
                 "<non-string panic payload>"
             };
-            let _ = match info.location() {
-                Some(loc) => write!(
-                    msg_buf.writer(),
-                    "{} ({}:{}:{})",
-                    msg,
-                    loc.file(),
-                    loc.line(),
-                    loc.column()
-                ),
-                None => write!(msg_buf.writer(), "{msg}"),
-            };
+            let _ = write!(msg_buf.writer(), "{msg}");
         }
         // SAFETY: `CrashReason::Panic` stores `&'static [u8]` (it was designed for
         // the `-> !` path). `msg_buf` outlives every read of `reason` below — the
@@ -2066,11 +2067,12 @@ mod draft {
 
             _ => return bun_sys::windows::EXCEPTION_CONTINUE_SEARCH,
         };
-        crash_handler(
-            reason,
-            None,
-            Some(unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize),
-        );
+        // SAFETY: kernel provides a valid EXCEPTION_RECORD; ExceptionAddress is
+        // the faulting instruction.
+        let pc = unsafe { (*info.ExceptionRecord).ExceptionAddress } as usize;
+        // Windows: capture_from_context uses RtlCaptureStackBackTrace and trims
+        // by `pc`; the frame-pointer slot is unused.
+        crash_handler(reason, TraceSeed::Fault { pc, fp: 0 });
     }
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -3817,8 +3819,7 @@ mod draft {
         crash_handler(
             // SAFETY: noreturn — see panic_impl note
             CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) }),
-            None,
-            Some(debug::return_address()),
+            TraceSeed::BeginAddr(debug::return_address()),
         );
     }
 

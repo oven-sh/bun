@@ -13,8 +13,8 @@
 //! unimplemented anywhere (no Zig `export fn`, no C++ body) — those are
 //! `unreachable!` so a stray call is loud rather than silent garbage.
 //!
-//! `__wrap_gettid` and `Bun__captureStackTrace` are NOT here — they live in
-//! `bun_core` (their proper, already-linked home).
+//! `__wrap_gettid` is NOT here — it lives in `bun_core` (its proper,
+//! already-linked home).
 //!
 //! Calling convention: `jsc.conv` is plain `"C"` on every non-Windows-x64
 //! target, so `extern "C"` is correct on Linux/macOS. The Windows path is not

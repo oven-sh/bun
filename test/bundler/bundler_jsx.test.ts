@@ -191,8 +191,9 @@ describe("bundler", () => {
       "/index.tsx": /* tsx */ `
         import { print } from 'bun-test-helpers'
         import { Fragment } from 'react'
+        const F = Fragment
         const el = <>hi</>
-        print([typeof Fragment, el.type !== Fragment])
+        print([typeof F, el.type !== F])
       `,
       ...helpers,
     },

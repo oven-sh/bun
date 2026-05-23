@@ -394,27 +394,34 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
                 .throw());
         }
+        // Pin both buffers before mutating any state: materializing a
+        // FastTypedArray's backing store can fail on OOM, and failing here
+        // leaves nothing to unwind.
+        let in_buf: jsc::ArrayBuffer;
+        let in_: Option<&[u8]> = if arguments[1].is_null() {
+            None
+        } else {
+            let Some(buf) = arguments[1].as_pinned_arraybuffer(global_this) else {
+                return Err(global_this.throw_out_of_memory());
+            };
+            in_buf = buf;
+            Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
+        };
+        let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
+            if !arguments[1].is_null() {
+                arguments[1].unpin_array_buffer();
+            }
+            return Err(global_this.throw_out_of_memory());
+        };
+        let out: Option<&mut [u8]> = Some(
+            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
+        );
+
         this.write_in_progress().set(true);
         this.ref_();
 
         T::pending_input_set_cached(this_value, global_this, arguments[1]);
         T::pending_output_set_cached(this_value, global_this, arguments[4]);
-
-        let in_buf: jsc::ArrayBuffer;
-        let in_: Option<&[u8]> = if arguments[1].is_null() {
-            None
-        } else {
-            in_buf = arguments[1]
-                .as_pinned_arraybuffer(global_this)
-                .expect("in was validated as an ArrayBuffer above");
-            Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
-        };
-        let mut out_buf = arguments[4]
-            .as_pinned_arraybuffer(global_this)
-            .expect("out was validated as an ArrayBuffer above");
-        let out: Option<&mut [u8]> = Some(
-            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
-        );
 
         this.stream().with_mut(|s| {
             s.set_buffers(in_, out);

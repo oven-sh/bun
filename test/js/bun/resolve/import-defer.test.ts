@@ -382,3 +382,314 @@ describe.concurrent("import defer", () => {
     });
   });
 });
+
+// TC39 proposal-defer-import-eval (Stage 3) — dynamic `import.defer(...)`
+// https://tc39.es/proposal-defer-import-eval/#sec-import-call-runtime-semantics-evaluation
+describe.concurrent("dynamic import.defer()", () => {
+  test("defers module evaluation until a property is accessed", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        const ns = await import.defer("./dep.js");
+        console.log("before access");
+        console.log("value:", ns.value);
+        console.log("add:", ns.add(1, 2));
+      `,
+      "dep.js": `
+        console.log("dep evaluated");
+        export const value = 42;
+        export function add(a, b) { return a + b; }
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual([
+      "before access",
+      "dep evaluated",
+      "value: 42",
+      "add: 3",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("module is never evaluated if the namespace is never accessed", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        await import.defer("./dep.js");
+        console.log("done");
+      `,
+      "dep.js": `
+        console.log("dep evaluated");
+        export const value = 1;
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["done"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("resolves to a 'Deferred Module' namespace", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        const ns = await import.defer("./dep.js");
+        console.log(ns[Symbol.toStringTag]);
+        console.log("---");
+        console.log(ns.value);
+      `,
+      "dep.js": `
+        console.log("dep evaluated");
+        export const value = 7;
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["Deferred Module", "---", "dep evaluated", "7"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("returns the same namespace object as a static 'import defer'", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        import defer * as stat from "./dep.js";
+        const dyn = await import.defer("./dep.js");
+        console.log("same:", dyn === stat);
+        console.log("value:", dyn.value);
+      `,
+      "dep.js": `
+        console.log("dep evaluated");
+        export const value = 3;
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["same: true", "dep evaluated", "value: 3"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("evaluation error surfaces at property access, not at import time", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        const ns = await import.defer("./throws.js");
+        console.log("imported ok");
+        for (let i = 0; i < 2; i++) {
+          try {
+            void ns.value;
+            console.log("unreachable");
+          } catch (e) {
+            console.log("caught:", e.message);
+          }
+        }
+      `,
+      "throws.js": `
+        throw new Error("boom");
+        export const value = 1;
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["imported ok", "caught: boom", "caught: boom"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("rejects when the module cannot be resolved", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        import.defer("./does-not-exist.js").then(
+          () => console.log("unreachable"),
+          () => console.log("rejected"),
+        );
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["rejected"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("evaluates async transitive dependencies eagerly, defers the rest", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        const ns = await import.defer("./dep.js");
+        console.log("main after import");
+        console.log("value:", ns.value);
+      `,
+      "dep.js": `
+        import { ready } from "./tla.js";
+        console.log("dep evaluated");
+        export const value = ready;
+      `,
+      "tla.js": `
+        console.log("tla start");
+        await Promise.resolve();
+        console.log("tla done");
+        export const ready = "ok";
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual([
+      "tla start",
+      "tla done",
+      "main after import",
+      "dep evaluated",
+      "value: ok",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a deferred module that itself uses top-level await is evaluated during the import", async () => {
+    // GatherAsynchronousTransitiveDependencies includes the root module when
+    // it has top-level await, so it can never be left for (impossible)
+    // synchronous evaluation later.
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        const ns = await import.defer("./tla.js");
+        console.log("main after import");
+        console.log("value:", ns.ready);
+      `,
+      "tla.js": `
+        console.log("tla start");
+        await Promise.resolve();
+        console.log("tla done");
+        export const ready = "ok";
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["tla start", "tla done", "main after import", "value: ok"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("works with a runtime-computed specifier", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        const parts = ["./dep", ".js"];
+        const ns = await import.defer(parts.join(""));
+        console.log("before access");
+        console.log("value:", ns.value);
+      `,
+      "dep.js": `
+        console.log("dep evaluated");
+        export const value = 42;
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["before access", "dep evaluated", "value: 42"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("works from a CommonJS module", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "main.cjs": `
+          module.exports.loaded = true;
+          (async () => {
+            const ns = await import.defer("./dep.js");
+            console.log("before access");
+            console.log("value:", ns.value);
+          })();
+        `,
+        "dep.js": `
+          console.log("dep evaluated");
+          export const value = 42;
+        `,
+      },
+      "main.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["before access", "dep evaluated", "value: 42"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("importing a CommonJS module evaluates it at import time (host-defined)", async () => {
+    // CommonJS modules are executed by the host while building their ESM
+    // wrapper record, so there is nothing left to defer — the namespace is
+    // usable but the module body has already run by the time the promise
+    // resolves. Deferral only applies to ES module evaluation.
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        const ns = await import.defer("./dep.cjs");
+        console.log("after import");
+        console.log("value:", ns.default.value);
+      `,
+      "dep.cjs": `
+        console.log("cjs evaluated");
+        module.exports = { value: 7 };
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["cjs evaluated", "after import", "value: 7"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("import.defer() with import attributes", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        const ns = await import.defer("./data.json", { with: { type: "json" } });
+        console.log("loaded");
+        console.log(ns.default.hello);
+      `,
+      "data.json": JSON.stringify({ hello: "world" }),
+    });
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["loaded", "world"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("works in .ts files", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "main.ts": `
+          const ns = await import.defer("./dep.ts");
+          console.log("before access");
+          console.log(ns.value);
+        `,
+        "dep.ts": `
+          console.log("dep evaluated");
+          export const value: number = 9;
+        `,
+      },
+      "main.ts",
+    );
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["before access", "dep evaluated", "9"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.Transpiler preserves import.defer() in output", () => {
+    const out = new Bun.Transpiler({ loader: "js" }).transformSync(`const p = import.defer("./x");\n`);
+    expect(out).toContain(`import.defer("./x")`);
+  });
+
+  test("Bun.Transpiler preserves import.defer() with a non-literal specifier", () => {
+    const out = new Bun.Transpiler({ loader: "js" }).transformSync(
+      `export function load(name) { return import.defer(name); }\n`,
+    );
+    expect(out).toContain("import.defer(name)");
+  });
+
+  test("Bun.Transpiler.scanImports reports import.defer() as a dynamic import", () => {
+    const scanned = new Bun.Transpiler({ loader: "js" }).scanImports(`import.defer("./x");`);
+    expect(scanned).toEqual([{ kind: "dynamic-import", path: "./x" }]);
+  });
+
+  describe("syntax errors", () => {
+    test("'import.defer' without a call is a syntax error", async () => {
+      const { exitCode, stderr } = await run({
+        "main.js": `const x = import.defer; console.log(x);`,
+      });
+      expect(exitCode).not.toBe(0);
+      expect(stderr.toLowerCase()).toContain("error");
+    });
+
+    test("'defer' with an escape sequence is not the phase keyword", async () => {
+      const { exitCode, stderr } = await run({
+        "main.js": `import.def\\u0065r("./dep.js");`,
+        "dep.js": `export const x = 1;`,
+      });
+      expect(exitCode).not.toBe(0);
+      expect(stderr.toLowerCase()).toContain("error");
+    });
+
+    test("other identifiers after 'import.' are still rejected", async () => {
+      const { exitCode, stderr } = await run({
+        "main.js": `import.source("./dep.js");`,
+        "dep.js": `export const x = 1;`,
+      });
+      expect(exitCode).not.toBe(0);
+      expect(stderr.toLowerCase()).toContain("error");
+    });
+  });
+});

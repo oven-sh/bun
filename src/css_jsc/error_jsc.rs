@@ -17,9 +17,11 @@ where
     T: Display,
 {
     let str = BunString::create_format(format_args!("{}", this.kind));
-    // `defer str.deref()` — `bun_core::String` is `Copy` and has no `Drop`, so deref explicitly.
+    // `bun_string_jsc::to_error_instance` consumes the caller's reference
+    // (it derefs internally), so do not deref again here — the string impl is
+    // shared with the JS error's message and an extra deref frees it while
+    // still referenced.
     let js = bun_jsc::bun_string_jsc::to_error_instance(&str, global_this);
-    str.deref();
     Ok(js)
 }
 

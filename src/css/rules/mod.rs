@@ -663,6 +663,110 @@ impl<R> CssRuleList<R> {
 // ── `.style` arm body — preserved verbatim port, gated on StyleRule
 // behavior + selector helpers + DeclarationBlock::deep_clone. ──
 
+/// Maximum number of selector combinations a single style rule may expand into
+/// when CSS nesting is compiled away for the configured browser targets.
+///
+/// Compiling nesting multiplies selectors: every selector of a nested rule is
+/// combined with every selector of every ancestor rule, either by splitting
+/// rules during minification (`minify_style_arm`) or by substituting `&` with
+/// `:is(...)` while printing. The expansion is the product of the selector
+/// list lengths along the nesting chain, which grows exponentially with the
+/// nesting depth — ~1KB of adversarial CSS (26 nested two-selector lists) asks
+/// for 2^26 combinations and exhausts memory. Real-world stylesheets stay far
+/// below this limit.
+pub const MAX_NESTING_EXPANSION: usize = 65536;
+
+/// Counts the rules in `list`, including nested rules, returning early once
+/// the count exceeds `cap`. When the true count is `<= cap` the result is
+/// exact; otherwise it is some value `> cap`.
+fn count_rules_capped<R>(list: &CssRuleList<R>, cap: usize) -> usize {
+    let mut count: usize = 0;
+    for rule in list.v.iter() {
+        count += 1;
+        let nested: Option<&CssRuleList<R>> = match rule {
+            CssRule::Media(r) => Some(&r.rules),
+            CssRule::Supports(r) => Some(&r.rules),
+            CssRule::LayerBlock(r) => Some(&r.rules),
+            CssRule::MozDocument(r) => Some(&r.rules),
+            CssRule::Container(r) => Some(&r.rules),
+            CssRule::Scope(r) => Some(&r.rules),
+            CssRule::StartingStyle(r) => Some(&r.rules),
+            CssRule::Style(r) => Some(&r.rules),
+            CssRule::Nesting(r) => Some(&r.style.rules),
+            _ => None,
+        };
+        if let Some(nested) = nested {
+            count = count.saturating_add(count_rules_capped(nested, cap.saturating_sub(count)));
+        }
+        if count > cap {
+            return count;
+        }
+    }
+    count
+}
+
+/// Returns the location of the first nested style rule whose selectors would
+/// expand into more than [`MAX_NESTING_EXPANSION`] combinations when CSS
+/// nesting is compiled away (the printer substitutes `&` with the parent
+/// selector list, so the printed size of a nested rule is the product of the
+/// selector list lengths along its nesting chain).
+///
+/// `inside_style_rule` is whether `list` is nested within a style rule, and
+/// `ancestor_product` is the product of the selector list lengths of the
+/// enclosing style rules.
+pub(crate) fn exceeds_nesting_expansion_limit<R>(
+    list: &CssRuleList<R>,
+    inside_style_rule: bool,
+    ancestor_product: usize,
+) -> Option<Location> {
+    fn check_style_rule<R>(
+        sty: &style::StyleRule<R>,
+        inside_style_rule: bool,
+        ancestor_product: usize,
+    ) -> Result<Option<(usize, &CssRuleList<R>)>, Location> {
+        let own_len = (sty.selectors.v.len() as usize).max(1);
+        let product = ancestor_product.saturating_mul(own_len);
+        if inside_style_rule && product > MAX_NESTING_EXPANSION {
+            return Err(sty.loc);
+        }
+        if sty.rules.v.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some((product, &sty.rules)))
+        }
+    }
+
+    for rule in list.v.iter() {
+        let nested: Option<(&CssRuleList<R>, bool, usize)> = match rule {
+            CssRule::Style(sty) => match check_style_rule(sty, inside_style_rule, ancestor_product)
+            {
+                Ok(nested) => nested.map(|(product, rules)| (rules, true, product)),
+                Err(loc) => return Some(loc),
+            },
+            CssRule::Nesting(r) => {
+                match check_style_rule(&r.style, inside_style_rule, ancestor_product) {
+                    Ok(nested) => nested.map(|(product, rules)| (rules, true, product)),
+                    Err(loc) => return Some(loc),
+                }
+            }
+            CssRule::Media(r) => Some((&r.rules, inside_style_rule, ancestor_product)),
+            CssRule::Supports(r) => Some((&r.rules, inside_style_rule, ancestor_product)),
+            CssRule::LayerBlock(r) => Some((&r.rules, inside_style_rule, ancestor_product)),
+            CssRule::MozDocument(r) => Some((&r.rules, inside_style_rule, ancestor_product)),
+            CssRule::Container(r) => Some((&r.rules, inside_style_rule, ancestor_product)),
+            CssRule::Scope(r) => Some((&r.rules, inside_style_rule, ancestor_product)),
+            CssRule::StartingStyle(r) => Some((&r.rules, inside_style_rule, ancestor_product)),
+            _ => None,
+        };
+        if let Some((rules, inside, product)) = nested {
+            if let Some(loc) = exceeds_nesting_expansion_limit(rules, inside, product) {
+                return Some(loc);
+            }
+        }
+    }
+    None
+}
+
 fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     rule: &mut CssRule<R>,
     rules: &mut Vec<CssRule<R>>,
@@ -721,6 +825,23 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     } else {
         SmallList::default()
     };
+
+    // Each incompatible selector below clones this rule's entire nested subtree.
+    // Nested rules were minified (and possibly split the same way) first, so the
+    // subtree doubles at every nesting level whose selector list is incompatible
+    // — the total is the product of the selector list lengths along the nesting
+    // chain, which is exponential in the nesting depth. Bound the expansion and
+    // report an error instead of exhausting memory on adversarial input.
+    if incompatible.len() > 0 && !sty.rules.v.is_empty() {
+        let subtree_rules = count_rules_capped(&sty.rules, MAX_NESTING_EXPANSION);
+        if (incompatible.len() as usize).saturating_mul(subtree_rules) > MAX_NESTING_EXPANSION {
+            context.err = Some(css::error::MinifyError {
+                kind: css::error::MinifyErrorKind::nesting_expansion_limit_exceeded,
+                loc: sty.loc,
+            });
+            return Err(MinifyErr::minify_err);
+        }
+    }
 
     sty.update_prefix(context);
 

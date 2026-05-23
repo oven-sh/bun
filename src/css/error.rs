@@ -502,6 +502,9 @@ pub enum MinifyErrorKind {
         /// The source location of the `@custom-media` rule with unsupported boolean logic.
         custom_media_loc: Location,
     },
+    /// Compiling CSS nesting for the configured browser targets would expand a
+    /// rule into more selector combinations than the allowed maximum.
+    nesting_expansion_limit_exceeded,
 }
 
 impl fmt::Display for MinifyErrorKind {
@@ -517,6 +520,11 @@ impl fmt::Display for MinifyErrorKind {
                 f,
                 "Unsupported boolean logic in custom media rule at line {}, column {}",
                 custom_media_loc.line, custom_media_loc.column,
+            ),
+            Self::nesting_expansion_limit_exceeded => write!(
+                f,
+                "Compiling CSS nesting for the configured browser targets would expand this rule into more than {} selector combinations. Reduce the number of selectors in nested selector lists, or target browsers that support CSS nesting.",
+                crate::rules::MAX_NESTING_EXPANSION,
             ),
         }
     }

@@ -2665,10 +2665,48 @@ mod stylesheet_impl {
             };
 
             if self.rules.minify(&mut minify_ctx, false).is_err() {
-                panic!("TODO: Handle");
+                // Minify errors report the rich error out-of-band through the
+                // context (the in-band error is just a tag).
+                let err = minify_ctx
+                    .err
+                    .take()
+                    .expect("CssRuleList::minify returned an error without setting MinifyContext::err");
+                return Err(self.minify_error_with_location(err));
+            }
+
+            // When CSS nesting is compiled away, the printer substitutes `&` with
+            // the parent selector list, so the printed size of a nested rule is
+            // the product of the selector list lengths along its nesting chain —
+            // exponential in the nesting depth. Reject rules whose expansion would
+            // be unreasonably large before attempting to print them.
+            if options
+                .targets
+                .should_compile_same(compat::Feature::Nesting)
+                && let Some(loc) = css_rules::exceeds_nesting_expansion_limit(&self.rules, false, 1)
+            {
+                return Err(self.minify_error_with_location(MinifyError {
+                    kind: MinifyErrorKind::nesting_expansion_limit_exceeded,
+                    loc,
+                }));
             }
 
             Ok(())
+        }
+
+        /// Attaches the filename for `err.loc`'s source index so the error can
+        /// be reported with a proper location.
+        fn minify_error_with_location(&self, err: MinifyError) -> Err<MinifyErrorKind> {
+            Err {
+                kind: err.kind,
+                loc: self
+                    .sources
+                    .get(err.loc.source_index as usize)
+                    .map(|filename| ErrorLocation {
+                        filename: std::ptr::from_ref::<[u8]>(&**filename),
+                        line: err.loc.line,
+                        column: err.loc.column,
+                    }),
+            }
         }
 
         pub fn to_css_with_writer<'a>(

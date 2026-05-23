@@ -690,9 +690,11 @@ describe("pathological inline HTML inputs", () => {
           ["bracket runs with unterminated comments", fill(20000, "[[[[[[[ foo <!-- this is a --\\n"), out => out.includes("[[[[[[[") && out.includes("&lt;!--")],
           ["inline links between unterminated comments", fill(20000, "[a](b) <!-- x "), out => out.includes('<a href="b">') && out.includes("&lt;!-- x")],
           ["unterminated comments inside link labels", fill(20000, "[<!-- x](u) <!-- y "), out => out.includes('<a href="u">') && out.includes("&lt;!-- y")],
+          ["adjacent comment-label links between unterminated comments", fill(15000, "[<!-- a](u)[<!-- b](v) <!-- c "), out => out.includes('<a href="v">') && out.includes("&lt;!-- c")],
           ["images between unterminated comments", fill(20000, "![a](b) <!-- x "), out => out.includes("<img") && out.includes("&lt;!-- x")],
           ["reference links between unterminated comments", "[r]: /u\\n\\n" + fill(20000, "[a][r] <!-- x "), out => out.includes('<a href="/u">') && out.includes("&lt;!-- x")],
           ["one link with a comment-flooded label", "[" + fill(40000, "<!-- x ") + "](u)", out => out.includes('<a href="u">') && out.includes("&lt;!-- x")],
+          ["comment-label link before a comment-flooded label", "[<!-- a](u)[" + fill(40000, "<!-- x ") + "](v) <!-- tail", out => out.includes('<a href="v">') && out.includes("&lt;!-- tail")],
         ];
         for (const [name, input, check] of cases) {
           const out = Bun.markdown.html(input);
@@ -747,6 +749,9 @@ describe("pathological inline HTML inputs", () => {
     );
     expect(Markdown.html("[<!-- x <!-- x <!-- x ](u)\n")).toBe(
       '<p><a href="u">&lt;!-- x &lt;!-- x &lt;!-- x </a></p>\n',
+    );
+    expect(Markdown.html("[<!-- a](u)[<!-- b](v) <!-- c\n")).toBe(
+      '<p><a href="u">&lt;!-- a</a><a href="v">&lt;!-- b</a> &lt;!-- c</p>\n',
     );
   });
 });

@@ -61,25 +61,6 @@ pub enum HtmlScanKind {
 
 pub const HTML_SCAN_KIND_COUNT: usize = 4;
 
-#[derive(Clone, Copy)]
-struct HtmlScanMemoEntry {
-    slice_addr: usize,
-    slice_len: usize,
-    no_terminator_from: [usize; HTML_SCAN_KIND_COUNT],
-}
-
-impl HtmlScanMemoEntry {
-    const EMPTY: HtmlScanMemoEntry = HtmlScanMemoEntry {
-        slice_addr: 0,
-        slice_len: 0,
-        no_terminator_from: [usize::MAX; HTML_SCAN_KIND_COUNT],
-    };
-
-    fn applies_to(&self, content: &[u8]) -> bool {
-        self.slice_addr == content.as_ptr() as usize && self.slice_len == content.len()
-    }
-}
-
 /// Memo of failed closing-delimiter searches in `find_html_tag`.
 ///
 /// A `<!--` / `<?` / `<!DECL` / `<![CDATA[` candidate scans forward for a
@@ -90,24 +71,30 @@ impl HtmlScanMemoEntry {
 /// rescan is quadratic on inputs with many unterminated openers in one
 /// paragraph (found by fuzzing).
 ///
-/// Entries are keyed to the content slice identity (address + length) because
-/// `find_html_tag` is also called on link-label sub-slices with their own
-/// coordinates. Two recency-ordered entries are kept so a label scan cannot
-/// evict the enclosing slice's entry (the two interleave once per link
-/// candidate, which would otherwise rescan the paragraph per link).
-/// `process_inline_content` starts each slice from an empty memo and restores
-/// the caller's memo on return, so recycled merged-line buffers and transient
-/// table-cell buffers can never alias a previous slice's entries.
+/// The memo describes one slice at a time and is keyed to that slice's
+/// identity (address + length). Every scope that scans a different slice —
+/// `process_inline_content` for each paragraph, table cell or recursively
+/// rendered link label, and `label_contains_link` for its label walk — starts
+/// from an empty memo and restores the caller's memo when it returns, so
+/// scans for different slices never evict each other's state and recycled or
+/// transient buffers can never alias a previous slice's entry.
 #[derive(Clone, Copy)]
 pub struct HtmlScanMemo {
-    /// `entries[0]` is the most recently used.
-    entries: [HtmlScanMemoEntry; 2],
+    slice_addr: usize,
+    slice_len: usize,
+    no_terminator_from: [usize; HTML_SCAN_KIND_COUNT],
 }
 
 impl HtmlScanMemo {
     pub const EMPTY: HtmlScanMemo = HtmlScanMemo {
-        entries: [HtmlScanMemoEntry::EMPTY; 2],
+        slice_addr: 0,
+        slice_len: 0,
+        no_terminator_from: [usize::MAX; HTML_SCAN_KIND_COUNT],
     };
+
+    fn applies_to(&self, content: &[u8]) -> bool {
+        self.slice_addr == content.as_ptr() as usize && self.slice_len == content.len()
+    }
 }
 
 impl Parser<'_> {
@@ -811,38 +798,20 @@ impl Parser<'_> {
         kind: HtmlScanKind,
         scan_start: usize,
     ) -> bool {
-        let mut memo = self.html_scan_memo.get();
-        let Some(idx) = memo.entries.iter().position(|e| e.applies_to(content)) else {
-            return false;
-        };
-        if idx != 0 {
-            memo.entries.swap(0, idx);
-            self.html_scan_memo.set(memo);
-        }
-        scan_start >= memo.entries[0].no_terminator_from[kind as usize]
+        let memo = self.html_scan_memo.get();
+        memo.applies_to(content) && scan_start >= memo.no_terminator_from[kind as usize]
     }
 
     /// Record that the search for `kind`'s terminator starting at `scan_start`
     /// reached the end of `content` without a match.
     fn note_unterminated_html_scan(&self, content: &[u8], kind: HtmlScanKind, scan_start: usize) {
         let mut memo = self.html_scan_memo.get();
-        match memo.entries.iter().position(|e| e.applies_to(content)) {
-            Some(idx) => {
-                if idx != 0 {
-                    memo.entries.swap(0, idx);
-                }
-            }
-            None => {
-                // Evict the least recently used entry.
-                memo.entries[1] = HtmlScanMemoEntry {
-                    slice_addr: content.as_ptr() as usize,
-                    slice_len: content.len(),
-                    no_terminator_from: [usize::MAX; HTML_SCAN_KIND_COUNT],
-                };
-                memo.entries.swap(0, 1);
-            }
+        if !memo.applies_to(content) {
+            memo = HtmlScanMemo::EMPTY;
+            memo.slice_addr = content.as_ptr() as usize;
+            memo.slice_len = content.len();
         }
-        let slot = &mut memo.entries[0].no_terminator_from[kind as usize];
+        let slot = &mut memo.no_terminator_from[kind as usize];
         *slot = (*slot).min(scan_start);
         self.html_scan_memo.set(memo);
     }

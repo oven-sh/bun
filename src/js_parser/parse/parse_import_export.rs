@@ -35,7 +35,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 phase_defer = true;
             } else {
-                p.lexer.expected_string(b"\"meta\"")?;
+                p.lexer.expected_string(b"\"meta\" or \"defer\"")?;
             }
         }
 

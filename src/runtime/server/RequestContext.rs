@@ -253,14 +253,17 @@ use std::io::Write as _;
 mod NativePromiseContext {
     use super::{JSGlobalObject, JSValue};
     use crate::api::native_promise_context as npc;
-    pub use npc::NativePromiseContextType;
+    pub(super) use npc::NativePromiseContextType;
 
     #[inline]
-    pub fn create<T: NativePromiseContextType>(global: &JSGlobalObject, ctx: *mut T) -> JSValue {
+    pub(super) fn create<T: NativePromiseContextType>(
+        global: &JSGlobalObject,
+        ctx: *mut T,
+    ) -> JSValue {
         npc::create(global, ctx)
     }
     #[inline]
-    pub fn take<T>(cell: JSValue) -> Option<&'static mut T> {
+    pub(super) fn take<T>(cell: JSValue) -> Option<&'static mut T> {
         // SAFETY: the cell carried a +1 ref on `ctx`; ownership transfers back
         // to the caller, who immediately scopes it with a deref-on-drop guard.
         npc::take::<T>(cell).map(|p| unsafe { &mut *p.as_ptr() })
@@ -330,15 +333,18 @@ mod shim {
     use super::*;
 
     #[inline]
-    pub fn response_body_stream(r: &mut Response, g: &JSGlobalObject) -> Option<ReadableStream> {
+    pub(super) fn response_body_stream(
+        r: &mut Response,
+        g: &JSGlobalObject,
+    ) -> Option<ReadableStream> {
         r.get_body_readable_stream(g)
     }
     #[inline]
-    pub fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
+    pub(super) fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
         r.detach_readable_stream(g)
     }
     #[inline]
-    pub fn signal_aborted(s: NonNull<AbortSignal>) -> bool {
+    pub(super) fn signal_aborted(s: NonNull<AbortSignal>) -> bool {
         // `signal` is kept alive by the intrusive C++ refcount (+1 from
         // `AbortSignal::new()` / `ref_()`) plus `pending_activity_ref()` until
         // `signal_release` drops both — satisfies the `BackRef` outlives-holder
@@ -346,7 +352,11 @@ mod shim {
         bun_ptr::BackRef::from(s).aborted()
     }
     #[inline]
-    pub fn signal_fire(s: NonNull<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
+    pub(super) fn signal_fire(
+        s: NonNull<AbortSignal>,
+        g: &JSGlobalObject,
+        r: jsc::CommonAbortReason,
+    ) {
         // See `signal_aborted` — counted ref keeps pointee live.
         bun_ptr::BackRef::from(s).signal(g, r)
     }
@@ -356,7 +366,7 @@ mod shim {
     /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
     /// be dereferenced after this call.
     #[inline]
-    pub fn signal_release(s: NonNull<AbortSignal>) {
+    pub(super) fn signal_release(s: NonNull<AbortSignal>) {
         // See `signal_aborted`. Order matches Zig: pending-activity first,
         // then the owning intrusive ref (which may free). `BackRef` is dropped
         // before `unref()` returns, so no dangling deref.
@@ -365,7 +375,7 @@ mod shim {
         signal.unref();
     }
     #[inline]
-    pub fn iec_trigger(
+    pub(super) fn iec_trigger(
         cb: &bun_jsc::JsCell<request::InternalJSEventCallback>,
         ev: request::EventType,
         g: &JSGlobalObject,
@@ -373,31 +383,31 @@ mod shim {
         cb.with_mut(|cb| cb.trigger(ev, g))
     }
     #[inline]
-    pub fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
+    pub(super) fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
         cb.with_mut(|cb| cb.deinit())
     }
     #[inline]
-    pub fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
+    pub(super) fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
         cb.get().has_callback()
     }
     /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
     /// (E0034); inline the body here.
     #[inline]
-    pub fn blob_is_s3(b: &Blob) -> bool {
+    pub(super) fn blob_is_s3(b: &Blob) -> bool {
         b.store
             .get()
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
     }
     #[inline]
-    pub fn blob_needs_to_read_file(b: &Blob) -> bool {
+    pub(super) fn blob_needs_to_read_file(b: &Blob) -> bool {
         b.store
             .get()
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
     #[inline]
-    pub fn byte_stream_unpipe(s: NonNull<ByteStream>) {
+    pub(super) fn byte_stream_unpipe(s: NonNull<ByteStream>) {
         // The lone caller has just `take()`n the pointer out of
         // `self.byte_stream`; the allocation is kept alive by
         // `response_body_readable_stream_ref` (BackRef invariant: pointee

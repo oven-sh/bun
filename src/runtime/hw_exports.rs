@@ -270,7 +270,7 @@ pub(crate) mod sql_hooks {
 
     /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
     #[unsafe(no_mangle)]
-    pub static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
+    pub(crate) static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
         sql_rare,
         timer_heap,
         timer_insert,

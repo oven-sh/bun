@@ -346,7 +346,7 @@ unsafe impl bytemuck::Zeroable for StreamPriority {}
 unsafe impl bytemuck::Pod for StreamPriority {}
 const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
 impl StreamPriority {
-    pub const BYTE_SIZE: usize = 5;
+    pub(crate) const BYTE_SIZE: usize = 5;
     #[inline]
     fn write(self, writer: &mut impl WireWriter) -> bool {
         let mut swap = self;
@@ -1058,7 +1058,7 @@ impl Handlers {
         self.global_object
     }
 
-    pub fn call_event_handler(
+    pub(crate) fn call_event_handler(
         &self,
         event: JSH2FrameParser::Gc,
         this_value: JSValue,
@@ -1074,7 +1074,7 @@ impl Handlers {
         true
     }
 
-    pub fn call_write_callback(&self, callback: JSValue, data: &[JSValue]) -> bool {
+    pub(crate) fn call_write_callback(&self, callback: JSValue, data: &[JSValue]) -> bool {
         if !callback.is_callable() {
             return false;
         }
@@ -1084,7 +1084,7 @@ impl Handlers {
         true
     }
 
-    pub fn call_event_handler_with_result(
+    pub(crate) fn call_event_handler_with_result(
         &self,
         event: JSH2FrameParser::Gc,
         this_value: JSValue,
@@ -1101,7 +1101,7 @@ impl Handlers {
         )
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         opts: JSValue,
         this_value: JSValue,
@@ -1497,13 +1497,13 @@ struct PendingQueue {
 }
 
 impl PendingQueue {
-    pub fn enqueue(&mut self, value: PendingFrame) {
+    pub(crate) fn enqueue(&mut self, value: PendingFrame) {
         self.data.push(value);
         self.len += 1;
         bun_output::scoped_log!(H2FrameParser, "PendingQueue.enqueue {}", self.len);
     }
 
-    pub fn peek_last(&mut self) -> Option<&mut PendingFrame> {
+    pub(crate) fn peek_last(&mut self) -> Option<&mut PendingFrame> {
         if self.len == 0 {
             return None;
         }
@@ -1511,14 +1511,14 @@ impl PendingQueue {
         Some(&mut self.data[last])
     }
 
-    pub fn peek_front(&mut self) -> Option<&mut PendingFrame> {
+    pub(crate) fn peek_front(&mut self) -> Option<&mut PendingFrame> {
         if self.len == 0 {
             return None;
         }
         Some(&mut self.data[self.front])
     }
 
-    pub fn dequeue(&mut self) -> Option<PendingFrame> {
+    pub(crate) fn dequeue(&mut self) -> Option<PendingFrame> {
         if self.len == 0 {
             bun_output::scoped_log!(H2FrameParser, "PendingQueue.dequeue null");
             return None;
@@ -1535,7 +1535,7 @@ impl PendingQueue {
         Some(value)
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len == 0
     }
 }
@@ -1552,7 +1552,7 @@ struct PendingFrame {
 }
 
 impl PendingFrame {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         &self.buffer[self.offset as usize..self.len as usize]
     }
 }

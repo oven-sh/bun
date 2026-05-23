@@ -213,8 +213,8 @@ impl Debug {
 }
 
 mod drain_result {
-    pub const SUCCESS: u8 = 0;
-    pub const JS_TERMINATED: u8 = 1;
+    pub(super) const SUCCESS: u8 = 0;
+    pub(super) const JS_TERMINATED: u8 = 1;
 }
 
 // TODO(port): move to jsc_sys

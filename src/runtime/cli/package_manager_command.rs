@@ -43,7 +43,7 @@ struct ByName<'a> {
 impl<'a> ByName<'a> {
     // PORT NOTE: Zig pdq takes a strict-less-than predicate; Rust
     // `sort_unstable_by` requires a total `Ordering`.
-    pub fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> Ordering {
+    pub(crate) fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> Ordering {
         self.dependencies[lhs as usize]
             .name
             .slice(self.buf)

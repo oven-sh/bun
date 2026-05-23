@@ -47,7 +47,7 @@ declare_scope!(ParseTask, hidden);
 /// `bun.jsc.EventLoopTask` (ParseTask.zig:Result.task). T6 type erased here.
 #[allow(non_snake_case)]
 mod EventLoop {
-    pub type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
+    pub(super) type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
 }
 
 // PORT NOTE: the per-file parse arena is held as `bump: &'static Bump` (the

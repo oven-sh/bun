@@ -199,7 +199,7 @@ impl CreateOptions {
         PARAMS
     }
 
-    pub fn parse(_ctx: &Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {
+    pub(crate) fn parse(_ctx: &Command::Context<'_>) -> Result<CreateOptions, bun_core::Error> {
         // Zig: `Output.is_verbose = Output.isVerbose();` — Rust has no setter; the
         // `is_verbose()` accessor reads the env directly each call, so this is a no-op.
         let _ = Output::is_verbose();
@@ -1082,13 +1082,13 @@ impl CreateCommand {
                     // pub var dependencies_key     = js_ast.Expr{ .data = .{ .e_string = &dependencies_e_string },    .loc = logger.Loc.Empty };
 
                     // TODO(port): these wire up the static objects above; only feeds dead code
-                    pub fn wire() {
+                    pub(crate) fn wire() {
                         // InjectionPrefill.bun_macro_relay_object.properties = ...fromBorrowedSliceDangerous(bun_macro_relay_properties[0..]);
                         // InjectionPrefill.bun_macros_relay_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_object_properties);
                         // InjectionPrefill.bun_macros_relay_only_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_only_object_properties);
                     }
 
-                    pub fn npx_react_scripts_build() -> bun_ast::Expr {
+                    pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {
                         // TODO(port): build bun_ast::Expr { .e_string = "npx react-scripts build" }
                         bun_ast::Expr::init(
                             bun_ast::E::EString::init(b"npx react-scripts build"),
@@ -2787,7 +2787,7 @@ static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
     bun_core::RacyCell::new(None);
 
 impl GitHandler {
-    pub fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
+    pub(crate) fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
         SUCCESS.store(0, Ordering::Relaxed);
 
         // TODO(port): std.Thread.spawn — destination/path borrowed across thread; Zig relied on
@@ -2823,7 +2823,7 @@ impl GitHandler {
         Output::flush();
     }
 
-    pub fn wait() -> bool {
+    pub(crate) fn wait() -> bool {
         while SUCCESS.load(Ordering::Acquire) == 0 {
             let _ = Futex::wait(&SUCCESS, 0, Some(1000));
         }
@@ -2834,7 +2834,7 @@ impl GitHandler {
         outcome
     }
 
-    pub fn run<const VERBOSE: bool>(
+    pub(crate) fn run<const VERBOSE: bool>(
         destination: &[u8],
         path: &[u8],
     ) -> Result<bool, bun_core::Error> {

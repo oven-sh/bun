@@ -43,9 +43,9 @@ use bun_cares_sys::c_ares_draft as c_ares;
 // target-agnostic. Windows values come from ws2def.h via the libuv-sys mirror
 // (layout-identical: `ADDRINFOA`, 128-byte 8-aligned `sockaddr_storage`).
 #[cfg(not(windows))]
-pub mod netc {
-    pub use bun_dns::AI_ADDRCONFIG;
-    pub use libc::{
+pub(crate) mod netc {
+    pub(crate) use bun_dns::AI_ADDRCONFIG;
+    pub(crate) use libc::{
         AF_INET, AF_INET6, AF_UNSPEC, EAI_NONAME, SOCK_STREAM, addrinfo, sockaddr, sockaddr_in,
         sockaddr_in6, sockaddr_storage,
     };
@@ -122,7 +122,7 @@ const IANA_DNS_PORT: i32 = 53;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-pub mod lib_info {
+pub(super) mod lib_info {
     use super::*;
 
     // static int32_t (*getaddrinfo_async_start)(mach_port_t*, const char*, const char*,
@@ -130,7 +130,7 @@ pub mod lib_info {
     // static int32_t (*getaddrinfo_async_handle_reply)(void*);
     // static void (*getaddrinfo_async_cancel)(mach_port_t);
     // typedef void getaddrinfo_async_callback(int32_t, struct addrinfo*, void*)
-    pub type GetaddrinfoAsyncStart = unsafe extern "C" fn(
+    pub(crate) type GetaddrinfoAsyncStart = unsafe extern "C" fn(
         *mut mach_port,
         node: *const c_char,
         service: *const c_char,
@@ -138,7 +138,7 @@ pub mod lib_info {
         callback: GetAddrInfoAsyncCallback,
         context: *mut c_void,
     ) -> i32;
-    pub type GetaddrinfoAsyncHandleReply = unsafe extern "C" fn(*mut mach_port) -> i32;
+    pub(crate) type GetaddrinfoAsyncHandleReply = unsafe extern "C" fn(*mut mach_port) -> i32;
 
     // PORTING.md §Global mutable state: lazy dlopen, JS-thread-only.
     // null = "tried and failed / not yet loaded"; LOADED disambiguates.
@@ -146,7 +146,7 @@ pub mod lib_info {
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
     static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-    pub fn get_handle() -> Option<*mut c_void> {
+    pub(crate) fn get_handle() -> Option<*mut c_void> {
         use core::sync::atomic::Ordering::Relaxed;
         if LOADED.load(Relaxed) {
             let h = HANDLE.load(Relaxed);
@@ -164,7 +164,7 @@ pub mod lib_info {
         handle
     }
 
-    pub fn getaddrinfo_async_start() -> Option<GetaddrinfoAsyncStart> {
+    pub(crate) fn getaddrinfo_async_start() -> Option<GetaddrinfoAsyncStart> {
         bun_core::Environment::only_mac();
         sys::dlsym_with_handle!(
             GetaddrinfoAsyncStart,
@@ -173,7 +173,7 @@ pub mod lib_info {
         )
     }
 
-    pub fn getaddrinfo_async_handle_reply() -> Option<GetaddrinfoAsyncHandleReply> {
+    pub(crate) fn getaddrinfo_async_handle_reply() -> Option<GetaddrinfoAsyncHandleReply> {
         bun_core::Environment::only_mac();
         sys::dlsym_with_handle!(
             GetaddrinfoAsyncHandleReply,
@@ -182,7 +182,11 @@ pub mod lib_info {
         )
     }
 
-    pub fn lookup(this: &Resolver, query: GetAddrInfo, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn lookup(
+        this: &Resolver,
+        query: GetAddrInfo,
+        global_this: &JSGlobalObject,
+    ) -> JSValue {
         bun_core::Environment::only_mac();
 
         let Some(getaddrinfo_async_start_) = getaddrinfo_async_start() else {
@@ -313,10 +317,10 @@ pub mod lib_info {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(not(windows))]
-pub mod lib_c {
+pub(super) mod lib_c {
     use super::*;
 
-    pub fn lookup(
+    pub(crate) fn lookup(
         this: &Resolver,
         query_init: &GetAddrInfo,
         global_this: &JSGlobalObject,
@@ -503,7 +507,7 @@ pub mod lib_uv_backend {
 // normalizeDNSName
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &'a [u8] {
+pub(super) fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &'a [u8] {
     if *backend == GetAddrInfoBackend::CAres {
         // https://github.com/c-ares/c-ares/issues/477
         if name.ends_with(b".localhost") {
@@ -3925,7 +3929,7 @@ pub enum ChannelResult<'a> {
 // extension since it needs JSC.
 pub use bun_dns::Order;
 
-pub trait OrderJscExt {
+pub(super) trait OrderJscExt {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
 }
 
@@ -3954,7 +3958,7 @@ pub enum RecordType {
     ANY = 255,
 }
 
-pub static RECORD_TYPE_MAP: phf::Map<&'static [u8], RecordType> = phf::phf_map! {
+pub(super) static RECORD_TYPE_MAP: phf::Map<&'static [u8], RecordType> = phf::phf_map! {
     b"A" => RecordType::A, b"AAAA" => RecordType::AAAA, b"ANY" => RecordType::ANY,
     b"CAA" => RecordType::CAA, b"CNAME" => RecordType::CNAME, b"MX" => RecordType::MX,
     b"NS" => RecordType::NS, b"PTR" => RecordType::PTR, b"SOA" => RecordType::SOA,

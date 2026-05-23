@@ -22,7 +22,7 @@ mod group_log {
 
     #[inline]
     #[track_caller]
-    pub fn begin() -> group::GroupGuard {
+    pub(super) fn begin() -> group::GroupGuard {
         let loc = core::panic::Location::caller();
         // Mirrors Zig `group.begin(@src())` → `"<file>:<line>:<col>: <fn_name>"` (ANSI-coloured
         // in debug.zig). Rust's `Location` has no `fn_name`, so we emit `file:line:col` which
@@ -35,7 +35,7 @@ mod group_log {
         ))
     }
     #[inline]
-    pub fn log(args: core::fmt::Arguments<'_>) {
+    pub(super) fn log(args: core::fmt::Arguments<'_>) {
         group::log(args);
     }
 }

@@ -1237,7 +1237,7 @@ pub mod package_manifest {
                 Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
             };
 
-            pub struct SaveTask<'a> {
+            pub(crate) struct SaveTask<'a> {
                 manifest: PackageManifest,
                 scope: &'a registry::Scope,
                 tmpdir: Fd,
@@ -1249,7 +1249,7 @@ pub mod package_manifest {
             bun_threading::intrusive_work_task!(['a] SaveTask<'a>, task);
 
             impl<'a> SaveTask<'a> {
-                pub fn new(init: SaveTask<'a>) -> Box<SaveTask<'a>> {
+                pub(crate) fn new(init: SaveTask<'a>) -> Box<SaveTask<'a>> {
                     Box::new(init)
                 }
 
@@ -1261,7 +1261,7 @@ pub mod package_manifest {
                 // discharged locally (matches `HardLinkWindowsInstallTask::
                 // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
                 // coerces to the `unsafe fn(*mut Task)` field type.
-                pub fn run(task: *mut PoolTask) {
+                pub(crate) fn run(task: *mut PoolTask) {
                     use bun_threading::IntrusiveWorkTask as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 

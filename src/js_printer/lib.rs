@@ -47,7 +47,7 @@ use js_ast::Ref;
 /// classifiers, all of which live in `bun_ast::lexer_tables`. Aliased so the
 /// `lexer::is_identifier(...)` spelling matches the Zig path.
 mod lexer {
-    pub use bun_ast::lexer_tables::*;
+    pub(crate) use bun_ast::lexer_tables::*;
 }
 use bun_ast::ImportRecordFlags;
 
@@ -1562,7 +1562,7 @@ enum ImportVariant {
 
 impl ImportVariant {
     #[inline]
-    pub fn has_items(self) -> Self {
+    pub(crate) fn has_items(self) -> Self {
         match self {
             Self::ImportDefault => Self::ImportItemsAndDefault,
             Self::ImportStar => Self::ImportItemsAndStar,
@@ -1573,7 +1573,7 @@ impl ImportVariant {
 
     // We always check star first so don't need to be exhaustive here
     #[inline]
-    pub fn has_star(self) -> Self {
+    pub(crate) fn has_star(self) -> Self {
         match self {
             Self::PathOnly => Self::ImportStar,
             _ => self,
@@ -1582,7 +1582,7 @@ impl ImportVariant {
 
     // We check default after star
     #[inline]
-    pub fn has_default(self) -> Self {
+    pub(crate) fn has_default(self) -> Self {
         match self {
             Self::PathOnly => Self::ImportDefault,
             Self::ImportStar => Self::ImportStarAndImportDefault,
@@ -1590,7 +1590,7 @@ impl ImportVariant {
         }
     }
 
-    pub fn determine(record: &ImportRecord, s_import: &js_ast::S::Import) -> ImportVariant {
+    pub(crate) fn determine(record: &ImportRecord, s_import: &js_ast::S::Import) -> ImportVariant {
         let mut variant = ImportVariant::PathOnly;
 
         if record

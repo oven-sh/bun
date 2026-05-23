@@ -1005,7 +1005,7 @@ mod fields {
     use super::super::ffi_body::FFI as FfiImpl;
 
     // viewSource → FFI::print(global, JSValue, ?JSValue) -> JsResult<JSValue>
-    pub fn view_source(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn view_source(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         let mut iter = args.slice().iter();
         let object = eat_required(global, &mut iter)?;
@@ -1014,7 +1014,7 @@ mod fields {
     }
 
     // dlopen → FFI::open(global, ZigString, JSValue) -> JSValue
-    pub fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         let mut iter = args.slice().iter();
         let name = eat_zig_string(global, &mut iter)?;
@@ -1023,7 +1023,7 @@ mod fields {
     }
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>
-    pub fn callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         let mut iter = args.slice().iter();
         let interface = eat_required(global, &mut iter)?;
@@ -1032,7 +1032,10 @@ mod fields {
     }
 
     // linkSymbols → FFI::link_symbols(global, JSValue) -> JSValue
-    pub fn link_symbols(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn link_symbols(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<1>();
         let mut iter = args.slice().iter();
         let object = eat_required(global, &mut iter)?;
@@ -1040,7 +1043,7 @@ mod fields {
     }
 
     // toBuffer → to_buffer(global, JSValue, ?JSValue×4) -> JsResult<JSValue>
-    pub fn to_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn to_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<5>();
         let mut iter = args.slice().iter();
         let value = eat_required(global, &mut iter)?;
@@ -1052,7 +1055,10 @@ mod fields {
     }
 
     // toArrayBuffer → to_array_buffer(global, JSValue, ?JSValue×4) -> JsResult<JSValue>
-    pub fn to_array_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn to_array_buffer(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<5>();
         let mut iter = args.slice().iter();
         let value = eat_required(global, &mut iter)?;
@@ -1064,7 +1070,10 @@ mod fields {
     }
 
     // closeCallback → FFI::close_callback(global, JSValue) -> JSValue
-    pub fn close_callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn close_callback(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<1>();
         let mut iter = args.slice().iter();
         let ctx = eat_required(global, &mut iter)?;
@@ -1072,7 +1081,7 @@ mod fields {
     }
 
     // CString → new_cstring(global, JSValue, ?JSValue, ?JSValue) -> JsResult<JSValue>
-    pub fn cstring(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn cstring(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<3>();
         let mut iter = args.slice().iter();
         let value = eat_required(global, &mut iter)?;

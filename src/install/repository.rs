@@ -112,7 +112,7 @@ struct SloppyGlobalGitConfig {
 static SLOPPY_HOLDER: OnceLock<SloppyGlobalGitConfig> = OnceLock::new();
 
 impl SloppyGlobalGitConfig {
-    pub fn get() -> SloppyGlobalGitConfig {
+    pub(crate) fn get() -> SloppyGlobalGitConfig {
         *SLOPPY_HOLDER.get_or_init(Self::load_and_parse)
     }
 

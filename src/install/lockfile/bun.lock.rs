@@ -125,7 +125,7 @@ struct TreeDepsSortCtx<'a> {
 }
 
 impl<'a> TreeDepsSortCtx<'a> {
-    pub fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
+    pub(crate) fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
         strings::cmp_strings_asc(

@@ -49,7 +49,7 @@ struct AuditResult {
 }
 
 impl AuditResult {
-    pub fn init() -> AuditResult {
+    pub(crate) fn init() -> AuditResult {
         AuditResult {
             vulnerable_packages: StringArrayHashMap::default(),
             all_vulnerabilities: Vec::new(),

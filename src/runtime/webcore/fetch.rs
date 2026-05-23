@@ -337,7 +337,10 @@ pub fn bun_fetch_preconnect(
 struct StringOrURL;
 
 impl StringOrURL {
-    pub fn from_js(value: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<BunString>> {
+    pub(crate) fn from_js(
+        value: JSValue,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Option<BunString>> {
         if value.is_string() {
             return Ok(Some(BunString::from_js(value, global_this)?));
         }
@@ -1999,7 +2002,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    pub fn resolve(
+    pub(crate) fn resolve(
         result: s3::S3UploadResult,
         self_: *mut Self,
     ) -> Result<(), bun_jsc::JsTerminated> {

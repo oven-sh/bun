@@ -815,13 +815,13 @@ mod zig_crypto_algos {
     use super::{ZigHashAlgo, evp};
     use sha3::digest::{ExtendableOutputReset, FixedOutputReset, Output, Update};
 
-    pub type Sha3_224 = sha3::Sha3_224;
-    pub type Sha3_256 = sha3::Sha3_256;
-    pub type Sha3_384 = sha3::Sha3_384;
-    pub type Sha3_512 = sha3::Sha3_512;
-    pub type Shake128 = sha3::Shake128;
-    pub type Shake256 = sha3::Shake256;
-    pub type Blake2s256 = blake2::Blake2s256;
+    pub(super) type Sha3_224 = sha3::Sha3_224;
+    pub(super) type Sha3_256 = sha3::Sha3_256;
+    pub(super) type Sha3_384 = sha3::Sha3_384;
+    pub(super) type Sha3_512 = sha3::Sha3_512;
+    pub(super) type Shake128 = sha3::Shake128;
+    pub(super) type Shake256 = sha3::Shake256;
+    pub(super) type Blake2s256 = blake2::Blake2s256;
 
     /// Fixed-digest Keccak/BLAKE2 — Zig `T.final(state, *[digest_length]u8)`
     /// writes exactly `digest_length` bytes; mirror via `FixedOutputReset`.

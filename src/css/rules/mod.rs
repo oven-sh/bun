@@ -217,7 +217,7 @@ pub(super) mod dc {
     /// belongs there, not here, and collapses when `CssRule<'bump, R>`
     /// re-threads the arena lifetime.
     #[inline]
-    pub fn decl_block<'bump>(
+    pub(crate) fn decl_block<'bump>(
         this: &crate::DeclarationBlock<'bump>,
         bump: &'bump Arena,
     ) -> crate::DeclarationBlock<'bump> {
@@ -253,7 +253,7 @@ pub(super) mod dc {
 
     /// `'bump`-erasure adaptor for [`decl_block`]. See [`arena_static`].
     #[inline]
-    pub fn decl_block_static(
+    pub(crate) fn decl_block_static(
         this: &crate::DeclarationBlock<'static>,
         bump: &Arena,
     ) -> crate::DeclarationBlock<'static> {
@@ -268,7 +268,7 @@ pub(super) mod dc {
     /// erasure helper. Delete with `decl_block_static` once
     /// `CssRule<'bump, R>` re-threads the arena lifetime.
     #[inline]
-    pub fn decl_block_empty_static(bump: &Arena) -> crate::DeclarationBlock<'static> {
+    pub(crate) fn decl_block_empty_static(bump: &Arena) -> crate::DeclarationBlock<'static> {
         // SAFETY: `'bump`-erasure placeholder — see `arena_static`.
         crate::DeclarationBlock::new_in(unsafe { arena_static(bump) })
     }
@@ -282,7 +282,7 @@ pub(super) mod dc {
     /// erasure lives in ONE place; collapses together with `decl_block_static`
     /// when `CssRule<'bump, R>` lands.
     #[inline]
-    pub fn decl_handler_static<'a>(
+    pub(crate) fn decl_handler_static<'a>(
         h: &'a mut crate::DeclarationHandler<'_>,
     ) -> &'a mut crate::DeclarationHandler<'static> {
         // SAFETY: inner-lifetime variance cast via raw pointer — `DeclarationHandler<'_>`
@@ -294,7 +294,7 @@ pub(super) mod dc {
     /// `MediaList::deep_clone` — routes to the real arena-aware impl in
     /// media_query.rs (element-wise walk of `media_queries`).
     #[inline]
-    pub fn media_list(
+    pub(crate) fn media_list(
         this: &crate::media_query::MediaList,
         bump: &Arena,
     ) -> crate::media_query::MediaList {
@@ -304,7 +304,7 @@ pub(super) mod dc {
     /// `SelectorList::deep_clone` re-derives the source `ArenaPtr` instead of
     /// taking `bump`; intra-arena only (footgun if a cross-arena clone is added).
     #[inline]
-    pub fn selector_list(
+    pub(crate) fn selector_list(
         this: &crate::selectors::SelectorList,
         _bump: &Arena,
     ) -> crate::selectors::SelectorList {
@@ -314,7 +314,7 @@ pub(super) mod dc {
     /// `QueryFeature<F>::deep_clone` — routes to the real arena-aware impl in
     /// media_query.rs (variant-wise walk recursing into `MediaFeatureValue`).
     #[inline]
-    pub fn query_feature<F>(
+    pub(crate) fn query_feature<F>(
         this: &crate::media_query::QueryFeature<F>,
         bump: &Arena,
     ) -> crate::media_query::QueryFeature<F>
@@ -328,7 +328,7 @@ pub(super) mod dc {
     /// `Property::deep_clone` in properties_generated.rs (faithful per-variant
     /// port of .zig:6307-6558).
     #[inline]
-    pub fn property(
+    pub(crate) fn property(
         this: &crate::properties::Property,
         bump: &Arena,
     ) -> crate::properties::Property {

@@ -34,13 +34,13 @@ bun_output::declare_scope!(bun_test, hidden);
 // adapter dispatches). Drop once the body is normalised to call
 // `code_coverage::{text,lcov}` directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
-    pub use bun_sourcemap_jsc::code_coverage::{
+    pub(super) use bun_sourcemap_jsc::code_coverage::{
         ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
     };
 
     /// `std.sort.pdq(..., isLessThan)` adapter — Rust `sort_by` wants `Ordering`.
     #[inline]
-    pub fn is_less_than_cmp(
+    pub(super) fn is_less_than_cmp(
         a: &&mut ByteRangeMapping,
         b: &&mut ByteRangeMapping,
     ) -> core::cmp::Ordering {
@@ -48,13 +48,13 @@ mod coverage {
     }
 
     #[allow(non_snake_case)]
-    pub mod Text {
+    pub(super) mod Text {
         use super::*;
         use bun_sourcemap_jsc::code_coverage::text;
 
         /// Runtime-bool → const-generic dispatch for `text::write_format`.
         #[inline]
-        pub fn write_format(
+        pub(crate) fn write_format(
             report: &CodeCoverageReport,
             max_filename_length: usize,
             fraction: &mut Fraction,
@@ -77,7 +77,7 @@ mod coverage {
 
         /// Runtime-bool → const-generic dispatch for `text::write_format_with_values`.
         #[inline]
-        pub fn write_format_with_values(
+        pub(crate) fn write_format_with_values(
             filename: &[u8],
             max_filename_length: usize,
             vals: Fraction,
@@ -133,14 +133,14 @@ mod bun_test {
 
     /// `add_result()` queue payload — Zig spells it `bun_test.ResultMsg.start`;
     /// Rust port collapsed it into `RefDataValue`.
-    pub use crate::test_runner::bun_test::RefDataValue as ResultMsg;
-    pub use crate::test_runner::bun_test::*;
-    pub use crate::test_runner::execution::{
+    pub(super) use crate::test_runner::bun_test::RefDataValue as ResultMsg;
+    pub(super) use crate::test_runner::bun_test::*;
+    pub(super) use crate::test_runner::execution::{
         Basic as BasicResult, ExpectAssertions, PendingIs as PendingMode,
     };
     #[allow(non_snake_case)]
-    pub mod Execution {
-        pub use crate::test_runner::execution::*;
+    pub(super) mod Execution {
+        pub(crate) use crate::test_runner::execution::*;
     }
 }
 
@@ -3050,7 +3050,7 @@ impl TestCommand {
             files: &'a [PathString],
         }
         impl<'a> Context<'a> {
-            pub fn begin(&mut self) {
+            pub(crate) fn begin(&mut self) {
                 let reporter = &mut *self.reporter;
                 let vm = &mut *self.vm;
                 let files = self.files;

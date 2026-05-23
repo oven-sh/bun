@@ -809,10 +809,10 @@ mod holder {
     // TODO(port): in-place init — reconcile with OnceLock<Box<PackageManager>>.
     // PORTING.md §Global mutable state: ptr written once on main thread, read
     // from worker threads → AtomicPtr (Release/Acquire pairs the publish).
-    pub static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
+    pub(super) static RAW_PTR: core::sync::atomic::AtomicPtr<PackageManager> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-    pub static INITIALIZED: core::sync::atomic::AtomicBool =
+    pub(super) static INITIALIZED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
     // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
@@ -825,21 +825,21 @@ mod holder {
     // to anchor the allocation). `AtomicCell<*mut T>` — payload is `Copy` and
     // pointer-sized, so `.store()` is a safe Release write (no `RacyCell`
     // raw-ptr deref needed).
-    pub static ENV_MAP: bun_core::AtomicCell<*mut dot_env::Map> =
+    pub(super) static ENV_MAP: bun_core::AtomicCell<*mut dot_env::Map> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
-    pub static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader<'static>> =
+    pub(super) static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader<'static>> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`
     /// (Zig: `allocator.dupeZ` into a leaked singleton field). `OnceLock` per
     /// PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
-    pub static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+    pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
     /// (Zig: `manager.allocator.dupeZ` per entry, never freed). The HTTP thread
     /// reads these asynchronously after `init()` returns, so they must outlive
     /// the local that builds them.
-    pub static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
+    pub(super) static CA: std::sync::OnceLock<Vec<bun_core::ZBox>> = std::sync::OnceLock::new();
 }
 
 // PORTING.md §Global mutable state: single-thread (main) scratch buffers →

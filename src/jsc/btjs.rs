@@ -27,12 +27,12 @@ mod zig_std_debug {
     // ── ThreadContext / have_ucontext ────────────────────────────────────
     // Zig: `pub const ThreadContext = if (windows) windows.CONTEXT else if (have_ucontext) posix.ucontext_t else void;`
     #[cfg(not(windows))]
-    pub type ThreadContext = libc::ucontext_t;
+    pub(super) type ThreadContext = libc::ucontext_t;
     #[cfg(windows)]
     pub type ThreadContext = bun_sys::windows::CONTEXT;
 
     // Zig: `pub const have_ucontext = posix.ucontext_t != void;`
-    pub const HAVE_UCONTEXT: bool = cfg!(not(windows));
+    pub(super) const HAVE_UCONTEXT: bool = cfg!(not(windows));
     // Zig: `pub const have_getcontext = @TypeOf(posix.system.getcontext) != void;`
     // Android / OpenBSD / Haiku lack getcontext; everywhere else we link libc's.
     #[cfg(not(windows))]
@@ -51,7 +51,7 @@ mod zig_std_debug {
     /// Port of `std.debug.getContext`. Captures the current register state.
     /// Returns `false` if the platform has no `getcontext`.
     #[inline(always)]
-    pub fn get_context(context: *mut ThreadContext) -> bool {
+    pub(super) fn get_context(context: *mut ThreadContext) -> bool {
         #[cfg(windows)]
         {
             // SAFETY: context is a valid out-param; RtlCaptureContext writes to it.
@@ -321,7 +321,7 @@ mod zig_std_debug {
     }
 
     // ── StackIterator (vendor/zig/lib/std/debug.zig:771) ─────────────────
-    pub struct StackIterator {
+    pub(super) struct StackIterator {
         // Skip every frame before this address is found.
         first_address: Option<usize>,
         // Last known value of the frame pointer register.
@@ -356,7 +356,7 @@ mod zig_std_debug {
             core::mem::size_of::<usize>()
         };
 
-        pub fn init(first_address: Option<usize>, fp: Option<usize>) -> StackIterator {
+        pub(super) fn init(first_address: Option<usize>, fp: Option<usize>) -> StackIterator {
             // (SPARC `flushw` omitted — not a Bun target.)
             StackIterator {
                 first_address,
@@ -366,7 +366,7 @@ mod zig_std_debug {
             }
         }
 
-        pub fn init_with_context(
+        pub(super) fn init_with_context(
             first_address: Option<usize>,
             _debug_info: &mut SelfInfo,
             context: *mut ThreadContext,
@@ -391,7 +391,7 @@ mod zig_std_debug {
             }
         }
 
-        pub fn get_last_error(&mut self) -> Option<LastUnwindError> {
+        pub(super) fn get_last_error(&mut self) -> Option<LastUnwindError> {
             if !HAVE_UCONTEXT {
                 return None;
             }
@@ -406,7 +406,7 @@ mod zig_std_debug {
             None
         }
 
-        pub fn next(&mut self) -> Option<usize> {
+        pub(super) fn next(&mut self) -> Option<usize> {
             let mut address = self.next_internal()?;
             if let Some(first_address) = self.first_address {
                 while address != first_address {
@@ -446,8 +446,8 @@ mod zig_std_debug {
         }
     }
 
-    pub type UnwindError = Error;
-    pub struct LastUnwindError {
+    pub(super) type UnwindError = Error;
+    pub(super) struct LastUnwindError {
         pub address: usize,
         pub err: UnwindError,
     }
@@ -456,7 +456,7 @@ mod zig_std_debug {
     // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
     // needed by the crash handler's stack-trace printer). Re-export so the
     // in-file callers below compile unchanged.
-    pub use bun_crash_handler::debug::{
+    pub(super) use bun_crash_handler::debug::{
         Module, SelfInfo, SourceLocation, SymbolInfo, get_self_debug_info,
     };
 }
@@ -477,7 +477,7 @@ mod tty {
     // `detect_config_stdout` stays LOCAL — it ports a *different* Zig call
     // site (`detectConfig(stdout())` with NO_COLOR/CLICOLOR_FORCE/isatty) than
     // crash_handler's `detect_tty_config_stderr()` (Output::ENABLE_ANSI_COLORS_STDERR).
-    pub use bun_crash_handler::debug::{Color, TtyConfig as Config};
+    pub(super) use bun_crash_handler::debug::{Color, TtyConfig as Config};
 
     /// Port of `process.hasNonEmptyEnvVarConstant`.
     fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {
@@ -526,7 +526,7 @@ mod tty {
     }
 
     /// Port of `std.io.tty.detectConfig(std.fs.File.stdout())`.
-    pub fn detect_config_stdout() -> Config {
+    pub(super) fn detect_config_stdout() -> Config {
         let force_color: Option<bool> = if has_non_empty_env_var(c"NO_COLOR") {
             Some(false)
         } else if has_non_empty_env_var(c"CLICOLOR_FORCE") {

@@ -238,23 +238,23 @@ use bun_core::output::ansi as colors;
 
 mod prefix_styles {
     use super::{PrefixStyle, colors};
-    pub const INSERTED: PrefixStyle = PrefixStyle {
+    pub(super) const INSERTED: PrefixStyle = PrefixStyle {
         msg: "+ ",
         color: colors::RED,
     };
-    pub const REMOVED: PrefixStyle = PrefixStyle {
+    pub(super) const REMOVED: PrefixStyle = PrefixStyle {
         msg: "- ",
         color: colors::GREEN,
     };
-    pub const EQUAL: PrefixStyle = PrefixStyle {
+    pub(super) const EQUAL: PrefixStyle = PrefixStyle {
         msg: "  ",
         color: "",
     };
-    pub const SINGLE_LINE_INSERTED: PrefixStyle = PrefixStyle {
+    pub(super) const SINGLE_LINE_INSERTED: PrefixStyle = PrefixStyle {
         msg: "Received: ",
         color: "",
     };
-    pub const SINGLE_LINE_REMOVED: PrefixStyle = PrefixStyle {
+    pub(super) const SINGLE_LINE_REMOVED: PrefixStyle = PrefixStyle {
         msg: "Expected: ",
         color: "",
     };
@@ -262,23 +262,23 @@ mod prefix_styles {
 
 mod base_styles {
     use super::{Style, colors, prefix_styles};
-    pub const RED_BG_INSERTED: Style = Style {
+    pub(super) const RED_BG_INSERTED: Style = Style {
         prefix: prefix_styles::INSERTED,
         text_color: const_format::concatcp!(colors::RED, colors::INVERT),
     };
-    pub const GREEN_BG_REMOVED: Style = Style {
+    pub(super) const GREEN_BG_REMOVED: Style = Style {
         prefix: prefix_styles::REMOVED,
         text_color: const_format::concatcp!(colors::GREEN, colors::INVERT),
     };
-    pub const DIM_EQUAL: Style = Style {
+    pub(super) const DIM_EQUAL: Style = Style {
         prefix: prefix_styles::EQUAL,
         text_color: colors::DIM,
     };
-    pub const RED_FG_INSERTED: Style = Style {
+    pub(super) const RED_FG_INSERTED: Style = Style {
         prefix: prefix_styles::INSERTED,
         text_color: colors::RED,
     };
-    pub const GREEN_FG_REMOVED: Style = Style {
+    pub(super) const GREEN_FG_REMOVED: Style = Style {
         prefix: prefix_styles::REMOVED,
         text_color: colors::GREEN,
     };
@@ -289,13 +289,13 @@ mod base_styles {
 // only in inserted_equal/removed_equal; .fg omits inserted_diff/removed_diff entirely.
 mod styles {
     use super::{Style, base_styles};
-    pub const INSERTED_LINE: Style = base_styles::RED_FG_INSERTED;
-    pub const REMOVED_LINE: Style = base_styles::GREEN_FG_REMOVED;
-    pub const INSERTED_DIFF: Style = base_styles::RED_FG_INSERTED;
-    pub const REMOVED_DIFF: Style = base_styles::GREEN_FG_REMOVED;
-    pub const EQUAL: Style = base_styles::DIM_EQUAL;
-    pub const INSERTED_EQUAL: Style = base_styles::RED_FG_INSERTED;
-    pub const REMOVED_EQUAL: Style = base_styles::GREEN_FG_REMOVED;
+    pub(super) const INSERTED_LINE: Style = base_styles::RED_FG_INSERTED;
+    pub(super) const REMOVED_LINE: Style = base_styles::GREEN_FG_REMOVED;
+    pub(super) const INSERTED_DIFF: Style = base_styles::RED_FG_INSERTED;
+    pub(super) const REMOVED_DIFF: Style = base_styles::GREEN_FG_REMOVED;
+    pub(super) const EQUAL: Style = base_styles::DIM_EQUAL;
+    pub(super) const INSERTED_EQUAL: Style = base_styles::RED_FG_INSERTED;
+    pub(super) const REMOVED_EQUAL: Style = base_styles::GREEN_FG_REMOVED;
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

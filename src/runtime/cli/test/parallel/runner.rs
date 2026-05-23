@@ -571,7 +571,7 @@ struct WorkerLoop<'a> {
 }
 
 impl<'a> WorkerLoop<'a> {
-    pub fn begin(&mut self) {
+    pub(crate) fn begin(&mut self) {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
         if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {

@@ -37,7 +37,7 @@ enum VersionType {
 }
 
 impl VersionType {
-    pub fn from_string(str: &[u8]) -> Option<VersionType> {
+    pub(crate) fn from_string(str: &[u8]) -> Option<VersionType> {
         if str == b"patch" {
             return Some(VersionType::Patch);
         }

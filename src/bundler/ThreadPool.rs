@@ -118,7 +118,7 @@ mod io_thread_pool {
     /// N > 1 means N-1 `ThreadPool`s are using the IO thread pool.
     static REF_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-    pub fn acquire() -> NonNull<ThreadPoolLib::ThreadPool> {
+    pub(super) fn acquire() -> NonNull<ThreadPoolLib::ThreadPool> {
         let mut count = REF_COUNT.load(Ordering::Acquire);
         loop {
             if count == 0 {
@@ -170,12 +170,12 @@ mod io_thread_pool {
             .expect("UnsafeCell::get is non-null")
     }
 
-    pub fn release() {
+    pub(super) fn release() {
         let old = REF_COUNT.fetch_sub(1, Ordering::Release);
         debug_assert!(old > 1, "IOThreadPool: too many calls to release()");
     }
 
-    pub fn shutdown() -> bool {
+    pub(super) fn shutdown() -> bool {
         // Acquire instead of AcqRel is okay because we only need to ensure that other
         // threads are done using the IO pool if we read 1 from the ref count.
         //

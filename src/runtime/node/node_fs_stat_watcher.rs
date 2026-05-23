@@ -576,24 +576,28 @@ mod js {
     }
 
     #[inline]
-    pub fn listener_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+    pub(super) fn listener_set_cached(
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
         StatWatcherPrototype__listenerSetCachedValue(this_value, global.as_mut_ptr(), value)
     }
     #[inline]
-    pub fn listener_get_cached(this_value: JSValue) -> Option<JSValue> {
+    pub(super) fn listener_get_cached(this_value: JSValue) -> Option<JSValue> {
         let v = StatWatcherPrototype__listenerGetCachedValue(this_value);
         if v.is_empty() { None } else { Some(v) }
     }
 
-    pub mod gc {
-        pub mod prev_stat {
+    pub(super) mod gc {
+        pub(crate) mod prev_stat {
             use super::super::*;
             #[inline]
-            pub fn set(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
+            pub(crate) fn set(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
                 StatWatcherPrototype__prevStatSetCachedValue(this_value, global.as_mut_ptr(), value)
             }
             #[inline]
-            pub fn get(this_value: JSValue) -> Option<JSValue> {
+            pub(crate) fn get(this_value: JSValue) -> Option<JSValue> {
                 let v = StatWatcherPrototype__prevStatGetCachedValue(this_value);
                 if v.is_empty() { None } else { Some(v) }
             }

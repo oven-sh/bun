@@ -13,8 +13,6 @@
 #![allow(incomplete_features, internal_features)]
 #![warn(unused_must_use, unreachable_pub)]
 
-extern crate self as bun_collections;
-
 pub mod hive_array;
 pub mod multi_array_list;
 pub mod vec_ext;

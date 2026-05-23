@@ -837,7 +837,7 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
             // SAFETY precondition: out-param fd pointers must be writable and
             // termp/winp must be null or valid — raw-pointer contract. Kept
             // `unsafe` so the fn item coerces to `OpenPtyFn` (unsafe fn ptr).
-            pub fn openpty(
+            pub(crate) fn openpty(
                 amaster: *mut c_int,
                 aslave: *mut c_int,
                 name: *mut u8,

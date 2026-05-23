@@ -105,7 +105,7 @@ pub fn find_imported_files_in_css_order<'a>(
             BStr::new(&sources[source_index.get() as usize].path.pretty)
         }
 
-        pub fn visit(
+        pub(crate) fn visit(
             &mut self,
             source_index: Index,
             wrapping_conditions: &mut Vec<ImportConditions>,

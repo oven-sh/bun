@@ -8,7 +8,6 @@
 
 // ── crate aliases ─────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
-extern crate bun_core as bun_str;
 use bun_collections::VecExt;
 
 // ── sibling modules ───────────────────────────────────────────────────────

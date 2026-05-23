@@ -296,7 +296,7 @@ struct ElideResult<'b> {
 }
 
 impl<'a> State<'a> {
-    pub fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         self.remaining_scripts == 0
     }
 
@@ -590,7 +590,7 @@ impl<'a> State<'a> {
         let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
     }
 
-    pub fn abort(&mut self) {
+    pub(crate) fn abort(&mut self) {
         // we perform an abort by sending SIGINT to all processes
         self.aborted = true;
         for handle in self.handles.iter_mut() {
@@ -603,7 +603,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn finalize(&mut self) -> u8 {
+    pub(crate) fn finalize(&mut self) -> u8 {
         if self.aborted {
             let _ = self.redraw(true);
         }
@@ -655,7 +655,7 @@ impl AbortHandler {
         bun_sys::windows::FALSE
     }
 
-    pub fn install() {
+    pub(crate) fn install() {
         #[cfg(unix)]
         {
             // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
@@ -683,7 +683,7 @@ impl AbortHandler {
         }
     }
 
-    pub fn uninstall() {
+    pub(crate) fn uninstall() {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         #[cfg(windows)]
         {

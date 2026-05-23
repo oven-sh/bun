@@ -2,7 +2,6 @@
 #![warn(unused_must_use)]
 // Early drafts used `bun_str` as the crate name; aliased here for compat.
 #![warn(unreachable_pub)]
-extern crate bun_core as bun_str;
 
 #[path = "StandaloneModuleGraph.rs"]
 pub mod StandaloneModuleGraph;

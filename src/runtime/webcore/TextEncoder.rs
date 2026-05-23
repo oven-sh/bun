@@ -198,7 +198,7 @@ impl<'a> RopeStringEncoder<'a> {
 
     // The four rope-iteration callbacks coerce (safe → unsafe `extern "C"`) to
     // the `JSStringIterator` callback-pointer field types at `iter()` below.
-    pub extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
+    pub(crate) extern "C" fn append8(it: *mut JSStringIterator, ptr: *const u8, len: u32) {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
@@ -214,13 +214,18 @@ impl<'a> RopeStringEncoder<'a> {
         }
     }
 
-    pub extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
+    pub(crate) extern "C" fn append16(it: *mut JSStringIterator, _: *const u16, _: u32) {
         let (it, this) = Self::resolve(it);
         this.any_non_ascii = true;
         it.stop = 1;
     }
 
-    pub extern "C" fn write8(it: *mut JSStringIterator, ptr: *const u8, len: u32, offset: u32) {
+    pub(crate) extern "C" fn write8(
+        it: *mut JSStringIterator,
+        ptr: *const u8,
+        len: u32,
+        offset: u32,
+    ) {
         let (it, this) = Self::resolve(it);
         // SAFETY: ptr[0..len] is provided by JSC rope iteration
         let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
@@ -234,13 +239,13 @@ impl<'a> RopeStringEncoder<'a> {
         }
     }
 
-    pub extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
+    pub(crate) extern "C" fn write16(it: *mut JSStringIterator, _: *const u16, _: u32, _: u32) {
         let (it, this) = Self::resolve(it);
         this.any_non_ascii = true;
         it.stop = 1;
     }
 
-    pub fn iter(&mut self) -> JSStringIterator {
+    pub(crate) fn iter(&mut self) -> JSStringIterator {
         JSStringIterator {
             data: std::ptr::from_mut::<Self>(self).cast::<c_void>(),
             stop: 0,

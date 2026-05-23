@@ -39,9 +39,9 @@ pub(crate) mod jsc {
     /// (T5) and is re-exported through `crate::api::js_bundler` so the
     /// JSC-aware `PluginJscExt` methods are in scope; both paths name the same
     /// nominal type.
-    pub use crate::api::js_bundler::Plugin;
-    pub use crate::jsc::*;
-    pub use bun_jsc::debugger::DebuggerId;
+    pub(crate) use crate::api::js_bundler::Plugin;
+    pub(crate) use crate::jsc::*;
+    pub(crate) use bun_jsc::debugger::DebuggerId;
 }
 
 /// export default { app: ... };

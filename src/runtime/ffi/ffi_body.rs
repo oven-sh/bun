@@ -141,13 +141,13 @@ mod exposed_to_ffi {
     use super::{JSGlobalObject, JSValue};
     unsafe extern "C" {
         #[link_name = "JSC__JSValue__toInt64"]
-        pub fn JSVALUE_TO_INT64(value: JSValue) -> i64;
+        pub(super) fn JSVALUE_TO_INT64(value: JSValue) -> i64;
         #[link_name = "JSC__JSValue__toUInt64NoTruncate"]
-        pub fn JSVALUE_TO_UINT64(value: JSValue) -> u64;
+        pub(super) fn JSVALUE_TO_UINT64(value: JSValue) -> u64;
         #[link_name = "JSC__JSValue__fromInt64NoTruncate"]
-        pub fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
+        pub(super) fn INT64_TO_JSVALUE(global: *mut JSGlobalObject, i: i64) -> JSValue;
         #[link_name = "JSC__JSValue__fromUInt64NoTruncate"]
-        pub fn UINT64_TO_JSVALUE(global: *mut JSGlobalObject, i: u64) -> JSValue;
+        pub(super) fn UINT64_TO_JSVALUE(global: *mut JSGlobalObject, i: u64) -> JSValue;
     }
 }
 
@@ -186,7 +186,7 @@ impl Offsets {
         // SAFETY: extern "C" fn populating a static
         unsafe { bun_ffi_ensure_offsets_are_loaded() };
     }
-    pub fn get() -> &'static Offsets {
+    pub(crate) fn get() -> &'static Offsets {
         static ONCE: Once = Once::new();
         ONCE.call_once(Self::load_once);
         // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
@@ -276,14 +276,14 @@ enum Source {
 }
 
 impl Source {
-    pub fn first(&self) -> &ZStr {
+    pub(crate) fn first(&self) -> &ZStr {
         match self {
             Source::File(f) => f,
             Source::Files(files) => &files[0],
         }
     }
 
-    pub fn add(
+    pub(crate) fn add(
         &self,
         state: &mut TCC::State,
         current_file_for_errors: &mut ZBox,
@@ -319,27 +319,27 @@ mod stdarg {
 
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        pub fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
-        pub fn ffi_vprintf(_: *const c_char, ...) -> c_int;
-        pub fn ffi_fprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
-        pub fn ffi_printf(_: *const c_char, ...) -> c_int;
-        pub fn ffi_fscanf(_: *mut c_void, _: *const c_char, ...) -> c_int;
-        pub fn ffi_scanf(_: *const c_char, ...) -> c_int;
-        pub fn ffi_sscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
-        pub fn ffi_vsscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
-        pub fn ffi_fopen(_: *const c_char, _: *const c_char) -> *mut c_void;
-        pub fn ffi_fclose(_: *mut c_void) -> c_int;
-        pub fn ffi_fgetc(_: *mut c_void) -> c_int;
-        pub fn ffi_fputc(c: c_int, _: *mut c_void) -> c_int;
-        pub fn ffi_feof(_: *mut c_void) -> c_int;
-        pub fn ffi_fileno(_: *mut c_void) -> c_int;
-        pub fn ffi_ungetc(c: c_int, _: *mut c_void) -> c_int;
-        pub fn ffi_ftell(_: *mut c_void) -> c_long;
-        pub fn ffi_fseek(_: *mut c_void, _: c_long, _: c_int) -> c_int;
-        pub fn ffi_fflush(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vprintf(_: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_fprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_printf(_: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_fscanf(_: *mut c_void, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_scanf(_: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_sscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vsscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_fopen(_: *const c_char, _: *const c_char) -> *mut c_void;
+        pub(super) fn ffi_fclose(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_fgetc(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_fputc(c: c_int, _: *mut c_void) -> c_int;
+        pub(super) fn ffi_feof(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_fileno(_: *mut c_void) -> c_int;
+        pub(super) fn ffi_ungetc(c: c_int, _: *mut c_void) -> c_int;
+        pub(super) fn ffi_ftell(_: *mut c_void) -> c_long;
+        pub(super) fn ffi_fseek(_: *mut c_void, _: c_long, _: c_int) -> c_int;
+        pub(super) fn ffi_fflush(_: *mut c_void) -> c_int;
 
-        pub fn calloc(nmemb: usize, size: usize) -> *mut c_void;
-        pub fn perror(_: *const c_char);
+        pub(super) fn calloc(nmemb: usize, size: usize) -> *mut c_void;
+        pub(super) fn perror(_: *const c_char);
     }
 
     #[cfg(target_os = "macos")]
@@ -360,7 +360,7 @@ mod stdarg {
             static FFI_STDERRP: AtomicPtr<c_void>;
         }
 
-        pub fn inject(state: &mut TCC::State) {
+        pub(super) fn inject(state: &mut TCC::State) {
             // SAFETY: taking addresses of process-global FILE* pointers; the
             // statics live for the process and we never form a Rust reference
             // to them (only a raw `*const c_void` for tcc_add_symbol).
@@ -387,7 +387,7 @@ mod stdarg {
         pub fn inject(_: &mut TCC::State) {}
     }
 
-    pub fn inject(state: &mut TCC::State) {
+    pub(super) fn inject(state: &mut TCC::State) {
         // TODO(port): TCC::State::add_symbols API — Zig used addSymbolsComptime over a struct literal
         state
             .add_symbols(&[
@@ -462,7 +462,7 @@ impl CompileC {
     /// must be null or point to a live `CompileC`. `message` is a NUL-terminated
     /// C string when non-null. Signature matches `ConfigErr::handler` exactly so
     /// it can be passed without an ABI-coercing cast.
-    pub unsafe extern "C" fn handle_compilation_error(
+    pub(crate) unsafe extern "C" fn handle_compilation_error(
         this_: *mut CompileC,
         message: *const c_char,
     ) {
@@ -511,7 +511,7 @@ impl CompileC {
         Ok(())
     }
 
-    pub const DEFAULT_TCC_OPTIONS: &'static str = "-std=c11 -Wl,--export-all-symbols -g -O2";
+    pub(crate) const DEFAULT_TCC_OPTIONS: &'static str = "-std=c11 -Wl,--export-all-symbols -g -O2";
 
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
     fn get_system_root_dir_once() {
@@ -618,7 +618,7 @@ impl CompileC {
             .filter(|d| !d.is_empty())
     }
 
-    pub fn compile(
+    pub(crate) fn compile(
         &mut self,
         global_this: &JSGlobalObject,
     ) -> Result<NonNull<TCC::State>, bun_core::Error> {
@@ -921,7 +921,7 @@ impl Drop for StringArray {
 }
 
 impl StringArray {
-    pub fn from_js_array(
+    pub(crate) fn from_js_array(
         global_this: &JSGlobalObject,
         value: JSValue,
         property: &'static str,
@@ -948,7 +948,7 @@ impl StringArray {
         Ok(StringArray { items })
     }
 
-    pub fn from_js_string(
+    pub(crate) fn from_js_string(
         global_this: &JSGlobalObject,
         value: JSValue,
         property: &'static str,
@@ -971,7 +971,7 @@ impl StringArray {
         Ok(StringArray { items })
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         value: JSValue,
         property: &'static str,
@@ -1729,7 +1729,7 @@ impl FFI {
     }
 }
 
-pub fn generate_symbol_for_function(
+pub(super) fn generate_symbol_for_function(
     global: &JSGlobalObject,
     value: JSValue,
     function: &mut Function,
@@ -1870,7 +1870,7 @@ pub fn generate_symbol_for_function(
     Ok(None)
 }
 
-pub fn generate_symbols(
+pub(super) fn generate_symbols(
     global: &JSGlobalObject,
     symbols: &mut StringArrayHashMap<Function>,
     object: &JSObject,
@@ -2657,7 +2657,7 @@ impl CompilerRT {
         let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
     }
 
-    pub fn dir() -> Option<&'static ZStr> {
+    pub(crate) fn dir() -> Option<&'static ZStr> {
         CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
         COMPILER_RT_DIR
             .get()
@@ -2680,7 +2680,7 @@ impl CompilerRT {
         }
     }
 
-    pub fn define(state: &mut TCC::State) {
+    pub(crate) fn define(state: &mut TCC::State) {
         #[cfg(target_arch = "x86_64")]
         {
             state.define_symbol(zstr!("NEEDS_COMPILER_RT_FUNCTIONS"), zstr!("1"));
@@ -2726,7 +2726,7 @@ impl CompilerRT {
         ]);
     }
 
-    pub fn inject(state: &mut TCC::State) {
+    pub(crate) fn inject(state: &mut TCC::State) {
         state
             .add_symbol(zstr!("memset"), Self::memset as *const c_void)
             .expect("unreachable");

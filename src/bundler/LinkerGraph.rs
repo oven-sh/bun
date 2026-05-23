@@ -811,7 +811,7 @@ impl<'a> LinkerGraph<'a> {
         }
 
         impl<'a> State<'a> {
-            pub fn visit_all(&mut self) {
+            pub(crate) fn visit_all(&mut self) {
                 for i in 0..self.import_records.len() {
                     self.visit(i);
                 }

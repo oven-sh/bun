@@ -89,7 +89,7 @@ mod dom_call_slowpath {
     // exceptions), so no `to_js_host_call` mapping.
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    pub fn FFI__ptr__slowpath(
+    pub(super) fn FFI__ptr__slowpath(
         global: *mut JSGlobalObject,
         this_value: JSValue,
         arguments_ptr: *const JSValue,
@@ -126,7 +126,7 @@ mod TCC {
         all(windows, target_arch = "aarch64")
     )))]
     unsafe extern "C" {
-        pub fn tcc_delete(s: *mut State);
+        pub(super) fn tcc_delete(s: *mut State);
     }
     #[cfg(any(
         target_os = "android",

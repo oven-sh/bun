@@ -128,7 +128,7 @@ pub mod r#gen {
 mod static_adapters {
     use super::*;
 
-    pub fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<1>();
         let opts = if args.len >= 1 {
             args.ptr[0]
@@ -138,7 +138,7 @@ mod static_adapters {
         crate::socket::Listener::connect(g, opts)
     }
 
-    pub fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<1>();
         let opts = if args.len >= 1 {
             args.ptr[0]
@@ -148,7 +148,7 @@ mod static_adapters {
         crate::socket::Listener::listen(g, opts)
     }
 
-    pub fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<1>();
         let opts = if args.len >= 1 {
             args.ptr[0]
@@ -158,7 +158,7 @@ mod static_adapters {
         crate::socket::udp_socket_draft::UDPSocket::udp_socket(g, opts)
     }
 
-    pub fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<2>();
         let a0 = if args.len >= 1 {
             args.ptr[0]
@@ -173,7 +173,7 @@ mod static_adapters {
         crate::api::js_bun_spawn_bindings::spawn(g, a0, a1)
     }
 
-    pub fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let args = cf.arguments_old::<2>();
         let a0 = if args.len >= 1 {
             args.ptr[0]
@@ -188,24 +188,30 @@ mod static_adapters {
         crate::api::js_bun_spawn_bindings::spawn_sync(g, a0, a1)
     }
 
-    pub fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         crate::api::js_bundler::JSBundler::build_fn(g, cf)
     }
     /// `Bun.$` parsed-script constructor — wraps the marked-argument-buffer host fn.
-    pub fn parsed_shell_script_create(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn parsed_shell_script_create(
+        g: &JSGlobalObject,
+        cf: &CallFrame,
+    ) -> JsResult<JSValue> {
         // `CREATE_PARSED_SHELL_SCRIPT` is the safe `JSHostFnZig` produced by
         // `marked_argument_buffer_wrap!` (the C-ABI shim is exported separately
         // by the macro); call it directly.
         crate::shell::parsed_shell_script::CREATE_PARSED_SHELL_SCRIPT(g, cf)
     }
-    pub fn shell_interpreter_create(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn shell_interpreter_create(
+        g: &JSGlobalObject,
+        cf: &CallFrame,
+    ) -> JsResult<JSValue> {
         crate::shell::interpreter::create_shell_interpreter(g, cf)
     }
 
     /// `Bun.sha(input, output?)` — wrapStaticMethod(Crypto.SHA512_256, "hash_", true).
     /// Hand-roll the (BlobOrStringOrBuffer, ?StringOrBuffer) decode that
     /// `wrapStaticMethod` would emit, with auto-protect on each argument.
-    pub fn sha(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn sha(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         use crate::node::types::{BlobOrStringOrBuffer, StringOrBuffer};
         let args = cf.arguments_old::<2>();
         let a0 = if args.len >= 1 {
@@ -3174,7 +3180,7 @@ mod stdio_stores {
         unsafe { (&*blob).to_js(global_this) }
     }
 
-    pub fn stdin(global_this: &JSGlobalObject) -> JSValue {
+    pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {
         let is_atty = bun_sys::isatty(bun_sys::Fd::from_uv(0));
         make_blob(
             global_this,
@@ -3184,7 +3190,7 @@ mod stdio_stores {
             &bun_core::analytics::Features::BUN_STDIN,
         )
     }
-    pub fn stdout(global_this: &JSGlobalObject) -> JSValue {
+    pub(super) fn stdout(global_this: &JSGlobalObject) -> JSValue {
         let is_atty = matches!(
             bun_core::output::stdout_descriptor_type(),
             bun_core::output::OutputStreamDescriptor::Terminal
@@ -3197,7 +3203,7 @@ mod stdio_stores {
             &bun_core::analytics::Features::BUN_STDOUT,
         )
     }
-    pub fn stderr(global_this: &JSGlobalObject) -> JSValue {
+    pub(super) fn stderr(global_this: &JSGlobalObject) -> JSValue {
         let is_atty = matches!(
             bun_core::output::stderr_descriptor_type(),
             bun_core::output::OutputStreamDescriptor::Terminal

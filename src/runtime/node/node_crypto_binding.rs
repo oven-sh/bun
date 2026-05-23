@@ -1170,22 +1170,22 @@ mod _impl {
     }
 
     #[bun_jsc::host_fn]
-    pub fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]
-    pub fn get_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn get_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::js_number(0.0))
     }
 
     #[bun_jsc::host_fn]
-    pub fn set_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn set_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]
-    pub fn set_engine(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn set_engine(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Err(global
             .err(
                 ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED,

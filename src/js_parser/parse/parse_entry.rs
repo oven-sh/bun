@@ -354,7 +354,7 @@ impl<'a> Parser<'a> {
 // surface lands.
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
+    pub fn parse(self) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
         #[cfg(target_arch = "wasm32")]
         {

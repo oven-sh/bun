@@ -231,50 +231,50 @@ mod ffi {
     // ABI-identical to a non-null `*mut T`. `notifyBundleStart` keeps a raw
     // `(ptr, len)` pair (slice not FFI-safe) and stays `unsafe`.
     unsafe extern "C" {
-        pub safe fn InspectorBunFrontendDevServerAgent__notifyClientConnected(
+        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientConnected(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
         );
-        pub safe fn InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
+        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientDisconnected(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
         );
-        pub fn InspectorBunFrontendDevServerAgent__notifyBundleStart(
+        pub(super) fn InspectorBunFrontendDevServerAgent__notifyBundleStart(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             trigger_files: *mut BunString,
             trigger_files_len: usize,
         );
-        pub safe fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(
+        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleComplete(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             duration_ms: f64,
         );
-        pub safe fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
+        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             build_errors_payload_base64: &mut BunString,
         );
-        pub safe fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(
+        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
             url: &mut BunString,
             route_bundle_id: i32,
         );
-        pub safe fn InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
+        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientErrorReported(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             client_error_payload_base64: &mut BunString,
         );
-        pub safe fn InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
+        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyGraphUpdate(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             visualizer_payload_base64: &mut BunString,
         );
-        pub safe fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
+        pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             kind: u8,

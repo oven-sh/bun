@@ -28,13 +28,13 @@ mod darwin_spawn_np {
     use core::ffi::{c_char, c_int};
     /// `POSIX_SPAWN_SETSID` — set session ID (calls `setsid()` in child).
     /// `<spawn.h>`: `0x0400`.
-    pub const POSIX_SPAWN_SETSID: c_int = 0x0400;
+    pub(super) const POSIX_SPAWN_SETSID: c_int = 0x0400;
     unsafe extern "C" {
-        pub fn posix_spawn_file_actions_addinherit_np(
+        pub(super) fn posix_spawn_file_actions_addinherit_np(
             actions: *mut libc::posix_spawn_file_actions_t,
             fd: c_int,
         ) -> c_int;
-        pub fn posix_spawn_file_actions_addchdir_np(
+        pub(super) fn posix_spawn_file_actions_addchdir_np(
             actions: *mut libc::posix_spawn_file_actions_t,
             path: *const c_char,
         ) -> c_int;
@@ -64,14 +64,14 @@ mod posix_compat {
     // (`posix_spawn_bun.cpp`). On POSIX `FdNative == c_int`; on Windows
     // `FdNative` is HANDLE, but this code path is unreachable there — keep
     // the C-ABI type so the struct compiles unchanged.
-    pub type fd_t = core::ffi::c_int;
+    pub(super) type fd_t = core::ffi::c_int;
     /// `std.posix.pid_t`.
     #[cfg(unix)]
-    pub type pid_t = libc::pid_t;
+    pub(super) type pid_t = libc::pid_t;
     #[cfg(not(unix))]
     pub type pid_t = i32;
     #[cfg(target_os = "macos")]
-    pub use bun_sys::posix::mode_t;
+    pub(super) use bun_sys::posix::mode_t;
 
     /// `std.posix.E` — errno enum with **unprefixed** variant names. The real
     /// `bun_errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
@@ -79,19 +79,19 @@ mod posix_compat {
     #[cfg(unix)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[repr(transparent)]
-    pub struct Errno(pub c_int);
+    pub(super) struct Errno(pub c_int);
     #[cfg(unix)]
     impl Errno {
-        pub const SUCCESS: Errno = Errno(0);
+        pub(super) const SUCCESS: Errno = Errno(0);
         #[cfg(target_os = "macos")]
-        pub const NOMEM: Errno = Errno(libc::ENOMEM);
+        pub(super) const NOMEM: Errno = Errno(libc::ENOMEM);
         #[cfg(target_os = "macos")]
-        pub const INVAL: Errno = Errno(libc::EINVAL);
+        pub(super) const INVAL: Errno = Errno(libc::EINVAL);
         #[cfg(target_os = "macos")]
-        pub const BADF: Errno = Errno(libc::EBADF);
+        pub(super) const BADF: Errno = Errno(libc::EBADF);
         #[cfg(target_os = "macos")]
-        pub const NAMETOOLONG: Errno = Errno(libc::ENAMETOOLONG);
-        pub const INTR: Errno = Errno(libc::EINTR);
+        pub(super) const NAMETOOLONG: Errno = Errno(libc::ENAMETOOLONG);
+        pub(super) const INTR: Errno = Errno(libc::EINTR);
     }
     /// `std.posix.errno(rc)` — Zig: with libc, `rc == -1 ⇒ read __errno`,
     /// else `.SUCCESS`. The `posix_spawn*` family instead returns the errno
@@ -101,7 +101,7 @@ mod posix_compat {
     // `errno_from_ret(rc)` (rc == -1 ⇒ read libc errno) and route call sites.
     #[cfg(unix)]
     #[inline]
-    pub fn errno(rc: c_int) -> Errno {
+    pub(super) fn errno(rc: c_int) -> Errno {
         if rc == -1 {
             return Errno(bun_sys::posix::errno());
         }
@@ -109,13 +109,13 @@ mod posix_compat {
     }
 
     /// `std.posix.toPosixPath` — copy into a NUL-terminated buffer.
-    pub fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
+    pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
         CString::new(path).map_err(|_| err!("Unexpected"))
     }
 
     /// `std.posix.unexpectedErrno` — Zig logs + returns `error.Unexpected`.
     #[cfg(target_os = "macos")]
-    pub fn unexpected_errno(_e: Errno) -> Error {
+    pub(super) fn unexpected_errno(_e: Errno) -> Error {
         err!("Unexpected")
     }
 }

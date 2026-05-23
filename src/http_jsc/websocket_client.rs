@@ -2491,7 +2491,7 @@ enum Copy<'a> {
 }
 
 impl<'a> Copy<'a> {
-    pub fn len(&self, byte_len: &mut usize) -> usize {
+    pub(crate) fn len(&self, byte_len: &mut usize) -> usize {
         match self {
             Copy::Utf16(utf16) => {
                 *byte_len = strings::element_length_utf16_into_utf8(utf16);
@@ -2512,7 +2512,7 @@ impl<'a> Copy<'a> {
         }
     }
 
-    pub fn copy(
+    pub(crate) fn copy(
         &self,
         global_this: &JSGlobalObject,
         buf: &mut [u8],
@@ -2616,7 +2616,7 @@ impl<'a> Copy<'a> {
         }
     }
 
-    pub fn copy_compressed(
+    pub(crate) fn copy_compressed(
         global_this: &JSGlobalObject,
         buf: &mut [u8],
         compressed_data: &[u8],

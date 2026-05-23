@@ -39,7 +39,7 @@ pub(crate) mod ci_info_generated {
         };
     }
 
-    pub fn is_ci_uncached_generated() -> bool {
+    pub(crate) fn is_ci_uncached_generated() -> bool {
         env_set!("BUILD_ID")
             || env_set!("BUILD_NUMBER")
             || env_set!("CI")
@@ -51,7 +51,7 @@ pub(crate) mod ci_info_generated {
             || env_set!("RUN_ID")
     }
 
-    pub fn detect_uncached_generated() -> Option<&'static [u8]> {
+    pub(crate) fn detect_uncached_generated() -> Option<&'static [u8]> {
         if env_set!("AGOLA_GIT_REF") {
             return Some(b"agola-ci");
         }

@@ -444,14 +444,14 @@ struct BorderShorthand {
 }
 
 impl BorderShorthand {
-    pub fn eql(&self, rhs: &Self) -> bool {
+    pub(crate) fn eql(&self, rhs: &Self) -> bool {
         css::generic::eql(&self.width, &rhs.width)
             && css::generic::eql(&self.style, &rhs.style)
             && css::generic::eql(&self.color, &rhs.color)
     }
 
     // `border: anytype` — any GenericBorder<S, P>
-    pub fn set_border<S, const P: u8>(&mut self, arena: &Bump, border: &GenericBorder<S, P>)
+    pub(crate) fn set_border<S, const P: u8>(&mut self, arena: &Bump, border: &GenericBorder<S, P>)
     where
         S: for<'a> css::DeepClone<'a> + Into<LineStyle>,
     {
@@ -567,7 +567,7 @@ bitflags::bitflags! {
 
 // blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
 impl BorderProperty {
-    pub fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
+    pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
         // TODO(port): Zig used `inline for` over PropertyIdTag fields + @hasDecl.
         // Expanded to an explicit match over every PropertyIdTag whose name
         // starts with "border" and has a matching const above.

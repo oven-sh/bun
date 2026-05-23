@@ -8,7 +8,6 @@
 // Self-alias so Phase-A drafts written against `bun_install::…` resolve
 // without rewriting every `use` (e.g. yarn.rs, extract_tarball.rs,
 // lifecycle_script_runner.rs).
-extern crate bun_core as bun_str;
 extern crate bun_sha_hmac as bun_sha;
 extern crate self as bun_install;
 // `bun_output::declare_scope!` / `scoped_log!` in Phase-A drafts → the macros
@@ -17,25 +16,24 @@ extern crate self as bun_install;
 extern crate bun_analytics as analytics;
 extern crate bun_core as bun_output;
 // `bun_simdutf` → real crate is `bun_simdutf_sys`.
-extern crate bun_simdutf_sys as bun_simdutf;
 
 /// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 pub(crate) mod bun_schema {
-    pub use bun_options_types::schema::api;
+    pub(crate) use bun_options_types::schema::api;
 }
 
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
 pub(crate) mod bun_json {
-    pub use bun_ast::{Expr, ExprData, G::Property, e as E};
-    pub use bun_parsers::json::*;
+    pub(crate) use bun_ast::{Expr, ExprData, G::Property, e as E};
+    pub(crate) use bun_parsers::json::*;
 }
 
 /// `bun.fs` namespace — resolver-tier `FileSystem` / `DirEntry` / `Entry`.
 /// `bun_install` depends on `bun_resolver` directly (no cycle), so re-export
 /// the real types instead of routing through any lower-tier shim.
 pub(crate) mod bun_fs {
-    pub use bun_resolver::fs::*;
+    pub(crate) use bun_resolver::fs::*;
 }
 
 /// `bun_progress` → re-export of the real `bun_core::Progress` (snapshot of
@@ -45,7 +43,7 @@ pub(crate) mod bun_fs {
 /// `unprotected_*` atomics, `&mut Node` from `start()`); keeping a parallel
 /// type here just bifurcated `Node` identity across the crate.
 pub(crate) mod bun_progress {
-    pub use bun_core::Progress::{Node, Progress};
+    pub(crate) use bun_core::Progress::{Node, Progress};
 }
 
 /// `bun_bunfig` → config-loading entrypoint. The real `bun_bunfig` crate now
@@ -57,7 +55,7 @@ pub(crate) mod bun_progress {
 /// the real crate spell it `::bun_bunfig`.
 pub(crate) mod bun_bunfig {
 
-    pub use bun_options_types::context as Arguments;
+    pub(crate) use bun_options_types::context as Arguments;
 }
 
 use core::cell::Cell;
@@ -226,7 +224,7 @@ pub mod package_manager {
 /// `bun_install::install` submodule path mirroring `install.zig`. The crate
 /// root *is* that file now, so re-export everything under both names.
 pub(crate) mod install {
-    pub use crate::*;
+    pub(crate) use crate::*;
 }
 
 /// `windows-shim/BinLinkingShim.zig` — `.bunx` shim encoder consumed by

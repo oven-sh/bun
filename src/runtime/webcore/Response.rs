@@ -498,7 +498,7 @@ mod _jsc_host_fns {
 
     #[unsafe(export_name = "jsFunctionRequestOrResponseHasBodyValue")]
     #[bun_jsc::host_call]
-    pub fn js_function_request_or_response_has_body_value(
+    pub(super) fn js_function_request_or_response_has_body_value(
         _global: *mut JSGlobalObject,
         callframe: &CallFrame,
     ) -> JSValue {
@@ -519,7 +519,7 @@ mod _jsc_host_fns {
 
     #[unsafe(export_name = "jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer")]
     #[bun_jsc::host_call]
-    pub fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
+    pub(super) fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
         global_object: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {

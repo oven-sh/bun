@@ -334,7 +334,7 @@ struct EntryList {
 }
 
 impl EntryList {
-    pub fn prepend(&mut self, current: *mut ExecutionEntry) {
+    pub(crate) fn prepend(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
         unsafe { (*current).next = self.first };
         self.first = Some(current);
@@ -343,7 +343,7 @@ impl EntryList {
         }
     }
 
-    pub fn append(&mut self, current: *mut ExecutionEntry) {
+    pub(crate) fn append(&mut self, current: *mut ExecutionEntry) {
         // SAFETY: `current` points to a live ExecutionEntry owned by the test scheduler.
         let cur = unsafe { &mut *current };
         if bun_core::Environment::CI_ASSERT && cur.added_in_phase != AddedInPhase::Preload {

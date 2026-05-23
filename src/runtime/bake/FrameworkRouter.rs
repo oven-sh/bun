@@ -133,7 +133,7 @@ pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>; // Zig: u31 (los
 pub struct RouteEdge;
 
 pub enum RouteEdgeMarker {}
-pub type RouteEdgeIndex = bun_core::GenericIndex<u32, RouteEdgeMarker>;
+pub(crate) type RouteEdgeIndex = bun_core::GenericIndex<u32, RouteEdgeMarker>;
 
 /// Native code for `FrameworkFileSystemRouterType`
 pub struct Type {
@@ -676,13 +676,13 @@ impl Clone for Style {
     }
 }
 
-pub static STYLE_MAP: phf::Map<&'static [u8], fn() -> Style> = phf::phf_map! {
+pub(crate) static STYLE_MAP: phf::Map<&'static [u8], fn() -> Style> = phf::phf_map! {
     b"nextjs-pages" => || Style::NextjsPages,
     b"nextjs-app-ui" => || Style::NextjsAppUi,
     b"nextjs-app-routes" => || Style::NextjsAppRoutes,
 };
 
-pub const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
+pub(crate) const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 impl Style {
     // TODO(port): move to *_jsc — calls JSValue methods
@@ -2106,7 +2106,7 @@ impl JSFrameworkRouter {
 // PORT NOTE: free-function host-fn shim — `#[bun_jsc::host_fn]` (Free kind) emits a
 // shim that calls the bare ident, so this cannot live inside the `impl` block.
 #[bun_jsc::host_fn]
-pub fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     JSFrameworkRouter::parse_route_pattern(global, frame)
 }
 

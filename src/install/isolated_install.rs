@@ -181,7 +181,7 @@ struct Wait<'a, 'b> {
 }
 
 impl<'a, 'b> Wait<'a, 'b> {
-    pub fn is_done(&mut self) -> bool {
+    pub(crate) fn is_done(&mut self) -> bool {
         // `Installer.manager` is a BACKREF raw pointer; `manager_mut()`
         // materializes the unique `&mut PackageManager` for this main-thread
         // tick without aliasing `&mut Installer`.

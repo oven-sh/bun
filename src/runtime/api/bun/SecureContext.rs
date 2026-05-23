@@ -208,8 +208,15 @@ mod cpp {
     use super::*;
     // TODO(port): move to runtime_sys
     unsafe extern "C" {
-        pub safe fn Bun__SecureContextCache__get(global: &JSGlobalObject, key: u64) -> JSValue;
-        pub safe fn Bun__SecureContextCache__set(global: &JSGlobalObject, key: u64, value: JSValue);
+        pub(super) safe fn Bun__SecureContextCache__get(
+            global: &JSGlobalObject,
+            key: u64,
+        ) -> JSValue;
+        pub(super) safe fn Bun__SecureContextCache__set(
+            global: &JSGlobalObject,
+            key: u64,
+            value: JSValue,
+        );
     }
 }
 

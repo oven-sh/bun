@@ -145,7 +145,7 @@ mod _impl {
     // ───────────────────────────── title ─────────────────────────────
 
     #[unsafe(export_name = "Bun__Process__getTitle")]
-    pub extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
+    pub(super) extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
         let str_ = guard.as_deref().unwrap_or(b"bun");
         // SAFETY: title is a valid out-param provided by C++ caller
@@ -156,7 +156,10 @@ mod _impl {
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
-    pub extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
+    pub(super) extern "C" fn set_title(
+        _global_object: *const JSGlobalObject,
+        newvalue: *mut BunString,
+    ) {
         // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
         // returning. `String` is `Copy`, so read it out by value and let
         // `OwnedString`'s Drop release the ref (Zig: `defer newvalue.deref()`).
@@ -177,7 +180,9 @@ mod _impl {
     // (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
     // not a `JSHostFunctionType`. Hand-roll the wrap1 shim instead of `#[bun_jsc::host_fn]`.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Process__createExecArgv(global_object: &JSGlobalObject) -> JSValue {
+    pub(super) extern "C" fn Bun__Process__createExecArgv(
+        global_object: &JSGlobalObject,
+    ) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
@@ -314,7 +319,7 @@ mod _impl {
     // ───────────────────────────── argv ─────────────────────────────
 
     #[unsafe(export_name = "Bun__Process__createArgv")]
-    pub extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
+    pub(super) extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
@@ -389,7 +394,7 @@ mod _impl {
     // ───────────────────────────── eval ─────────────────────────────
 
     #[unsafe(export_name = "Bun__Process__getEval")]
-    pub extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
+    pub(super) extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
@@ -404,7 +409,7 @@ mod _impl {
     // `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`. Hand-roll the wrap1
     // shim instead of `#[bun_jsc::host_fn]` (caller is not a JSHostFunction).
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
+    pub(super) extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))
     }
 
@@ -420,7 +425,7 @@ mod _impl {
     // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, ZigString*)`. Hand-roll
     // the wrap2 shim; the second arg is the raw `*mut ZigString`, not a CallFrame.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Process__setCwd(
+    pub(super) extern "C" fn Bun__Process__setCwd(
         global_object: &JSGlobalObject,
         to: &ZigString,
     ) -> JSValue {

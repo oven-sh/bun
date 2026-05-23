@@ -124,14 +124,14 @@ fn relative_paths_list_ptr() -> *mut ImportPathsList {
 mod hardcoded_module {
     use super::*;
     #[derive(Default, Clone, Copy)]
-    pub struct AliasOptions {
+    pub(super) struct AliasOptions {
         pub rewrite_jest_for_tests: bool,
     }
-    pub struct Alias {
+    pub(super) struct Alias {
         pub path: &'static [u8],
         pub tag: ImportRecordTag,
     }
-    pub fn get(name: &[u8], target: BundleTarget, opts: AliasOptions) -> Option<Alias> {
+    pub(super) fn get(name: &[u8], target: BundleTarget, opts: AliasOptions) -> Option<Alias> {
         bun_resolve_builtins::Alias::get(
             name,
             target,

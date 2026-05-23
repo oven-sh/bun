@@ -1242,7 +1242,7 @@ enum PGNummericString<'a> {
 }
 
 impl<'a> PGNummericString<'a> {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             PGNummericString::Static(value) => value,
             PGNummericString::Dynamic(value) => value,

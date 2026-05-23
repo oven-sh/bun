@@ -501,7 +501,7 @@ pub fn install_hoisted_packages(
             }
 
             impl<'a, 'b> Closure<'a, 'b> {
-                pub fn is_done(closure: &mut Self) -> bool {
+                pub(crate) fn is_done(closure: &mut Self) -> bool {
                     // SAFETY: `closure.manager` is the raw provenance root set
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.

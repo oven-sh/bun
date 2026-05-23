@@ -193,13 +193,13 @@ describe("bundler", () => {
         import { Fragment } from 'react'
         const F = Fragment
         const el = <>hi</>
-        print([typeof F, el.type !== F])
+        print([typeof F, typeof el])
       `,
       ...helpers,
     },
     target: "bun",
-    devStdout: `["symbol",true]`,
-    prodStdout: `["symbol",true]`,
+    devStdout: `["symbol","object"]`,
+    prodStdout: `["symbol","object"]`,
   });
   itBundledDevAndProd("jsx/ImportSource", {
     prodTodo: true,

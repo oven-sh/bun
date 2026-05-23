@@ -3693,6 +3693,14 @@ it("deeply nested expressions error instead of crashing the process", () => {
     ];
     const minifyShapes = [
       n => "function f(){let x = 1; return a" + repeat(" && a", n) + " && x}",
+      n =>
+        "function f(){function g(){return x}" +
+        repeat("[", n) +
+        "1" +
+        repeat("]", n) +
+        ";let x = 1;return " +
+        repeat("a", 500) +
+        ";}",
     ];
     const check = (transpiler, src) => {
       try {

@@ -2529,7 +2529,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         replacement: Expr,
         replacement_can_be_removed: bool,
     ) -> Substitution {
-        if !self.stack_check.is_safe_to_recurse() {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(expr.loc);
             return Substitution::Failure(expr);
         }

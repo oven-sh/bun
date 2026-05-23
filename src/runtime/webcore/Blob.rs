@@ -3613,7 +3613,16 @@ impl BlobExt for Blob {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                                        joiner.push_static(blob.shared_view());
+                                        // A later part can run user JS (e.g. an
+                                        // object part's toString) that drops the
+                                        // last reference to this Blob and frees
+                                        // its Store before `joiner.done()` reads
+                                        // a borrowed view — copy the bytes now.
+                                        if parts_can_run_js {
+                                            joiner.push_cloned(blob.shared_view());
+                                        } else {
+                                            joiner.push_static(blob.shared_view());
+                                        }
                                         continue;
                                     } else {
                                         let sliced = current.to_slice_clone(global)?;
@@ -3635,7 +3644,12 @@ impl BlobExt for Blob {
                     if let Some(blob) = current.as_class_ref::<Blob>() {
                         could_have_non_ascii = could_have_non_ascii
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                        joiner.push_static(blob.shared_view());
+                        // See the array-item Blob arm above: a later part can
+                        // free this Blob's Store before `joiner.done()`. This
+                        // arm is only reached for entries deferred onto the
+                        // walk stack, where other pending entries may still
+                        // run user JS, so always copy.
+                        joiner.push_cloned(blob.shared_view());
                     } else {
                         let sliced = current.to_slice_clone(global)?;
                         could_have_non_ascii = could_have_non_ascii || sliced.is_allocated();

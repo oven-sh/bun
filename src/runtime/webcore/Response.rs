@@ -845,6 +845,8 @@ impl Response {
     /// `ptr` must point to a live `Response` allocation (e.g. freshly boxed via
     /// [`Response::clone`]); ownership of the +1 ref transfers to the returned
     /// JS wrapper.
+    // Safety contract is documented above; callers pass freshly-boxed pointers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn make_maybe_pooled(global_object: &JSGlobalObject, ptr: *mut Response) -> JSValue {
         // SAFETY: caller contract — `ptr` is live and uniquely owned.
         unsafe { (*ptr).to_js(global_object) }

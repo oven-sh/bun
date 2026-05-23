@@ -1247,7 +1247,7 @@ mod tests {
         let drops = core::cell::Cell::new(0u32);
 
         const CAP: usize = 2;
-        type Pool<'c> = HiveAllocator<Tracked<'c>, CAP>;
+        type Pool<'c> = Fallback<HiveRef<Tracked<'c>, CAP>, CAP>;
         let pool: Pool = Fallback::init();
         let pool_ptr: *const Pool = &pool;
 
@@ -1319,7 +1319,7 @@ mod tests {
         let drops = core::cell::Cell::new(0u32);
 
         const CAP: usize = 1;
-        type Pool<'c> = HiveAllocator<Tracked<'c>, CAP>;
+        type Pool<'c> = Fallback<HiveRef<Tracked<'c>, CAP>, CAP>;
         let pool: Pool = Fallback::init();
         let pool_ptr: *const Pool = &pool;
 

@@ -1128,6 +1128,13 @@ pub enum Origin {
     Tarball = 2,
 }
 
+impl Origin {
+    #[inline]
+    pub const fn is_valid_lockfile_tag(byte: u8) -> bool {
+        byte == Origin::Local as u8 || byte == Origin::Npm as u8 || byte == Origin::Tarball as u8
+    }
+}
+
 // MOVE_DOWN: `Features` and `PreinstallState` now live in
 // `bun_install_types::resolver_hooks` so `Behavior::is_enabled` (also moved
 // down) can name a single shared `Features` without a `bun_install` upward

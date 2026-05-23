@@ -72,14 +72,14 @@ async function runMinifyTest(depth: number, withTargets: boolean) {
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
-test("deeply nested `&` selectors error out instead of expanding without bound when compiling nesting", async () => {
+test.concurrent("deeply nested `&` selectors error out instead of expanding without bound when compiling nesting", async () => {
   const { stdout, stderr, signalCode } = await runMinifyTest(24, true);
   expect(stderr).toBe("");
   expect(signalCode).toBeNull(); // not killed by the kill switch
   expect(stdout).toContain("ERR Maximum nesting expansion exceeded");
 });
 
-test("deeply nested `&` selectors still minify when nesting is preserved (no targets)", async () => {
+test.concurrent("deeply nested `&` selectors still minify when nesting is preserved (no targets)", async () => {
   const { stdout, stderr, signalCode } = await runMinifyTest(24, false);
   expect(stderr).toBe("");
   expect(signalCode).toBeNull();
@@ -87,7 +87,7 @@ test("deeply nested `&` selectors still minify when nesting is preserved (no tar
   expect(stdout).toStartWith("OK ");
 });
 
-test("ordinary nested CSS still compiles for older targets", async () => {
+test.concurrent("ordinary nested CSS still compiles for older targets", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -114,7 +114,7 @@ test("ordinary nested CSS still compiles for older targets", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("bun build does not hang on deeply nested `&` selectors with the default browser target", async () => {
+test.concurrent("bun build does not hang on deeply nested `&` selectors with the default browser target", async () => {
   using dir = tempDir("css-nested-selector-expansion", {
     "explode.css": explodingNestedCss(24),
   });

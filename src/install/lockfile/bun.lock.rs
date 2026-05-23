@@ -1554,25 +1554,21 @@ pub fn parse_into_binary_lockfile(
             };
             // Store the exact bytes the hash is computed from so trust lookups
             // can confirm the name instead of relying on the truncated hash
-            // alone. JSON-parsed strings are always UTF-8; keep the UTF-16
-            // fallback from `as_string_hash_utf8` for the unreachable branch
-            // (transcode so the stored name and the hash agree).
-            if s.is_utf8() {
-                let name = s.slice8();
-                let name_hash: TruncatedPackageNameHash =
-                    StringBuilder::string_hash(name) as TruncatedPackageNameHash;
-                trusted_dependencies.insert(name_hash, Box::from(name));
+            // alone. JSON-parsed strings are always UTF-8; the UTF-16 arm is
+            // kept for the unreachable branch (transcode so the stored name
+            // and the hash agree).
+            let name: Box<[u8]> = if s.is_utf8() {
+                Box::from(s.slice8())
             } else {
                 debug_assert!(
                     false,
                     "trustedDependencies: UTF-16 EString from JSON parser"
                 );
-                let bump = bun_alloc::Arena::new();
-                let name = s.string(&bump)?;
-                let name_hash: TruncatedPackageNameHash =
-                    StringBuilder::string_hash(name) as TruncatedPackageNameHash;
-                trusted_dependencies.insert(name_hash, Box::from(name));
-            }
+                strings::to_utf8_alloc(s.slice16()).into_boxed_slice()
+            };
+            let name_hash: TruncatedPackageNameHash =
+                StringBuilder::string_hash(&name) as TruncatedPackageNameHash;
+            trusted_dependencies.insert(name_hash, name);
         }
 
         lockfile.trusted_dependencies = Some(trusted_dependencies);

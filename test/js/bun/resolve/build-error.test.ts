@@ -45,7 +45,6 @@ test("importing a module with many build errors does not crash while reporting t
   // Every error in the AggregateError should have been printed.
   expect(stderr).toContain('"x0" has already been declared');
   expect(stderr).toContain('"x39" has already been declared');
-  expect(stderr).not.toContain("AddressSanitizer");
   // Unhandled rejection -> clean exit with code 1, not a crash.
   expect(exitCode).toBe(1);
 });

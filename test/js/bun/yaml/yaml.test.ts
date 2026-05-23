@@ -1152,6 +1152,73 @@ folded: >
         });
       });
 
+      describe("anchor/tag on empty node ([161] e-scalar)", () => {
+        test("anchor on empty mapping value", () => {
+          // [197] s-l+flow-in-block: content on a later line must be at
+          // indent > n; `b` at indent 0 is the next key, not content for `&x`.
+          const r = YAML.parse("a: &x\nb: *x\n");
+          expect(r).toEqual({ a: null, b: null });
+          expect(r.a).toBe(r.b);
+        });
+
+        test("tag on empty mapping value", () => {
+          expect(YAML.parse("a: !!str\nb: y\n")).toEqual({ a: "", b: "y" });
+          expect(YAML.parse("a: &x !!str\nb: *x\n")).toEqual({ a: "", b: "" });
+        });
+
+        test("anchor on empty sequence item", () => {
+          const r = YAML.parse("- &a\n- *a\n");
+          expect(r).toEqual([null, null]);
+          expect(r[0]).toBe(r[1]);
+        });
+
+        test("content at indent > n still attaches", () => {
+          // s-separate-lines(n+1): content on later line at indent > n.
+          expect(YAML.parse("a: &x\n  b\n")).toEqual({ a: "b" });
+          expect(YAML.parse("a: &x\n b\n")).toEqual({ a: "b" });
+          expect(YAML.parse("a:\n &x\n b\n")).toEqual({ a: "b" });
+        });
+
+        test("[200]/[201] block sequence may sit at indent n", () => {
+          // BLOCK-OUT seq-space(n) = l+block-sequence(n-1).
+          expect(YAML.parse("a: !!seq\n- x\n- y\n")).toEqual({ a: ["x", "y"] });
+          expect(YAML.parse("a:\n &m\n- x\n")).toEqual({ a: ["x"] });
+        });
+
+        test("second property at parent indent terminates first", () => {
+          // [197] property at indent ≤ n is the parent's, not value content.
+          expect(() => YAML.parse("key: &x\n!!map\n  a: b\n")).toThrow(
+            "Unexpected token",
+          );
+        });
+
+        test("second anchor at indent > n is the [200] collection's first key", () => {
+          const r = YAML.parse("top: &node\n  &k key: one\n");
+          expect(r).toEqual({ top: { key: "one" } });
+        });
+
+        test("anchor on empty `?` key", () => {
+          expect(YAML.parse("? &d\n: v\n")).toEqual({ null: "v" });
+          expect(YAML.parse("- ? &d\n- ? &e\n  : &a\n")).toEqual([
+            { null: null },
+            { null: null },
+          ]);
+        });
+
+        test.todo("anchor as implicit-key e-node, alias in later entry", () => {
+          // [154]/[159] `&a` is the key's ns-flow-yaml-node = props + e-scalar.
+          // Currently the anchor is applied to the mapping (not the key) at
+          // parse_node's exit, AFTER subsequent entries are parsed, so `*a`
+          // is unresolved at parse time. Pre-existing.
+          expect(YAML.parse("&a : x\nb: *a\n")).toEqual({ null: "x", b: null });
+        });
+
+        test("at top level, content at indent 0 is still content (n = -1)", () => {
+          expect(YAML.parse("&x\nb\n")).toEqual("b");
+          expect(YAML.parse("&x\n")).toEqual(null);
+        });
+      });
+
       // Pre-existing flow-context over-accepts surfaced by adversarial review.
       // Each `test.todo` asserts the spec result (per ≥3/4 reference parsers);
       // the comment documents what Bun currently produces.

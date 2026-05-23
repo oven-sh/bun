@@ -950,9 +950,15 @@ var require_wasi = __commonJS({
             let real;
             try {
               real = fs.realpathSync(probe);
-            } catch (err) {
+            } catch {
+              // Walk up on any resolution failure (ENOENT/ENOTDIR for
+              // not-yet-created components, but also ELOOP etc.) so `real` is
+              // always a *resolved* ancestor plus an unresolved suffix —
+              // comparing an unresolved path against the resolved preopen
+              // base would spuriously fail whenever the preopen itself
+              // traverses a symlink (e.g. macOS /tmp -> /private/tmp).
               const parent = path.dirname(probe);
-              if ((err?.code === "ENOENT" || err?.code === "ENOTDIR") && parent !== probe) {
+              if (parent !== probe) {
                 suffix = path.sep + path.basename(probe) + suffix;
                 probe = parent;
                 continue;

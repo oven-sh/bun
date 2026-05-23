@@ -26,6 +26,10 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 }
             };
 
+            if log.has_errors() {
+                return Err(global.throw_value(log.to_js(global, "Failed to parse toml")?));
+            }
+
             // for now...
             let buffer_writer = js_printer::BufferWriter::init();
             let mut writer = js_printer::BufferPrinter::init(buffer_writer);

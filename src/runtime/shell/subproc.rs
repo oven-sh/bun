@@ -539,7 +539,6 @@ impl ShellSubprocess {
         unsafe { (*this).proc().set_exit_handler_default() };
         #[cfg(windows)]
         {
-            let _ = this;
             return;
         }
         #[cfg(not(windows))]

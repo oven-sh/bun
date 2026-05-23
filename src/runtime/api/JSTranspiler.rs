@@ -1693,11 +1693,11 @@ impl JSTranspiler {
 
         let mut capture = SourceMapCapture::new(is_bun_target);
 
-        // SAFETY: see `transpiler_mut` — `print`/`print_with_source_map` do
-        // not re-enter JS. Same per-call `arena` that `set_arena(&arena)` /
-        // `parse()` used.
         let print_result = if want_source_map {
             let handler = JSPrinter::SourceMapHandler::for_(&mut capture);
+            // SAFETY: see `transpiler_mut` — `print_with_source_map` does not
+            // re-enter JS. Same per-call `arena` that `set_arena(&arena)` /
+            // `parse()` used.
             unsafe { self.transpiler_mut() }.print_with_source_map(
                 &arena,
                 parse_result,
@@ -1707,6 +1707,8 @@ impl JSTranspiler {
                 None,
             )
         } else {
+            // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
+            // Same per-call `arena` that `set_arena(&arena)` / `parse()` used.
             unsafe { self.transpiler_mut() }.print(
                 &arena,
                 parse_result,

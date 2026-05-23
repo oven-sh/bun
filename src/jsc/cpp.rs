@@ -40,8 +40,4 @@
     clippy::too_many_arguments
 )]
 
-// Generated `cpp.rs` may spell the string types as `bun_core::…` or
-// `bun_core::…` depending on which side of the `bun_string → bun_core` merge
-// the codegen ran on; alias here so both resolve.
-
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/cpp.rs"));

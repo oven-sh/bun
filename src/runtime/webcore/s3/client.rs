@@ -1130,7 +1130,7 @@ pub fn readable_stream(
     request_payer: bool,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    pub(crate) struct S3DownloadStreamWrapper {
+    struct S3DownloadStreamWrapper {
         pub readable_stream_ref: ReadableStreamStrong,
         pub path: Box<[u8]>,
         pub global: GlobalRef, // JSC_BORROW
@@ -1141,11 +1141,11 @@ pub fn readable_stream(
     }
 
     impl S3DownloadStreamWrapper {
-        pub(crate) fn new(init: Self) -> *mut Self {
+        fn new(init: Self) -> *mut Self {
             bun_core::heap::into_raw(Box::new(init))
         }
 
-        pub(crate) fn callback(
+        fn callback(
             chunk: &MutableString,
             has_more: bool,
             request_err: Option<Error::S3Error>,

@@ -653,14 +653,14 @@ impl ShellSubprocess {
         // Windows *uv.Pipe in an unbound temporary inside the struct initializer.
         // `mut` only for the Windows-only `.deinit()` rollback below.
         #[cfg_attr(not(windows), allow(unused_mut))]
-        let stdin_opt = match stdio_guard[0].as_spawn_option(0) {
+        let mut stdin_opt = match stdio_guard[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
                 return Err(ShellErr::Custom(Box::<[u8]>::from(e.to_str())));
             }
         };
         #[cfg_attr(not(windows), allow(unused_mut))]
-        let stdout_opt = match stdio_guard[1].as_spawn_option(1) {
+        let mut stdout_opt = match stdio_guard[1].as_spawn_option(1) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => {
                 #[cfg(windows)]

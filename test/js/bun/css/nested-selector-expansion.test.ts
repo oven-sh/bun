@@ -75,19 +75,21 @@ async function runMinifyTest(depth: number, withTargets: boolean) {
 test.concurrent(
   "deeply nested `&` selectors error out instead of expanding without bound when compiling nesting",
   async () => {
-    const { stdout, stderr, signalCode } = await runMinifyTest(24, true);
+    const { stdout, stderr, signalCode, exitCode } = await runMinifyTest(24, true);
     expect(stderr).toBe("");
     expect(signalCode).toBeNull(); // not killed by the kill switch
     expect(stdout).toContain("ERR Maximum nesting expansion exceeded");
+    expect(exitCode).toBe(0);
   },
 );
 
 test.concurrent("deeply nested `&` selectors still minify when nesting is preserved (no targets)", async () => {
-  const { stdout, stderr, signalCode } = await runMinifyTest(24, false);
+  const { stdout, stderr, signalCode, exitCode } = await runMinifyTest(24, false);
   expect(stderr).toBe("");
   expect(signalCode).toBeNull();
   // Without targets the nesting is preserved, so the output stays small.
   expect(stdout).toStartWith("OK ");
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("ordinary nested CSS still compiles for older targets", async () => {

@@ -688,6 +688,11 @@ describe("pathological inline HTML inputs", () => {
           ["unterminated declarations", fill(100000, "x <!DOCTYPE y\\n"), out => out.includes("&lt;!DOCTYPE y")],
           ["unterminated CDATA sections", fill(100000, "x <![CDATA[ y\\n"), out => out.includes("&lt;![CDATA[ y")],
           ["bracket runs with unterminated comments", fill(20000, "[[[[[[[ foo <!-- this is a --\\n"), out => out.includes("[[[[[[[") && out.includes("&lt;!--")],
+          ["inline links between unterminated comments", fill(20000, "[a](b) <!-- x "), out => out.includes('<a href="b">') && out.includes("&lt;!-- x")],
+          ["unterminated comments inside link labels", fill(20000, "[<!-- x](u) <!-- y "), out => out.includes('<a href="u">') && out.includes("&lt;!-- y")],
+          ["images between unterminated comments", fill(20000, "![a](b) <!-- x "), out => out.includes("<img") && out.includes("&lt;!-- x")],
+          ["reference links between unterminated comments", "[r]: /u\\n\\n" + fill(20000, "[a][r] <!-- x "), out => out.includes('<a href="/u">') && out.includes("&lt;!-- x")],
+          ["one link with a comment-flooded label", "[" + fill(40000, "<!-- x ") + "](u)", out => out.includes('<a href="u">') && out.includes("&lt;!-- x")],
         ];
         for (const [name, input, check] of cases) {
           const out = Bun.markdown.html(input);
@@ -731,5 +736,17 @@ describe("pathological inline HTML inputs", () => {
 
   test("unterminated comment openers inside link labels keep the surrounding text literal", () => {
     expect(Markdown.html("[t <!-- u](v) <!-- w --> q\n")).toBe("<p>[t <!-- u](v) <!-- w --> q</p>\n");
+  });
+
+  test("links and images interleaved with unterminated comment openers render unchanged", () => {
+    expect(Markdown.html("[a](b) <!-- x [a](b)\n")).toBe('<p><a href="b">a</a> &lt;!-- x <a href="b">a</a></p>\n');
+    expect(Markdown.html("[<!-- x](u) <!-- y\n")).toBe('<p><a href="u">&lt;!-- x</a> &lt;!-- y</p>\n');
+    expect(Markdown.html("![<!-- x](u) <!-- y\n")).toBe('<p><img src="u" alt="&lt;!-- x" /> &lt;!-- y</p>\n');
+    expect(Markdown.html("[r]: /u\n\n[a][r] <!-- x [a][r]\n")).toBe(
+      '<p><a href="/u">a</a> &lt;!-- x <a href="/u">a</a></p>\n',
+    );
+    expect(Markdown.html("[<!-- x <!-- x <!-- x ](u)\n")).toBe(
+      '<p><a href="u">&lt;!-- x &lt;!-- x &lt;!-- x </a></p>\n',
+    );
   });
 });

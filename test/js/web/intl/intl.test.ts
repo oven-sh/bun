@@ -223,6 +223,21 @@ describe("URL IDNA", () => {
   });
 });
 
+describe("Intl.getCanonicalLocales", () => {
+  test("deprecated BCP-47 tags map to modern equivalents", () => {
+    // ICU ships .res bundles under the deprecated tag names; canonicalization
+    // is what makes them reachable.
+    expect({
+      in: Intl.getCanonicalLocales("in")[0],
+      iw: Intl.getCanonicalLocales("iw")[0],
+      mo: Intl.getCanonicalLocales("mo")[0],
+      ji: Intl.getCanonicalLocales("ji")[0],
+    }).toEqual({ in: "id", iw: "he", mo: "ro", ji: "yi" });
+    // sh/tl/no are kept as-is (ICU ships bundles under both names)
+    expect(Intl.getCanonicalLocales(["sh", "tl", "no"])).toEqual(["sh", "tl", "no"]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Exhaustive sweep — load EVERY compressed item.
 //

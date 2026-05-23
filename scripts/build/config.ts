@@ -273,6 +273,8 @@ export interface Config {
   nodejsAbiVersion: string;
   /** WebKit commit. Default in versions.ts; override to test a WebKit branch. */
   webkitVersion: string;
+  /** Permit `webkitVersion` to be an `autobuild-preview-*` PR tag. */
+  allowPreviewWebkit: boolean;
 }
 
 /**
@@ -318,6 +320,7 @@ export interface PartialConfig {
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
   webkitVersion?: string;
+  allowPreviewWebkit?: boolean;
 }
 
 /**
@@ -821,6 +824,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
+  const allowPreviewWebkit = partial.allowPreviewWebkit ?? false;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
@@ -917,6 +921,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     nodejsAbiVersion,
     canaryRevision,
     webkitVersion,
+    allowPreviewWebkit,
   };
 }
 

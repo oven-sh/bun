@@ -64,7 +64,10 @@ public:
         if (dlen == ZSTD_CONTENTSIZE_UNKNOWN || dlen == ZSTD_CONTENTSIZE_ERROR)
             return p;
 
-        void* buf = MimallocMalloc::tryAlignedMalloc(static_cast<size_t>(dlen), 16);
+        // tryAlignedMalloc asserts size is a multiple of alignment in debug
+        // builds; ICU item sizes are only 4-aligned, so round up.
+        size_t alloc = WTF::roundUpToMultipleOf<16>(static_cast<size_t>(dlen));
+        void* buf = MimallocMalloc::tryAlignedMalloc(alloc, 16);
         if (!buf)
             return p;
         size_t r = m_ddict

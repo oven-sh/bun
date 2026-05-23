@@ -47,6 +47,7 @@ export const WEBKIT_VERSION = "autobuild-preview-pr-237-72c07745";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
+import { BuildError } from "../error.ts";
 import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
@@ -79,6 +80,13 @@ function prebuiltUrl(cfg: Config): string {
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
+  if (version.startsWith("autobuild-preview-") && !cfg.allowPreviewWebkit) {
+    throw new BuildError(
+      `WEBKIT_VERSION is pinned to a PR preview tag (${version}). ` +
+        `Preview prebuilts are deleted when the PR closes. ` +
+        `Pass --allow-preview-webkit=on to build anyway, or revert to a stable hash before merging.`
+    );
+  }
   const tag = version.startsWith("autobuild-") ? version : `autobuild-${version}`;
   return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
 }
@@ -88,7 +96,9 @@ function prebuiltUrl(cfg: Config): string {
  * doesn't reuse a wrong-ABI extraction.
  */
 function prebuiltDestDir(cfg: Config): string {
-  const version16 = cfg.webkitVersion.slice(0, 16);
+  // Strip the autobuild- prefix (matches prebuiltUrl) so two different
+  // preview/tag pins don't collapse to the same "autobuild-previe" cache key.
+  const version16 = cfg.webkitVersion.replace(/^autobuild-/, "").slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
   // so include os+arch in the key — otherwise a FreeBSD/arm64 extraction
   // collides with a Linux/x64 one at the same WebKit version.

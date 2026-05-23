@@ -431,7 +431,6 @@ qu
 qu-BO
 qu-EC
 raj
-res-index
 rm
 rn
 ro

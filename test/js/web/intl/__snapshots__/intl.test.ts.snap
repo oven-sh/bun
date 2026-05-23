@@ -1,0 +1,578 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Intl.DisplayNames region:'US' across locales 1`] = `
+{
+  "ar": "الولايات المتحدة",
+  "de": "Vereinigte Staaten",
+  "en": "United States",
+  "es-419": "Estados Unidos",
+  "fr": "États-Unis",
+  "ja": "アメリカ合衆国",
+  "ko": "미국",
+  "pt-PT": "Estados Unidos",
+  "ru": "Соединенные Штаты",
+  "th": "สหรัฐอเมริกา",
+  "zh": "美国",
+  "zh-Hant": "美國",
+}
+`;
+
+exports[`Intl.DisplayNames language:'en' across locales 1`] = `
+{
+  "ar": "الإنجليزية",
+  "de": "Englisch",
+  "en": "English",
+  "es-419": "Inglés",
+  "fr": "anglais",
+  "ja": "英語",
+  "ko": "영어",
+  "pt-PT": "Inglês",
+  "ru": "Английский",
+  "th": "อังกฤษ",
+  "zh": "英语",
+  "zh-Hant": "英文",
+}
+`;
+
+exports[`Intl.DisplayNames currency:'USD' across locales 1`] = `
+{
+  "ar": "دولار أمريكي",
+  "de": "US-Dollar",
+  "en": "US Dollar",
+  "es-419": "dólar estadounidense",
+  "fr": "dollar des États-Unis",
+  "ja": "米ドル",
+  "ko": "미국 달러",
+  "pt-PT": "dólar dos Estados Unidos",
+  "ru": "доллар США",
+  "th": "ดอลลาร์สหรัฐ",
+  "zh": "美元",
+  "zh-Hant": "美元",
+}
+`;
+
+exports[`Intl.DisplayNames script:'Hant' across locales 1`] = `
+{
+  "ar": "التقليدية",
+  "de": "Traditionell",
+  "en": "Traditional",
+  "es-419": "tradicional",
+  "fr": "traditionnel",
+  "ja": "繁体字",
+  "ko": "번체",
+  "pt-PT": "tradicional",
+  "ru": "Традиционная",
+  "th": "ตัวเต็ม",
+  "zh": "繁体",
+  "zh-Hant": "繁體",
+}
+`;
+
+exports[`Intl.DisplayNames a few more region codes 1`] = `
+{
+  "419": {
+    "ar": "أمريكا اللاتينية",
+    "de": "Lateinamerika",
+    "en": "Latin America",
+    "es-419": "Latinoamérica",
+    "fr": "Amérique latine",
+    "ja": "ラテンアメリカ",
+    "ko": "라틴 아메리카",
+    "pt-PT": "América Latina",
+    "ru": "Латинская Америка",
+    "th": "ละตินอเมริกา",
+    "zh": "拉丁美洲",
+    "zh-Hant": "拉丁美洲",
+  },
+  "BR": {
+    "ar": "البرازيل",
+    "de": "Brasilien",
+    "en": "Brazil",
+    "es-419": "Brasil",
+    "fr": "Brésil",
+    "ja": "ブラジル",
+    "ko": "브라질",
+    "pt-PT": "Brasil",
+    "ru": "Бразилия",
+    "th": "บราซิล",
+    "zh": "巴西",
+    "zh-Hant": "巴西",
+  },
+  "DE": {
+    "ar": "ألمانيا",
+    "de": "Deutschland",
+    "en": "Germany",
+    "es-419": "Alemania",
+    "fr": "Allemagne",
+    "ja": "ドイツ",
+    "ko": "독일",
+    "pt-PT": "Alemanha",
+    "ru": "Германия",
+    "th": "เยอรมนี",
+    "zh": "德国",
+    "zh-Hant": "德國",
+  },
+  "JP": {
+    "ar": "اليابان",
+    "de": "Japan",
+    "en": "Japan",
+    "es-419": "Japón",
+    "fr": "Japon",
+    "ja": "日本",
+    "ko": "일본",
+    "pt-PT": "Japão",
+    "ru": "Япония",
+    "th": "ญี่ปุ่น",
+    "zh": "日本",
+    "zh-Hant": "日本",
+  },
+}
+`;
+
+exports[`Intl.NumberFormat default grouping 1`] = `
+{
+  "ar": "١٬٢٣٤٬٥٦٧٫٨٩",
+  "de": "1.234.567,89",
+  "en": "1,234,567.89",
+  "es-419": "1,234,567.89",
+  "fr": "1 234 567,89",
+  "ja": "1,234,567.89",
+  "ko": "1,234,567.89",
+  "pt-PT": "1 234 567,89",
+  "ru": "1 234 567,89",
+  "th": "1,234,567.89",
+  "zh": "1,234,567.89",
+  "zh-Hant": "1,234,567.89",
+}
+`;
+
+exports[`Intl.NumberFormat currency symbol 1`] = `
+{
+  "ar": "‏١٬٢٣٤٫٥٦ €",
+  "de": "1.234,56 €",
+  "en": "€1,234.56",
+  "es-419": "EUR 1,234.56",
+  "fr": "1 234,56 €",
+  "ja": "€1,234.56",
+  "ko": "€1,234.56",
+  "pt-PT": "1234,56 €",
+  "ru": "1 234,56 €",
+  "th": "€1,234.56",
+  "zh": "€1,234.56",
+  "zh-Hant": "€1,234.56",
+}
+`;
+
+exports[`Intl.NumberFormat currencyDisplay:'name' (curr/<loc>.res) 1`] = `
+{
+  "ar": "٢٫٠٠ دولار أمريكي",
+  "de": "2,00 US-Dollar",
+  "en": "2.00 US dollars",
+  "es-419": "2.00 dólares estadounidenses",
+  "fr": "2,00 dollars des États-Unis",
+  "ja": "2.00米ドル",
+  "ko": "2.00 미국 달러",
+  "pt-PT": "2,00 dólares dos Estados Unidos",
+  "ru": "2,00 доллара США",
+  "th": "2.00 ดอลลาร์สหรัฐ",
+  "zh": "2.00美元",
+  "zh-Hant": "2.00 美元",
+}
+`;
+
+exports[`Intl.NumberFormat style:'unit' (unit/<loc>.res; ru is the largest item) 1`] = `
+{
+  "celsius": {
+    "ar": "٥ درجة مئوية",
+    "de": "5 Grad Celsius",
+    "en": "5 degrees Celsius",
+    "es-419": "5 grados Celsius",
+    "fr": "5 degrés Celsius",
+    "ja": "摂氏 5 度",
+    "ko": "섭씨 5도",
+    "pt-PT": "5 graus Celsius",
+    "ru": "5 градусов Цельсия",
+    "th": "5 องศาเซลเซียส",
+    "zh": "5摄氏度",
+    "zh-Hant": "攝氏 5 度",
+  },
+  "kilometer": {
+    "ar": "٥ كيلومترات",
+    "de": "5 Kilometer",
+    "en": "5 kilometers",
+    "es-419": "5 kilómetros",
+    "fr": "5 kilomètres",
+    "ja": "5 キロメートル",
+    "ko": "5킬로미터",
+    "pt-PT": "5 quilómetros",
+    "ru": "5 километров",
+    "th": "5 กิโลเมตร",
+    "zh": "5公里",
+    "zh-Hant": "5 公里",
+  },
+  "kilometer-per-hour": {
+    "ar": "٥ كيلومتر في الساعة",
+    "de": "5 Kilometer pro Stunde",
+    "en": "5 kilometers per hour",
+    "es-419": "5 kilómetros por hora",
+    "fr": "5 kilomètres par heure",
+    "ja": "時速 5 キロメートル",
+    "ko": "시속 5킬로미터",
+    "pt-PT": "5 quilómetros por hora",
+    "ru": "5 километров в час",
+    "th": "5 กิโลเมตรต่อชั่วโมง",
+    "zh": "每小时5公里",
+    "zh-Hant": "每小時 5 公里",
+  },
+}
+`;
+
+exports[`Intl.DateTimeFormat default 1`] = `
+{
+  "ar": "١‏/١‏/١٩٧٠",
+  "de": "1.1.1970",
+  "en": "1/1/1970",
+  "es-419": "1/1/1970",
+  "fr": "01/01/1970",
+  "ja": "1970/1/1",
+  "ko": "1970. 1. 1.",
+  "pt-PT": "01/01/1970",
+  "ru": "01.01.1970",
+  "th": "1/1/2513",
+  "zh": "1970/1/1",
+  "zh-Hant": "1970/1/1",
+}
+`;
+
+exports[`Intl.DateTimeFormat timeZoneName:'long' (zone/<loc>.res) 1`] = `
+{
+  "America/Los_Angeles": {
+    "ar": "توقيت المحيط الهادي الرسمي",
+    "de": "Nordamerikanische Westküsten-Normalzeit",
+    "en": "Pacific Standard Time",
+    "es-419": "hora estándar del Pacífico",
+    "fr": "heure normale du Pacifique nord-américain",
+    "ja": "アメリカ太平洋標準時",
+    "ko": "미 태평양 표준시",
+    "pt-PT": "Hora padrão do Pacífico norte-americana",
+    "ru": "Тихоокеанское стандартное время",
+    "th": "เวลามาตรฐานแปซิฟิกในอเมริกาเหนือ",
+    "zh": "北美太平洋标准时间",
+    "zh-Hant": "太平洋標準時間",
+  },
+  "Asia/Tokyo": {
+    "ar": "توقيت اليابان الرسمي",
+    "de": "Japanische Normalzeit",
+    "en": "Japan Standard Time",
+    "es-419": "hora estándar de Japón",
+    "fr": "heure normale du Japon",
+    "ja": "日本標準時",
+    "ko": "일본 표준시",
+    "pt-PT": "Hora padrão do Japão",
+    "ru": "Япония, стандартное время",
+    "th": "เวลามาตรฐานญี่ปุ่น",
+    "zh": "日本标准时间",
+    "zh-Hant": "日本標準時間",
+  },
+  "Europe/Berlin": {
+    "ar": "توقيت وسط أوروبا الرسمي",
+    "de": "Mitteleuropäische Normalzeit",
+    "en": "Central European Standard Time",
+    "es-419": "hora estándar de Europa central",
+    "fr": "heure normale d’Europe centrale",
+    "ja": "中央ヨーロッパ標準時",
+    "ko": "중부유럽 표준시",
+    "pt-PT": "Hora padrão da Europa Central",
+    "ru": "Центральная Европа, стандартное время",
+    "th": "เวลามาตรฐานยุโรปกลาง",
+    "zh": "中欧标准时间",
+    "zh-Hant": "中歐標準時間",
+  },
+}
+`;
+
+exports[`Intl.Collator sort order across locales 1`] = `
+{
+  "ar": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "de": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "en": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "es-419": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "fr": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "ja": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "ko": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "pt-PT": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "ru": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "th": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "zh": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+  "zh-Hant": [
+    "a",
+    "A",
+    "ä",
+    "ö",
+    "z",
+    "Z",
+  ],
+}
+`;
+
+exports[`Intl.Collator zh pinyin (coll/zh.res, 713 KB raw) 1`] = `
+[
+  "阿",
+  "波",
+  "次",
+]
+`;
+
+exports[`Intl.Collator ko 1`] = `
+[
+  "가",
+  "나",
+  "하",
+]
+`;
+
+exports[`Intl.Collator de phonebook vs standard 1`] = `
+{
+  "phonebook": [
+    "öf",
+    "of",
+  ],
+  "standard": [
+    "of",
+    "öf",
+  ],
+}
+`;
+
+exports[`Intl.Segmenter grapheme — emoji ZWJ sequence 1`] = `
+[
+  "👨‍👩‍👧‍👦",
+  "a",
+  "🇯🇵",
+]
+`;
+
+exports[`Intl.Segmenter word — en/zh/ja/th 1`] = `
+{
+  "en": [
+    "hello",
+    " ",
+    "world",
+  ],
+  "ja": [
+    "今日",
+    "は",
+    "いい",
+    "天気",
+  ],
+  "th": [
+    "สวัสดี",
+    "ครับ",
+  ],
+  "zh": [
+    "中文",
+    "分词",
+    "测试",
+  ],
+}
+`;
+
+exports[`Intl.PluralRules select across locales 1`] = `
+{
+  "ar": {
+    "0": "zero",
+    "1": "one",
+    "11": "many",
+    "2": "two",
+    "21": "many",
+    "3": "few",
+    "5": "few",
+  },
+  "en": {
+    "0": "other",
+    "1": "one",
+    "11": "other",
+    "2": "other",
+    "21": "other",
+    "3": "other",
+    "5": "other",
+  },
+  "pl": {
+    "0": "many",
+    "1": "one",
+    "11": "many",
+    "2": "few",
+    "21": "many",
+    "3": "few",
+    "5": "many",
+  },
+  "ru": {
+    "0": "many",
+    "1": "one",
+    "11": "many",
+    "2": "few",
+    "21": "one",
+    "3": "few",
+    "5": "many",
+  },
+}
+`;
+
+exports[`Intl.ListFormat conjunction across locales 1`] = `
+{
+  "ar": "a وb وc",
+  "de": "a, b und c",
+  "en": "a, b, and c",
+  "es-419": "a, b y c",
+  "fr": "a, b et c",
+  "ja": "a、b、c",
+  "ko": "a, b 및 c",
+  "pt-PT": "a, b e c",
+  "ru": "a, b и c",
+  "th": "a b และc",
+  "zh": "a、b和c",
+  "zh-Hant": "a、b和c",
+}
+`;
+
+exports[`Intl.RelativeTimeFormat format across locales 1`] = `
+{
+  "ar": [
+    "قبل يوم واحد",
+    "خلال يومين",
+    "قبل ٣ أشهر",
+  ],
+  "de": [
+    "vor 1 Tag",
+    "in 2 Tagen",
+    "vor 3 Monaten",
+  ],
+  "en": [
+    "1 day ago",
+    "in 2 days",
+    "3 months ago",
+  ],
+  "es-419": [
+    "hace 1 día",
+    "dentro de 2 días",
+    "hace 3 meses",
+  ],
+  "fr": [
+    "il y a 1 jour",
+    "dans 2 jours",
+    "il y a 3 mois",
+  ],
+  "ja": [
+    "1 日前",
+    "2 日後",
+    "3 か月前",
+  ],
+  "ko": [
+    "1일 전",
+    "2일 후",
+    "3개월 전",
+  ],
+  "pt-PT": [
+    "há 1 dia",
+    "dentro de 2 dias",
+    "há 3 meses",
+  ],
+  "ru": [
+    "1 день назад",
+    "через 2 дня",
+    "3 месяца назад",
+  ],
+  "th": [
+    "1 วันที่ผ่านมา",
+    "ในอีก 2 วัน",
+    "3 เดือนที่ผ่านมา",
+  ],
+  "zh": [
+    "1天前",
+    "2天后",
+    "3个月前",
+  ],
+  "zh-Hant": [
+    "1 天前",
+    "2 天後",
+    "3 個月前",
+  ],
+}
+`;

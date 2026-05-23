@@ -1052,7 +1052,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     };
                                 }
                             }
-                            _ => {}
+                            // "interface" turned out not to start an interface
+                            // declaration: the nested statement came back as an
+                            // expression statement ("export default interface = 2",
+                            // "export default interface => 1") or a labeled statement
+                            // ("export default interface: 0"). None of these can be a
+                            // default export value, so report a syntax error instead of
+                            // building an S.ExportDefault that the visit and print
+                            // passes don't support.
+                            _ => {
+                                let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+                                p.log().add_range_error_fmt(
+                                    Some(p.source),
+                                    r,
+                                    format_args!(
+                                        "Unexpected \"{}\"",
+                                        bstr::BStr::new(p.source.text_for_range(r))
+                                    ),
+                                );
+                                return Err(err!("SyntaxError"));
+                            }
                         }
 
                         p.create_default_name(default_loc).expect("unreachable")

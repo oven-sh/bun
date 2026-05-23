@@ -1708,6 +1708,10 @@ impl Log {
         self.msgs.clear();
         self.warnings = 0;
         self.errors = 0;
+        // Drop the per-source scan cache with the messages it was built for;
+        // its identity check is pointer-based, so don't let it outlive the
+        // logical reuse boundary.
+        self.line_column_tracker = None;
     }
 
     pub fn has_any(&self) -> bool {
@@ -1876,6 +1880,8 @@ impl Log {
         self.msgs.shrink_to_fit();
         // self.warnings = 0;
         // self.errors = 0;
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
     }
 }
 

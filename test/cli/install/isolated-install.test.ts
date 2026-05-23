@@ -1266,6 +1266,58 @@ test("runs lifecycle scripts correctly", async () => {
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
 
+test("--trust runs scripts and persists trustedDependencies to package.json and bun.lock", async () => {
+  // `--trust <pkg>` trusts the package through an update request. The task
+  // threads of the isolated installer record the trusted name while scripts
+  // are enqueued, and the name must end up in both package.json and the
+  // saved bun.lock once the install completes.
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-trust-cli",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--trust", "lifecycle-postinstall@1.0.0"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+
+  // The trusted package's postinstall ran inside the isolated store.
+  expect(await file(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt")).text()).toBe(
+    "postinstall!",
+  );
+
+  // The trusted name is written back to package.json...
+  expect(await file(packageJson).json()).toEqual({
+    name: "test-pkg-trust-cli",
+    dependencies: {
+      "no-deps": "1.0.0",
+      "lifecycle-postinstall": "1.0.0",
+    },
+    trustedDependencies: ["lifecycle-postinstall"],
+  });
+
+  // ...and persisted into the lockfile's trustedDependencies.
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  const trusted = lockfile.match(/"trustedDependencies":\s*\[([^\]]*)\]/);
+  expect(trusted).not.toBeNull();
+  expect(trusted![1]).toContain('"lifecycle-postinstall"');
+});
+
 // When an auto-installed peer dependency has its OWN peer deps, those
 // transitive peers get re-queued during peer processing. If all manifest
 // loads are synchronous (cached with valid max-age) AND the transitive peer's

@@ -869,8 +869,9 @@ impl ShellSubprocess {
         // `Writable::on_close` (drops the `Arc<FileSink>`) runs when the sink
         // finishes. `stdin` lives inside the Box-allocated `Subprocess` at a
         // stable address, so the self-referential raw pointer is sound for the
-        // life of the subprocess. Only reachable on Windows (POSIX
-        // `Writable::init` never returns `Pipe` for shell stdio).
+        // life of the subprocess. The inner `signal.set` is skipped for
+        // ReadableStream stdin (assign_to_stream already set the signal); only
+        // the Windows `Stdio::Pipe` arm reaches it.
         {
             // Derive `stdin_ptr` from the raw heap pointer (`subprocess`), not
             // the local `subproc: &mut` reborrow — the pointer is stored

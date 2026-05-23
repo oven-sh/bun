@@ -769,7 +769,7 @@ booga"
       // limit (10) must still match literally: neutralizing every `!` as its
       // own `{!}` group used to overflow the brace stack and turn the whole
       // word into "no matches found".
-      const bangRun = "!".repeat(11);
+      const bangRun = Buffer.alloc(11, "!").toString();
 
       TestBuilder.command`echo prefix${bangRun}*`
         .ensureTempDir()

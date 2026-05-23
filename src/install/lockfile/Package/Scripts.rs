@@ -153,7 +153,7 @@ impl Scripts {
                     first_script_index = i8::try_from(script_index).expect("int cast");
                 }
                 scripts[script_index as usize] =
-                    Some(Box::<[u8]>::from(self.preinstall.slice(lockfile_buf)));
+                    Some(Box::<[u8]>::from(self.postinstall.slice(lockfile_buf)));
                 counter += 1;
             }
             script_index += 1;

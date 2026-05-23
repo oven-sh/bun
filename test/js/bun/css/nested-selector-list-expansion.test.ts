@@ -105,4 +105,6 @@ test("bun build reports an error instead of exploding on deeply nested multi-sel
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(LIMIT_ERROR);
   expect(exitCode).toBe(1);
+  // The build must fail before emitting the (multi-megabyte) expanded output.
+  expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);
 });

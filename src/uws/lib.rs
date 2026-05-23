@@ -998,8 +998,7 @@ pub mod ssl_wrapper {
                             // SSL_renegotiate().
                             let renegotiation_allowed =
                                 self.renegotiation_count < MAX_RENEGOTIATIONS;
-                            self.renegotiation_count =
-                                self.renegotiation_count.saturating_add(1);
+                            self.renegotiation_count = self.renegotiation_count.saturating_add(1);
                             // SAFETY: ssl is still valid.
                             if !renegotiation_allowed
                                 || unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } == 0

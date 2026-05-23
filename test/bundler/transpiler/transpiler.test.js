@@ -936,6 +936,7 @@ class Test extends Bar {
       err('import * as Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
       err('import { Foo } from "./x";\nfunction Foo() {}', '"Foo" has already been declared');
       err('import { Foo } from "./x";\nvar Foo = 1;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nvar Foo = 1;\nvar Foo = 2;', '"Foo" has already been declared');
       err('import { Foo } from "./x";\nlet Foo = 1;', '"Foo" has already been declared');
       err('import { Foo } from "./x";\nenum Foo {}', '"Foo" has already been declared');
       err('import { Foo } from "./x";\nimport Foo = require("./y");', '"Foo" has already been declared');

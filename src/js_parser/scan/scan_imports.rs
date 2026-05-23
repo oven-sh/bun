@@ -344,9 +344,17 @@ impl<'a> ImportScanner<'a> {
                             // member, while generated symbols (e.g. JSX runtime imports)
                             // link the other way.
                             let symbol = &p.symbols[name_ref.inner_index() as usize];
-                            let link = symbol.link.get();
+                            let mut link = symbol.link.get();
                             if !link.is_valid() {
                                 continue;
+                            }
+                            // Follow the chain of replacements to the live symbol.
+                            loop {
+                                let next = p.symbols[link.inner_index() as usize].link.get();
+                                if !next.is_valid() {
+                                    break;
+                                }
+                                link = next;
                             }
                             // SAFETY: arena-owned slice valid for 'p.
                             let name = symbol.original_name.slice();

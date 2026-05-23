@@ -4015,7 +4015,7 @@ describe("using declarations in switch statements", () => {
     expect(out.match(/finally/g)).toHaveLength(2);
   });
 
-  it("reparses when combined with top-level using declarations", () => {
+  it("keeps case bindings const when combined with top-level using declarations", () => {
     const input = `
       using top = r();
       switch (a()) {
@@ -4027,6 +4027,11 @@ describe("using declarations in switch statements", () => {
     `;
     const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
     expect(() => reparse(out)).not.toThrow();
+    // The module-level wrap turns top-level `using` into `var`, but the bindings
+    // inside the switch cases can never be exported and must stay `const`.
+    expect(out).toMatch(/const x\s*=\s*__using/);
+    expect(out).toMatch(/const y\s*=\s*__using/);
+    expect(out).not.toMatch(/var [xy]\b/);
   });
 
   it("disposes at switch exit in reverse order and keeps bindings visible across cases", async () => {

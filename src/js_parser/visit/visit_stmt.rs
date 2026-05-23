@@ -2118,6 +2118,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Switch,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test_);
+        let mut lowered_using: Option<StmtList<'a>> = None;
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)
                 .expect("unreachable");
@@ -2137,38 +2138,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 cases[i].body = list_to_stmts(_stmts);
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
+
+            // All case bodies share the switch's block scope, so "using" declarations
+            // inside them cannot be lowered per case (the temp refs would collide and
+            // disposal would happen too early). Lower them by wrapping the entire
+            // switch statement in a single try/catch/finally instead. This runs while
+            // the switch's block scope is still current so the rewritten bindings stay
+            // `const`: unlike the module-level wrap, case bindings can never be exported.
+            let mut should_lower_using = false;
+            for i in 0..cases.len() {
+                if p.should_lower_using_declarations(cases[i].body.slice()) {
+                    should_lower_using = true;
+                    break;
+                }
+            }
+            if should_lower_using {
+                let mut ctx = crate::p::LowerUsingDeclarationsContext::init(p)?;
+                for i in 0..cases.len() {
+                    ctx.scan_stmts(p, cases[i].body.slice_mut());
+                }
+                let switch_stmt = p.arena.alloc_slice_copy(&[*stmt]);
+                // Only the switch statement itself gets wrapped, so there are no
+                // function declarations to hoist out of the generated try block.
+                lowered_using = Some(ctx.finalize(p, switch_stmt, false));
+            }
+
             p.pop_scope();
         }
         // TODO: duplicate case checker
 
-        // All case bodies share the switch's block scope, so "using" declarations
-        // inside them cannot be lowered per case (the temp refs would collide and
-        // disposal would happen too early). Lower them by wrapping the entire
-        // switch statement in a single try/catch/finally instead.
-        let mut should_lower_using = false;
-        for case in data.cases.slice() {
-            if p.should_lower_using_declarations(case.body.slice()) {
-                should_lower_using = true;
-                break;
-            }
-        }
-        if should_lower_using {
-            let mut ctx = crate::p::LowerUsingDeclarationsContext::init(p)?;
-            let cases = data.cases.slice_mut();
-            for i in 0..cases.len() {
-                ctx.scan_stmts(p, cases[i].body.slice_mut());
-            }
-            let switch_stmt = p.arena.alloc_slice_copy(&[*stmt]);
-            let lowered = ctx.finalize(
-                p,
-                switch_stmt,
-                p.will_wrap_module_in_try_catch_for_using && p.current_scope().parent.is_none(),
-            );
+        if let Some(lowered) = lowered_using {
             stmts.extend_from_slice(&lowered);
-            return Ok(());
+        } else {
+            stmts.push(*stmt);
         }
-
-        stmts.push(*stmt);
         Ok(())
     }
 

@@ -521,15 +521,12 @@ pub(crate) fn load(
                 lockfile.trusted_dependencies = Some(Default::default());
                 let td = lockfile.trusted_dependencies.as_mut().unwrap();
                 td.ensure_total_capacity(trusted_dependencies_hashes.len())?;
-
-                // SAFETY: capacity reserved above; keys are fully overwritten
-                // by `copy_from_slice` before `re_index` reads them; value type
-                // is `()` so its column needs no init.
-                unsafe {
-                    td.set_entries_len(trusted_dependencies_hashes.len());
+                // The binary lockfile only stores the truncated hashes, not the
+                // names they were computed from. The empty value is the
+                // "name unknown, hash-only match" sentinel.
+                for &hash in &trusted_dependencies_hashes {
+                    td.put_assume_capacity(hash, Box::<[u8]>::default());
                 }
-                td.keys_mut().copy_from_slice(&trusted_dependencies_hashes);
-                td.re_index()?;
             } else if next_num == HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG {
                 // trusted dependencies exists in package.json but is an empty array.
                 lockfile.trusted_dependencies = Some(Default::default());

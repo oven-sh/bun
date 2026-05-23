@@ -2118,6 +2118,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Switch,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test_);
+        let mut lowered_using = false;
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)
                 .expect("unreachable");
@@ -2132,16 +2133,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
                 let mut _stmts = stmts_to_list(p.arena, cases[i].body);
-                p.visit_stmts(&mut _stmts, StmtsKind::None)
+                p.visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
+
+            for i in 0..cases.len() {
+                if p.should_lower_using_declarations(cases[i].body.slice()) {
+                    lowered_using = true;
+                    break;
+                }
+            }
+            if lowered_using {
+                let mut ctx = crate::p::LowerUsingDeclarationsContext::init(p)?;
+                for i in 0..cases.len() {
+                    ctx.scan_stmts(p, cases[i].body.slice_mut());
+                }
+                let switch_stmt = p.arena.alloc_slice_copy(&[*stmt]);
+                stmts.extend_from_slice(&ctx.finalize(p, switch_stmt, false));
+            }
+
             p.pop_scope();
         }
         // TODO: duplicate case checker
 
-        stmts.push(*stmt);
+        if !lowered_using {
+            stmts.push(*stmt);
+        }
         Ok(())
     }
 

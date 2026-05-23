@@ -61,10 +61,7 @@ impl TestingAPIs {
     }
 
     pub fn apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let args = match Self::parse_apply_args(global, frame) {
-            Err(e) => return Ok(e),
-            Ok(a) => a,
-        };
+        let args = Self::parse_apply_args(global, frame)?;
 
         // TODO(port): lifetime — `PatchFile<'a>` borrows its source bytes, so the Zig
         // `ApplyArgs { patchfile, patchfile_txt }` pair is self-referential in Rust.
@@ -117,27 +114,19 @@ impl TestingAPIs {
         Ok(js)
     }
 
-    pub fn parse_apply_args(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> Result<ApplyArgs, JSValue> {
-        // TODO(port): Zig return type was `bun.jsc.Node.Maybe(ApplyArgs, jsc.JSValue)`; mapped to plain Result.
+    pub fn parse_apply_args(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<ApplyArgs> {
         let arguments_ = frame.arguments_old::<2>();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
         let mut arguments = ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
 
         let Some(patchfile_js) = arguments.next_eat() else {
-            let _ = global.throw(format_args!("apply: expected at least 1 argument, got 0"));
-            return Err(JSValue::UNDEFINED);
+            return Err(global.throw(format_args!("apply: expected at least 1 argument, got 0")));
         };
 
         let dir_fd = if let Some(dir_js) = arguments.next_eat() {
-            let Ok(bunstr) = dir_js.to_bun_string(global) else {
-                return Err(JSValue::UNDEFINED);
-            };
             // +1 ref from `to_bun_string`; release via `OwnedString` drop (Zig: `defer bunstr.deref()`).
-            let bunstr = OwnedString::new(bunstr);
+            let bunstr = OwnedString::new(dir_js.to_bun_string(global)?);
             let path = bunstr.to_owned_slice_z();
 
             match bun_sys::open(
@@ -147,8 +136,7 @@ impl TestingAPIs {
             ) {
                 Err(e) => {
                     let js_err = SysErrorJsc::to_js(&e.with_path(path.as_bytes()), global);
-                    let _ = global.throw_value(js_err);
-                    return Err(JSValue::UNDEFINED);
+                    return Err(global.throw_value(js_err));
                 }
                 Ok(fd) => fd,
             }
@@ -156,8 +144,14 @@ impl TestingAPIs {
             Fd::cwd()
         };
 
-        let Ok(patchfile_bunstr) = patchfile_js.to_bun_string(global) else {
-            return Err(JSValue::UNDEFINED);
+        let patchfile_bunstr = match patchfile_js.to_bun_string(global) {
+            Ok(bunstr) => bunstr,
+            Err(e) => {
+                if Fd::cwd() != dir_fd {
+                    dir_fd.close();
+                }
+                return Err(e);
+            }
         };
         // +1 ref from `to_bun_string`; release via `OwnedString` drop (Zig:
         // `defer patchfile_bunstr.deref()`). `to_utf8()` takes its own ref, so
@@ -177,8 +171,7 @@ impl TestingAPIs {
             }
 
             drop(patchfile_src);
-            let _ = global.throw_error(e.into(), "failed to parse patchfile");
-            return Err(JSValue::UNDEFINED);
+            return Err(global.throw_error(e.into(), "failed to parse patchfile"));
         }
 
         Ok(ApplyArgs {

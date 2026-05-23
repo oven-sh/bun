@@ -21,7 +21,7 @@ pub struct PageSelector {
 impl PageSelector {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if let Some(name) = self.name {
-            dest.write_str(name)?;
+            dest.serialize_identifier(name)?;
         }
 
         for pseudo in &self.pseudo_classes {
@@ -57,7 +57,7 @@ impl PageSelector {
         loop {
             // Whitespace is not allowed between pseudo classes
             let state = input.state();
-            let is_colon = matches!(*input.next_including_whitespace()?, css::Token::Colon);
+            let is_colon = matches!(input.next_including_whitespace(), Ok(css::Token::Colon));
             if is_colon {
                 let vv = PagePseudoClass::parse(input)?;
                 pseudo_classes.push(vv);
@@ -131,7 +131,7 @@ impl PageRule {
         if self.selectors.len() >= 1 {
             let firstsel = &self.selectors[0];
             // Space is only required if the first selector has a name.
-            if !dest.minify && firstsel.name.is_some() {
+            if firstsel.name.is_some() {
                 dest.write_char(b' ')?;
             }
             dest.write_comma_separated(&self.selectors, |d, sel| sel.to_css(d))?;

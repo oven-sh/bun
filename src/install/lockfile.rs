@@ -109,8 +109,11 @@ pub(crate) type StringBuffer = Vec<u8>;
 pub(crate) type ExternalStringBuffer = Vec<ExternalString>;
 
 pub(crate) type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContextU64>;
+/// Value is the exact byte string the key hash was computed from; lookups must
+/// compare it since truncated hashes can collide. An empty value is the legacy
+/// `bun.lockb` sentinel ("name unknown, hash-only match").
 pub(crate) type TrustedDependenciesSet =
-    ArrayHashMap<TruncatedPackageNameHash, (), ArrayIdentityContext>;
+    ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>, ArrayIdentityContext>;
 pub(crate) type VersionHashMap =
     ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContextU64>;
 pub(crate) type PatchedDependenciesMap =
@@ -3341,7 +3344,12 @@ impl Lockfile {
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
             let hash = SemverStringBuilder::string_hash(alias) as u32;
-            return trusted_dependencies.contains(&hash);
+            // Empty value = legacy bun.lockb sentinel (no name stored);
+            // match by hash alone.
+            return match trusted_dependencies.get(&hash) {
+                Some(name) => name.is_empty() || **name == *alias,
+                None => false,
+            };
         }
 
         // Only allow default trusted dependencies for npm packages. Check the

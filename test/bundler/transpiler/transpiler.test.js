@@ -176,6 +176,21 @@ describe("Bun.Transpiler", () => {
       exp("declare class Foo {}", "");
     });
 
+    it("does not crash when export default abstract is an expression followed by a class", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("export default abstract = 1\nclass Foo {}", "export default abstract = 1;\n\nclass Foo {\n}");
+      exp("export default abstract ?? 1\nclass Foo {}", "export default abstract ?? 1;\n\nclass Foo {\n}");
+      exp("export default abstract = 1", "export default abstract = 1;\n");
+
+      exp("export default abstract class Foo { abstract bar(): void }", "export default class Foo {\n}");
+      exp("export default abstract class {}", "export default class {\n}");
+
+      err("@dec export default abstract = 1", 'Expected "class" but found end of file');
+      err("@dec(() => 0) export default abstract = 1\nclass Foo {}", 'Expected "class" but found "class"');
+    });
+
     it("scope tracking stays balanced when a contextual keyword starts a larger expression", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -1134,6 +1149,65 @@ export default class {
 
     it("exported enum", () => {
       ts.expectPrinted_(input4, output4);
+    });
+
+    const input5 = `namespace ns {
+  export class ns {}
+}`;
+    const output5 = `var ns;
+((_ns) => {
+
+  class ns {
+  }
+  _ns.ns = ns;
+})(ns ||= {})`;
+
+    it("namespace argument renamed to avoid a member with the same name", () => {
+      ts.expectPrinted_(input5, output5);
+    });
+
+    const input6 = `namespace m2 {
+  class m2 {}
+  class _m2 {}
+}`;
+    const output6 = `var m2;
+((__m2) => {
+
+  class m2 {
+  }
+
+  class _m2 {
+  }
+})(m2 ||= {})`;
+
+    it("namespace argument does not collide with declarations in the namespace body", () => {
+      ts.expectPrinted_(input6, output6);
+    });
+
+    // The runtime transpiler does not run a renamer, so the generated closure
+    // argument must not shadow declarations inside the namespace body.
+    it("namespace closure argument does not redeclare members at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `namespace m2 {
+            class m2 {}
+            class _m2 {}
+            export const names = [m2.name, _m2.name];
+          }
+          console.log(JSON.stringify(m2.names));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["m2","_m2"]\n');
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -3968,5 +4042,117 @@ describe("export of a block-scoped function declaration", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('"encrypt" is not declared in this file');
     expect(exitCode).toBe(1);
+  });
+});
+
+describe("using declarations in switch statements", () => {
+  const reparse = out => new Bun.Transpiler({ loader: "js" }).transformSync(out);
+
+  it("lowers by wrapping the entire switch in a single try/finally", () => {
+    const input =
+      "switch (dom()) {\n case 0:\n using d23 = { [Se]() {} };\n default:\n using d24 = { [ose]() {} };\n }";
+
+    for (const minifyWhitespace of [false, true]) {
+      const out = new Bun.Transpiler({ loader: "jsx", target: "node", minifyWhitespace }).transformSync(input);
+      expect(() => reparse(out)).not.toThrow();
+      expect(out).toMatch(/try\s*\{\s*switch\s*\(dom\(\)\)/);
+      expect(out.match(/finally/g)).toHaveLength(1);
+    }
+  });
+
+  it("lowers `await using` in switch cases the same way", () => {
+    const input = `async function f(x) {
+      switch (x()) {
+        case 0:
+          await using a = y();
+        default:
+          await using b = z();
+      }
+    }`;
+    const out = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(input);
+    expect(() => reparse(out)).not.toThrow();
+    expect(out).toMatch(/try\s*\{\s*switch\s*\(x\(\)\)/);
+    expect(out.match(/finally/g)).toHaveLength(1);
+  });
+
+  it("keeps generated temp refs unique across sibling switches in the same scope", () => {
+    const input = `
+      switch (a()) { case 0: using x = { [s]() {} }; }
+      switch (b()) { case 1: using y = { [t]() {} }; }
+    `;
+    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
+    expect(() => reparse(out)).not.toThrow();
+    expect(out.match(/finally/g)).toHaveLength(2);
+  });
+
+  it("keeps case bindings const when combined with top-level using declarations", () => {
+    const input = `
+      using top = r();
+      switch (a()) {
+        case 0:
+          using x = { [s]() {} };
+        default:
+          using y = { [t]() {} };
+      }
+    `;
+    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
+    expect(() => reparse(out)).not.toThrow();
+    expect(out).toMatch(/const x\s*=\s*__using/);
+    expect(out).toMatch(/const y\s*=\s*__using/);
+    expect(out).not.toMatch(/var [xy]\b/);
+  });
+
+  it("disposes at switch exit in reverse order and keeps bindings visible across cases", async () => {
+    const source = `
+      const order = [];
+      function resource(name) {
+        return { [Symbol.dispose]() { order.push("dispose " + name); } };
+      }
+      function run(value) {
+        switch (value) {
+          case 0:
+            using a = resource("a");
+            order.push("case 0");
+          default:
+            using b = resource("b");
+            order.push("default sees a: " + (a !== undefined));
+        }
+        order.push("after switch");
+      }
+      run(0);
+      console.log(JSON.stringify(order));
+    `;
+
+    const lowered = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(source);
+    expect(lowered).toContain("__using");
+
+    using dir = tempDir("using-switch-lowering", { "lowered.mjs": lowered });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lowered.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["case 0", "default sees a: true", "dispose b", "dispose a", "after switch"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("minifyWhitespace keeps the space before keyword operators", () => {
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+
+  it("between a single-character identifier and 'instanceof'", () => {
+    expect(minifier.transformSync("x instanceof y")).toBe("x instanceof y;");
+  });
+
+  it("between a single-character identifier and 'in'", () => {
+    expect(minifier.transformSync("x in y")).toBe("x in y;");
+  });
+
+  it("between a numeric literal and 'in'", () => {
+    expect(minifier.transformSync("1 in y")).toBe("1 in y;");
   });
 });

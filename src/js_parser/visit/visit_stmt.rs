@@ -2132,7 +2132,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
                 let mut _stmts = stmts_to_list(p.arena, cases[i].body);
-                p.visit_stmts(&mut _stmts, StmtsKind::None)
+                p.visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
             }
@@ -2140,6 +2140,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.pop_scope();
         }
         // TODO: duplicate case checker
+
+        // All case bodies share the switch's block scope, so "using" declarations
+        // inside them cannot be lowered per case (the temp refs would collide and
+        // disposal would happen too early). Lower them by wrapping the entire
+        // switch statement in a single try/catch/finally instead.
+        let mut should_lower_using = false;
+        for case in data.cases.slice() {
+            if p.should_lower_using_declarations(case.body.slice()) {
+                should_lower_using = true;
+                break;
+            }
+        }
+        if should_lower_using {
+            let mut ctx = crate::p::LowerUsingDeclarationsContext::init(p)?;
+            let cases = data.cases.slice_mut();
+            for i in 0..cases.len() {
+                ctx.scan_stmts(p, cases[i].body.slice_mut());
+            }
+            let switch_stmt = p.arena.alloc_slice_copy(&[*stmt]);
+            let lowered = ctx.finalize(
+                p,
+                switch_stmt,
+                p.will_wrap_module_in_try_catch_for_using && p.current_scope().parent.is_none(),
+            );
+            stmts.extend_from_slice(&lowered);
+            return Ok(());
+        }
 
         stmts.push(*stmt);
         Ok(())

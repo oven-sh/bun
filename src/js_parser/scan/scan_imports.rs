@@ -322,12 +322,7 @@ impl<'a> ImportScanner<'a> {
                         st.star_name_loc = None;
                     }
 
-                    // In TypeScript, a later declaration is allowed to re-declare the
-                    // name of an import binding on the assumption that the import is
-                    // type-only and will be elided (see `Scope::can_merge_symbol_kinds`).
-                    // Any such import binding that is still around at this point will be
-                    // printed next to the other declaration, so report the duplicate
-                    // declaration instead of emitting output that fails to re-parse.
+                    // Report import bindings that were re-declared but not elided.
                     if is_typescript_enabled && !p.redeclared_import_bindings.is_empty() {
                         let default_binding = st
                             .default_name

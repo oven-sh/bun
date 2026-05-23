@@ -930,11 +930,6 @@ class Test extends Bar {
     it("re-declaring an import binding that is kept in the output is an error", () => {
       const err = ts.expectParseError;
 
-      // TypeScript allows another declaration to take over the name of an
-      // import binding because the import may be type-only. These imports are
-      // not elided (trimUnusedImports defaults to false for Bun.Transpiler),
-      // so printing them would produce output that fails to re-parse. They
-      // must error instead.
       err('import{Observable}from""\nimport{Observable} from "x"', '"Observable" has already been declared');
       err('import { Foo } from "./x";\nexport class Foo {}', '"Foo" has already been declared');
       err('import Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
@@ -950,8 +945,6 @@ class Test extends Bar {
     it("re-declaring an elided import binding is allowed", () => {
       const exp = ts.expectPrinted_;
 
-      // Type-only imports and declarations that emit no code don't conflict
-      // with anything in the output, so they are still allowed to collide.
       exp('import type { Foo } from "./x";\nclass Foo {}', "class Foo {\n}");
       exp(
         'import { type Foo, Bar } from "./x";\nclass Foo {}\nconsole.log(Bar);',
@@ -960,8 +953,6 @@ class Test extends Bar {
       exp('import { Foo } from "./x";\ndeclare class Foo {}\nnew Foo();', 'import { Foo } from "./x";\nnew Foo;\n');
       exp('import { foo } from "./x";\nfunction foo(): void;', 'import { foo } from "./x";\n');
 
-      // When unused imports are trimmed (the default for the runtime and the
-      // bundler), the re-declared import is elided and there is no error.
       const trimming = new Bun.Transpiler({ loader: "ts", trimUnusedImports: true });
       expect(trimming.transformSync('import { Foo } from "./x";\nexport class Foo {}')).toBe("export class Foo {\n}\n");
       expect(trimming.transformSync('import{Observable}from""\nimport{Observable} from "x"')).toBe("");

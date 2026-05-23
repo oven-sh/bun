@@ -432,12 +432,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub enclosing_class_keyword: bun_ast::Range,
     pub import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub is_import_item: RefMap,
-    /// Import bindings whose name was re-declared by a later declaration in the
-    /// same scope. TypeScript allows the collision because the import may be
-    /// type-only and elided (see `Scope::can_merge_symbol_kinds`), but if the
-    /// import binding survives import elision it would be printed next to the
-    /// other declaration, so `ImportScanner::scan` reports a duplicate
-    /// declaration error using the re-declaration's location stored here.
+    /// Import bindings replaced by a later declaration (allowed in TS since the
+    /// import may be type-only), mapped to the replacing declaration's location.
     pub redeclared_import_bindings: HashMap<Ref, bun_ast::Loc>,
     pub named_imports: NamedImportsType<'a>,
     pub named_exports: bun_ast::ast_result::NamedExports,
@@ -4997,11 +4993,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.symbols[symbol_idx].remove_overwritten_function_declaration = true;
                         }
 
-                        // In TypeScript, an import binding may be silently re-declared
-                        // because the import might be type-only and elided (see
-                        // `Scope::can_merge_symbol_kinds`). Remember the collision so
-                        // `ImportScanner::scan` can report a duplicate declaration error
-                        // if the import binding is actually kept in the output.
                         if TYPESCRIPT
                             && self.symbols[symbol_idx].kind == js_ast::symbol::Kind::Import
                         {

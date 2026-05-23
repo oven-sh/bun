@@ -989,23 +989,13 @@ pub use bun_alloc::SEP;
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {
     pub const ZEROED: Self = Self([0; MAX_PATH_BYTES]);
-    /// Zig `= undefined`. The bytes are immediately overwritten by the syscall
-    /// that fills it, so the initial contents are never observed.
+    /// Zero-initialized scratch buffer.
     ///
-    /// On Windows `MAX_PATH_BYTES` is 98 302 (vs 4 096 Linux / 1 024 macOS), so
-    /// the previous `Self::ZEROED` body here was a ~100 KB `memset` at every
-    /// one of the ~400 call sites — turning hot loops (glob scan, module load,
-    /// stack-trace formatting) into multi-GB zero-fill workloads and timing out
-    /// the leak/stress tests. Match the Zig spec and leave the bytes uninit.
+    /// The name is kept for Zig-port call sites, but this safe constructor must
+    /// return a fully initialized `[u8; MAX_PATH_BYTES]`.
     #[inline]
-    #[allow(invalid_value, clippy::uninit_assumed_init)]
     pub fn uninit() -> Self {
-        // SAFETY: `PathBuffer` is `repr(transparent)` over `[u8; N]`; every bit
-        // pattern is a valid `u8`, and callers treat this as a write-only
-        // scratch buffer (length-tracked) exactly like Zig
-        // `var buf: bun.PathBuffer = undefined`. No byte is read before being
-        // written by the consuming syscall / encoder.
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+        Self::ZEROED
     }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
@@ -1041,18 +1031,13 @@ impl core::ops::DerefMut for PathBuffer {
 pub struct WPathBuffer(pub [u16; PATH_MAX_WIDE]);
 impl WPathBuffer {
     pub const ZEROED: Self = Self([0; PATH_MAX_WIDE]);
-    /// Zig `= undefined`. See [`PathBuffer::uninit`] — `PATH_MAX_WIDE` is
-    /// 32 767 `u16`s (~64 KB), and these are allocated per Windows syscall
-    /// for UTF-8→UTF-16 path conversion, so zero-initialising dominated the
-    /// hot path on Windows.
+    /// Zero-initialized wide-path scratch buffer.
+    ///
+    /// The name is kept for Zig-port call sites, but this safe constructor must
+    /// return a fully initialized `[u16; PATH_MAX_WIDE]`.
     #[inline]
-    #[allow(invalid_value, clippy::uninit_assumed_init)]
     pub fn uninit() -> Self {
-        // SAFETY: `repr(transparent)` over `[u16; N]`; every bit pattern is a
-        // valid `u16`. Callers treat this as a write-only scratch buffer and
-        // track the written length out-of-band — mirrors Zig
-        // `var wbuf: bun.WPathBuffer = undefined`.
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+        Self::ZEROED
     }
     /// Inherent `as_slice` so `wbuf.as_slice()` resolves here instead of the
     /// unstable `<[u16]>::as_slice` (`str_as_str` feature) via `Deref`.

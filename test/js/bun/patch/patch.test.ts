@@ -484,21 +484,24 @@ describe("apply", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const { patchInternals } = require("bun:internal-for-testing");
+        `import { patchInternals } from "bun:internal-for-testing";
          try { patchInternals.apply("@@"); console.log("no-error"); } catch (e) { console.log("invalid-patchfile: " + e.message); }
          try { patchInternals.apply(); console.log("no-error"); } catch (e) { console.log("missing-argument: " + e.message); }
-         try { patchInternals.apply("@@", "bun-patch-test-nonexistent-dir"); console.log("no-error"); } catch (e) { console.log("bad-dir: " + e.code); }`,
+         try { patchInternals.apply("@@", "bun-patch-test-nonexistent-dir"); console.log("no-error"); } catch (e) { console.log("bad-dir: " + e.code); }
+         try { patchInternals.apply({ toString() { throw new Error("coerce-fail"); } }, process.cwd()); console.log("no-error"); } catch (e) { console.log("bad-patchfile-arg: " + e.message); }`,
       ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     expect(stdout.trim().split("\n")).toEqual([
       "invalid-patchfile: bad_header_line failed to parse patchfile",
       "missing-argument: apply: expected at least 1 argument, got 0",
       "bad-dir: ENOENT",
+      "bad-patchfile-arg: coerce-fail",
     ]);
     expect(exitCode).toBe(0);
   });

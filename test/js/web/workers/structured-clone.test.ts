@@ -1,5 +1,5 @@
 import { deserialize, serialize } from "bun:jsc";
-import { openSync } from "fs";
+import { closeSync, openSync } from "fs";
 import { bunEnv } from "harness";
 import { bunExe } from "js/bun/shell/test_builder";
 import { join } from "path";
@@ -217,18 +217,22 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       });
       test("file from fd", async () => {
         const fd = openSync(join(import.meta.dir, "example.txt"), "r");
-        const blob = Bun.file(fd);
-        if (structuredCloneFn === structuredClone) {
-          const cloned = structuredCloneFn(blob);
-          expect(cloned.lastModified).toBe(blob.lastModified);
-          expect(cloned.name).toBe(blob.name);
-          expect(cloned.size).toBe(blob.size);
-        } else if (structuredCloneFn === jscSerializeRoundtrip) {
-          expect(() => structuredCloneFn(blob)).toThrow();
-        } else {
-          // Cross-process: the child's deserialize must reject the file
-          // record outright (surfaced by the helper as a sentinel).
-          expect(structuredCloneFn(blob)).toBe("DESERIALIZE_THREW");
+        try {
+          const blob = Bun.file(fd);
+          if (structuredCloneFn === structuredClone) {
+            const cloned = structuredCloneFn(blob);
+            expect(cloned.lastModified).toBe(blob.lastModified);
+            expect(cloned.name).toBe(blob.name);
+            expect(cloned.size).toBe(blob.size);
+          } else if (structuredCloneFn === jscSerializeRoundtrip) {
+            expect(() => structuredCloneFn(blob)).toThrow();
+          } else {
+            // Cross-process: the child's deserialize must reject the file
+            // record outright (surfaced by the helper as a sentinel).
+            expect(structuredCloneFn(blob)).toBe("DESERIALIZE_THREW");
+          }
+        } finally {
+          closeSync(fd);
         }
       });
       describe("dom file", async () => {

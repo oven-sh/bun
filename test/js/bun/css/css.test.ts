@@ -7494,6 +7494,15 @@ describe("css tests", () => {
       );
     });
 
+    describe("unparsed oklab color fallbacks", () => {
+      minify_test(".foo { color: var(--x, oklab(40% 0.1 0.1)) }", ".foo{color:var(--x,oklab(40% .1 .1))}");
+      minify_test(".foo { color: var(--x, oklch(40% 0.1 30)) }", ".foo{color:var(--x,oklch(40% .1 30))}");
+      minify_test(".foo { color: var(--x, lab(40% 0.1 0.1)) }", ".foo{color:var(--x,lab(40% .1 .1))}");
+      minify_test(".foo { color: var(--x, lch(40% 0.1 30)) }", ".foo{color:var(--x,lch(40% .1 30))}");
+      minify_test('.foo { color: "a" oklab(40% 0.1 0.1) }', '.foo{color:"a" oklab(40% .1 .1)}');
+      minify_test('.foo { color: "a" lab(40% 0.1 0.1) }', '.foo{color:"a" lab(40% .1 .1)}');
+    });
+
     // Deeply nested @keyframes with invalid percentages
     describe("nested keyframes", () => {
       cssTest(

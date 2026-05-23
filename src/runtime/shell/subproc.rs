@@ -946,9 +946,13 @@ impl ShellSubprocess {
             // would be freed and the later GC finalize would UAF (this same UAF
             // exists in `Bun.spawn`'s equivalent error path on main). Forget the
             // `FileSinkPtr` so the controller owns the remaining +1 and frees
-            // the sink on GC.
+            // the sink on GC. (ManuallyDrop rather than mem::forget — clippy
+            // rejects forget on types with Drop fields.)
             if let Writable::Pipe(_) = &subproc.stdin {
-                core::mem::forget(core::mem::replace(&mut subproc.stdin, Writable::Ignore));
+                let _ = core::mem::ManuallyDrop::new(core::mem::replace(
+                    &mut subproc.stdin,
+                    Writable::Ignore,
+                ));
             }
             Self::abort_after_failed_start(subprocess);
             return Err(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
@@ -1002,7 +1006,7 @@ impl ShellSubprocess {
             // it cancels/closes the upstream ReadableStream and stops writing to a
             // dead pipe.
             // SAFETY: `pipe` holds a live refcounted FileSink.
-            unsafe { FileSink::on_attached_process_exit(pipe.as_ptr(), &status) };
+            unsafe { FileSink::on_attached_process_exit(pipe.as_ptr(), status) };
             // Unlike StaticPipeWriter, a FileSink has no callback into the Cmd
             // when it's done; explicitly mark buffered stdin as closed so
             // Cmd::has_finished can proceed. Guard on `.subproc` because on
@@ -1192,12 +1196,19 @@ impl Writable {
                             );
                             // SAFETY: `pipe_ptr` is live with refcount 1.
                             let assign_result = unsafe { (*pipe_ptr).assign_to_stream(rs, global) };
-                            if let Some(err) = assign_result.to_error() {
+                            // On failure assign_to_stream returns the thrown value already
+                            // unwrapped from its JSC::Exception (it may be any JS value, not
+                            // just an Error), on success a promise or empty/undefined. So
+                            // "non-empty and not a promise" is the error signal; a second
+                            // .to_error() here would miss `throw "string"` etc.
+                            if !assign_result.is_empty_or_undefined_or_null()
+                                && assign_result.as_any_promise().is_none()
+                            {
                                 // Surface to the caller; a still-valid Writable is returned
                                 // so spawn_maybe_sync_impl can tear down the subprocess via
                                 // the same abort_after_failed_start() path it uses for
                                 // other post-spawn start failures.
-                                *out_assign_error = err;
+                                *out_assign_error = assign_result;
                             }
                         }
 
@@ -1337,12 +1348,19 @@ impl Writable {
                     });
 
                     let assign_result = pipe.assign_to_stream(rs, global);
-                    if let Some(err) = assign_result.to_error() {
+                    // On failure assign_to_stream returns the thrown value already unwrapped
+                    // from its JSC::Exception (it may be any JS value, not just an Error),
+                    // on success a promise or empty/undefined. So "non-empty and not a
+                    // promise" is the error signal; a second .to_error() here would miss
+                    // `throw "string"` etc.
+                    if !assign_result.is_empty_or_undefined_or_null()
+                        && assign_result.as_any_promise().is_none()
+                    {
                         // Surface to the caller; a still-valid Writable is returned so
                         // spawn_maybe_sync_impl can tear down the subprocess via the
                         // same abort_after_failed_start() path it uses for other
                         // post-spawn start failures.
-                        *out_assign_error = err;
+                        *out_assign_error = assign_result;
                     }
 
                     // SAFETY: `create` returns non-null with one owned ref; `adopt`

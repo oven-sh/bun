@@ -3573,10 +3573,8 @@ where
         if let Some(readable) = this.request_body_readable_stream_ref.get(global_this) {
             debug_assert!(this.request_body_buf.is_empty());
 
-            // The up-front maxRequestBodySize check only sees Content-Length.
-            // Chunked / H3 bodies may omit it, so cap the bytes forwarded to
-            // the stream here too — otherwise a single CL-less request can
-            // stream unbounded data past the configured limit.
+            // Cap streamed bytes against maxRequestBodySize too — the up-front
+            // check only sees Content-Length (see the buffering branch below).
             this.request_body_streamed_len =
                 this.request_body_streamed_len.saturating_add(chunk.len());
             if this.request_body_streamed_len > server.config().max_request_body_size {

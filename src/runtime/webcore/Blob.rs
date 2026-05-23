@@ -3505,25 +3505,14 @@ impl BlobExt for Blob {
                     let mut iter = jsc::JSArrayIterator::init(current, global)?;
                     stack.reserve(iter.len as usize);
 
-                    // Decide up front whether processing any part can re-enter
-                    // user JS (toString / Symbol.toPrimitive / proxy traps /
-                    // getters) before `joiner.done()` copies the borrowed
-                    // slices out. If nothing can, typed-array parts can be
-                    // borrowed (`push_static`) instead of cloned — cloning
-                    // every part doubles peak memory for the common
-                    // `new Blob(largeChunks)` case. The prescan is only
-                    // side-effect-free on a fast (contiguous, sane-prototype)
-                    // array; anything else is conservatively treated as able
-                    // to run user JS. `js_type_loose`/`as_class_ref` read the
-                    // cell header only, so the extra pass is unobservable.
-                    //
-                    // The decision must also account for entries still pending
-                    // on `stack`: they are processed after this array's parts
-                    // are pushed but before `done()`, so if anything else
-                    // remains to be walked, its processing could re-enter user
-                    // JS and detach a buffer this array borrowed. (A nested
-                    // array *inside* this one already forces cloning via the
-                    // prescan's catch-all arm.)
+                    // Decide up front whether processing any part (or any entry
+                    // still pending on `stack`) can re-enter user JS (toString /
+                    // Symbol.toPrimitive / proxy traps / getters) and detach a
+                    // borrowed buffer before `joiner.done()` copies it out. If
+                    // nothing can, typed-array parts are borrowed (`push_static`)
+                    // instead of cloned, which would double peak memory for
+                    // `new Blob(largeChunks)`. Non-fast arrays are conservatively
+                    // treated as able to run user JS.
                     let mut parts_can_run_js = iter.fast.is_none() || !stack.is_empty();
                     if !parts_can_run_js {
                         let mut prescan = jsc::JSArrayIterator::init(current, global)?;
@@ -3592,15 +3581,10 @@ impl BlobExt for Blob {
                                     could_have_non_ascii = true;
                                     let buf = item.as_array_buffer(global).unwrap();
                                     if parts_can_run_js {
-                                        // Copy now: processing a later part can run
-                                        // user JS (toString / Symbol.toPrimitive /
-                                        // proxy traps) that detaches or resizes this
-                                        // buffer before `done()`.
+                                        // A later part may run user JS that detaches
+                                        // or resizes this buffer before `done()`.
                                         joiner.push_cloned(buf.byte_slice());
                                     } else {
-                                        // No part can re-enter JS before `done()`,
-                                        // so the backing store cannot be detached;
-                                        // borrow it instead of doubling peak memory.
                                         joiner.push_static(buf.byte_slice());
                                     }
                                     continue;
@@ -3613,11 +3597,8 @@ impl BlobExt for Blob {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                                        // A later part can run user JS (e.g. an
-                                        // object part's toString) that drops the
-                                        // last reference to this Blob and frees
-                                        // its Store before `joiner.done()` reads
-                                        // a borrowed view — copy the bytes now.
+                                        // A later part may run user JS that drops the
+                                        // last ref to this Blob's Store before `done()`.
                                         if parts_can_run_js {
                                             joiner.push_cloned(blob.shared_view());
                                         } else {
@@ -3644,11 +3625,9 @@ impl BlobExt for Blob {
                     if let Some(blob) = current.as_class_ref::<Blob>() {
                         could_have_non_ascii = could_have_non_ascii
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                        // See the array-item Blob arm above: a later part can
-                        // free this Blob's Store before `joiner.done()`. This
-                        // arm is only reached for entries deferred onto the
-                        // walk stack, where other pending entries may still
-                        // run user JS, so always copy.
+                        // This arm only handles entries deferred onto the walk
+                        // stack; other pending entries may still run user JS and
+                        // free this Blob's Store before `done()`, so always copy.
                         joiner.push_cloned(blob.shared_view());
                     } else {
                         let sliced = current.to_slice_clone(global)?;

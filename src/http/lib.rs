@@ -2308,13 +2308,10 @@ impl<'a> HTTPClient<'a> {
         } else if self.state.request_stage == RequestStage::Done
             && self.is_keep_alive_possible()
             && !socket.is_closed_or_has_error()
-            // A direct TLS socket whose handshake may have been verified
-            // against a Host-header override (get_tls_hostname) must not be
-            // pooled here: this.url has already been repointed at the
-            // redirect destination, so proxy_auth_hash() can no longer
-            // compute the override relative to the hostname the socket was
-            // actually connected to. Close it instead (same reasoning as the
-            // tunnel branch above).
+            // A direct TLS socket verified against a Host-header override
+            // (get_tls_hostname) must not be pooled here: this.url has already
+            // been repointed at the redirect destination, so proxy_auth_hash()
+            // can no longer compute the correct pool key. Close it instead.
             && (!IS_SSL || self.http_proxy.is_some() || self.hostname.is_none())
         {
             // request_stage == .done: a 303 to a streaming POST can arrive before
@@ -2344,9 +2341,8 @@ impl<'a> HTTPClient<'a> {
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
 
-        // Now that the old socket has been pooled or closed (with the override
-        // still visible to the guard above), drop the per-request Host override
-        // for the cross-origin follow-up connection.
+        // Deferred until after the pool/close decision above — see
+        // `InternalStateFlags::clear_hostname_on_redirect`.
         if self.state.flags.clear_hostname_on_redirect {
             self.state.flags.clear_hostname_on_redirect = false;
             self.hostname = None;
@@ -4272,10 +4268,8 @@ impl<'a> HTTPClient<'a> {
                     // RFC 9110 section 9.3.6: a client MUST ignore
                     // Content-Length in a successful response to CONNECT —
                     // the connection becomes an opaque tunnel and is never
-                    // released back to the keep-alive pool, so the
-                    // framing-desync concern below does not apply. Without
-                    // this, a proxy sending a malformed Content-Length on its
-                    // 200 would have the tunnel rejected before it is set up.
+                    // pooled, so the framing-desync concern below does not
+                    // apply.
                     if self.flags.proxy_tunneling
                         && self.proxy_tunnel.is_none()
                         && response.status_code == 200
@@ -4284,13 +4278,10 @@ impl<'a> HTTPClient<'a> {
                     }
                     // byte-level parse — header.value() is network bytes, not &str
                     //
-                    // RFC 9112 section 6.3: an invalid Content-Length, or
-                    // multiple Content-Length fields with differing values, is
-                    // an unrecoverable framing error. Falling back to 0 would
-                    // deliver an empty body and release a desynchronized socket
-                    // into the keep-alive pool, where the unread body bytes
-                    // would be read as the response to the next request on the
-                    // connection.
+                    // RFC 9112 section 6.3: an invalid or conflicting
+                    // Content-Length is an unrecoverable framing error —
+                    // falling back to 0 would release a desynchronized socket
+                    // into the keep-alive pool.
                     let Ok(content_length) = bun_core::parse_unsigned::<usize>(header.value(), 10)
                     else {
                         return Err(err!(InvalidHTTPResponse));
@@ -4710,14 +4701,9 @@ impl<'a> HTTPClient<'a> {
                             }
                         }
 
-                        // Cross-origin redirect: drop the per-request Host
-                        // override so TLS SNI, certificate verification, and
-                        // the Host header for the follow-up connection are
-                        // re-derived from the redirect target's URL instead of
-                        // the previous origin's Host header. Deferred to
-                        // `do_redirect`: its socket pool/close decision must
-                        // still see the override to know the old socket's
-                        // handshake was verified against it.
+                        // Cross-origin redirect: re-derive SNI / cert
+                        // verification / Host from the redirect target. See
+                        // `InternalStateFlags::clear_hostname_on_redirect`.
                         if !is_same_origin {
                             self.state.flags.clear_hostname_on_redirect = true;
                         }

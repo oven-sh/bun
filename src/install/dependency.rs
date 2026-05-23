@@ -584,12 +584,9 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
     Err(PackageNameError::InvalidPackageName)
 }
 
-/// A dependency name/alias becomes a directory under `node_modules/` (and a
-/// `node_modules/<name>/node_modules` component for un-hoisted packages).
-/// Names come from attacker-controlled `package.json` / registry-manifest
-/// dependency keys, so reject anything that could resolve outside that
-/// directory: empty / `.` / `..` path components, backslashes, drive-letter
-/// colons, and NUL bytes. `@scope/name` stays valid.
+/// A dependency name/alias becomes a directory under `node_modules/`. Names
+/// come from untrusted `package.json` / manifest keys, so reject anything that
+/// could resolve outside that directory. `@scope/name` stays valid.
 pub fn is_safe_install_folder_name(name: &[u8]) -> bool {
     if name.is_empty() {
         return false;

@@ -245,7 +245,7 @@ struct InflationStream {
         memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
 
         if (res == 0) {
-            /* Fast path wins, but still be strict about the max size */
+            /* Fast path wins */
             if (written > maxPayloadLength) {
                 return std::nullopt;
             }

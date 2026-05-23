@@ -604,8 +604,6 @@ pub fn migrate_npm_lockfile<'a>(
             continue;
         }
 
-        // Must skip exactly the packages the counting pass skipped, otherwise
-        // this pass appends more packages than were counted.
         if is_skipped_pkg(pkg) {
             continue;
         }
@@ -915,8 +913,6 @@ pub fn migrate_npm_lockfile<'a>(
         // PORT NOTE: `StoreRef::get` shadows `E::Object::get`; deref-coerce.
         let pkg: &E::Object = pkg;
 
-        // Same skip predicate as the counting pass. The dependency cursors
-        // below assume this pass writes no more entries than were counted.
         if pkg.get(b"link").is_some() || is_skipped_pkg(pkg) {
             continue;
         }
@@ -1569,7 +1565,6 @@ pub fn migrate_npm_lockfile<'a>(
     }))
 }
 
-/// True when `pkg[key]` is present and is the boolean literal `true`.
 fn pkg_flag_is_true(pkg: &E::Object, key: &[u8]) -> bool {
     pkg.get(key)
         .map(|x| matches!(x.data, ExprData::EBoolean(b) if b.value))
@@ -1577,9 +1572,8 @@ fn pkg_flag_is_true(pkg: &E::Object, key: &[u8]) -> bool {
 }
 
 /// Skip predicate shared by the package counting, building, and linking
-/// passes: `inBundle` truthy OR `extraneous` truthy. All passes must agree on
-/// this predicate, otherwise the building/linking passes append more packages
-/// than the counting pass reserved.
+/// passes — all three must agree, otherwise the later passes append more
+/// packages than the counting pass reserved.
 fn is_skipped_pkg(pkg: &E::Object) -> bool {
     pkg_flag_is_true(pkg, b"inBundle") || pkg_flag_is_true(pkg, b"extraneous")
 }

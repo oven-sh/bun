@@ -1013,10 +1013,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         // would pop their borrow-stack tags under SB.
                         let cache_ctx = this.manifest_disk_cache_ctx();
                         let this_ptr: *mut PackageManager = this;
-                        // Copy the name out of `string_bytes` instead of
-                        // detaching a borrow into it:
-                        // `get_or_put_resolved_package_with_find_result` below
-                        // appends to `string_bytes` (and may reallocate it),
+                        // Owned copy: `get_or_put_resolved_package_with_find_result`
+                        // below appends to `string_bytes` (and may reallocate it),
                         // and `name_str` is still read afterwards on the
                         // fall-through path.
                         let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();

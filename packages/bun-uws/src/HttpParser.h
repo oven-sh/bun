@@ -982,8 +982,6 @@ namespace uWS
                     consumedTotal += emittable;
 
                     if (returnedUser != user) {
-                        /* The data handler closed or shut down the socket; stop parsing
-                         * so we do not dispatch pipelined requests on a dead socket. */
                         return HttpParserResult::success(consumedTotal, returnedUser);
                     }
                 }
@@ -999,8 +997,6 @@ namespace uWS
                 /* If we came here without a body; emit an empty data chunk to signal no data */
                 void *returnedUser = dataHandler(user, {}, true);
                 if (returnedUser != user) {
-                    /* The data handler closed or shut down the socket; stop parsing
-                     * so we do not dispatch pipelined requests on a dead socket. */
                     return HttpParserResult::success(consumedTotal, returnedUser);
                 }
             }
@@ -1029,8 +1025,6 @@ public:
                 for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
                     void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
                     if (returnedUser != user) {
-                        /* The data handler closed or shut down the socket; stop parsing
-                         * so we do not dispatch pipelined requests on a dead socket. */
                         return HttpParserResult::success(0, returnedUser);
                     }
                 }
@@ -1097,8 +1091,6 @@ public:
                         for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
                             void *returnedUser = dataHandler(user, chunk, chunk.length() == 0);
                             if (returnedUser != user) {
-                                /* The data handler closed or shut down the socket; stop parsing
-                                 * so we do not dispatch pipelined requests on a dead socket. */
                                 return HttpParserResult::success(0, returnedUser);
                             }
                         }

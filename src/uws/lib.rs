@@ -238,12 +238,10 @@ pub mod ssl_wrapper {
     /// writes we loop until we have no more data to write/backpressure.
     const BUFFER_SIZE: usize = 65536;
 
-    /// Maximum number of peer-initiated TLS renegotiations accepted per
-    /// connection. Mirrors the `client_renegotiation_limit` default used by
-    /// the uSockets C path (`us_reneg_policy` in openssl.c and
-    /// `BunSocketContextOptions::default`). Each renegotiation costs a full
-    /// handshake, so an unbounded peer can pin the CPU (CVE-2011-1473 class
-    /// DoS).
+    /// Cap on peer-initiated TLS renegotiations per connection. Mirrors the
+    /// `client_renegotiation_limit` default in the uSockets C path
+    /// (`us_reneg_policy` in openssl.c). Unbounded renegotiation is a CPU
+    /// DoS (CVE-2011-1473).
     const MAX_RENEGOTIATIONS: u8 = 3;
 
     pub struct SSLWrapper<T: Copy> {
@@ -251,8 +249,6 @@ pub mod ssl_wrapper {
         pub ssl: Option<NonNull<boring_sys::SSL>>,
         pub ctx: Option<NonNull<boring_sys::SSL_CTX>>,
         pub flags: Flags,
-        /// Number of peer-initiated renegotiations accepted so far; the
-        /// connection is terminated once it would exceed [`MAX_RENEGOTIATIONS`].
         pub renegotiation_count: u8,
     }
 
@@ -992,10 +988,8 @@ pub mod ssl_wrapper {
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
                             self.flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
-                            // Bound peer-initiated renegotiation: mirror the
-                            // uSockets C path's per-connection limit and treat
-                            // an over-limit request like a failed
-                            // SSL_renegotiate().
+                            // An over-limit renegotiation request is treated
+                            // like a failed SSL_renegotiate().
                             let renegotiation_allowed =
                                 self.renegotiation_count < MAX_RENEGOTIATIONS;
                             self.renegotiation_count = self.renegotiation_count.saturating_add(1);

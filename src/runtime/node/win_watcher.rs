@@ -72,12 +72,11 @@ impl PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
             watchers: StringArrayHashMap::default(),
             vm,
-            // Self-free as soon as the last watcher unregisters. A manager can
-            // be displaced from `DEFAULT_MANAGER` by a `watch()` call from a
-            // different VM (see `watch()`); without this the displaced manager
-            // would never be freed. Setting the flag here — on the owning
-            // thread, before the pointer is published — avoids a cross-thread
-            // write to the displaced manager at displacement time.
+            // A manager can be displaced from `DEFAULT_MANAGER` by a `watch()`
+            // call from a different VM; without this the displaced manager
+            // would never be freed. Set here — on the owning thread, before the
+            // pointer is published — to avoid a cross-thread write at
+            // displacement time.
             deinit_on_last_watcher: true,
         }))
     }
@@ -506,10 +505,8 @@ pub fn watch(
     let existing = DEFAULT_MANAGER.load();
     // The manager is bound to one VM's uv_loop; reusing it from a different VM
     // (Worker) would mutate its watcher map and drive libuv cross-thread.
-    // Allocate a fresh manager for this VM instead of aliasing the stored one.
-    // The displaced manager is not leaked: `deinit_on_last_watcher` is set at
-    // construction, so it frees itself (on its own VM's thread) once its last
-    // watcher unregisters.
+    // Allocate a fresh manager for this VM instead; the displaced one frees
+    // itself once its last watcher unregisters (`deinit_on_last_watcher`).
     // SAFETY: `existing` is a non-null pointer published under
     // DEFAULT_MANAGER_MUTEX (which we hold) by `init` below on a prior call;
     // the allocation lives until `deinit` clears the slot, so it is valid here.

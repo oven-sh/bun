@@ -36,13 +36,10 @@ impl<C: WriterContext> Packet<C> {
         let new_offset = self.ctx.wrapped.offset();
         // fix position for packet header
         let length = new_offset - self.offset - PacketHeader::SIZE;
-        // The header's length field is only 24 bits. Truncating a larger
-        // payload would make the server reparse the trailing bytes as
-        // separate, attacker-controlled packets (protocol injection). We do
-        // not implement multi-packet splitting on the write path, so reject
-        // payloads that cannot be framed as a single packet — and roll the
-        // partially-serialized packet back out of the write buffer so the
-        // next packet on this connection starts on a packet boundary.
+        // The length field is only 24 bits and we don't implement multi-packet
+        // splitting on the write path; truncating would let the server reparse
+        // the tail as separate attacker-controlled packets. Roll the partial
+        // packet back out of the buffer and reject.
         if length >= PacketHeader::MAX_PAYLOAD_LENGTH {
             self.ctx.wrapped.truncate(self.offset);
             return Err(AnyMySQLError::Overflow);

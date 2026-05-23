@@ -780,10 +780,8 @@ class PostgresAdapter
   }
 
   validateTransactionOptions(options: string): { valid: boolean; error?: string } {
-    // Transaction modes are keyword lists like `ISOLATION LEVEL SERIALIZABLE, READ ONLY`
-    // — letters, spaces and commas only. The string is interpolated into a
-    // simple-protocol `BEGIN ${options}` command, so refuse anything that could
-    // terminate the statement or start a new one.
+    // The string is interpolated into `BEGIN ${options}`, so refuse anything that
+    // could terminate the statement or start a new one.
     if (!/^[A-Za-z ,]*$/.test(options)) {
       return {
         valid: false,

@@ -2281,9 +2281,6 @@ pub fn parse_into_binary_lockfile(
                 }
             };
 
-            // Set when the lockfile entry pins a tarball URL that does not
-            // belong to the configured registry for this package; such an
-            // entry must also carry an integrity hash (checked below).
             let mut npm_url_needs_integrity = false;
             if res.tag == ResolutionTag::Npm {
                 if i >= (pkg_info.len_u32() as usize) {
@@ -2535,11 +2532,9 @@ pub fn parse_into_binary_lockfile(
                         pkg.meta.integrity = Integrity::default();
                     }
 
-                    // Fail closed: a lockfile entry that redirects the tarball
-                    // URL away from the configured registry must also pin the
-                    // tarball content. Otherwise a tampered lockfile could
-                    // install arbitrary content under a trusted package name
-                    // with integrity verification silently disabled.
+                    // Fail closed: otherwise a tampered lockfile could redirect
+                    // the tarball URL off-registry and install arbitrary content
+                    // under a trusted package name with verification disabled.
                     if npm_url_needs_integrity && !pkg.meta.integrity.tag.is_supported() {
                         log.add_error(
                             Some(source),

@@ -453,12 +453,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.write_in_progress().set(true);
         this.ref_();
 
-        // The worker thread reads/writes through the raw `next_in`/`next_out`
-        // pointers until `run_from_js_thread`, but the call stack stops
-        // rooting `arguments` once this host fn returns. Hold each typed
-        // array `Strong` (so GC cannot free the backing store) and pin its
-        // `ArrayBuffer` (so `transfer()`/detach cannot free it either).
-        // Released in `run_from_js_thread` after `do_work()` has finished.
+        // Hold the in/out buffers Strong + pinned for the worker (see
+        // `PinnedWriteBuffers`); released in `run_from_js_thread`.
         this.pinned_buffers()
             .with_mut(|p| p.pin(global_this, arguments[1], arguments[4]));
 
@@ -570,9 +566,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this.write_in_progress().set(false);
 
-        // The worker is done with the `next_in`/`next_out` pointers -- release
-        // the GC + detach protection taken in `write()` before any callbacks
-        // run.
+        // Release the GC + detach protection taken in `write()`.
         this.pinned_buffers().with_mut(|p| p.unpin());
 
         // Clear the strong handle before we call any callbacks.

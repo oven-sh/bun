@@ -2146,11 +2146,8 @@ pub fn install_isolated_packages(
             let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
             let pkg_res: Resolution = pkg_resolutions[pkg_id as usize];
 
-            // The package name and each dependency alias become
-            // `node_modules/<name>` path components when this entry is
-            // materialized (store entry contents, dependency symlinks, hidden
-            // hoisted links). Reject any name that could escape the
-            // destination directory before any filesystem work happens.
+            // Validate the package name and every dependency alias as
+            // `node_modules/<name>` components before any filesystem work.
             {
                 let mut unsafe_folder_name: Option<&[u8]> = None;
                 let name = pkg_name.slice(string_buf);

@@ -300,14 +300,9 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
     }
 }
 
-/// A tree folder name is a dependency alias taken verbatim from an untrusted
-/// manifest, `package.json`, or lockfile, and is joined into install
-/// destinations as `node_modules/<name>/node_modules/...`. Reject anything
-/// that could resolve outside the `node_modules` directory it is appended to:
-/// empty/`.`/`..` segments, backslashes (path separators on Windows),
-/// drive-letter colons, and embedded NULs (which would truncate the C path
-/// early). Legitimate names are `pkg` or `@scope/pkg`. Delegates to the same
-/// validator used when building the tree so both code paths agree.
+/// Tree folder names are joined into install destinations as
+/// `node_modules/<name>/...`; this path and the tree builder must agree on the
+/// same validator.
 pub fn folder_name_is_safe(name: &[u8]) -> bool {
     crate::dependency::is_safe_install_folder_name(name)
 }
@@ -825,10 +820,6 @@ impl Tree {
 
             let dependency = &dependencies[dep_id as usize];
 
-            // The dependency name/alias is used verbatim as a directory under
-            // `node_modules/` (and as a `node_modules/<name>/node_modules`
-            // component for un-hoisted packages). Reject names that could
-            // resolve outside that directory before placing them in the tree.
             if !crate::dependency::is_safe_install_folder_name(
                 dependency
                     .name

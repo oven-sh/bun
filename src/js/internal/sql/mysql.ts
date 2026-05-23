@@ -543,10 +543,8 @@ class MySQLAdapter
   }
 
   validateTransactionOptions(options: string): { valid: boolean; error?: string } {
-    // Transaction characteristics are keyword lists like `READ ONLY, WITH CONSISTENT SNAPSHOT`
-    // — letters, spaces and commas only. The string is interpolated into
-    // `START TRANSACTION ${options}`, so refuse anything that could terminate the
-    // statement or start a new one.
+    // The string is interpolated into `START TRANSACTION ${options}`, so refuse anything
+    // that could terminate the statement or start a new one.
     if (!/^[A-Za-z ,]*$/.test(options)) {
       return {
         valid: false,

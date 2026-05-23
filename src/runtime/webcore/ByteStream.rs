@@ -283,12 +283,9 @@ impl ByteStream {
         if self.pending.get().state == streams::PendingState::Pending {
             debug_assert!(self.buffer.get().is_empty());
             // Re-derive the destination from the GC-rooted view instead of trusting the
-            // raw pointer captured at pull time: `pending_value` keeps the Uint8Array
-            // wrapper alive, but JS can still detach or transfer the backing ArrayBuffer
-            // (`postMessage(chunk, [chunk.buffer])`, `ArrayBuffer.prototype.transfer()`)
-            // between the pull and the data arriving, leaving `pending_buffer` dangling.
-            // A detached or shrunk view re-derives to a shorter (possibly empty) slice,
-            // so the copy below never writes through freed memory.
+            // raw pointer captured at pull time: JS can detach or transfer the backing
+            // ArrayBuffer between the pull and the data arriving, leaving
+            // `pending_buffer` dangling. A detached view re-derives to an empty slice.
             let global = self.parent_const().global_this();
             let mut pending_view = self
                 .pending_value

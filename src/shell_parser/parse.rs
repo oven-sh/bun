@@ -1678,11 +1678,9 @@ impl<'bump> Parser<'bump> {
                         if eq_idx == 0 {
                             break 'var_decl None;
                         }
-                        // Interpolated JS values are data, not shell syntax: an `=`
-                        // that came from an interpolated value must not turn the
-                        // word into an env assignment (e.g. interpolating
-                        // "LD_PRELOAD=/evil.so" at command position must stay a
-                        // single inert command word).
+                        // An `=` that came from an interpolated JS value is data, not
+                        // shell syntax — it must not turn the word into an env
+                        // assignment (e.g. interpolating "LD_PRELOAD=/evil.so").
                         if self.is_interpolated_position(txtrng.start + eq_idx) {
                             break 'var_decl None;
                         }

@@ -1297,10 +1297,9 @@ impl QueryStringMap {
 // PORT NOTE: Zig `StaticBitSet(2048)` resolves to `ArrayBitSet(usize, 2048)`.
 // bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
 // pick ArrayBitSet directly. 2048 / 64 == 32 masks.
-/// Hard cap on the number of parsed query-string parameters.
-/// `QueryStringMap::init` / `init_with_scanner` enforce this so the iterator's
-/// fixed-size `VisitedMap` bitset can never be indexed out of bounds (which
-/// would panic and abort the process on an attacker-controlled query string).
+/// Hard cap on parsed query-string parameters, enforced in `init` /
+/// `init_with_scanner` so the fixed-size `VisitedMap` bitset is never indexed
+/// out of bounds.
 const MAX_QUERY_STRING_PARAMS: usize = 2048;
 type VisitedMap = ArrayBitSet<MAX_QUERY_STRING_PARAMS, { num_masks_for(MAX_QUERY_STRING_PARAMS) }>;
 

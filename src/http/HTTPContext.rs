@@ -772,9 +772,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 continue;
             }
 
-            // Checked for direct TLS sockets too, not just tunnels: the hash
-            // covers the Host-header SNI override that the handshake was
-            // verified against (see get_tls_hostname / connect()).
+            // The hash covers the Host-header SNI override that the handshake
+            // was verified against (see get_tls_hostname / connect()).
             if socket.proxy_auth_hash != proxy_auth_hash {
                 continue;
             }

@@ -3691,10 +3691,14 @@ it("deeply nested expressions error instead of crashing the process", () => {
       // a scope-creating leaf inside the deep expression plus a sibling
       // statement that pushes another scope
       n => repeat("[", n) + "() => 1" + repeat("]", n) + ";{ let x; }",
+      // sibling statements with identifiers that are only resolved if the
+      // visit pass reaches them
+      n => repeat("[", n) + "1" + repeat("]", n) + "; someLongIdentifier + anotherIdentifier;",
       // left-leaning chains are parsed/visited iteratively, then fed whole
       // into the recursive side-effect/primitive-type analyses
       n => "void ((x" + repeat(" ?? x", n) + ") < 1)",
       n => "(a" + repeat(" && a", n) + ") == 1;",
+      n => "f() ? 1 : g()" + repeat(" || g()", n) + ";",
     ];
     for (const shape of shapes) {
       for (const n of [4000, 20000, 100000]) {

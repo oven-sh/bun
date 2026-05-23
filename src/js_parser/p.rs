@@ -5880,7 +5880,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
         // This walks arbitrarily deep ASTs; report the stack overflow instead
         // of crashing. The parse fails with that error, so the answer is moot.
-        if !self.stack_check.is_safe_to_recurse() {
+        // Once the visit pass has bailed out, parts of the AST were never
+        // visited (identifier refs are still parse-time slices), so skip the
+        // analysis entirely rather than reading them.
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(expr.loc);
             return false;
         }

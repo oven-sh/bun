@@ -149,8 +149,11 @@ impl SideEffects {
         }
         // This walks arbitrarily deep ASTs; report the stack overflow instead
         // of crashing. The parse fails with that error, so the value returned
-        // here never reaches the printer.
-        if !p.stack_check.is_safe_to_recurse() {
+        // here never reaches the printer. Once the visit pass has bailed out,
+        // parts of the AST were never visited (identifier refs are still
+        // parse-time slices), so skip the analysis entirely rather than
+        // reading them.
+        if !p.stack_check.is_safe_to_recurse() || p.reported_stack_overflow.get() {
             p.report_stack_overflow(expr.loc);
             return Some(expr);
         }

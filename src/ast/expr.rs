@@ -782,22 +782,48 @@ impl Expr {
     // `ConstParamTy` (Op.rs owns the enum); pass at runtime here. Revisit once
     // `Code` gains `ConstParamTy` — call sites are a handful of literal ops.
     pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
-        // "(a, b) op c" => "a, b op c"
-        if let Data::EBinary(mut comma) = a.data {
-            if comma.op == crate::OpCode::BinComma {
-                comma.right = Self::join_with_left_associative_op(op, comma.right, b);
-            }
-        }
+        // Re-associating recurses once per level of same-op nesting in `b`;
+        // such chains are built iteratively and can be deeper than the call
+        // stack allows, so the recursion carries a stack check and falls back
+        // to the unflattened `a op b` shape when it is nearly exhausted.
+        Self::join_with_left_associative_op_with_check(op, a, b, bun_core::StackCheck::init())
+    }
 
-        // "a op (b op c)" => "(a op b) op c"
-        // "a op (b op (c op d))" => "((a op b) op c) op d"
-        if let Data::EBinary(binary) = b.data {
-            if binary.op == op {
-                return Self::join_with_left_associative_op(
-                    op,
-                    Self::join_with_left_associative_op(op, a, binary.left),
-                    binary.right,
-                );
+    fn join_with_left_associative_op_with_check(
+        op: Op::Code,
+        a: Expr,
+        b: Expr,
+        stack_check: bun_core::StackCheck,
+    ) -> Expr {
+        if stack_check.is_safe_to_recurse() {
+            // "(a, b) op c" => "a, b op c"
+            if let Data::EBinary(mut comma) = a.data {
+                if comma.op == crate::OpCode::BinComma {
+                    comma.right = Self::join_with_left_associative_op_with_check(
+                        op,
+                        comma.right,
+                        b,
+                        stack_check,
+                    );
+                }
+            }
+
+            // "a op (b op c)" => "(a op b) op c"
+            // "a op (b op (c op d))" => "((a op b) op c) op d"
+            if let Data::EBinary(binary) = b.data {
+                if binary.op == op {
+                    return Self::join_with_left_associative_op_with_check(
+                        op,
+                        Self::join_with_left_associative_op_with_check(
+                            op,
+                            a,
+                            binary.left,
+                            stack_check,
+                        ),
+                        binary.right,
+                        stack_check,
+                    );
+                }
             }
         }
 

@@ -1020,6 +1020,42 @@ class Test extends Bar {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });
 
+    it("re-declaring an import binding that is kept in the output is an error", () => {
+      const err = ts.expectParseError;
+
+      err('import{Observable}from""\nimport{Observable} from "x"', '"Observable" has already been declared');
+      err('import { Foo } from "./x";\nexport class Foo {}', '"Foo" has already been declared');
+      err('import Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
+      err('import * as Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nfunction Foo() {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nvar Foo = 1;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nvar Foo = 1;\nvar Foo = 2;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nlet Foo = 1;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nenum Foo {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nimport Foo = require("./y");', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nimport Foo = Bar.Baz;', '"Foo" has already been declared');
+      err('import { Foo, Foo } from "./x";', '"Foo" has already been declared');
+    });
+
+    it("re-declaring an elided import binding is allowed", () => {
+      const exp = ts.expectPrinted_;
+
+      exp('import type { Foo } from "./x";\nclass Foo {}', "class Foo {\n}");
+      exp(
+        'import { type Foo, Bar } from "./x";\nclass Foo {}\nconsole.log(Bar);',
+        'import { Bar } from "./x";\n\nclass Foo {\n}\nconsole.log(Bar);\n',
+      );
+      exp('import { Foo } from "./x";\ndeclare class Foo {}\nnew Foo();', 'import { Foo } from "./x";\nnew Foo;\n');
+      exp('import { foo } from "./x";\nfunction foo(): void;', 'import { foo } from "./x";\n');
+
+      const trimming = new Bun.Transpiler({ loader: "ts", trimUnusedImports: true });
+      expect(trimming.transformSync('import { Foo } from "./x";\nexport class Foo {}')).toBe("export class Foo {\n}\n");
+      expect(trimming.transformSync('import{Observable}from""\nimport{Observable} from "x"')).toBe("");
+      expect(trimming.transformSync('import { Foo } from "./x";\nnamespace Foo { export const x = 1 }')).toBe(
+        "var Foo;\n((Foo) => {\n  Foo.x = 1;\n})(Foo ||= {});\n",
+      );
+    });
+
     it("export = {foo: 123}", () => {
       ts.expectPrinted_("export = {foo: 123}", "module.exports = { foo: 123 }");
     });

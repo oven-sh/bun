@@ -1096,58 +1096,57 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && is_identifier
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                     && name == b"abstract"
+                    && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                 {
-                    match &expr.data {
-                        js_ast::ExprData::EIdentifier(_) => {
-                            let mut stmt_opts = ParseStatementOptions {
-                                ts_decorators: opts.ts_decorators.take(),
-                                is_name_optional: true,
-                                ..Default::default()
-                            };
-                            let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
+                    let mut stmt_opts = ParseStatementOptions {
+                        ts_decorators: opts.ts_decorators.take(),
+                        is_name_optional: true,
+                        ..Default::default()
+                    };
+                    let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
 
-                            // Use the statement name if present, since it's a better name
-                            let default_name: LocRef = 'default_name_getter: {
-                                match &stmt.data {
-                                    // This was just a type annotation
-                                    js_ast::StmtData::STypeScript(_) => {
-                                        return Ok(stmt);
-                                    }
+                    // Use the statement name if present, since it's a better name
+                    let default_name: LocRef = 'default_name_getter: {
+                        match &stmt.data {
+                            // This was just a type annotation
+                            js_ast::StmtData::STypeScript(_) => {
+                                return Ok(stmt);
+                            }
 
-                                    js_ast::StmtData::SFunction(func_container) => {
-                                        if let Some(_name) = func_container.func.name {
-                                            break 'default_name_getter LocRef {
-                                                loc: default_loc,
-                                                ref_: _name.ref_,
-                                            };
-                                        }
-                                    }
-                                    js_ast::StmtData::SClass(class) => {
-                                        if let Some(_name) = class.class.class_name {
-                                            break 'default_name_getter LocRef {
-                                                loc: default_loc,
-                                                ref_: _name.ref_,
-                                            };
-                                        }
-                                    }
-                                    _ => {}
+                            js_ast::StmtData::SFunction(func_container) => {
+                                if let Some(_name) = func_container.func.name {
+                                    break 'default_name_getter LocRef {
+                                        loc: default_loc,
+                                        ref_: _name.ref_,
+                                    };
                                 }
+                            }
+                            js_ast::StmtData::SClass(class) => {
+                                if let Some(_name) = class.class.class_name {
+                                    break 'default_name_getter LocRef {
+                                        loc: default_loc,
+                                        ref_: _name.ref_,
+                                    };
+                                }
+                            }
+                            _ => {}
+                        }
 
-                                p.create_default_name(default_loc).expect("unreachable")
-                            };
-                            p.has_export_default = true;
-                            return Ok(p.s(
-                                S::ExportDefault {
-                                    default_name,
-                                    value: js_ast::StmtOrExpr::Stmt(stmt),
-                                },
-                                loc,
-                            ));
-                        }
-                        _ => {
-                            p.panic("internal error: unexpected", format_args!(""));
-                        }
-                    }
+                        p.create_default_name(default_loc).expect("unreachable")
+                    };
+                    p.has_export_default = true;
+                    return Ok(p.s(
+                        S::ExportDefault {
+                            default_name,
+                            value: js_ast::StmtOrExpr::Stmt(stmt),
+                        },
+                        loc,
+                    ));
+                }
+
+                // "@decorator export default abstract = 1"
+                if opts.ts_decorators.is_some() {
+                    p.lexer.expected(T::TClass)?;
                 }
 
                 p.lexer.expect_or_insert_semicolon()?;

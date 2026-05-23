@@ -176,6 +176,21 @@ describe("Bun.Transpiler", () => {
       exp("declare class Foo {}", "");
     });
 
+    it("does not crash when export default abstract is an expression followed by a class", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("export default abstract = 1\nclass Foo {}", "export default abstract = 1;\n\nclass Foo {\n}");
+      exp("export default abstract ?? 1\nclass Foo {}", "export default abstract ?? 1;\n\nclass Foo {\n}");
+      exp("export default abstract = 1", "export default abstract = 1;\n");
+
+      exp("export default abstract class Foo { abstract bar(): void }", "export default class Foo {\n}");
+      exp("export default abstract class {}", "export default class {\n}");
+
+      err("@dec export default abstract = 1", 'Expected "class" but found end of file');
+      err("@dec(() => 0) export default abstract = 1\nclass Foo {}", 'Expected "class" but found "class"');
+    });
+
     it("scope tracking stays balanced when a contextual keyword starts a larger expression", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -1161,6 +1176,65 @@ export default class {
 
     it("exported enum", () => {
       ts.expectPrinted_(input4, output4);
+    });
+
+    const input5 = `namespace ns {
+  export class ns {}
+}`;
+    const output5 = `var ns;
+((_ns) => {
+
+  class ns {
+  }
+  _ns.ns = ns;
+})(ns ||= {})`;
+
+    it("namespace argument renamed to avoid a member with the same name", () => {
+      ts.expectPrinted_(input5, output5);
+    });
+
+    const input6 = `namespace m2 {
+  class m2 {}
+  class _m2 {}
+}`;
+    const output6 = `var m2;
+((__m2) => {
+
+  class m2 {
+  }
+
+  class _m2 {
+  }
+})(m2 ||= {})`;
+
+    it("namespace argument does not collide with declarations in the namespace body", () => {
+      ts.expectPrinted_(input6, output6);
+    });
+
+    // The runtime transpiler does not run a renamer, so the generated closure
+    // argument must not shadow declarations inside the namespace body.
+    it("namespace closure argument does not redeclare members at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `namespace m2 {
+            class m2 {}
+            class _m2 {}
+            export const names = [m2.name, _m2.name];
+          }
+          console.log(JSON.stringify(m2.names));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["m2","_m2"]\n');
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -3995,5 +4069,21 @@ describe("export of a block-scoped function declaration", () => {
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain('"encrypt" is not declared in this file');
     expect(exitCode).toBe(1);
+  });
+});
+
+describe("minifyWhitespace keeps the space before keyword operators", () => {
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+
+  it("between a single-character identifier and 'instanceof'", () => {
+    expect(minifier.transformSync("x instanceof y")).toBe("x instanceof y;");
+  });
+
+  it("between a single-character identifier and 'in'", () => {
+    expect(minifier.transformSync("x in y")).toBe("x in y;");
+  });
+
+  it("between a numeric literal and 'in'", () => {
+    expect(minifier.transformSync("1 in y")).toBe("1 in y;");
   });
 });

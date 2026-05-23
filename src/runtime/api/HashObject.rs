@@ -41,9 +41,7 @@ pub trait HashAlgorithm {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hasher impls — one unit struct per algorithm.
-// TODO(port): the underlying hash functions reference Zig's `std.hash.*`.
-// Phase B must wire these to Rust equivalents (or FFI to the existing
-// implementations) that produce **bit-identical** output.
+// Each must produce output **bit-identical** to Zig's `std.hash.*`.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Wyhash;
@@ -276,7 +274,7 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     let mut args = jsc::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     let mut input: &[u8] = b"";
-    let mut input_slice = ZigStringSlice::empty();
+    let input_slice: ZigStringSlice;
     // Hoisted to outlive the borrow stored in `input` (Zig's stack-value
     // `array_buffer` lived for the whole function; mirror that scope here).
     let array_buffer;

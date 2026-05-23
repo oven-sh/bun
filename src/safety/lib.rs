@@ -1,4 +1,3 @@
-#![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 pub mod alloc;
@@ -56,7 +55,7 @@ static KNOWN_ALLOC_LEN: AtomicUsize = AtomicUsize::new(0);
 /// `fetch_add → slot.store` window would see a null slot, which is a harmless
 /// no-match (`needle` is always a non-null vtable address).
 pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
-    let p = vtable as *const _ as *mut ();
+    let p = std::ptr::from_ref(vtable) as *mut ();
     let i = KNOWN_ALLOC_LEN.fetch_add(1, Ordering::Relaxed);
     debug_assert!(
         i < KNOWN_ALLOC_CAP,
@@ -69,7 +68,7 @@ pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
 
 #[inline]
 pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
-    let needle = alloc.vtable as *const _ as *mut ();
+    let needle = std::ptr::from_ref(alloc.vtable) as *mut ();
     let n = KNOWN_ALLOC_LEN.load(Ordering::Relaxed).min(KNOWN_ALLOC_CAP);
     KNOWN_ALLOC_VTABLES[..n]
         .iter()
@@ -78,6 +77,7 @@ pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
 
 /// `MimallocArena.isInstance` — `bun_alloc` is below us, so call it directly
 /// (no registry needed for this one).
+#[cfg(debug_assertions)]
 #[inline]
 pub(crate) fn is_mimalloc_arena(alloc: bun_alloc::StdAllocator) -> bool {
     bun_alloc::MimallocArena::is_instance(&alloc)

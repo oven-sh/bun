@@ -204,13 +204,13 @@ impl StreamPriority {
         // std.mem.byteSwapAllFields(StreamPriority, dst) — `weight: u8` is a no-op.
         // PORT NOTE: brace-expr `{packed.field}` performs an unaligned copy;
         // assignment to a packed field is an unaligned store. No `unsafe`.
-        dst.stream_identifier = u32::swap_bytes({ dst.stream_identifier });
+        dst.stream_identifier = u32::swap_bytes(dst.stream_identifier);
     }
 
     #[inline]
-    pub fn encode_into(&self, dst: &mut [u8; Self::BYTE_SIZE]) {
-        let mut swap = *self;
-        swap.stream_identifier = u32::swap_bytes({ swap.stream_identifier });
+    pub fn encode_into(self, dst: &mut [u8; Self::BYTE_SIZE]) {
+        let mut swap = self;
+        swap.stream_identifier = u32::swap_bytes(swap.stream_identifier);
         dst.copy_from_slice(bytemuck::bytes_of(&swap));
     }
 }
@@ -277,7 +277,8 @@ pub struct SettingsPayloadUnit {
 unsafe impl bytemuck::Zeroable for SettingsPayloadUnit {}
 // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
 unsafe impl bytemuck::Pod for SettingsPayloadUnit {}
-const _: () = assert!(core::mem::size_of::<SettingsPayloadUnit>() == SettingsPayloadUnit::BYTE_SIZE);
+const _: () =
+    assert!(core::mem::size_of::<SettingsPayloadUnit>() == SettingsPayloadUnit::BYTE_SIZE);
 
 impl SettingsPayloadUnit {
     pub const BYTE_SIZE: usize = 6;
@@ -288,8 +289,8 @@ impl SettingsPayloadUnit {
         bytes[offset..src.len() + offset].copy_from_slice(src);
         if END {
             // std.mem.byteSwapAllFields(SettingsPayloadUnit, dst)
-            dst.type_ = u16::swap_bytes({ dst.type_ });
-            dst.value = u32::swap_bytes({ dst.value });
+            dst.type_ = u16::swap_bytes(dst.type_);
+            dst.value = u32::swap_bytes(dst.value);
         }
     }
 
@@ -351,7 +352,7 @@ impl FullSettingsPayload {
     pub const BYTE_SIZE: usize = 42;
 
     pub fn update_with(&mut self, option: SettingsPayloadUnit) {
-        match SettingsType({ option.type_ }) {
+        match SettingsType(option.type_) {
             SettingsType::SETTINGS_HEADER_TABLE_SIZE => self.header_table_size = option.value,
             SettingsType::SETTINGS_ENABLE_PUSH => self.enable_push = option.value,
             SettingsType::SETTINGS_MAX_CONCURRENT_STREAMS => {
@@ -371,19 +372,19 @@ impl FullSettingsPayload {
     pub fn encode_into(&self, dst: &mut [u8; Self::BYTE_SIZE]) {
         let mut swap = *self;
         swap._header_table_size_type = swap._header_table_size_type.swap_bytes();
-        swap.header_table_size = u32::swap_bytes({ swap.header_table_size });
+        swap.header_table_size = u32::swap_bytes(swap.header_table_size);
         swap._enable_push_type = swap._enable_push_type.swap_bytes();
-        swap.enable_push = u32::swap_bytes({ swap.enable_push });
+        swap.enable_push = u32::swap_bytes(swap.enable_push);
         swap._max_concurrent_streams_type = swap._max_concurrent_streams_type.swap_bytes();
-        swap.max_concurrent_streams = u32::swap_bytes({ swap.max_concurrent_streams });
+        swap.max_concurrent_streams = u32::swap_bytes(swap.max_concurrent_streams);
         swap._initial_window_size_type = swap._initial_window_size_type.swap_bytes();
-        swap.initial_window_size = u32::swap_bytes({ swap.initial_window_size });
+        swap.initial_window_size = u32::swap_bytes(swap.initial_window_size);
         swap._max_frame_size_type = swap._max_frame_size_type.swap_bytes();
-        swap.max_frame_size = u32::swap_bytes({ swap.max_frame_size });
+        swap.max_frame_size = u32::swap_bytes(swap.max_frame_size);
         swap._max_header_list_size_type = swap._max_header_list_size_type.swap_bytes();
-        swap.max_header_list_size = u32::swap_bytes({ swap.max_header_list_size });
+        swap.max_header_list_size = u32::swap_bytes(swap.max_header_list_size);
         swap._enable_connect_protocol_type = swap._enable_connect_protocol_type.swap_bytes();
-        swap.enable_connect_protocol = u32::swap_bytes({ swap.enable_connect_protocol });
+        swap.enable_connect_protocol = u32::swap_bytes(swap.enable_connect_protocol);
         dst.copy_from_slice(bytemuck::bytes_of(&swap));
     }
 }

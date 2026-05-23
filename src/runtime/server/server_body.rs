@@ -1,14 +1,13 @@
 //! Port of src/runtime/server/server.zig
 
-use bun_collections::VecExt;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_int, c_void};
 use core::mem;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
 use crate::api::js_bundler::PluginJscExt as _;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
-use crate::bake::dev_server::{self as dev_server_mod, DevServer};
+use crate::bake::dev_server::DevServer;
 use crate::bake::framework_router as FrameworkRouter;
 use crate::bake::{self as bake};
 use crate::node::types::PathLikeExt as _;
@@ -17,34 +16,27 @@ use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, Blob, Body, FetchHeaders, Request, Response,
+    self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response,
 };
 use ::bstr::BStr;
-use bun_alloc::AllocError;
-use bun_boringssl as boringssl;
 use bun_collections::HashMap;
-use bun_core::{self as core_, Global, Output, analytics, fmt as bun_fmt};
-use bun_core::{self as bstr, String as BunString, ZStr, ZigString, strings};
+use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{String as BunString, ZigString, strings};
 use bun_http::{self as http, Method, MimeType};
-use bun_http_jsc::method_jsc::MethodJsc as _;
-use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::Debugger::{AsyncTaskTracker, DebuggerId};
+use bun_jsc::Debugger::DebuggerId;
+use bun_jsc::ZigStringJsc as _;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsRef, JsResult, Node, StringJsc as _, Strong, StrongOptional, SysErrorJsc as _, SystemError,
-    VirtualMachine, host_fn,
+    JsResult, Node, StringJsc as _, Strong, StrongOptional, VirtualMachine, host_fn,
 };
-use bun_jsc::{StringJsc as _, ZigStringJsc as _};
 use bun_paths as paths;
-use bun_ptr::{IntrusiveRc, RefPtr};
+use bun_ptr::RefPtr;
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
 use bun_url::URL;
-use bun_uws::{
-    self as uws, AnyResponse, AnyWebSocket, Opcode, ResponseKind, WebSocketUpgradeContext,
-};
+use bun_uws::{self as uws, AnyWebSocket, ResponseKind, WebSocketUpgradeContext};
 use bun_uws_sys as uws_sys;
 use bun_wyhash::hash;
 
@@ -58,20 +50,14 @@ macro_rules! ctx_log {
     ($($arg:tt)*) => { bun_output::scoped_log!(RequestContext, $($arg)*) };
 }
 
-use bun_boringssl_sys::{ERR_func_error_string, ERR_lib_error_string, ERR_reason_error_string};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::http_server_agent::{self, InspectorHTTPServerAgent};
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 pub use super::html_bundle::{self as html_bundle, HTMLBundle};
-pub use super::http_status_text as HTTPStatusText;
-pub use super::web_socket_server_context::WebSocketServerContext;
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub use super::any_request_context::AnyRequestContext;
-pub use super::file_response_stream::FileResponseStream;
 pub use super::file_route::FileRoute;
 pub use super::node_http_response::NodeHTTPResponse;
-pub use super::range_request as RangeRequest;
 pub use super::request_context::{DeferDeinitFlag, RequestContext as NewRequestContext};
 pub use super::server_config::{self as server_config, ServerConfig};
 pub use super::server_web_socket::ServerWebSocket;
@@ -135,7 +121,7 @@ pub trait RequestCtxOps: RequestCtx {
     fn ctx_method(&self) -> http::Method;
     fn set_upgrade_context(&mut self, ctx: Option<*mut WebSocketUpgradeContext>);
     fn defer_deinit_ptr(&mut self) -> &mut Option<DeferDeinitFlag>;
-    fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>);
+    fn set_request_body(&mut self, body: Option<crate::webcore::body::BodyHiveHandle>);
     fn request_body_mut(&mut self) -> Option<&mut BodyValue>;
     fn set_signal(&mut self, sig: *mut AbortSignal);
     fn set_request_weakref(&mut self, req: *mut Request);
@@ -145,7 +131,8 @@ pub trait RequestCtxOps: RequestCtx {
     fn set_is_transfer_encoding(&mut self, v: bool);
     fn set_is_waiting_for_request_body(&mut self, v: bool);
     fn arm_on_data(&mut self, resp: &mut Self::Resp);
-    // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`)
+    // body-streaming callback hooks (type-erased, stored on `Body::PendingValue`).
+    // `this` must be a live `*mut Self::RequestCtx` cast to `*mut c_void`.
     fn on_start_buffering_callback(this: *mut c_void);
     fn on_start_streaming_request_body_callback(this: *mut c_void) -> WebCore::DrainResult;
     fn on_request_body_readable_stream_available(
@@ -217,14 +204,16 @@ where
         &mut self.defer_deinit_until_callback_completes
     }
     #[inline]
-    fn set_request_body(&mut self, body: Option<NonNull<BodyValue>>) {
+    fn set_request_body(&mut self, body: Option<crate::webcore::body::BodyHiveHandle>) {
         self.request_body = body
     }
     #[inline]
     fn request_body_mut(&mut self) -> Option<&mut BodyValue> {
-        // SAFETY: request_body points at a live HiveRef<Value> slot owned by the
-        // VM's hive allocator while the RequestContext holds a ref.
-        self.request_body.map(|p| unsafe { &mut *p.as_ptr() })
+        // SAFETY: R-2 invariant — slot shared with `Request.body`, never
+        // `&mut`-borrowed concurrently (single-threaded event loop).
+        self.request_body
+            .as_ref()
+            .map(|h| unsafe { &mut (*h.as_ptr()).value })
     }
     #[inline]
     fn set_signal(&mut self, sig: *mut AbortSignal) {
@@ -415,112 +404,10 @@ impl RespLike for uws_sys::h3::Response {
     }
 }
 
-// Module-level type aliases replacing the unstable inherent associated types
-// (`pub type App = …` inside `impl NewServer`).
-pub type ServerApp<const SSL: bool> = uws::NewApp<SSL>;
-
-// PORT NOTE: `bun_http` re-exports only the `Method` enum, not the sibling
-// `Set` type alias from `bun_http_types::Method`. Surface it locally so the
-// route-coverage bitset matches the Zig `HTTP.Method.Set` spelling.
-pub(crate) type MethodSet = bun_http_types::Method::Set;
-
-// ─── AppRouteExt ────────────────────────────────────────────────────────────
-// Local typed shim over `uws_sys::NewApp::{get,head,any,method}` whose
-// upstream signatures take a raw `extern "C" fn(*mut uws_res, *mut Request,
-// *mut c_void)` + opaque user-data. Zig generated a per-(ctx,handler)
-// trampoline at comptime; we recover that here by monomorphising on the
-// ZST fn-item type `H` so the user-data slot carries only the context.
-pub(crate) trait AppRouteExt<const SSL: bool> {
-    fn get_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, h: H)
-    where
-        H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static;
-    fn head_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, h: H)
-    where
-        H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static;
-    fn any_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, h: H)
-    where
-        H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static;
-    fn method_ctx<T, H>(&mut self, m: http::Method, pattern: &[u8], ctx: *mut T, h: H)
-    where
-        H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static;
-}
-
-#[inline]
-extern "C" fn _route_tramp<T, H, const SSL: bool>(
-    res: *mut uws_sys::uws_res,
-    req: *mut uws_sys::Request,
-    ud: *mut c_void,
-) where
-    H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
-{
-    use bun_uws_sys::thunk;
-    // SAFETY: uWS route callback contract — `ud`/`req`/`res` were registered by
-    // the matching `*_ctx` call below and are live disjoint pointers for the
-    // duration of the call; `H` is a ZST fn item (compile-asserted in
-    // `thunk::zst`). Consolidates the open-coded `&mut *cast` derefs into the
-    // audited `thunk::*` primitives so the invariant is documented once (S005).
-    unsafe {
-        let Some(ctx) = thunk::user_mut::<T>(ud) else {
-            return;
-        };
-        thunk::zst::<H>()(
-            ctx,
-            thunk::handle_mut(req.cast::<uws::Request>()),
-            thunk::handle_mut(res.cast::<uws_sys::NewAppResponse<SSL>>()),
-        );
-    }
-}
-
-impl<const SSL: bool> AppRouteExt<SSL> for uws_sys::NewApp<SSL> {
-    fn get_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, _h: H)
-    where
-        H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
-    {
-        self.get(
-            pattern,
-            Some(_route_tramp::<T, H, SSL>),
-            ctx.cast::<c_void>(),
-        );
-    }
-    fn head_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, _h: H)
-    where
-        H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
-    {
-        self.head(
-            pattern,
-            Some(_route_tramp::<T, H, SSL>),
-            ctx.cast::<c_void>(),
-        );
-    }
-    fn any_ctx<T, H>(&mut self, pattern: &[u8], ctx: *mut T, _h: H)
-    where
-        H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
-    {
-        self.any(
-            pattern,
-            Some(_route_tramp::<T, H, SSL>),
-            ctx.cast::<c_void>(),
-        );
-    }
-    fn method_ctx<T, H>(&mut self, m: http::Method, pattern: &[u8], ctx: *mut T, _h: H)
-    where
-        H: Fn(&mut T, &mut uws::Request, &mut uws_sys::NewAppResponse<SSL>) + Copy + 'static,
-    {
-        self.method(
-            m,
-            pattern,
-            Some(_route_tramp::<T, H, SSL>),
-            ctx.cast::<c_void>(),
-        );
-    }
-}
-
 pub type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 pub type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, true>;
-pub type ServerPreparedRequest<'a, const SSL: bool, const DEBUG: bool> =
-    PreparedRequestFor<'a, ServerRequestContext<SSL, DEBUG>>;
 
 // ─── BunInfo (moved from bun_core::Global) ───────────────────────────────────
 // Spec: src/bun_core/Global.zig:195-210. `generate()` builds the struct and
@@ -544,21 +431,21 @@ pub mod BunInfo {
 
     fn os_tag_name(os: OperatingSystem) -> &'static [u8] {
         match os {
-            OperatingSystem::_none => b"_none",
-            OperatingSystem::linux => b"linux",
-            OperatingSystem::macos => b"macos",
-            OperatingSystem::windows => b"windows",
-            OperatingSystem::wsl => b"wsl",
-            OperatingSystem::android => b"android",
-            OperatingSystem::freebsd => b"freebsd",
+            OperatingSystem::None => b"_none",
+            OperatingSystem::Linux => b"linux",
+            OperatingSystem::Macos => b"macos",
+            OperatingSystem::Windows => b"windows",
+            OperatingSystem::Wsl => b"wsl",
+            OperatingSystem::Android => b"android",
+            OperatingSystem::Freebsd => b"freebsd",
         }
     }
 
     fn arch_tag_name(arch: Architecture) -> &'static [u8] {
         match arch {
-            Architecture::_none => b"_none",
-            Architecture::x64 => b"x64",
-            Architecture::arm => b"arm",
+            Architecture::None => b"_none",
+            Architecture::X64 => b"x64",
+            Architecture::Arm => b"arm",
         }
     }
 
@@ -614,8 +501,6 @@ pub mod BunInfo {
         ))
     }
 }
-
-pub use super::write_status;
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
 // PORT NOTE: enum + `memory_cost`/`set_server`/`ref_`/`deref_` live in
@@ -791,7 +676,7 @@ impl AnyRoute {
             return Ok(AnyRoute::File(
                 NonNull::new(FileRoute::init_from_blob(
                     blob,
-                    super::file_route::InitOptions {
+                    &super::file_route::InitOptions {
                         server: None,
                         status_code: 200,
                         headers,
@@ -832,6 +717,8 @@ impl AnyRoute {
                     // *without* deref). `RefPtr<T>` has no `Drop`, so a bit-copy
                     // here keeps the net refcount at 1 — bumping for the map
                     // slot would leak +1 per first-seen HTMLBundle.
+                    // SAFETY: `html_bundle` is the live `RefPtr<HTMLBundle>` from the
+                    // route map; `init` consumes its +1 ref into the new `Route`.
                     let route = html_bundle::Route::init(html_bundle);
                     // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
                     // wrap without bumping so the map slot stays non-owning
@@ -986,6 +873,7 @@ pub enum GetOrStartLoadResult<'a> {
     Err,
 }
 
+#[derive(Clone, Copy)]
 pub enum ServePluginsCallback<'a> {
     /// Raw `*mut` because the route is stored in
     /// `ServePluginsState::Pending.html_bundle_routes` and later resolved via
@@ -1377,9 +1265,8 @@ pub enum PluginsResult<'a> {
 // defined once in `super` (mod.rs). This file contributes additional inherent
 // methods on the same type — there is no separate Phase-A struct.
 pub use super::{
-    AnyServer, AnyServerTag, CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer,
-    HTTPServer, NewServer, PreparedRequest, SavedRequest, SavedRequestUnion,
-    ServerAllConnectionsClosedTask, ServerFlags, UserRoute,
+    CreateJsRequest, DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, NewServer,
+    SavedRequest, ServerFlags, UserRoute,
 };
 
 /// `fn PreparedRequestFor(comptime Ctx: type) type` — generic over the
@@ -1663,7 +1550,7 @@ where
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        let topic = ZigString::from(topic_value.get_zig_string(global)?);
+        let topic = topic_value.get_zig_string(global)?;
         // jsc.JSValue
         let message_value = iter
             .next_eat()
@@ -1907,8 +1794,8 @@ where
             // fastGet returns a ZigString that borrows from the header map entry's
             // StringImpl, which fastRemove then frees — so we must copy the bytes
             // before removing the entry.
-            let mut sec_websocket_protocol_owned = ZigStringSlice::EMPTY;
-            let mut sec_websocket_extensions_owned = ZigStringSlice::EMPTY;
+            let mut _sec_websocket_protocol_owned = ZigStringSlice::EMPTY;
+            let mut _sec_websocket_extensions_owned = ZigStringSlice::EMPTY;
 
             if let Some(opts) = optional {
                 'getter: {
@@ -1968,9 +1855,9 @@ where
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
                         {
                             // Clone before fastRemove frees the backing StringImpl.
-                            sec_websocket_protocol_owned = protocol.to_slice_clone();
+                            _sec_websocket_protocol_owned = protocol.to_slice_clone();
                             sec_websocket_protocol =
-                                ZigString::init(sec_websocket_protocol_owned.slice());
+                                ZigString::init(_sec_websocket_protocol_owned.slice());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                         }
@@ -1979,9 +1866,9 @@ where
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions)
                         {
                             // Clone before fastRemove frees the backing StringImpl.
-                            sec_websocket_extensions_owned = extensions.to_slice_clone();
+                            _sec_websocket_extensions_owned = extensions.to_slice_clone();
                             sec_websocket_extensions =
-                                ZigString::init(sec_websocket_extensions_owned.slice());
+                                ZigString::init(_sec_websocket_extensions_owned.slice());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
@@ -2042,7 +1929,11 @@ where
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
         upgrader.ref_();
-        let _upgrader_guard = scopeguard::guard(upgrader_ptr, |p| unsafe { (*p).deref() });
+        let _upgrader_guard = scopeguard::guard(upgrader_ptr, |p| {
+            // SAFETY: `p` is the live `upgrader_ptr` whose refcount was bumped by
+            // the `ref_()` above; this guard pairs it with a single `deref()`.
+            unsafe { (*p).deref() }
+        });
 
         let mut sec_websocket_key_str = ZigString::EMPTY;
         let mut sec_websocket_protocol = ZigString::EMPTY;
@@ -2050,9 +1941,9 @@ where
 
         // Owned backing storage for sec_websocket_* — see server.zig:910 comment.
         // `ZigStringSlice` impls `Drop`; reassignment drops the previous value.
-        let mut sec_websocket_key_owned = bun_core::ZigStringSlice::empty();
-        let mut sec_websocket_protocol_owned = bun_core::ZigStringSlice::empty();
-        let mut sec_websocket_extensions_owned = bun_core::ZigStringSlice::empty();
+        let mut _sec_websocket_key_owned = bun_core::ZigStringSlice::empty();
+        let mut _sec_websocket_protocol_owned = bun_core::ZigStringSlice::empty();
+        let mut _sec_websocket_extensions_owned = bun_core::ZigStringSlice::empty();
 
         // PORT NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
@@ -2064,16 +1955,16 @@ where
             // (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
             let head = bun_opaque::opaque_deref_mut(head.as_ptr());
             if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
-                sec_websocket_key_owned = key.to_slice_clone();
-                sec_websocket_key_str = ZigString::init(sec_websocket_key_owned.slice());
+                _sec_websocket_key_owned = key.to_slice_clone();
+                sec_websocket_key_str = ZigString::init(_sec_websocket_key_owned.slice());
             }
             if let Some(proto) = head.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                sec_websocket_protocol_owned = proto.to_slice_clone();
-                sec_websocket_protocol = ZigString::init(sec_websocket_protocol_owned.slice());
+                _sec_websocket_protocol_owned = proto.to_slice_clone();
+                sec_websocket_protocol = ZigString::init(_sec_websocket_protocol_owned.slice());
             }
             if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                sec_websocket_extensions_owned = ext.to_slice_clone();
-                sec_websocket_extensions = ZigString::init(sec_websocket_extensions_owned.slice());
+                _sec_websocket_extensions_owned = ext.to_slice_clone();
+                sec_websocket_extensions = ZigString::init(_sec_websocket_extensions_owned.slice());
             }
         }
 
@@ -2102,7 +1993,7 @@ where
             }
         }
 
-        if sec_websocket_key_str.len == 0 {
+        if sec_websocket_key_str.len != 24 {
             return Ok(JSValue::FALSE);
         }
         if sec_websocket_protocol.len > 0 {
@@ -2178,15 +2069,15 @@ where
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                     let fh = bun_opaque::opaque_deref_mut(fh);
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                        sec_websocket_protocol_owned = p.to_slice_clone();
+                        _sec_websocket_protocol_owned = p.to_slice_clone();
                         sec_websocket_protocol =
-                            ZigString::init(sec_websocket_protocol_owned.slice());
+                            ZigString::init(_sec_websocket_protocol_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                     }
                     if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                        sec_websocket_extensions_owned = e.to_slice_clone();
+                        _sec_websocket_extensions_owned = e.to_slice_clone();
                         sec_websocket_extensions =
-                            ZigString::init(sec_websocket_extensions_owned.slice());
+                            ZigString::init(_sec_websocket_extensions_owned.slice());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }
                 }
@@ -2236,7 +2127,7 @@ where
 
         data_value.ensure_still_alive();
         let ws = ServerWebSocket::init(
-            &mut self.config.websocket.as_mut().unwrap().handler,
+            &self.config.websocket.as_mut().unwrap().handler,
             data_value,
             signal,
         );
@@ -2362,7 +2253,7 @@ where
         if self.inspector_server_id.get() != 0 {
             if let Some(debugger) = self.vm().as_mut().debugger.as_deref_mut() {
                 bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
-                    &mut debugger.http_server_agent,
+                    &debugger.http_server_agent,
                     self.as_any_server(),
                 ));
             }
@@ -2478,13 +2369,16 @@ where
 
             let mut url = URL::parse(temp_url_str);
 
-            // Both branches produce a heap-owned buffer that `url.href` borrows.
-            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so this
-            // buffer must be freed before we leave the block.
-            let owned_url_buf: Vec<u8> = if url.hostname.is_empty() {
-                strings::append(&self.base_url_string_for_joining, url.pathname).into_vec()
+            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so the
+            // joined buffer only needs to live through this block. The else arm
+            // borrows `temp_url_str` (kept alive by `url_zig_str`) instead of
+            // duping it just to satisfy a uniform `defer free` like the Zig did.
+            let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
+                std::borrow::Cow::Owned(
+                    strings::append(&self.base_url_string_for_joining, url.pathname).into_vec(),
+                )
             } else {
-                temp_url_str.to_vec()
+                std::borrow::Cow::Borrowed(temp_url_str)
             };
             url = URL::parse(&owned_url_buf);
 
@@ -2529,9 +2423,8 @@ where
             Box::new(Request::init2(
                 BunString::clone_utf8(url.href),
                 headers,
-                // Zig: `bun.handleOom(this.vm.initRequestBodyValue(body))` —
-                // moves `body` into the per-VM hive pool (ref_count = 1).
-                crate::webcore::body::hive_alloc(self.vm().as_mut(), body),
+                // Moves `body` into the per-VM hive pool (ref_count = 1).
+                crate::webcore::body::hive_alloc(body),
                 method,
             ))
         } else if let Some(request_) = first_arg
@@ -2923,8 +2816,9 @@ where
         req: &mut Ctx::Req,
         resp: &mut Ctx::Resp,
     ) {
-        // SAFETY: server backref outlives user_route
         let server_ptr = user_route.server.cast_mut();
+        // SAFETY: `UserRoute.server` is a back-pointer to the owning server,
+        // which outlives every route it registered.
         let server = unsafe { &mut *server_ptr };
         let index = user_route.id;
 
@@ -3170,22 +3064,16 @@ where
         };
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
-        // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
-        // owned by the per-thread VirtualMachine.
-        self.vm_ref()
-            .jsc_vm()
-            .deprecated_report_extra_memory(mem::size_of::<Ctx>());
 
-        // `vm.initRequestBodyValue(.{ .Null = {} })` — typed wrapper over the
-        // type-erased RuntimeHooks vtable. Returns `NonNull<HiveRef>` with
-        // `ref_count = 1` (held by `ctx.request_body`).
-        let body_hive = crate::webcore::body::hive_alloc(self.vm().as_mut(), BodyValue::Null);
-        // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
-        // its refcount drops to zero (released in `RequestContext::deinit` and
-        // `Request::finalize`).
-        let body_ptr: *mut BodyValue =
-            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
-        ctx.set_request_body(NonNull::new(body_ptr));
+        // Don't report extra GC memory here: ctx is a recycled pool slot,
+        // not a fresh heap allocation (see NewServer::on_request).
+
+        // `vm.initRequestBodyValue(.{ .Null = {} })` — pooled body slot,
+        // ref_count = 1.
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
+        // Zig: `.body = body.ref()` — ctx and Request each own a +1 on the
+        // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
+        ctx.set_request_body(Some(body_hive.clone()));
 
         let signal = AbortSignal::new(&self.global());
         ctx.set_signal(signal);
@@ -3196,19 +3084,12 @@ where
         // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
         // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
-        // Zig: `.body = body.ref()` — bump once so the JS Request shares the
-        // same hive slot as `ctx.request_body` (streamed bytes buffered into
-        // the ctx surface on `request.body`/`request.json()`). Paired with
-        // `HiveRef::unref` in `Request::finalize`.
-        // SAFETY: `body_hive` is live (ref_count >= 1).
-        let body_for_req: NonNull<crate::webcore::body::HiveRef> =
-            unsafe { NonNull::from((*body_hive.as_ptr()).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
             SSL,
             Some(signal_for_req),
-            body_for_req,
+            body_hive,
         ));
         let request_object: &mut Request =
             // SAFETY: leak so the ctx (which outlives this stack frame) can
@@ -3228,20 +3109,23 @@ where
                 ))
             }));
             // PORT NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
-            // returned slices alias the same uWS-owned header buffer. Snapshot
-            // `host` into an owned buffer first so the second borrow for `url`
-            // is unconflicted.
-            let host: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|h| h.to_vec());
+            // returned slices alias the same uWS-owned header buffer. Format
+            // the `https://{host}` prefix while `host` is borrowed so the
+            // second `&mut req` borrow for `url` is unconflicted.
+            let prefix: Option<Vec<u8>> = ReqLike::header(req, b"host").map(|host| {
+                let fmt = bun_fmt::HostFormatter {
+                    is_https: true,
+                    host,
+                    port: None,
+                };
+                let mut s = Vec::new();
+                write!(&mut s, "https://{}", fmt).ok();
+                s
+            });
             let path = ReqLike::url(req);
             if !path.is_empty() && path[0] == b'/' {
-                if let Some(host) = host.as_deref() {
-                    let fmt = bun_fmt::HostFormatter {
-                        is_https: true,
-                        host,
-                        port: None,
-                    };
-                    let mut s = Vec::new();
-                    write!(&mut s, "https://{}{}", fmt, BStr::new(path)).ok();
+                if let Some(mut s) = prefix {
+                    s.extend_from_slice(path);
                     request_object.url.set(BunString::clone_utf8(&s));
                 } else {
                     request_object.url.set(BunString::clone_utf8(path));
@@ -3323,6 +3207,8 @@ where
         let index = this.id;
 
         let should_deinit_context = core::cell::Cell::new(false);
+        // SAFETY: `server_ptr` is the live heap server registered for this route;
+        // `req`/`resp` are the live uWS handles passed to the route handler.
         let Some(mut prepared) = Self::prepare_js_request_context(
             server_ptr,
             req,
@@ -3358,7 +3244,7 @@ where
         Self::handle_request(
             server_ptr,
             &should_deinit_context,
-            prepared,
+            &prepared,
             req,
             response_value,
         );
@@ -3411,26 +3297,26 @@ where
         }
         this.pending_requests += 1;
         req.set_yield(false);
-        // SAFETY: pointer is non-null and owns a fresh pool slot.
-        let ctx_slot = unsafe { (*this.request_pool).get() };
+        // SAFETY: `request_pool` is non-null while the server is alive; `claim()`
+        // reserves a fresh slot whose `Drop` releases it on panic before init.
+        let ctx_slot = unsafe { (*this.request_pool).claim() };
         let should_deinit_context = core::cell::Cell::new(false);
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
-            ctx_slot,
+            ctx_slot.addr().as_ptr(),
             self_ptr,
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             None,
         );
-        // SAFETY: ctx_slot was just initialized by create_in.
-        let ctx = unsafe { &mut *ctx_slot };
+        // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
+        let ctx = unsafe { &mut *ctx_slot.assume_init().as_ptr() };
 
-        let body_hive = crate::webcore::body::hive_alloc(this.vm().as_mut(), BodyValue::Null);
-        // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until
-        // its refcount drops to zero.
-        let body_ptr: *mut BodyValue =
-            unsafe { core::ptr::addr_of_mut!((*body_hive.as_ptr()).value) };
-        ctx.request_body = NonNull::new(body_ptr);
+        // Pooled body slot, ref_count = 1.
+        let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
+        // Zig: `.body = body.ref()` — ctx and Request each own a +1 on the
+        // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
+        ctx.request_body = Some(body_hive.clone());
 
         let signal = AbortSignal::new(&this.global());
         // Zig: `ctx.signal = signal; signal.pendingActivityRef();` — the
@@ -3443,18 +3329,12 @@ where
         // adopt into RAII so it pairs with `Request::Drop`'s unref.
         // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
         let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
-        // Zig: `.body = body.ref()` — bump once so the JS Request shares the
-        // same hive slot as `ctx.request_body`. Paired unref in
-        // `Request::finalize`.
-        // SAFETY: `body_hive` is live (ref_count >= 1).
-        let body_for_req: NonNull<crate::webcore::body::HiveRef> =
-            unsafe { NonNull::from((*body_hive.as_ptr()).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),
             SSL,
             Some(signal_for_req),
-            body_for_req,
+            body_hive,
         ));
         ctx.upgrade_context = Some(upgrade_ctx);
         let request_object: &mut Request =
@@ -3522,7 +3402,15 @@ where
         }
 
         let authorized = 'brk: {
-            if self.dev_server.is_none() {
+            let Some(dev_server) = self.dev_server.as_deref() else {
+                break 'brk false;
+            };
+
+            // The loopback source-IP check below is not enough on its own: a
+            // DNS-rebound origin connects from 127.0.0.1 but presents the
+            // attacker's hostname in `Host`. Apply the same Host allowlist as
+            // the `/_bun/*` routes before disclosing the project root path.
+            if !bake::is_allowed_dev_host(dev_server, req) {
                 break 'brk false;
             }
 
@@ -3533,7 +3421,7 @@ where
                 }
                 // IPv6 loopback addresses
                 if address.ip.starts_with(b"::ffff:127.")
-                    || address.ip.starts_with(b"::1")
+                    || address.ip == b"::1"
                     || address.ip == b"0:0:0:0:0:0:0:1"
                 {
                     break 'brk true;
@@ -3725,14 +3613,17 @@ pub fn server_set_idle_timeout_(
         )));
     }
     let value = seconds.to_u32();
-    // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<HTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_idle_timeout(value);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_idle_timeout(value);
     } else {
         return Err(global.throw(format_args!(
@@ -3781,6 +3672,8 @@ pub fn server_set_on_client_error_(
                         // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty) buffer.
                         let this = unsafe { &mut *user_data.cast::<$T>() };
                         let packet: &[u8] = if raw_packet_len > 0 {
+                            // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len`
+                            // readable bytes when `raw_packet_len > 0`.
                             unsafe { bun_core::ffi::slice(raw_packet, raw_packet_len as usize) }
                         } else {
                             &[]
@@ -3815,14 +3708,17 @@ pub fn server_set_app_flags_(
         )));
     }
 
-    // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<HTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
     } else {
         return Err(global.throw(format_args!(
@@ -3843,14 +3739,17 @@ pub fn server_set_max_http_header_size_(
         )));
     }
 
-    // SAFETY: as_ returned a non-null *mut to a live server.
     if let Some(this) = server.as_::<HTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<HTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
+        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
         unsafe { &mut *this }.set_max_http_header_size(max_header_size);
     } else {
         return Err(global.throw(format_args!(
@@ -3963,7 +3862,4 @@ unsafe extern "C" {
         paths: *mut ZigString,
         paths_length: usize,
     ) -> JSValue;
-
-    safe fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
-    safe fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
 }

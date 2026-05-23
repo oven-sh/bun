@@ -1,5 +1,4 @@
 use bun_collections::VecExt;
-use core::ffi::c_void;
 use std::io::Write as _;
 
 use crate::bun_json as JSON;
@@ -9,11 +8,10 @@ use bun_collections::{HashMap, StringSet};
 use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
-use bun_http::{self as http, AsyncHTTP, HTTPClient, HeaderBuilder};
+use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
 use bun_picohttp as picohttp;
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
-use bun_sys::{self, CloseOnDrop, Fd, File};
-use bun_threading::ThreadPool;
+use bun_sys::{self, Fd, File};
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
@@ -21,8 +19,8 @@ use crate::bin::{self, Bin};
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
-    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, IdentityContext, PackageManager,
-    PackageNameHash, VersionSlice, initialize_mini_store as initialize_store,
+    Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
+    VersionSlice, initialize_mini_store as initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -84,12 +82,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
         write!(
             &mut print_buf,
-            "{} {} {} workspaces/{}{}{}",
+            "{} {} {} workspaces/false{}{}",
             Global::user_agent,
             Global::os_name,
             Global::arch_name,
-            // TODO: figure out how npm determines workspaces=true
-            false,
             if ci_name.is_some() { " ci/" } else { "" },
             bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
@@ -121,11 +117,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
         write!(
             &mut print_buf,
-            "{} {} {} workspaces/{}{}{}",
+            "{} {} {} workspaces/false{}{}",
             Global::user_agent,
             Global::os_name,
             Global::arch_name,
-            false,
             if ci_name.is_some() { " ci/" } else { "" },
             bstr::BStr::new(ci_name.unwrap_or(b"")),
         )
@@ -216,7 +211,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     Ok(username.to_vec())
 }
 
-// TODO(b2): body gated — picohttp::Response field shape drift
+// TODO(port): body gated — picohttp::Response field shape drift
 
 pub fn response_error<const OTP_RESPONSE: bool>(
     req: &AsyncHTTP,
@@ -246,11 +241,12 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         res.status_code,
         if !res.status.is_empty() { " " } else { "" },
         bstr::BStr::new(&res.status),
-        bun_fmt::redacted_npm_url(&req.url.href),
+        bun_fmt::redacted_npm_url(req.url.href),
     ));
 
-    if res.status_code == 404 && pkg_id.is_some() {
-        let (package_name, package_version) = pkg_id.unwrap();
+    if res.status_code == 404
+        && let Some((package_name, package_version)) = pkg_id
+    {
         Output::pretty_errorln(format_args!(
             "\n - '{}@{}' does not exist in this registry",
             bstr::BStr::new(package_name),
@@ -372,8 +368,8 @@ pub mod registry {
                         // defer { url.pathname = pathname; url.path = pathname; } — applied below
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {
-                            let mut segment = &pathname[colon as usize + 1..];
-                            pathname = &pathname[..colon as usize];
+                            let mut segment = &pathname[colon + 1..];
+                            pathname = &pathname[..colon];
                             needs_to_check_slash = false;
                             needs_normalize = true;
                             if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
@@ -390,15 +386,15 @@ pub mod registry {
                             // Bearer Token
                             if segment == b"_authToken" {
                                 registry.token = value.into();
-                                url.pathname = pathname.into();
-                                url.path = pathname.into();
+                                url.pathname = pathname;
+                                url.path = pathname;
                                 break 'outer;
                             }
 
                             if segment == b"_auth" {
                                 auth = value;
-                                url.pathname = pathname.into();
-                                url.path = pathname.into();
+                                url.pathname = pathname;
+                                url.path = pathname;
                                 break 'outer;
                             }
 
@@ -416,7 +412,7 @@ pub mod registry {
                         // In this case, there is only one.
                         if needs_to_check_slash {
                             if let Some(last_slash) = strings::last_index_of_char(pathname, b'/') {
-                                let remain = &pathname[last_slash as usize + 1..];
+                                let remain = &pathname[last_slash + 1..];
                                 if let Some(eql_i) = strings::index_of_char(remain, b'=') {
                                     let segment = &remain[..eql_i as usize];
                                     let value = &remain[eql_i as usize + 1..];
@@ -425,37 +421,37 @@ pub mod registry {
                                     // Bearer Token
                                     if segment == b"_authToken" {
                                         registry.token = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
                                     if segment == b"_auth" {
                                         auth = value;
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
                                     if segment == b"username" {
                                         registry.username = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
 
                                     if segment == b"_password" {
                                         registry.password = value.into();
-                                        pathname = &pathname[..last_slash as usize + 1];
+                                        pathname = &pathname[..last_slash + 1];
                                         needs_normalize = true;
-                                        url.pathname = pathname.into();
-                                        url.path = pathname.into();
+                                        url.pathname = pathname;
+                                        url.path = pathname;
                                         break 'outer;
                                     }
                                 }
@@ -464,8 +460,8 @@ pub mod registry {
 
                         // PORT NOTE: reshaped for borrowck — Zig's `defer { url.pathname = pathname; url.path = pathname; }`
                         // is applied at every `break 'outer` above and once more here at fallthrough.
-                        url.pathname = pathname.into();
-                        url.path = pathname.into();
+                        url.pathname = pathname;
+                        url.path = pathname;
                     }
 
                     registry.username = env.get_auto(&registry.username).into();
@@ -522,7 +518,7 @@ pub mod registry {
         }
     }
 
-    // TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+    // TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
     pub type Map = HashMap<u64, Scope>;
 
     pub enum PackageVersionResponse {
@@ -547,7 +543,10 @@ pub mod registry {
             429 => return Err(err!("TooManyRequests")),
             404 => return Ok(PackageVersionResponse::NotFound),
             500..=599 => return Err(err!("HTTPInternalServerError")),
-            304 => return Ok(PackageVersionResponse::Cached(loaded_manifest.unwrap())),
+            304 => match loaded_manifest {
+                Some(manifest) => return Ok(PackageVersionResponse::Cached(manifest)),
+                None => return Err(err!("UnexpectedNotModified")),
+            },
             _ => {}
         }
 
@@ -576,7 +575,7 @@ pub mod registry {
                     &package,
                     scope,
                     package_manager.get_temporary_directory().handle.fd,
-                    package_manager.get_cache_directory().fd,
+                    package_manager.get_cache_directory(),
                 );
             }
 
@@ -659,6 +658,14 @@ pub struct PackageVersion {
     // Splitting this into it's own array ends up increasing the final size a little bit.
     pub integrity: Integrity,
 
+    // Explicit padding so this struct has no implicit (uninitialized) padding
+    // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
+    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
+    // fields, `Default` zero-fills them and every byte of the struct is
+    // initialized. Layout (size=240, align=8) is unchanged; see the
+    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
+    pub _padding_after_integrity: [u8; 3],
+
     /// "dependencies"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#dependencies)
     pub dependencies: ExternalStringMap,
 
@@ -685,6 +692,7 @@ pub struct PackageVersion {
     /// `"peerDependenciesMeta"` in [package.json](https://docs.npmjs.com/cli/v8/configuring-npm/package-json#peerdependenciesmeta)
     /// if `non_optional_peer_dependencies_start` is > 0, then instead of alphabetical, the first N items of `peer_dependencies` are optional
     pub non_optional_peer_dependencies_start: u32,
+    pub _padding_before_man_dir: [u8; 4],
 
     pub man_dir: ExternalString,
 
@@ -705,6 +713,7 @@ pub struct PackageVersion {
 
     /// `hasInstallScript` field in registry API.
     pub has_install_script: bool,
+    pub _padding_tail: [u8; 2],
 
     /// Unix timestamp when this version was published (0 if unknown)
     pub publish_timestamp_ms: f64,
@@ -714,6 +723,7 @@ impl Default for PackageVersion {
     fn default() -> Self {
         Self {
             integrity: Integrity::default(),
+            _padding_after_integrity: [0; 3],
             dependencies: ExternalStringMap::default(),
             optional_dependencies: ExternalStringMap::default(),
             peer_dependencies: ExternalStringMap::default(),
@@ -722,6 +732,7 @@ impl Default for PackageVersion {
             bin: Bin::default(),
             engines: ExternalStringMap::default(),
             non_optional_peer_dependencies_start: 0,
+            _padding_before_man_dir: [0; 4],
             man_dir: ExternalString::default(),
             tarball_url: ExternalString::default(),
             unpacked_size: 0,
@@ -730,6 +741,7 @@ impl Default for PackageVersion {
             cpu: Architecture::ALL,
             libc: Libc::NONE,
             has_install_script: false,
+            _padding_tail: [0; 2],
             publish_timestamp_ms: 0.0,
         }
     }
@@ -764,6 +776,41 @@ const _: () = assert!(
     "Npm.PackageVersion layout drifted from Zig spec (expected 240 bytes); \
      bump PackageManifest::Serializer::VERSION if intentional",
 );
+
+// Compile-time proof that the explicit `_padding_*` fields above leave no
+// implicit padding gaps in `PackageVersion` (so `&[PackageVersion] as &[u8]`
+// in `Serializer::write_array` reads only initialized bytes). Mirrors the
+// `NpmPackage` checks below and `padding_checker.rs`.
+const _: () = {
+    use core::mem::{offset_of, size_of};
+    // gap between `integrity` (size 65, align 1) and `dependencies` (align 4 → 68)
+    assert!(
+        offset_of!(PackageVersion, _padding_after_integrity)
+            == offset_of!(PackageVersion, integrity) + size_of::<Integrity>()
+    );
+    assert!(
+        offset_of!(PackageVersion, dependencies)
+            == offset_of!(PackageVersion, _padding_after_integrity) + 3
+    );
+    // gap between `non_optional_peer_dependencies_start` (u32, ends at 180) and `man_dir` (align 8 → 184)
+    assert!(
+        offset_of!(PackageVersion, _padding_before_man_dir)
+            == offset_of!(PackageVersion, non_optional_peer_dependencies_start) + size_of::<u32>()
+    );
+    assert!(
+        offset_of!(PackageVersion, man_dir)
+            == offset_of!(PackageVersion, _padding_before_man_dir) + 4
+    );
+    // gap between `has_install_script` (bool, ends at 230) and `publish_timestamp_ms` (align 8 → 232)
+    assert!(
+        offset_of!(PackageVersion, _padding_tail)
+            == offset_of!(PackageVersion, has_install_script) + size_of::<bool>()
+    );
+    assert!(
+        offset_of!(PackageVersion, publish_timestamp_ms)
+            == offset_of!(PackageVersion, _padding_tail) + 2
+    );
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -841,7 +888,7 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
-    // TODO(b2): bun_io::DiscardingWriter — counting writer not exposed yet
+    // TODO(port): bun_io::DiscardingWriter — counting writer not exposed yet
 
     pub fn byte_length(&self, scope: &registry::Scope) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
@@ -872,7 +919,7 @@ pub mod package_manifest {
 
         // TODO(port): `sizes` was a comptime block iterating PackageManifest's fields by alignment.
         // Rust cannot reflect struct fields. Hardcode the field order produced by the Zig sort
-        // (descending alignment) and verify in Phase B against the Zig output.
+        // (descending alignment); re-verify against the Zig output if the layout changes.
         pub const SIZES_FIELDS: &'static [&'static str] = &[
             "pkg",
             "string_buf",
@@ -956,8 +1003,8 @@ pub mod package_manifest {
 
             pos += 128 / 8;
 
-            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand. Phase B: verify field
-            // order matches Zig comptime sort (descending alignment).
+            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand. Verify field
+            // order matches Zig comptime sort (descending alignment) if the layout changes.
             {
                 // "pkg"
                 // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
@@ -997,7 +1044,7 @@ pub mod package_manifest {
             outpath: &bun_core::ZStr,
         ) -> Result<(), Error> {
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
-            // PERF(port): was stack-fallback alloc — profile in Phase B
+            // PERF(port): was stack-fallback alloc — profile if hot.
             let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(scope) + 64);
             Serializer::write(this, scope, &mut buffer)?;
             // --- Perf Improvement #1 ----
@@ -1025,8 +1072,10 @@ pub mod package_manifest {
             let path_to_use_for_opening_file = tmp_path;
             #[cfg(not(windows))]
             let _ = &mut realpath_buf;
+            #[cfg(windows)]
+            let _ = cache_dir;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut is_using_o_tmpfile = false;
 
             let file: File = 'brk: {
@@ -1039,7 +1088,7 @@ pub mod package_manifest {
                 // Do our best to use O_TMPFILE, so that if this process is interrupted, we don't leave a temporary file behind.
                 // O_TMPFILE is Linux-only. Not all filesystems support O_TMPFILE.
                 // https://manpages.debian.org/testing/manpages-dev/openat.2.en.html#O_TMPFILE
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     match File::openat(
                         cache_dir,
@@ -1081,19 +1130,11 @@ pub mod package_manifest {
                 )?
             };
 
-            {
-                // errdefer file.close()
-                let guard = CloseOnDrop::file(&file);
-                file.write_all(&buffer)?;
-                let _ = guard.into_inner();
-            }
+            file.write_all(&buffer)?;
 
             #[cfg(windows)]
             {
                 let mut realpath2_buf = bun_paths::PathBuffer::uninit();
-                // errdefer if (!did_close) file.close() — disarmed once we close explicitly below.
-                let guard = CloseOnDrop::file(&file);
-
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
                 let cache_path_abs =
                     bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
@@ -1101,7 +1142,6 @@ pub mod package_manifest {
                         &mut realpath2_buf[..],
                         &[cache_dir_abs, outpath.as_bytes()],
                     );
-                let _ = guard.into_inner();
                 // Zig spec discards the close error too — the renameat
                 // immediately below surfaces a usable error if the temp
                 // file is in a bad state, and on POSIX the close cannot
@@ -1116,9 +1156,8 @@ pub mod package_manifest {
                 return Ok(());
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
-                let _close = CloseOnDrop::file(&file);
                 // Attempt #1.
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
                     // Attempt #2: the file may already exist. Let's unlink and try again.
@@ -1131,7 +1170,6 @@ pub mod package_manifest {
 
             #[cfg(not(windows))]
             {
-                let _close = CloseOnDrop::file(&file);
                 // Attempt #1. Rename the file.
                 let rc = bun_sys::renameat(tmpdir, tmp_path, cache_dir, outpath);
 
@@ -1148,16 +1186,15 @@ pub mod package_manifest {
                         // Rust `Errno::EOPNOTSUPP` resolves to 102 on Darwin,
                         // so match `ENOTSUP` as well to keep the macOS
                         // `renameat2(.exchange)` fallback reachable. On
-                        // Linux/FreeBSD the two names alias the same value;
-                        // the redundant arm is intentional.
-                        #[allow(unreachable_patterns)]
-                        if matches!(
-                            err.get_errno(),
-                            bun_sys::Errno::EEXIST
-                                | bun_sys::Errno::ENOTEMPTY
-                                | bun_sys::Errno::ENOTSUP
-                                | bun_sys::Errno::EOPNOTSUPP
-                        ) {
+                        // Linux/FreeBSD the two names alias the same value,
+                        // so compare by equality (a `matches!` pattern would
+                        // flag the alias as unreachable).
+                        let errno = err.get_errno();
+                        if errno == bun_sys::Errno::EEXIST
+                            || errno == bun_sys::Errno::ENOTEMPTY
+                            || errno == bun_sys::Errno::ENOTSUP
+                            || errno == bun_sys::Errno::EOPNOTSUPP
+                        {
                             // Atomically swap the old file with the new file.
                             bun_sys::renameat2(
                                 tmpdir,
@@ -1180,6 +1217,7 @@ pub mod package_manifest {
                 rc?;
             }
 
+            #[cfg(not(windows))]
             Ok(())
         }
 
@@ -1250,7 +1288,7 @@ pub mod package_manifest {
             }
 
             // TODO(port): lifetime — `scope` is borrowed across a thread boundary; Zig assumed
-            // the Registry.Scope outlives the threadpool task. Phase B: prove or change to owned.
+            // the Registry.Scope outlives the threadpool task. Prove or change to owned.
             let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
                 manifest: this.clone(), // TODO(port): Zig copied PackageManifest by value
                 scope,
@@ -1272,7 +1310,6 @@ pub mod package_manifest {
             file_id: u64,
             scope: &registry::Scope,
         ) -> Result<&'b bun_core::ZStr, Error> {
-            use core::fmt::Write as _;
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
             let mut stream = bun_io::FixedBufferStream::new_mut(buf);
             if scope.url_hash == *registry::DEFAULT_URL_HASH {
@@ -1328,7 +1365,6 @@ pub mod package_manifest {
             let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
                 return Ok(None);
             };
-            let _close_cache_file = CloseOnDrop::file(&cache_file);
 
             'delete: {
                 match Self::load_by_file(scope, &cache_file) {
@@ -1908,7 +1944,7 @@ impl PackageManifest {
     }
 }
 
-// TODO(b2): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
+// TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
 type ExternalStringMapDeduper = HashMap<u64, ExternalStringList>;
 
 use bun_install_types::DependencyGroup;
@@ -1941,9 +1977,9 @@ impl PackageManifest {
         // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
         // pushed/popped the AST arena around the parse so the JSON AST is
         // bulk-freed on return. `initialize_mini_store` already does the push;
-        // the pop is handled by resetting on the next call. Phase B should wire
-        // an explicit RAII guard once `ASTMemoryAllocator::pop` is exposed.
-        // PERF(port): was arena bulk-free — profile in Phase B
+        // the pop is handled by resetting on the next call. Wire an explicit
+        // RAII guard once `ASTMemoryAllocator::pop` is exposed.
+        // PERF(port): was arena bulk-free — profile if hot.
         let bump = bun_alloc::Arena::new();
         let json = match JSON::parse_utf8(&source, log, &bump) {
             Ok(j) => j,
@@ -1975,7 +2011,7 @@ impl PackageManifest {
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
 
         let mut bundled_deps_set = StringSet::init();
-        let mut bundle_all_deps = false;
+        let mut bundle_all_deps: bool;
 
         let mut bundled_deps_count: usize = 0;
 
@@ -2175,7 +2211,7 @@ impl PackageManifest {
                 }
 
                 for pair in &DEPENDENCY_GROUPS {
-                    // PERF(port): was comptime monomorphization — profile in Phase B
+                    // PERF(port): was comptime monomorphization — profile if hot.
                     if let Some(versioned_deps) = prop
                         .value
                         .as_ref()
@@ -2331,7 +2367,7 @@ impl PackageManifest {
             release_versions_len..release_versions_len + pre_versions_len;
         let dist_tag_versions_start = release_versions_len + pre_versions_len;
         // SAFETY: all_semver_versions is heap-allocated; we need disjoint mutable subslices.
-        // TODO(port): use split_at_mut chain instead of raw pointers in Phase B.
+        // TODO(port): use split_at_mut chain instead of raw pointers.
         let all_semver_versions_ptr: *mut Semver::Version = all_semver_versions.as_mut_ptr();
         let mut release_versions_cursor: usize = 0;
         let mut prerelease_versions_cursor: usize = release_versions_len;
@@ -2731,7 +2767,7 @@ impl PackageManifest {
 
                 let mut non_optional_peer_dependency_offset: usize = 0;
 
-                // PERF(port): was comptime monomorphization (`inline for`) — profile in Phase B
+                // PERF(port): was comptime monomorphization (`inline for`) — profile if hot.
                 for (group_idx, pair) in DEPENDENCY_GROUPS.iter().enumerate() {
                     let is_peer = pair.prop == b"peerDependencies";
                     // For peer deps, fall through with an empty `items`
@@ -2775,8 +2811,6 @@ impl PackageManifest {
                             }
                         };
                     if items.len() > 0 || has_meta_only_peers {
-                        let mut count = items.len();
-
                         // PORT NOTE: reshaped for borrowck — index into all_extern_strings / version_extern_strings
                         let names_base = dependency_names_cursor;
                         let values_base = dependency_values_cursor;
@@ -2823,11 +2857,6 @@ impl PackageManifest {
                                                     meta_key,
                                                 ),
                                             );
-
-                                            // Reserve a slot for a meta-only synthesised peer.
-                                            // The slot is unused if `meta_key` also appears in
-                                            // `peerDependencies` below.
-                                            count += 1;
                                         }
                                     }
                                 }
@@ -2996,7 +3025,7 @@ impl PackageManifest {
                             }
                         }
 
-                        count = i;
+                        let count = i;
                         // The peer slice was over-reserved by the
                         // number of `peerDependenciesMeta` entries (so
                         // meta-only synthesised peers had room); trim
@@ -3079,7 +3108,7 @@ impl PackageManifest {
 
                         // TODO(port): debug-assertions block (Zig lines 2478-2522) elided —
                         // it re-reads `this_names`/`this_versions` via `mut()` after dedupe.
-                        // Phase B can re-add with cursor-based slicing.
+                        // Re-add with cursor-based slicing if needed.
                         let _ = (this_names, this_versions);
                     }
                 }
@@ -3208,7 +3237,7 @@ impl PackageManifest {
         );
         result.pkg.releases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_releases_range.clone()],
+            &versioned_packages[all_versioned_package_releases_range],
         );
 
         result.pkg.prereleases.keys = VersionSlice::init(
@@ -3217,7 +3246,7 @@ impl PackageManifest {
         );
         result.pkg.prereleases.values = PackageVersionList::init(
             &versioned_packages,
-            &versioned_packages[all_versioned_package_prereleases_range.clone()],
+            &versioned_packages[all_versioned_package_prereleases_range],
         );
 
         let max_versions_count = all_release_versions_range
@@ -3244,12 +3273,12 @@ impl PackageManifest {
             n => {
                 // ceil(log2_int_ceil(n) / 8)
                 let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
-                (bits + 7) / 8
+                bits.div_ceil(8)
             }
         };
 
         // PERF(port): was comptime monomorphization over Int width — using a macro to expand
-        // the 1..=8 byte cases. Phase B may collapse to a single usize path if profiling allows.
+        // the 1..=8 byte cases. Could collapse to a single usize path if profiling allows.
         macro_rules! sort_with_int {
             ($Int:ty) => {{
                 type Int = $Int;
@@ -3330,7 +3359,7 @@ impl PackageManifest {
             2 => sort_with_int!(u16),
             3 => sort_with_int!(u32), // TODO(port): Zig used u24; Rust has no u24, use u32
             4 => sort_with_int!(u32),
-            5 | 6 | 7 | 8 => sort_with_int!(u64),
+            5..=8 => sort_with_int!(u64),
             _ => {
                 debug_assert!(max_versions_count == 0);
             }
@@ -3382,14 +3411,14 @@ impl PackageManifest {
 
         if let Some(buf) = string_builder.ptr.take() {
             // TODO(port): string_builder owns this allocation; copy out the
-            // written prefix. Phase B can add a `Builder::into_owned()` that
-            // yields `Box<[u8]>` without the truncate copy.
+            // written prefix. Add a `Builder::into_owned()` that yields
+            // `Box<[u8]>` without the truncate copy.
             let mut v = buf.into_vec();
             v.truncate(string_builder.len);
             result.string_buf = v.into_boxed_slice();
         }
 
-        let _ = all_tarball_url_strings; // suppress unused-mut warnings in Phase A
+        let _ = all_tarball_url_strings; // suppress unused-mut warnings
 
         Ok(Some(result))
     }

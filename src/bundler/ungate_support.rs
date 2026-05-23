@@ -1,15 +1,13 @@
-//! B-2 un-gate support — types and crate aliases extracted from `bundle_v2`
-//! so `Chunk.rs` / `LinkerContext.rs` / `ParseTask.rs` / `Graph.rs` can
-//! compile against real surfaces.
+//! Types and crate aliases extracted from `bundle_v2` so `Chunk.rs` /
+//! `LinkerContext.rs` / `ParseTask.rs` / `Graph.rs` can compile against real
+//! surfaces.
 //!
 //! These are pure value types with no T6 deps. `bundle_v2.rs` re-exports the
 //! whole set from here (its draft duplicates were collapsed in DEDUP D059);
 //! nothing here owns behavior that belongs elsewhere.
 
-#![allow(unused)]
 #![warn(unused_must_use)]
 
-use bun_collections::VecExt;
 use bun_core::strings;
 // `Ref` is re-exported (pub use) below for `crate::Ref`; the local `use` here
 // is intentionally folded into that to avoid duplicate-import errors.
@@ -17,11 +15,11 @@ use bun_core::strings;
 use crate::{Index, IndexInt, options};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Crate-name shims for Phase-A draft modules. These map the names the draft
-// bodies use (`bun_str`, `bun_fs`, `bun_node_fallbacks`, `bun_output`,
+// Crate-name shims for the original draft modules. These map the names the
+// draft bodies use (`bun_str`, `bun_fs`, `bun_node_fallbacks`, `bun_output`,
 // `bun_css`) onto the real crates / re-export modules so `use crate::…`
-// resolves. The Phase-A drafts wrote bare extern-crate paths; un-gated
-// modules import from here via `use crate::ungate_support::… as …`.
+// resolves. The drafts wrote bare extern-crate paths; modules import from
+// here via `use crate::ungate_support::… as …`.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_core as bun_str;
 /// `bun_output` is a thin re-export crate over `bun_core` that isn't a
@@ -39,7 +37,7 @@ pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 /// drafts that pass string literals would all be dead names. Shim a
 /// string-taking `trace` here that routes through `_Stub` so call sites stay
 /// 1:1 with the `.zig` literals.
-/// TODO(b1): drop once `scripts/generate-perf-trace-events.sh` emits Rust.
+/// TODO(port): drop once `scripts/generate-perf-trace-events.sh` emits Rust.
 pub mod perf {
     pub use bun_perf::{Ctx, PerfEvent};
 
@@ -313,7 +311,7 @@ impl Default for CompileResult {
 /// the type stored on `bun_ast::Source.path`). `dupe_alloc_fix_pretty` interns into
 /// `FilenameStore` (process-static), so the `'static` return is satisfied.
 pub fn generic_path_with_pretty_initialized(
-    path: bun_paths::fs::Path<'static>,
+    path: &bun_paths::fs::Path<'static>,
     target: options::Target,
     top_level_dir: &[u8],
     _bump: &bun_alloc::Arena,
@@ -328,7 +326,7 @@ pub fn generic_path_with_pretty_initialized(
         && (strings::has_prefix(path.text, bun_node_fallbacks::IMPORT_PATH)
             || !bun_paths::is_absolute(path.text))
     {
-        return Ok(path);
+        return Ok(*path);
     }
 
     // "file" namespace should use the relative file path for its display name.
@@ -343,7 +341,7 @@ pub fn generic_path_with_pretty_initialized(
         >(&mut **buf2, top_level_dir, path.text);
         // D090: `bun_paths::fs::Path<'static>` and `bun_fs::Path` are the same type;
         // covariance lets `path_clone` widen to `Path<'_>` for the temp `pretty`.
-        let mut path_clone: bun_fs::Path<'_> = path;
+        let mut path_clone: bun_fs::Path<'_> = *path;
         // stack-allocated temporary is not leaked because dupeAlloc on the path will
         // move .pretty into the heap. that function also fixes some slash issues.
         if target == options::Target::BakeServerComponentsSsr {
@@ -364,7 +362,7 @@ pub fn generic_path_with_pretty_initialized(
         path_clone.dupe_alloc_fix_pretty()
     } else {
         // in non-file namespaces, standard filesystem rules do not apply.
-        let mut path_clone: bun_fs::Path<'_> = path;
+        let mut path_clone: bun_fs::Path<'_> = *path;
         let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
         // PORT NOTE: raw byte writes (not `write!` over `bstr::BStr`) — see
         // the `ssr:` branch above; namespace/text may carry non-UTF-8 bytes.
@@ -469,7 +467,7 @@ pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
 }
 
 /// `js_ast::renamer` — re-exported here so `Chunk.rs` can name it without
-/// pulling `bun_js_printer` into its `use` set (the Phase-A draft used a
+/// pulling `bun_js_printer` into its `use` set (the original draft used a
 /// non-existent `bun_renamer` crate).
 pub mod bun_renamer {
     pub use bun_js_printer::renamer::*;
@@ -547,7 +545,7 @@ pub mod html_import_manifest {
     pub fn write_escaped_json(
         index: u32,
         graph: &Graph,
-        linker_graph: &LinkerGraph,
+        linker_graph: &LinkerGraph<'_>,
         chunks: &[Chunk],
         w: &mut &mut [u8],
     ) -> Result<(), core::fmt::Error> {
@@ -580,33 +578,24 @@ pub enum WrapKind {
 }
 
 pub use crate::options_impl::PathTemplate;
-pub(crate) use bun_ast::ServerComponentBoundary;
 pub(crate) use bun_ast::UseDirective;
 
 /// `bundle_v2.zig:MangledProps`.
 pub use bun_js_printer::MangledProps;
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gate surface for `LinkerGraph.rs` + `linker_context/scanImportsAndExports.rs`.
+// Value-type surface for `LinkerGraph.rs` + `linker_context/scanImportsAndExports.rs`.
 // Real value-type defs extracted from the gated `bundle_v2.rs` draft body
-// (JSMeta, EntryPoint, ImportData, ExportData, …) so the freshly un-gated
-// modules can name them at `crate::*`. Once `bundle_v2.rs` un-gates its draft
-// body these collapse to re-exports.
+// (JSMeta, EntryPoint, ImportData, ExportData, …) so those modules can name
+// them at `crate::*`. Once `bundle_v2.rs` un-gates its draft body these
+// collapse to re-exports.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.logger` — alias used by Phase-A drafts as `crate::bun_ast::Source`.
+/// `bun.logger` — alias used by the original drafts as `crate::bun_ast::Source`.
 
 /// `js_ast.BundledAst` (the bundler-facing AST view).
-///
-/// PORT NOTE: lifetime-erased to `'static`. `BundledAst<'arena>` borrows the
-/// per-file parse arena (`hashbang`/`url_for_css`/`export_star_import_records`
-/// slices). The bundler owns those arenas for the entire link (see
-/// `LinkerGraph.bump: *const Arena` "stays `'static`-ish" note); `JSAst` is
-/// stored in a `MultiArrayList` SoA inside `LinkerGraph`/`Graph`, neither of
-/// which carries a lifetime parameter yet. Pin to `'static` until Phase B
-/// threads `'bump` through `Chunk`/`LinkerGraph`/`LinkerContext`.
-pub type JSAst = crate::BundledAst<'static>;
-pub(crate) use bun_ast::{Part, Ref, Symbol};
+pub type JSAst<'a> = crate::BundledAst<'a>;
+pub(crate) use bun_ast::{Part, Ref};
 
 /// `bundle_v2.zig:EntryPoint` — both a struct and (via the sibling module
 /// below) a namespace for `Kind`. Rust keeps types and modules in separate
@@ -686,35 +675,54 @@ pub mod entry_point {
 /// `bundle_v2.zig:ImportData` / `ExportData` / `JSMeta` — see the gated
 /// `bundle_v2.rs` draft body for full doc-comments.
 pub mod js_meta {
+    use bun_alloc::{AstAlloc, AstVec};
     use bun_ast::{Dependency, Ref};
-    use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
+    use bun_collections::array_hash_map::StringContext;
+    use bun_collections::{ArrayHashMap, AutoContext, StringArrayHashMap};
 
     use crate::{ImportTracker, Index, WrapKind};
 
-    #[derive(Default)]
     pub struct ImportData {
-        pub re_exports: Vec<Dependency>,
+        pub re_exports: AstVec<Dependency>,
         pub data: ImportTracker,
+    }
+    impl Default for ImportData {
+        fn default() -> Self {
+            Self {
+                re_exports: AstAlloc::vec(),
+                data: ImportTracker::default(),
+            }
+        }
     }
     /// Alias used by `LinkerGraph::generate_symbol_import_and_use`.
     pub type ImportToBind = ImportData;
 
-    #[derive(Default)]
     pub struct ExportData {
-        pub potentially_ambiguous_export_star_refs: Vec<ImportData>,
+        pub potentially_ambiguous_export_star_refs: AstVec<ImportData>,
         pub data: ImportTracker,
+    }
+    impl Default for ExportData {
+        fn default() -> Self {
+            Self {
+                potentially_ambiguous_export_star_refs: AstAlloc::vec(),
+                data: ImportTracker::default(),
+            }
+        }
     }
     /// Alias used by `LinkerGraph::load`.
     pub type ResolvedExport = ExportData;
 
-    pub type RefImportData = ArrayHashMap<Ref, ImportData>;
-    pub type ResolvedExports = StringArrayHashMap<ExportData>;
+    pub type RefImportData = ArrayHashMap<Ref, ImportData, AutoContext, AstAlloc>;
+    pub type ResolvedExports = StringArrayHashMap<ExportData, StringContext, AstAlloc>;
+    pub type ProbablyTypescriptType = ArrayHashMap<Ref, (), AutoContext, AstAlloc>;
+    pub type SortedAndFilteredExportAliases = AstVec<Box<[u8], AstAlloc>>;
+    pub type CjsExportCopies = AstVec<Ref>;
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
-    /// `bundle_v2.zig:JSMeta.Flags` — packed struct(u8). Field-style access
-    /// (`flags.is_async_or_has_async_dependency = true`) is what the Phase-A
-    /// drafts wrote, so this is a plain struct of bools + `wrap` for now;
-    /// pack into a u8 once callers move to setters. PERF(port).
+    /// `bundle_v2.zig:JSMeta.Flags` — packed struct(u8). Callers use
+    /// field-style access (`flags.is_async_or_has_async_dependency = true`),
+    /// so this is a plain struct of bools + `wrap` for now; pack into a u8
+    /// once callers move to setters. PERF(port).
     #[derive(Clone, Copy, Default)]
     pub struct Flags {
         pub is_async_or_has_async_dependency: bool,
@@ -728,29 +736,45 @@ pub mod js_meta {
     /// `JSMeta.Wrap` alias used by `linker_context/` submodules.
     pub use crate::WrapKind as Wrap;
 
-    #[derive(Default)]
     pub struct JSMeta {
-        pub probably_typescript_type: ArrayHashMap<Ref, ()>,
+        pub probably_typescript_type: ProbablyTypescriptType,
         pub imports_to_bind: RefImportData,
         pub resolved_exports: ResolvedExports,
         pub resolved_export_star: ExportData,
-        pub sorted_and_filtered_export_aliases: Box<[Box<[u8]>]>,
+        pub sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
         pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
-        pub cjs_export_copies: Box<[Ref]>,
+        pub cjs_export_copies: CjsExportCopies,
         pub wrapper_part_index: Index,
         pub entry_point_part_index: Index,
         pub flags: Flags,
     }
 
+    impl Default for JSMeta {
+        fn default() -> Self {
+            Self {
+                probably_typescript_type: ProbablyTypescriptType::default(),
+                imports_to_bind: RefImportData::default(),
+                resolved_exports: ResolvedExports::default(),
+                resolved_export_star: ExportData::default(),
+                sorted_and_filtered_export_aliases: AstAlloc::vec(),
+                top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
+                cjs_export_copies: AstAlloc::vec(),
+                wrapper_part_index: Index::default(),
+                entry_point_part_index: Index::default(),
+                flags: Flags::default(),
+            }
+        }
+    }
+
     bun_collections::multi_array_columns! {
         pub trait JSMetaColumns for JSMeta {
-            probably_typescript_type: ArrayHashMap<Ref, ()>,
+            probably_typescript_type: ProbablyTypescriptType,
             imports_to_bind: RefImportData,
             resolved_exports: ResolvedExports,
             resolved_export_star: ExportData,
-            sorted_and_filtered_export_aliases: Box<[Box<[u8]>]>,
+            sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
             top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
-            cjs_export_copies: Box<[Ref]>,
+            cjs_export_copies: CjsExportCopies,
             wrapper_part_index: Index,
             entry_point_part_index: Index,
             flags: Flags,
@@ -766,12 +790,12 @@ pub mod js_meta {
     }
 }
 pub use js_meta::{
-    ExportData, ImportData, JSMeta, JSMetaColumns, RefImportData, ResolvedExports,
-    TopLevelSymbolToParts,
+    CjsExportCopies, ExportData, ImportData, JSMeta, JSMetaColumns, ProbablyTypescriptType,
+    RefImportData, ResolvedExports, SortedAndFilteredExportAliases, TopLevelSymbolToParts,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gate surface for `bundle_v2.rs::on_parse_task_complete`.
+// Surface for `bundle_v2.rs::on_parse_task_complete`.
 // `` now emits `InputFileColumns` with the full
 // `items_<field>()` / `items_<field>_mut()` set; this alias keeps the old
 // ambiguity (same trait, two names).
@@ -791,10 +815,10 @@ pub use crate::linker_context_mod::EventLoop;
 // crate-private aliases mirroring Zig's `Index.Int` / `Part.List` /
 // `ImportRecord.List` nesting.
 pub(crate) mod index {
-    pub(crate) use bun_ast::{Index, IndexInt as Int};
+    pub(crate) use bun_ast::IndexInt as Int;
 }
 pub(crate) mod part {
-    pub(crate) use bun_ast::{Dependency, PartList as List, symbol::Use as SymbolUse};
+    pub(crate) use bun_ast::PartList as List;
 }
 pub(crate) mod import_record {
     pub(crate) use bun_ast::import_record::List;

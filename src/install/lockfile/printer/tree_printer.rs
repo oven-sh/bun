@@ -11,9 +11,9 @@ use bun_install::{
 };
 // PORT NOTE: Zig `slice.items(.field)` → trait-provided `items_<field>()`
 // accessors on `MultiArrayList<Package>` / its `Slice`.
-use crate::lockfile_real::package::{PackageColumns as _};
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
-use bun_sys::{Dir as SysDir, Fd};
+use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
 
@@ -56,7 +56,6 @@ where
     // It's possible to have duplicate dependencies with the same version and resolution.
     // While both are technically installed, only one was chosen and should be printed.
     let mut dep_dedupe: HashMap<PackageNameHash, ()> = HashMap::new();
-    // `defer dep_dedupe.deinit()` — Drop handles this.
 
     // PORT NOTE: reshaped for borrowck — `id_map` is reborrowed per call below.
     let mut id_map = id_map;
@@ -99,7 +98,7 @@ where
                     }
                 }
 
-                print_updated_package::<W, ENABLE_ANSI_COLORS>(this, update_info, writer)?;
+                print_updated_package::<W, ENABLE_ANSI_COLORS>(this, &update_info, writer)?;
             }
         }
     }
@@ -160,9 +159,9 @@ where
     Ok(())
 }
 
-// TODO(port): lifetime — `version_buf` borrows from `PackageManager.updating_packages` entry;
-// this struct is a transient return value. PORTING.md says no struct lifetimes in Phase A,
-// but raw `*const [u8]` here would be strictly worse. Revisit in Phase B.
+// `version_buf` borrows from the `PackageManager.updating_packages` entry;
+// this struct is a transient return value, so the explicit `'a` lifetime is
+// fine (a raw `*const [u8]` would be strictly worse).
 struct PackageUpdatePrintInfo<'a> {
     version: semver::Version,
     version_buf: &'a [u8],
@@ -174,7 +173,7 @@ enum ShouldPrintPackageInstallResult<'a> {
     Yes,
     No,
     Return,
-    Update(PackageUpdatePrintInfo<'a>),
+    Update(Box<PackageUpdatePrintInfo<'a>>),
 }
 
 fn should_print_package_install<'a>(
@@ -236,12 +235,14 @@ fn should_print_package_install<'a>(
         if let Some(entry) = manager.updating_packages.get(name) {
             if let Some(original_version) = entry.original_version {
                 if !original_version.eql(npm_version) {
-                    return ShouldPrintPackageInstallResult::Update(PackageUpdatePrintInfo {
-                        version: original_version,
-                        version_buf: entry.original_version_string_buf.as_ref(),
-                        resolution,
-                        dependency_id: dep_id,
-                    });
+                    return ShouldPrintPackageInstallResult::Update(Box::new(
+                        PackageUpdatePrintInfo {
+                            version: original_version,
+                            version_buf: entry.original_version_string_buf.as_ref(),
+                            resolution,
+                            dependency_id: dep_id,
+                        },
+                    ));
                 }
             }
         }
@@ -252,7 +253,7 @@ fn should_print_package_install<'a>(
 
 fn print_updated_package<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
-    update_info: PackageUpdatePrintInfo<'_>,
+    update_info: &PackageUpdatePrintInfo<'_>,
     writer: &mut W,
 ) -> Result<(), bun_core::Error>
 where
@@ -305,7 +306,7 @@ where
 
     let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
-        manager.format_later_version_in_cache(package_name, dependency.name_hash, resolution)
+        manager.format_later_version_in_cache(package_name, dependency.name_hash, &resolution)
     {
         // TODO(port): Output.prettyFmt comptime ANSI format string
         let fmt = if ENABLE_ANSI_COLORS {
@@ -382,7 +383,6 @@ where
         return Ok(());
     }
     let mut id_map: Vec<DependencyID> = vec![INVALID_PACKAGE_ID; this.updates.len()];
-    // `defer free` — Drop handles this.
 
     let end = resolved.len() as PackageID;
 
@@ -390,7 +390,6 @@ where
     if let Some(installed) = this.successfully_installed.as_ref() {
         if log_level.is_verbose() {
             let mut workspaces_to_print: Vec<DependencyID> = Vec::new();
-            // `defer deinit` — Drop handles this.
 
             for dep_id in resolutions_list[0].begin()..resolutions_list[0].end() {
                 let dep = &dependencies_buffer[dep_id as usize];
@@ -563,7 +562,7 @@ where
                     package_name: name,
                     // PORT NOTE: Zig default `bun.invalid_fd.stdDir()` — never read on
                     // the .map/.file/.named_file paths this arm covers.
-                    destination_node_modules: SysDir::from_fd(Fd::INVALID),
+                    destination_node_modules: Fd::INVALID,
                     buf: bun_paths::PathBuffer::uninit(),
                     string_buffer: string_buf,
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),

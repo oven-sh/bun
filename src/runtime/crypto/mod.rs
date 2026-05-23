@@ -1,9 +1,6 @@
 use crate::jsc::{JSGlobalObject, JSValue};
 
 // ─── submodules ───────────────────────────────────────────────────────────
-// `bun_boringssl_sys` bindgen output now exists; `hmac` compiles standalone.
-// Remaining submodules blocked on `bun_jsc` method surface (stub types have
-// no `.err()`/`.to_js()` etc.). Phase-A drafts preserved on disk via `#[path]`.
 
 #[path = "pwhash.rs"]
 pub mod pwhash;
@@ -27,12 +24,6 @@ pub mod boringssl_jsc;
 pub fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -> JSValue {
     boringssl_jsc::err_to_js(global_this, err_code)
 }
-
-// ─── B-2 type-surface stubs removed ──────────────────────────────────────
-// The inline `password_object`/`crypto_hasher` stub modules that lived here
-// during phase-B (struct/state un-gate) are now superseded by the full
-// `#[path = "PasswordObject.rs"]` / `#[path = "CryptoHasher.rs"]` drafts
-// un-gated above. Re-exports below resolve through those files.
 
 /// For usage in Rust (`src/runtime/crypto/PBKDF2.zig` `pub fn pbkdf2`).
 ///

@@ -120,6 +120,8 @@ impl Script {
             // command substitution which duped from the parent and must
             // deinitialize it (Zig: `this.base.shell.deinit()`).
             if !me.base.shell.is_null() {
+                // SAFETY: `me.base.shell` is the duped env this Script owned;
+                // null-checked and exclusively held here.
                 ShellExecEnv::deinit_impl(me.base.shell);
                 me.base.shell = core::ptr::null_mut();
             }
@@ -151,7 +153,7 @@ impl Script {
     #[inline]
     fn stmt_at(interp: &Interpreter, this: NodeId, idx: usize) -> *const ast::Stmt {
         let me = interp.as_script(this);
-        &me.node.stmts[idx]
+        &raw const me.node.stmts[idx]
     }
 }
 

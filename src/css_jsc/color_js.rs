@@ -1,4 +1,3 @@
-use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_alloc::Arena;
@@ -135,15 +134,14 @@ pub mod ansi256 {
         let grey = 8u32.wrapping_add(10u32.wrapping_mul(grey_idx));
 
         let d = sqdist(cr, cg, cb, r, g, b);
-        let idx = if sqdist(grey, grey, grey, r, g, b) < d {
+        if sqdist(grey, grey, grey, r, g, b) < d {
             232u32.wrapping_add(grey_idx)
         } else {
             16u32
                 .wrapping_add(36u32.wrapping_mul(qr))
                 .wrapping_add(6u32.wrapping_mul(qg))
                 .wrapping_add(qb)
-        };
-        idx
+        }
     }
 
     const TABLE_256: [u8; 256] = [
@@ -205,7 +203,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         ));
     }
 
-    let mut log = Log::init();
+    let log = Log::init();
 
     let unresolved_format: OutputColorFormat = 'brk: {
         if !args[1].is_empty_or_undefined_or_null() {
@@ -218,7 +216,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
         break 'brk OutputColorFormat::Css;
     };
-    let mut input = ZigStringSlice::EMPTY;
+    let input: ZigStringSlice;
 
     let parsed_color: css::CssColorParseResult = 'brk: {
         if args[0].is_number() {
@@ -300,7 +298,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             }
 
             break 'brk Ok(CssColor::Rgba(RGBA {
-                alpha: if let Some(a) = a { a } else { 255 },
+                alpha: a.unwrap_or(255),
                 red: u8::try_from(r).expect("int cast"),
                 green: u8::try_from(g).expect("int cast"),
                 blue: u8::try_from(b).expect("int cast"),
@@ -595,7 +593,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 &arena,
                 bun_alloc::ArenaVec::<u8>::new_in(&arena),
                 &mut dest,
-                css::PrinterOptions::default(),
+                &css::PrinterOptions::default(),
                 None,
                 None,
                 &symbols,

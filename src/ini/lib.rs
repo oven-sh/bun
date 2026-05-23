@@ -1,19 +1,14 @@
-#![feature(allocator_api)]
-#![allow(unused, dead_code, non_snake_case, non_upper_case_globals)]
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
-// Phase B-2 un-gate: pieces that do not transitively need the JS-AST
-// (`Expr`/`E::Object`/`Rope`) or the schema (`BunInstall`/`NpmRegistry`)
-// now compile for real. Everything that touches those types stays re-gated
-// with a `// TODO(b2-blocked):` pointing at the missing lower-tier symbol.
+// Pieces that transitively need the JS-AST (`Expr`/`E::Object`/`Rope`) or the
+// schema (`BunInstall`/`NpmRegistry`) are gated behind `// TODO(port):`
+// markers pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
 #![warn(unreachable_pub)]
-use bun_collections::VecExt;
 use core::fmt;
 
-use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
+use bun_alloc::AllocError;
 use bun_ast::{Loc, Log, Source};
-use bun_core::ZStr;
 
 type OOM<T> = Result<T, AllocError>;
 
@@ -224,12 +219,12 @@ pub enum ScopeError {
 // Remaining gates are blocked on schema/API types only:
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(b2-blocked): bun_api::BunInstall
-// TODO(b2-blocked): bun_api::NpmRegistry
-// TODO(b2-blocked): bun_api::NpmRegistryMap
-// TODO(b2-blocked): bun_api::npm_registry::Parser
-// TODO(b2-blocked): bun_api::Ca
-// TODO(b2-blocked): bun_install_types::NodeLinker::PnpmMatcher::from_expr
+// TODO(port): bun_api::BunInstall
+// TODO(port): bun_api::NpmRegistry
+// TODO(port): bun_api::NpmRegistryMap
+// TODO(port): bun_api::npm_registry::Parser
+// TODO(port): bun_api::Ca
+// TODO(port): bun_install_types::NodeLinker::PnpmMatcher::from_expr
 
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
@@ -243,12 +238,11 @@ mod draft {
 
     use core::fmt;
     use core::ptr;
-    use std::io::Write as _;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, BunInstall, Ca, NpmRegistry, NpmRegistryMap, npm_registry};
+    use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
     use bun_ast::E::Rope;
-    use bun_ast::{self as js_ast, E, Expr, ExprData};
+    use bun_ast::{E, Expr, ExprData};
     use bun_ast::{IntoStr, Loc, Log, Source};
     use bun_collections::{ArrayHashMap, VecExt};
     use bun_core::ZStr;
@@ -257,11 +251,18 @@ mod draft {
     use bun_url::URL;
 
     use super::{
-        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, ScopeError,
-        is_quoted, next_dot, should_skip_line,
+        ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, is_quoted,
+        next_dot, should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;
+
+    /// Hard cap on dot-separated segments in a section-header rope. The rope is
+    /// consumed by `E::Object::get_or_put_object`, which recurses once per
+    /// `rope.next` link, so an unbounded header overflows the stack. Past the
+    /// cap the remainder of the header (dots included) becomes the final
+    /// segment. Mirrors `MAX_DOTTED_KEY_SEGMENTS` in the TOML parser.
+    const MAX_SECTION_ROPE_SEGMENTS: usize = 512;
 
     // ──────────────────────────────────────────────────────────────────────────
     // Parser
@@ -285,7 +286,7 @@ mod draft {
     //
     // PORT NOTE: `#[derive(ConstParamTy)]` requires nightly `adt_const_params`.
     // Dropped to a runtime arg (the body never uses USAGE in a type position).
-    // PERF(port): was comptime monomorphization — profile in Phase B.
+    // PERF(port): was comptime monomorphization.
     #[derive(PartialEq, Eq, Clone, Copy)]
     enum Usage {
         Section,
@@ -307,7 +308,7 @@ mod draft {
 
     impl<'a> Parser<'a> {
         pub fn init(path: &[u8], src: &'a [u8], env: &'a mut DotEnvLoader<'a>) -> Parser<'a> {
-            // TODO(b2-blocked): bun_ast::Source<'bump> — `Source::init_path_string`
+            // TODO(port): bun_ast::Source<'bump> — `Source::init_path_string`
             // currently takes `Str = &'static [u8]`; once the lower tier threads a
             // lifetime through `Source`, pass `path`/`src` directly. They outlive
             // the `Parser` and its `Source`/`Expr` tree (arena-freed in lockstep),
@@ -593,16 +594,16 @@ mod draft {
                     // `bun_ast::Expr` (via the `From` impl in
                     // `bun_ast::expr`) so the rest of this body works
                     // against a single `ExprData`.
-                    // Phase-A `Str = &'static [u8]` lifetime erasure (see
-                    // PORTING.md §Allocators / `Parser::init` above). `val` is a
-                    // sub-slice of `self.src` and outlives the temporary `Source`.
+                    // `Str = &'static [u8]` lifetime erasure (see PORTING.md
+                    // §Allocators / `Parser::init` above). `val` is a sub-slice
+                    // of `self.src` and outlives the temporary `Source`.
                     let val_s: &'static [u8] = val.into_str();
                     let src = Source::init_path_string(self.source.path.text, val_s);
                     let mut log = Log::init();
                     // Try to parse it and if it fails will just treat it as a string
                     let json_val: Expr =
                         match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
-                            Ok(v) => Expr::from(v),
+                            Ok(v) => v,
                             Err(_) => {
                                 // JSON parse failed (e.g., single-quoted string like '${VAR}')
                                 // Still need to expand env vars in the content
@@ -698,13 +699,14 @@ mod draft {
                 // RopeT is *Rope when usage==Section, else unit. In Rust we just
                 // keep an Option<&mut Rope> and ignore it for non-section usages.
                 let mut rope: Option<&'a mut Rope> = None;
+                let mut rope_parts: usize = 0;
 
                 let mut i: usize = 0;
                 'walk: while i < val.len() {
                     let c = val[i];
                     if esc {
                         match c {
-                            b'\\' => unesc.extend_from_slice(&[b'\\']),
+                            b'\\' => unesc.extend_from_slice(b"\\"),
                             b';' | b'#' | b'$' => unesc.push(c),
                             b'.' => {
                                 if usage == Usage::Section {
@@ -785,8 +787,10 @@ mod draft {
                                 did_any_escape = true;
                             }
                             b'.' => {
-                                if usage == Usage::Section {
+                                if usage == Usage::Section && rope_parts < MAX_SECTION_ROPE_SEGMENTS
+                                {
                                     self.commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
+                                    rope_parts += 1;
                                 } else {
                                     unesc.push(b'.');
                                 }
@@ -975,7 +979,13 @@ mod draft {
                         b'\\' => esc = !esc,
                         b'$' => {
                             if !esc {
-                                return self.parse_env_substitution(val, start, j, depth + 1, unesc);
+                                return self.parse_env_substitution(
+                                    val,
+                                    start,
+                                    j,
+                                    depth + 1,
+                                    unesc,
+                                );
                             }
                         }
                         b'{' => {
@@ -1068,33 +1078,26 @@ mod draft {
                 head: Expr::init(E::EString::init(&key[..dot_idx]), Loc::EMPTY),
                 next: ptr::null_mut(),
             });
-            // SAFETY: `head` is the same allocation as `rope`'s initial value;
-            // we walk `rope` forward via `append` while keeping `head` to return.
-            // PORT NOTE: reshaped for borrowck — Zig holds two *Rope simultaneously.
-            let head: *mut Rope = std::ptr::from_mut::<Rope>(rope_head);
-            let mut rope: *mut Rope = head;
 
+            let mut segments: usize = 1;
             while dot_idx + 1 < key.len() {
                 let next_dot_idx = match next_dot(&key[dot_idx + 1..]) {
-                    Some(n) => dot_idx + 1 + n,
-                    None => {
+                    Some(n) if segments < MAX_SECTION_ROPE_SEGMENTS => dot_idx + 1 + n,
+                    _ => {
                         let rest = &key[dot_idx + 1..];
-                        // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                        rope = unsafe { &mut *rope }
+                        let _ = rope_head
                             .append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc)?;
                         break;
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
-                // SAFETY: `rope` points into a live bump allocation; no aliasing borrow.
-                rope = unsafe { &mut *rope }
-                    .append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
+                let _ =
+                    rope_head.append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
+                segments += 1;
                 dot_idx = next_dot_idx;
             }
 
-            let _ = rope;
-            // SAFETY: head was created by ropealloc.alloc above and is still live in the bump.
-            Ok(unsafe { &mut *head })
+            Ok(rope_head)
         }
     }
 
@@ -1317,12 +1320,12 @@ mod draft {
             }
             if log.has_errors() {
                 if log.errors == 1 {
-                    Output::warn(&format_args!(
+                    Output::warn(format_args!(
                         "Encountered an error while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
                     ));
                 } else {
-                    Output::warn(&format_args!(
+                    Output::warn(format_args!(
                         "Encountered errors while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
                     ));
@@ -1350,14 +1353,17 @@ mod draft {
         // `'p` (matches `Parser::init`'s own erasures for `path`/`src`).
         // SAFETY: `parser` does not outlive `env`/`source.contents`.
         let contents: &'static [u8] = source.contents.as_ref().into_str();
-        // Round-trip through a raw pointer to erase both the borrow and the inner
-        // lifetime; identical bit-pattern.
-        let env = unsafe { &mut *(env as *mut DotEnvLoader<'_> as *mut DotEnvLoader<'static>) };
+        // SAFETY: `parser` is dropped before this function returns and so does not
+        // outlive `env` or its borrowed data; this cast only erases lifetimes.
+        let env = unsafe {
+            &mut *std::ptr::from_mut::<DotEnvLoader<'_>>(env).cast::<DotEnvLoader<'static>>()
+        };
         let mut parser = Parser::init(npmrc_path.as_bytes(), contents, env);
         // TODO(port): borrowck — `parser.arena` is borrowed while `parser` is `&mut`.
-        // SAFETY: arena outlives all bump-allocated slices used below; Phase B should
-        // restructure Parser so the bump is passed externally or split borrows.
-        let bump: &Arena = unsafe { &*(&raw const parser.arena) };
+        // TODO(refactor): restructure Parser so the bump is passed externally or split borrows.
+        let bump_ptr: *const Arena = &raw const parser.arena;
+        // SAFETY: arena outlives all bump-allocated slices used below.
+        let bump: &Arena = unsafe { &*bump_ptr };
         parser.parse(bump)?;
         // Need to be very, very careful here with strings.
         // They are allocated in the Parser's arena, which of course gets
@@ -1492,9 +1498,7 @@ mod draft {
                     install.node_linker = Some(NodeLinker::Hoisted);
                 } else if install_strategy_str == b"linked" {
                     install.node_linker = Some(NodeLinker::Isolated);
-                } else if install_strategy_str == b"nested" {
-                    // TODO
-                } else if install_strategy_str == b"shallow" {
+                } else if install_strategy_str == b"nested" || install_strategy_str == b"shallow" {
                     // TODO
                 }
             }
@@ -1535,10 +1539,7 @@ mod draft {
                 };
         }
 
-        let mut registry_map = install
-            .scoped
-            .take()
-            .unwrap_or_else(NpmRegistryMap::default);
+        let mut registry_map = install.scoped.take().unwrap_or_default();
 
         // SAFETY: `parser.out` is an `E::Object` produced by `Parser::parse`; the
         // arena pointee lives until `parser` drops at end of fn.
@@ -1637,7 +1638,7 @@ mod draft {
 "#;
             // The line that sets the auth token should only apply to the @myorg scope
             // The line that sets the username would apply to both @myorg and @another
-            let mut url_map = {
+            let url_map = {
                 // PERF(port): was StringArrayHashMap<URL> on parser.arena. `URL<'a>`
                 // borrows `v.url` (inside `registry_map.scopes`), which would alias the
                 // `values_mut()` iteration below. Store the owned URL bytes instead and

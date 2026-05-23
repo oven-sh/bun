@@ -21,7 +21,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 // (atomic refcounting now via `bun_ptr::ThreadSafeRefCount`)
-use std::sync::Arc;
+use std::rc::Rc;
 
 use bun_core::{PathString, immutable::AsciiStatus};
 use bun_http_types::MimeType::MimeType;
@@ -93,6 +93,8 @@ pub struct Blob {
 // the pointee data is either `'static`/heap-owned (`content_type`) or an
 // opaque JSC handle only ever dereferenced on its owning JS thread.
 unsafe impl Send for Blob {}
+// SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
+// mutex or on the single owning JS thread; the `Cell` fields are never raced.
 unsafe impl Sync for Blob {}
 
 impl Default for Blob {
@@ -335,14 +337,14 @@ impl Blob {
     ///
     /// In Zig that copy bumps **no** refcounts and is never `deinit()`ed — it
     /// just borrows `self`'s store/name/content_type for the caller's stack
-    /// frame. In Rust, `StoreRef` has drop glue, so the only sound translation
-    /// is: clone the `StoreRef` (its `Drop` balances the +1 at scope exit) and
-    /// **alias** `name`/`content_type` as borrowed bits (both are `Copy` raw
-    /// data with no `Drop`, so nothing runs on scope exit).
+    /// frame. In Rust, both `StoreRef` and `OwnedStringCell` have drop glue,
+    /// so the only sound translation is: clone them (their `Drop` balances the
+    /// +1 at scope exit) and **alias** `content_type` as borrowed bits (a
+    /// `Copy` raw pointer with no `Drop`, so nothing runs on scope exit).
     ///
-    /// Do **not** use [`Blob::dupe`] for this — it `dupe_ref()`s `name` and
-    /// boxes a fresh `content_type`, neither of which is freed by drop glue,
-    /// so both leak when the result is treated as a no-copy view.
+    /// Do **not** use [`Blob::dupe`] for this — it boxes a fresh
+    /// `content_type`, which is not freed by drop glue, so it leaks when the
+    /// result is treated as a no-copy view.
     #[inline]
     pub fn borrowed_view(&self) -> Blob {
         Blob {
@@ -358,7 +360,7 @@ impl Blob {
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),
-            name: bun_core::OwnedStringCell::new(self.name.get()), // borrowed; no dupe_ref
+            name: self.name.clone(), // +1 ↔ OwnedStringCell::drop on scope exit
         }
     }
 
@@ -613,6 +615,8 @@ pub mod store {
     // `NonNull<u8>` is uniquely owned (Zig: `ptr` is the sole alias) and
     // `StdAllocator` is `Send + Sync`.
     unsafe impl Send for Bytes {}
+    // SAFETY: `&Bytes` only reads the uniquely-owned slice via `slice()`; no
+    // interior mutability, so sharing references across threads is sound.
     unsafe impl Sync for Bytes {}
 
     impl Default for Bytes {
@@ -836,7 +840,7 @@ pub mod store {
     pub struct S3 {
         pub pathlike: PathLike,
         pub mime_type: MimeType,
-        pub credentials: Option<Arc<bun_s3_signing::S3Credentials>>,
+        pub credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
@@ -849,7 +853,7 @@ pub mod store {
             Some(true)
         }
 
-        pub fn get_credentials(&self) -> &Arc<bun_s3_signing::S3Credentials> {
+        pub fn get_credentials(&self) -> &Rc<bun_s3_signing::S3Credentials> {
             debug_assert!(self.credentials.is_some());
             self.credentials.as_ref().unwrap()
         }
@@ -871,9 +875,7 @@ pub mod store {
             } else if bun_core::ends_with(path_name, b"\\") {
                 path_name = &path_name[0..path_name.len() - 1];
             }
-            if bun_core::starts_with(path_name, b"/") {
-                path_name = &path_name[1..];
-            } else if bun_core::starts_with(path_name, b"\\") {
+            if bun_core::starts_with(path_name, b"/") || bun_core::starts_with(path_name, b"\\") {
                 path_name = &path_name[1..];
             }
             path_name
@@ -882,11 +884,10 @@ pub mod store {
         pub fn init_with_referenced_credentials(
             pathlike: PathLike,
             mime_type: Option<MimeType>,
-            credentials: Arc<bun_s3_signing::S3Credentials>,
+            credentials: Rc<bun_s3_signing::S3Credentials>,
         ) -> S3 {
             S3 {
-                // Zig: `credentials.ref()` — Arc::clone bumps the strong count.
-                credentials: Some(Arc::clone(&credentials)),
+                credentials: Some(credentials),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),
@@ -903,7 +904,7 @@ pub mod store {
         ) -> S3 {
             S3 {
                 // Zig: `credentials.dupe()` — heap-allocate a fresh refcounted copy.
-                credentials: Some(Arc::new(credentials)),
+                credentials: Some(Rc::new(credentials)),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),
@@ -1131,9 +1132,7 @@ pub mod store {
         /// deallocator).
         #[inline]
         pub fn into_raw(self) -> *mut Store {
-            let p = self.ptr.as_ptr();
-            core::mem::forget(self);
-            p
+            core::mem::ManuallyDrop::new(self).ptr.as_ptr()
         }
 
         /// Mutable access to `data` through the shared handle. Zig mutates
@@ -1198,6 +1197,8 @@ pub mod store {
     // immutable-after-init or guarded by callers; matches Zig's cross-thread
     // `*Store` usage.
     unsafe impl Send for StoreRef {}
+    // SAFETY: `Store::ref_count` is atomic and `&StoreRef` only derefs to
+    // `&Store`; matches Zig's cross-thread shared `*Store` reads.
     unsafe impl Sync for StoreRef {}
 }
 pub use store::{Store, StoreRef};

@@ -6,7 +6,7 @@ use core::ptr;
 use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
 use bun_core::strings;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
-use bun_paths::{self as path, PathBuffer, WPathBuffer};
+use bun_paths::{PathBuffer, WPathBuffer};
 use bun_ptr::{BackRef, RawSlice};
 use bun_threading::Mutex;
 
@@ -126,7 +126,7 @@ impl DirWatcher {
         {
             let err = w::Win32Error::get();
             bun_core::scoped_log!(watcher, "failed to start watching directory: {}", err.0);
-            // TODO(b2-blocked): bun_sys::Tag::watch — full syscall enum not yet in subset.
+            // TODO(port): bun_sys::Tag::watch — full syscall enum not yet in subset.
             return Err(bun_sys::Error {
                 // Route the raw code through the `u32` `SystemErrnoInit` impl
                 // (same Win32→errno table as `Win32ErrorExt::to_system_errno`).
@@ -332,7 +332,7 @@ impl WindowsWatcher {
                     return Ok(None);
                 } else {
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
-                    // TODO(b2-blocked): bun_sys::Tag::watch
+                    // TODO(port): bun_sys::Tag::watch
                     return Err(bun_sys::Error {
                         errno: bun_sys::SystemErrno::init(err.0 as u32)
                             .unwrap_or(bun_sys::SystemErrno::EINVAL)
@@ -518,7 +518,7 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     // log("event_count: {d}\n", .{event_count});
 
     let all_events = &mut this.watch_events[0..event_count];
-    all_events.sort_unstable_by(WatchEvent::sort_by_index);
+    all_events.sort_unstable_by(|a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
     // Zig: `var last_event_id: u32 = std.math.maxInt(u32);` — sentinel must be wider than

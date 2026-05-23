@@ -6,7 +6,6 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-#[allow(unused_imports)]
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 use bun_core::strings;
@@ -46,11 +45,9 @@ pub use crate::webcore::s3::simple_request::S3UploadResult;
 use crate::webcore::s3::simple_request as s3_simple_request;
 
 use crate::webcore::ResumableSinkBackpressure;
-#[allow(unused_imports)]
 use crate::webcore::resumable_sink::{ResumableS3UploadSink, ResumableSinkContext};
 
 use crate::webcore::BlobSizeType;
-#[allow(unused_imports)]
 use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
@@ -266,7 +263,7 @@ pub fn list_objects(
     }
 
     let result = match this.sign_request::<true>(
-        bun_s3_signing::SignOptions {
+        &bun_s3_signing::SignOptions {
             path: b"",
             method: bun_http::Method::GET,
             search_params: Some(search_params.slice()),
@@ -329,25 +326,29 @@ pub fn list_objects(
         Box::<[u8]>::default()
     };
 
-    // SAFETY (lifetime extension): `url`, `headers_buf`, and `proxy_url` borrow from
+    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
     // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
     // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
     // until `task` is dropped in `on_response`.
     let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
+    // heap-owned by `*task` and outlives the AsyncHTTP request.
     let headers_buf: &'static [u8] =
         unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
+        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is
+        // heap-owned by `*task` and outlives the AsyncHTTP request.
         Some(bun_url::URL::parse(unsafe {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))
     } else {
         None
     };
+    let mut vm_ref = task.vm.expect("vm set at task creation");
     // SAFETY: `task.vm` is the live per-thread VM BackRef from
     // `VirtualMachine::get()`; `get_mut` exclusivity holds — single-threaded
     // dispatch on the JS thread, no other `&`/`&mut VirtualMachine` is live for
     // this call's duration.
-    let mut vm_ref = task.vm.expect("vm set at task creation");
     let vm = unsafe { vm_ref.get_mut() };
 
     task.http.write(bun_http::AsyncHTTP::init(
@@ -359,6 +360,8 @@ pub fn list_objects(
         b"",
         bun_http::HTTPClientResultCallback::new::<S3HttpSimpleTask>(
             task_ptr,
+            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
+            // HTTP thread invokes this with that exact pointer.
             S3HttpSimpleTask::http_callback,
         ),
         bun_http::FetchRedirect::Follow,
@@ -556,7 +559,7 @@ pub fn writable_stream(
     // explicitly set it to a dead pointer
     // we use this memory address to disable signals being sent
     sink.signal.clear();
-    bun_core::assert_with_location(sink.signal.is_dead(), core::panic::Location::caller());
+    assert!(sink.signal.is_dead());
     Ok(sink.to_js(global_this))
 }
 
@@ -594,6 +597,7 @@ impl S3UploadStreamWrapper {
     pub unsafe fn deref_(this: *mut Self) {
         // SAFETY: caller contract above.
         let rc = unsafe { (*this).ref_count.get() } - 1;
+        // SAFETY: caller contract above — `this` is still live (freed only after rc hits zero below).
         unsafe { (*this).ref_count.set(rc) };
         if rc == 0 {
             // SAFETY: ref_count hit zero; reconstitute the Box to run Drop and free.
@@ -734,6 +738,7 @@ impl Drop for S3UploadStreamWrapper {
         bun_output::scoped_log!(S3UploadStream, "deinit {}", self.sink.is_some());
         self.detach_sink();
         // task.deref() — release our ref on the MultiPartUpload.
+        // SAFETY: `self.task` is the +1 ref held since this stream was created.
         MultiPartUpload::deref_(self.task);
         // endPromise.deinit() — Strong field Drop handles this
     }
@@ -944,13 +949,13 @@ pub fn download_stream(
     proxy_url: Option<&[u8]>,
     request_payer: bool,
     callback: fn(
-        chunk: MutableString,
+        chunk: &MutableString,
         has_more: bool,
         err: Option<Error::S3Error>,
         ctx: *mut c_void,
     ),
     callback_context: *mut c_void,
-) {
+) -> *mut S3HttpDownloadStreamingTask {
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -969,8 +974,8 @@ pub fn download_stream(
         Some(v)
     };
 
-    let mut result = match this.sign_request::<false>(
-        bun_s3_signing::SignOptions {
+    let result = match this.sign_request::<false>(
+        &bun_s3_signing::SignOptions {
             path,
             method: bun_http::Method::GET,
             request_payer,
@@ -990,7 +995,7 @@ pub fn download_stream(
             drop(range);
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
             callback(
-                MutableString::default(),
+                &MutableString::default(),
                 false,
                 Some(Error::S3Error {
                     code: error_code_and_message.code,
@@ -998,7 +1003,7 @@ pub fn download_stream(
                 }),
                 callback_context,
             );
-            return;
+            return core::ptr::null_mut();
         }
     };
 
@@ -1056,12 +1061,16 @@ pub fn download_stream(
     let task = unsafe { &mut *task_ptr };
     task.poll_ref.ref_(bun_io::js_vm_ctx());
 
-    // SAFETY (lifetime extension): `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
+    // SAFETY: lifetime extension — `url` / `headers_buf` / `proxy_url` borrow from heap-allocated
     // fields of `*task` which the task outlives. See `execute_simple_s3_request`.
     let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
+    // heap-owned by `*task` and outlives the AsyncHTTP request.
     let headers_buf: &'static [u8] =
         unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
     let http_proxy = if !task.proxy_url.is_empty() {
+        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is
+        // heap-owned by `*task` and outlives the AsyncHTTP request.
         Some(bun_url::URL::parse(unsafe {
             bun_ptr::detach_lifetime_ref(&*task.proxy_url)
         }))
@@ -1086,6 +1095,8 @@ pub fn download_stream(
         b"",
         bun_http::HTTPClientResultCallback::new::<S3HttpDownloadStreamingTask>(
             task_ptr,
+            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
+            // HTTP thread invokes this with that exact pointer.
             S3HttpDownloadStreamingTask::http_callback,
         ),
         bun_http::FetchRedirect::Follow,
@@ -1106,6 +1117,7 @@ pub fn download_stream(
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
     bun_http::HTTPThread::schedule(batch);
+    task_ptr
 }
 
 /// returns a readable stream that reads from the s3 path
@@ -1122,6 +1134,10 @@ pub fn readable_stream(
         pub readable_stream_ref: ReadableStreamStrong,
         pub path: Box<[u8]>,
         pub global: GlobalRef, // JSC_BORROW
+        /// Non-owning. The task frees itself on the main thread once `has_more == false`,
+        /// which first drops this wrapper (clearing `cancel_handler`), so this pointer is
+        /// never observed dangling from `on_stream_cancelled`.
+        pub task: *mut S3HttpDownloadStreamingTask,
     }
 
     impl S3DownloadStreamWrapper {
@@ -1130,7 +1146,7 @@ pub fn readable_stream(
         }
 
         pub fn callback(
-            chunk: MutableString,
+            chunk: &MutableString,
             has_more: bool,
             request_err: Option<Error::S3Error>,
             self_: &mut Self,
@@ -1199,10 +1215,24 @@ pub fn readable_stream(
             // When the download finishes (has_more == false), deinit() will
             // clean up the remaining resources.
             self_.readable_stream_ref.deinit();
+            // Abort the in-flight HTTP request so the HTTP thread delivers a final
+            // callback with `has_more == false`, which frees the task and this wrapper.
+            // Without this, a server that never sends the terminal chunk would leak both.
+            let task = core::mem::replace(&mut self_.task, core::ptr::null_mut());
+            if !task.is_null() {
+                // SAFETY: task is live until its own `on_response` frees it on this thread,
+                // which has not happened yet (it would have dropped this wrapper first).
+                unsafe {
+                    (*task)
+                        .signal_store
+                        .aborted
+                        .store(true, core::sync::atomic::Ordering::Relaxed);
+                }
+            }
         }
 
         pub fn opaque_callback(
-            chunk: MutableString,
+            chunk: &MutableString,
             has_more: bool,
             err: Option<Error::S3Error>,
             opaque_self: *mut c_void,
@@ -1249,6 +1279,7 @@ pub fn readable_stream(
         ),
         path: Box::<[u8]>::from(path),
         global: global_static,
+        task: core::ptr::null_mut(),
     });
 
     reader_mut
@@ -1256,7 +1287,7 @@ pub fn readable_stream(
         .set(Some(S3DownloadStreamWrapper::on_stream_cancelled));
     reader_mut.cancel_ctx.set(Some(wrapper.cast::<c_void>()));
 
-    download_stream(
+    let task = download_stream(
         this,
         path,
         offset,
@@ -1266,6 +1297,12 @@ pub fn readable_stream(
         S3DownloadStreamWrapper::opaque_callback,
         wrapper.cast::<c_void>(),
     );
+    if !task.is_null() {
+        // SAFETY: on the success path `download_stream` only schedules work onto the HTTP
+        // thread; the wrapper is freed via `opaque_callback` on this (main) thread, which
+        // cannot run until we return to the event loop, so `wrapper` is still live here.
+        unsafe { (*wrapper).task = task };
+    }
     Ok(readable_value)
 }
 

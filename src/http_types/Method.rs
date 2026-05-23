@@ -263,7 +263,9 @@ impl Optional {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
+/// # Safety
+/// `str` must point to `len` initialised bytes for the duration of the call.
+pub unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
     // SAFETY: genuine FFI boundary — C++ caller passes a non-null, byte-aligned
     // pointer to `len` initialised bytes (Zig signature `[*]const u8`, which is
     // non-null by construction). The (ptr,len) pair cannot be a `&[u8]` across

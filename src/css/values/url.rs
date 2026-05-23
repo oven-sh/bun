@@ -2,7 +2,6 @@ use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
 use bun_ast::ImportRecord;
-use bun_collections::VecExt;
 use bun_core::strings;
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
@@ -27,11 +26,8 @@ impl Url {
     }
 
     /// Returns whether the URL is absolute, and not relative.
-    pub fn is_absolute(&self, import_records: &Vec<ImportRecord>) -> bool {
-        let url: &[u8] = import_records
-            .at(self.import_record_idx as usize)
-            .path
-            .pretty;
+    pub fn is_absolute(&self, import_records: &[ImportRecord]) -> bool {
+        let url: &[u8] = import_records[self.import_record_idx as usize].path.pretty;
 
         // Quick checks. If the url starts with '.', it is relative.
         if strings::starts_with_char(url, b'.') {
@@ -112,12 +108,12 @@ impl Url {
         let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
 
         if dest.minify && !is_internal {
-            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile in Phase B
+            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile if hot
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             // PORT NOTE: inlined `Token::to_css_generic(UnquotedUrl(url))` —
-            // `Token` payloads are `&'static [u8]` placeholders in Phase A and
-            // we only have `&'a [u8]` here.
+            // `Token` payloads are `&'static [u8]` placeholders and we only
+            // have `&'a [u8]` here.
             use css::WriteAll;
             if buf
                 .write_all(b"url(")

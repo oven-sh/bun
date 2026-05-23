@@ -1,5 +1,6 @@
 use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
 use crate::helpers;
+use crate::links::BracketMatches;
 use crate::parser::{self, Parser};
 use crate::types::{OFF, SpanType, TextType, VerbatimLine};
 
@@ -100,8 +101,15 @@ impl Parser<'_> {
             return Err(parser::Error::StackOverflow);
         }
 
+        // Bracket-pair map for this slice: link processing looks up the ']'
+        // matching a '[' here instead of rescanning the rest of the slice for
+        // every opener. The backing storage is recycled via self.bracket_pairs
+        // (recursive calls for link labels simply build their own small map).
+        let bracket_storage = core::mem::take(&mut self.bracket_pairs);
+        let brackets = self.compute_bracket_matches(content, bracket_storage);
+
         // Phase 1: Collect and resolve emphasis delimiters
-        self.collect_emphasis_delimiters(content);
+        self.collect_emphasis_delimiters(content, &brackets);
         self.resolve_emphasis_delimiters();
 
         // Copy resolved delimiters locally (recursive calls may modify emph_delims)
@@ -298,7 +306,7 @@ impl Parser<'_> {
                 if i > text_start {
                     self.emit_text(TextType::Normal, &content[text_start..i])?;
                 }
-                if let Some(end_pos) = self.process_link(content, i, base_off, false)? {
+                if let Some(end_pos) = self.process_link(content, i, base_off, false, &brackets)? {
                     i = end_pos;
                 } else {
                     self.emit_text(TextType::Normal, b"[")?;
@@ -313,7 +321,9 @@ impl Parser<'_> {
                 if i > text_start {
                     self.emit_text(TextType::Normal, &content[text_start..i])?;
                 }
-                if let Some(end_pos) = self.process_link(content, i + 1, base_off, true)? {
+                if let Some(end_pos) =
+                    self.process_link(content, i + 1, base_off, true, &brackets)?
+                {
                     i = end_pos;
                 } else {
                     self.emit_text(TextType::Normal, b"!")?;
@@ -408,6 +418,8 @@ impl Parser<'_> {
         if text_start < content.len() {
             self.emit_text(TextType::Normal, &content[text_start..])?;
         }
+        // Hand the bracket-map storage back for reuse by the next block.
+        self.bracket_pairs = brackets.into_storage();
         Ok(())
     }
 
@@ -489,7 +501,7 @@ impl Parser<'_> {
     }
 
     /// Collect emphasis delimiter runs from content, skipping code spans and HTML tags.
-    pub fn collect_emphasis_delimiters(&mut self, content: &[u8]) {
+    pub fn collect_emphasis_delimiters(&mut self, content: &[u8], brackets: &BracketMatches) {
         self.emph_delims.clear();
         let mut i: usize = 0;
         while i < content.len() {
@@ -527,13 +539,13 @@ impl Parser<'_> {
             if c == b'[' || (c == b'!' && i + 1 < content.len() && content[i + 1] == b'[') {
                 let is_img = c == b'!';
                 let bracket_start = if is_img { i + 1 } else { i };
-                let link_result = self.try_match_bracket_link(content, bracket_start);
+                let link_result = self.try_match_bracket_link(content, bracket_start, brackets, 0);
                 if link_result.is_link {
                     // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
                     // Images CAN contain links in alt text, so only check for non-images
                     if !is_img {
                         let label = &content[bracket_start + 1..link_result.label_end];
-                        if self.label_contains_link(label) {
+                        if self.label_contains_link(label, brackets, bracket_start + 1) {
                             // Label contains inner links — this can't form a link
                             i += 1;
                             continue;
@@ -643,10 +655,10 @@ impl Parser<'_> {
                     // and the sum is a multiple of 3, and neither is individually a multiple of 3, skip
                     if self.emph_delims[oi].emph_char != b'~'
                         && (self.emph_delims[oi].can_close || self.emph_delims[closer_idx].can_open)
-                        && (self.emph_delims[oi].count + self.emph_delims[closer_idx].count) % 3
-                            == 0
-                        && self.emph_delims[oi].count % 3 != 0
-                        && self.emph_delims[closer_idx].count % 3 != 0
+                        && (self.emph_delims[oi].count + self.emph_delims[closer_idx].count)
+                            .is_multiple_of(3)
+                        && !self.emph_delims[oi].count.is_multiple_of(3)
+                        && !self.emph_delims[closer_idx].count.is_multiple_of(3)
                     {
                         continue;
                     }

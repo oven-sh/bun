@@ -5,7 +5,6 @@
 
 use bun_ast::ImportRecord;
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
-use bun_core::Output;
 // Zig `std.hash.Wyhash` (final4 variant) — used by `hash_for_runtime_transpiler`
 // (runtime.zig:272) and `ReactRefresh.HookContext` (parser.zig:1140). NOT
 // interchangeable with `bun_wyhash::Wyhash11`.
@@ -35,7 +34,7 @@ pub mod options {
     // re-exported here so the `options::Loader`/`options::Target` spelling used
     // throughout `P.rs`/`Parser.rs` keeps resolving without per-site churn.
     pub(crate) use bun_ast::Loader;
-    // TODO(b2-blocked): bun_options_types::{ServerComponents, OutputFormat,
+    // TODO(port): bun_options_types::{ServerComponents, OutputFormat,
     // AllowUnresolved, Format, Framework} — missing from lower-tier surface.
     pub use bun_options_types::bundle_enums::ModuleType;
     // D042: canonical `JSX::{Pragma, Runtime, ImportSource, Defaults, ...}`
@@ -47,7 +46,6 @@ pub mod options {
     /// `RuntimeFeatures.server_components` resolve to one type.
     pub(crate) use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
     pub use JSX::Runtime as JSXRuntime;
-    #[allow(non_snake_case)]
     pub use bun_options_types::jsx as JSX;
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     #[allow(non_camel_case_types)]
@@ -95,19 +93,15 @@ pub mod options {
     /// is captured.
     pub type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Default)]
     pub enum AllowUnresolved {
         /// Default. Skip all checks — current behavior.
+        #[default]
         All,
         /// Always error on dynamic specifiers.
         None,
         /// Glob patterns; at least one must match the extracted shape.
         Patterns(Box<[Box<[u8]>]>, AllowUnresolvedMatcher),
-    }
-    impl Default for AllowUnresolved {
-        fn default() -> Self {
-            AllowUnresolved::All
-        }
     }
     impl AllowUnresolved {
         // Zig: `pub const default: AllowUnresolved = .all;` — taken by address
@@ -313,7 +307,7 @@ pub mod Runtime {
         /// - Assigns functions to context for persistence
         pub repl_mode: bool,
 
-        // ── round-C/D vestigial bool stubs not present in Zig `Runtime.Features`. ──
+        // ── Vestigial bool stubs not present in Zig `Runtime.Features`. ──────────
         // Retained until their last reader (parseJSXElement.rs et al.) is ported to
         // the real predicate; they default false and are otherwise inert.
         pub jsx_optimization_inline: bool,
@@ -636,7 +630,7 @@ pub use js_ast::Op::Level;
 pub use crate::lexer as js_lexer;
 pub use js_lexer::T;
 
-// TODO(b0): defines arrives from move-in (was bun_bundler::defines → js_parser)
+// TODO(port): defines arrives from move-in (was bun_bundler::defines → js_parser)
 use crate::defines::Define;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -904,7 +898,7 @@ pub struct VisitArgsOpts<'a> {
 /// Generic transposer over `if` expressions.
 ///
 /// `visitor` is a comptime fn pointer in Zig; here we store it as a plain
-/// `fn` pointer. // PERF(port): was comptime monomorphization — profile in Phase B
+/// `fn` pointer. // PERF(port): was comptime monomorphization
 pub struct ExpressionTransposer<'a, Context, State: Copy> {
     pub context: &'a mut Context,
     visitor: fn(&mut Context, Expr, State) -> Expr,
@@ -1068,7 +1062,9 @@ impl<'a> JSXTag<'a> {
 
             if let Some(index) = strings::index_of_char(member, b'-') {
                 let source = p.source();
-                p.log().add_error(
+                // SAFETY: `log_ptr()` returns the externally-lent `&mut Log`;
+                // sole live alias while `P` lives.
+                unsafe { p.log_ptr().as_mut() }.add_error(
                     Some(source),
                     bun_ast::Loc {
                         start: member_range.loc.start + i32::try_from(index).expect("int cast"),
@@ -1170,8 +1166,8 @@ pub struct ExprOrLetStmt {
     // PORT NOTE: Zig writes `.decls = decls.slice()` borrowing the heap buffer
     // that was just moved into `S::Local`. The buffer pointer is stable across
     // the move, but borrowck can't see that — store as `RawSlice` to record the
-    // outlives-holder invariant without a per-site unsafe cast. (Neither caller
-    // currently reads this field, matching parseStmt.zig:829-836.)
+    // outlives-holder invariant without a per-site unsafe cast. Read by the
+    // for-loop parser so for-in/for-of heads can validate "let"/"using" decls.
     pub decls: bun_collections::RawSlice<G::Decl>,
 }
 
@@ -1414,30 +1410,16 @@ pub enum StmtsKind {
     FnBody,
 }
 
-#[cold]
-#[allow(dead_code)]
-fn notimpl() -> ! {
-    Output::panic(format_args!("Not implemented yet!!"));
-}
-
 #[derive(Default)]
 pub struct ExprBindingTuple {
     pub expr: Option<ExprNodeIndex>,
     pub binding: Option<Binding>,
 }
 
+#[derive(Default)]
 pub struct TempRef {
     pub r#ref: Ref,
     pub value: Option<Expr>,
-}
-
-impl Default for TempRef {
-    fn default() -> Self {
-        Self {
-            r#ref: Ref::default(),
-            value: None,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1462,6 +1444,7 @@ impl Default for ThenCatchChain {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ParsedPath<'a> {
     pub loc: bun_ast::Loc,
     pub text: &'a [u8],
@@ -1968,15 +1951,13 @@ impl<'a> ParseStatementOptions<'a> {
 // TODO(port): `Prefill` holds mutable global AST node singletons (`pub var` in
 // Zig). Rust forbids non-`Sync` mutable statics without `unsafe`; several of
 // these contain raw pointers (e_string -> &E.String) and one (`ActivateIndex`)
-// has an `undefined` field. Phase B should decide between `static mut` +
+// has an `undefined` field. TODO(refactor): decide between `static mut` +
 // `unsafe`, `LazyLock`, or eliminating the globals entirely. The byte-array
 // constants are safe and ported as `pub const`.
 pub mod prefill {
     use super::*;
 
     pub mod hot_module_reloading {
-        #[allow(unused_imports)]
-        use super::*;
         // TODO(port): mutable static Expr arrays — need `static mut` or `LazyLock`.
         // pub static DEBUG_ENABLED_ARGS: [Expr; 1] = [...];
         // pub static DEBUG_DISABLED: [Expr; 1] = [...];
@@ -2029,13 +2010,6 @@ pub mod prefill {
         pub const THIS: js_ast::ExprData = js_ast::ExprData::EThis(E::This {});
         pub const ZERO: js_ast::ExprData = js_ast::ExprData::ENumber(value::ZERO);
     }
-}
-
-#[derive(Default)]
-#[allow(dead_code)]
-struct ReactJSX {
-    // TODO(port): ArrayHashMap with bun.ArrayIdentityContext (identity hash on Ref)
-    hoisted_elements: ArrayHashMap<Ref, G::Decl>,
 }
 
 pub struct ImportOrRequireScanResults {
@@ -2218,13 +2192,13 @@ impl Default for DeferredArrowArgErrors {
 
 pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_alloc::Arena,
-    define: &mut Define,
-    opts: ParserOptions,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &bun_ast::Source,
-    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
-) -> Result<Option<js_ast::Ast>, bun_core::Error> {
+    source: &'bump bun_ast::Source,
+    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
+) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
     new_lazy_export_ast_impl(
         bump,
         define,
@@ -2233,20 +2207,20 @@ pub fn new_lazy_export_ast<'bump>(
         expr,
         source,
         runtime_api_call,
-        js_ast::symbol::List::default(),
+        js_ast::symbol::List::new_in(bump),
     )
 }
 
 pub fn new_lazy_export_ast_impl<'bump>(
     bump: &'bump bun_alloc::Arena,
-    define: &mut Define,
-    opts: ParserOptions,
+    define: &'bump mut Define,
+    opts: ParserOptions<'bump>,
     log_to_copy_into: &mut bun_ast::Log,
     expr: Expr,
-    source: &bun_ast::Source,
-    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization — profile in Phase B
-    symbols: js_ast::symbol::List,
-) -> Result<Option<js_ast::Ast>, bun_core::Error> {
+    source: &'bump bun_ast::Source,
+    runtime_api_call: &'static [u8], // PERF(port): was comptime monomorphization
+    symbols: js_ast::symbol::List<'bump>,
+) -> Result<Option<js_ast::Ast<'bump>>, bun_core::Error> {
     let mut temp_log = bun_ast::Log::init();
     // Zig held two aliasing `*Log` (parser.log + lexer.log). Both sides store
     // `NonNull<Log>` in Rust; copy the lexer's pointer so they share one
@@ -2437,12 +2411,12 @@ impl ReactRefresh<'_> {
         if id.is_empty() {
             return false;
         }
-        matches!(id[0], b'A'..=b'Z')
+        id[0].is_ascii_uppercase()
     }
 
     /// https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L408
     pub fn is_hook_name(id: &[u8]) -> bool {
-        id.len() >= 4 && id.starts_with(b"use") && matches!(id[3], b'A'..=b'Z')
+        id.len() >= 4 && id.starts_with(b"use") && id[3].is_ascii_uppercase()
     }
 }
 

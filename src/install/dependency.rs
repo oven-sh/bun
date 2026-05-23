@@ -7,7 +7,7 @@ use bun_semver::{SlicedString, String};
 
 use crate::hosted_git_info;
 use crate::repository::Repository;
-use crate::{Features, PackageManager, PackageNameHash};
+use crate::{PackageManager, PackageNameHash};
 
 // ──────────────────────────────────────────────────────────────────────────
 // NpmAliasRegistry — exposes only the one `PackageManager` method `parse`
@@ -137,7 +137,7 @@ impl DependencyExt for Dependency {
         }
         let name_ = &name[1..];
         match bun_core::index_of_char(name_, b'/') {
-            Some(i) => &name_[i as usize + 1..],
+            Some(i) => &name_[i + 1..],
             None => name,
         }
     }
@@ -183,7 +183,7 @@ impl DependencyExt for Dependency {
 
         let lhs_name = lhs.name.slice(string_buf);
         let rhs_name = rhs.name.slice(string_buf);
-        strings::cmp_strings_asc(&(), lhs_name, rhs_name)
+        strings::cmp_strings_asc((), lhs_name, rhs_name)
     }
 
     /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
@@ -294,8 +294,8 @@ impl DependencyExt for Dependency {
         is_remote_tarball(dep)
     }
 
-    /// Stub-compat: B-1 stub exposed `Dependency::parse` as an associated fn;
-    /// real port has it as a free fn. Delegate so downstream callers
+    /// Compat: dependents call `Dependency::parse` as an associated fn;
+    /// the actual implementation is a free fn. Delegate so downstream callers
     /// (`bun_install_jsc`) keep type-checking.
     ///
     /// `alias_hash`, `log`, and `manager` accept either bare values or
@@ -312,12 +312,6 @@ impl DependencyExt for Dependency {
         parse(alias, alias_hash, dependency, sliced, log, manager)
     }
 }
-
-// PORT NOTE: Zig copies `Dependency`/`Version` by value (POD struct semantics);
-// the linked-list memory under `Semver::query::Group` is arena-owned and never
-// freed through these handles. Rust can't `derive(Clone)` because `Value` is
-// an untagged union with `ManuallyDrop` fields, so we implement a shallow
-// bitwise clone matching Zig's copy semantics.
 
 // `comptime StringBuilder: type` param maps onto `bun_semver::StringBuilder`
 // (count / append<T> / append_string). The only extra method needed here is
@@ -474,9 +468,9 @@ pub fn is_remote_tarball(dependency: &[u8]) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Stub-compat aliases: B-1 stub exposed `dependency::version::Tag`,
+// Compat aliases: dependents reference `dependency::version::Tag`,
 // `dependency::VersionTag`, `Dependency::is_remote_tarball`, and a `tarball`
-// submodule. Real Zig nests `Tag` under `Dependency.Version`, but Phase-A
+// submodule. The Zig nests `Tag` under `Dependency.Version`, but here it's
 // flattened to top-level — keep both paths so dependents type-check.
 // ──────────────────────────────────────────────────────────────────────────
 pub use Tag as VersionTag;
@@ -644,7 +638,6 @@ impl VersionExt for Version {
         Ok(Version {
             tag: self.tag,
             literal: builder.append_string(self.literal.slice(buf)),
-            // TODO(port): Value::clone not defined in this file; assumed on Value
             value: self.value.clone_in(self.tag, buf, builder)?,
         })
     }
@@ -652,7 +645,7 @@ impl VersionExt for Version {
     fn is_less_than(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
         debug_assert!(lhs.tag == rhs.tag);
         strings::cmp_strings_asc(
-            &(),
+            (),
             lhs.literal.slice(string_buf),
             rhs.literal.slice(string_buf),
         )
@@ -665,7 +658,7 @@ impl VersionExt for Version {
         }
 
         strings::cmp_strings_asc(
-            &(),
+            (),
             lhs.literal.slice(string_buf),
             rhs.literal.slice(string_buf),
         )
@@ -680,9 +673,15 @@ impl VersionExt for Version {
         let slice = String {
             bytes: bytes[1..9].try_into().expect("infallible: size matches"),
         };
+        if !slice.is_inline() {
+            let ptr = slice.ptr();
+            if (ptr.off as usize).saturating_add(ptr.len as usize) > ctx.buffer.len() {
+                return Version::default();
+            }
+        }
         // bytes[0] was written by `to_external` from a valid `Tag`; decode by
-        // exhaustive match so a corrupt lockfile byte traps instead of
-        // producing an invalid discriminant.
+        // exhaustive match so a corrupt lockfile byte degrades to an
+        // uninitialized version (and a logged error) instead of aborting.
         let tag: Tag = match bytes[0] {
             0 => Tag::Uninitialized,
             1 => Tag::Npm,
@@ -694,7 +693,14 @@ impl VersionExt for Version {
             7 => Tag::Git,
             8 => Tag::Github,
             9 => Tag::Catalog,
-            n => unreachable!("invalid Dependency.Version.Tag {n}"),
+            n => {
+                ctx.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("Corrupt lockfile: invalid dependency version tag {n}"),
+                );
+                Tag::Uninitialized
+            }
         };
         let sliced = slice.sliced(ctx.buffer);
         parse_with_tag(
@@ -746,18 +752,12 @@ impl VersionExt for Version {
     }
 }
 
-// PORT NOTE: no `Drop for Version`. Zig treats `Version` as POD — the
-// `Semver::query::Group` linked list under `.npm` is arena-allocated and
-// outlives any individual `Version` copy. Adding `Drop` here would make
-// `Dependency`/`Version` non-clonable and break the shallow-copy contract
-// the lockfile buffers rely on.
-
 // ──────────────────────────────────────────────────────────────────────────
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
 
 // PORT NOTE: Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
-// in the Phase-A draft; rewritten as a length-gated match (cf. 12577e958d71
+// in an earlier draft; rewritten as a length-gated match (cf. 12577e958d71
 // clap::find_param) — 9 entries with near-unique lengths, so a single `usize`
 // compare rejects almost every miss before touching bytes, and hits resolve in
 // ≤3 slice compares with no hashing or static-init overhead.
@@ -825,7 +825,7 @@ impl TagExt for Tag {
             return Tag::Folder;
         }
 
-        // PERF(port): was stack-fallback allocator (1024B); now uses global mimalloc — profile in Phase B
+        // PERF(port): was stack-fallback allocator (1024B); now uses global mimalloc — profile if it shows up on a hot path.
 
         match dependency[0] {
             // =1
@@ -1165,18 +1165,23 @@ pub trait ValueExt {
 }
 
 impl ValueExt for Value {
-    // TODO(port): `clone` is called in Version::clone but not defined in
-    // dependency.zig — likely lives elsewhere or relies on Zig copy semantics.
     fn clone_in<SB: StringBuilderLike>(
         &self,
-        _tag: Tag,
+        tag: Tag,
         _buf: &[u8],
         _builder: &mut SB,
     ) -> Result<Value, bun_core::Error> {
-        // Zig copies the union by value into the new builder context; the only
-        // builder-dependent piece is `literal`, which `Version::clone_in`
-        // already re-appends. Match Zig's shallow copy here.
-        Ok(Clone::clone(self))
+        Ok(match tag {
+            Tag::Npm => {
+                // SAFETY: `tag == Npm` selects the `npm` union arm.
+                let npm = unsafe { (*self.npm).clone() };
+                Value {
+                    npm: ManuallyDrop::new(npm),
+                }
+            }
+            // SAFETY: every other arm is `Copy` (no heap), so a bitwise read is a true clone.
+            _ => unsafe { core::ptr::read(self) },
+        })
     }
 }
 
@@ -1383,13 +1388,13 @@ pub fn parse_with_tag(
                         owner: String::from(b""),
                         repo: sliced
                             .sub(if let Some(index) = hash_index {
-                                &input[0..index as usize]
+                                &input[0..index]
                             } else {
                                 input
                             })
                             .value(),
                         committish: if let Some(index) = hash_index {
-                            sliced.sub(&input[index as usize + 1..]).value()
+                            sliced.sub(&input[index + 1..]).value()
                         } else {
                             String::from(b"")
                         },
@@ -1414,7 +1419,6 @@ pub fn parse_with_tag(
             // Find owner in dependency string
             let owner_idx = strings::index_of(dependency, owner_str);
             let owner = if let Some(idx) = owner_idx {
-                let idx = idx as usize;
                 sliced.sub(&dependency[idx..idx + owner_str.len()]).value()
             } else {
                 String::from(b"")
@@ -1423,7 +1427,6 @@ pub fn parse_with_tag(
             // Find repo in dependency string
             let repo_idx = strings::index_of(dependency, repo_str);
             let repo = if let Some(idx) = repo_idx {
-                let idx = idx as usize;
                 sliced.sub(&dependency[idx..idx + repo_str.len()]).value()
             } else {
                 String::from(b"")
@@ -1433,7 +1436,6 @@ pub fn parse_with_tag(
             let committish = if !committish_str.is_empty() {
                 let committish_idx = strings::index_of(dependency, committish_str);
                 if let Some(idx) = committish_idx {
-                    let idx = idx as usize;
                     sliced
                         .sub(&dependency[idx..idx + committish_str.len()])
                         .value()

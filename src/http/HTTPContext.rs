@@ -4,14 +4,13 @@ use core::ptr::NonNull;
 
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::{
-    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, ProxyTunnel,
-    get_cert_error_from_no, h2,
+    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::{self, Error, FeatureFlags};
-// TODO(b0): SSLConfig arrives from move-in
+// TODO(port): SSLConfig arrives from move-in
 // (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
 use crate::ssl_config::{self, SSLConfig};
 use bun_core::strings;
@@ -57,6 +56,9 @@ pub struct HTTPContext<const SSL: bool> {
     /// coalesce onto the first one's session once ALPN resolves rather
     /// than each opening its own socket.
     // TODO(port): lifetime — owned Box<PendingConnect>; `pc.deinit()` in Drop.
+    // The `Box` is load-bearing: `client.pending_h2` holds `NonNull<PendingConnect>`
+    // into the box interior; unboxing would dangle it on `Vec` realloc.
+    #[expect(clippy::vec_box)]
     pub pending_h2_connects: Vec<Box<h2::PendingConnect>>,
 }
 
@@ -170,6 +172,12 @@ pub struct PooledSocket<const SSL: bool> {
     pub port: u16,
     /// If you set `rejectUnauthorized` to `false`, the connection fails to verify,
     pub did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
+    /// True if the TLS handshake for this socket ran with
+    /// `rejectUnauthorized=true` (i.e. `checkServerIdentity` was enforced).
+    /// A socket established with `rejectUnauthorized=false` never validated the
+    /// peer hostname, so a strict caller must not reuse it even when the chain
+    /// itself was CA-valid (`did_have_handshaking_error` stays false).
+    pub established_with_reject_unauthorized: bool,
     /// The interned SSLConfig this socket was created with (None = default context).
     /// Owns a strong ref while the socket is in the keepalive pool.
     pub ssl_config: Option<ssl_config::SharedPtr>,
@@ -509,7 +517,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub fn init_with_client_config(&mut self, client: &mut HTTPClient) -> Result<(), InitError> {
         // TODO(port): `if (!comptime ssl) @compileError("ssl only")` — Rust
         // cannot @compileError on a const-generic bool branch without nightly;
-        // debug_assert until Phase B splits impls.
+        // debug_assert until the SSL/non-SSL impls are split.
         debug_assert!(SSL, "ssl only");
         let opts = client
             .tls_props
@@ -517,12 +525,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .unwrap()
             .get()
             .as_usockets_for_client_verification();
-        self.init_with_opts(opts)
+        self.init_with_opts(&opts)
     }
 
     fn init_with_opts(
         &mut self,
-        opts: uws::SocketContext::BunSocketContextOptions,
+        opts: &uws::SocketContext::BunSocketContextOptions,
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
@@ -565,7 +573,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             request_cert: 1,
             ..Default::default()
         };
-        self.init_with_opts(opts)
+        self.init_with_opts(&opts)
     }
 
     pub fn init(&mut self) {
@@ -606,6 +614,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         &mut self,
         socket: HTTPSocket<SSL>,
         did_have_handshaking_error_while_reject_unauthorized_is_false: bool,
+        established_with_reject_unauthorized: bool,
         hostname: &[u8],
         port: u16,
         ssl_config: Option<&ssl_config::SharedPtr>,
@@ -660,6 +669,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     hostname_len: hostname.len() as u8, // @truncate
                     port,
                     did_have_handshaking_error_while_reject_unauthorized_is_false,
+                    established_with_reject_unauthorized,
                     // Clone a strong ref for the keepalive pool; the caller retains
                     // its own ref via HTTPClient.tls_props.
                     ssl_config: ssl_config.cloned(),
@@ -786,6 +796,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 {
                     continue;
                 }
+            } else if SSL
+                // Same failure mode as the tunnel branch above, for direct
+                // HTTPS sockets: a socket established with
+                // reject_unauthorized=false never ran checkServerIdentity, so
+                // a CA-valid wrong-hostname cert leaves
+                // did_have_handshaking_error=false and the outer guard passes.
+                // Block a strict caller from reusing it.
+                && reject_unauthorized
+                && !socket.established_with_reject_unauthorized
+            {
+                continue;
             }
 
             if strings::eql_long(
@@ -904,14 +925,28 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // the centralised [`h2_session_as_mut`] accessor — same
                     // strong-ref-held invariant as the pool/found-slot cases.
                     let s = h2_session_as_mut(NonNull::new(session)).unwrap();
-                    if s.has_headroom() && s.matches(hostname, port, cfg) {
+                    if s.has_headroom()
+                        && s.matches(hostname, port, cfg)
+                        // Same guard as the pool path: a session whose TLS
+                        // handshake ran with reject_unauthorized=false never
+                        // validated the peer hostname, so a strict caller
+                        // must not multiplex onto it.
+                        && (!client.flags.reject_unauthorized
+                            || s.established_with_reject_unauthorized)
+                    {
                         s.adopt(client);
                         return Ok(None);
                     }
                 }
                 let cfg_nn = cfg.and_then(|p| NonNull::new(p.cast_mut()));
                 for pc in &mut self.pending_h2_connects {
-                    if pc.matches(hostname, port, cfg_nn) {
+                    // Same strictness guard as the active-session loop above: a
+                    // strict caller must not coalesce onto an in-flight connect
+                    // that was initiated with reject_unauthorized=false, since
+                    // the resulting session won't have validated the peer.
+                    if pc.matches(hostname, port, cfg_nn)
+                        && (!client.flags.reject_unauthorized || pc.reject_unauthorized)
+                    {
                         // client outlives the pending connect (resolved before
                         // its terminal callback fires).
                         pc.waiters.push(client.as_erased_ptr());
@@ -1036,6 +1071,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     hostname: Box::<[u8]>::from(hostname),
                     port,
                     ssl_config: cfg,
+                    reject_unauthorized: client.flags.reject_unauthorized,
                     ..Default::default()
                 });
                 // `client.pending_h2 = pc` stores a *borrowed* backref into the
@@ -1153,12 +1189,15 @@ impl<const SSL: bool> Handler<SSL> {
                     }
 
                     // if checkServerIdentity returns false, we dont call firstCall — the connection was rejected
-                    let ssl_ptr = socket
-                        .get_native_handle()
-                        .map(|h| h.cast::<bun_boringssl_sys::SSL>())
-                        .unwrap_or(core::ptr::null_mut());
-                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl_ptr, true)
-                    {
+                    // SAFETY: the native handle on a TLS socket is `*mut SSL`,
+                    // live and non-null after the handshake completes.
+                    let ssl = unsafe {
+                        &mut *socket
+                            .get_native_handle()
+                            .expect("TLS socket has native handle after handshake")
+                            .cast::<bun_boringssl_sys::SSL>()
+                    };
+                    if !client.check_server_identity::<SSL>(socket, handshake_error, ssl, true) {
                         // checkServerIdentity already called closeAndFail() → fail()
                         // → result callback, which may have destroyed the
                         // AsyncHTTP that embeds `client`. Socket is terminated

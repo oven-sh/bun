@@ -10,22 +10,22 @@ use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::package_manager_lifecycle::LifecycleScriptTimeLogEntry;
 use bun_core::{Global, Output};
 use bun_event_loop::AnyEventLoop;
+use bun_io::BufferedReader;
 use bun_io::heap as io_heap;
-use bun_io::{BufferedReader, EventLoopHandle};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_core::ZStr;
-use bun_spawn::{
-    Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, SpawnResultExt as _, Status,
-};
-use bun_sys::{Fd, FdExt as _};
+#[cfg(unix)]
+use bun_spawn::SpawnResultExt as _;
+use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
+#[cfg(unix)]
+use bun_sys::Fd;
 // PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
-// on Windows. The inherent `loop_()` projects through the uws wrapper
+// on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
 // (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
 // `BufferedReaderParent::loop_` expects.
-use bun_io::Loop as AsyncLoop;
 
 bun_output::declare_scope!(Script, visible);
 
@@ -333,7 +333,7 @@ impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
 
 impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     #[inline]
-    fn less(
+    unsafe fn less(
         &self,
         a: *mut LifecycleScriptSubprocess<'a>,
         b: *mut LifecycleScriptSubprocess<'a>,
@@ -363,7 +363,7 @@ use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
-// TODO(port): `std.time.Timer` — replace with bun_core monotonic timer wrapper in Phase B.
+// TODO(port): `std.time.Timer` — replace with bun_core monotonic timer wrapper.
 pub type Timer = bun_core::time::Timer;
 
 impl<'a> LifecycleScriptSubprocess<'a> {
@@ -380,17 +380,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.manager.get()
     }
 
-    /// SAFETY: see [`Self::manager`]. Mutable access is sound because Zig's
+    /// # Safety
+    /// See [`Self::manager`]. Mutable access is sound because Zig's
     /// `*PackageManager` is a non-exclusive pointer; no `&PackageManager`
     /// outlives the brief field accesses below on the install thread.
     #[inline]
-    fn manager_mut(&self) -> &mut PackageManager {
+    unsafe fn manager_mut(&mut self) -> &mut PackageManager {
         // SAFETY: see fn doc.
-        unsafe { &mut *self.manager.as_ptr() }
-    }
-
-    pub fn loop_(&self) -> *mut AsyncLoop {
-        self.manager_mut().event_loop.native_loop()
+        unsafe { self.manager.get_mut() }
     }
 
     pub fn event_loop(&self) -> &AnyEventLoop<'static> {
@@ -409,7 +406,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.maybe_finished();
     }
 
-    pub fn on_reader_error(&mut self, err: bun_sys::Error) {
+    pub fn on_reader_error(&mut self, err: &bun_sys::Error) {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
 
@@ -607,14 +604,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let mut argv: [*const c_char; 4] = if (*this).shell_bin.is_some() && !cfg!(windows) {
                 [
                     (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
-                    b"-c\0".as_ptr().cast::<c_char>(),
+                    c"-c".as_ptr(),
                     combined_script.as_ptr().cast::<c_char>(),
                     core::ptr::null(),
                 ]
             } else {
                 [
                     bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
-                    b"exec\0".as_ptr().cast::<c_char>(),
+                    c"exec".as_ptr(),
                     combined_script.as_ptr().cast::<c_char>(),
                     core::ptr::null(),
                 ]
@@ -637,9 +634,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // passed to libuv) and take SOLE ownership from
             // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
             // block below and `filter_run.rs` for the canonical pattern.
-            // `mut` only for the Windows error-path `.deinit()` below.
-            #[allow(unused_mut)]
-            let mut spawn_options = SpawnOptions {
+            let spawn_options = SpawnOptions {
                 stdin: if (*this).foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
@@ -704,7 +699,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            let mut spawned = match bun_spawn::spawn_process(
+            let spawned = match bun_spawn::spawn_process(
                 &spawn_options,
                 // argv is `[*const c_char; 4]` with trailing null — exactly the
                 // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
@@ -728,6 +723,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         // BEFORE building `SpawnOptions` (lifecycle_script_runner.zig:190);
                         // the Rust ordering moved allocation inline (see PORT NOTE above)
                         // and must therefore handle the error path explicitly.
+                        let mut spawn_options = spawn_options;
                         spawn_options.stdout.deinit();
                         spawn_options.stderr.deinit();
                     }
@@ -735,6 +731,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     unreachable!();
                 }
             };
+            #[cfg(windows)]
+            let mut spawned = spawned;
 
             #[cfg(unix)]
             {
@@ -937,19 +935,19 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 if let Some(nanos) = maybe_duration {
                     if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        self.manager_mut()
+                        // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
+                        // dropped per §Allocators (non-AST crate). Zig borrowed the lockfile
+                        // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
+                        // `destroy`, so the log entry takes its own owned copy.
+                        let entry = LifecycleScriptTimeLogEntry {
+                            package_name: self.package_name.clone(),
+                            script_id: self.current_script_index,
+                            duration: nanos,
+                        };
+                        // SAFETY: see [`Self::manager_mut`].
+                        unsafe { self.manager_mut() }
                             .lifecycle_script_time_log
-                            .append_concurrent(
-                                // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
-                                // dropped per §Allocators (non-AST crate). Zig borrowed the lockfile
-                                // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
-                                // `destroy`, so the log entry takes its own owned copy.
-                                LifecycleScriptTimeLogEntry {
-                                    package_name: self.package_name.clone(),
-                                    script_id: self.current_script_index,
-                                    duration: nanos,
-                                },
-                            );
+                            .append_concurrent(entry);
                     }
                 }
 
@@ -1142,15 +1140,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 break 'try_delete_dir;
             };
             let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
-            let Ok(dir) = bun_sys::open_dir_absolute(dirname) else {
-                break 'try_delete_dir;
-            };
-            let _ = dir.delete_tree(basename);
             // PORT NOTE: Zig (lifecycle_script_runner.zig:533-534) leaks this fd
             // too — fixed here since this path returns to the install loop without
             // exiting, so the HANDLE/fd would otherwise persist for the rest of
             // the install on every failed optional-dependency lifecycle script.
-            dir.close();
+            let Ok(dir) = bun_sys::Dir::open(dirname) else {
+                break 'try_delete_dir;
+            };
+            let _ = dir.delete_tree(basename);
         }
 
         // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
@@ -1248,7 +1245,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 bun_spawn::link_impl_ProcessExit! {
     LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
         on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(process, status, &*rusage),
+            (*this).on_process_exit(process, status, rusage),
     }
 }
 
@@ -1265,8 +1262,8 @@ bun_io::impl_buffered_reader_parent! {
     LifecycleScript for LifecycleScriptSubprocess<'a>;
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
-    on_reader_error = |this, err| (*this).on_reader_error(err);
-    loop_           = |this| (*this).loop_();
+    on_reader_error = |this, err| (*this).on_reader_error(&err);
+    loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
         &mut (*(*this).manager.as_ptr()).event_loop,
     ).as_event_loop_ctx();

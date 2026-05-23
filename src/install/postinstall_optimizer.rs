@@ -20,7 +20,7 @@ pub enum PostinstallOptimizer {
     Ignore,
 }
 
-// TODO(port): was comptime in Zig — verify `string_hash` can be `const fn` in Phase B and
+// TODO(port): was comptime in Zig — verify `string_hash` can be `const fn` and
 // switch to `const` array if so.
 static DEFAULT_NATIVE_BINLINKS_NAME_HASHES: LazyLock<[PackageNameHash; 2]> = LazyLock::new(|| {
     [
@@ -35,7 +35,7 @@ struct DefaultIgnore {
 }
 
 // TODO(port): was comptime in Zig — `Version::parse_utf8` is unlikely to be `const fn`; keep
-// LazyLock unless Phase B finds a const path.
+// LazyLock unless a const path is found.
 static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
     [DefaultIgnore {
         name_hash: semver::string::Builder::string_hash(b"sharp"),
@@ -134,8 +134,8 @@ impl PostinstallOptimizer {
 
 // TODO(port): Zig used `std.ArrayHashMapUnmanaged(PackageNameHash, PostinstallOptimizer,
 // install.ArrayIdentityContext.U64, false)` — i.e. an *identity* hash context (key is already
-// a hash). `bun_collections::ArrayHashMap` must be configured for identity hashing on u64 keys
-// in Phase B, or expose a `ArrayHashMap<K, V, IdentityU64>` variant.
+// a hash). `bun_collections::ArrayHashMap` should be configured for identity hashing on u64 keys,
+// or expose a `ArrayHashMap<K, V, IdentityU64>` variant.
 pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer>;
 
 #[derive(Default)]
@@ -186,7 +186,7 @@ impl List {
 
     pub fn should_ignore_lifecycle_scripts(
         &self,
-        pkg_info: PkgInfo<'_>,
+        pkg_info: &PkgInfo<'_>,
         resolutions: &[PackageID],
         metas: &[Meta],
         target_cpu: npm::Architecture,
@@ -229,7 +229,7 @@ impl List {
         }
     }
 
-    fn from_default(pkg_info: PkgInfo<'_>) -> Option<PostinstallOptimizer> {
+    fn from_default(pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         for &hash in DEFAULT_NATIVE_BINLINKS_NAME_HASHES.iter() {
             if hash == pkg_info.name_hash {
                 return Some(PostinstallOptimizer::NativeBinlink);
@@ -255,14 +255,12 @@ impl List {
         None
     }
 
-    pub fn get(&self, pkg_info: PkgInfo<'_>) -> Option<PostinstallOptimizer> {
+    pub fn get(&self, pkg_info: &PkgInfo<'_>) -> Option<PostinstallOptimizer> {
         if let Some(optimize) = self.dynamic.get(&pkg_info.name_hash) {
             return Some(*optimize);
         }
 
-        let Some(default) = Self::from_default(pkg_info) else {
-            return None;
-        };
+        let default = Self::from_default(pkg_info)?;
 
         match default {
             PostinstallOptimizer::NativeBinlink => {

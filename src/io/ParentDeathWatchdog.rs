@@ -35,10 +35,17 @@
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::{ZStr, env_var};
-use bun_sys::{self, Fd, O};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_core::ZStr;
+use bun_core::env_var;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+use bun_sys::Fd;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_sys::O;
 
-use crate::posix_event_loop::{EventLoopCtx, FilePoll, Owner, poll_tag};
+use crate::posix_event_loop::EventLoopCtx;
+#[cfg(target_os = "macos")]
+use crate::posix_event_loop::{FilePoll, Owner, poll_tag};
 
 /// Unit struct — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
@@ -159,6 +166,7 @@ fn kill_sync_pgroups_and_descendants() {
 }
 
 // TODO(port): move to <aio>_sys
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     // safe: no args; no preconditions.
     safe fn Bun__noOrphans_killTracked();
@@ -168,6 +176,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     // safe: no args; read process IDs — no preconditions, never fail.
     safe fn getpid() -> libc::pid_t;
+    #[cfg(target_os = "macos")]
     safe fn getppid() -> libc::pid_t;
     // safe: by-value `pid_t`/`c_int` only; bad pid → `ESRCH`, bad sig →
     // `EINVAL`, never UB. Async-signal-safe.
@@ -175,6 +184,7 @@ unsafe extern "C" {
     // safe: out-param is `&mut c_int` (non-null, valid for write); kernel only
     // writes the slot and reports failure via the return value — bad pid →
     // `ECHILD`, never UB. Async-signal-safe.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     safe fn waitpid(pid: libc::pid_t, status: &mut c_int, options: c_int) -> libc::pid_t;
 }
 
@@ -183,9 +193,11 @@ unsafe extern "C" {
 // — `PR_SET_PDEATHSIG` fires on the *thread*'s exit, so defaulting it from a
 // JS Worker would kill children on `worker.terminate()` — is documented there.
 
+#[cfg(target_os = "macos")]
 static EVENT_LOOP_INSTALLED: AtomicBool = AtomicBool::new(false);
 /// Singleton instance — `FilePoll.Owner` needs a real pointer, but we have no
 /// per-instance state.
+#[cfg(target_os = "macos")]
 static INSTANCE: bun_core::RacyCell<ParentDeathWatchdog> =
     bun_core::RacyCell::new(ParentDeathWatchdog);
 
@@ -252,7 +264,7 @@ pub fn enable() {
             return;
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // PR_SET_PDEATHSIG: kernel sends SIGKILL when the thread that forked
             // us exits. Persists across exec; cleared on fork (Bun's own children
@@ -428,11 +440,11 @@ pub fn kill_descendants() {
 /// siblings (both have ppid==us). Returns the slice written; empty on
 /// non-Linux or enumeration failure.
 pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         return &out[..0];
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let self_pid = getpid();
         let n = list_child_pids(self_pid, out).unwrap_or(0);
@@ -453,11 +465,11 @@ pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
 /// also land here and be killed — `--no-orphans` is opt-in aggressive cleanup
 /// and would kill it at process-exit via `kill_descendants()` anyway.
 pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = siblings;
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let self_pid = getpid();
         let mut buf: [libc::pid_t; 4096] = [0; 4096];
@@ -501,7 +513,7 @@ pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
 /// ppid-verify + leaves-first-SIGKILL discipline as `kill_descendants()`, just
 /// not rooted at ourselves. `expected_ppid_of_root` lets the caller verify
 /// `root` itself before recursing (ppid==us for subreaper adoptees).
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
     let mut to_visit: Vec<libc::pid_t> = Vec::new();
     let mut to_kill: Vec<libc::pid_t> = Vec::new();
@@ -587,10 +599,12 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
             return libc::pid_t::try_from(info.pbi_ppid).expect("int cast");
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut path_buf = [0u8; 64];
-        let Ok(path) = bun_core::fmt::buf_print_z(&mut path_buf, format_args!("/proc/{}/stat", pid)) else {
+        let Ok(path) =
+            bun_core::fmt::buf_print_z(&mut path_buf, format_args!("/proc/{}/stat", pid))
+        else {
             return 0;
         };
         let mut read_buf = [0u8; 512];
@@ -612,7 +626,7 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
         };
         return bun_core::fmt::parse_decimal::<libc::pid_t>(ppid_str).unwrap_or(0);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     {
         let _ = pid;
         0
@@ -642,11 +656,11 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
         }
         return Some((usize::try_from(rc).expect("int cast")).min(out.len()));
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         return list_child_pids_linux(parent, out);
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     {
         let _ = (parent, out);
         None
@@ -657,7 +671,7 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
 /// `parent`. Each file is a space-separated list of child pids whose
 /// `getppid()` is `parent` and which were created by that specific thread.
 /// Requires CONFIG_PROC_CHILDREN (enabled on every distro kernel that matters).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize> {
     use std::io::Write;
 
@@ -726,14 +740,12 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
 /// Single-shot open+read+close into `buf`. Exit-handler helper — avoids
 /// allocating (so no `File.readFrom`) and swallows the `bun.sys` error info
 /// we don't need.
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     let fd = match bun_sys::open(path, O::RDONLY, 0) {
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    // PORT NOTE: Zig `defer file.close()`. `bun_sys::File` does not impl Drop;
-    // close explicitly on every exit path.
     let _guard = scopeguard::guard(fd, |fd| {
         let _ = bun_sys::close(fd);
     });

@@ -36,7 +36,7 @@ impl Params {
 pub struct RareData {
     libdeflate_compressor: Cell<Option<*mut libdeflate_sys::Compressor>>,
     libdeflate_decompressor: Cell<Option<*mut libdeflate_sys::Decompressor>>,
-    // PERF(port): was StackFallbackAllocator(128 * 1024) — profile in Phase B
+    // PERF(port): was StackFallbackAllocator(128 * 1024) — profile if hot.
     // Zig kept a 128KB inline buffer reused as scratch for (de)compression output.
 }
 
@@ -54,7 +54,7 @@ impl RareData {
 
     pub fn array_list(&self) -> Vec<u8> {
         // PERF(port): Zig handed back an ArrayList aliasing the 128KB stack_fallback
-        // buffer (zero-alloc). Phase A uses a fresh heap Vec; revisit in Phase B.
+        // buffer (zero-alloc). Allocates a fresh heap Vec per call — profile if hot.
         Vec::with_capacity(Self::STACK_BUFFER_SIZE)
     }
 
@@ -161,7 +161,7 @@ impl PerMessageDeflate {
             params,
             compress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
             decompress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
-            // TODO(b2-blocked): bun_jsc::rare_data::WebSocketDeflateRareData —
+            // TODO(port): bun_jsc::rare_data::WebSocketDeflateRareData —
             // `rare_data.websocket_deflate()` returns an opaque `{ _opaque: () }`
             // placeholder in bun_jsc; the real type is `self::RareData` (this
             // module), which bun_jsc cannot import without a dep cycle. Until a

@@ -2,17 +2,11 @@
 //!
 //! Ported from `src/css/properties/properties.zig`.
 
-#![allow(unused_imports)]
 #![warn(unused_must_use)]
-use crate as css;
 
-// ─── B-2 round 7 status ────────────────────────────────────────────────────
-// `properties_generated.rs` is now un-gated: the 249-variant `Property` /
-// `PropertyId` / `PropertyIdTag` enums are real types referenced by
-// `declaration.rs`, `context.rs`, and `rules/`. The leaf property modules
-// (`align`, `background`, …) remain ``-gated — their handler
-// bodies and parse/to_css impls bottom out on Parser/Printer surface that
-// is still in flux — but every *value type* the `Property` enum names is
+// `properties_generated.rs` carries the 249-variant `Property` /
+// `PropertyId` / `PropertyIdTag` enums referenced by `declaration.rs`,
+// `context.rs`, and `rules/`. Every *value type* the `Property` enum names is
 // re-exposed below via `pub mod $name`. When a leaf .rs file un-gates, its
 // real type replaces the stub transparently (same path, same name).
 //
@@ -31,30 +25,6 @@ use crate as css;
 /// `finalize(*Self, *DeclarationList, *PropertyHandlerContext) void`. Same
 /// shape here; lifetimes on `DeclarationList<'bump>` / context are erased
 /// behind anonymous lifetimes since the stub bodies touch neither.
-macro_rules! handler_stub {
-    ($($Handler:ident),+ $(,)?) => {$(
-        #[derive(Default)]
-        pub struct $Handler;
-        impl $Handler {
-            #[inline]
-            pub fn handle_property(
-                &mut self,
-                _property: &crate::properties::Property,
-                _dest: &mut crate::DeclarationList<'_>,
-                _context: &mut crate::PropertyHandlerContext<'_>,
-            ) -> bool {
-                false
-            }
-            #[inline]
-            pub fn finalize(
-                &mut self,
-                _dest: &mut crate::DeclarationList<'_>,
-                _context: &mut crate::PropertyHandlerContext<'_>,
-            ) {
-            }
-        }
-    )+};
-}
 
 // ─── Rect / Size shorthand impl + define macros ────────────────────────────
 // Shared by `border.rs` and `margin_padding.rs`. These are the Rust port of
@@ -157,7 +127,6 @@ macro_rules! impl_size_shorthand {
                 &self,
                 dest: &mut $crate::printer::Printer,
             ) -> ::core::result::Result<(), $crate::PrintErr> {
-                use $crate::generic::ToCss as _;
                 self.$start.to_css(dest)?;
                 if self.$start != self.$end {
                     dest.write_str(b" ")?;
@@ -173,12 +142,6 @@ macro_rules! impl_size_shorthand {
 // ─── Submodule declarations ────────────────────────────────────────────────
 // (Zig: `pub const X = @import("./X.zig");`)
 //
-// B-2 round 8: the leaf property modules below are un-gated — their value
-// *types* (and handler ZSTs) compile for real and replace the former
-// `handler_stub!` placeholders. Heavy parse/to_css/
-// handle_property *bodies* that bottom out on still-unported Parser/
-// PropertyHandlerContext surface remain internally ``-gated
-// inside each leaf file (same pattern as `font.rs`).
 pub mod align;
 // `animation`: un-gated — real AnimationName / Animation / AnimationIterationCount /
 // AnimationDirection / AnimationPlayState / AnimationFillMode / AnimationTimeline /

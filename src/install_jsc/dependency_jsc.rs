@@ -7,11 +7,11 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Local helper: `bun_semver::String` → JS string. Mirrors
 /// `bun_semver_jsc::SemverStringJsc::to_js`, but that crate stubs its own JSC
-/// types (concurrent B-2), so its `JSGlobalObject`/`JSValue` are not the
+/// types, so its `JSGlobalObject`/`JSValue` are not the
 /// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
 #[inline]
 fn semver_string_to_js(
-    s: &bun_semver::String,
+    s: bun_semver::String,
     buf: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -39,69 +39,61 @@ pub fn version_to_js(
     match dep.tag {
         Tag::DistTag => {
             let v = dep.dist_tag();
-            object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
-            object.put(global, b"tag", semver_string_to_js(&v.tag, buf, global)?);
+            object.put(global, b"name", semver_string_to_js(v.name, buf, global)?);
+            object.put(global, b"tag", semver_string_to_js(v.tag, buf, global)?);
         }
         Tag::Folder => {
             let v = dep.folder();
-            object.put(global, b"folder", semver_string_to_js(v, buf, global)?);
+            object.put(global, b"folder", semver_string_to_js(*v, buf, global)?);
         }
         Tag::Git => {
             let v = dep.git();
-            object.put(
-                global,
-                b"owner",
-                semver_string_to_js(&v.owner, buf, global)?,
-            );
-            object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
+            object.put(global, b"owner", semver_string_to_js(v.owner, buf, global)?);
+            object.put(global, b"repo", semver_string_to_js(v.repo, buf, global)?);
             object.put(
                 global,
                 b"ref",
-                semver_string_to_js(&v.committish, buf, global)?,
+                semver_string_to_js(v.committish, buf, global)?,
             );
         }
         Tag::Github => {
             let v = dep.github();
-            object.put(
-                global,
-                b"owner",
-                semver_string_to_js(&v.owner, buf, global)?,
-            );
-            object.put(global, b"repo", semver_string_to_js(&v.repo, buf, global)?);
+            object.put(global, b"owner", semver_string_to_js(v.owner, buf, global)?);
+            object.put(global, b"repo", semver_string_to_js(v.repo, buf, global)?);
             object.put(
                 global,
                 b"ref",
-                semver_string_to_js(&v.committish, buf, global)?,
+                semver_string_to_js(v.committish, buf, global)?,
             );
         }
         Tag::Npm => {
             let v = dep.npm();
-            object.put(global, b"name", semver_string_to_js(&v.name, buf, global)?);
+            object.put(global, b"name", semver_string_to_js(v.name, buf, global)?);
             let mut version_str = BunString::create_format(format_args!("{}", v.version.fmt(buf)));
             object.put(global, b"version", version_str.transfer_to_js(global)?);
             object.put(global, b"alias", JSValue::js_boolean(v.is_alias));
         }
         Tag::Symlink => {
             let v = dep.symlink();
-            object.put(global, b"path", semver_string_to_js(v, buf, global)?);
+            object.put(global, b"path", semver_string_to_js(*v, buf, global)?);
         }
         Tag::Workspace => {
             let v = dep.workspace();
-            object.put(global, b"name", semver_string_to_js(v, buf, global)?);
+            object.put(global, b"name", semver_string_to_js(*v, buf, global)?);
         }
         Tag::Tarball => {
             let v = dep.tarball();
             object.put(
                 global,
                 b"name",
-                semver_string_to_js(&v.package_name, buf, global)?,
+                semver_string_to_js(v.package_name, buf, global)?,
             );
             match &v.uri {
                 dependency::tarball::Uri::Local(local) => {
-                    object.put(global, b"path", semver_string_to_js(local, buf, global)?);
+                    object.put(global, b"path", semver_string_to_js(*local, buf, global)?);
                 }
                 dependency::tarball::Uri::Remote(remote) => {
-                    object.put(global, b"url", semver_string_to_js(remote, buf, global)?);
+                    object.put(global, b"url", semver_string_to_js(*remote, buf, global)?);
                 }
             }
         }
@@ -124,7 +116,7 @@ pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         return Ok(JSValue::UNDEFINED);
     }
 
-    let dependency_str = arguments[0].to_bun_string(global)?;
+    let dependency_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global)?);
     let as_utf8 = dependency_str.to_utf8();
 
     let tag = Tag::infer(as_utf8.slice());
@@ -153,8 +145,8 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     if arguments.len() == 1 {
         return crate::update_request_jsc::from_js(global, arguments[0]);
     }
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
-    // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...)) — profile in Phase B
+    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if hot
+    // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...)) — profile if hot
 
     let alias_value: JSValue = if !arguments.is_empty() {
         arguments[0]

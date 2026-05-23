@@ -31,9 +31,7 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 /// inherent `to_js_ptr(*mut Self, &JSGlobalObject)`; `noConstructor: true`
 /// in `server.classes.ts` means no `${T}__getConstructor` is exported.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut NodeHTTPResponse` until Phase 1 lands —
-// `&mut T` auto-derefs to `&T` so the impls below compile against either.
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
 pub struct NodeHTTPResponse {
     pub ref_count: Cell<u32>,
@@ -90,12 +88,12 @@ impl Default for Flags {
 impl Flags {
     /// Did the user end the request?
     #[inline]
-    pub fn is_requested_completed_or_ended(&self) -> bool {
+    pub fn is_requested_completed_or_ended(self) -> bool {
         self.intersects(Flags::REQUEST_HAS_COMPLETED | Flags::ENDED)
     }
 
     #[inline]
-    pub fn is_done(&self) -> bool {
+    pub fn is_done(self) -> bool {
         self.is_requested_completed_or_ended() || self.contains(Flags::SOCKET_CLOSED)
     }
 }
@@ -159,17 +157,12 @@ impl UpgradeCTX {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum BodyReadState {
+    #[default]
     None = 0,
     Pending = 1,
     Done = 2,
-}
-
-impl Default for BodyReadState {
-    fn default() -> Self {
-        BodyReadState::None
-    }
 }
 
 unsafe extern "C" {
@@ -388,8 +381,8 @@ impl NodeHTTPResponse {
             return false;
         }
         // `AnyServer` is a `Copy` type-erased pointer; copy it so the
-        // `&mut self`-taking accessor can be called from this `&self` body
-        // (R-2 Phase 2). The pointee is the long-lived server, not `*self`.
+        // `&mut self`-taking accessor can be called from this `&self` body.
+        // The pointee is the long-lived server, not `*self`.
         let mut server = self.server;
         let Some(ws_handler) = server.web_socket_handler() else {
             return false;
@@ -514,7 +507,12 @@ impl NodeHTTPResponse {
 
     pub fn should_request_be_pending(&self) -> bool {
         let flags = self.flags.get();
-        if flags.contains(Flags::SOCKET_CLOSED) {
+        // Once the socket is closed or has been adopted by the WebSocket
+        // layer, the HTTP request/response cycle is over — no further uws
+        // callbacks will arrive on `raw_response` to balance the
+        // IS_REQUEST_PENDING ref, so report not-pending so
+        // `mark_request_as_done()` can release it.
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return false;
         }
 
@@ -552,6 +550,23 @@ impl NodeHTTPResponse {
         // defer this.deref(); — moved to end of fn body.
         self.update_flags(|f| f.remove(Flags::IS_REQUEST_PENDING));
 
+        // The async path (`on_node_http_request_with_upgrade_ctx`) stashes the
+        // handler's pending promise here and registers `then2` reactions that
+        // are responsible for releasing the server-handler ref (one of the
+        // initial 3). When the request is torn down via abort/socket-close
+        // those reactions may never fire (the JS-side resolve chain is broken
+        // once the socket is gone), which would strand that ref forever and
+        // leak the whole `NodeHTTPResponse` allocation. Treat a still-held
+        // promise as the ownership token for that ref: drop the strong root
+        // and release the ref here. `on_resolve`/`on_reject` observe the
+        // empty slot and skip their own deref, so a late settlement is a
+        // no-op rather than a double release.
+        let had_async_promise = self.promise.with_mut(|p| {
+            let had = p.has();
+            p.deinit();
+            had
+        });
+
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.upgrade_context.with_mut(|c| c.reset());
@@ -564,6 +579,9 @@ impl NodeHTTPResponse {
 
         server.on_request_complete();
 
+        if had_async_promise {
+            self.deref();
+        }
         self.deref();
     }
 
@@ -709,8 +727,7 @@ impl NodeHTTPResponse {
         let state = raw_response.state();
         handle_ended_if_necessary(state, global_object)?;
 
-        let status_code_value: JSValue =
-            arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
+        let status_code_value: JSValue = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
         let status_message_value: JSValue = match arguments.get(1).copied() {
             Some(v) if v != JSValue::NULL => v,
             _ => JSValue::UNDEFINED,
@@ -743,9 +760,8 @@ impl NodeHTTPResponse {
         let status_message_str;
         let status_message_slice;
         let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
-            status_message_str = bun_core::OwnedString::new(
-                status_message_value.to_bun_string(global_object)?,
-            );
+            status_message_str =
+                bun_core::OwnedString::new(status_message_value.to_bun_string(global_object)?);
             status_message_slice = status_message_str.to_utf8_without_ref();
             status_message_slice.slice()
         } else {
@@ -823,12 +839,7 @@ impl NodeHTTPResponse {
                 heap.extend_from_slice(code);
                 heap.push(b' ');
                 heap.extend_from_slice(message);
-                write_head_internal(
-                    &raw_response,
-                    global_object,
-                    &heap,
-                    headers_object_value,
-                );
+                write_head_internal(&raw_response, global_object, &heap, headers_object_value);
             }
         }
 
@@ -903,7 +914,22 @@ impl NodeHTTPResponse {
 
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             if EVENT == AbortEvent::Abort {
+                // The socket is gone — no further uws callback will arrive to
+                // balance the IS_REQUEST_PENDING ref. `on_request_complete()`
+                // can set REQUEST_HAS_COMPLETED while `body_read_state` is
+                // still `.pending` (e.g. the request body's last chunk was
+                // buffered during pause before `res.end()` — the
+                // `Expect: 100-continue` path), in which case
+                // `mark_request_as_done()` never ran there and both that ref
+                // and the server's pending-request counter are stranded. The
+                // synchronous `set_closed()` from `JSNodeHTTPServerSocket::
+                // onClose` has already flipped SOCKET_CLOSED, so
+                // `should_request_be_pending()` is now false; let the gate
+                // re-evaluate. Clear `raw_response` first so the
+                // `clear_on_data_callback` reached from `mark_request_as_done`
+                // can't touch the dead socket.
                 self.raw_response.set(None);
+                self.mark_request_as_done_if_necessary();
             }
             return;
         }
@@ -1086,7 +1112,13 @@ pub fn node_http_request_on_resolve(
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
     let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
-    this.promise.with_mut(|p| p.deinit());
+    // `promise` non-empty is the ownership token for the server-handler ref;
+    // `mark_request_as_done` may have already released it on abort.
+    let had_promise = this.promise.with_mut(|p| {
+        let had = p.has();
+        p.deinit();
+        had
+    });
     // defer this.deref(); — moved to tail.
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
 
@@ -1108,7 +1140,9 @@ pub fn node_http_request_on_resolve(
         this.on_request_complete();
     }
 
-    this.deref();
+    if had_promise {
+        this.deref();
+    }
     JSValue::UNDEFINED
 }
 
@@ -1122,7 +1156,13 @@ pub fn node_http_request_on_reject(
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
     let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
-    this.promise.with_mut(|p| p.deinit());
+    // `promise` non-empty is the ownership token for the server-handler ref;
+    // `mark_request_as_done` may have already released it on abort.
+    let had_promise = this.promise.with_mut(|p| {
+        let had = p.has();
+        p.deinit();
+        had
+    });
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
 
     // defer this.deref(); — moved to tail.
@@ -1151,7 +1191,9 @@ pub fn node_http_request_on_reject(
     }
 
     let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
-    this.deref();
+    if had_promise {
+        this.deref();
+    }
     JSValue::UNDEFINED
 }
 
@@ -1918,11 +1960,8 @@ impl NodeHTTPResponse {
 
         self.promise.with_mut(|p| p.deinit());
         // SAFETY: self was allocated via `heap::into_raw` in `createForJS`;
-        // refcount is zero so no other references remain. R-2 interim: the
-        // codegen shim still hands us `&mut T` (auto-deref'd to `&self`), so
-        // the `*const → *mut` cast retains the original Box provenance. Once
-        // Phase 1 lands the shim will pass the raw m_ctx as `&T` directly and
-        // this remains the unique owner at count==0.
+        // refcount is zero so no other references remain — `self` is the unique
+        // owner at count==0, so the `*const → *mut` cast is sound.
         unsafe { drop(bun_core::heap::take(self.as_ctx_ptr())) };
     }
 
@@ -1978,8 +2017,12 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
     }
 }
 
+/// # Safety
+/// `has_body`, `request`, `response_ptr`, `upgrade_ctx`, and `node_response_ptr`
+/// are provided by C++ NodeHTTPServer and must be valid for the duration of the
+/// call; `has_body` and `node_response_ptr` must be writable.
 #[unsafe(no_mangle)]
-pub extern "C" fn NodeHTTPResponse__createForJS(
+pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
     any_server_tag: u64,
     global_object: &JSGlobalObject,
     has_body: *mut bool,

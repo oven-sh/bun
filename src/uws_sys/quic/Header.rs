@@ -18,24 +18,25 @@ impl Header {
     /// Safe view of the header name bytes.
     #[inline]
     pub fn name_bytes(&self) -> &[u8] {
-        // SAFETY: lsquic populates `name` with `name_len` bytes valid for the
-        // duration of the header callback (or `Header::init` borrowed them
-        // from a caller-owned slice). The returned borrow is tied to `&self`.
-        // `(null, 0)` is tolerated for empty headers.
         if self.name.is_null() {
             &[]
         } else {
+            // SAFETY: lsquic populates `name` with `name_len` bytes valid for the
+            // duration of the header callback (or `Header::init` borrowed them
+            // from a caller-owned slice). The returned borrow is tied to `&self`,
+            // and the null case is handled above.
             unsafe { core::slice::from_raw_parts(self.name, self.name_len as usize) }
         }
     }
     /// Safe view of the header value bytes.
     #[inline]
     pub fn value_bytes(&self) -> &[u8] {
-        // SAFETY: same invariant as `name_bytes` — `value` points to
-        // `value_len` bytes valid for the borrow of `&self`.
         if self.value.is_null() {
             &[]
         } else {
+            // SAFETY: same invariant as `name_bytes` — `value` points to
+            // `value_len` bytes valid for the borrow of `&self`, and the null
+            // case is handled above.
             unsafe { core::slice::from_raw_parts(self.value, self.value_len as usize) }
         }
     }
@@ -126,7 +127,7 @@ impl Qpack {
         // compiles to a handful of word compares — cheaper than phf's hash +
         // displacement-table probe + verify on every header.
         Some(match name.len() {
-            4 => match &*lower {
+            4 => match lower {
                 b"host" => Class::Host,
                 b"date" => Class::idx(b"date", Qpack::Date),
                 b"etag" => Class::idx(b"etag", Qpack::Etag),
@@ -134,43 +135,43 @@ impl Qpack {
                 b"vary" => Class::idx(b"vary", Qpack::Vary),
                 _ => return None,
             },
-            5 => match &*lower {
+            5 => match lower {
                 b"range" => Class::idx(b"range", Qpack::Range),
                 _ => return None,
             },
-            6 => match &*lower {
+            6 => match lower {
                 b"accept" => Class::idx(b"accept", Qpack::Accept),
                 b"cookie" => Class::idx(b"cookie", Qpack::Cookie),
                 b"origin" => Class::idx(b"origin", Qpack::Origin),
                 b"server" => Class::idx(b"server", Qpack::Server),
                 _ => return None,
             },
-            7 => match &*lower {
+            7 => match lower {
                 b"referer" => Class::idx(b"referer", Qpack::Referer),
                 b"upgrade" => Class::Forbidden,
                 _ => return None,
             },
-            8 => match &*lower {
+            8 => match lower {
                 b"if-range" => Class::idx(b"if-range", Qpack::IfRange),
                 b"location" => Class::idx(b"location", Qpack::Location),
                 _ => return None,
             },
-            9 => match &*lower {
+            9 => match lower {
                 b"forwarded" => Class::idx(b"forwarded", Qpack::Forwarded),
                 _ => return None,
             },
-            10 => match &*lower {
+            10 => match lower {
                 b"connection" => Class::Forbidden,
                 b"keep-alive" => Class::Forbidden,
                 b"set-cookie" => Class::idx(b"set-cookie", Qpack::SetCookie),
                 b"user-agent" => Class::idx(b"user-agent", Qpack::UserAgent),
                 _ => return None,
             },
-            12 => match &*lower {
+            12 => match lower {
                 b"content-type" => Class::idx(b"content-type", Qpack::ContentType),
                 _ => return None,
             },
-            13 => match &*lower {
+            13 => match lower {
                 b"accept-ranges" => Class::idx(b"accept-ranges", Qpack::AcceptRanges),
                 b"authorization" => Class::idx(b"authorization", Qpack::Authorization),
                 b"cache-control" => Class::idx(b"cache-control", Qpack::CacheControl),
@@ -178,27 +179,27 @@ impl Qpack {
                 b"last-modified" => Class::idx(b"last-modified", Qpack::LastModified),
                 _ => return None,
             },
-            14 => match &*lower {
+            14 => match lower {
                 b"content-length" => Class::idx(b"content-length", Qpack::ContentLength),
                 _ => return None,
             },
-            15 => match &*lower {
+            15 => match lower {
                 b"accept-encoding" => Class::idx(b"accept-encoding", Qpack::AcceptEncoding),
                 b"accept-language" => Class::idx(b"accept-language", Qpack::AcceptLanguage),
                 b"x-forwarded-for" => Class::idx(b"x-forwarded-for", Qpack::XForwardedFor),
                 _ => return None,
             },
-            16 => match &*lower {
+            16 => match lower {
                 b"content-encoding" => Class::idx(b"content-encoding", Qpack::ContentEncoding),
                 b"proxy-connection" => Class::Forbidden,
                 _ => return None,
             },
-            17 => match &*lower {
+            17 => match lower {
                 b"if-modified-since" => Class::idx(b"if-modified-since", Qpack::IfModifiedSince),
                 b"transfer-encoding" => Class::Forbidden,
                 _ => return None,
             },
-            19 => match &*lower {
+            19 => match lower {
                 b"content-disposition" => {
                     Class::idx(b"content-disposition", Qpack::ContentDisposition)
                 }

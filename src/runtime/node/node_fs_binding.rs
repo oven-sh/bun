@@ -3,9 +3,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass, JsResult, SysErrorJsc as _,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
@@ -143,8 +141,8 @@ where
 // single mutable field `node_fs` is wrapped in `JsCell` so the
 // `sync_error_buf` scratch buffer and `&mut NodeFS` syscall dispatches are
 // projected through interior mutability instead of `&mut Binding`. The
-// codegen shim still emits `this: &mut NodeJSFS` until Phase 1 lands —
-// `&mut T` auto-coerces to `&T` so the impls below compile against either.
+// codegen shim still emits `this: &mut NodeJSFS` — `&mut T` auto-coerces to
+// `&T` so the impls below compile against either.
 #[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
 #[derive(Default)]
 pub struct Binding {
@@ -287,7 +285,7 @@ impl Binding {
         // scoped via `with_mut` so the borrow cannot outlive the call.
         match this
             .node_fs
-            .with_mut(|nfs| nfs.watch(watch_args, Flavor::Sync))
+            .with_mut(|nfs| nfs.watch(&watch_args, Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(res) => Ok(res),
@@ -335,7 +333,7 @@ impl Binding {
 
         match this
             .node_fs
-            .with_mut(|nfs| nfs.unwatch_file(&(), Flavor::Sync))
+            .with_mut(|nfs| nfs.unwatch_file((), Flavor::Sync))
         {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),
@@ -438,7 +436,7 @@ pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> J
         return Ok(JSValue::UNDEFINED);
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = arguments;
         return Err(global.throw(format_args!(
@@ -446,7 +444,7 @@ pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> J
         )));
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let size = arguments.ptr[0].to_int64();
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {

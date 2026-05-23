@@ -10,7 +10,7 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
 // {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
 // Alias as `bun_schema` so existing field paths resolve unchanged.
@@ -104,10 +104,9 @@ fn throw_core_error(global: &JSGlobalObject, e: bun_core::Error, ctx: &'static s
     global.throw_error(e, ctx)
 }
 
-/// Erase the `'bump` lifetime of an arena-backed slice. Phase-A convention
-/// (see file-level TODO(port)): `UserOptions.arena` outlives every borrower,
-/// so the bytes are valid for the program-relevant lifetime; Phase B threads
-/// a real `'bump` parameter through `Framework`/`FileSystemRouterType`.
+/// Erase the `'bump` lifetime of an arena-backed slice. Arena-erasure
+/// convention (see file-level TODO(port)): `UserOptions.arena` outlives every
+/// borrower, so the bytes are valid for the program-relevant lifetime.
 #[inline(always)]
 pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
     // SAFETY: arena-backed; UserOptions owns the bump and is dropped last.
@@ -117,7 +116,7 @@ pub(crate) fn arena_erase<T: ?Sized>(r: &T) -> &'static T {
 }
 
 /// `arena.dupeZ(u8, bytes)` — copy `bytes` + trailing NUL into the bump arena.
-/// Returns `&'static ZStr` per the file-level Phase-A `'static` convention
+/// Returns `&'static ZStr` per the file-level `'static` convention
 /// (arena-backed; lifetime erased — see TODO(port) at top of file).
 pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
     let buf: &mut [u8] = arena.alloc_slice_fill_default(bytes.len() + 1);
@@ -125,8 +124,8 @@ pub(crate) fn arena_dupe_z(arena: &Arena, bytes: &[u8]) -> &'static ZStr {
     buf[bytes.len()] = 0;
     // SAFETY: buf is NUL-terminated; arena outlives all borrowers per the
     // self-referential UserOptions pattern. Not `from_buf`: the `'static`
-    // return type intentionally erases the arena lifetime — Phase B threads
-    // `'bump` and replaces this with `from_buf`.
+    // return type intentionally erases the arena lifetime; threading a real
+    // `'bump` would replace this with `from_buf`.
     unsafe { ZStr::from_raw(buf.as_ptr(), bytes.len()) }
 }
 
@@ -135,8 +134,8 @@ pub const API_NAME: &str = "app";
 
 // TODO(port): lifetime — many `&'static [u8]` fields below are actually backed
 // by `UserOptions.arena` (bumpalo::Bump) or `UserOptions.allocations`
-// (StringRefList). Phase A uses `&'static` to avoid struct lifetime params per
-// PORTING.md; Phase B should thread `'bump` or introduce `ArenaStr`.
+// (StringRefList). `&'static` is used to avoid struct lifetime params per
+// PORTING.md; could thread `'bump` or introduce `ArenaStr`.
 
 /// Zig version of the TS definition 'Bake.Options' in 'bake.d.ts'
 pub struct UserOptions {
@@ -177,7 +176,7 @@ impl UserOptions {
         if !config.is_object() {
             // Allow users to do `export default { app: 'react' }` for convenience
             if config.is_string() {
-                let bunstr = config.to_bun_string(global)?;
+                let bunstr = bun_core::OwnedString::new(config.to_bun_string(global)?);
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
@@ -286,15 +285,15 @@ impl StringRefList {
     pub fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
-        // SAFETY (`Interned::assume` — Population B, holder-backed): the
+        // SAFETY: (`Interned::assume` — Population B, holder-backed) the
         // `ZigStringSlice` is now owned by `self.strings` and lives exactly as
         // long as the `StringRefList`, which is owned by `UserOptions` and
         // dropped only when bake teardown runs (`UserOptions::deinit`). The
         // returned slice is stored only in `Framework` / `FileSystemRouterType`
         // / `ServerComponents` fields that are themselves owned by the same
         // `UserOptions`, so no read outlives the holder. NOT process-lifetime
-        // — Phase B must re-thread a real `'bump` lifetime here (see file-level
-        // TODO(port)); `assume` makes the lie grep-able until then.
+        // — a real `'bump` lifetime should eventually be threaded here (see
+        // file-level TODO(port)); `assume` makes the lie grep-able until then.
         unsafe { bun_ptr::Interned::assume(slice) }.as_bytes()
     }
 }
@@ -625,8 +624,8 @@ impl Framework {
         Framework {
             is_built_in_react: self.is_built_in_react,
             file_system_router_types: self.file_system_router_types.clone(),
-            server_components: self.server_components.clone(),
-            react_fast_refresh: self.react_fast_refresh.clone(),
+            server_components: self.server_components,
+            react_fast_refresh: self.react_fast_refresh,
             built_in_modules: bun_core::handle_oom(self.built_in_modules.clone()),
         }
     }
@@ -762,7 +761,7 @@ impl Framework {
         arena: &Arena,
     ) -> JsResult<Framework> {
         if opts.is_string() {
-            let str = opts.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(opts.to_bun_string(global)?);
 
             // Deprecated
             if str.eql_comptime("react-server-components") {
@@ -819,7 +818,7 @@ impl Framework {
                 }
             };
 
-            let str = prop.to_bun_string(global)?;
+            let str = bun_core::OwnedString::new(prop.to_bun_string(global)?);
 
             Some(ReactFastRefresh {
                 import_source: refs.track(str.to_utf8()),
@@ -1196,15 +1195,12 @@ impl Framework {
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
     ) -> Result<(), bun_core::Error> {
-        use bun_js_parser as ast;
-
         // PORT NOTE: Zig built `ASTMemoryAllocator.Scope` by hand and called
         // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
-        // returning the RAII `Scope`. `defer ast_scope.exit()` is the explicit
-        // exit at end-of-fn (the Scope has no Drop yet).
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
-        let ast_scope = ast_memory_allocator.enter();
-        let _guard = scopeguard::guard(ast_scope, |s| s.exit());
+        // returning the RAII `Scope`, whose `Drop` runs `exit()` at end-of-fn
+        // (Zig's `defer ast_scope.exit()`).
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+        let _ast_scope = ast_memory_allocator.enter();
 
         // PORT NOTE: Zig passed `out: *Transpiler` pointing at `= undefined`
         // memory and assigned `out.* = try Transpiler.init(...)`. In Rust the
@@ -1313,7 +1309,7 @@ impl Framework {
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
             );
-            use bun_bundler::{DefineDataExt, DefineExt};
+            use bun_bundler::DefineDataExt;
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -1368,7 +1364,7 @@ pub enum BuiltInModule {
     Code(&'static [u8]),
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ServerComponents {
     pub separate_ssr_graph: bool,
     pub server_runtime_import: &'static [u8],
@@ -1390,7 +1386,7 @@ impl Default for ServerComponents {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct ReactFastRefresh {
     pub import_source: &'static [u8],
 }
@@ -1439,7 +1435,7 @@ fn get_optional_string(
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    let str = value.to_bun_string(global)?;
+    let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
     let _ = arena; // TODO(port): arena param unused after to_utf8() drops allocator
     Ok(Some(allocations.track(str.to_utf8())))
 }
@@ -1509,7 +1505,7 @@ pub fn add_import_meta_defines(
     side: Side,
 ) -> Result<(), bun_core::Error> {
     use bun_ast::E::EString;
-    use bun_bundler::DefineExt;
+
     use bun_bundler::defines::DefineData;
 
     static MODE_DEVELOPMENT: EString = EString::from_static(b"development");
@@ -1546,50 +1542,6 @@ pub fn add_import_meta_defines(
     )?;
 
     Ok(())
-}
-
-// PORT NOTE: `bun_paths::fs::Path<'static>` (the minimal type `bun_ast::Source` actually
-// stores) has no `init_for_kit_built_in`; that constructor lives on the
-// richer `bun_resolver::fs::Path` (a different nominal type) and is not
-// `const fn`. Mirror what `bun_bundler::bundle_v2` does and build the
-// virtual sources lazily.
-// TODO(port): once the two `fs::Path` types are unified, restore the static
-// initializers from bake.zig:976-984.
-pub fn server_virtual_source() -> bun_ast::Source {
-    bun_ast::Source {
-        // = bun.fs.Path.initForKitBuiltIn("bun", "bake/server")
-        path: bun_paths::fs::Path {
-            pretty: b"bun:bake/server",
-            text: b"_bun/bake/server",
-            namespace: b"bun",
-            name: bun_paths::fs::PathName::init(b"bake/server"),
-            is_symlink: true,
-            is_disabled: false,
-        },
-        contents: bun_ptr::Cow::Borrowed(b""), // Virtual
-        // = bun.ast.Index.bake_server_data (=1). bundle_v2 asserts on this; the
-        // `..Default::default()` would silently zero it.
-        index: bun_ast::Index::source(1),
-        ..Default::default()
-    }
-}
-
-pub fn client_virtual_source() -> bun_ast::Source {
-    bun_ast::Source {
-        // = bun.fs.Path.initForKitBuiltIn("bun", "bake/client")
-        path: bun_paths::fs::Path {
-            pretty: b"bun:bake/client",
-            text: b"_bun/bake/client",
-            namespace: b"bun",
-            name: bun_paths::fs::PathName::init(b"bake/client"),
-            is_symlink: true,
-            is_disabled: false,
-        },
-        contents: bun_ptr::Cow::Borrowed(b""), // Virtual
-        // = bun.ast.Index.bake_client_data (=2).
-        index: bun_ast::Index::source(2),
-        ..Default::default()
-    }
 }
 
 /// Stack-allocated structure that is written to from end to start.

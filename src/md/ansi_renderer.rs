@@ -2,11 +2,9 @@
 //! markdown documents to the terminal with colors, hyperlinks, syntax
 //! highlighting, and Unicode box drawing.
 
-use core::ffi::c_void;
 use std::io::Write as _;
 
 use bun_collections::StringHashMap;
-use bun_core::env_var;
 use bun_core::output::ansi_b;
 
 use bun_core::strings;
@@ -260,7 +258,7 @@ impl OutputBuffer {
             return;
         }
         // PERF(port): was appendSlice with latched OOM — Vec::extend aborts
-        // on OOM under the global mimalloc allocator. Phase B may revisit.
+        // on OOM under the global mimalloc allocator.
         self.list.extend_from_slice(data);
     }
 
@@ -382,14 +380,7 @@ impl<'a> AnsiRenderer<'a> {
                         } else {
                             if checked { b"[x] " } else { b"[ ] " }
                         };
-                        break 'blk (
-                            g,
-                            if checked {
-                                ansi_b::GREEN
-                            } else {
-                                ansi_b::DIM
-                            },
-                        );
+                        break 'blk (g, if checked { ansi_b::GREEN } else { ansi_b::DIM });
                     }
                     if let Some(idx) = parent_list {
                         if self.block_stack[idx].kind == BlockKind::Ol {
@@ -1671,7 +1662,7 @@ impl<'a> AnsiRenderer<'a> {
                         strings::wtf8_byte_sequence_length_with_invalid(rest[0]),
                     ));
                 }
-                state_at[i].push(state.clone());
+                state_at[i].push(state);
                 segments[i].push(&rest[0..cut]);
                 state.scan(&rest[0..cut]);
                 rest = &rest[cut..];
@@ -1707,7 +1698,7 @@ impl<'a> AnsiRenderer<'a> {
                     b""
                 };
                 let opens: CellAnsiState = if line < state_at[i].len() {
-                    state_at[i][line].clone()
+                    state_at[i][line]
                 } else {
                     CellAnsiState::default()
                 };
@@ -1852,7 +1843,7 @@ impl<'a> AnsiRenderer<'a> {
         let saved_depth = self.image_depth;
         self.image_depth = 0;
 
-        let has_src = src.as_deref().map_or(false, |s| !s.is_empty());
+        let has_src = src.as_deref().is_some_and(|s| !s.is_empty());
 
         // Kitty Graphics Protocol path: for local files, emit an APC
         // sequence that tells the terminal to read the file directly
@@ -2006,7 +1997,7 @@ impl<'a> AnsiRenderer<'a> {
 /// Tracked so a cell that wraps mid-span can re-emit the same opens
 /// on the continuation segment AND close any open OSC 8 link before
 /// the border character — `\x1b[0m` doesn't terminate OSC 8.
-#[derive(Clone, Default)]
+#[derive(Copy, Clone, Default)]
 struct CellAnsiState<'s> {
     flags: u8,
     fg: Option<&'s [u8]>,
@@ -2598,9 +2589,7 @@ fn extract_png_data_url_base64(src: &[u8]) -> Option<&[u8]> {
         return None;
     }
     // Only PNG is losslessly transmittable via t=d,f=100.
-    if strings::index_of(header, b"image/png").is_none() {
-        return None;
-    }
+    strings::index_of(header, b"image/png")?;
     Some(payload)
 }
 

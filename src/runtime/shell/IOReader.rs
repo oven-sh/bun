@@ -4,9 +4,8 @@
 //! Zig version queued deinitialization onto the event loop to prevent bugs;
 //! see the `Drop` impl note for the Rust equivalent.
 
-#![allow(dead_code)]
-
 use core::cell::UnsafeCell;
+#[cfg(not(windows))]
 use core::ffi::c_void;
 
 use bun_sys::{self as sys, Fd};
@@ -35,7 +34,7 @@ pub enum ReaderTag {
 }
 
 /// Spec: IOReader.zig `Readers = SmolList(ChildPtr, 4)`.
-// PERF(port): was inline-4 small-vec — profile in Phase B.
+// PERF(port): was inline-4 small-vec — profile if hot.
 type Readers = Vec<ChildPtr>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -49,7 +48,6 @@ struct State {
     fd: Fd,
     buf: Vec<u8>,
     readers: Readers,
-    read: usize,
     err: Option<sys::SystemError>,
     /// The raw `sys::Error` that produced `err`. `SystemError` is not `Clone`
     /// in the Rust port yet, so we keep the source error to re-derive a fresh
@@ -80,27 +78,36 @@ pub struct IOReader {
 
 // SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
 unsafe impl Send for IOReader {}
+// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
 unsafe impl Sync for IOReader {}
 
 impl IOReader {
     /// Spec: IOReader.zig `__deinit` (body `AsyncDeinitReader` posts back to
     /// main). Drops the last strong ref so the underlying `BufferedReader`
     /// closes on the JS thread.
+    ///
+    /// # Safety
+    /// `this` must be the `Arc::as_ptr` of a live `Arc<IOReader>` whose
+    /// strong count was held by the async-deinit task.
+    // Forwards `this` to `Arc::decrement_strong_count` without dereferencing;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deinit_on_main_thread(this: *mut IOReader) {
-        // SAFETY: `this` is the `Arc::as_ptr` whose strong count was held by
-        // the async-deinit task.
+        // SAFETY: precondition above.
         unsafe { std::sync::Arc::decrement_strong_count(this) };
     }
 }
 
 impl IOReader {
     #[inline]
+    #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded
     fn state(&self) -> &mut State {
         // SAFETY: single-threaded; matches Zig `*IOReader` model.
         unsafe { &mut *self.state.get() }
     }
 
     #[inline]
+    #[allow(clippy::mut_from_ref)] // interior mutability via UnsafeCell; single-threaded
     fn reader(&self) -> &mut ReaderImpl {
         // SAFETY: single-threaded. Split into its own cell so a `&mut ReaderImpl`
         // held by the bun_io read loop never overlaps a `&mut State` derived in a
@@ -145,36 +152,40 @@ impl IOReader {
                 fd,
                 buf: Vec::new(),
                 readers: Readers::new(),
-                read: 0,
                 err: None,
                 raw_err: None,
                 evtloop,
                 #[cfg(windows)]
                 is_reading: false,
                 started: false,
-                self_weak: w.clone(),
+                self_weak: std::sync::Weak::clone(w),
                 interp: None,
             }),
         });
         // PORT NOTE: set the parent backref after Arc allocation so the
         // address is stable.
-        //
+        let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
         // SAFETY: `Arc::as_ptr` yields `*const IOReader`, but every field of
         // `IOReader` is `UnsafeCell`, so all mutation flows through interior
         // mutability (SharedReadWrite). The `*mut` cast exists solely to satisfy
         // `set_parent`'s `*mut` signature for the vtable backref; the
         // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
         // call `&self` methods — no `&mut IOReader` is materialized from it.
-        let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
         unsafe { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this
     }
 
+    /// # Safety
+    /// `interp` must be null or point to the live owning `Interpreter` (it
+    /// owns the IO struct that holds this `Arc`) for the lifetime of this
+    /// reader; single-threaded.
     #[inline]
+    // Forwards `interp` to `ParentRef::from_nullable_mut` without dereferencing;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: `interp` is the live owning Interpreter (it owns the IO
-        // struct that holds this Arc); single-threaded.
+        // SAFETY: precondition above.
         self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
 
@@ -230,7 +241,7 @@ impl IOReader {
             if need_start {
                 let fd = self.state().fd;
                 if let Err(e) = r.start(fd, true) {
-                    self.on_reader_error(e);
+                    self.on_reader_error(&e);
                 }
             }
             return Yield::suspended();
@@ -243,7 +254,7 @@ impl IOReader {
             }
             s.is_reading = true;
             if let Err(e) = self.reader().start_with_current_pipe() {
-                self.on_reader_error(e);
+                self.on_reader_error(&e);
                 return Yield::failed();
             }
             Yield::suspended()
@@ -316,7 +327,7 @@ impl IOReader {
     }
 
     /// Spec: IOReader.zig `onReaderError`.
-    fn on_reader_error(&self, err: sys::Error) {
+    fn on_reader_error(&self, err: &sys::Error) {
         // `dispatch_reader_done` may drop the last external Arc; keep `self`
         // alive across the loop. Spec gets this from `asyncDeinit`'s hop.
         let _keepalive = self.keepalive();
@@ -385,7 +396,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done_cb();
-    on_reader_error = |this, err| (*this).on_reader_error(err);
+    on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).io_evtloop().native_loop();
     event_loop      = |this| (*this).io_evtloop();
 }

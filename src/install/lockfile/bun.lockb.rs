@@ -25,7 +25,7 @@ use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageN
 use bun_semver::{self as semver, String as SemverString};
 
 // TODO(port): z_allocator is a zeroing allocator (bun.z_allocator). In Rust,
-// the equivalent is a wrapper that zeroes allocations. Phase B: provide
+// the equivalent is a wrapper that zeroes allocations. Provide
 // `bun_alloc::ZAllocator` or ensure padding bytes are zeroed via
 // `#[derive(zeroize)]` / explicit zeroing on the serialized structs.
 
@@ -387,6 +387,20 @@ pub fn load(
 
     lockfile.packages = packages_load_result.list;
 
+    // `meta.id` is memcpy'd verbatim from disk with no range validation; a
+    // corrupt `bun.lockb` can make it garbage and trip `panic_bounds_check`
+    // in `Package::clone` / `preinstall_state` indexing later. Surface it
+    // here as a parse error so the installer can warn + re-resolve instead
+    // of aborting.
+    {
+        let len = lockfile.packages.len();
+        for meta in lockfile.packages.items_meta() {
+            if meta.id as usize >= len {
+                return Err(bun_core::err!("InvalidLockfile"));
+            }
+        }
+    }
+
     res.packages_need_update = packages_load_result.needs_update;
     res.migrated_from_lockb_v2 = migrate_from_v2;
 
@@ -507,15 +521,12 @@ pub fn load(
                 lockfile.trusted_dependencies = Some(Default::default());
                 let td = lockfile.trusted_dependencies.as_mut().unwrap();
                 td.ensure_total_capacity(trusted_dependencies_hashes.len())?;
-
-                // SAFETY: capacity reserved above; keys are fully overwritten
-                // by `copy_from_slice` before `re_index` reads them; value type
-                // is `()` so its column needs no init.
-                unsafe {
-                    td.set_entries_len(trusted_dependencies_hashes.len());
+                // The binary lockfile only stores the truncated hashes, not the
+                // names they were computed from. The empty value is the
+                // "name unknown, hash-only match" sentinel.
+                for &hash in &trusted_dependencies_hashes {
+                    td.put_assume_capacity(hash, Box::<[u8]>::default());
                 }
-                td.keys_mut().copy_from_slice(&trusted_dependencies_hashes);
-                td.re_index()?;
             } else if next_num == HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG {
                 // trusted dependencies exists in package.json but is an empty array.
                 lockfile.trusted_dependencies = Some(Default::default());
@@ -646,7 +657,6 @@ pub fn load(
                         package_manager: manager.as_deref_mut(),
                     };
                     let value = dependency::to_dependency(*dep, &mut context);
-                    drop(context);
                     // PERF(port): was assume_capacity
                     catalogs.default.put_assume_capacity_context(
                         *dep_name,
@@ -674,7 +684,7 @@ pub fn load(
                     } else {
                         let entry = catalogs
                             .groups
-                            .get_or_put_adapted(*catalog_name, StringCtxAdapter(&str_ctx))?;
+                            .get_or_put_adapted(catalog_name, &StringCtxAdapter(&str_ctx))?;
                         if !entry.found_existing {
                             *entry.key_ptr = *catalog_name;
                             *entry.value_ptr = super::catalog_map::Map::default();
@@ -692,7 +702,6 @@ pub fn load(
                             package_manager: manager.as_deref_mut(),
                         };
                         let value = dependency::to_dependency(*dep, &mut context);
-                        drop(context);
                         // PERF(port): was assume_capacity
                         group.put_assume_capacity_context(
                             *dep_name,

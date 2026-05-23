@@ -26,7 +26,7 @@ use core::ptr;
 // is folded into a trait on `Context` (`HeapContext<T>::less`). This preserves
 // monomorphization (no indirect call) at the cost of requiring the caller to impl the
 // trait instead of passing a free fn.
-// PERF(port): was comptime fn-pointer monomorphization — profile in Phase B.
+// PERF(port): was comptime fn-pointer monomorphization — profile if hot.
 pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
     pub root: *mut T,
     pub context: Context,
@@ -35,7 +35,10 @@ pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
 /// Trait providing the ordering relation for `Intrusive`.
 /// Implement this on your `Context` type (or a ZST if no context is needed).
 pub trait HeapContext<T> {
-    fn less(&self, a: *mut T, b: *mut T) -> bool;
+    /// # Safety
+    /// `a` and `b` must be non-null, aligned, and point to live nodes currently
+    /// owned by the intrusive heap. Only called from `Intrusive` internals.
+    unsafe fn less(&self, a: *mut T, b: *mut T) -> bool;
 }
 
 /// Trait giving generic access to the embedded `IntrusiveField` on `T`.

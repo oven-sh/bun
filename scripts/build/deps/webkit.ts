@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b";
+export const WEBKIT_VERSION = "782504c968e2ae06a511c9e7a4d48318b2a23263";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -83,7 +83,10 @@ function prebuiltUrl(cfg: Config): string {
  * doesn't reuse a wrong-ABI extraction.
  */
 function prebuiltDestDir(cfg: Config): string {
-  const version16 = cfg.webkitVersion.slice(0, 16);
+  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
+  // meaningful sha is at the end, so use the whole thing.
+  const v = cfg.webkitVersion;
+  const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
   // so include os+arch in the key — otherwise a FreeBSD/arm64 extraction
   // collides with a Linux/x64 one at the same WebKit version.

@@ -1,7 +1,5 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
-use core::ptr::NonNull;
 
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
@@ -55,7 +53,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //   @Identifier.member
                 //   @Identifier.member(args)
                 //   @(Expression)
-                // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile in Phase B
+                // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile if it shows up on a hot path
                 decorators.push(p.parse_standard_decorator()?);
             } else {
                 // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
@@ -66,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //   }
                 //
                 // This matches the behavior of the TypeScript compiler.
-                // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile in Phase B
+                // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile if it shows up on a hot path
                 // PORT NOTE: Zig `parseExprWithFlags` takes an out-param slot; preserved here.
                 let mut expr = Expr::EMPTY;
                 p.parse_expr_with_flags(Level::New, EFlags::TsDecorator, &mut expr)?;
@@ -393,12 +391,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
             if p.current_scope().members.contains_key(name_text) {
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
-                // run the renamer. For external-facing things the renamer will avoid
-                // collisions automatically so this isn't important for correctness.
-                // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
-                // Phase B: route through bump arena.
-                let prefixed = strings::cat(b"_", name_text).expect("unreachable");
-                let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
+                // run the renamer. Keep adding "_" until the argument does not collide
+                // with a symbol declared in the namespace body: paths that skip the
+                // renamer (runtime transpiler, Bun.Transpiler, `bun build --no-bundle`)
+                // print symbols by their original name, so a colliding argument would
+                // re-declare a block-scoped member:
+                //
+                //   namespace m { class m {} class _m {} }
+                //
+                // Candidates are built in the parse arena (Zig: `p.allocator`); the
+                // chosen one becomes the symbol's original name and is freed together
+                // with the rest of the AST arena.
+                let mut underscores: usize = 1;
+                let prefixed: &'a [u8] = loop {
+                    let candidate = p
+                        .arena
+                        .alloc_slice_fill_copy(underscores + name_text.len(), b'_');
+                    candidate[underscores..].copy_from_slice(name_text);
+                    if !p.current_scope().members.contains_key(candidate) {
+                        break candidate;
+                    }
+                    underscores += 1;
+                };
                 arg_ref = p
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");
@@ -510,7 +524,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = p
             .declare_symbol(SymbolKind::Constant, default_name_loc, default_name)
             .expect("unreachable");
-        // PERF(port): was `arena.alloc(Decl, 1)` into arena slice — profile in Phase B
+        // PERF(port): was `arena.alloc(Decl, 1)` into arena slice — profile if it shows up on a hot path
         let binding = p.b(B::Identifier { r#ref: ref_ }, default_name_loc);
         let decls = G::DeclList::init_one(G::Decl {
             binding,
@@ -665,7 +679,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
                 // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
-                // Phase B: route through bump arena.
+                // TODO(perf): route through bump arena.
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
                 let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
                 arg_ref = p

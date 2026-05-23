@@ -3,28 +3,24 @@
 //! server, server components, and other integrations. Instead of taking the
 //! role as a framework, Bake is tool for frameworks to build on top of.
 //!
-//! B-2 keystone L: DevServer struct + lifecycle un-gated. Heavy method bodies
-//! (request handling, finalize_bundle, hot-update tracing) remain in the gated
-//! Phase-A draft `DevServer.rs` and submodule drafts; they are blocked on
-//! `bun_jsc` method surface and `bun_bundler::BundleV2` field access (both
-//! currently opaque). Type identity is real here so downstream `server/` and
-//! the `bun_bundler::dispatch::DevServerVTable` can be wired.
+//! This file holds the keystone DevServer struct + lifecycle so downstream
+//! `server/` and the `bun_bundler::dispatch::DevServerVTable` can be wired.
+//! The heavy method bodies (request handling, finalize_bundle, hot-update
+//! tracing) live in `DevServer.rs` and the other `#[path]` submodules below.
 
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
-// ─── Phase-A drafts ──────────────────────────────────────────────────────────
-// `bake_body.rs` (Framework/UserOptions/BuildConfigSubset `from_js` + the
-// `init_server_runtime`/`get_hmr_runtime` host fns) is un-gated here so the
-// keystone types above stop being opaque `(())` shells. DevServer/
-// FrameworkRouter/production drafts stay gated — they need BundleV2 field
-// access and the full IncrementalGraph surface.
+// ─── Submodule bodies ────────────────────────────────────────────────────────
+// `bake_body.rs` carries the Framework/UserOptions/BuildConfigSubset `from_js`
+// impls plus the `init_server_runtime`/`get_hmr_runtime` host fns.
 #[path = "bake_body.rs"]
 pub(crate) mod bake_body;
 
 #[path = "DevServer.rs"]
 mod dev_server_body;
 pub(crate) use dev_server_body::get_deinit_count_for_testing;
+pub(crate) use dev_server_body::is_allowed_dev_host;
 
 #[path = "FrameworkRouter.rs"]
 pub(crate) mod framework_router_body;
@@ -32,7 +28,7 @@ pub(crate) mod framework_router_body;
 #[path = "production.rs"]
 mod production_body;
 
-// Re-exports from the full Phase-A drafts so `production.rs` can name them
+// Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
 pub use bake_body::{PatternBuffer, UserOptions, print_warning};
 
@@ -46,7 +42,6 @@ pub(crate) mod jsc {
     pub use crate::api::js_bundler::Plugin;
     pub use crate::jsc::*;
     pub use bun_jsc::debugger::DebuggerId;
-    pub use bun_jsc::virtual_machine::VirtualMachine;
 }
 
 /// export default { app: ... };
@@ -221,6 +216,7 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
+    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
     pub fn init_transpiler<'a>(
         &mut self,
         arena: &'a bun_alloc::Arena,
@@ -229,12 +225,11 @@ impl Framework {
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
         use bun_options_types::schema as bun_schema;
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::new_without_stack(arena);
-        let ast_scope = ast_memory_allocator.enter();
-        let _guard = scopeguard::guard(ast_scope, |s| s.exit());
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+        let _ast_scope = ast_memory_allocator.enter();
 
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
@@ -297,10 +292,11 @@ impl Framework {
         // `*bake.Framework`. The bundler crate (lower tier) carries a TYPE_ONLY
         // projection (`bake_types::Framework`); construct it here and give it
         // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // PERF(port): interior `Box<[u8]>` in the projection are not dropped by
-        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
-        // is reshaped to `&'a [u8]`.
-        out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
+        let framework_view: *mut bun_bundler::bake_types::Framework =
+            arena.alloc(self.as_bundler_view());
+        // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
+        // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
+        out.options.framework = Some(unsafe { &*framework_view });
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -342,7 +338,7 @@ impl Framework {
                 bundler_options.define.keys.len(),
                 bundler_options.define.values.len()
             );
-            use bun_bundler::{DefineDataExt, DefineExt};
+            use bun_bundler::DefineDataExt;
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -374,7 +370,7 @@ impl Framework {
         // Spec bake.zig:821 — re-sync after define/naming mutations so the
         // resolver sees the final option set.
         out.sync_resolver_opts();
-        Ok(())
+        Ok(framework_view)
     }
 
     /// `bake.Framework.resolve` (bake.zig:401). Resolves built-in module
@@ -496,6 +492,7 @@ impl Framework {
 }
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
+#[derive(Default)]
 pub struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
@@ -504,20 +501,10 @@ pub struct SplitBundlerOptions {
     pub server: BuildConfigSubset,
     pub ssr: BuildConfigSubset,
 }
-impl Default for SplitBundlerOptions {
-    fn default() -> Self {
-        Self {
-            plugin: None,
-            client: Default::default(),
-            server: Default::default(),
-            ssr: Default::default(),
-        }
-    }
-}
 
 // ─── bake_body → keystone bridges ────────────────────────────────────────────
-// LAYERING: `UserOptions` (bake_body.rs) carries the `&'static [u8]`-backed
-// Phase-A duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
+// LAYERING: `UserOptions` (bake_body.rs) carries `&'static [u8]`-backed
+// duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
 // (DevServer.rs) wants the keystone Cow-backed types defined above. Both
 // mirror the single Zig `bake.Framework`/`bake.SplitBundlerOptions`. Until the
 // two struct families unify (tracked by the `convert_file_system_router_type`

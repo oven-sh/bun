@@ -9,7 +9,7 @@ use crate::postgres::protocol::new_writer::{NewWriter, WriterContext};
 // per-call. Stable Rust cannot take a fn as a const generic, so we model it as a ZST type
 // parameter `F: WriteFn<Container>` — callers supply a unit struct that impls the trait.
 // This keeps `write(this, context)` 2-arg, matching the Zig signature for side-by-side diff.
-// TODO(port): Phase B should check call sites and may flatten this to a trait directly on
+// TODO(refactor): check call sites and consider flattening this to a trait directly on
 // `Container` (a provided `write` method) instead of a zero-sized generic struct.
 pub trait WriteFn<Container> {
     fn call<Ctx: WriterContext>(

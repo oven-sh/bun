@@ -5,7 +5,7 @@ bun_core::declare_scope!(MySQLRequest, visible);
 
 pub fn execute_query<Context: WriterContext>(
     query: &[u8],
-    mut writer: NewWriter<Context>,
+    writer: NewWriter<Context>,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     bun_core::scoped_log!(
@@ -25,7 +25,7 @@ pub fn execute_query<Context: WriterContext>(
 
 pub fn prepare_request<Context: WriterContext>(
     query: &[u8],
-    mut writer: NewWriter<Context>,
+    writer: NewWriter<Context>,
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     bun_core::scoped_log!(MySQLRequest, "prepareRequest {}", bstr::BStr::new(query));

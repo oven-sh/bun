@@ -30,7 +30,9 @@ pub fn parse_frames(session: &mut ClientSession, buf: &[u8]) -> usize {
             break;
         }
         let mut header = wire::FrameHeader::decode(
-            remaining[0..wire::FrameHeader::BYTE_SIZE].try_into().unwrap(),
+            remaining[0..wire::FrameHeader::BYTE_SIZE]
+                .try_into()
+                .unwrap(),
         );
         let sid = wire::UInt31WithReserved::from(header.stream_identifier).uint31();
         header.stream_identifier = sid;
@@ -126,7 +128,7 @@ pub fn dispatch_frame(
                 }
                 return;
             }
-            if length as usize % wire::SettingsPayloadUnit::BYTE_SIZE != 0 {
+            if !(length as usize).is_multiple_of(wire::SettingsPayloadUnit::BYTE_SIZE) {
                 session.fatal_error = Some(err!(HTTP2FrameSizeError));
                 return;
             }
@@ -437,7 +439,9 @@ pub fn dispatch_frame(
             // END_STREAM would be appended to body_buffer before the
             // deliver loop swaps the stream out.
             if stream.remote_closed() {
-                stream.fatal_error.get_or_insert(err!(HTTP2ProtocolError));
+                stream
+                    .fatal_error
+                    .get_or_insert_with(|| err!(HTTP2ProtocolError));
                 return;
             }
             stream.unacked_bytes = stream.unacked_bytes.saturating_add(length);
@@ -708,9 +712,10 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         // SAFETY: bounds are within decoded_bytes; bytes ptr valid until next reallocation.
         let name =
             unsafe { bun_core::ffi::slice(bytes.add(b[0] as usize), (b[1] - b[0]) as usize) };
+        // SAFETY: b[1] <= b[2] <= decoded_bytes.len(); bytes is decoded_bytes.as_ptr() with no realloc since.
         let value =
             unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity.
         stream
             .decoded_headers
             .push(picohttp::Header::new(name, value));

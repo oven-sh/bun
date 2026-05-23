@@ -31,6 +31,13 @@ pub struct Expansion {
     /// boundary is hit (IFS split / glob result), it is flushed into `out`
     /// via `push_current_out`. Spec: Expansion.zig `current_out`.
     pub current_out: Vec<u8>,
+    /// Byte offsets in `current_out` written by literal metacharacter atoms
+    /// (`Asterisk`/`DoubleAsterisk`/`BraceBegin`/`Comma`/`BraceEnd`). Only
+    /// these positions may act as pattern syntax in `do_brace_expand` or
+    /// `transition_to_glob_state`; metacharacter bytes from any other source
+    /// (JS interpolation, quoted text, `$var`, command substitution) are data
+    /// and must not change the expansion structure or broaden the glob.
+    pub meta_offsets: Vec<u32>,
     pub child_script: Option<NodeId>,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
@@ -57,7 +64,7 @@ pub enum ExpansionState {
     Done,
     /// Spec: Expansion.zig `.err`. The parent inspects this on
     /// `child_done(_, 1)` to print the message.
-    Err(ShellErr),
+    Err(Box<ShellErr>),
 }
 
 #[derive(Default)]
@@ -104,6 +111,7 @@ impl Expansion {
             word_idx: 0,
             out: ExpansionOut::default(),
             current_out: Vec::new(),
+            meta_offsets: Vec::new(),
             child_script: None,
             cmd_subst_quoted: false,
             has_quoted_empty: false,
@@ -142,6 +150,13 @@ impl Expansion {
                 }
                 ExpansionState::BraceExpand => {
                     Self::do_brace_expand(me);
+                    // brace + glob composes: after pushing the literal brace
+                    // variants, glob the original pattern (Zig re-enters the
+                    // `.glob` state). The normal glob path likewise calls
+                    // `transition_to_glob_state` directly (see below).
+                    if matches!(me.state, ExpansionState::Glob) {
+                        return Self::transition_to_glob_state(interp, this);
+                    }
                     continue;
                 }
                 ExpansionState::Done | ExpansionState::Err(_) => break,
@@ -172,6 +187,7 @@ impl Expansion {
                     shell,
                     simple,
                     &mut me.current_out,
+                    &mut me.meta_offsets,
                     &mut me.has_quoted_empty,
                     true,
                     event_loop,
@@ -205,7 +221,7 @@ impl Expansion {
                     Ok(d) => d,
                     Err(e) => {
                         drop(io);
-                        interp.throw(ShellErr::new_sys(e));
+                        interp.throw(ShellErr::new_sys(&e));
                         return Yield::failed();
                     }
                 };
@@ -217,6 +233,7 @@ impl Expansion {
             // All sub-atoms expanded — post-process leading tilde then finish.
             if leading_tilde {
                 let home = me.base.shell().get_homedir();
+                let len_before = me.current_out.len();
                 match me.current_out.first() {
                     Some(b'/') | Some(b'\\') => {
                         me.current_out.splice(0..0, home.slice().iter().copied());
@@ -228,6 +245,17 @@ impl Expansion {
                         me.current_out.extend_from_slice(home.slice());
                     }
                     None => {}
+                }
+                // The first two arms prepend; shift the recorded brace
+                // metacharacter offsets so they keep pointing at the same
+                // bytes. The `extend_from_slice` arm only runs when
+                // `current_out` (and therefore `meta_offsets`) is
+                // empty, so the shift is a no-op there.
+                let prepended = (me.current_out.len() - len_before) as u32;
+                if prepended != 0 {
+                    for off in &mut me.meta_offsets {
+                        *off += prepended;
+                    }
                 }
                 home.deref();
             }
@@ -257,7 +285,24 @@ impl Expansion {
     /// `expand_simple_no_io`) and push each variant as a separate argv word.
     fn do_brace_expand(me: &mut Expansion) {
         use bun_shell_parser::braces;
-        let brace_str = &me.current_out[..];
+        // Only the `{`/`,`/`}` bytes recorded in `meta_offsets` (written
+        // by literal BraceBegin/Comma/BraceEnd atoms) are brace-expansion
+        // metacharacters. Bytes from Text/Var/cmd-subst expansion — notably JS
+        // `${...}` interpolations — are data: backslash-escape them so the
+        // brace lexer cannot be steered into emitting extra argv words.
+        // (`meta_offsets` also records literal `*`/`**` positions for the glob
+        // path; those are inert here since `*` is not in the escape set.)
+        let mut escaped: Vec<u8> = Vec::with_capacity(me.current_out.len());
+        let mut next_meta = 0usize;
+        for (i, &b) in me.current_out.iter().enumerate() {
+            if next_meta < me.meta_offsets.len() && me.meta_offsets[next_meta] as usize == i {
+                next_meta += 1;
+            } else if matches!(b, b'{' | b'}' | b',' | b'\\') {
+                escaped.push(b'\\');
+            }
+            escaped.push(b);
+        }
+        let brace_str = &escaped[..];
         let mut lexer_output = if bun_core::is_all_ascii(brace_str) {
             bun_core::handle_oom(braces::Lexer::tokenize(brace_str))
         } else {
@@ -265,7 +310,16 @@ impl Expansion {
                 braces::NewLexer::<{ braces::StringEncoding::Wtf8 }>::tokenize(brace_str),
             )
         };
-        let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]) as usize;
+        let count = braces::calculate_expanded_amount(&lexer_output.tokens[..]);
+        // Hard cap before preallocation: `calculate_expanded_amount` saturates
+        // to `u32::MAX`, so a tiny nested input can otherwise request a huge `Vec`.
+        const MAX_BRACE_EXPANSIONS: u32 = 65536;
+        if count > MAX_BRACE_EXPANSIONS {
+            let msg = format!("too many brace expansions ({count} > {MAX_BRACE_EXPANSIONS})");
+            me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+            return;
+        }
+        let count = count as usize;
         let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
 
         let arena = bun_alloc::Arena::new();
@@ -283,7 +337,6 @@ impl Expansion {
         // Spec lines 268-279: push each variant as its own word. The Zig
         // version NUL-terminated then `out.pushResult`; the NodeId port
         // records word boundaries via `bounds` instead.
-        me.current_out.clear();
         for s in expanded {
             if !me.out.buf.is_empty() {
                 me.out.bounds.push(me.out.buf.len() as u32);
@@ -293,15 +346,76 @@ impl Expansion {
 
         let node = me.node;
         let atom = node.get();
-        me.state = if atom.has_glob_expansion() {
-            // Spec: brace+glob composes — re-enter via the glob arm. The
-            // NodeId port currently routes glob through `current_out`, so
-            // brace-produced multi-word + glob is left as a TODO (matches the
-            // Zig "weird behaviour" note above the spec).
-            ExpansionState::Done
+        if atom.has_glob_expansion() {
+            // brace + glob composes (Zig re-enters the `.glob` state). Keep
+            // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
+            // the glob walker brace-expands and globs it; its matches are
+            // appended after the literal brace variants already pushed above.
+            me.state = ExpansionState::Glob;
         } else {
-            ExpansionState::Done
-        };
+            me.current_out.clear();
+            me.state = ExpansionState::Done;
+        }
+    }
+
+    /// Build the pattern handed to the glob walker from `current_out`,
+    /// neutralizing every glob metacharacter byte that was *not* written by a
+    /// literal metacharacter atom (those positions are recorded in
+    /// `meta_offsets`). Metacharacters arriving via JS `${...}` interpolation,
+    /// `$var`, command substitution, or quoted text are data and must not be
+    /// able to broaden the match. Mirrors `do_brace_expand`'s escaping loop,
+    /// but the glob matcher has no general backslash-escape that survives
+    /// `build_pattern_components` on every platform, so each byte is wrapped
+    /// in a single-character class (`[c]`) — or a one-branch brace group for
+    /// a component-leading `!` — which the matcher provably treats as that
+    /// literal character.
+    /// `current_out` itself is not mutated: the no-match error message and the
+    /// assignment-position literal fallback keep using the original word.
+    fn neutralize_glob_metachars(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {
+        let mut pattern: Vec<u8> = Vec::with_capacity(current_out.len());
+        let mut next_meta = 0usize;
+        for (i, &b) in current_out.iter().enumerate() {
+            if next_meta < meta_offsets.len() && meta_offsets[next_meta] as usize == i {
+                next_meta += 1;
+                pattern.push(b);
+                continue;
+            }
+            match b {
+                // `[c]` is a single-character class containing only `c`.
+                b'*' | b'?' | b'[' | b']' | b'{' | b'}' | b',' => {
+                    pattern.extend_from_slice(&[b'[', b, b']']);
+                }
+                // `[!]`/`[^]` would be a negated class, so `!` cannot use the
+                // class wrapper. Only a `!` at the start of a path component
+                // (the same split `build_pattern_components` performs) can act
+                // as pattern syntax — the matcher's negation loop — so wrap
+                // that one in a one-branch brace group whose sole branch is
+                // the literal `!`. Every other `!` already matches literally
+                // and is emitted bare: wrapping each one costs a brace-stack
+                // slot per byte, and a run of more than 10 interpolated `!`
+                // would overflow the matcher's bounded brace stack and turn
+                // the whole word into a spurious no-match.
+                b'!' => {
+                    let starts_component = pattern
+                        .last()
+                        .is_none_or(|&prev| bun_core::path_sep::is_sep_native(prev));
+                    if starts_component {
+                        pattern.extend_from_slice(b"{!}");
+                    } else {
+                        pattern.push(b'!');
+                    }
+                }
+                // `[\\]` is a class containing an escaped `\`; the 3-byte
+                // `[\]` would mis-parse as a class containing an escaped `]`.
+                #[cfg(not(windows))]
+                b'\\' => pattern.extend_from_slice(b"[\\\\]"),
+                // On Windows `\` is a native path separator (same pass-through
+                // policy as `/`); wrapping it would let the component splitter
+                // cut the synthesized brackets apart.
+                _ => pattern.push(b),
+            }
+        }
+        pattern
     }
 
     /// Spec: Expansion.zig `transitionToGlobState`. Kick off an off-thread
@@ -313,7 +427,7 @@ impl Expansion {
         {
             let me = interp.as_expansion_mut(this);
             me.state = ExpansionState::Glob;
-            pattern = me.current_out.clone();
+            pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
             cwd = me.base.shell().cwd().to_vec();
         }
         let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
@@ -321,12 +435,14 @@ impl Expansion {
         ) {
             Ok(Ok(w)) => w,
             Ok(Err(e)) => {
-                interp.as_expansion_mut(this).state = ExpansionState::Err(ShellErr::new_sys(e));
+                interp.as_expansion_mut(this).state =
+                    ExpansionState::Err(Box::new(ShellErr::new_sys(&e)));
                 return Yield::Next(this);
             }
             Err(e) => {
-                interp.as_expansion_mut(this).state =
-                    ExpansionState::Err(ShellErr::Custom(e.to_string().into_bytes().into()));
+                interp.as_expansion_mut(this).state = ExpansionState::Err(Box::new(
+                    ShellErr::Custom(e.to_string().into_bytes().into()),
+                ));
                 return Yield::Next(this);
             }
         };
@@ -341,6 +457,7 @@ impl Expansion {
         shell: &ShellExecEnv,
         atom: &ast::SimpleAtom,
         out: &mut Vec<u8>,
+        meta_offsets: &mut Vec<u32>,
         has_quoted_empty: &mut bool,
         expand_tilde: bool,
         event_loop: EventLoopHandle,
@@ -370,13 +487,32 @@ impl Expansion {
                 }
             }
             ast::SimpleAtom::VarArgv(int) => {
+                // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
                 Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }
-            ast::SimpleAtom::Asterisk => out.push(b'*'),
-            ast::SimpleAtom::DoubleAsterisk => out.extend_from_slice(b"**"),
-            ast::SimpleAtom::BraceBegin => out.push(b'{'),
-            ast::SimpleAtom::BraceEnd => out.push(b'}'),
-            ast::SimpleAtom::Comma => out.push(b','),
+            ast::SimpleAtom::Asterisk => {
+                meta_offsets.push(out.len() as u32);
+                out.push(b'*');
+            }
+            ast::SimpleAtom::DoubleAsterisk => {
+                // Both bytes must be recorded or `neutralize_glob_metachars`
+                // would wrap the second `*`, breaking `**`.
+                meta_offsets.push(out.len() as u32);
+                meta_offsets.push(out.len() as u32 + 1);
+                out.extend_from_slice(b"**");
+            }
+            ast::SimpleAtom::BraceBegin => {
+                meta_offsets.push(out.len() as u32);
+                out.push(b'{');
+            }
+            ast::SimpleAtom::BraceEnd => {
+                meta_offsets.push(out.len() as u32);
+                out.push(b'}');
+            }
+            ast::SimpleAtom::Comma => {
+                meta_offsets.push(out.len() as u32);
+                out.push(b',');
+            }
             ast::SimpleAtom::Tilde => {
                 if expand_tilde {
                     let home = shell.get_homedir();
@@ -400,6 +536,7 @@ impl Expansion {
             me.out.bounds.push(me.out.buf.len() as u32);
         }
         me.out.buf.append(&mut me.current_out);
+        me.meta_offsets.clear();
     }
 
     /// Spec: Expansion.zig `postSubshellExpansion` + `convertNewlinesToSpaces`.
@@ -514,7 +651,7 @@ impl Expansion {
         log!("Expansion {} onGlobWalkDone", this);
         if let Some(err) = err {
             let shell_err = match err {
-                ShellGlobErr::Syscall(e) => ShellErr::new_sys(e),
+                ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
                 ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
             };
             interp.throw(shell_err);
@@ -541,7 +678,7 @@ impl Expansion {
                 me.state = ExpansionState::Done;
             } else {
                 let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
-                me.state = ExpansionState::Err(ShellErr::Custom(msg.into_bytes().into()));
+                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
             }
             Yield::Next(this).run(interp);
             return;
@@ -567,7 +704,7 @@ impl Expansion {
     pub fn take_err(interp: &Interpreter, this: NodeId) -> Option<ShellErr> {
         let me = interp.as_expansion_mut(this);
         match core::mem::replace(&mut me.state, ExpansionState::Done) {
-            ExpansionState::Err(e) => Some(e),
+            ExpansionState::Err(e) => Some(*e),
             other => {
                 me.state = other;
                 None

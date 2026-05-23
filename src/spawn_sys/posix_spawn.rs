@@ -1,12 +1,17 @@
-#![allow(unused_imports, dead_code, unused_variables)]
 #![warn(unused_must_use)]
 
-use core::ffi::{c_char, c_int, c_short};
+#[cfg(target_os = "macos")]
+use core::ffi::c_short;
+#[cfg(unix)]
+use core::ffi::{c_char, c_int};
+#[cfg(unix)]
 use core::ptr;
 use std::ffi::{CStr, CString};
 
 use bun_core::{Error, err};
-use bun_sys::{self as sys, Fd};
+#[cfg(unix)]
+use bun_sys as sys;
+use bun_sys::Fd;
 
 // `std.posix.system` — `bun_sys::c` only re-exports a thin slice of libc
 // (no `posix_spawn*`/`waitpid`/`wait4`). Use the `libc` crate directly here;
@@ -41,11 +46,16 @@ mod darwin_spawn_np {
 // MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
 // is self-contained; delete in favour of `bun_sys::posix::*` once that module
 // widens.
-use self::posix_compat::{Errno, errno, fd_t, mode_t, pid_t, to_posix_path, unexpected_errno};
+#[cfg(unix)]
+use self::posix_compat::{Errno, errno};
+use self::posix_compat::{fd_t, pid_t, to_posix_path};
+#[cfg(target_os = "macos")]
+use self::posix_compat::{mode_t, unexpected_errno};
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
     use bun_core::{Error, err};
+    #[cfg(unix)]
     use core::ffi::c_int;
     use std::ffi::CString;
 
@@ -60,50 +70,40 @@ mod posix_compat {
     pub type pid_t = libc::pid_t;
     #[cfg(not(unix))]
     pub type pid_t = i32;
+    #[cfg(target_os = "macos")]
     pub use bun_sys::posix::mode_t;
 
     /// `std.posix.E` — errno enum with **unprefixed** variant names. The real
     /// `bun_errno::posix::E` aliases `SystemErrno` (E-prefixed); local newtype
     /// keeps the body's `Errno::SUCCESS`/`NOMEM`/... matches intact.
+    #[cfg(unix)]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[repr(transparent)]
     pub struct Errno(pub c_int);
     #[cfg(unix)]
     impl Errno {
         pub const SUCCESS: Errno = Errno(0);
+        #[cfg(target_os = "macos")]
         pub const NOMEM: Errno = Errno(libc::ENOMEM);
+        #[cfg(target_os = "macos")]
         pub const INVAL: Errno = Errno(libc::EINVAL);
+        #[cfg(target_os = "macos")]
         pub const BADF: Errno = Errno(libc::EBADF);
+        #[cfg(target_os = "macos")]
         pub const NAMETOOLONG: Errno = Errno(libc::ENAMETOOLONG);
         pub const INTR: Errno = Errno(libc::EINTR);
     }
-    #[cfg(not(unix))]
-    impl Errno {
-        pub const SUCCESS: Errno = Errno(0);
-        pub const NOMEM: Errno = Errno(12);
-        pub const INVAL: Errno = Errno(22);
-        pub const BADF: Errno = Errno(9);
-        pub const NAMETOOLONG: Errno = Errno(36);
-        pub const INTR: Errno = Errno(4);
-    }
-
     /// `std.posix.errno(rc)` — Zig: with libc, `rc == -1 ⇒ read __errno`,
     /// else `.SUCCESS`. The `posix_spawn*` family instead returns the errno
-    /// **directly** (0 on success). The Phase-A draft conflated both call
-    /// conventions; preserve that here so behaviour matches the .zig source
-    /// 1:1, and let Phase-B audit (TODO(port) below).
+    /// **directly** (0 on success). This helper conflates both call
+    /// conventions to match the .zig source 1:1; see TODO(port) below.
     // TODO(port): split into `errno_from_posix_spawn(rc)` (rc IS errno) vs
     // `errno_from_ret(rc)` (rc == -1 ⇒ read libc errno) and route call sites.
+    #[cfg(unix)]
     #[inline]
     pub fn errno(rc: c_int) -> Errno {
         if rc == -1 {
-            // Windows has no thread-local POSIX errno here — `posix_spawn`
-            // is unreachable on that target (the libuv path handles spawn),
-            // so just return UNKNOWN to keep the type compiling.
-            #[cfg(unix)]
             return Errno(bun_sys::posix::errno());
-            #[cfg(windows)]
-            return Errno(bun_sys::E::UNKNOWN as i32);
         }
         Errno::SUCCESS
     }
@@ -114,6 +114,7 @@ mod posix_compat {
     }
 
     /// `std.posix.unexpectedErrno` — Zig logs + returns `error.Unexpected`.
+    #[cfg(target_os = "macos")]
     pub fn unexpected_errno(_e: Errno) -> Error {
         err!("Unexpected")
     }
@@ -181,7 +182,7 @@ pub mod bun_spawn {
                 kind: FileActionType::Open,
                 path: path_ptr,
                 flags: i32::try_from(flags).expect("int cast"),
-                mode: i32::try_from(mode).expect("int cast"),
+                mode,
                 fds: [fd_int(fd), 0],
             });
             Ok(())
@@ -259,10 +260,13 @@ pub mod bun_spawn {
             // sets directly on this struct BEFORE calling set(). Preserve
             // that value when the flag bit isn't available.
             // TODO(port): Zig used `@hasDecl(bun.c, "POSIX_SPAWN_SETSID")`; approximated
-            // here as unix-not-freebsd. Phase B should use a build-time cfg from bindgen.
-            #[cfg(target_os = "linux")]
+            // here as unix-not-freebsd. Should use a build-time cfg from bindgen.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
-                self.detached = (flags & system::POSIX_SPAWN_SETSID as u16) != 0;
+                // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
+                // the libc crate only exposes it for `target_os = "linux"`.
+                const POSIX_SPAWN_SETSID: u16 = 0x80;
+                self.detached = (flags & POSIX_SPAWN_SETSID) != 0;
             }
             #[cfg(target_os = "macos")]
             {
@@ -280,10 +284,13 @@ pub mod bun_spawn {
 
 // mostly taken from zig's posix_spawn.zig
 pub mod posix_spawn {
+    #[cfg(unix)]
     use super::bun_spawn;
     use super::*;
 
+    #[cfg(unix)]
     const SYSCALL_POSIX_SPAWN: sys::Tag = sys::Tag::posix_spawn;
+    #[cfg(unix)]
     const SYSCALL_WAITPID: sys::Tag = sys::Tag::waitpid;
 
     #[derive(Copy, Clone)]
@@ -493,7 +500,7 @@ pub mod posix_spawn {
     pub type Actions = bun_spawn::Actions;
     #[cfg(unix)]
     pub type Attr = bun_spawn::Attr;
-    // TODO(b2-blocked): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
+    // TODO(port): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
     // draft, but Windows goes through `process.rs::spawn_process_windows`
     // (libuv), never these. Leave undeclared on Windows for now.
 
@@ -568,7 +575,7 @@ pub mod posix_spawn {
         envp: *const *const c_char,
     ) -> sys::Result<pid_t> {
         let pty_slave_fd = attr.map_or(-1, |a| a.pty_slave_fd);
-        let detached = attr.map_or(false, |a| a.detached);
+        let detached = attr.is_some_and(|a| a.detached);
 
         // Use posix_spawn_bun when:
         // - Linux: always (uses vfork which is fast and safe)
@@ -576,13 +583,13 @@ pub mod posix_spawn {
         //   setsid() + ioctl(TIOCSCTTY) before exec, which system posix_spawn can't do.
         //   For non-PTY spawns on macOS, we use system posix_spawn which is safer
         //   (Apple's posix_spawn uses a kernel fast-path that avoids fork() entirely).
-        let use_bun_spawn = cfg!(target_os = "linux")
+        let use_bun_spawn = cfg!(any(target_os = "linux", target_os = "android"))
             || cfg!(target_os = "freebsd")
             || (cfg!(target_os = "macos") && pty_slave_fd >= 0);
 
         // TODO(port): cfg-gate platform-only field access — the body below touches
         // bun_spawn::Actions/Attr fields that don't exist on the not(unix) Actions/Attr
-        // alias; cfg!() above keeps both arms in the type-checker. Phase B may need to
+        // alias; cfg!() above keeps both arms in the type-checker. May need to
         // restructure (linux/freebsd fall-through after this block is statically
         // unreachable but rustc can't prove it from the runtime `use_bun_spawn` bool).
         #[cfg(unix)]
@@ -604,7 +611,7 @@ pub mod posix_spawn {
                         .and_then(|a| a.chdir_buf.as_deref())
                         .map_or(ptr::null(), |c| c.as_ptr()),
                     detached,
-                    new_process_group: attr.map_or(false, |a| a.new_process_group),
+                    new_process_group: attr.is_some_and(|a| a.new_process_group),
                     pty_slave_fd,
                     linux_pdeathsig: attr.map_or(0, |a| a.linux_pdeathsig),
                 },
@@ -766,7 +773,6 @@ pub mod posix_spawn {
         // early return always fires; rustc can't prove that from the runtime
         // bool. macOS falls through to the system-posix_spawn block above.
         #[cfg(all(unix, not(target_os = "macos")))]
-        #[allow(unreachable_code)]
         {
             unreachable!("posix_spawn_bun handles all unix-non-darwin spawns");
         }
@@ -775,7 +781,6 @@ pub mod posix_spawn {
         // Gated not(unix) because `actions`/`attr` here are PosixSpawnActions/PosixSpawnAttr
         // fields; on unix the Actions/Attr aliases resolve to bun_spawn::* which lack `.attr`.
         #[cfg(not(unix))]
-        #[allow(unreachable_code)]
         {
             let mut pid: pid_t = 0;
             // SAFETY: all pointers valid; argv/envp NULL-terminated
@@ -891,6 +896,7 @@ pub mod posix_spawn {
     pub use crate::spawn_process::{PosixSpawnResult, Rusage};
 }
 
+#[cfg(unix)]
 use crate::spawn_process as process;
 
 // ported from: src/runtime/api/bun/spawn.zig

@@ -3,7 +3,6 @@
 //! see the same surface regardless of transport.
 
 use core::ffi::{c_char, c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr;
 
 use crate::SocketAddress;
@@ -418,18 +417,18 @@ macro_rules! h3_route_methods {
 }
 
 impl App {
-    pub fn create(opts: BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
+    pub fn create(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
         // SAFETY: opts is `#[repr(C)]` passed by value; uws owns the returned handle
-        let p = unsafe { c::uws_h3_create_app(opts, idle_timeout_s) };
+        let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s) };
         if p.is_null() { None } else { Some(p) }
     }
     pub fn add_server_name_with_options(
         &mut self,
         hostname: &bun_core::ZStr,
-        opts: BunSocketContextOptions,
+        opts: &BunSocketContextOptions,
     ) -> Result<(), AddServerNameError> {
         // SAFETY: self is a live FFI handle; hostname is NUL-terminated; opts passed by value
-        if !unsafe { c::uws_h3_app_add_server_name(self, hostname.as_ptr().cast(), opts) } {
+        if !unsafe { c::uws_h3_app_add_server_name(self, hostname.as_ptr().cast(), *opts) } {
             return Err(AddServerNameError::FailedToAddServerName);
         }
         Ok(())
@@ -467,7 +466,7 @@ impl App {
                 thunk::zst::<H>()(ud, thunk::handle_mut(req), thunk::handle_mut(res));
             }
         }
-        // PERF(port): was comptime enum dispatch — profile in Phase B
+        // PERF(port): was comptime enum dispatch — profile if it shows up on a hot path
         let f = match which {
             RouteKind::Get => c::uws_h3_app_get,
             RouteKind::Post => c::uws_h3_app_post,
@@ -522,7 +521,7 @@ impl App {
         }
     }
 
-    pub fn listen_with_config<UD, H>(&mut self, ud: *mut UD, _handler: H, config: ListenConfig)
+    pub fn listen_with_config<UD, H>(&mut self, ud: *mut UD, _handler: H, config: &ListenConfig)
     where
         H: Fn(&mut UD, Option<&mut ListenSocket>) + Copy + 'static,
     {

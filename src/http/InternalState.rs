@@ -4,8 +4,8 @@ use bun_core::MutableString;
 use bun_core::{Error, Output};
 
 use crate::{
-    CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata,
-    extremely_verbose,
+    CertificateInfo, Decompressor, EXTREMELY_VERBOSE, Encoding, HTTPRequestBody,
+    HTTPResponseMetadata,
 };
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
@@ -53,7 +53,7 @@ pub struct InternalState<'a> {
 
 // PORT NOTE: was a `packed struct(u8)` in Zig. Kept as a struct-of-bools so the
 // HTTPClient state machine in lib.rs can use field syntax (`flags.allow_keepalive
-// = true`) directly; restore packing in Phase B if size matters.
+// = true`) directly; restore packing if size ever matters.
 #[derive(Clone, Copy)]
 pub struct InternalStateFlags {
     pub allow_keepalive: bool,
@@ -231,7 +231,7 @@ impl<'a> InternalState<'a> {
         // so each early-return below calls `self.compressed_body.reset()` explicitly.
         let mut gzip_timer: Option<std::time::Instant> = None;
 
-        if extremely_verbose {
+        if EXTREMELY_VERBOSE {
             gzip_timer = Some(std::time::Instant::now());
         }
 
@@ -239,7 +239,7 @@ impl<'a> InternalState<'a> {
 
         if bun_core::feature_flags::is_libdeflate_enabled() {
             // Fast-path: use libdeflate
-            // TODO(b2-blocked): bun_http::HTTPThread::deflater — `http_thread()` accessor and the
+            // TODO(port): bun_http::HTTPThread::deflater — `http_thread()` accessor and the
             // `LibdeflateState { decompressor, shared_buffer }` it returns live in the gated
             // HTTPThread cluster. Re-gated until HTTPThread un-gates (which itself blocks on
             // bun_uws::SocketHandler method bodies).
@@ -330,7 +330,7 @@ impl<'a> InternalState<'a> {
                 }
             }
 
-            // TODO(b2-blocked): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
+            // TODO(port): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
             // bun_zstd::ZstdReaderArrayList — `Decompressor::update_buffers` is re-gated until
             // those reader types are reshaped to not carry an `'a` borrow of the output Vec.
 
@@ -339,7 +339,7 @@ impl<'a> InternalState<'a> {
                 .update_buffers(self.encoding, buffer, body_out_str)
             {
                 self.compressed_body.reset();
-                return Err(err.into());
+                return Err(err);
             }
             // While `update_buffers` is gated, `read_all` on Decompressor::None is a silent
             // no-op (Decompressor.rs:148). Surface an error instead of pretending the body
@@ -351,7 +351,7 @@ impl<'a> InternalState<'a> {
 
             if let Err(err) = self.decompressor.read_all(self.is_done()) {
                 if self.is_done() || err != bun_core::err!("ShortRead") {
-                    Output::pretty_errorln(&format_args!(
+                    Output::pretty_errorln(format_args!(
                         "<r><red>Decompression error: {}<r>",
                         bstr::BStr::new(err.name()),
                     ));
@@ -362,7 +362,7 @@ impl<'a> InternalState<'a> {
             }
         }
 
-        if extremely_verbose {
+        if EXTREMELY_VERBOSE {
             // TODO(port): `gzip_elapsed` is not a field on InternalState in the Zig source either —
             // this looks like dead code referencing a removed field. Preserved as a no-op read.
             let _ = gzip_timer.map(|t| t.elapsed());
@@ -426,12 +426,12 @@ impl<'a> InternalState<'a> {
                 } else if !body_out_str.owns(&buffer) {
                     if let Err(err) = body_out_str.append(&buffer) {
                         let err: Error = err.into();
-                        Output::pretty_errorln(&format_args!(
+                        Output::pretty_errorln(format_args!(
                             "<r><red>Failed to append to body buffer: {}<r>",
                             bstr::BStr::new(err.name()),
                         ));
                         Output::flush();
-                        return Err(err.into());
+                        return Err(err);
                     }
                 }
             }

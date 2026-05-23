@@ -1,6 +1,5 @@
-#![allow(dead_code)]
-
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
@@ -48,6 +47,9 @@ pub struct Dup2 {
     pub to: StdioKind,
 }
 
+// Mirrors the Zig `bun.spawn.Stdio` union and is constructed/matched in many
+// other files (subprocess, shell); boxing `Blob` would ripple through all of them.
+#[allow(clippy::large_enum_variant)]
 pub enum Stdio {
     Inherit,
     Capture(Capture),
@@ -110,13 +112,13 @@ impl Stdio {
     }
 
     pub fn can_use_memfd(&self, is_sync: bool, has_max_buffer: bool) -> bool {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = (is_sync, has_max_buffer);
             return false;
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) | Self::ArrayBuffer(_) => true,
@@ -126,13 +128,13 @@ impl Stdio {
     }
 
     pub fn use_memfd(&mut self, index: u32) -> bool {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = index;
             return false;
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use crate::api::bun_process::spawn_sys;
             if !spawn_sys::can_use_memfd() {
@@ -467,10 +469,8 @@ impl Stdio {
                                 "stdout and stderr cannot be used for stdin"
                             )));
                         }
-                        if i == 1 && tag == FdStdio::StdOut {
-                            *out_stdio = Stdio::Inherit;
-                            return Ok(());
-                        } else if i == 2 && tag == FdStdio::StdErr {
+                        if (i == 1 && tag == FdStdio::StdOut) || (i == 2 && tag == FdStdio::StdErr)
+                        {
                             *out_stdio = Stdio::Inherit;
                             return Ok(());
                         }

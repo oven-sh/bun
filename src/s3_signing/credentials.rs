@@ -3,11 +3,10 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-use bun_collections::BoundedArray;
 use bun_core::strings;
 use bun_http_types::Method::Method;
 use bun_picohttp::Header as PicoHeader;
-use bun_ptr::{IntrusiveRc, RawSlice, RefCount, RefCounted};
+use bun_ptr::{IntrusiveRc, RawSlice, RefCount};
 
 use super::acl::ACL;
 use super::storage_class::StorageClass;
@@ -32,7 +31,7 @@ fn pico_header_empty() -> PicoHeader {
     PicoHeader::ZERO
 }
 
-// TODO(b2-blocked): bun_picohttp::Header::new — fields are private; constructing via
+// TODO(port): bun_picohttp::Header::new — fields are private; constructing via
 // repr(C) layout-pun until a public ctor lands. Layout is asserted in bun_picohttp.
 #[inline]
 fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
@@ -298,7 +297,7 @@ impl S3Credentials {
 
     pub fn sign_request<const ALLOW_EMPTY_PATH: bool>(
         &self,
-        sign_options: SignOptions<'_>,
+        sign_options: &SignOptions<'_>,
         sign_query_option: Option<SignQueryOptions>,
     ) -> Result<SignResult, SignError> {
         let method = sign_options.method;
@@ -359,9 +358,7 @@ impl S3Credentials {
         };
         let mut full_path = request_path;
         // handle \\ on bucket name
-        if strings::starts_with(full_path, b"/") {
-            full_path = &full_path[1..];
-        } else if strings::starts_with(full_path, b"\\") {
+        if strings::starts_with(full_path, b"/") || strings::starts_with(full_path, b"\\") {
             full_path = &full_path[1..];
         }
 
@@ -372,12 +369,6 @@ impl S3Credentials {
             if bucket.is_empty() {
                 // guess bucket using path
                 if let Some(end) = strings::index_of(full_path, b"/") {
-                    if let Some(backslash_index) = strings::index_of(full_path, b"\\") {
-                        if backslash_index < end {
-                            bucket = &full_path[..backslash_index];
-                            path = &full_path[backslash_index + 1..];
-                        }
-                    }
                     bucket = &full_path[..end];
                     path = &full_path[end + 1..];
                 } else if let Some(backslash_index) = strings::index_of(full_path, b"\\") {
@@ -429,6 +420,12 @@ impl S3Credentials {
                     if bucket.is_empty() {
                         return Err(SignError::InvalidEndpoint);
                     }
+                    // The bucket is interpolated into the host; a `/` (or `\`,
+                    // which encode_uri_component normalizes to `/`) would let a
+                    // crafted bucket redirect the signed request to another host.
+                    if bucket.contains(&b'/') {
+                        return Err(SignError::InvalidEndpoint);
+                    }
                     // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/
                     let mut v = Vec::new();
                     write!(
@@ -461,7 +458,12 @@ impl S3Credentials {
             } else {
                 break 'brk buf_print(
                     &mut normalized_path_buffer,
-                    format_args!("{}/{}/{}", BStr::new(extra_path), BStr::new(bucket), BStr::new(path)),
+                    format_args!(
+                        "{}/{}/{}",
+                        BStr::new(extra_path),
+                        BStr::new(bucket),
+                        BStr::new(path)
+                    ),
                 )
                 .map_err(|_| SignError::InvalidPath)?;
             }
@@ -502,7 +504,12 @@ impl S3Credentials {
             let sig_date_region_service_req: [u8; DIGESTED_HMAC_256_LEN] = 'brk_sign: {
                 let key = buf_print(
                     &mut tmp_buffer,
-                    format_args!("{}{}{}", BStr::new(region), service_name, BStr::new(&self.secret_access_key)),
+                    format_args!(
+                        "{}{}{}",
+                        BStr::new(region),
+                        service_name,
+                        BStr::new(&self.secret_access_key)
+                    ),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 // PORT NOTE: was `bun_jsc::VirtualMachine::get*().rare_data().aws_cache()`.
@@ -556,7 +563,12 @@ impl S3Credentials {
                 // TODO(port): fix the overwritten-key bug in credentials.zig as well.
                 let key = buf_print(
                     &mut tmp_buffer,
-                    format_args!("{}{}{}", BStr::new(region), service_name, BStr::new(&self.secret_access_key)),
+                    format_args!(
+                        "{}{}{}",
+                        BStr::new(region),
+                        service_name,
+                        BStr::new(&self.secret_access_key)
+                    ),
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
                 aws_cache_set(date_result.numeric_day, key, digest);
@@ -607,55 +619,49 @@ impl S3Credentials {
 
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 let canonical: &[u8] = 'brk_canonical: {
-                    // PERF(port): was stack-fallback alloc
-                    let mut query_parts: BoundedArray<Vec<u8>, 13> = BoundedArray::default();
+                    let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(13);
 
                     // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
                     if let Some(v) = encoded_content_md5 {
-                        let _ = query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
                     }
                     if let Some(v) = acl {
-                        let _ = query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v)));
                     }
-                    let _ = query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                    // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                    let _ = query_parts.push(alloc_print!(
+                    query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
+                    query_parts.push(alloc_print!(
                         "X-Amz-Credential={}%2F{}%2F{}%2F{}%2Faws4_request",
                         BStr::new(&self.access_key_id),
                         BStr::new(amz_day),
                         BStr::new(region),
                         service_name
                     ));
-                    let _ = query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                    let _ = query_parts.push(alloc_print!("X-Amz-Expires={}", expires)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
+                    query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
                     if let Some(token) = encoded_session_token {
-                        let _ = query_parts
-                            .push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
                     }
-                    let _ = query_parts.push(alloc_print!("X-Amz-SignedHeaders=host")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
                     if let Some(cd) = encoded_content_disposition {
-                        // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                        let _ = query_parts.push(alloc_print!(
+                        query_parts.push(alloc_print!(
                             "response-content-disposition={}",
                             BStr::new(cd)
                         ));
                     }
                     if let Some(ct) = encoded_content_type {
-                        let _ = query_parts
-                            .push(alloc_print!("response-content-type={}", BStr::new(ct))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
                     }
                     if request_payer {
-                        let _ = query_parts.push(alloc_print!("x-amz-request-payer=requester")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        query_parts.push(alloc_print!("x-amz-request-payer=requester"));
                     }
                     if let Some(v) = storage_class {
-                        let _ =
-                            query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                        query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v)));
                     }
 
                     // Join query parameters with &
                     let mut query_string: Vec<u8> = Vec::new();
-                    for (i, part) in query_parts.as_slice().iter().enumerate() {
+                    for (i, part) in query_parts.iter().enumerate() {
                         if i > 0 {
                             query_string.push(b'&');
                         }
@@ -678,7 +684,8 @@ impl S3Credentials {
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // PORT NOTE: was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
-                bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
+                // SAFETY: `boring_engine()` returns null (default engine).
+                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
 
                 let sign_value = buf_print(
                     &mut tmp_buffer,
@@ -702,60 +709,53 @@ impl S3Credentials {
                 .ok_or(SignError::FailedToGenerateSignature)?;
 
                 // Build final URL with query parameters in alphabetical order to match canonical request
-                // PERF(port): was stack-fallback alloc
-                let mut url_query_parts: BoundedArray<Vec<u8>, 14> = BoundedArray::default();
+                let mut url_query_parts: Vec<Vec<u8>> = Vec::with_capacity(14);
 
                 // Add parameters in alphabetical order: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date, X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders, response-content-disposition, response-content-type, x-amz-request-payer, x-amz-storage-class
 
                 if let Some(v) = encoded_content_md5 {
-                    let _ = url_query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    url_query_parts.push(alloc_print!("Content-MD5={}", BStr::new(v)));
                 }
                 if let Some(v) = acl {
-                    let _ = url_query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    url_query_parts.push(alloc_print!("X-Amz-Acl={}", BStr::new(v)));
                 }
-                let _ = url_query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                let _ = url_query_parts.push(alloc_print!(
+                url_query_parts.push(alloc_print!("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
+                url_query_parts.push(alloc_print!(
                     "X-Amz-Credential={}%2F{}%2F{}%2F{}%2Faws4_request",
                     BStr::new(&self.access_key_id),
                     BStr::new(amz_day),
                     BStr::new(region),
                     service_name
                 ));
-                let _ = url_query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                let _ = url_query_parts.push(alloc_print!("X-Amz-Expires={}", expires)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                url_query_parts.push(alloc_print!("X-Amz-Date={}", BStr::new(&amz_date)));
+                url_query_parts.push(alloc_print!("X-Amz-Expires={}", expires));
                 if let Some(token) = encoded_session_token {
-                    let _ = url_query_parts
-                        .push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    url_query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
                 }
-                // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                let _ = url_query_parts.push(alloc_print!(
+                url_query_parts.push(alloc_print!(
                     "X-Amz-Signature={}",
                     HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
                 ));
-                let _ = url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
                 if let Some(cd) = encoded_content_disposition {
-                    // OOM/capacity: Zig aborts; port keeps fire-and-forget
-                    let _ = url_query_parts.push(alloc_print!(
+                    url_query_parts.push(alloc_print!(
                         "response-content-disposition={}",
                         BStr::new(cd)
                     ));
                 }
                 if let Some(ct) = encoded_content_type {
-                    let _ = url_query_parts
-                        .push(alloc_print!("response-content-type={}", BStr::new(ct))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    url_query_parts.push(alloc_print!("response-content-type={}", BStr::new(ct)));
                 }
                 if request_payer {
-                    let _ = url_query_parts.push(alloc_print!("x-amz-request-payer=requester")); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    url_query_parts.push(alloc_print!("x-amz-request-payer=requester"));
                 }
                 if let Some(v) = storage_class {
-                    let _ =
-                        url_query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                    url_query_parts.push(alloc_print!("x-amz-storage-class={}", BStr::new(v)));
                 }
 
                 // Join URL query parameters with &
                 let mut url_query_string: Vec<u8> = Vec::new();
-                for (i, part) in url_query_parts.as_slice().iter().enumerate() {
+                for (i, part) in url_query_parts.iter().enumerate() {
                     if i > 0 {
                         url_query_string.push(b'&');
                     }
@@ -792,7 +792,8 @@ impl S3Credentials {
                 let mut sha_digest = [0u8; bun_sha_hmac::SHA256::DIGEST];
                 // PORT NOTE: was `bun_jsc::VirtualMachine::get().rare_data().boring_engine()`;
                 // BoringSSL ignores the ENGINE arg, so pass null (see `boring_engine()` doc).
-                bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine());
+                // SAFETY: `boring_engine()` returns null (default engine).
+                unsafe { bun_sha_hmac::SHA256::hash(canonical, &mut sha_digest, boring_engine()) };
 
                 let sign_value = buf_print(
                     &mut tmp_buffer,
@@ -847,6 +848,9 @@ impl S3Credentials {
             || content_disposition.is_some_and(contains_newline_or_cr)
             || content_encoding.is_some_and(contains_newline_or_cr)
             || session_token.is_some_and(contains_newline_or_cr)
+            || contains_newline_or_cr(region)
+            || contains_newline_or_cr(&self.access_key_id)
+            || contains_newline_or_cr(&host)
         {
             return Err(SignError::InvalidHeaderValue);
         }
@@ -950,15 +954,12 @@ fn get_amz_date() -> DateResult {
     // Date.now() ISO string via JS removed; uses libc gmtime_r
 
     // Create UTC timestamp
-    // TODO(port): Zig used std.time.milliTimestamp() + std.time.epoch helpers. Replace with
-    // bun_core::time equivalents in Phase B; using std::time here is OK (not banned).
-    let secs: u64 = u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    )
-    .unwrap();
+    // TODO(port): Zig used std.time.milliTimestamp() + std.time.epoch helpers. Could move to
+    // bun_core::time equivalents; using std::time here is OK (not banned).
+    let secs: u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     let (year, month, day, hours, minutes, seconds, day_seconds) = epoch_to_utc_components(secs);
 
     DateResult {
@@ -1317,8 +1318,8 @@ pub struct S3CredentialsWithOptions {
 
 /// Headers must be in alphabetical order per AWS Signature V4 spec.
 // TODO(port): Zig `packed struct(u7)` (all-bool fields). Kept as a plain struct for
-// readability of `key.field` accesses in SignedHeaders/CanonicalRequest; bitflags!/
-// `#[repr(transparent)] u8` deferred to Phase B. `bits()` below preserves the u7 layout.
+// readability of `key.field` accesses in SignedHeaders/CanonicalRequest; could move to
+// bitflags!/`#[repr(transparent)] u8`. `bits()` below preserves the u7 layout.
 #[derive(Clone, Copy, Default)]
 pub struct SignedHeadersKey {
     pub content_disposition: bool,
@@ -1348,7 +1349,7 @@ struct SignedHeaders;
 impl SignedHeaders {
     // PERF(port): Zig builds a comptime [128]&'static str table via string concatenation.
     // Rust cannot concat &str in a const loop, so we build at runtime into a caller buffer.
-    // Phase B may switch to a build.rs-generated static table if profiling shows this matters.
+    // Could switch to a build.rs-generated static table if profiling shows this matters.
     fn get(key: SignedHeadersKey, buf: &mut [u8; 256]) -> &[u8] {
         let mut n = 0usize;
         macro_rules! push {
@@ -1395,7 +1396,7 @@ struct CanonicalRequest;
 impl CanonicalRequest {
     // PERF(port): Zig generates 128 monomorphized format strings and dispatches via
     // `switch (bits) { inline 0..127 => |idx| ... }`. We build the canonical request at
-    // runtime with conditional writes. Same output bytes; profile in Phase B.
+    // runtime with conditional writes. Same output bytes; profile if hot.
     pub(crate) fn format<'b>(
         buf: &'b mut [u8],
         key: SignedHeadersKey,

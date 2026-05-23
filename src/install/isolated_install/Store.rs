@@ -104,6 +104,13 @@ impl<T> NewId<T> {
     }
 }
 
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.entries.drop_elements();
+        self.nodes.drop_elements();
+    }
+}
+
 impl Store {
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub fn is_cycle(
@@ -263,13 +270,13 @@ impl<T: Copy> OrderedArraySet<T> {
             }
 
             if order == Ordering::Less {
-                // PERF(port): was insertAssumeCapacity — profile in Phase B
+                // PERF(port): was insertAssumeCapacity — profile if hot
                 self.list.insert(i, new);
                 return;
             }
         }
 
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if hot
         self.list.push(new);
     }
 }
@@ -583,7 +590,7 @@ pub mod entry {
             let l_dep_name = l_dep.name;
             let r_dep_name = r_dep.name;
 
-            l_dep_name.order(&r_dep_name, string_buf, string_buf)
+            l_dep_name.order(r_dep_name, string_buf, string_buf)
         }
     }
 
@@ -731,7 +738,7 @@ pub mod node {
             let l_pkg_name = pkg_names[l_pkg_id as usize];
             let r_pkg_name = pkg_names[r_pkg_id as usize];
 
-            l_pkg_name.order(&r_pkg_name, string_buf, string_buf)
+            l_pkg_name.order(r_pkg_name, string_buf, string_buf)
         }
     }
 

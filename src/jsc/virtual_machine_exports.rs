@@ -42,7 +42,7 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
     }
-    // PORT NOTE: Zig `std.time.Timer.read()`; the Phase-B field is `Instant`.
+    // PORT NOTE: Zig `std.time.Timer.read()`; the Rust field is `Instant`.
     vm.origin_timer.elapsed().as_nanos() as u64
 }
 
@@ -233,7 +233,10 @@ pub fn get_tls_reject_unauthorized_value() -> i32 {
 }
 
 // HOST_EXPORT(Bun__isNoProxy, c)
-pub fn is_no_proxy(
+/// # Safety
+/// `hostname_ptr[..hostname_len]` and `host_ptr[..host_len]` must each be valid
+/// for reads for the duration of the call (or the corresponding len must be 0).
+pub unsafe fn is_no_proxy(
     hostname_ptr: *const u8,
     hostname_len: usize,
     host_ptr: *const u8,
@@ -241,14 +244,14 @@ pub fn is_no_proxy(
 ) -> bool {
     // SAFETY: VM singleton is process-lifetime.
     let vm = VirtualMachine::get();
-    // SAFETY: caller (C++) guarantees `hostname_ptr[..hostname_len]` is valid for reads.
     let hostname: Option<&[u8]> = if hostname_len > 0 {
+        // SAFETY: caller guarantees `hostname_ptr[..hostname_len]` is valid for reads.
         Some(unsafe { bun_core::ffi::slice(hostname_ptr, hostname_len) })
     } else {
         None
     };
-    // SAFETY: caller (C++) guarantees `host_ptr[..host_len]` is valid for reads.
     let host: Option<&[u8]> = if host_len > 0 {
+        // SAFETY: caller guarantees `host_ptr[..host_len]` is valid for reads.
         Some(unsafe { bun_core::ffi::slice(host_ptr, host_len) })
     } else {
         None
@@ -283,7 +286,7 @@ pub fn add_bake_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings.put_bake_source_provider(
         opaque_source_provider.cast::<BakeSourceProvider>(),
@@ -297,7 +300,7 @@ pub fn add_dev_server_source_provider(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings.put_dev_server_source_provider(
         opaque_source_provider.cast::<DevServerSourceProvider>(),
@@ -311,7 +314,7 @@ pub fn remove_dev_server_source_provider(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
         .remove_dev_server_source_provider(opaque_source_provider, slice.slice());
@@ -323,7 +326,7 @@ pub fn add_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
         .put_zig_source_provider(opaque_source_provider, slice.slice());
@@ -335,7 +338,7 @@ pub fn remove_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile in Phase B
+    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
         .remove_zig_source_provider(opaque_source_provider, slice.slice());

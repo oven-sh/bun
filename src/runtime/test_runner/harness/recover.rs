@@ -56,7 +56,7 @@ pub fn call_for_test(
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
-    let mut ctx: Context = unsafe { core::mem::zeroed::<Context>() };
+    let mut ctx: Context = unsafe { core::mem::MaybeUninit::<Context>::zeroed().assume_init() };
     // SAFETY: ctx is a valid, writable, properly-aligned Context on this stack.
     unsafe { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
@@ -81,7 +81,7 @@ pub fn call<T>(
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
-    let mut ctx: Context = unsafe { core::mem::zeroed::<Context>() };
+    let mut ctx: Context = unsafe { core::mem::MaybeUninit::<Context>::zeroed().assume_init() };
     // SAFETY: ctx is a valid, writable, properly-aligned Context on this stack.
     unsafe { get_context(&raw mut ctx) };
     if TOP_CTX.with(|c| c.get()) != prev_ctx {
@@ -114,7 +114,7 @@ unsafe extern "C" {
 mod musl {
     use core::ffi::c_int;
     // TODO(port): Zig used @cImport(@cInclude("setjmp.h")).jmp_buf — confirm
-    // exact musl jmp_buf size/align per target arch in Phase B. This is a
+    // exact musl jmp_buf size/align per target arch. This is a
     // STACK VALUE (`var ctx = std.mem.zeroes(Context); setjmp(&ctx)`), not an
     // opaque handle, so it must reserve real storage — a ZST would let setjmp
     // scribble past the allocation. 32×u64 over-reserves vs every musl arch.
@@ -179,8 +179,8 @@ unsafe fn set_context(ctx: *const Context) -> ! {
 /// Install at root source file as `pub const panic = @import("recover").panic;`
 // TODO(port): Zig exposed this as `std.debug.FullPanic(handler)` — a type
 // installed at the root file as `pub const panic`. Rust has no equivalent
-// declarative panic-handler slot; Phase B should wire this via
-// `std::panic::set_hook` (or a `#[panic_handler]` in no_std) at startup.
+// declarative panic-handler slot; wire this via `std::panic::set_hook`
+// (or a `#[panic_handler]` in no_std) at startup.
 pub fn panic(msg: &[u8], first_trace_addr: Option<usize>) -> ! {
     panicked();
     // TODO(port): std.debug.defaultPanic — route to bun_core's default panic.

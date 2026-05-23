@@ -330,7 +330,7 @@ impl<'a, W, const BUFFER_SIZE: usize> Drop for ZlibReader<'a, W, BUFFER_SIZE> {
     }
 }
 
-// TODO(b1): thiserror not in workspace deps; manual Display impl below.
+// TODO(port): thiserror not in workspace deps; manual Display impl below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZlibError {
     OutOfMemory,
@@ -367,6 +367,9 @@ pub struct ZlibReaderArrayList<'a> {
     pub zlib: zStream_struct,
     // PORT NOTE: allocator field dropped (global mimalloc)
     pub state: ZlibReaderArrayListState,
+    /// Decompression-bomb guard: `read_all` errors instead of growing the
+    /// output past this many bytes. Defaults to unbounded.
+    pub max_output_size: usize,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
@@ -414,6 +417,7 @@ impl<'a> ZlibReaderArrayList<'a> {
             list_ptr: list,
             zlib: bun_core::ffi::zeroed(),
             state: ZlibReaderArrayListState::Uninitialized,
+            max_output_size: usize::MAX,
         });
 
         let list_len = zlib_reader.list_ptr.len();
@@ -510,10 +514,20 @@ impl<'a> ZlibReaderArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
+                    let produced = self.zlib.total_out as usize;
+                    let remaining_budget = self.max_output_size.saturating_sub(produced);
+                    if remaining_budget == 0 {
+                        self.state = ZlibReaderArrayListState::Error;
+                        return Err(ZlibError::ZlibError);
+                    }
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    let (next_out, avail_out) = unsafe {
+                        self.list_ptr
+                            .reserve_expand_tail(remaining_budget.min(4096))
+                    };
                     self.zlib.next_out = next_out;
-                    self.zlib.avail_out = avail_out as uInt;
+                    // Clamp so a single inflate call cannot write past `max_output_size`.
+                    self.zlib.avail_out = avail_out.min(remaining_budget) as uInt;
                 }
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
@@ -1082,7 +1096,7 @@ impl<'a> Drop for ZlibCompressorArrayList<'a> {
 }
 
 // Zig: `@import("zlib-internal")` → `src/zlib_sys/{posix,win32}.zig` (see build.zig).
-// B-2: re-export from bun_zlib_sys, platform-selected to match build.zig.
+// Re-export from bun_zlib_sys, platform-selected to match build.zig.
 mod internal {
     #[cfg(not(windows))]
     pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};

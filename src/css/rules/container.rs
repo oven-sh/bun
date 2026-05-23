@@ -32,13 +32,10 @@ impl ContainerName {
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
         use crate::css_values::ident::CustomIdentFns;
         use bun_core::strings;
-        let ident = match CustomIdentFns::parse(input) {
-            Ok(vv) => vv,
-            Err(e) => return Err(e),
-        };
+        let ident = CustomIdentFns::parse(input)?;
 
-        // SAFETY: CustomIdent.v points into the parser source/arena (Phase A
-        // lifetime erasure — see PORTING.md §AST crates).
+        // SAFETY: CustomIdent.v points into the parser source/arena (lifetime
+        // erasure — see PORTING.md §AST crates).
         let v: &'static [u8] = unsafe { crate::arena_str(ident.v) };
         // todo_stuff.match_ignore_ascii_case;
         if strings::eql_any_case_insensitive_ascii(v, &[b"none", b"and", b"not", b"or"]) {
@@ -97,7 +94,7 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
 
 impl ContainerSizeFeatureId {
     pub fn to_css_with_prefix(
-        &self,
+        self,
         prefix: &[u8],
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
@@ -109,7 +106,7 @@ impl ContainerSizeFeatureId {
 /// Represents a style query within a container condition.
 pub enum StyleQuery {
     /// A style feature, implicitly parenthesized.
-    Feature(Property),
+    Feature(Box<Property>),
 
     /// A negation of a condition.
     Not(Box<StyleQuery>),
@@ -120,7 +117,7 @@ pub enum StyleQuery {
         operator: Operator,
         /// The conditions for the operator.
         // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
-        // Phase B decides bun_alloc::ArenaVec<'bump, _> vs global Vec crate-wide.
+        // could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<StyleQuery>,
     },
 }
@@ -136,7 +133,7 @@ impl QueryCondition for StyleQuery {
 
     fn as_feature(&self) -> Option<&Property> {
         if let Self::Feature(f) = self {
-            Some(f)
+            Some(f.as_ref())
         } else {
             None
         }
@@ -167,10 +164,10 @@ impl QueryCondition for StyleQuery {
         let property_id = crate::properties::PropertyId::parse(input)?;
         input.expect_colon()?;
         input.skip_whitespace();
-        // PORT NOTE: Zig threaded `(input.arena(), null)` here; Phase B
-        // re-threads `&Bump` once `ParserOptions` carries the arena.
+        // PORT NOTE: Zig threaded `(input.arena(), null)` here; re-thread
+        // `&Bump` once `ParserOptions` carries the arena.
         let opts = css::ParserOptions::default(None);
-        let feature = StyleQuery::Feature(Property::parse(property_id, input, &opts)?);
+        let feature = StyleQuery::Feature(Box::new(Property::parse(property_id, input, &opts)?));
         let _ = input.try_parse(css::css_parser::parse_important);
         Ok(feature)
     }
@@ -202,7 +199,7 @@ impl StyleQuery {
         // `Property` routes through `dc::property` until the per-variant
         // `DeepClone` derives land in `properties_generated.rs`.
         match self {
-            Self::Feature(p) => Self::Feature(super::dc::property(p, bump)),
+            Self::Feature(p) => Self::Feature(Box::new(super::dc::property(p, bump))),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
             Self::Operation {
                 operator,
@@ -217,7 +214,7 @@ impl StyleQuery {
 
 pub enum ContainerCondition {
     /// A size container feature, implicitly parenthesized.
-    Feature(ContainerSizeFeature),
+    Feature(Box<ContainerSizeFeature>),
     /// A negation of a condition.
     Not(Box<ContainerCondition>),
     /// A set of joint operations.
@@ -226,7 +223,7 @@ pub enum ContainerCondition {
         operator: Operator,
         /// The conditions for the operator.
         // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
-        // Phase B decides bun_alloc::ArenaVec<'bump, _> vs global Vec crate-wide.
+        // could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<ContainerCondition>,
     },
     /// A style query.
@@ -244,7 +241,7 @@ impl QueryCondition for ContainerCondition {
 
     fn as_feature(&self) -> Option<&ContainerSizeFeature> {
         if let Self::Feature(f) = self {
-            Some(f)
+            Some(f.as_ref())
         } else {
             None
         }
@@ -284,7 +281,7 @@ impl QueryCondition for ContainerCondition {
 
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
         let feature = QueryFeature::<ContainerSizeFeatureId>::parse(input)?;
-        Ok(ContainerCondition::Feature(feature))
+        Ok(ContainerCondition::Feature(Box::new(feature)))
     }
     fn create_negation(condition: Box<Self>) -> Self {
         ContainerCondition::Not(condition)
@@ -323,7 +320,7 @@ impl ContainerCondition {
         // routes through `dc::query_feature` (Clone is faithful — see note
         // there); `Operator` is `Copy`.
         match self {
-            Self::Feature(f) => Self::Feature(super::dc::query_feature(f, bump)),
+            Self::Feature(f) => Self::Feature(Box::new(super::dc::query_feature(f, bump))),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
             Self::Operation {
                 operator,

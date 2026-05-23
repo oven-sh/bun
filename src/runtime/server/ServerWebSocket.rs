@@ -8,8 +8,6 @@ use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
 
-use bun_jsc::event_loop::EventLoop;
-
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
@@ -44,15 +42,8 @@ pub struct ServerWebSocket {
 // We pack the per-socket data into this struct below
 // Zig: packed struct(u64) { ssl:1, closed:1, opened:1, binary_type:4, packed_websocket_ptr:57 }
 #[repr(transparent)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub struct Flags(u64);
-
-impl Default for Flags {
-    fn default() -> Self {
-        // ssl=false, closed=false, opened=false, binary_type=.Buffer (discriminant 0), packed_websocket_ptr=0
-        Flags(0)
-    }
-}
 
 impl Flags {
     const SSL_BIT: u64 = 1 << 0;
@@ -179,7 +170,13 @@ fn send_status_to_js(
 ) -> JSValue {
     match status {
         SendStatus::Backpressure => {
-            bun_output::scoped_log!(WebSocketServer, "{}() backpressure ({} {})", op, len, suffix);
+            bun_output::scoped_log!(
+                WebSocketServer,
+                "{}() backpressure ({} {})",
+                op,
+                len,
+                suffix
+            );
             JSValue::js_number(-1.0)
         }
         SendStatus::Success => {
@@ -730,7 +727,7 @@ impl ServerWebSocket {
         }
     }
 
-    pub fn behavior<ServerType, const SSL: bool>(opts: WebSocketBehavior) -> WebSocketBehavior
+    pub fn behavior<ServerType, const SSL: bool>(opts: &WebSocketBehavior) -> WebSocketBehavior
     where
         ServerType: WebSocketUpgradeServer<SSL>,
     {
@@ -747,6 +744,10 @@ impl ServerWebSocket {
         Err(global_object.throw(format_args!("Cannot construct ServerWebSocket")))
     }
 
+    // Codegen's `host_fn_finalize` calls this via `|b| ServerWebSocket::finalize(b)`
+    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
+    // false positive on that contract.
+    #[allow(clippy::boxed_local)]
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(WebSocketServer, "finalize");
         self.this_value.with_mut(|v| v.finalize());
@@ -1216,7 +1217,8 @@ impl ServerWebSocket {
 
         let buffer = array_buffer.slice();
         send_status_to_js(
-            self.websocket().send(buffer, Opcode::Binary, compress, true),
+            self.websocket()
+                .send(buffer, Opcode::Binary, compress, true),
             buffer.len(),
             "sendBinary",
             "bytes",
@@ -1233,7 +1235,7 @@ impl ServerWebSocket {
         self.send_ping(global_this, callframe, "pong", Opcode::Pong)
     }
 
-    // PERF(port): was comptime monomorphization (name + opcode) — profile in Phase B
+    // PERF(port): was comptime monomorphization (name + opcode) — profile if hot.
     #[inline]
     fn send_ping(
         &self,

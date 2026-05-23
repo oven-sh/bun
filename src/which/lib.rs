@@ -1,12 +1,16 @@
-#![allow(unused_imports, unused_variables, dead_code, unreachable_code)]
 #![warn(unused_must_use, unreachable_pub)]
 use bstr::BStr;
-use bun_core::{WStr, ZStr, strings, w};
-use bun_paths::resolve_path::{PosixToWinNormalizer, posix_to_platform_in_place};
-use bun_paths::{
-    DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, WPathBuffer, is_absolute,
-    path_buffer_pool, w_path_buffer_pool,
-};
+#[cfg(windows)]
+use bun_core::{WStr, w};
+use bun_core::{ZStr, strings};
+#[cfg(not(windows))]
+use bun_paths::DELIMITER;
+#[cfg(windows)]
+use bun_paths::resolve_path::PosixToWinNormalizer;
+use bun_paths::resolve_path::posix_to_platform_in_place;
+#[cfg(windows)]
+use bun_paths::w_path_buffer_pool;
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, WPathBuffer, is_absolute, path_buffer_pool};
 
 #[allow(non_upper_case_globals)]
 mod scope {
@@ -14,6 +18,7 @@ mod scope {
 }
 use scope::which as which_log;
 
+#[cfg(not(windows))]
 fn is_valid(buf: &mut PathBuffer, segment: &[u8], bin: &[u8]) -> Option<u16> {
     let prefix_len = segment.len() + 1; // includes trailing path separator
     let len = prefix_len + bin.len();
@@ -113,6 +118,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
     }
 }
 
+#[cfg(windows)]
 static WIN_EXTENSIONS_W: [&[u16]; 3] = [w!("exe"), w!("cmd"), w!("bat")];
 const WIN_EXTENSIONS: [&[u8]; 3] = [b"exe", b"cmd", b"bat"];
 
@@ -131,6 +137,43 @@ pub fn ends_with_extension(str: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// Returns true when `path` names a Windows batch script (`.cmd` / `.bat`).
+///
+/// `CreateProcessW` runs these through `cmd.exe`, which re-tokenizes the
+/// command line with shell metacharacter rules ("BatBadBut",
+/// CVE-2024-24576 / CVE-2024-27980). Spawn paths must not pass untrusted
+/// arguments to one without checking [`batch_arg_has_cmd_metachars`].
+pub fn is_batch_file(path: &[u8]) -> bool {
+    // Windows strips trailing ASCII spaces and periods from the final path
+    // component, so `foo.cmd.` / `foo.cmd ` still run `foo.cmd` through
+    // cmd.exe (CVE-2024-43402). Trim them before checking the extension.
+    let mut end = path.len();
+    while end > 0 && matches!(path[end - 1], b' ' | b'.') {
+        end -= 1;
+    }
+    if end < 4 || path[end - 4] != b'.' {
+        return false;
+    }
+    let file_ext = &path[end - 3..end];
+    strings::eql_case_insensitive_asciii_check_length(file_ext, b"cmd")
+        || strings::eql_case_insensitive_asciii_check_length(file_ext, b"bat")
+}
+
+/// Returns true when `arg` contains a byte `cmd.exe` would reinterpret while
+/// re-tokenizing the command line of a `.bat`/`.cmd` invocation: `"` breaks
+/// out of libuv's MSVCRT-style quoting, `%` expands environment variables
+/// even inside quotes, and the rest are command separators / redirection /
+/// escape characters in unquoted positions. None of these can be escaped for
+/// `cmd.exe`, so callers must reject the spawn instead.
+pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
+    arg.iter().any(|&c| {
+        matches!(
+            c,
+            b'"' | b'%' | b'&' | b'|' | b'<' | b'>' | b'^' | b'\r' | b'\n'
+        )
+    })
 }
 
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by which_win)

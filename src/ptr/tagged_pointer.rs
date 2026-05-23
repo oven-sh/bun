@@ -143,8 +143,8 @@ pub trait UnionMember<Ts: TypeList> {
 /// `$T`, assigning tags `1024 - i` to match Zig's `TagTypeEnumWithTypeMap`.
 // TODO(port): proc-macro — Zig uses `@typeName` for both the tag enum field
 // name and the `name` string. `stringify!($T)` is the closest analogue but
-// won't match Zig's fully-qualified `@typeName` output; Phase B should confirm
-// no caller depends on the exact string.
+// won't match Zig's fully-qualified `@typeName` output; confirm no caller
+// depends on the exact string.
 #[macro_export]
 macro_rules! impl_tagged_ptr_union {
     ($($T:ty),+ $(,)?) => {
@@ -323,7 +323,7 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     // look up a method by string at compile time. Port pattern: define a trait
     // with the target method, bound every `Ti: TheTrait`, and have callers
     // `match self.tag()` (or use a per-instantiation `dispatch!` macro). Each
-    // callsite of `.call(...)` needs to be rewritten in Phase B.
+    // callsite of `.call(...)` needs to be rewritten by hand.
 }
 
 // ported from: src/ptr/tagged_pointer.zig

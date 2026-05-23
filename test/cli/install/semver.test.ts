@@ -14,6 +14,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+import { bunEnv, bunExe } from "harness";
 import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
@@ -226,7 +227,7 @@ describe("Bun.semver.satisfies()", () => {
       }
     }
     Bun.gc(true);
-  });
+  }, 30_000);
 
   test("exact versions", () => {
     testSatisfiesExact("1.2.3", "1.2.3", true);
@@ -737,4 +738,49 @@ describe("Bun.semver.satisfies()", () => {
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
+});
+
+test("a version range with >=256 || comparators does not abort", async () => {
+  const range = Array(300).fill("1.0.0").join(" || ");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.stdout.write(String(Bun.semver.satisfies("1.0.0", ${JSON.stringify(range)})))`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(stdout).toBe("true");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+test("a range with a dangling '-' after a skipped tag does not crash the parser", async () => {
+  // Found by fuzzing: a "-" that follows a skipped garbage token (or "||") used to
+  // reach `unreachable!()` in the range parser once at least one comparator had
+  // already been parsed, crashing the process.
+  const fuzzed = "> > > > > > > `{" + "`${".repeat(34) + "- - - 1e-323-alpha.1";
+  const cases = [
+    ["", fuzzed],
+    ["1.0.0", fuzzed],
+    ["", "1 || -"],
+    ["1.0.0", "1 || -"],
+    ["2.0.0", "1 || -"],
+    ["1.0.0", "1 a - b"],
+    // the skipped "-q" chunk must not swallow the "||", so "^2" still matches
+    ["2.5.0", "^1 || -q ^2"],
+  ];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdout.write(JSON.stringify(${JSON.stringify(cases)}.map(([version, range]) => Bun.semver.satisfies(version, range))))`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([true, true, false, true, false, true, true]);
+  expect(exitCode).toBe(0);
 });

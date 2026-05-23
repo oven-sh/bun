@@ -2,6 +2,7 @@ use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
 use bun_core::Output;
+#[cfg(debug_assertions)]
 use bun_core::strings;
 
 // PORT NOTE: `use super::{self as lockfile, ...}` and bare `use super as lockfile;`
@@ -13,9 +14,7 @@ use super::{
 };
 use crate::lockfile_real as lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
-use crate::{
-    Aligner, Dependency, DependencyID, PackageID, PackageManager, dependency, invalid_package_id,
-};
+use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
 
 #[derive(Default)]
 pub struct Buffers {
@@ -78,15 +77,6 @@ impl Buffers {
 // ──────────────────────────────────────────────────────────────────────────
 mod sizes {
     use super::*;
-
-    pub const NAMES: [&str; 6] = [
-        "trees",
-        "hoisted_dependencies",
-        "resolutions",
-        "dependencies",
-        "extern_strings",
-        "string_bytes",
-    ];
 
     /// Alignment used by `Aligner::write` for every array payload (Zig: `sizes.types[0]`).
     ///
@@ -191,7 +181,7 @@ where
     // TODO(port): narrow error set
 {
     // TODO(port): comptime `assertNoUninitializedPadding(@TypeOf(array))` — needs
-    // a const-eval padding check on `T`; Phase B can add a `const _: () = assert!(...)`
+    // a const-eval padding check on `T`; could add a `const _: () = assert!(...)`
     // per call site or a `NoPadding` marker trait.
     assert_no_uninitialized_padding(array);
 
@@ -272,7 +262,7 @@ where
             // We duplicate it here so that alignment bytes are zeroed out
             let mut clone: Vec<$elem> = Vec::with_capacity(buffers.$field.len());
             clone.extend_from_slice(buffers.$field.as_slice());
-            // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+            // PERF(port): was appendSliceAssumeCapacity
             write_array(stream, clone.as_slice(), $prefix)?;
             #[cfg(debug_assertions)]
             {
@@ -389,7 +379,7 @@ where
         let mut to_clone: Vec<dependency::External> = Vec::with_capacity(remaining.len());
         for dep in remaining {
             to_clone.push(dependency::to_external(dep));
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity
         }
 
         write_array(
@@ -460,7 +450,7 @@ pub fn load(
     pm_: Option<&mut PackageManager>,
 ) -> Result<Buffers, bun_core::Error> {
     let mut this = Buffers::default();
-    let mut external_dependency_list_: Vec<dependency::External> = Vec::new();
+    let external_dependency_list_: Vec<dependency::External>;
 
     // PORT NOTE: Zig `inline for (sizes.names)` unrolled — see `sizes` module note.
 
@@ -542,7 +532,7 @@ pub fn load(
         package_manager: pm_,
     };
     // TODO(port): `Dependency::Context` borrows `log`, `string_buf`, and `pm_`
-    // simultaneously with `&mut this`; Phase B may need to restructure borrows.
+    // simultaneously with `&mut this`; may need to restructure borrows.
 
     // PORT NOTE: Zig did `expandToCapacity` + `items.len = N` then wrote each
     // slot via `*dep = ...`. In Rust, `set_len` then `as_mut_slice()` would form

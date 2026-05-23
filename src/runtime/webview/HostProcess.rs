@@ -14,18 +14,22 @@
 //! This file owns process lifetime only. The usockets client lives in C++
 //! (WebKitBackend.cpp) — usockets is a C API and the frame protocol is C structs.
 
-use core::ffi::c_char;
 use core::ptr::{self, NonNull};
 
-use bun_core::{self, Error};
 use bun_jsc::JSGlobalObject;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_output::{declare_scope, scoped_log};
-use bun_spawn::{
-    self, EventLoopHandle, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions,
-    SpawnResultExt as _, Status, Stdio,
+use bun_spawn::{self, Process};
+
+#[cfg(target_os = "macos")]
+use {
+    bun_core::Error,
+    bun_jsc::virtual_machine::VirtualMachine,
+    bun_spawn::{
+        EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
+    },
+    bun_sys::{self, Fd, FdExt as _},
+    core::ffi::c_char,
 };
-use bun_sys::{self, Fd, FdExt as _};
 
 declare_scope!(WebViewHost, hidden);
 
@@ -124,6 +128,7 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
     #[cfg(not(target_os = "macos"))]
     {
@@ -132,7 +137,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     }
     #[cfg(target_os = "macos")]
     {
-        // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B.
+        // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if it shows up on a hot path.
 
         // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK
         // again after dup2 (socketpair flags are per-fd, not per-pair).
@@ -159,9 +164,9 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // var, then re-terminate.
         let base_entries = &base_slice[..base_slice.len().saturating_sub(1)];
         let mut env: Vec<*const c_char> = Vec::with_capacity(base_entries.len() + 2);
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B.
+        // PERF(port): was appendSliceAssumeCapacity.
         env.extend(base_entries.iter().copied());
-        // PERF(port): was appendAssumeCapacity — profile in Phase B.
+        // PERF(port): was appendAssumeCapacity.
         env.push(c"BUN_INTERNAL_WEBVIEW_HOST=3".as_ptr());
         env.push(ptr::null());
 
@@ -187,10 +192,13 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
             ..SpawnOptions::default()
         };
 
-        let spawned = bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr())??;
+        // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
+        // argv[0] non-null; valid for this call.
+        let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
-        // SAFETY: vm is valid for the call.
-        let event_loop = EventLoopHandle::init(unsafe { (*vm).event_loop() }.cast());
+        // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
+        // per-thread `jsc::EventLoop`.
+        let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
         let process =
             NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));

@@ -14,13 +14,7 @@
 //! have been moved up into `bun_runtime`, and the few that only need an opaque
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
-#![allow(
-    dead_code,
-    unused_imports,
-    unused_variables,
-    deprecated,
-    non_snake_case
-)]
+#![allow(deprecated, non_snake_case)]
 #![allow(unexpected_cfgs)]
 // `ConsoleObject::Formatter::print_as` dispatches on `const FORMAT: Tag` to
 // preserve Zig's comptime monomorphization (zig:2210). `Tag` is a fieldless
@@ -41,7 +35,6 @@ extern crate alloc;
 extern crate self as bun_jsc;
 
 use core::ffi::{c_char, c_void};
-use core::marker::PhantomData;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Proc-macro re-exports. `#[bun_jsc::host_fn]` / `#[bun_jsc::JsClass]` /
@@ -66,12 +59,8 @@ pub const CONV: &str = "sysv64";
 pub const CONV: &str = "C";
 
 // ──────────────────────────────────────────────────────────────────────────
-// Gated Phase-A draft modules (preserved on disk, not compiled in B-1).
-// Each `#[path]` points at the actual PascalCase / snake_case .rs file so the
-// draft body is addressable for B-2 un-gating.
-// ──────────────────────────────────────────────────────────────────────────
-// ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gated modules (real Phase-A draft code, now compiling).
+// Submodules. Each `#[path]` points at the actual PascalCase / snake_case
+// .rs file.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
@@ -490,9 +479,8 @@ pub use self::zig_stack_frame_position::ZigStackFramePosition;
 pub mod garbage_collection_controller;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Phase-D un-gated `#[no_mangle]` export modules. These were B-1 gated; now
-// compiled so the C++ side links against the real symbols (43 exports per
-// /tmp/hw_defined_but_unlinked.txt). Remaining drafts stay in `_gated` below.
+// `#[no_mangle]` export modules — compiled so the C++ side links against the
+// real symbols.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "AbortSignal.rs"]
 pub mod abort_signal;
@@ -601,7 +589,15 @@ pub fn initialize(eval_mode: bool) {
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
     // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
     // it is handed. JSCInitialize is called exactly once at startup.
-    unsafe { JSCInitialize(env.as_ptr(), env.len(), on_jsc_invalid_env_var, eval_mode, one_shot) };
+    unsafe {
+        JSCInitialize(
+            env.as_ptr(),
+            env.len(),
+            on_jsc_invalid_env_var,
+            eval_mode,
+            one_shot,
+        )
+    };
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
@@ -980,13 +976,11 @@ mod __macro_smoke {
 
     #[crate::JsClass(no_construct)]
     pub struct Smoke {
-        #[allow(dead_code)]
         n: u32,
     }
     impl Smoke {
         // Required by the `construct` hook when `no_construct` is omitted; kept
         // here so a future flip exercises it.
-        #[allow(dead_code)]
         pub fn constructor(_g: &JSGlobalObject, _f: &CallFrame) -> JsResult<*mut Smoke> {
             Err(super::JsError::Thrown)
         }
@@ -1057,9 +1051,9 @@ impl Default for IntegerRange {
 pub type IntegerRangeOptions = IntegerRange;
 
 // ──────────────────────────────────────────────────────────────────────────
-// ResolvedSource — un-gated (B-2). `#[repr(C)]` mirror of the C struct in
+// ResolvedSource — `#[repr(C)]` mirror of the C struct in
 // src/jsc/bindings/headers-handwritten.h:115. Passed by value across the
-// Zig/Rust → C++ module-loader boundary (`ErrorableResolvedSource`).
+// Rust → C++ module-loader boundary (`ErrorableResolvedSource`).
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "ResolvedSource.rs"]
 pub mod resolved_source;
@@ -1286,8 +1280,8 @@ pub mod resolved_source_tag {
 pub use self::resolved_source_tag::ResolvedSourceTag;
 
 // ──────────────────────────────────────────────────────────────────────────
-// FetchHeaders — un-gated (B-2). Opaque C++ `WebCore::FetchHeaders` handle
-// plus the `HTTPHeaderName` enum used by `fast_get`/`fast_has`/`put`.
+// FetchHeaders — opaque C++ `WebCore::FetchHeaders` handle plus the
+// `HTTPHeaderName` enum used by `fast_get`/`fast_has`/`put`.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
@@ -1332,8 +1326,8 @@ pub enum BuiltinName {
 
 #[allow(non_upper_case_globals)]
 impl BuiltinName {
-    // PascalCase aliases for downstream Phase-A drafts (Response.rs / Request.rs
-    // / streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
+    // PascalCase aliases for downstream callers (Response.rs / Request.rs /
+    // streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
     pub const Method: Self = Self::method;
     pub const Headers: Self = Self::headers;
     pub const Status: Self = Self::status;
@@ -1555,14 +1549,14 @@ pub struct ValidateObjectOpts {
 pub use self::js_global_object::BunPluginTarget;
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — JSObject (un-gated; real module in JSObject.rs).
+// JSObject (real module in JSObject.rs).
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "JSObject.rs"]
 pub mod js_object;
 pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, JSObject};
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — CallFrame / ArgumentsSlice (un-gated; real module in CallFrame.rs).
+// CallFrame / ArgumentsSlice (real module in CallFrame.rs).
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "CallFrame.rs"]
 pub mod call_frame;
@@ -1589,11 +1583,25 @@ impl FromJsEnum for bun_sys::SignalCode {
         s.deref();
         match hit {
             Some(code) => Ok(code),
-            // Zig builds the `'SIGHUP', 'SIGINT' or ...` list at comptime; at
-            // 31 variants the runtime port keeps the message terse.
-            None => Err(global.throw_invalid_arguments(format_args!(
-                "{property_name} must be one of the SignalCode names"
-            ))),
+            None => {
+                // Mirror Zig's comptime `toEnumFromMap` list
+                // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
+                // canonical signal X-macro so names are never re-spelled.
+                let names = &bun_core::SIGNAL_NAMES[1..];
+                let mut one_of = std::string::String::from("'");
+                for (i, entry) in names.iter().enumerate() {
+                    one_of.push_str(entry);
+                    one_of.push('\'');
+                    if i < names.len() - 2 {
+                        one_of.push_str(", '");
+                    } else if i == names.len() - 2 {
+                        one_of.push_str(" or '");
+                    }
+                }
+                Err(global.throw_invalid_arguments(format_args!(
+                    "{property_name} must be one of {one_of}"
+                )))
+            }
         }
     }
 }
@@ -1653,7 +1661,7 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
 // `URL::path_from_file_url` / `URL::href_from_js` live in `URL.rs` (the
 // dedicated port file); the lib.rs copies were duplicate definitions.
 
-// B-2 Track A — JSString (un-gated; real module in JSString.rs).
+// JSString (real module in JSString.rs).
 #[path = "JSString.rs"]
 pub mod js_string;
 pub use self::js_string::JSString;
@@ -1672,9 +1680,7 @@ pub mod saved_source_map;
 pub use self::saved_source_map as SavedSourceMap;
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 un-gated: VirtualMachine / ModuleLoader / event_loop now compile from
-// their real Phase-A draft files. The stub `pub mod` blocks that lived here
-// in B-1 are replaced with `#[path]` decls; downstream-compat re-exports
+// VirtualMachine / ModuleLoader / event_loop. Downstream-compat re-exports
 // (`VirtualMachine`, `ModuleLoader`, `EventLoop`, `VirtualMachineInitOptions`)
 // are preserved.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1961,7 +1967,11 @@ pub trait ZigStringJsc: Sized {
     fn to_json_object(&self, global: &JSGlobalObject) -> JSValue;
     /// `ZigString.external` — like `to_external_value` but with a caller-supplied
     /// `ctx` + finalizer callback (used to keep a `Blob::Store` ref alive).
-    fn external(
+    ///
+    /// # Safety
+    /// `ctx` and the string's backing buffer must satisfy `callback`'s contract;
+    /// ownership of both transfers to JSC, which invokes `callback` exactly once.
+    unsafe fn external(
         &self,
         global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
@@ -2009,9 +2019,11 @@ impl ZigStringJsc for bun_core::ZigString {
     #[inline]
     fn to_external_value(&self, global: &JSGlobalObject) -> JSValue {
         if self.len > bun_core::String::max_length() {
-            // SAFETY: contract — bytes were allocated by the global mimalloc allocator.
+            // SAFETY: contract — bytes were allocated by the default (global)
+            // allocator. `default_alloc::free` agrees with the
+            // `#[global_allocator]` (`mi_free` normally; libc free under ASAN).
             unsafe {
-                bun_alloc::mimalloc::mi_free(
+                bun_alloc::default_alloc::free(
                     self.byte_slice()
                         .as_ptr()
                         .cast_mut()
@@ -2035,7 +2047,7 @@ impl ZigStringJsc for bun_core::ZigString {
         ZigString__toJSONObject(self, global)
     }
     #[inline]
-    fn external(
+    unsafe fn external(
         &self,
         global: &JSGlobalObject,
         ctx: *mut core::ffi::c_void,
@@ -2075,9 +2087,17 @@ impl ZigStringJsc for bun_core::ZigString {
 
 /// Free-function form of `ZigString.toExternalU16` for callers that import
 /// `bun_core::ZigString`. Forwards to the canonical impl in [`zig_string`].
+///
+/// # Safety
+/// See [`zig_string::to_external_u16`].
 #[inline]
-pub fn zig_string_to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
-    crate::zig_string::to_external_u16(ptr, len, global)
+pub unsafe fn zig_string_to_external_u16(
+    ptr: *const u16,
+    len: usize,
+    global: &JSGlobalObject,
+) -> JSValue {
+    // SAFETY: caller upholds `to_external_u16`'s contract.
+    unsafe { crate::zig_string::to_external_u16(ptr, len, global) }
 }
 
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).
@@ -2151,7 +2171,7 @@ impl<V: Copy> ComptimeStringMapExt<V> for phf::Map<&'static [u8], V> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// B-2 Track A — BuildMessage / ResolveMessage / ZigException::Holder / JsClass.
+// BuildMessage / ResolveMessage / ZigException::Holder / JsClass.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "BuildMessage.rs"]
 pub mod build_message;
@@ -2305,8 +2325,6 @@ unsafe extern "C" {
         one_shot_startup: bool,
     );
 }
-
-pub(crate) use bun_ast::math;
 
 // TODO(port): generated module — re-run bindgen with .rs output. Hand-stubbed
 // in `generated.rs` until `src/codegen/generate-classes.ts` grows a `.rs`

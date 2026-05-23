@@ -11,8 +11,8 @@ use super::ArrayList;
 pub struct PageSelector {
     /// An optional named page type.
     // PORT NOTE: arena-owned slice borrowed from parser input; `&'static` per
-    // PORTING.md §AST crates / rules/mod.rs lifetime-erasure note. Phase B
-    // re-threads `'bump`.
+    // PORTING.md §AST crates / rules/mod.rs lifetime-erasure note.
+    // TODO(port): re-thread `'bump`.
     pub name: Option<&'static [u8]>,
     /// A list of page pseudo classes.
     pub pseudo_classes: ArrayList<PagePseudoClass>,
@@ -21,7 +21,7 @@ pub struct PageSelector {
 impl PageSelector {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if let Some(name) = self.name {
-            dest.write_str(name)?;
+            dest.serialize_identifier(name)?;
         }
 
         for pseudo in &self.pseudo_classes {
@@ -57,10 +57,7 @@ impl PageSelector {
         loop {
             // Whitespace is not allowed between pseudo classes
             let state = input.state();
-            let is_colon = match input.next_including_whitespace() {
-                Ok(tok) => matches!(*tok, css::Token::Colon),
-                Err(e) => return Err(e),
-            };
+            let is_colon = matches!(input.next_including_whitespace(), Ok(css::Token::Colon));
             if is_colon {
                 let vv = PagePseudoClass::parse(input)?;
                 pseudo_classes.push(vv);
@@ -134,7 +131,7 @@ impl PageRule {
         if self.selectors.len() >= 1 {
             let firstsel = &self.selectors[0];
             // Space is only required if the first selector has a name.
-            if !dest.minify && firstsel.name.is_some() {
+            if firstsel.name.is_some() {
                 dest.write_char(b' ')?;
             }
             dest.write_comma_separated(&self.selectors, |d, sel| sel.to_css(d))?;
@@ -225,7 +222,7 @@ impl PageRule {
         while let Some(decl) = parser.next() {
             if let Err(e) = decl {
                 if parser.parser.options.error_recovery {
-                    parser.parser.options.warn(e);
+                    parser.parser.options.warn(&e);
                     continue;
                 }
                 return Err(e);
@@ -260,9 +257,9 @@ pub enum PagePseudoClass {
 
 impl PagePseudoClass {
     #[inline]
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
         // `Copy` enum (generics.zig "simple copy types" → identity).
-        *self
+        self
     }
 }
 

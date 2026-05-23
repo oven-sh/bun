@@ -3,7 +3,7 @@
 //! In the NodeId-arena port `IO` is a plain `Clone` value (the Zig version
 //! used intrusive refcounts on `IOReader`/`IOWriter`; here those are `Arc`).
 
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use core::fmt;
 
 use crate::api::bun_spawn::stdio::{Capture, Stdio};
@@ -108,6 +108,7 @@ impl OutFd {
     /// lifetime. The `(&self) -> &mut T` shape cannot encode this, hence
     /// `unsafe fn`.
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn captured_mut(&self) -> Option<&mut Vec<u8>> {
         // SAFETY: caller contract — single-threaded shell, env outlives `self`.
         self.captured.map(|p| unsafe { &mut *p })
@@ -181,7 +182,7 @@ impl OutKind {
         match self {
             OutKind::Fd(val) => {
                 // Spec: `shellio.* = val.writer.dupeRef()`.
-                *shellio = Some(val.writer.clone());
+                *shellio = Some(std::sync::Arc::clone(&val.writer));
                 if let Some(cap) = val.captured {
                     Stdio::Capture(Capture { buf: cap })
                 } else {

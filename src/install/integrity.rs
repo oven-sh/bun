@@ -65,7 +65,7 @@ impl Integrity {
         let end: usize = b"3cd0599b099384b815c10f7fa7df0092b62d534f"
             .len()
             .min(buf.len());
-        if end % 2 != 0 {
+        if !end.is_multiple_of(2) {
             return Err(bun_core::err!("InvalidCharacter"));
         }
         let mut out_i: usize = 0;
@@ -162,13 +162,16 @@ impl Integrity {
     pub fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;
         let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
-        Crypto::SHA512::hash(
-            bytes,
-            (&mut value[0..LEN])
-                .try_into()
-                .expect("infallible: size matches"),
-            core::ptr::null_mut(),
-        );
+        // SAFETY: engine is null (default).
+        unsafe {
+            Crypto::SHA512::hash(
+                bytes,
+                (&mut value[0..LEN])
+                    .try_into()
+                    .expect("infallible: size matches"),
+                core::ptr::null_mut(),
+            )
+        };
         Integrity {
             tag: Tag::SHA512,
             value,
@@ -177,7 +180,7 @@ impl Integrity {
 
     #[inline]
     pub fn verify(&self, bytes: &[u8]) -> bool {
-        // PERF(port): was @call(bun.callmod_inline, ...) — profile in Phase B
+        // PERF(port): was @call(bun.callmod_inline, ...) — profile if hot.
         Self::verify_by_tag(self.tag, bytes, &self.value)
     }
 
@@ -190,7 +193,8 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut());
+                // SAFETY: engine is null (default).
+                unsafe { Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut()) };
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA512 => {
@@ -198,7 +202,8 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut());
+                // SAFETY: engine is null (default).
+                unsafe { Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut()) };
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA256 => {
@@ -206,7 +211,8 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut());
+                // SAFETY: engine is null (default).
+                unsafe { Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut()) };
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             Tag::SHA384 => {
@@ -214,7 +220,8 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut());
+                // SAFETY: engine is null (default).
+                unsafe { Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut()) };
                 strings::eql_long(ptr, &sum[0..LEN], true)
             }
             _ => false,
@@ -330,9 +337,9 @@ pub enum Hasher {
 }
 
 impl Streaming {
-    pub fn init(expected: Integrity, compute_if_missing: bool) -> Streaming {
+    pub fn init(expected: &Integrity, compute_if_missing: bool) -> Streaming {
         Streaming {
-            expected,
+            expected: *expected,
             hasher: match expected.tag {
                 Tag::SHA1 => Hasher::Sha1(Crypto::SHA1::init()),
                 Tag::SHA256 => Hasher::Sha256(Crypto::SHA256::init()),

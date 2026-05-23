@@ -1,4 +1,3 @@
-use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
 use crate::shared::Data;
 use bun_ptr::RawSlice;
@@ -161,9 +160,9 @@ impl Authentication {
                     bun_core::scoped_log!(Postgres, "Missing i");
                 }
 
-                let r = r.ok_or(bun_core::err!("InvalidMessage"))?;
-                let s = s.ok_or(bun_core::err!("InvalidMessage"))?;
-                let i = i.ok_or(bun_core::err!("InvalidMessage"))?;
+                let r = r.ok_or_else(|| bun_core::err!("InvalidMessage"))?;
+                let s = s.ok_or_else(|| bun_core::err!("InvalidMessage"))?;
+                let i = i.ok_or_else(|| bun_core::err!("InvalidMessage"))?;
 
                 Ok(Authentication::SASLContinue(SASLContinue {
                     data: bytes,

@@ -1,7 +1,6 @@
 use bun_core as bstring;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
-use super::assert::myers_diff::DiffList;
 use super::node_assert;
 
 /// ```ts
@@ -15,7 +14,7 @@ use super::node_assert;
 /// ```
 #[bun_jsc::host_fn]
 pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (2KB) + ArenaAllocator bulk-free — profile in Phase B
+    // PERF(port): was stack-fallback (2KB) + ArenaAllocator bulk-free.
 
     let nargs = frame.arguments_count();
     if nargs < 2 {
@@ -54,30 +53,6 @@ pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         check_comma_disparity,
         lines,
     )
-}
-
-type StrDiffList<'a> = DiffList<&'a [u8]>;
-
-#[allow(dead_code)]
-fn diff_list_to_js(global: &JSGlobalObject, diff_list: StrDiffList<'_>) -> JsResult<JSValue> {
-    // todo: replace with toJS
-    JSValue::create_array_from_iter(global, diff_list.iter(), |line| {
-        let obj = JSValue::create_empty_object_with_null_prototype(global);
-        if obj.is_empty() {
-            return Err(global.throw_out_of_memory());
-        }
-        obj.put(
-            global,
-            bstring::String::static_(b"kind"),
-            JSValue::js_number(line.kind as u32 as f64),
-        );
-        obj.put(
-            global,
-            bstring::String::static_(b"value"),
-            JSValue::from_any(global, line.value)?,
-        );
-        Ok(obj)
-    })
 }
 
 // =============================================================================

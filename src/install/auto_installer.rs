@@ -25,7 +25,7 @@ use core::mem::{align_of, size_of};
 use bun_install_types::resolver_hooks as hooks;
 use bun_semver::{SlicedString, String as SemverString};
 
-use crate::dependency::{self, DependencyExt as _, VersionExt as _};
+use crate::dependency::{self, DependencyExt as _};
 use crate::lockfile::{self, Package};
 use crate::package_manager::package_manager_directories as directories;
 use crate::package_manager::package_manager_enqueue as enqueue;
@@ -97,7 +97,7 @@ fn tag_to_hooks(t: resolution::Tag) -> hooks::ResolutionTag {
 }
 
 #[inline]
-fn resolution_to_hooks(r: resolution::Resolution) -> hooks::Resolution {
+fn resolution_to_hooks(r: &resolution::Resolution) -> hooks::Resolution {
     // `resolution::Value<u64>` is a type alias for `hooks::ResolutionValue<u64>`,
     // so `value` copies as the SAME nominal type. `hooks::Resolution` is
     // in-memory only (never byte-serialized), so trailing union bytes carrying
@@ -150,7 +150,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn lockfile_package_resolution(&self, id: PackageID) -> hooks::Resolution {
-        resolution_to_hooks(self.lockfile.packages.get(id as usize).resolution)
+        resolution_to_hooks(&self.lockfile.packages.get(id as usize).resolution)
     }
 
     fn lockfile_dependencies_buf(&self) -> &[hooks::Dependency] {
@@ -174,7 +174,7 @@ impl hooks::AutoInstaller for PackageManager {
         // Zig: `manager.lockfile.resolve(name, dependency_version)`
         // (resolver.zig:2028) → `Lockfile.resolvePackageFromNameAndVersion`.
         self.lockfile
-            .resolve_package_from_name_and_version(name, Clone::clone(version))
+            .resolve_package_from_name_and_version(name, version)
     }
 
     fn lockfile_legacy_package_to_dependency_id(
@@ -184,7 +184,6 @@ impl hooks::AutoInstaller for PackageManager {
         self.lockfile
             .buffers
             .legacy_package_to_dependency_id(None, package_id)
-            .map_err(Into::into)
     }
 
     fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8] {
@@ -263,8 +262,8 @@ impl hooks::AutoInstaller for PackageManager {
                 Ok(cloned) => dependencies[0] = cloned,
                 Err(e) => {
                     // Zig: `defer string_builder.clamp()` — must run on the
-                    // error path too. Restore the buffer length so the
-                    // lockfile stays consistent (`Dependency` is no-op Drop).
+                    // error path too. `truncate` drops the default-filled tail
+                    // (and any already-written deps) before restoring length.
                     dependencies_list.truncate(dep_start);
                     string_builder.clamp();
                     return Err(e);
@@ -301,7 +300,7 @@ impl hooks::AutoInstaller for PackageManager {
 
         string_builder.clamp();
 
-        let appended = lockfile.append_package(package)?;
+        let appended = lockfile.append_package(&package)?;
         Ok(appended.meta.id)
     }
 
@@ -309,9 +308,11 @@ impl hooks::AutoInstaller for PackageManager {
         // Zig: `try manager.lockfile.appendPackage(.{ .name = String.init("", ""),
         //   .resolution = .{ .value = .{ .root = {} }, .tag = .root } })`
         // (resolver.zig:2082).
-        let mut pkg = Package::default();
-        pkg.resolution = resolution::Resolution::init(resolution::TaggedValue::Root);
-        let appended = self.lockfile.append_package(pkg)?;
+        let pkg = Package {
+            resolution: resolution::Resolution::init(resolution::TaggedValue::Root),
+            ..Default::default()
+        };
+        let appended = self.lockfile.append_package(&pkg)?;
         Ok(appended.meta.id)
     }
 
@@ -337,7 +338,7 @@ impl hooks::AutoInstaller for PackageManager {
         let path_buf: &mut bun_paths::PathBuffer =
             unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
         let r = resolution_from_hooks(resolution);
-        let out = directories::path_for_resolution(self, package_id, r, path_buf)?;
+        let out = directories::path_for_resolution(self, package_id, &r, path_buf)?;
         Ok(&*out)
     }
 
@@ -379,7 +380,7 @@ impl hooks::AutoInstaller for PackageManager {
         name: &[u8],
         version: &hooks::DependencyVersion,
     ) -> Option<PackageID> {
-        pm_resolution::resolve_from_disk_cache(self, name, Clone::clone(version))
+        pm_resolution::resolve_from_disk_cache(self, name, version)
     }
 
     fn enqueue_dependency_to_root(
@@ -395,7 +396,7 @@ impl hooks::AutoInstaller for PackageManager {
                 resolution,
             } => hooks::EnqueueResult::Resolution {
                 package_id,
-                resolution: resolution_to_hooks(resolution),
+                resolution: resolution_to_hooks(&resolution),
             },
             enqueue::DependencyToEnqueue::Pending(id) => hooks::EnqueueResult::Pending(id),
             enqueue::DependencyToEnqueue::NotFound => hooks::EnqueueResult::NotFound,
@@ -411,11 +412,8 @@ impl hooks::AutoInstaller for PackageManager {
         name_hash: Option<u64>,
         version: &[u8],
         sliced: &SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        // SAFETY: resolver passes `self.log()` which is a valid `*mut Log`;
-        // null is also accepted (Zig: `?*logger.Log`).
-        let log = unsafe { log.as_mut() };
         // Zig threads `pm` so `parse_with_tag` can record `npm:` aliases into
         // `pm.known_npm_aliases` (dependency.zig:905).
         dependency::parse(name, name_hash, version, sliced, log, Some(self))
@@ -428,10 +426,8 @@ impl hooks::AutoInstaller for PackageManager {
         version: &[u8],
         tag: hooks::DependencyVersionTag,
         sliced: &SlicedString,
-        log: *mut bun_ast::Log,
+        log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        // SAFETY: see `parse_dependency`.
-        let log = unsafe { log.as_mut() };
         dependency::parse_with_tag(
             name,
             Some(name_hash),
@@ -462,36 +458,31 @@ impl hooks::AutoInstaller for PackageManager {
 // upcast to the `dyn AutoInstaller` trait object the resolver stores.
 //
 // SAFETY (callee contract):
-//   • `log` is the resolver's `*mut bun_ast::Log` (Transpiler-owned,
+//   • `log` is the resolver's `NonNull<bun_ast::Log>` (Transpiler-owned,
 //     process-lifetime; `init_with_runtime` stores it raw).
-//   • `install` is the type-erased `Option<&Api::BunInstall>` projected from
-//     `BundleOptions.install` (`*const ()` — null ⇔ None). The pointee is the
-//     CLI-owned `Box<BunInstall>` (process-lifetime).
-//   • `env` is the type-erased `*mut DotEnv::Loader` (Transpiler-owned,
+//   • `install` is `BundleOptions.install` (`?*Api.BunInstall`). The pointee is
+//     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
+//   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
 //     process-lifetime). `init_with_runtime` stores it as
-//     `NonNull<Loader<'static>>`; the lifetime erasure matches Zig's raw
-//     `*DotEnv.Loader`.
+//     `NonNull<Loader<'static>>`; the `'static` lifetime matches Zig's
+//     untracked `*DotEnv.Loader`.
 #[unsafe(no_mangle)]
 pub unsafe fn __bun_resolver_init_package_manager(
-    log: *mut bun_ast::Log,
-    install: *const (),
-    env: *mut core::ffi::c_void,
+    mut log: core::ptr::NonNull<bun_ast::Log>,
+    install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
+    mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
 ) -> core::ptr::NonNull<dyn hooks::AutoInstaller> {
     // Zig: `bun.HTTPThread.init(&.{})` — idempotent.
     bun_http::http_thread::init(&Default::default());
 
-    // SAFETY: `install` is either null or points at a live `Api::BunInstall`
+    // SAFETY: when `Some`, `install` points at a live `Api::BunInstall`
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
-    let bun_install: Option<&crate::bun_schema::api::BunInstall> = unsafe {
-        install
-            .cast::<crate::bun_schema::api::BunInstall>()
-            .as_ref()
-    };
-    // SAFETY: caller guarantees `log` / `env` are non-null process-lifetime
-    // pointers (resolver `.expect`s `env_loader` before calling).
-    let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
-    let env_ref: &mut bun_dotenv::Loader<'static> =
-        unsafe { &mut *env.cast::<bun_dotenv::Loader<'static>>() };
+    let bun_install: Option<&crate::bun_schema::api::BunInstall> =
+        install.map(|p| unsafe { p.as_ref() });
+    // SAFETY: caller guarantees `log` / `env` point at process-lifetime
+    // Transpiler-owned storage with no aliasing `&mut` live across this call.
+    let (log_ref, env_ref): (&mut bun_ast::Log, &mut bun_dotenv::Loader<'static>) =
+        unsafe { (log.as_mut(), env.as_mut()) };
 
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
         log_ref,

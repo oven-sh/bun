@@ -3,7 +3,6 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, Output, zstr};
 use bun_io as Async;
-use bun_js_parser as js_ast;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
@@ -103,6 +102,10 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// `resolver: Resolver<'a>`) that cannot be zero-init'd, so the allocate +
     /// configure pair is folded into one trait call returning the
     /// arena-allocated, fully-configured transpiler.
+    // The returned `&'a mut Transpiler<'a>` is arena-allocated via `bump.alloc(...)`
+    // (bumpalo `Bump`), which hands out `&mut` from `&self` through interior
+    // mutability — the standard arena pattern `mut_from_ref` cannot see through.
+    #[allow(clippy::mut_from_ref)]
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
@@ -114,9 +117,9 @@ pub trait CompletionStruct: Node + Send + 'static {
     /// → on success `self.set_result(Value(..))` → `this.deinitWithoutFreeingArena()`;
     /// on error drain `this.linker.source_maps.*_wait_group` then deinit.
     ///
-    /// PORT NOTE: the un-gated `BundleV2` impl does not yet expose `init` /
-    /// `run_from_js_in_new_thread` (they live in `bundle_v2::_the gated draft block (now dissolved)`
-    /// pending the linker pipeline un-gate). The Zig `@compileError` already
+    /// PORT NOTE: the `BundleV2` impl does not yet expose `init` /
+    /// `run_from_js_in_new_thread` (pending the linker pipeline). The Zig
+    /// `@compileError` already
     /// proves this body is `JSBundleCompletionTask`-specific, so the
     /// construction + run is delegated to the trait impl in T6, which has
     /// access to the concrete event-loop / work-pool wiring. The shared
@@ -193,6 +196,8 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// `instance` must point to a live `BundleThread` whose bundle thread has been
     /// spawned (so `waker` is initialized). Called concurrently with `thread_main`.
     pub unsafe fn enqueue(instance: *mut Self, completion: *mut C) {
+        // SAFETY: `completion` is a live, caller-owned task node (non-null).
+        let completion = unsafe { core::ptr::NonNull::new_unchecked(completion) };
         // SAFETY: field projections via raw ptr — `thread_main` on the bundle thread
         // accesses the same struct concurrently, so we never materialize `&mut Self`.
         // `UnboundedQueue::push` takes `&self` (lock-free MPSC). `Waker::wake` takes
@@ -200,8 +205,10 @@ impl<C: CompletionStruct> BundleThread<C> {
         // `AtomicBool` for `has_pending_wake`), so this autorefs to `&Waker` and is
         // safe to call concurrently with `wait(&self)` in `thread_main` and with
         // other `enqueue` callers.
-        unsafe { (*instance).queue.push(completion) };
-        unsafe { (*instance).waker.wake() };
+        unsafe {
+            (*instance).queue.push(completion);
+            (*instance).waker.wake();
+        }
     }
 
     unsafe fn thread_main(instance: *mut Self) {
@@ -269,8 +276,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             }
 
             if has_bundled {
-                // SAFETY: `mi_collect(false)` is a thread-local heap sweep with no preconditions.
-                unsafe { bun_alloc::mimalloc::mi_collect(false) };
+                bun_alloc::mimalloc::mi_collect(false);
                 has_bundled = false;
             }
 
@@ -358,7 +364,9 @@ impl<C: CompletionStruct> BundleThread<C> {
         // global-heap* state, so there is no double free.
         unsafe {
             core::ptr::drop_in_place(transpiler_ptr);
-            core::ptr::drop_in_place(ast_memory_store as *mut bun_ast::ASTMemoryAllocator);
+            core::ptr::drop_in_place(std::ptr::from_mut::<bun_ast::ASTMemoryAllocator>(
+                ast_memory_store,
+            ));
         }
 
         run
@@ -387,6 +395,9 @@ pub mod singleton {
     // `'static`; cross-thread access is mediated entirely through
     // `UnboundedQueue` / `ResetEvent` atomics inside `BundleThread::enqueue`.
     unsafe impl Send for Instance {}
+    // SAFETY: `&Instance` only exposes the raw pointer; every dereference path
+    // goes through `BundleThread::enqueue`'s atomic queue/waker primitives, so
+    // sharing the pointer across threads is sound.
     unsafe impl Sync for Instance {}
 
     static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
@@ -428,14 +439,16 @@ pub mod singleton {
     }
 
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
+        // Validate the caller's pointer at the public boundary so the unsafe
+        // path below never receives null.
+        let completion = NonNull::new(completion).unwrap_or_else(|| {
+            Output::panic(format_args!("BundleThread enqueue: null completion"))
+        });
         // SAFETY: `get()` returns the leaked 'static singleton whose bundle thread is
         // running; `BundleThread::enqueue` only performs raw-ptr field projections.
-        unsafe { BundleThread::enqueue(get::<C>(), completion) };
+        unsafe { BundleThread::enqueue(get::<C>(), completion.as_ptr()) };
     }
 }
-
-use bun_ast::Index;
-use bun_ast::Ref;
 
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;

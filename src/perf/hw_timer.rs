@@ -18,7 +18,10 @@
 //! See WebKit r312153 (UnbarrieredMonotonicTime) for the original design and
 //! drift/monotonicity measurements on Darwin/arm64.
 
-#[allow(unused_imports)]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "macos", target_os = "freebsd")
+))]
 use core::ffi::{c_char, c_int, c_void};
 
 /// True on every target Bun ships. Kept for callers that want to gate on it.
@@ -77,7 +80,7 @@ pub fn now_ns() -> u64 {
             // u64×u64→u128 widening mul + shift: 2 insns on x64 (`mul`+`shrd`),
             // 3 on arm64 (`mul`+`umulh`+`extr`). The `as u128` widen guarantees LLVM
             // sees a widening mul, not a generic 128×128 `__multi3`.
-            let ns: u64 = ((ticks as u128) * (cal.mult as u128) >> SHIFT) as u64;
+            let ns: u64 = (((ticks as u128) * (cal.mult as u128)) >> SHIFT) as u64;
             return cal.start_ns.wrapping_add(ns);
         }
     }
@@ -93,22 +96,12 @@ pub fn now_ms() -> u64 {
 
 const SHIFT: u32 = 32;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct Calibration {
     start_counter: u64,
     start_ns: u64,
     /// elapsed_ns = (ticks * mult) >> 32. Zero ⇒ HW path disabled.
     mult: u64,
-}
-
-impl Default for Calibration {
-    fn default() -> Self {
-        Self {
-            start_counter: 0,
-            start_ns: 0,
-            mult: 0,
-        }
-    }
 }
 
 // PORTING.md §Global mutable state: written exactly once inside
@@ -209,7 +202,10 @@ fn read_frequency() -> u64 {
     compile_error!("hw_timer::read_frequency: unsupported target");
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+    target_arch = "x86_64",
+    not(any(target_os = "macos", target_os = "freebsd"))
+))]
 struct CpuidResult {
     eax: u32,
     ebx: u32,
@@ -217,7 +213,10 @@ struct CpuidResult {
     edx: u32,
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+    target_arch = "x86_64",
+    not(any(target_os = "macos", target_os = "freebsd"))
+))]
 #[inline]
 fn cpuid(leaf: u32, subleaf: u32) -> CpuidResult {
     // PORT NOTE: Rust inline asm reserves `rbx` (LLVM PIC base), so we use the
@@ -257,7 +256,7 @@ fn os_monotonic_ns() -> u64 {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // CLOCK_MONOTONIC, not _RAW: guaranteed vDSO (no syscall). _RAW only
             // joined the vDSO in 5.3.
@@ -273,7 +272,7 @@ fn os_monotonic_ns() -> u64 {
                 let _ = libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &mut spec);
             }
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             // SAFETY: spec is a valid out-pointer.
             unsafe {

@@ -1,8 +1,6 @@
 use core::cell::Cell;
-use core::mem::offset_of;
 
 use bun_collections::VecExt;
-use bun_core::Output;
 use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 
@@ -211,7 +209,7 @@ impl ByteStream {
                 // R-2: move the action out of the cell *before* calling
                 // `reject` (which resolves a JS promise and may re-enter).
                 let mut action = self.buffer_action.replace(None).unwrap();
-                let res = action.reject(global, err.clone());
+                let res = action.reject(global, err);
 
                 self.buffer.with_mut(|b| {
                     b.clear();
@@ -369,7 +367,7 @@ impl ByteStream {
                 streams::Result::TemporaryAndDone(temp) | streams::Result::Temporary(temp) => {
                     let chunk = &temp.slice()[offset..];
                     let mut buf = Vec::with_capacity(chunk.len());
-                    // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+                    // PERF(port): was appendSliceAssumeCapacity.
                     buf.extend_from_slice(chunk);
                     self.buffer.set(buf);
                 }
@@ -469,7 +467,7 @@ impl ByteStream {
         // returned `streams::Result::Pending` raw-backref needs.
         streams::Result::Pending(self.pending.as_ptr())
         // TODO(port): `streams::Result::Pending` carries `*streams.Result.Pending` in Zig (raw
-        // backref). Phase B: decide on `NonNull<streams::Pending>` vs index.
+        // backref). TODO(refactor): decide on `NonNull<streams::Pending>` vs index.
     }
 
     pub fn on_cancel(&self) {
@@ -498,7 +496,7 @@ impl ByteStream {
             // TODO: properly propagate exception upwards
             let _ = action.reject(
                 global,
-                streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
+                &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
             );
             self.buffer_action.set(None);
         }

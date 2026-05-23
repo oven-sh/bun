@@ -1,4 +1,3 @@
-use crate::postgres::protocol::decoder_wrap::DecoderWrap;
 use crate::postgres::protocol::new_reader::NewReader;
 use crate::shared::Data;
 

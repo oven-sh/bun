@@ -5,24 +5,21 @@ use core::mem::MaybeUninit;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_core::strings;
-use bun_core::{self, Error, Output, err};
+use bun_core::{self, Error, err};
 use bun_wyhash::Wyhash;
 
 use crate::parser::options;
 use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
 
-use crate as js_parser;
 use crate::defines::Define;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    Jest, ParseStatementOptions, Runtime, RuntimeFeatures, RuntimeImports,
-    ScanPassResult, SideEffects, WrapMode,
+    Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, WrapMode,
 };
 use bun_ast as js_ast;
-use bun_ast::g::Decl;
+use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt, Symbol};
-use bun_ast::{DeclaredSymbol, StmtList};
 
 // Named instantiations of `P<'_, TS, SCAN>` matching the Zig
 // `JavaScriptParser`/`TypeScriptParser`/etc. comptime aliases.
@@ -310,14 +307,14 @@ impl<'a> Options<'a> {
     }
 }
 
-// ── live `Parser::init` (round-E unblock) ─────────────────────────────────
+// ── live `Parser::init` ───────────────────────────────────────────────────
 // Zig held two aliasing `*Log` pointers (parser + lexer). Rust models this as
 // `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
 // Stacked-Borrows tag is invalidated when accesses interleave.
 impl<'a> Parser<'a> {
     pub fn init(
         options: Options<'a>,
-        log: &'a mut bun_ast::Log,
+        log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
         define: &'a Define,
         bump: &'a Arena,
@@ -357,7 +354,7 @@ impl<'a> Parser<'a> {
 // surface lands.
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result, Error> {
+    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
         #[cfg(target_arch = "wasm32")]
         {
@@ -543,8 +540,8 @@ impl<'a> Parser<'a> {
         &mut self,
         expr: Expr,
         runtime_api_call: &'static [u8],
-        symbols: js_ast::symbol::List,
-    ) -> Result<crate::Result, Error> {
+        symbols: js_ast::symbol::List<'a>,
+    ) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
         // Zig moves lexer/options by value into `P` (Parser.zig) and only
         // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
@@ -581,13 +578,9 @@ impl<'a> Parser<'a> {
         // If we added to `p.symbols` it's going to fuck up all the indices
         // in the `symbols` array.
         debug_assert!(p.symbols.len() == 0);
-        let mut symbols_ = symbols;
-        // PORT NOTE: Zig `moveToListManaged(arena)` rebinds the same
-        // backing storage to an `ArrayList(arena)`. The Rust Vec
-        // adapter returns a `std::Vec`; `p.symbols` is a bump-backed Vec, so
-        // copy elements into the arena. Phase B may grow a zero-copy adapter.
-        p.symbols =
-            bun_alloc::vec_from_iter_in(symbols_.move_to_list_managed().into_iter(), p.arena);
+        // Zig: `moveToListManaged(arena)` — the buffer is already arena-backed,
+        // so this is now a plain move (matches Zig's pointer re-tag).
+        p.symbols = symbols;
 
         p.prepare_for_visit_pass()?;
 
@@ -616,16 +609,17 @@ impl<'a> Parser<'a> {
             ..Default::default()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
-        // PERF(port): was appendSliceAssumeCapacity — profile in Phase B
+        // PERF(port): was appendSliceAssumeCapacity — profile if hot
         parts.push(ns_export_part);
         parts.push(part);
 
         let exports_kind: js_ast::ExportsKind = 'brk: {
             if matches!(expr.data, js_ast::ExprData::EUndefined(_)) {
-                if self.source.path.name.ext == b".cjs" {
+                let ext = self.source.path.name().ext;
+                if ext == b".cjs" {
                     break 'brk js_ast::ExportsKind::Cjs;
                 }
-                if self.source.path.name.ext == b".mjs" {
+                if ext == b".mjs" {
                     break 'brk js_ast::ExportsKind::Esm;
                 }
             }
@@ -710,7 +704,7 @@ impl<'a> Parser<'a> {
                 // If the logger is backed by console.log, every print appends a newline.
                 // so buffering is kind of mandatory here
                 // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
-                // buffered writer over it. Phase B should provide a `bun_core::Output::buffered()`
+                // buffered writer over it. Provide a `bun_core::Output::buffered()`
                 // that returns an `impl core::fmt::Write` flushed on drop.
                 for msg in p.log().msgs.as_slice() {
                     let mut m: bun_ast::Msg = *msg;
@@ -734,10 +728,10 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool>(self) -> Result<crate::Result, Error> {
+    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         // TODO(port): narrow error set
-        // TODO(b2-blocked): bun_crash_handler::current_action — `Action` stores
-        // `&'static [u8]` but `self.source.path.text` is `'a`; Phase B widens
+        // TODO(port): bun_crash_handler::current_action — `Action` stores
+        // `&'static [u8]` but `self.source.path.text` is `'a`; widen
         // the lifetime on `Action` (Zig held the same pointer). Once unblocked:
         //   let _restore = bun_crash_handler::scoped_action(Action::Parse(self.source.path.text));
         // (`ActionGuard` restores the previous action on Drop — no scopeguard.)
@@ -778,9 +772,9 @@ impl<'a> Parser<'a> {
             p.should_fold_typescript_constant_expressions = true;
         }
 
-        // PERF(port): was stack-fallback arena (42 * sizeof(BinaryExpressionVisitor)) — profile in Phase B
+        // PERF(port): was stack-fallback arena (42 * sizeof(BinaryExpressionVisitor)) — profile if hot
         p.binary_expression_stack = BumpVec::with_capacity_in(41, p.arena);
-        // PERF(port): was stack-fallback arena (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile in Phase B
+        // PERF(port): was stack-fallback arena (48 * sizeof(BinaryExpressionSimplifyVisitor)) — profile if hot
         p.binary_expression_simplify_stack = BumpVec::with_capacity_in(47, p.arena);
 
         // (Zig asserted the stack-fallback arena owns the buffer; not applicable here.)
@@ -811,7 +805,7 @@ impl<'a> Parser<'a> {
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
         if true
-        /* TODO(b2-blocked): feature_flag */
+        /* TODO(port): feature_flag */
         {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 // TODO(port): `Path::is_node_module`/`is_jsx_file` live on the
@@ -822,12 +816,13 @@ impl<'a> Parser<'a> {
                 const NM: &[u8] = b"\\node_modules\\";
                 #[cfg(not(windows))]
                 const NM: &[u8] = b"/node_modules/";
-                let is_node_module = strings::last_index_of(path.name.dir, NM).is_some();
-                let is_jsx_file = strings::has_suffix_comptime(path.name.filename, b".jsx")
-                    || strings::has_suffix_comptime(path.name.filename, b".tsx");
+                let name = path.name();
+                let is_node_module = strings::last_index_of(name.dir, NM).is_some();
+                let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
+                    || strings::has_suffix_comptime(name.filename, b".tsx");
                 if cache.get(
                     p.source,
-                    (&raw const p.options).cast::<()>(),
+                    core::ptr::NonNull::from(&p.options).cast::<()>(),
                     p.options.jsx.parse && (!is_node_module || is_jsx_file),
                 ) {
                     return Ok(crate::Result::Cached);
@@ -877,7 +872,7 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        // TODO(b2-blocked): bun_crash_handler::CURRENT_ACTION.set(Action::Visit(self.source.path.text))
+        // TODO(port): bun_crash_handler::CURRENT_ACTION.set(Action::Visit(self.source.path.text))
         // — see lifetime note at top of fn.
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
@@ -1148,7 +1143,7 @@ impl<'a> Parser<'a> {
                         ),
                         value: Some(p.new_expr(
                             E::String {
-                                data: p.source.path.name.dir.into(),
+                                data: p.source.path.name().dir.into(),
                                 ..Default::default()
                             },
                             bun_ast::Loc::EMPTY,
@@ -1254,6 +1249,7 @@ impl<'a> Parser<'a> {
                             default_name: None,
                             items: bun_ast::StoreSlice::EMPTY,
                             is_single_line: false,
+                            phase_defer: false,
                         },
                         ns_loc,
                     );
@@ -1424,16 +1420,11 @@ impl<'a> Parser<'a> {
                                 if let Some(id) = redirect_import_record_index {
                                     part.symbol_uses = Default::default();
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                                        // Borrow the arena/Vec-backed records as a Vec view
-                                        // (matches `P::to_ast`); `p` is dropped immediately
-                                        // after this return so no double-ownership.
-                                        import_records: unsafe {
-                                            Vec::from_bump_slice(p.import_records.items_mut())
-                                        },
+                                        import_records: p.import_records.move_to_baby_list(p.arena),
                                         redirect_import_record_index: Some(id),
                                         named_imports: core::mem::take(&mut *p.named_imports),
                                         named_exports: core::mem::take(&mut p.named_exports),
-                                        ..Default::default()
+                                        ..js_ast::Ast::empty_in(p.arena)
                                     })));
                                 }
                             }
@@ -1470,7 +1461,7 @@ impl<'a> Parser<'a> {
                         if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
                             let value: Expr = s_expr.value;
 
-                            if let js_ast::ExprData::EBinary(mut bin_ptr) = value.data {
+                            if let js_ast::ExprData::EBinary(bin_ptr) = value.data {
                                 let mut bin = bin_ptr;
                                 loop {
                                     let left = bin.left;
@@ -1573,7 +1564,7 @@ impl<'a> Parser<'a> {
             //    export * as ns from './foo'
             //
             if false
-            /* TODO(b2-blocked): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
+            /* TODO(port): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
             {
                 // If the file only contains "export * from './blah'
                 // we pretend the file never existed in the first place.
@@ -1610,15 +1601,11 @@ impl<'a> Parser<'a> {
 
                     if let Some(star) = export_star_redirect {
                         return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                            // TODO(port): Zig set `.arena = p.arena`; arena ownership tracked elsewhere in Rust
-                            // See note on the matching arm above re double-ownership.
-                            import_records: unsafe {
-                                Vec::from_bump_slice(p.import_records.items_mut())
-                            },
+                            import_records: p.import_records.move_to_baby_list(p.arena),
                             redirect_import_record_index: Some(star.import_record_index),
                             named_imports: core::mem::take(&mut *p.named_imports),
                             named_exports: core::mem::take(&mut p.named_exports),
-                            ..Default::default()
+                            ..js_ast::Ast::empty_in(p.arena)
                         })));
                     }
                 }
@@ -2018,7 +2005,9 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: vec![import_record_id],
+                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
+                        import_record_id,
+                    ),
                     tag: bun_ast::PartTag::BunTest,
                     ..Default::default()
                 });
@@ -2067,6 +2056,7 @@ impl<'a> Parser<'a> {
                         default_name: None,
                         star_name_loc: None,
                         is_single_line: false,
+                        phase_defer: false,
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -2075,7 +2065,9 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: vec![import_record_id],
+                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
+                        import_record_id,
+                    ),
                     tag: bun_ast::PartTag::BunTest,
                     ..Default::default()
                 });
@@ -2222,8 +2214,8 @@ impl<'a> Parser<'a> {
             // Single up-front reserve preserves the Zig fused-growth; the inner
             // reserve() calls in prepend_from / append become no-ops.
             parts.reserve(before.len() + after.len());
-            bun_collections::prepend_from(&mut parts, &mut before);
-            parts.append(&mut after); // std Vec::append: bitwise-move tail, same allocator
+            parts.prepend_from(&mut before);
+            parts.append(&mut after);
         }
 
         // Pop the module scope to apply the "ContainsDirectEval" rules
@@ -2231,7 +2223,7 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if true
-        /* TODO(b2-blocked): feature_flag */
+        /* TODO(port): feature_flag */
         {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 if p.macro_call_count != 0 {
@@ -2255,7 +2247,7 @@ impl<'a> Parser<'a> {
     // PORT NOTE: associated fn (was `&self` reading `self.lexer.source.contents`)
     // because `_parse` consumes `self` by value and destructures it before this
     // call site; the source contents are passed explicitly.
-    #[allow(dead_code)] // called from gated `_parse` body above
+    // called from gated `_parse` body above
     fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let end = contents.len();

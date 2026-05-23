@@ -7,8 +7,10 @@
 //! Must work on any host platform (macOS, Windows, Linux) for cross-compilation.
 
 use core::mem::size_of;
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::sync::atomic::{AtomicU8, Ordering};
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::env_var;
 use bun_core::{slice_to_nul, strings};
 
@@ -68,7 +70,8 @@ impl ElfFile {
 
         // Bounds-check the program header table up-front; --compile-executable-path
         // accepts arbitrary files, so a corrupt e_phoff/e_phnum must not panic.
-        let phdr_table_end = (ehdr.e_phoff as u64)
+        let phdr_table_end = ehdr
+            .e_phoff
             .saturating_add((ehdr.e_phnum as u64).saturating_mul(phdr_size as u64));
         if phdr_table_end > self.data.len() as u64 {
             return;
@@ -562,12 +565,12 @@ fn validate_elf64_le(data: &[u8]) -> Result<(), ElfError> {
 /// can run on macOS/Windows, in which case the host's linker layout is
 /// irrelevant and we want to normalize for portability (#24742).
 fn host_uses_nix_store_interpreter() -> bool {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         return false;
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         static COMPUTED: AtomicU8 = AtomicU8::new(0); // 0 unknown, 1 no, 2 yes
 

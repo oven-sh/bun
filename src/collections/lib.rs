@@ -11,7 +11,6 @@
     allocator_api
 )]
 #![allow(incomplete_features, internal_features)]
-#![allow(unused, non_snake_case, clippy::all)]
 #![warn(unused_must_use, unreachable_pub)]
 
 extern crate self as bun_collections;
@@ -40,7 +39,9 @@ pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
 
 pub use bounded_array::BoundedArray;
-pub use hive_array::{Fallback as HiveArrayFallback, HiveArray, HiveRef, HiveSlot};
+pub use hive_array::{
+    Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveRef, HiveRefHandle, HiveSlot,
+};
 pub use linear_fifo::{LinearFifo, LinearFifoBufferType};
 pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]
@@ -163,7 +164,7 @@ pub use identity_context::{
 
 pub mod array_hash_map;
 pub use array_hash_map::{
-    ArrayHashMap, ArrayHashMapExt, CaseInsensitiveAsciiPrehashed,
+    ArrayHashMap, ArrayHashMapExt, AutoContext, CaseInsensitiveAsciiPrehashed,
     CaseInsensitiveAsciiStringArrayHashMap, CaseInsensitiveAsciiStringContext, Entry,
     GetOrPutResult, MapEntry, OccupiedEntry, StringArrayHashMap, StringHashMap,
     StringHashMapContext, StringHashMapInner, StringHashMapKey, StringHashMapUnownedKey, StringSet,
@@ -219,7 +220,8 @@ impl<T, const N: usize> Default for SmallList<T, N> {
     }
 }
 impl<T: Clone, const N: usize> Clone for SmallList<T, N> {
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
@@ -276,13 +278,15 @@ impl<'a, T, const N: usize> IntoIterator for &'a mut SmallList<T, N> {
     }
 }
 impl<T, const N: usize> FromIterator<T> for SmallList<T, N> {
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         Self(smallvec::SmallVec::from_iter(iter))
     }
 }
 impl<T, const N: usize> Extend<T> for SmallList<T, N> {
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         self.0.extend(iter)
     }
@@ -297,7 +301,8 @@ impl<T, const N: usize> SmallList<T, N> {
         v.push(val);
         Self(v)
     }
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn init_capacity(capacity: u32) -> Self {
         Self(smallvec::SmallVec::with_capacity(capacity as usize))
     }
@@ -308,6 +313,34 @@ impl<T, const N: usize> SmallList<T, N> {
     {
         debug_assert!(values.len() <= N);
         Self(smallvec::SmallVec::from_slice(values))
+    }
+    /// Build a `SmallList` whose heap spill (if any) is allocated from `arena`
+    /// instead of the global allocator.
+    ///
+    /// Use this when the list is stored in an arena-owned, never-`Drop`'d
+    /// structure (forgotten/`set_len(0)`-cleared on teardown). The returned
+    /// list **must not** be dropped or grown past its initial length: when it
+    /// spills, the backing storage is arena memory that the global allocator
+    /// does not own. The arena reclaims the slab on reset; running
+    /// `SmallVec::drop` would call `dealloc` on a pointer it never handed out.
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
+    pub fn from_arena_iter<I>(arena: &bun_alloc::Arena, iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let iter = iter.into_iter();
+        let len = iter.len();
+        if len <= N {
+            return Self(smallvec::SmallVec::from_iter(iter));
+        }
+        let slab = arena.alloc_slice_fill_iter(iter);
+        // SAFETY: `slab` was just initialized to exactly `len` elements;
+        // `len > N` so the resulting `SmallVec` is heap-mode, and the caller
+        // never drops or grows it (see fn doc), so the global-allocator
+        // invariant of `from_raw_parts` is never exercised.
+        Self(unsafe { smallvec::SmallVec::from_raw_parts(slab.as_mut_ptr(), len, len) })
     }
     /// Zig `fromList` / `fromBabyList` — adopt a `Vec<T>` as the heap buffer
     /// (O(1) header transfer; no element copy).
@@ -364,24 +397,22 @@ impl<T, const N: usize> SmallList<T, N> {
     pub fn last_mut(&mut self) -> Option<&mut T> {
         self.0.last_mut()
     }
-    #[inline]
-    pub fn get_last_unchecked(&self) -> &T {
-        // SAFETY: caller guarantees len >= 1 (Zig contract).
-        unsafe { self.0.get_unchecked(self.0.len() - 1) }
-    }
 
     // ── mutation ───────────────────────────────────────────────────────────
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn append(&mut self, item: T) {
         self.0.push(item)
     }
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn append_assume_capacity(&mut self, item: T) {
         // SmallVec v1 has no stable `push_unchecked`; the capacity check is a
         // single branch and `reserve` is amortised, so this is a no-op delta.
         self.0.push(item)
     }
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn append_slice(&mut self, items: &[T])
     where
         T: Clone,
@@ -391,7 +422,8 @@ impl<T, const N: usize> SmallList<T, N> {
         // remain admissible.
         self.0.extend(items.iter().cloned())
     }
-    #[inline]
+    #[cfg_attr(bun_asan, inline(never))]
+    #[cfg_attr(not(bun_asan), inline)]
     pub fn append_slice_assume_capacity(&mut self, items: &[T])
     where
         T: Clone,

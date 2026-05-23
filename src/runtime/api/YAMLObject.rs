@@ -87,7 +87,7 @@ impl Space {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
             // toInt32() wraps large values and Infinity to 0, which is wrong.
             let num_f = space.as_number();
-            if !(num_f >= 1.0) {
+            if num_f.is_nan() || num_f < 1.0 {
                 // handles NaN, -Infinity, 0, negatives
                 return Ok(Space::Minified);
             }
@@ -161,6 +161,7 @@ pub enum AnchorAliasName {
     },
 }
 
+#[derive(Clone, Copy)]
 pub enum ValueOrigin {
     Root,
     ArrayItem,
@@ -246,8 +247,7 @@ impl Stringifier {
             return Ok(());
         }
 
-        // PORT NOTE: `bun.Environment.ci_assert` → `debug_assert!` (closest analogue;
-        // `bun.assertWithLocation(cond, @src())` is a debug-only assert with source location).
+        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let object_entry = self.known_collections.get_or_put(unwrapped)?;
@@ -270,7 +270,14 @@ impl Stringifier {
                     self.array_item_counter += 1;
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    let name_entry = self.prop_names.get_or_put(prop_name.byte_slice())?;
+                    // Unsafe names use generated `value<counter>` anchors, keyed on
+                    // "value" so the counter is shared with literal "value" properties.
+                    let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
+                        prop_name.byte_slice()
+                    } else {
+                        b"value"
+                    };
+                    let name_entry = self.prop_names.get_or_put(key)?;
                     if name_entry.found_existing {
                         *name_entry.value_ptr += 1;
                     } else {
@@ -380,8 +387,7 @@ impl Stringifier {
             return Ok(());
         }
 
-        // PORT NOTE: `bun.Environment.ci_assert` → `debug_assert!` (closest analogue;
-        // `bun.assertWithLocation(cond, @src())` is a debug-only assert with source location).
+        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
@@ -409,7 +415,7 @@ impl Stringifier {
                     self.builder.append_usize(*counter);
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    if prop_name.length() == 0 {
+                    if !can_use_prop_name_as_anchor(prop_name) {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
@@ -673,6 +679,56 @@ impl Stringifier {
 /// Does this object property value need a newline? True for arrays and objects.
 fn prop_value_needs_newline(value: JSValue) -> bool {
     !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
+}
+
+/// Can this property name be emitted verbatim as an anchor/alias name?
+/// Anchor names can't be quoted or escaped, so only unambiguously safe characters
+/// are reused; anything else falls back to a generated `value<counter>` name.
+fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
+    if str.is_empty() {
+        return false;
+    }
+
+    for i in 0..str.length() {
+        match str.char_at(i) {
+            0x30..=0x39 /* '0'..='9' */
+            | 0x41..=0x5a /* 'A'..='Z' */
+            | 0x61..=0x7a /* 'a'..='z' */
+            | 0x2d /* '-' */
+            | 0x2e /* '.' */
+            | 0x5f /* '_' */ => {}
+            _ => return false,
+        }
+    }
+
+    !matches_generated_anchor_name(str)
+}
+
+/// `value0`, `item12`, `root1`, ... — names that could duplicate a generated anchor name.
+fn matches_generated_anchor_name(str: &BunString) -> bool {
+    const PREFIXES: [&[u8]; 3] = [b"value", b"item", b"root"];
+
+    'next_prefix: for prefix in PREFIXES {
+        if str.length() <= prefix.len() {
+            continue;
+        }
+
+        for (i, &byte) in prefix.iter().enumerate() {
+            if str.char_at(i) != u16::from(byte) {
+                continue 'next_prefix;
+            }
+        }
+
+        for i in prefix.len()..str.length() {
+            if !matches!(str.char_at(i), 0x30..=0x39 /* '0'..='9' */) {
+                continue 'next_prefix;
+            }
+        }
+
+        return true;
+    }
+
+    false
 }
 
 fn string_needs_quotes(str: &BunString) -> bool {
@@ -1079,10 +1135,9 @@ impl From<bun_ast::ToJSError> for ToJsError {
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
 
-    pub extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
+    extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
         // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
-        let ctx = unsafe { &mut *ctx };
-        let args = unsafe { &mut *args };
+        let (ctx, args) = unsafe { (&mut *ctx, &mut *args) };
         let root = ctx.root;
         ctx.result = match ctx.to_js(args, root) {
             Ok(v) => v,

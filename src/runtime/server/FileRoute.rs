@@ -16,7 +16,6 @@ use crate::server::file_response_stream::StartOptions as FileResponseStreamOptio
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 
 use crate::server::{AnyServer, FileResponseStream, RangeRequest, write_status};
-use crate::webcore::BlobExt as _;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, FetchHeaders, Response};
@@ -68,7 +67,7 @@ fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
 }
 
 #[inline]
-fn sp_slice<'a>(ptr: &StringPointer, buf: &'a [u8]) -> &'a [u8] {
+fn sp_slice<'a>(ptr: StringPointer, buf: &'a [u8]) -> &'a [u8] {
     &buf[ptr.offset as usize..][..ptr.length as usize]
 }
 
@@ -113,7 +112,7 @@ impl FileRoute {
         Ok(None)
     }
 
-    pub fn init_from_blob(blob: Blob, opts: InitOptions<'_>) -> *mut FileRoute {
+    pub fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> *mut FileRoute {
         let headers = headers_from(opts.headers, &blob);
         bun_core::heap::into_raw(Box::new(FileRoute {
             ref_count: Cell::new(1),
@@ -166,7 +165,7 @@ impl FileRoute {
                     ));
                 }
 
-                let mut blob = body_value.use_();
+                let blob = body_value.use_();
 
                 blob.global_this.set(std::ptr::from_ref(global));
                 debug_assert!(
@@ -192,7 +191,7 @@ impl FileRoute {
         }
         if let Some(blob) = argument.as_class_ref::<Blob>() {
             if blob.needs_to_read_file() {
-                let mut b = blob.dupe();
+                let b = blob.dupe();
                 b.global_this.set(std::ptr::from_ref(global));
                 debug_assert!(
                     !b.is_heap_allocated(),
@@ -229,7 +228,7 @@ impl FileRoute {
             AnyResponse::SSL(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
-                    s.write_header(sp_slice(name, buf), sp_slice(value, buf));
+                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
                 if let Some(srv) = self.server.get() {
                     if let Some(alt) = srv.h3_alt_svc() {
@@ -240,7 +239,7 @@ impl FileRoute {
             AnyResponse::TCP(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
-                    s.write_header(sp_slice(name, buf), sp_slice(value, buf));
+                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
                 if let Some(srv) = self.server.get() {
                     if let Some(alt) = srv.h3_alt_svc() {
@@ -251,7 +250,7 @@ impl FileRoute {
             AnyResponse::H3(s) => {
                 let s = bun_opaque::opaque_deref_mut(s);
                 for (name, value) in names.iter().zip(values) {
-                    s.write_header(sp_slice(name, buf), sp_slice(value, buf));
+                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
                 }
                 // tag == .H3 → no alt-svc header
             }
@@ -285,16 +284,25 @@ impl FileRoute {
         }
     }
 
+    /// # Safety
+    /// `this` must point to a live heap `FileRoute` (intrusive ref held by the
+    /// route table) for the duration of the call.
+    // Forwards `this` to `Self::on` without dereferencing; not_unsafe_ptr_arg_deref
+    // is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_head_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
-        // SAFETY: `this` is a live heap FileRoute (intrusive ref held by the route table).
-        debug_assert!(unsafe { (*this).server.get() }.is_some());
-
-        Self::on(this, req, resp, Method::HEAD);
+        // SAFETY: forwarded with the same precondition.
+        unsafe { Self::on(this, req, resp, Method::HEAD) };
     }
 
+    // Forwards `this` to `Self::on` without dereferencing; not_unsafe_ptr_arg_deref
+    // is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_request(this: *mut FileRoute, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(this, req, resp, method);
+        // SAFETY: `this` is a live heap FileRoute — intrusive ref held by the
+        // route table; only reached from the uWS route callback.
+        unsafe { Self::on(this, req, resp, method) };
     }
 
     // PORT NOTE: takes `*mut FileRoute` (not `&self`) because the
@@ -304,11 +312,18 @@ impl FileRoute {
     // the only per-request mutation (`stat_hash.hash`) goes through `Cell`, so
     // no `&mut Self` is ever materialized and the shared borrow stays valid
     // under Stacked Borrows across that write.
-    pub fn on(this_ptr: *mut FileRoute, mut req: AnyRequest, resp: AnyResponse, method: Method) {
-        // SAFETY: `this_ptr` is a live heap FileRoute for the duration of this
-        // fn body — the `ref_()` taken below keeps it alive until
-        // `on_response_complete`. All mutation through `this` goes via `Cell`,
-        // so the shared borrow is sound.
+    /// # Safety
+    /// `this_ptr` must point to a live heap `FileRoute` for the duration of
+    /// this call. The `ref_()` taken below keeps it alive until
+    /// `on_response_complete`. All mutation through `this` goes via `Cell`, so
+    /// the shared borrow is sound.
+    pub unsafe fn on(
+        this_ptr: *mut FileRoute,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        method: Method,
+    ) {
+        // SAFETY: see fn-level Safety doc.
         let this = unsafe { &*this_ptr };
         debug_assert!(this.server.get().is_some());
         this.ref_();
@@ -319,7 +334,7 @@ impl FileRoute {
         // PORT NOTE: clone the path so the borrow into `this.blob.store`
         // doesn't span the scopeguard creation (the guard's closure may free
         // `*this_ptr` on early-return drop). // PERF(port): was zero-copy
-        // slice — profile in Phase B.
+        // slice — profile if hot.
         let path_buf: Vec<u8> = match this.blob.store.get().as_ref().unwrap().get_path() {
             Some(p) => p.to_vec(),
             None => {
@@ -403,7 +418,7 @@ impl FileRoute {
             let stat_size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
             let _size: u64 = stat_size.min(this.blob.size.get());
 
-            let mode = u32::try_from(stat.st_mode).expect("int cast");
+            let mode = stat.st_mode as bun_sys::Mode;
             if bun_sys::S::ISDIR(mode) {
                 break 'brk (false, 0, FileType::File, false);
             }
@@ -547,7 +562,7 @@ impl FileRoute {
         // Hand ownership of the fd to FileResponseStream; disable the defer close.
         // The route ref taken at the top of on() is released in on_stream_complete.
         *fd_guard = false;
-        FileResponseStream::start(FileResponseStreamOptions {
+        FileResponseStream::start(&FileResponseStreamOptions {
             fd,
             auto_close: true,
             resp,

@@ -3,7 +3,6 @@
 //! `Blob` accessor that needs a `&JSGlobalObject` lives here.
 
 use core::ptr::NonNull;
-use core::sync::atomic::AtomicU32;
 
 use bun_core::{self as bstring, PathString, strings};
 use bun_http::MimeType;
@@ -59,7 +58,7 @@ impl FileJsc for File {
             // `*Store` across both). The store outlives this fn (leaked above).
             let store_ptr = store.as_ptr();
 
-            let mut b = Blob::init_with_store(store, global);
+            let b = Blob::init_with_store(store, global);
 
             if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
                 bun_paths::extension(self.name),
@@ -78,7 +77,10 @@ impl FileJsc for File {
             // The real name goes here:
             // SAFETY: see above; `data` is `Bytes` by construction.
             if let Data::Bytes(bytes) = unsafe { &mut (*store_ptr).data } {
-                bytes.stored_name = PathString::init(self.name);
+                // `Bytes::Drop` and `jsdom_file_construct_` both require
+                // `stored_name` to be heap-owned (or empty); a borrowed
+                // `'static` slice would be invalid-freed there.
+                bytes.stored_name = PathString::init_owned(self.name.to_vec());
             }
 
             // The pretty name goes here:

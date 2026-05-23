@@ -1,5 +1,5 @@
 use bstr::BStr;
-use bun_alloc::{AllocError, Arena as Bump};
+use bun_alloc::Arena as Bump;
 use bun_collections::VecExt;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -61,7 +61,6 @@ pub fn view(
                 let Ok(pkg_json) = JSON::parse::<false>(source, &mut pkg_log, &bump) else {
                     break 'from_package_json;
                 };
-                let pkg_json: ast::Expr = pkg_json.into();
                 if let Some(name) = pkg_json.get_string_cloned(&bump, b"name").ok().flatten() {
                     if !name.is_empty() {
                         break 'brk name;
@@ -152,7 +151,7 @@ pub fn view(
     let mut log = bun_ast::Log::init();
     let source = &bun_ast::Source::init_path_string(b"view.json", response_buf.list.as_slice());
     let json: ast::Expr = match JSON::parse_utf8(source, &mut log, &bump) {
-        Ok(j) => j.into(),
+        Ok(j) => j,
         Err(err) => {
             Output::err(err, "failed to parse response body as JSON", ());
             Global::crash();
@@ -186,9 +185,9 @@ pub fn view(
     };
 
     // Now use the existing version resolution logic from outdated_command
-    let mut manifest = json;
+    let mut manifest;
 
-    let mut versions_len: usize = 1;
+    let versions_len: usize;
 
     // PORT NOTE: reshaped for borrowck — Zig used a labeled block returning a tuple to reassign (version, manifest)
     'brk: {
@@ -319,10 +318,10 @@ pub fn view(
                 if json_output {
                     Output::print(format_args!(
                         "{}\n",
-                        bun_fmt::format_json_string_utf8(&slice, Default::default())
+                        bun_fmt::format_json_string_utf8(slice, Default::default())
                     ));
                 } else {
-                    Output::print(format_args!("{}\n", BStr::new(&*slice)));
+                    Output::print(format_args!("{}\n", BStr::new(slice)));
                 }
                 Output::flush();
                 return Ok(());

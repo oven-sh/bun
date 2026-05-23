@@ -39,9 +39,9 @@ pub struct Animation {
 
 impl Animation {
     // TODO(port): PropertyFieldMap / VendorPrefixMap were comptime anonymous-struct
-    // metadata consumed by reflection in the shorthand codegen. Phase B should
-    // replace these with a derive macro (e.g. #[derive(Shorthand)]) that emits
-    // the field→PropertyIdTag and field→has-vendor-prefix tables.
+    // metadata consumed by reflection in the shorthand codegen. Replace these with
+    // a derive macro (e.g. #[derive(Shorthand)]) that emits the field→PropertyIdTag
+    // and field→has-vendor-prefix tables.
     // PORT NOTE: PropertyFieldMap dropped — `PropertyIdTag::Animation*` variants
     // are not yet generated (animation longhands are unparsed-only for now), and
     // the table was unread comptime metadata. Re-add when the variants land.
@@ -295,9 +295,8 @@ impl AnimationName {
         // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse (CSSString = &'static [u8]).
-        if let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s)))
-        {
-            return Ok(AnimationName::String(unsafe { &raw const *s }));
+        if let Ok(s) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
+            return Ok(AnimationName::String(s));
         }
         let ident = CustomIdent::parse(input)?;
         Ok(AnimationName::Ident(ident))
@@ -353,7 +352,7 @@ impl AnimationName {
 
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.
 // TODO(port): css.DeriveParse / css.DeriveToCss were comptime mixins generating
-// parse()/to_css() from variant shape. Phase B: implement as #[derive(Parse, ToCss)].
+// parse()/to_css() from variant shape. Implement as #[derive(Parse, ToCss)].
 #[derive(PartialEq)]
 pub enum AnimationIterationCount {
     /// The animation will repeat the specified number of times.
@@ -376,7 +375,7 @@ impl AnimationIterationCount {
     // Port of `css.DeriveToCss(@This()).toCss`.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(n, dest),
+            AnimationIterationCount::Number(n) => CSSNumberFns::to_css(*n, dest),
             AnimationIterationCount::Infinite => dest.write_str(b"infinite"),
         }
     }
@@ -387,9 +386,6 @@ impl AnimationIterationCount {
 }
 
 /// A value for the [animation-direction](https://drafts.csswg.org/css-animations/#animation-direction) property.
-// TODO(port): css.DefineEnumProperty(@This()) provided eql/hash/parse/toCss/deepClone
-// by reflecting on @tagName. Phase B: #[derive(EnumProperty)] that emits Parse/ToCss
-// using kebab-case variant names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum AnimationDirection {
     /// The animation is played as specified
@@ -403,8 +399,8 @@ pub enum AnimationDirection {
 }
 
 impl AnimationDirection {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> AnimationDirection {
         AnimationDirection::Normal
@@ -421,8 +417,8 @@ pub enum AnimationPlayState {
 }
 
 impl AnimationPlayState {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> AnimationPlayState {
         AnimationPlayState::Running
@@ -443,8 +439,8 @@ pub enum AnimationFillMode {
 }
 
 impl AnimationFillMode {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> AnimationFillMode {
         AnimationFillMode::None
@@ -463,8 +459,8 @@ pub enum AnimationComposition {
 }
 
 impl AnimationComposition {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
 }
 
@@ -554,7 +550,7 @@ impl PartialEq for AnimationTimeline {
 }
 
 /// The [scroll()](https://drafts.csswg.org/scroll-animations-1/#scroll-notation) function.
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub struct ScrollTimeline {
     /// Specifies which element to use as the scroll container.
     pub scroller: Scroller,
@@ -583,8 +579,8 @@ pub enum Scroller {
 }
 
 impl Scroller {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> Scroller {
         Scroller::Nearest
@@ -605,8 +601,8 @@ pub enum ScrollAxis {
 }
 
 impl ScrollAxis {
-    pub fn deep_clone(&self) -> Self {
-        *self
+    pub fn deep_clone(self) -> Self {
+        self
     }
     pub fn default() -> ScrollAxis {
         ScrollAxis::Block

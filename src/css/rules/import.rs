@@ -7,7 +7,6 @@ use crate::{PrintErr, Printer};
 
 use bun_alloc::Arena;
 use bun_ast::ImportRecord;
-use bun_collections::VecExt;
 
 /// Named replacement for the Zig anonymous `struct { v: ?LayerName }` used in
 /// both `ImportConditions.layer` and `ImportRule.layer`. The two Zig anonymous
@@ -233,10 +232,9 @@ impl ImportRule {
         // covers all three fields — going through a field reference would narrow
         // provenance to just `layer` and make sibling-field reads UB under SB.
         // TODO(port): replace with an actual `conditions: ImportConditions` field on ImportRule
-        let base = std::ptr::from_ref::<Self>(self).cast::<u8>();
         unsafe {
-            &*base
-                .add(core::mem::offset_of!(Self, layer))
+            &*std::ptr::from_ref(self)
+                .byte_add(core::mem::offset_of!(Self, layer))
                 .cast::<ImportConditions>()
         }
     }
@@ -245,10 +243,9 @@ impl ImportRule {
         // SAFETY: see `conditions()` above. Derived from `&mut self` (full-struct
         // provenance) via byte offset so the returned `&mut ImportConditions` may
         // legally write `supports` and `media`, not just `layer`.
-        let base = std::ptr::from_mut::<Self>(self).cast::<u8>();
         unsafe {
-            &mut *base
-                .add(core::mem::offset_of!(Self, layer))
+            &mut *std::ptr::from_mut(self)
+                .byte_add(core::mem::offset_of!(Self, layer))
                 .cast::<ImportConditions>()
         }
     }
@@ -371,7 +368,5 @@ const _: () = {
 };
 
 // silence unused-import warnings on the gated bodies' deps
-#[allow(unused_imports)]
-use {Arena as _Arena, ImportRecord as _ImportRecord};
 
 // ported from: src/css/rules/import.zig

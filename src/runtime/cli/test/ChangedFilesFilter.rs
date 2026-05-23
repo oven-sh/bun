@@ -11,21 +11,28 @@
 //! Only those test entry points are returned.
 
 use bun_bundler::mal_prelude::*;
-use bun_collections::{ByteVecExt, VecExt};
 use core::ffi::{c_char, c_int};
 
 use bstr::BStr;
 
-use bun_alloc::{AllocError, Arena};
+use bun_alloc::Arena;
 use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
-use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt, getenv_z};
-use bun_core::{PathString, ZStr, strings};
+use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
+use bun_core::{PathString, strings};
+#[cfg(not(windows))]
+use bun_core::{ZBox, ZStr, getenv_z};
+#[cfg(not(windows))]
+use bun_jsc as jsc;
+#[cfg(windows)]
+use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, EventLoopHandle};
-use bun_paths::{self, PathBuffer, SEP, platform, resolve_path};
+#[cfg(not(windows))]
+use bun_paths::SEP;
+use bun_paths::{self, PathBuffer, platform, resolve_path};
+#[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
 use bun_sys as sys;
 use bun_which::which;
@@ -159,14 +166,14 @@ pub fn filter<'a>(
     scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
-    // Zig: `jsc.AnyEventLoop.init(allocator)` — Mini loop that
-    // `wait_for_parse` ticks to drain parse tasks; `None` panics there.
-    let event_loop = arena.alloc(bun_event_loop::AnyEventLoop::init());
+    // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
+    // scope exit; the arena bulk-free skips Drop.
+    let mut event_loop = bun_event_loop::AnyEventLoop::init();
 
-    let bundle = match BundleV2::scan_module_graph_from_cli(
+    let mut bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
-        Some(core::ptr::NonNull::from(event_loop)),
+        Some(core::ptr::NonNull::from(&mut event_loop)),
         &entry_points,
     ) {
         Ok(b) => b,
@@ -186,13 +193,7 @@ pub fn filter<'a>(
             });
         }
     };
-    // The bundler's ThreadLocalArena and worker pool are intentionally
-    // left in place for the remainder of the process. `bun test --watch`
-    // exec()s a fresh process on each reload, so nothing accumulates
-    // across restarts; tearing the pool down here blocks on worker
-    // shutdown and competes with the runtime VM's own parse threads.
 
-    // TODO(port): MultiArrayList `.items(.field)` accessor — confirm bun_collections API
     let sources = bundle.graph.input_files.items_source();
     let import_records = bundle.graph.ast.items_import_records();
 
@@ -226,17 +227,17 @@ pub fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        // PERF(port): was putAssumeCapacity — profile in Phase B
+        // PERF(port): was putAssumeCapacity — profile if it shows up on a hot path.
         path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
-        // PERF(port): was appendAssumeCapacity — profile in Phase B
+        // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
         graph_files.push(Box::<[u8]>::from(path_text));
     }
 
     for (idx, records) in import_records.iter().enumerate() {
         let importer = u32::try_from(idx).unwrap();
-        for record in records.slice() {
+        for record in records.as_slice() {
             let dep = record.source_index;
             if !dep.is_valid() || dep.is_runtime() {
                 continue;
@@ -294,13 +295,27 @@ pub fn filter<'a>(
         let tf = test_files[i];
         let maybe_source = slot_to_source[i];
         let keep = changed_files.contains(tf.slice())
-            || maybe_source.map_or(false, |src| affected.is_set(src as usize));
+            || maybe_source.is_some_and(|src| affected.is_set(src as usize));
 
         if keep {
             test_files[write] = tf;
             write += 1;
         }
     }
+
+    // The Zig original left the BundleV2 alive for the rest of the process —
+    // its AST payload lived in `graph.heap`. In the Rust port `to_ast()`
+    // materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
+    // global heap and the slab-only `MultiArrayList` drop never frees them, so
+    // release the graph columns and the bundler-owned worker pool now that
+    // everything needed has been copied out above. The scan transpiler itself
+    // is in the CLI arena (the `&'a mut Transpiler<'a>` invariant forces a
+    // `'static` borrow), so its Drop never runs either; free its heap-backed
+    // options through the borrow `bundle` still holds.
+    bundle.deinit_without_freeing_arena();
+    // SAFETY: `bundle.transpiler` is the arena-backed `&'static mut` noted
+    // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
+    unsafe { bundle.transpiler.deinit() };
 
     Ok(Result {
         test_files: &mut test_files[0..write],
@@ -316,6 +331,7 @@ pub fn filter<'a>(
 /// inherited through every restart. The value is a short path, never
 /// the list itself, so there is no env size concern.
 pub const TRIGGER_FILE_ENV_VAR: &str = "BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE";
+#[cfg(not(windows))]
 const TRIGGER_FILE_ENV_VAR_Z: &ZStr =
     ZStr::from_static(b"BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE\0");
 
@@ -352,12 +368,10 @@ pub fn init_watch_trigger() {
                 use std::io::Write as _;
                 write!(
                     &mut fresh,
-                    "{}{}{}{:x}{}",
+                    "{}{}.bun-test-changed-{:x}.trigger",
                     BStr::new(strings::without_trailing_slash(tmpdir)),
                     SEP as char,
-                    ".bun-test-changed-",
                     rand,
-                    ".trigger",
                 )
                 .expect("unreachable");
             }
@@ -590,6 +604,7 @@ fn get_changed_files(
     Ok(set)
 }
 
+#[derive(Default)]
 pub struct GitResult {
     pub ok: bool,
     /// Set when the git process could not be spawned at all. The failure
@@ -600,20 +615,9 @@ pub struct GitResult {
     pub stderr: Vec<u8>,
 }
 
-impl Default for GitResult {
-    fn default() -> Self {
-        Self {
-            ok: false,
-            spawn_failed: false,
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        }
-    }
-}
-
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
-    // PERF(port): was appendAssumeCapacity — profile in Phase B
+    // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
     argv.push(git_path);
     // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
     // and emits octal escapes. We want raw UTF-8 paths so they match the
@@ -637,7 +641,8 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
             // `*VirtualMachine` and called `vm.eventLoop()` internally; the
             // Rust split keeps `init` taking the erased `*mut ()` event-loop
             // pointer directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
+            // SAFETY: `VirtualMachine::get().event_loop()` is the live per-thread `jsc::EventLoop`.
+            loop_: unsafe { EventLoopHandle::init(VirtualMachine::get().event_loop().cast()) },
             ..Default::default()
         },
         ..Default::default()

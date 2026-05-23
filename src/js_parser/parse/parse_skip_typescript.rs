@@ -1,4 +1,3 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
 use crate::lexer::T;
 use crate::p::P;
@@ -8,7 +7,6 @@ use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
 use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
-use bun_ast::{self as js_ast, Op};
 use bun_core::{self, Error, err};
 
 // Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
@@ -1419,12 +1417,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut backtrack = false;
         match func(self) {
             Ok(_) => {}
-            Err(e) => {
-                if e == err!("Backtrack") {
-                    backtrack = true;
-                } else if self.lexer.did_panic {
-                    backtrack = true;
-                }
+            Err(_) => {
+                backtrack = true;
             }
         }
 
@@ -1451,12 +1445,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut backtrack = false;
         let result = match func(self) {
             Ok(r) => r,
-            Err(e) => {
-                if e == err!("Backtrack") {
-                    backtrack = true;
-                } else if self.lexer.did_panic {
-                    backtrack = true;
-                }
+            Err(_) => {
+                backtrack = true;
                 SkipTypeParameterResult::DidNotSkipAnything
             }
         };
@@ -1467,37 +1457,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.is_log_disabled = old_log_disabled;
 
         result
-    }
-
-    #[inline]
-    fn lexer_backtracker_with_args_bool<F>(&mut self, func: F) -> bool
-    where
-        F: FnOnce(&mut Self) -> Result<bool, Error>,
-    {
-        // PORT NOTE: matches Zig `lexerBacktrackerWithArgs` — does NOT check `did_panic` on
-        // non-Backtrack errors (unlike `lexerBacktracker`).
-        self.mark_type_script_only();
-        let old_lexer = self.lexer.snapshot();
-        let old_log_disabled = self.lexer.is_log_disabled;
-        self.lexer.is_log_disabled = true;
-
-        let mut backtrack = false;
-        match func(self) {
-            Ok(_) => {}
-            Err(e) => {
-                if e == err!("Backtrack") {
-                    backtrack = true;
-                }
-            }
-        }
-
-        if backtrack {
-            self.lexer.restore(&old_lexer);
-        }
-        self.lexer.is_log_disabled = old_log_disabled;
-
-        // FnReturnType == anyerror!bool path: returns true on success, false on backtrack.
-        !backtrack
     }
 
     pub fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
@@ -1589,7 +1548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         flags: SkipTypeOptionsBitset,
     ) -> bool {
-        self.lexer_backtracker_with_args_bool(|p| {
+        self.lexer_backtracker_bool(|p| {
             p.skip_type_script_constraint_of_infer_type_with_backtracking(flags)
         })
     }

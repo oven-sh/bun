@@ -3,8 +3,8 @@ use bun_url::PercentEncoding;
 
 // TODO(port): lifetime — every `&'static [u8]` field below actually borrows from
 // either the `parse()` input slice or, when the input was percent-encoded, from
-// `_decoded_storage`. Zig has no lifetimes so this is implicit there. Phase B
-// should add a lifetime param to `URLPath` so the input-borrow case is checked.
+// `_decoded_storage`. Zig has no lifetimes so this is implicit there. Add a
+// lifetime param to `URLPath` so the input-borrow case is checked.
 #[derive(Default)]
 pub struct URLPath {
     pub extname: &'static [u8],
@@ -67,7 +67,7 @@ impl URLPath {
 // so instead each URLPath that needs decoding owns its decode buffer in
 // `_decoded_storage`. This costs one small allocation only on the
 // percent-encoded path, which is the rare case.
-// PERF(port): was zero-alloc fixed buffers — profile in Phase B.
+// PERF(port): was zero-alloc fixed buffers — profile if it shows up on a hot path.
 
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Error> {
     // TODO(port): narrow error set
@@ -98,13 +98,13 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
         decoded_pathname = decoded_storage.as_deref().unwrap();
     }
 
-    let mut question_mark_i: i16 = -1;
-    let mut period_i: i16 = -1;
+    let mut question_mark_i: i32 = -1;
+    let mut period_i: i32 = -1;
 
-    let mut first_segment_end: i16 = i16::MAX;
-    let mut last_slash: i16 = -1;
+    let mut first_segment_end: i32 = i32::MAX;
+    let mut last_slash: i32 = -1;
 
-    let mut i: i16 = i16::try_from(decoded_pathname.len()).expect("int cast") - 1;
+    let mut i: i32 = i32::try_from(decoded_pathname.len()).expect("int cast") - 1;
 
     while i >= 0 {
         let c = decoded_pathname[usize::try_from(i).expect("int cast")];
@@ -177,7 +177,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Err
     }
 
     // TODO(port): lifetime — see struct-level note. `extend` launders the borrow
-    // to `'static` to match the Phase-A field type; remove once URLPath gains a
+    // to `'static` to match the field type; remove once URLPath gains a
     // proper lifetime parameter for the input-borrow case.
     #[inline(always)]
     fn extend(s: &[u8]) -> &'static [u8] {

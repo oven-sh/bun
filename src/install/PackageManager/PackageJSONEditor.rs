@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_semver as semver;
 
 use bun_install::dependency::{self, TagExt as _};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{Dependency, INVALID_PACKAGE_ID, resolution};
 use bun_install_types::DependencyGroup;
 
@@ -30,18 +30,13 @@ pub struct EditOptions {
     pub before_install: bool,
 }
 
-/// Allocate a `'static` byte buffer for storage in `E::EString.data`. Zig's
-/// equivalent (`allocator.dupe(u8, ...)`) used `manager.allocator`, a
-/// process-lifetime arena that is never reset during a `bun pm pkg`/`bun add`
-/// invocation — so this ownership is parked for the rest of the command, not
-/// reclaimed. `heap::release` is the named spelling of that hand-off.
 #[inline]
-fn leak_str(bytes: Vec<u8>) -> &'static [u8] {
-    bun_core::heap::release(bytes.into_boxed_slice())
+fn arena_str<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
+    arena.alloc_slice_copy(bytes)
 }
 #[inline]
-fn leak_dup(bytes: &[u8]) -> &'static [u8] {
-    bun_core::heap::release(Box::<[u8]>::from(bytes))
+fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
+    arena.alloc_slice_copy(bytes)
 }
 
 /// Shallow-copy a `G::Property` for the JSON-editing path. Only `key`/`value`
@@ -59,12 +54,12 @@ fn copy_property(p: &G::Property) -> G::Property {
 }
 
 pub fn edit_patched_dependencies(
-    _manager: &mut PackageManager,
+    manager: &mut PackageManager,
     package_json: &mut Expr,
     patch_key: &[u8],
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
-    let bump = bun_alloc::Arena::new();
+    let arena = &manager.ast_arena;
     // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {
@@ -84,14 +79,14 @@ pub fn edit_patched_dependencies(
     }
 
     let patchfile_expr = Expr::init(
-        E::EString::init(leak_dup(patchfile_path)),
+        E::EString::init(arena_dup(arena, patchfile_path)),
         bun_ast::Loc::EMPTY,
     );
 
-    patched_dependencies.put(&bump, leak_dup(patch_key), patchfile_expr)?;
+    patched_dependencies.put(arena, arena_dup(arena, patch_key), patchfile_expr)?;
 
     package_json.data.e_object_mut().unwrap().put(
-        &bump,
+        arena,
         b"patchedDependencies",
         Expr::init(patched_dependencies, bun_ast::Loc::EMPTY),
     )?;
@@ -104,18 +99,18 @@ pub fn edit_trusted_dependencies(
 ) -> Result<(), bun_alloc::AllocError> {
     let mut len = names_to_add.len();
 
-    let original_trusted_dependencies: Vec<Expr> = 'brk: {
-        if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-            if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-                break 'brk arr.items.slice().to_vec();
-            }
+    let mut trusted_dependencies: &[Expr] = &[];
+    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
+            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
+            // this function; lifetime erased per the parser's `Str` convention.
+            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
         }
-        Vec::new()
-    };
+    }
 
     for i in 0..names_to_add.len() {
         let name = &names_to_add[i];
-        for item in original_trusted_dependencies.iter() {
+        for item in trusted_dependencies.iter() {
             if let bun_ast::ExprData::EString(s) = &item.data {
                 if s.eql_bytes(name) {
                     names_to_add.swap(i, len - 1);
@@ -123,15 +118,6 @@ pub fn edit_trusted_dependencies(
                     break;
                 }
             }
-        }
-    }
-
-    let mut trusted_dependencies: &[Expr] = &[];
-    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
-            // this function; lifetime erased per Phase-A `Str` convention.
-            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
         }
     }
 
@@ -158,7 +144,7 @@ pub fn edit_trusted_dependencies(
             while i > 0 {
                 i -= 1;
                 if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
-                    deps[i] = Expr::init(E::EString::init(leak_dup(name)), bun_ast::Loc::EMPTY);
+                    deps[i] = Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY);
                     break;
                 }
             }
@@ -208,15 +194,14 @@ pub fn edit_trusted_dependencies(
             .len_u32()
             == 0
     {
-        let mut root_properties: Vec<G::Property> = Vec::with_capacity(1);
-        root_properties.push(G::Property {
+        let root_properties: Vec<G::Property> = vec![G::Property {
             key: Some(Expr::init(
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                 bun_ast::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
             ..Default::default()
-        });
+        }];
 
         *package_json = Expr::init(
             E::Object {
@@ -354,8 +339,7 @@ pub fn edit_update_no_args(
 
                         if manager.options.do_.contains(Do::UPDATE_TO_LATEST) {
                             // is it an aliased package
-                            let temp_version: &'static [u8] = if let Some(at_index) = alias_at_index
-                            {
+                            let temp_version: &[u8] = if let Some(at_index) = alias_at_index {
                                 let mut v = Vec::new();
                                 write!(
                                     &mut v,
@@ -363,7 +347,7 @@ pub fn edit_update_no_args(
                                     bstr::BStr::new(&version_literal[0..at_index])
                                 )
                                 .unwrap();
-                                leak_str(v)
+                                arena_str(arena, &v)
                             } else {
                                 b"latest"
                             };
@@ -521,7 +505,7 @@ pub fn edit_update_no_args(
                                             .unwrap();
                                             dep.value = Some(Expr::allocate(
                                                 arena,
-                                                E::EString::init(leak_str(v)),
+                                                E::EString::init(arena_str(arena, &v)),
                                                 bun_ast::Loc::EMPTY,
                                             ));
                                             break 'updated;
@@ -532,7 +516,7 @@ pub fn edit_update_no_args(
 
                                     dep.value = Some(Expr::allocate(
                                         arena,
-                                        E::EString::init(leak_str(new_version)),
+                                        E::EString::init(arena_str(arena, &new_version)),
                                         bun_ast::Loc::EMPTY,
                                     ));
                                     break 'updated;
@@ -578,31 +562,23 @@ pub fn edit(
     // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
     // Try to use the existing spot in the dependencies list if possible
     {
-        let original_trusted_dependencies: Vec<Expr> = 'brk: {
-            if !options.add_trusted_dependencies {
-                break 'brk Vec::new();
-            }
-            if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-                if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-                    // not modifying
-                    break 'brk arr.items.slice().to_vec();
-                }
-            }
-            Vec::new()
-        };
-
         if options.add_trusted_dependencies {
-            // Iterate backwards to avoid index issues when removing items
-            let mut i: usize = manager.trusted_deps_to_add_to_package_json.len();
-            while i > 0 {
-                i -= 1;
-                let trusted_package_name = &manager.trusted_deps_to_add_to_package_json[i];
-                for item in original_trusted_dependencies.iter() {
-                    if let bun_ast::ExprData::EString(s) = &item.data {
-                        if s.eql_bytes(trusted_package_name) {
-                            // PORT NOTE: reshaped for borrowck — drop return value (was allocator.free)
-                            let _ = manager.trusted_deps_to_add_to_package_json.swap_remove(i);
-                            break;
+            if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+                if let bun_ast::ExprData::EArray(arr) = query.expr.data {
+                    // Iterate backwards to avoid index issues when removing items
+                    let mut i: usize = manager.trusted_deps_to_add_to_package_json.len();
+                    while i > 0 {
+                        i -= 1;
+                        let trusted_package_name = &manager.trusted_deps_to_add_to_package_json[i];
+                        for item in arr.items.slice() {
+                            if let bun_ast::ExprData::EString(s) = &item.data {
+                                if s.eql_bytes(trusted_package_name) {
+                                    // PORT NOTE: reshaped for borrowck — drop return value (was allocator.free)
+                                    let _ =
+                                        manager.trusted_deps_to_add_to_package_json.swap_remove(i);
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -720,8 +696,23 @@ pub fn edit(
                                 }
                                 break;
                             } else {
-                                if request.version.tag == dependency::Tag::Github
-                                    || request.version.tag == dependency::Tag::Git
+                                // For non-aliased positionals where `get_name()` returns the
+                                // version literal (path/URL) rather than the resolved package
+                                // name — github/git/tarball URLs and local folder/tarball/link
+                                // paths — fall back to matching by the stored value so a
+                                // re-run doesn't append a duplicate `"<name>": "<literal>"`
+                                // key. Skipped when the user wrote `alias@url`: that form is
+                                // an explicit request to key by `alias`, so consolidating into
+                                // an existing entry under a different name would silently drop
+                                // the alias. `e_string.is_none()` guards so a match in an
+                                // earlier dependency list isn't re-counted across iterations.
+                                if request.e_string.is_none()
+                                    && !request.is_aliased
+                                    && (request.version.tag == dependency::Tag::Github
+                                        || request.version.tag == dependency::Tag::Git
+                                        || request.version.tag == dependency::Tag::Tarball
+                                        || request.version.tag == dependency::Tag::Folder
+                                        || request.version.tag == dependency::Tag::Symlink)
                                 {
                                     for item in query
                                         .expr
@@ -817,7 +808,7 @@ pub fn edit(
                     if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
                         deps[i] = Expr::allocate(
                             arena,
-                            E::EString::init(leak_dup(package_name)),
+                            E::EString::init(arena_dup(arena, package_name)),
                             bun_ast::Loc::EMPTY,
                         );
                         break;
@@ -863,7 +854,10 @@ pub fn edit(
 
                 new_dependencies[k].key = Some(Expr::allocate(
                     arena,
-                    E::EString::init(leak_dup(request.get_resolved_name(&manager.lockfile))),
+                    E::EString::init(arena_dup(
+                        arena,
+                        request.get_resolved_name(&manager.lockfile),
+                    )),
                     bun_ast::Loc::EMPTY,
                 ));
 
@@ -977,7 +971,7 @@ pub fn edit(
             root_properties.push(G::Property {
                 key: Some(Expr::allocate(
                     arena,
-                    E::EString::init(leak_dup(dependency_list)),
+                    E::EString::init(arena_dup(arena, dependency_list)),
                     bun_ast::Loc::EMPTY,
                 )),
                 value: Some(dependencies_object),
@@ -1018,7 +1012,7 @@ pub fn edit(
                 root_properties.push(G::Property {
                     key: Some(Expr::allocate(
                         arena,
-                        E::EString::init(leak_dup(dependency_list)),
+                        E::EString::init(arena_dup(arena, dependency_list)),
                         bun_ast::Loc::EMPTY,
                     )),
                     value: Some(dependencies_object),
@@ -1055,7 +1049,7 @@ pub fn edit(
                     key: Some(Expr::allocate(
                         arena,
                         E::EString::init(if needs_new_dependency_list {
-                            leak_dup(dependency_list)
+                            arena_dup(arena, dependency_list)
                         } else {
                             TRUSTED_DEPENDENCIES_STRING
                         }),
@@ -1122,8 +1116,11 @@ pub fn edit(
                     {
                         break 'uninitialized match request.version.tag {
                             dependency::Tag::Uninitialized => b"latest".into(),
-                            _ => leak_dup(request.version.literal.slice(request.version_buf()))
-                                .into(),
+                            _ => arena_dup(
+                                arena,
+                                request.version.literal.slice(request.version_buf()),
+                            )
+                            .into(),
                         };
                     } else {
                         break 'uninitialized e_string.data;
@@ -1210,11 +1207,11 @@ pub fn edit(
                                             bstr::BStr::new(&new_version)
                                         )
                                         .unwrap();
-                                        break 'npm leak_str(v);
+                                        break 'npm arena_str(arena, &v);
                                     }
                                 }
 
-                                break 'npm leak_str(new_version);
+                                break 'npm arena_str(arena, &new_version);
                             }
                         }
                         if request.version.tag == dependency::Tag::DistTag
@@ -1236,7 +1233,7 @@ pub fn edit(
                                     write!(&mut v, "^{}", version_fmt)
                                         .expect("infallible: in-memory write");
                                 }
-                                // PERF(port): was comptime bool dispatch — profile in Phase B
+                                // PERF(port): was comptime bool dispatch — profile if hot
                                 v
                             };
 
@@ -1255,18 +1252,18 @@ pub fn edit(
                                         bstr::BStr::new(&new_version)
                                     )
                                     .unwrap();
-                                    break 'npm leak_str(v);
+                                    break 'npm arena_str(arena, &v);
                                 }
                             }
 
-                            break 'npm leak_str(new_version);
+                            break 'npm arena_str(arena, &new_version);
                         }
 
-                        leak_dup(request.version.literal.slice(request.version_buf()))
+                        arena_dup(arena, request.version.literal.slice(request.version_buf()))
                     }
 
                     resolution::Tag::Workspace => b"workspace:*",
-                    _ => leak_dup(request.version.literal.slice(request.version_buf())),
+                    _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
                 });
         }
     }

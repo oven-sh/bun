@@ -1,15 +1,13 @@
 use core::mem::size_of;
 
 use super::new_writer::NewWriter;
-use super::write_wrap::WriteWrap;
 use super::z_helpers::z_count;
 use crate::postgres::types::int_types::{Int4, int32};
 
 // PORT NOTE: Zig `deinit` is a no-op (`_ = this;`), so all three slice fields are
-// borrowed for the lifetime of the write. PORTING.md says "never put a lifetime
-// param on a struct in Phase A", but none of Box / &'static / raw fit a transient
-// borrow-only message builder, so this struct carries an explicit `'a`.
-// TODO(port): lifetime — revisit if Phase B prefers raw `*const [u8]` here.
+// borrowed for the lifetime of the write. Most protocol message structs avoid
+// lifetime params, but none of Box / &'static / raw fit a transient borrow-only
+// message builder, so this struct carries an explicit `'a`.
 #[derive(Default)]
 pub struct Parse<'a> {
     pub name: &'a [u8],
@@ -31,7 +29,7 @@ impl<'a> Parse<'a> {
         }
         let count: usize = size_of::<u32>()
             + size_of::<u16>()
-            + (parameters.len() * size_of::<u32>())
+            + std::mem::size_of_val(parameters)
             + z_count(self.name).max(1)
             + z_count(self.query).max(1);
 

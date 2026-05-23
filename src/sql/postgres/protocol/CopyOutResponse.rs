@@ -1,4 +1,3 @@
-use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
 
 pub struct CopyOutResponse;
@@ -7,9 +6,9 @@ impl CopyOutResponse {
     // TODO(port): narrow error set
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         &mut self,
-        mut reader: NewReader<Container>,
+        reader: NewReader<Container>,
     ) -> Result<(), bun_core::Error> {
-        let _ = reader;
+        drop(reader);
         let _ = self;
         bun_core::output::panic(format_args!("TODO: not implemented {}", "CopyOutResponse",));
     }

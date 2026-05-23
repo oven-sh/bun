@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Managed `ArrayList` wrappers.
 //!
 //! PORT NOTE: The Zig original wraps `std.ArrayListAlignedUnmanaged` to add two things:
@@ -8,8 +9,8 @@
 //! In Rust, (1) disappears entirely — `Vec<T>` uses the global mimalloc allocator and the
 //! `Allocator` type parameter is dropped per §Allocators in PORTING.md. (2) is the *default*
 //! behavior of `Vec<T>`: removing/dropping elements runs their `Drop`. So the "deep" methods
-//! map to ordinary `Vec` operations and the `*_shallow` variants are the ones that need
-//! special handling (they must leak/forget the removed elements).
+//! map to ordinary `Vec` operations; the `*Shallow` variants had no in-tree callers and are
+//! not ported.
 
 use core::mem;
 
@@ -104,8 +105,8 @@ impl<T> ArrayListAlignedIn<T> {
 
     pub fn init_capacity_in(num: usize /* allocator dropped */) -> Result<Self, AllocError> {
         // Zig: `try .initCapacity(bun.allocators.asStd(allocator_), num)`
-        // PERF(port): Vec::with_capacity aborts on OOM rather than returning Err — Phase B may
-        // swap to `Vec::try_with_capacity` (nightly) or a fallible wrapper if OOM recovery matters.
+        // PERF(port): Vec::with_capacity aborts on OOM rather than returning Err. Could swap to
+        // `Vec::try_with_capacity` (nightly) or a fallible wrapper if OOM recovery matters.
         Ok(Self {
             unmanaged: Vec::with_capacity(num),
         })
@@ -113,15 +114,6 @@ impl<T> ArrayListAlignedIn<T> {
 
     // Zig `pub fn deinit` → `impl Drop` (see below). Body only deinits items + frees backing,
     // both of which `Vec<T>`'s `Drop` already does, so no explicit `Drop` impl is needed.
-
-    /// Frees the backing allocation **without** running `Drop` on the items.
-    pub fn deinit_shallow(mut self) {
-        // Zig: `self.#unmanaged.deinit(...)` after the deep `deinit` already consumed items.
-        // SAFETY: leaking the logical elements; capacity is still freed by Vec's Drop.
-        unsafe { self.unmanaged.set_len(0) };
-        // `self.unmanaged` dropped here → frees capacity, drops zero items.
-        // Zig also `bun.memory.deinit(&self.#allocator)` — allocator dropped, nothing to do.
-    }
 
     pub fn from_owned_slice(slice: Slice<T>) -> Self {
         Self {
@@ -139,7 +131,7 @@ impl<T> ArrayListAlignedIn<T> {
 
     // TODO(port): `writer()` — Zig returns an `std.io.Writer` that appends bytes. For `T = u8`
     // this is `impl std::io::Write for Vec<u8>` (already in std). For other `T` there is no
-    // meaningful writer. Expose only on `ArrayListAlignedIn<u8>` in Phase B.
+    // meaningful writer. TODO(port): expose only on `ArrayListAlignedIn<u8>`.
     pub fn writer(&mut self) -> &mut Vec<T> {
         &mut self.unmanaged
     }
@@ -195,7 +187,7 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     pub fn insert_assume_capacity(&mut self, i: usize, item: T) {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.insert(i, item);
     }
 
@@ -220,7 +212,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged
             .splice(index..index, core::iter::repeat_n(value, count));
         &mut self.unmanaged[index..index + count]
@@ -233,7 +225,7 @@ impl<T> ArrayListAlignedIn<T> {
     {
         // TODO(port): Zig takes `[]const T` and bit-copies, transferring ownership. Rust must
         // `Clone` from a borrowed slice. If callers own the data, change signature to
-        // `impl IntoIterator<Item = T>` in Phase B to avoid the clone.
+        // `impl IntoIterator<Item = T>` to avoid the clone.
         self.unmanaged
             .splice(index..index, new_items.iter().cloned());
         Ok(())
@@ -252,40 +244,8 @@ impl<T> ArrayListAlignedIn<T> {
     {
         // PORT NOTE: Zig deinits `items[start..start+len]` then calls the shallow path.
         // `Vec::splice` already drops the removed range, so deep == direct splice.
-        self.replace_range_shallow_impl::<true>(start, len, new_items)
-    }
-
-    /// This method does *not* `Drop` the removed items.
-    /// This method takes ownership of all elements in `new_items`.
-    pub fn replace_range_shallow(
-        &mut self,
-        start: usize,
-        len: usize,
-        new_items: &[T],
-    ) -> Result<(), AllocError>
-    where
-        T: Clone,
-    {
-        self.replace_range_shallow_impl::<false>(start, len, new_items)
-    }
-
-    fn replace_range_shallow_impl<const DROP_REMOVED: bool>(
-        &mut self,
-        start: usize,
-        len: usize,
-        new_items: &[T],
-    ) -> Result<(), AllocError>
-    where
-        T: Clone,
-    {
-        let removed = self
-            .unmanaged
+        self.unmanaged
             .splice(start..start + len, new_items.iter().cloned());
-        if DROP_REMOVED {
-            drop(removed);
-        } else {
-            removed.for_each(mem::forget);
-        }
         Ok(())
     }
 
@@ -295,23 +255,8 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
-        // Zig: loop `bun.memory.deinit(item)` over the removed range, then shallow replace.
-        let _ = self.replace_range_shallow_impl::<true>(start, len, new_items);
-    }
-
-    /// This method does *not* `Drop` the removed items.
-    /// This method takes ownership of all elements in `new_items`.
-    pub fn replace_range_assume_capacity_shallow(
-        &mut self,
-        start: usize,
-        len: usize,
-        new_items: &[T],
-    ) where
-        T: Clone,
-    {
-        // PERF(port): was assume_capacity — profile in Phase B.
-        let _ = self.replace_range_shallow_impl::<false>(start, len, new_items);
+        // PERF(port): was assume_capacity — profile if hot.
+        let _ = self.replace_range(start, len, new_items);
     }
 
     pub fn append(&mut self, item: T) -> Result<(), AllocError> {
@@ -320,7 +265,7 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     pub fn append_assume_capacity(&mut self, item: T) {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.push(item);
     }
 
@@ -347,7 +292,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.extend_from_slice(new_items);
     }
 
@@ -368,7 +313,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.extend_from_slice(new_items);
     }
 
@@ -388,7 +333,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PERF(port): was assume_capacity — profile in Phase B.
+        // PERF(port): was assume_capacity — profile if hot.
         self.unmanaged.extend(core::iter::repeat_n(value, n));
     }
 
@@ -408,36 +353,10 @@ impl<T> ArrayListAlignedIn<T> {
         Ok(())
     }
 
-    /// If `new_len` is less than the current length, this method will *not* `Drop` the removed
-    /// items.
-    ///
-    /// If `new_len` is greater than the current length, note that this creates copies of
-    /// `init_value`.
-    pub fn resize_without_deinit(&mut self, init_value: T, new_len: usize) -> Result<(), AllocError>
-    where
-        T: Clone,
-    {
-        let len = self.unmanaged.len();
-        if new_len > len {
-            self.unmanaged.resize(new_len, init_value);
-        } else {
-            // SAFETY: new_len <= len; elements in [new_len, len) are leaked intentionally.
-            unsafe { self.unmanaged.set_len(new_len) };
-        }
-        Ok(())
-    }
-
     /// This method `Drop`s the removed items.
     pub fn shrink_and_free(&mut self, new_len: usize) {
         self.prepare_for_deep_shrink(new_len);
         // PORT NOTE: `prepare_for_deep_shrink` already truncated (dropping items); now free.
-        self.unmanaged.shrink_to_fit();
-    }
-
-    /// This method does *not* `Drop` the removed items.
-    pub fn shrink_and_free_shallow(&mut self, new_len: usize) {
-        // SAFETY: caller asserts new_len <= len; leaked elements are intentionally not dropped.
-        unsafe { self.unmanaged.set_len(new_len) };
         self.unmanaged.shrink_to_fit();
     }
 
@@ -447,12 +366,6 @@ impl<T> ArrayListAlignedIn<T> {
         // `truncate` inside `prepare_for_deep_shrink` already retained capacity.
     }
 
-    /// This method does *not* `Drop` the removed items.
-    pub fn shrink_retaining_capacity_shallow(&mut self, new_len: usize) {
-        // SAFETY: caller asserts new_len <= len; leaked elements are intentionally not dropped.
-        unsafe { self.unmanaged.set_len(new_len) };
-    }
-
     /// This method `Drop`s all items.
     pub fn clear_retaining_capacity(&mut self) {
         // Zig: `bun.memory.deinit(self.items()); self.clearRetainingCapacityShallow();`
@@ -460,22 +373,9 @@ impl<T> ArrayListAlignedIn<T> {
         self.unmanaged.clear();
     }
 
-    /// This method does *not* `Drop` any items.
-    pub fn clear_retaining_capacity_shallow(&mut self) {
-        // SAFETY: intentionally leaking all elements.
-        unsafe { self.unmanaged.set_len(0) };
-    }
-
     /// This method `Drop`s all items.
     pub fn clear_and_free(&mut self) {
         // Zig: `bun.memory.deinit(self.items()); self.clearAndFreeShallow();`
-        self.unmanaged = Vec::new();
-    }
-
-    /// This method does *not* `Drop` any items.
-    pub fn clear_and_free_shallow(&mut self) {
-        // SAFETY: intentionally leaking all elements before freeing capacity.
-        unsafe { self.unmanaged.set_len(0) };
         self.unmanaged = Vec::new();
     }
 

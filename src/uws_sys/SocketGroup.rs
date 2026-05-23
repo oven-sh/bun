@@ -7,7 +7,7 @@
 //! read/written directly by C (loop.c walks `head_sockets`/`iterator`,
 //! context.c flips `linked`).
 
-use core::ffi::{c_char, c_int, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use crate::{
@@ -100,7 +100,7 @@ impl SocketGroup {
     // TODO(port): Zig accepted `owner_ptr: anytype` (any single-item pointer or
     // null) with comptime @typeInfo validation. Rust callers cast at the call
     // site; consider a typed `init_with_owner<T>(&mut self, ..., owner: &mut T)`
-    // helper in Phase B if ergonomics warrant.
+    // helper if ergonomics warrant.
     pub fn init(&mut self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
         // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
         // `#[repr(C)]` slot embedded in the caller.
@@ -323,10 +323,6 @@ unsafe extern "C" {
     // `close_all` reenters Rust callbacks that touch this group via aliasing
     // pointers (`us_socket_group(s)`).
     fn us_socket_group_close_all(group: *mut SocketGroup);
-    #[allow(dead_code)]
-    fn us_socket_group_timestamp(group: *mut SocketGroup) -> c_ushort;
-    #[allow(dead_code)]
-    fn us_socket_group_loop(group: *mut SocketGroup) -> *mut Loop;
     fn us_socket_group_listen(
         group: *mut SocketGroup,
         kind: u8,

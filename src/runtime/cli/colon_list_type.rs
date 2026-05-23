@@ -21,7 +21,7 @@ pub trait ColonListValue: Sized {
 
 pub struct ColonListType<T: ColonListValue> {
     // TODO(port): lifetime — keys borrow slices out of CLI argv (process-lifetime
-    // in practice). Phase A uses &'static; Phase B may thread a `'a` if needed.
+    // in practice). Uses &'static; may need to thread a `'a` if needed.
     pub keys: Vec<&'static [u8]>,
     pub values: Vec<T>,
 }
@@ -38,7 +38,7 @@ impl<T: ColonListValue> ColonListType<T> {
     }
 
     pub fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
-        for (_i, str) in input.iter().enumerate() {
+        for str in input.iter() {
             // Support either ":" or "=" as the separator, preferring whichever is first.
             // ":" is less confusing IMO because that syntax is used with flags
             // but "=" is what esbuild uses and I want this to be somewhat familiar for people using esbuild
@@ -64,7 +64,7 @@ impl<T: ColonListValue> ColonListType<T> {
             self.values.push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
                 Ok(v) => v,
                 Err(e) if e == err!("InvalidLoader") => {
-                    // TODO(b2-blocked): bun_ast::Loader (strum::VariantNames derive)
+                    // TODO(blocked): bun_ast::Loader (strum::VariantNames derive)
                     // — `bun_fmt::enum_tag_list::<Loader, false>()` requires the derive; print
                     // a placeholder list until lower-tier crate adds it.
                     pretty_errorln!(

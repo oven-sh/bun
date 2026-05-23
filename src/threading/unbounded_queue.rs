@@ -1,5 +1,5 @@
 use core::hint;
-use core::ptr;
+use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 #[cfg(any(
@@ -44,7 +44,7 @@ pub const CACHE_LINE_LENGTH: usize = 64;
 /// the given ordering. `item` is always a valid, non-null, properly aligned
 /// pointer when called by `UnboundedQueue`.
 // TODO(port): the Zig `has_custom_accessors` comptime branch is folded into
-// this trait — verify each concrete `T` picks the right impl in Phase B.
+// this trait — verify each concrete `T` picks the right impl.
 pub unsafe trait Node: Sized {
     /// Zig: `getNext(item: *T) ?*T`
     unsafe fn get_next(item: *mut Self) -> *mut Self;
@@ -139,6 +139,13 @@ pub struct Batch<T: Node> {
     pub last: *mut T,
     pub count: usize,
 }
+
+impl<T: Node> Clone for Batch<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T: Node> Copy for Batch<T> {}
 
 impl<T: Node> Default for Batch<T> {
     fn default() -> Self {
@@ -236,12 +243,18 @@ impl<T: Node> UnboundedQueue<T> {
         }
     }
 
-    pub fn push(&self, item: *mut T) {
+    /// `item` must point to a live `T` whose intrusive link is not concurrently
+    /// accessed outside this queue. The caller transfers logical ownership of
+    /// the node to the queue until a `pop`/`pop_batch` returns it.
+    pub fn push(&self, item: NonNull<T>) {
         self.push_batch(item, item);
     }
 
-    pub fn push_batch(&self, first: *mut T, last: *mut T) {
-        // SAFETY: caller guarantees `last` is a valid live node (Zig `*T` is non-null).
+    /// `first..=last` must form a valid intrusive chain of live `T` nodes. The
+    /// caller transfers logical ownership of every node in the chain.
+    pub fn push_batch(&self, first: NonNull<T>, last: NonNull<T>) {
+        let (first, last) = (first.as_ptr(), last.as_ptr());
+        // SAFETY: caller guarantees `last` is a live node (NonNull is non-null).
         unsafe { T::set_next(last, ptr::null_mut()) };
         if cfg!(debug_assertions) {
             let mut item = first;

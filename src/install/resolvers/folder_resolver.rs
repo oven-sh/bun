@@ -9,7 +9,7 @@ use bun_semver::{self as semver, String as SemverString};
 use bun_sys::{self, Fd, File, O};
 
 use crate::bun_json::Expr;
-use crate::dependency::{self, Dependency};
+use crate::dependency::{self};
 use crate::install::{Features, Lockfile, PackageID};
 use crate::lockfile::Package as LockfilePackage;
 use crate::lockfile_real::StringBuilder;
@@ -94,7 +94,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 
 // Zig: std.HashMapUnmanaged(u64, FolderResolution, IdentityContext(u64), 80)
 // PORT NOTE: bun_collections::HashMap currently ignores the context/load-factor
-// type params (backed by std HashMap); identity hashing is a Phase-B perf item.
+// type params (backed by std HashMap); identity hashing is a TODO(perf).
 pub type Map = HashMap<u64, FolderResolution, IdentityContext<u64>>;
 
 pub fn normalize(path: &[u8]) -> &[u8] {
@@ -190,7 +190,7 @@ fn normalize_package_json_path<'a>(
     joined: &'a mut PathBuffer,
     non_normalized_path: &[u8],
 ) -> Paths<'a> {
-    let mut abs: &[u8] = b"";
+    let abs: &[u8];
     let rel: &[u8];
     // We consider it valid if there is a package.json in the folder
     let normalized: &[u8] = if non_normalized_path.len() == 1 && non_normalized_path[0] == b'.' {
@@ -269,9 +269,9 @@ fn normalize_package_json_path<'a>(
 fn read_package_json_from_disk<R: FolderResolverImpl>(
     manager: &mut PackageManager,
     abs: &ZStr,
-    version: dependency::Version,
+    version: &dependency::Version,
     features: Features,
-    // PERF(port): was comptime monomorphization (features + ResolverType) — profile in Phase B
+    // PERF(port): was comptime monomorphization (features + ResolverType) — profile if hot
     resolver: &mut R,
 ) -> Result<LockfilePackage, bun_core::Error> {
     let mut body = npm::Registry::BodyPool::get();
@@ -298,6 +298,9 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
+        // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
+        // argument; `log` points into a separate `Log` allocation (see PORT NOTE
+        // above), so this `&mut` reborrow aliases no other live reference.
         let json = unsafe { &mut *manager_ptr }
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())
@@ -375,7 +378,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         return Ok(*manager.lockfile.packages.get(existing_id as usize));
     }
 
-    Ok(manager.lockfile.append_package(package)?)
+    Ok(manager.lockfile.append_package(&package)?)
 }
 
 #[derive(Copy, Clone)]
@@ -387,7 +390,7 @@ pub enum GlobalOrRelative<'a> {
 
 pub fn get_or_put(
     global_or_relative: GlobalOrRelative<'_>,
-    version: dependency::Version,
+    version: &dependency::Version,
     non_normalized_path: &[u8],
     manager: &mut PackageManager,
 ) -> FolderResolution {

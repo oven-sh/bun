@@ -9,15 +9,15 @@ pub use css::Printer;
 /// and remains valid for the lifetime of the parse + print session (i.e. as
 /// long as the originating `ParserInput`/arena lives). Stored as a raw slice
 /// pointer rather than `&'static [u8]` so the arena lifetime is not laundered
-/// to `'static` (see PORTING.md §Forbidden patterns); Phase B threads an
-/// explicit `'bump` lifetime here.
+/// to `'static` (see PORTING.md §Forbidden patterns). A future refactor
+/// should thread an explicit `'bump` lifetime here.
 pub type CssString = *const [u8];
 
 pub struct CssStringFns;
 impl CssStringFns {
     pub fn parse(input: &mut css::Parser) -> Result<CssString> {
         // No lifetime laundering: capture the arena slice as a raw pointer.
-        input.expect_string().map(|s| std::ptr::from_ref::<[u8]>(s))
+        input.expect_string().map(std::ptr::from_ref::<[u8]>)
     }
 
     pub fn to_css(this: &CssString, dest: &mut Printer) -> core::result::Result<(), PrintErr> {

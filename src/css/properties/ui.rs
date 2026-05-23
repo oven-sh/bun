@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use crate as css;
 
@@ -6,7 +5,6 @@ use css::css_properties::Property;
 use css::{PrintErr, Printer, PropertyHandlerContext, SmallList};
 
 use css::css_values::color::CssColor;
-#[allow(unused_imports)]
 use css::css_values::ident::DashedIdent;
 use css::css_values::number::CSSNumber;
 use css::css_values::url::Url;
@@ -68,8 +66,8 @@ impl ColorScheme {
         Ok(res)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if *self == ColorScheme::empty() {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+        if self == ColorScheme::empty() {
             return dest.write_str("normal");
         }
 
@@ -91,9 +89,9 @@ impl ColorScheme {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _arena: &Arena) -> Self {
+    pub fn deep_clone(self, _arena: &Arena) -> Self {
         // PORT NOTE: bitflags is Copy.
-        *self
+        self
     }
 }
 
@@ -184,18 +182,16 @@ pub enum Appearance {
     SliderHorizontal,
     SquareButton,
     Textarea,
-    // TODO(port): arena-owned slice in Zig (`[]const u8`); using raw fat ptr until 'bump threading in Phase B.
+    // TODO(port): arena-owned slice in Zig (`[]const u8`); using raw fat ptr until `'bump` threading lands.
     NonStandard(*const [u8]),
 }
 
 #[derive(Default)]
 pub struct ColorSchemeHandler;
 
-// PORT NOTE: un-gated B-2 round 15 — Property::ColorScheme variant +
-// PropertyHandlerContext::{add_dark_rule,targets} + TokenList/DashedIdent/
-// CustomProperty shapes are all real now. `context.arena` was dropped from
-// PropertyHandlerContext; `define_var` no longer needs an arena because
-// `TokenList.v` is a std `Vec<TokenOrValue>` (LIFETIMES.tsv classification).
+// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext;
+// `define_var` no longer needs an arena because `TokenList.v` is a std
+// `Vec<TokenOrValue>` (LIFETIMES.tsv classification).
 impl ColorSchemeHandler {
     pub fn handle_property(
         &mut self,

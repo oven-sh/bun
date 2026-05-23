@@ -395,7 +395,7 @@ function emitCppCallToVariant(name: string, variant: Variant, dispatchFunctionNa
         case "USVString":
         case "ByteString":
           cpp.line(
-            `return JSC::JSValue::encode(WebCore::toJS<WebCore::IDL${variant.ret.kind}>(*global, out.toWTFString()));`,
+            `return JSC::JSValue::encode(WebCore::toJS<WebCore::IDL${variant.ret.kind}>(*global, out.transferToWTFString()));`,
           );
           break;
       }

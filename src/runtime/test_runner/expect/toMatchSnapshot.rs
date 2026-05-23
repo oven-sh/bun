@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 use bun_core::ZigString;
 
 use super::Expect;
@@ -24,7 +23,7 @@ pub fn to_match_snapshot(
 
     let not = this.flags.get().not();
     if not {
-        // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
+        // PERF(port): was `comptime getSignature(...)` — would require `get_signature` to be `const fn`.
         let signature = get_signature("toMatchSnapshot", "", true);
         return this.throw_fmt(
             global,
@@ -35,7 +34,7 @@ pub fn to_match_snapshot(
     }
 
     let Some(buntest_strong) = this.bun_test() else {
-        // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
+        // PERF(port): was `comptime getSignature(...)` — would require `get_signature` to be `const fn`.
         let signature = get_signature("toMatchSnapshot", "", true);
         return this.throw_fmt(
             global,
@@ -66,7 +65,7 @@ pub fn to_match_snapshot(
         }
         _ => {
             if !arguments[0].is_object() {
-                // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
+                // PERF(port): was `comptime getSignature(...)` — would require `get_signature` to be `const fn`.
                 let signature =
                     get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
                 return this.throw_fmt(

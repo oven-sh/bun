@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::Fd;
@@ -35,9 +34,7 @@ impl ListenSocket {
         unsafe { &mut *std::ptr::from_mut::<ListenSocket>(self).cast::<us_socket_t>() }
     }
 
-    pub fn socket<const IS_SSL: bool>(
-        &mut self,
-    ) -> crate::socket::NewSocketHandler<IS_SSL> {
+    pub fn socket<const IS_SSL: bool>(&mut self) -> crate::socket::NewSocketHandler<IS_SSL> {
         // NewSocketHandler is local (crate::socket); no upward dep.
         crate::socket::NewSocketHandler::<IS_SSL>::from(std::ptr::from_mut::<us_socket_t>(
             self.get_socket(),
@@ -129,8 +126,6 @@ unsafe extern "C" {
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
     safe fn us_listen_socket_ext(ls: &mut ListenSocket) -> *mut c_void;
     safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
-    #[allow(dead_code)]
-    safe fn us_listen_socket_port(ls: &mut ListenSocket) -> c_int;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

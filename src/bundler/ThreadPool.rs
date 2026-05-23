@@ -2,8 +2,6 @@
 //! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
 //! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
 //!
-//! Un-gated B-2: structural surface (struct fields, schedule, IO pool, worker
-//! map) is real so `ParseTask` / `bundle_v2` / `Graph` can name and drive it.
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
 //! bitwise struct copy); the `linker.resolver` backref is wired by
@@ -13,21 +11,19 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_alloc::Arena as ThreadLocalArena; // Zig: bun.allocators.MimallocArena → bumpalo::Bump
-use bun_collections::VecExt;
+use bun_alloc::Arena as ThreadLocalArena; // Zig: bun.allocators.MimallocArena
 use bun_collections::{ArrayHashMap, MapEntry};
-use bun_core::{self, FeatureFlags, env_var, output as Output};
+use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
 use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 
-#[allow(unused_imports)]
-use crate::cache::{self as CacheSet, Contents, Entry as CacheEntry, ExternalFreeFunction};
+use crate::cache::{Contents, Entry as CacheEntry, ExternalFreeFunction};
 use crate::linker_context_mod::StmtList;
 // PORT NOTE: `crate::options::Target` is the lower-tier `bun_options_types`
 // enum (re-exported for downstream crates); `BundleOptions.target` is the
 // file-backed `options_impl::Target`. Compare against the latter so
-// `primary.options.target == target` type-checks. The two enums collapse in
-// Phase B-3 (see lib.rs `pub mod options` shadow note).
+// `primary.options.target == target` type-checks. TODO(refactor): collapse
+// the two enums into one (see lib.rs `pub mod options` shadow note).
 use crate::BundleV2;
 use crate::options_impl::Target;
 use crate::parse_task::{ContentsOrFd, ParseTask, ParseTaskStage};
@@ -65,6 +61,10 @@ pub struct ThreadPool {
     // would alias `&mut ThreadPool` across threads (UB before the lock is even
     // reached).
     pub workers_assignments: bun_threading::Guarded<ArrayHashMap<ThreadId, *mut Worker>>,
+    /// Monotonic per-pool stamp for the [`TLS_WORKER`] fast-path key. Pointer
+    /// identity is unsound across `Bun.build()` calls (mimalloc reuses the
+    /// freed slot), so each pool draws a fresh `u64` from [`POOL_GENERATION`].
+    pub generation: u64,
     // BACKREF (LIFETIMES.tsv row 170: ThreadPool.v2). `BundleV2` is generic
     // over `'a`; erase to `'static` behind the raw pointer like ParseTask.ctx.
     pub v2: *const BundleV2<'static>,
@@ -75,6 +75,10 @@ pub struct ThreadPool {
 // the raw-pointer fields are externally synchronized exactly as in the Zig
 // source.
 unsafe impl Send for ThreadPool {}
+// SAFETY: `&ThreadPool` is read concurrently from worker-pool threads via
+// `get_worker(&self)`; the only field mutated under `&self` is
+// `workers_assignments` (through its `bun_threading::Guarded` lock), and the
+// raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
 unsafe impl Sync for ThreadPool {}
 
 impl Default for ThreadPool {
@@ -87,6 +91,7 @@ impl Default for ThreadPool {
             worker_pool: ptr::null_mut(),
             worker_pool_is_owned: false,
             workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
+            generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
             v2: ptr::null(),
         }
     }
@@ -147,7 +152,7 @@ mod io_thread_pool {
             unsafe {
                 (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config {
-                        max_threads: u32::from(bun_core::get_thread_count().min(4).max(2)),
+                        max_threads: u32::from(bun_core::get_thread_count().clamp(2, 4)),
                         // Use a much smaller stack size for the IO thread pool
                         stack_size: 512 * 1024,
                     },
@@ -207,14 +212,8 @@ impl ThreadPool {
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
-    // PORT NOTE: generic over `V2` because `bundle_v2.rs` currently carries two
-    // `BundleV2` definitions (the canonical one + `_the gated draft block (now dissolved)::BundleV2`)
-    // during the phased port, and both call `ThreadPool::init`. The backref is
-    // stored as a type-erased raw pointer (`.cast()`) regardless, so the
-    // monomorphised body is identical. Collapses to `&BundleV2<'_>` once the
-    // draft module is dropped.
-    pub fn init<V2>(
-        v2: &V2,
+    pub fn init(
+        v2: &BundleV2<'_>,
         // `Option<NonNull<_>>` (not `Option<&mut _>`): callers pass the
         // process-wide `WorkPool` singleton (`OnceLock`-backed, shared across
         // worker threads). Materializing `&mut` from that provenance is UB
@@ -249,7 +248,10 @@ impl ThreadPool {
         Ok(this)
     }
 
-    pub fn init_with_pool<V2>(v2: &V2, worker_pool: *mut ThreadPoolLib::ThreadPool) -> ThreadPool {
+    pub fn init_with_pool(
+        v2: &BundleV2<'_>,
+        worker_pool: *mut ThreadPoolLib::ThreadPool,
+    ) -> ThreadPool {
         ThreadPool {
             worker_pool,
             io_pool: if Self::uses_io_pool() {
@@ -258,9 +260,10 @@ impl ThreadPool {
                 None
             },
             // BACKREF: lifetime erased behind the raw pointer.
-            v2: std::ptr::from_ref::<V2>(v2).cast(),
+            v2: std::ptr::from_ref(v2).cast::<BundleV2<'static>>(),
             worker_pool_is_owned: false,
             workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
+            generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -315,14 +318,11 @@ impl ThreadPool {
             return false;
         }
 
+        // 4 was the sweet spot on macOS. Didn't check the sweet spot on Windows.
         #[cfg(any(target_os = "macos", windows))]
-        {
-            // 4 was the sweet spot on macOS. Didn't check the sweet spot on Windows.
-            return bun_core::get_thread_count() > 3;
-        }
-
-        #[allow(unreachable_code)]
-        false
+        return bun_core::get_thread_count() > 3;
+        #[cfg(not(any(target_os = "macos", windows)))]
+        return false;
     }
 
     /// Shut down the IO pool, if and only if no `ThreadPool`s exist right now.
@@ -336,7 +336,11 @@ impl ThreadPool {
         }
     }
 
-    pub fn schedule_with_options(&self, parse_task: &mut ParseTask, is_inside_thread_pool: bool) {
+    fn schedule_with_options(&self, parse_task: *mut ParseTask, is_inside_thread_pool: bool) {
+        // SAFETY: callers (`schedule`/`schedule_inside_thread_pool`) pass a
+        // live, exclusively-owned ParseTask (heap- or arena-allocated raw
+        // pointer); see call sites in bundle_v2.rs.
+        let parse_task = unsafe { &mut *parse_task };
         if matches!(parse_task.contents_or_fd, ContentsOrFd::Contents(_))
             && matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode)
         {
@@ -395,14 +399,11 @@ impl ThreadPool {
     // PORT NOTE: takes `*mut` (Zig: `*ParseTask`) so callers can pass either a
     // raw heap pointer (e.g. `load.parse_task`) or a `&mut` (auto-coerces).
     pub fn schedule(&self, parse_task: *mut ParseTask) {
-        // SAFETY: caller passes a live, exclusively-owned ParseTask (heap- or
-        // arena-allocated raw pointer); see call sites in bundle_v2.rs.
-        self.schedule_with_options(unsafe { &mut *parse_task }, false);
+        self.schedule_with_options(parse_task, false);
     }
 
     pub fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
-        // SAFETY: see `schedule` above.
-        self.schedule_with_options(unsafe { &mut *parse_task }, true);
+        self.schedule_with_options(parse_task, true);
     }
 
     // PORT NOTE: returns `&'static mut` — the `Worker` is `heap::alloc`'d
@@ -411,7 +412,30 @@ impl ThreadPool {
     // Takes `&self` (not `&mut`) because this is called concurrently from
     // worker-pool threads via `Worker::get`; mutation goes through the
     // `bun_threading::Guarded` on `workers_assignments`.
+    //
+    // Fast path is a per-thread `(pool, worker)` cache: the map lookup is a
+    // pure `current_thread_id() → *mut Worker` re-read after first touch, so
+    // every subsequent call from the same thread for the same pool is a TLS
+    // load + pointer compare. The lock is only taken on first touch per
+    // `(thread, pool)` pair. Zig (ThreadPool.zig:180) takes the lock on every
+    // call; on a 19 K-module build that's ~100 K contended acquisitions, which
+    // perf attributes ~97 % of the build's futex traffic to.
+    #[inline]
     pub fn get_worker(&self, id: ThreadId) -> &'static mut Worker {
+        let (generation, worker) = TLS_WORKER.get();
+        if generation == self.generation {
+            // SAFETY: cached by `get_worker_slow` on this thread; the Worker is
+            // heap-pinned (boxed in the slow path) and live while
+            // `self.generation` is — `deinit_soon` runs before the pool is
+            // dropped, and a new pool at the same address has a fresh
+            // generation, so a stale TLS entry never matches here.
+            return unsafe { &mut *worker };
+        }
+        self.get_worker_slow(id)
+    }
+
+    #[cold]
+    fn get_worker_slow(&self, id: ThreadId) -> &'static mut Worker {
         let worker: *mut Worker;
         {
             let mut map = self.workers_assignments.lock();
@@ -419,6 +443,7 @@ impl ThreadPool {
                 MapEntry::Occupied(o) => {
                     let w = *o.into_mut();
                     drop(map);
+                    TLS_WORKER.set((self.generation, w));
                     // SAFETY: map only stores live heap-allocated Workers (inserted below).
                     return unsafe { &mut *w };
                 }
@@ -459,10 +484,20 @@ impl ThreadPool {
                 stmt_list: None,
             });
             (*worker).init(&*self.v2);
+            TLS_WORKER.set((self.generation, worker));
             &mut *worker
         }
     }
 }
+
+/// Per-thread cache for [`ThreadPool::get_worker`]. Keyed on
+/// [`ThreadPool::generation`] (not the pool pointer — `Bun.build()` reuse makes
+/// pointer identity ABA). `0` never matches a live pool.
+#[thread_local]
+static TLS_WORKER: core::cell::Cell<(u64, *mut Worker)> =
+    core::cell::Cell::new((0, core::ptr::null_mut()));
+
+static POOL_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Worker
@@ -520,9 +555,18 @@ impl Worker {
     /// can observe the `Worker`, and is never dangling after that point. The
     /// pointee is the worker's own `heap` field, which is pinned for the
     /// worker's lifetime.
+    /// The worker-owned bump arena. Returns `&'static` because the arena is
+    /// pinned for the worker's lifetime and `Worker::get` already hands out a
+    /// `&'static mut Worker`; centralising the erasure here avoids per-call-site
+    /// `detach_lifetime_ref` (the previous pattern at `ParseTask::run`).
     #[inline]
-    pub fn arena(&self) -> &ThreadLocalArena {
-        self.arena.get()
+    pub fn arena(&self) -> &'static ThreadLocalArena {
+        // SAFETY: `self.arena` is a `BackRef` to `self.heap`, set in
+        // `Worker::create` and never reassigned. `Worker::get` already returns
+        // `&'static mut Worker`; callers are task callbacks that complete
+        // before `deinit_soon` tears the worker down, so the arena outlives
+        // every reference handed out here.
+        unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) }
     }
 }
 
@@ -555,7 +599,7 @@ impl Worker {
     /// `Task.callback` field type at the struct-init site). `task` is the
     /// `deinit_task` field of a live boxed `Worker` — guaranteed by
     /// [`Self::deinit_soon`], the sole scheduler of this callback.
-    pub fn deinit_callback(task: *mut ThreadPoolLib::Task) {
+    fn deinit_callback(task: *mut ThreadPoolLib::Task) {
         bun_core::scoped_log!(ThreadPool, "Worker.deinit()");
         // SAFETY: `task` points to `Worker.deinit_task` (intrusive field) —
         // only ever invoked by the thread pool against a `Worker` enqueued via
@@ -584,7 +628,7 @@ impl Worker {
             // SAFETY: `self` is the heap-allocated Worker; sole owner now that
             // the caller is about to `clear_retaining_capacity()` the
             // `workers_assignments` map.
-            unsafe { Self::deinit(self as *mut Self) };
+            unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
         }
     }
 
@@ -596,6 +640,23 @@ impl Worker {
         // SAFETY: caller contract.
         let worker = unsafe { &mut *this };
         if worker.has_created {
+            // `wire_after_move` boxed a `bun_js_parser_jsc::Macro::MacroContext`
+            // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
+            // `Transpiler` has no `Drop` impl, so `worker.data = None` below
+            // would strand it. Free both transpilers' boxes explicitly — the
+            // box only owns a `MacroMap` and a lazy `bun_alloc::Arena`, no JSC
+            // handles, so the worker thread tearing it down is safe.
+            if let Some(data) = worker.data.as_mut() {
+                if let Some(ctx) = data.transpiler.macro_context.take() {
+                    ctx.deinit();
+                }
+                if let Some(other) = data.other_transpiler.as_deref_mut() {
+                    if let Some(ctx) = other.macro_context.take() {
+                        ctx.deinit();
+                    }
+                }
+                js_ast::Macro::collect_vm_garbage();
+            }
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
             // first, then the arenas it references.
             worker.data = None;
@@ -603,8 +664,8 @@ impl Worker {
             worker.stmt_list = None;
         }
         // SAFETY: `ast_memory_store` is always a valid `ManuallyDrop` —
-        // `get_worker` unconditionally writes `ASTMemoryAllocator::default()`
-        // (which owns a live `bumpalo::Bump`), and `create()` may overwrite it
+        // `get_worker` unconditionally writes `ASTMemoryAllocator::default()`,
+        // and `create()` may overwrite it
         // via `*ast_memory_store = ...`. Dropped exactly once here, *outside*
         // the `has_created` guard so the default-constructed arena is freed
         // even when `create()` never ran (Zig left it `undefined`; Rust does
@@ -640,22 +701,10 @@ impl Worker {
 
         worker.ast_memory_store.push();
 
-        if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
-            // PORT NOTE: `MimallocArena::help_catch_memory_issues` collected
-            // mimalloc's deferred frees + zero-filled freed pages. The Rust
-            // arena is `bumpalo::Bump`, which has no equivalent — calls
-            // dropped, gated on the real `MimallocArena` un-gate
-            // (`bun_alloc/MimallocArena.rs` is ``).
-        }
-
         worker
     }
 
     pub fn unget(&mut self) {
-        if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
-            // See `get()` — `help_catch_memory_issues` no-op while heap = Bump.
-        }
-
         self.ast_memory_store.pop();
     }
 
@@ -764,8 +813,5 @@ impl Worker {
         }
     }
 }
-
-use bun_ast::Index;
-use bun_ast::Ref;
 
 // ported from: src/bundler/ThreadPool.zig

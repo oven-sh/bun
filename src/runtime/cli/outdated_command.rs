@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     self, LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
@@ -33,8 +33,6 @@ struct GroupedOutdatedInfo {
     package_id: PackageID,
     dep_id: DependencyID,
     workspace_pkg_id: PackageID,
-    #[allow(dead_code)]
-    is_catalog: bool,
     grouped_workspace_names: Option<Box<[u8]>>,
 }
 
@@ -42,14 +40,13 @@ struct GroupedOutdatedInfo {
 enum FilterType<'a> {
     All,
     Name(&'a [u8]),
-    #[allow(dead_code)]
-    Path(&'a [u8]),
+    Path,
 }
 
 impl<'a> FilterType<'a> {
     fn init(pattern: &'a [u8], is_path: bool) -> Self {
         if is_path {
-            FilterType::Path(pattern)
+            FilterType::Path
         } else {
             FilterType::Name(pattern)
         }
@@ -331,8 +328,8 @@ impl OutdatedCommand {
             catalog_name_hash: u64,
             behavior: Behavior,
         }
-        let mut catalog_map: std::collections::HashMap<CatalogKey, Vec<PackageID>> =
-            std::collections::HashMap::new();
+        let mut catalog_map: bun_collections::HashMap<CatalogKey, Vec<PackageID>> =
+            bun_collections::HashMap::new();
 
         for item in outdated_items {
             if item.is_catalog {
@@ -355,7 +352,6 @@ impl OutdatedCommand {
                     package_id: item.package_id,
                     dep_id: item.dep_id,
                     workspace_pkg_id: item.workspace_pkg_id,
-                    is_catalog: false,
                     grouped_workspace_names: None,
                 });
             }
@@ -408,7 +404,6 @@ impl OutdatedCommand {
                 package_id: item.package_id,
                 dep_id: item.dep_id,
                 workspace_pkg_id: item.workspace_pkg_id,
-                is_catalog: true,
                 grouped_workspace_names: Some(workspace_names.into_boxed_slice()),
             });
         }
@@ -503,7 +498,7 @@ impl OutdatedCommand {
                     let matched = 'match_: {
                         for pattern in patterns {
                             match pattern {
-                                FilterType::Path(_) => unreachable!(),
+                                FilterType::Path => unreachable!(),
                                 FilterType::Name(name_pattern) => {
                                     if name_pattern.is_empty() {
                                         continue;
@@ -705,7 +700,7 @@ impl OutdatedCommand {
         table.print_column_names();
 
         // Print grouped items sorted by behavior type
-        // PERF(port): was `inline for` over a comptime tuple — profile in Phase B.
+        // PERF(port): was `inline for` over a comptime tuple.
         for group_behavior in [
             Behavior::PROD,
             Behavior::DEV,
@@ -906,7 +901,6 @@ impl OutdatedCommand {
     }
 }
 
-#[allow(dead_code)]
 type _AssertImports = (
     package_manager::WorkspaceFilter,
     package_manager::ManifestCacheOptions<'static>,

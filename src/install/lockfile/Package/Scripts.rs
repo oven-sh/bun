@@ -99,7 +99,7 @@ impl Scripts {
         for (dst, src) in scripts.hooks_mut().into_iter().zip(self.hooks()) {
             *dst = builder.append::<SemverString>(src.slice(buf));
         }
-        // PERF(port): was `inline for` over comptime name list — profile in Phase B
+        // PERF(port): was `inline for` over comptime name list — profile if hot.
         scripts
     }
 
@@ -107,7 +107,7 @@ impl Scripts {
         for hook in self.hooks() {
             builder.count(hook.slice(buf));
         }
-        // PERF(port): was `inline for` over comptime name list — profile in Phase B
+        // PERF(port): was `inline for` over comptime name list — profile if hot.
     }
 
     pub fn has_any(&self) -> bool {
@@ -171,7 +171,7 @@ impl Scripts {
                 }
                 script_index += 1;
             }
-            // PERF(port): was `inline for` over tuple — profile in Phase B
+            // PERF(port): was `inline for` over tuple — profile if hot.
         }
 
         match resolution_tag {
@@ -189,7 +189,7 @@ impl Scripts {
                     }
                     script_index += 1;
                 }
-                // PERF(port): was `inline for` over tuple — profile in Phase B
+                // PERF(port): was `inline for` over tuple — profile if hot.
             }
             ResolutionTag::Workspace => {
                 script_index += 1;
@@ -201,7 +201,6 @@ impl Scripts {
                         Some(Box::<[u8]>::from(self.prepare.slice(lockfile_buf)));
                     counter += 1;
                 }
-                script_index += 2;
             }
             _ => {}
         }
@@ -279,7 +278,7 @@ impl Scripts {
                         }
                     }
                 }
-                // PERF(port): was `inline for` over comptime name list — profile in Phase B
+                // PERF(port): was `inline for` over comptime name list — profile if hot.
             }
         }
     }
@@ -295,7 +294,7 @@ impl Scripts {
                         }
                     }
                 }
-                // PERF(port): was `inline for` + `@field` — profile in Phase B
+                // PERF(port): was `inline for` + `@field` — profile if hot.
             }
         }
     }
@@ -310,20 +309,20 @@ impl Scripts {
     ) -> Result<Option<List>, bun_core::Error> {
         // TODO(port): narrow error set
         if self.has_any() {
-            let add_node_gyp_rebuild_script = if lockfile
-                .has_trusted_dependency(folder_name, resolution)
-                && self.install.is_empty()
-                && self.preinstall.is_empty()
-            {
-                // `defer save.restore()` — `save()` returns an RAII guard that
-                // restores the path length on Drop and derefs to the path.
-                let mut save = folder_path.save();
-                let _ = save.append(b"binding.gyp"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+            let add_node_gyp_rebuild_script =
+                if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
+                    && self.install.is_empty()
+                    && self.preinstall.is_empty()
+                {
+                    // `defer save.restore()` — `save()` returns an RAII guard that
+                    // restores the path length on Drop and derefs to the path.
+                    let mut save = folder_path.save();
+                    let _ = save.append(b"binding.gyp"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
-                bun_sys::exists(save.slice())
-            } else {
-                false
-            };
+                    bun_sys::exists(save.slice())
+                } else {
+                    false
+                };
 
             return Ok(self.create_list(
                 lockfile,
@@ -449,7 +448,7 @@ impl List {
         resolution_buf: &[u8],
         format_type: PrintFormat,
     ) {
-        // PERF(port): was comptime enum param — profile in Phase B
+        // PERF(port): was comptime enum param — profile if hot.
         let needle = bun_paths::NODE_MODULES_NEEDLE;
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
             bun_core::pretty!(
@@ -525,7 +524,7 @@ impl List {
                     .scripts
                     .hook_mut(i)
                     .push(script.to_vec().into_boxed_slice());
-                // PERF(port): was `inline for` + appendAssumeCapacity-style — profile in Phase B
+                // PERF(port): was `inline for` + appendAssumeCapacity-style — profile if hot.
             }
         }
     }

@@ -1,6 +1,6 @@
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
-    JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString, host_fn,
+    JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString,
 };
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
@@ -48,13 +48,6 @@ impl ZigStringTruncExt for ZigString {
     }
 }
 
-// Allow on the stack:
-// - 8 string slices
-// - 3 path buffers
-// - extra padding
-const STACK_FALLBACK_SIZE_LARGE: usize =
-    8 * core::mem::size_of::<&[u8]>() + ((STACK_FALLBACK_SIZE_SMALL * 3) + 64);
-
 /// Pooled path scratch carved from the per-VM [`RarePathBuf`] (mirrors Zig's
 /// `RareData.path_buf.get(min_len, fallback)` `StackFallbackAllocator`).
 ///
@@ -98,11 +91,6 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
 }
 
 const PATH_MIN_WIDE: usize = 4096; // 4 KB
-#[cfg(windows)]
-// Up to 4 KB, instead of MAX_PATH_BYTES which is 96 KB on Windows, ouch!
-const STACK_FALLBACK_SIZE_SMALL: usize = PATH_MIN_WIDE;
-#[cfg(not(windows))]
-const STACK_FALLBACK_SIZE_SMALL: usize = MAX_PATH_BYTES;
 
 /// Canonical path-unit trait — re-export so external callers that named
 /// `crate::node::path::PathChar` keep compiling.
@@ -284,37 +272,10 @@ fn memmove<T: Copy>(dst: &mut [T], src: &[T]) {
     dst.copy_from_slice(src);
 }
 
-/// Helper: `bun.copy(T, dst, src)` — `dst.len() >= src.len()`.
-/// (Rust's borrow rules forbid `&mut [T]`/`&[T]` overlap, so memmove ⇒ memcpy.)
-#[inline]
-fn copy_overlapping<T: Copy>(dst: &mut [T], src: &[T]) {
-    dst[..src.len()].copy_from_slice(src);
-}
-
-/// Based on Node v21.6.1 private helper formatExt:
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L130C10-L130C19
-#[inline]
-fn format_ext_t<'a, T: PathCharCwd>(ext: &'a [T], buf: &'a mut [T]) -> &'a [T] {
-    let len = ext.len();
-    if len == 0 {
-        return &[];
-    }
-    if ext[0] == T::from_u8(CHAR_DOT) {
-        return ext;
-    }
-    let buf_size = len + 1;
-    buf[0] = T::from_u8(CHAR_DOT);
-    memmove(&mut buf[1..buf_size], ext);
-    &buf[0..buf_size]
-}
-
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
 pub fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
-    let cwd = match get_cwd_t(buf) {
-        Ok(r) => r,
-        Err(e) => return Err(e),
-    };
+    let cwd = get_cwd_t(buf)?;
     let len = cwd.len();
     if len == 0 {
         return Ok(cwd);
@@ -673,7 +634,7 @@ pub fn basename(
         return Ok(path_ptr);
     }
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
 
     let mut suffix_zslice: Option<bun_core::ZigStringSlice> = None;
@@ -890,7 +851,7 @@ pub fn dirname(
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
     dirname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -1135,7 +1096,7 @@ pub fn extname(
         return Ok(path_ptr);
     }
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
     extname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -1163,8 +1124,8 @@ fn _format_t<'a, T: PathCharCwd>(
     let dir_or_root = if dir_is_root { root } else { dir };
     let dir_len = dir_or_root.len();
 
-    let mut buf_offset: usize = 0;
-    let mut buf_size: usize = 0;
+    let mut buf_offset: usize;
+    let mut buf_size: usize;
 
     // Translated from the following JS code:
     //   const base = pathObject.base ||
@@ -1222,7 +1183,6 @@ fn _format_t<'a, T: PathCharCwd>(
     base_len = base_or_name_ext_range.1 - base_or_name_ext_range.0;
     if base_len > 0 {
         buf_offset = if dir_is_root { dir_len } else { dir_len + 1 };
-        buf_size = buf_offset + base_len;
         // Move all bytes to the right by dirLen + (maybe 1 for the separator).
         // Use copy_within because baseOrNameExt and buf overlap.
         buf.copy_within(
@@ -1309,7 +1269,7 @@ pub fn format(
         Default::default(),
     )?;
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
 
     let mut root: &[u8] = b"";
     let root_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "root")? {
@@ -1429,7 +1389,7 @@ pub fn join_posix_t<'a, T: PathCharCwd>(
     }
 
     let mut buf_size: usize = 0;
-    let mut buf_offset: usize = 0;
+    let mut buf_offset: usize;
 
     // Back joined by expandable buf2 in case it is long.
     // PORT NOTE: reshaped for borrowck — track length instead of slice into buf2.
@@ -1464,8 +1424,11 @@ pub fn join_posix_t<'a, T: PathCharCwd>(
     normalize_posix_t(&buf2[0..joined_len], buf)
 }
 
+/// # Safety
+/// `lhs` and `result` must be valid, aligned `BunString*` pointers and
+/// `rhs_ptr[..rhs_len]` must be a valid readable slice. Called only from C++.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Node__Path_joinWTF(
+pub unsafe extern "C" fn Bun__Node__Path_joinWTF(
     lhs: *mut bun_core::String,
     rhs_ptr: *const u8,
     rhs_len: usize,
@@ -1505,7 +1468,7 @@ pub fn join_windows_t<'a, T: PathCharCwd>(
     let is_sep_t = is_sep_windows_t::<T>;
 
     let mut buf_size: usize = 0;
-    let mut buf_offset: usize = 0;
+    let mut buf_offset: usize;
 
     // Backed by expandable buf2 in case it is long.
     // PORT NOTE: reshaped for borrowck — track ranges instead of slices into buf2.
@@ -1521,7 +1484,6 @@ pub fn join_windows_t<'a, T: PathCharCwd>(
             //     joined = firstPart = arg;
             //   else
             //     joined += `\\${arg}`;
-            buf_offset = buf_size;
             if buf_size == 0 {
                 buf_size = len;
                 memmove(&mut buf2[0..buf_size], path);
@@ -1918,8 +1880,8 @@ pub fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> 
     // Prefix with _ to avoid shadowing the identifier in the outer scope.
     let mut _is_absolute: bool = false;
 
-    let mut buf_offset: usize = 0;
-    let mut buf_size: usize = 0;
+    let mut buf_offset: usize;
+    let mut buf_size: usize;
 
     if is_sep_t(byte0) {
         // Possible UNC root
@@ -2488,7 +2450,7 @@ pub fn parse(
         return PathParsed::<u8>::default().to_js_object(global_object);
     }
 
-    // PERF(port): was stack-fallback — profile in Phase B
+    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
     parse_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -2509,10 +2471,7 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
 
     // Trim leading forward slashes.
     // Backed by expandable buf2 because fromOrig may be long.
-    let from_orig = match resolve_posix_t(&[from], buf2, buf3) {
-        Ok(r) => r,
-        Err(e) => return Err(e),
-    };
+    let from_orig = resolve_posix_t(&[from], buf2, buf3)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // PORT NOTE: reshaped for borrowck — resolve into buf, then operate via raw indices.
@@ -2520,9 +2479,9 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
     // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
     // resolved value (matches Zig, which captures the returned slice itself).
     let to_orig_len = {
-        let (ptr, len) = match resolve_posix_t(&[to], buf, buf3) {
-            Ok(r) => (r.as_ptr(), r.len()),
-            Err(e) => return Err(e),
+        let (ptr, len) = {
+            let r = resolve_posix_t(&[to], buf, buf3)?;
+            (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
             // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
@@ -2547,7 +2506,7 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     let mut last_common_sep: Option<usize> = None;
 
-    let mut matches_all_of_smallest = false;
+    let matches_all_of_smallest;
     // Add a block to isolate `i`.
     {
         let mut i: usize = 0;
@@ -2587,7 +2546,7 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
         }
     }
 
-    let mut buf_offset: usize = 0;
+    let mut buf_offset: usize;
     let mut buf_size: usize = 0;
 
     // Backed by buf3.
@@ -2657,10 +2616,7 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     }
 
     // Backed by expandable buf2 because fromOrig may be long.
-    let from_orig = match resolve_windows_t(&[from], buf2, buf3) {
-        Ok(r) => r,
-        Err(e) => return Err(e),
-    };
+    let from_orig = resolve_windows_t(&[from], buf2, buf3)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // PORT NOTE: reshaped for borrowck — resolve into buf, then operate via raw indices.
@@ -2668,9 +2624,9 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
     // resolved value (matches Zig, which captures the returned slice itself).
     let to_orig_len = {
-        let (ptr, len) = match resolve_windows_t(&[to], buf, buf3) {
-            Ok(r) => (r.as_ptr(), r.len()),
-            Err(e) => return Err(e),
+        let (ptr, len) = {
+            let r = resolve_windows_t(&[to], buf, buf3)?;
+            (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
             // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
@@ -2716,7 +2672,7 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     let mut last_common_sep: Option<usize> = None;
 
-    let mut matches_all_of_smallest = false;
+    let matches_all_of_smallest;
     // Add a block to isolate `i`.
     {
         let mut i: usize = 0;
@@ -2767,7 +2723,7 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
         }
     }
 
-    let mut buf_offset: usize = 0;
+    let mut buf_offset: usize;
     let mut buf_size: usize = 0;
 
     // Backed by buf3.
@@ -2800,7 +2756,9 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
 
     // Translated from the following JS code:
     //   toStart += lastCommonSep;
-    if last_common_sep.is_none() {
+    if let Some(sep) = last_common_sep {
+        to_start += sep;
+    } else {
         // If toStart would go negative make it toOrigLen - 1 to
         // mimic String#slice with a negative start.
         to_start = if to_start > 0 {
@@ -2808,8 +2766,6 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
         } else {
             to_orig_len - 1
         };
-    } else {
-        to_start += last_common_sep.unwrap();
     }
 
     // Lastly, append the rest of the destination (`to`) path that comes after
@@ -2936,8 +2892,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     let mut resolved_path_len: usize = 0;
     let mut resolved_absolute: bool = false;
 
-    let mut buf_offset: usize = 0;
-    let mut buf_size: usize = 0;
+    let mut buf_size: usize;
 
     let mut i_i64: i64 = if paths.is_empty() {
         -1
@@ -2954,10 +2909,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         } else {
             // cwd is limited to MAX_PATH_BYTES.
             tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
-            match posix_cwd_t(&mut tmp_buf) {
-                Ok(r) => &*r,
-                Err(e) => return Err(e),
-            }
+            &*posix_cwd_t(&mut tmp_buf)?
         };
         // validateString of `path` is performed in pub fn resolve.
         let len = path.len();
@@ -2971,8 +2923,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         // Translated from the following JS code:
         //   resolvedPath = `${path}/${resolvedPath}`;
         if resolved_path_len > 0 {
-            buf_offset = len + 1;
-            buf_size = buf_offset + resolved_path_len;
+            let buf_offset = len + 1;
             // Move all bytes to the right by path.len + 1 for the separator.
             // Use copy_within because resolvedPath and buf2 overlap.
             buf2.copy_within(0..resolved_path_len, buf_offset);
@@ -3049,8 +3000,8 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     let mut resolved_tail_len: usize = 0;
     let mut resolved_absolute: bool = false;
 
-    let mut buf_offset: usize = 0;
-    let mut buf_size: usize = 0;
+    let mut buf_offset: usize;
+    let mut buf_size: usize;
     let mut env_path_len: Option<usize> = None;
 
     let mut i_i64: i64 = if paths.is_empty() {
@@ -3088,10 +3039,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             path_len = p.len();
         } else if resolved_device_len == 0 {
             // cwd is limited to MAX_PATH_BYTES.
-            cwd_len = match get_cwd_t(&mut tmp_buf[..]) {
-                Ok(r) => r.len(),
-                Err(e) => return Err(e),
-            };
+            cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
             path_ptr = tmp_buf.as_ptr();
             path_len = cwd_len;
         } else {
@@ -3107,7 +3055,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                 // `GetEnvironmentVariableW`, which reads an LPCWSTR until NUL. The
                 // Zig spec uses `&[3:0]u16{...}` (sentinel-terminated) for the same
                 // reason.
-                let mut fast_key: [u16; 4];
+                let fast_key: [u16; 4];
                 // Windows has the concept of drive-specific current working
                 // directories. If we've resolved a drive letter but not yet an
                 // absolute path, get cwd for that drive, or the process cwd if
@@ -3187,10 +3135,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                 path_len = ep_len;
             } else {
                 // cwd is limited to MAX_PATH_BYTES.
-                cwd_len = match get_cwd_t(&mut tmp_buf[..]) {
-                    Ok(r) => r.len(),
-                    Err(e) => return Err(e),
-                };
+                cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
                 path_ptr = tmp_buf.as_ptr();
                 path_len = cwd_len;
                 // We must set envPath here so that it doesn't hit the null check just below.
@@ -3224,7 +3169,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
         let len = path_len;
         let mut root_end: usize = 0;
         // Backed by tmpBuf or an anonymous buffer.
-        let mut device_buf: [T; 2] = [T::default(); 2];
+        let device_buf: [T; 2];
         // PORT NOTE: same raw-ptr trick as `path` — `device` may alias tmp_buf.
         let mut device_ptr: *const T = core::ptr::NonNull::<T>::dangling().as_ptr().cast_const();
         let mut device_len: usize = 0;
@@ -3295,6 +3240,12 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                             buf_offset = buf_size;
                             let first_part_len = first_part_end - first_part_start;
                             buf_size += first_part_len;
+                            if buf_size > tmp_buf.len() {
+                                return Err(bun_sys::Error::from_code(
+                                    bun_sys::E::ENAMETOOLONG,
+                                    bun_sys::Tag::TODO,
+                                ));
+                            }
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
                             unsafe {
                                 core::ptr::copy(
@@ -3309,6 +3260,12 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                             let slice_len = j - last;
                             buf_offset = buf_size;
                             buf_size += slice_len;
+                            if buf_size > tmp_buf.len() {
+                                return Err(bun_sys::Error::from_code(
+                                    bun_sys::E::ENAMETOOLONG,
+                                    bun_sys::Tag::TODO,
+                                ));
+                            }
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
                             unsafe {
                                 core::ptr::copy(
@@ -3376,7 +3333,6 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             let slice_len = len - root_end;
             if resolved_tail_len > 0 {
                 buf_offset = slice_len + 1;
-                buf_size = buf_offset + resolved_tail_len;
                 // Move all bytes to the right by path slice.len + 1 for the separator
                 // Use copy_within because resolvedTail and buf2 overlap.
                 buf2.copy_within(0..resolved_tail_len, buf_offset);
@@ -3456,6 +3412,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
 }
 
 // path.zig:2749 — `extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;`
+#[cfg(unix)]
 unsafe extern "C" {
     safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
 }
@@ -3566,11 +3523,8 @@ pub fn resolve(
     {
         if !is_windows {
             // Micro-optimization #1: avoid creating a new string when passing no arguments or only empty strings.
-            if paths.is_empty() {
-                return Ok(Process__getCachedCwd(global_object));
-            }
             // Micro-optimization #2: path.resolve(".") and path.resolve("./") === process.cwd()
-            else if paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./") {
+            if paths.is_empty() || (paths.len() == 1 && (paths[0] == b"." || paths[0] == b"./")) {
                 return Ok(Process__getCachedCwd(global_object));
             }
         }
@@ -3590,10 +3544,7 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     // validateString of `path` is performed in pub fn toNamespacedPath.
     // Backed by buf.
     // PORT NOTE: reshaped for borrowck — capture length, then re-borrow buf.
-    let resolved_len = match resolve_windows_t(&[path], buf, buf2) {
-        Ok(r) => r.len(),
-        Err(e) => return Err(e),
-    };
+    let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
 
     let len = resolved_len;
     if len <= 2 {
@@ -3602,8 +3553,8 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
         return Ok(&buf[0..path.len()]);
     }
 
-    let mut buf_offset: usize;
-    let mut buf_size: usize;
+    let buf_offset: usize;
+    let buf_size: usize;
 
     let byte0 = buf[0];
     if byte0 == T::from_u8(CHAR_BACKWARD_SLASH) {

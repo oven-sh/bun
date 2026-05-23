@@ -8,7 +8,7 @@ use crate::postgres::any_postgres_error::AnyPostgresError;
 // generated struct becomes a blanket-impl'd extension trait. Call sites change
 // from `pub const decode = DecoderWrap(Self, decodeInternal).decode;` to
 // `impl DecoderWrap for Self { fn decode_fn<C>(...) { decodeInternal(...) } }`.
-// TODO(port): revisit in Phase B once NewReader<C>'s trait bounds are settled.
+// TODO(refactor): revisit once `NewReader<C>`'s trait bounds are settled.
 pub trait DecoderWrap: Sized {
     /// The Zig `decodeFn(this, comptime Context, NewReader(Context){ .wrapped = context })`.
     /// Paired `(comptime Context: type, reader: NewReader(Context))` collapses to a

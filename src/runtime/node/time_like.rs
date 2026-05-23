@@ -10,7 +10,9 @@ pub type TimeLike = libc::timespec;
 // uses `tv_sec`/`tv_nsec`. Confirm bun_sys exposes a wrapper or stick with libc.
 
 const NS_PER_S: f64 = bun_core::time::NS_PER_S as f64;
+#[cfg(not(windows))]
 const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
+#[cfg(not(windows))]
 const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
 
 // Equivalent to `toUnixTimestamp`
@@ -115,9 +117,9 @@ fn from_now() -> TimeLike {
     //        timestamps are not modified, but other error conditions may still
     libc::timespec {
         tv_sec: 0,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         tv_nsec: libc::UTIME_NOW as _,
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         tv_nsec: bun_sys::c::UTIME_NOW as _,
     }
 }

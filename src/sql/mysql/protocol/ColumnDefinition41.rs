@@ -1,4 +1,4 @@
-use crate::mysql::mysql_types::{self as types, FieldType};
+use crate::mysql::mysql_types::FieldType;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::column_identifier::ColumnIdentifier;
 use crate::shared::data::Data;
@@ -130,7 +130,7 @@ impl ColumnDefinition41 {
         // any byte. Rust `#[repr(u8)] enum` is exhaustive, so unknown bytes go through
         // `from_raw`'s match and error here instead. This diverges from Zig (which keeps
         // the value) but is sound; if a new server sends an unknown type, we fail loudly
-        // rather than carry an invalid discriminant. TODO(b2): switch FieldType to a
+        // rather than carry an invalid discriminant. TODO(port): switch FieldType to a
         // `#[repr(transparent)] struct(u8)` newtype to match Zig's non-exhaustive
         // semantics exactly.
         let type_byte = reader.int::<u8>()?;
@@ -145,8 +145,20 @@ impl ColumnDefinition41 {
         // PORT NOTE: `ColumnIdentifier::init` consumes its `Data` (Zig moved by-value
         // and `errdefer name.deinit()`). We can't move `self.name` while `&mut self`
         // is borrowed, so feed it a Temporary view of the same bytes.
-        let name_view = Data::Temporary(bun_ptr::RawSlice::new(self.name.slice()));
-        self.name_or_index = ColumnIdentifier::init(name_view)?;
+        //
+        // The server re-sends column definitions on every COM_STMT_EXECUTE, so a
+        // reused prepared statement re-decodes into the same slot once per query.
+        // Skip the `name_or_index` rebuild when the previously-owned name already
+        // matches — `ColumnIdentifier::init` would produce a byte-identical
+        // `Name(Owned(..))`, so this is a pure allocation elision. Without it the
+        // per-column free/alloc churn shows up as steady RSS growth under the
+        // ASAN quarantine (test/regression/issue/28632).
+        let unchanged = matches!(&self.name_or_index,
+            ColumnIdentifier::Name(existing) if existing.slice() == self.name.slice());
+        if !unchanged {
+            let name_view = Data::Temporary(bun_ptr::RawSlice::new(self.name.slice()));
+            self.name_or_index = ColumnIdentifier::init(name_view)?;
+        }
 
         // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet
         // According to mariadb, there seem to be extra 2 bytes at the end that is not being used
@@ -155,8 +167,8 @@ impl ColumnDefinition41 {
         Ok(())
     }
 
-    // TODO(port): `decoderWrap(ColumnDefinition41, decodeInternal).decode` is a comptime
-    // type-generator that produces a `.decode` wrapper. Phase B: express as a trait impl
+    // TODO(refactor): `decoderWrap(ColumnDefinition41, decodeInternal).decode` is a comptime
+    // type-generator that produces a `.decode` wrapper. Consider expressing as a trait impl
     // (e.g. `impl Decode for ColumnDefinition41`) or a macro from `new_reader`.
     pub fn decode<Context: ReaderContext>(
         &mut self,

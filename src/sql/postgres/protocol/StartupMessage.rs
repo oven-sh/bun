@@ -1,7 +1,6 @@
 use core::mem::size_of;
 
 use super::new_writer::NewWriter;
-use super::write_wrap::WriteWrap;
 use super::z_helpers::z_field_count;
 use crate::postgres::types::int_types::{int4, int32};
 use crate::shared::Data;

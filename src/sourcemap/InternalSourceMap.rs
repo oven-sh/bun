@@ -87,12 +87,12 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::Ordinal; // TODO(b2-blocked): bun_core::Ordinal — local shim
+use crate::Ordinal; // TODO(port): bun_core::Ordinal — local shim
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 
 use crate::vlq::decode as vlq_decode;
-use crate::{LineColumnOffset, Mapping, SourceMapState, VLQ, append_mapping_to_buffer};
+use crate::{LineColumnOffset, Mapping, SourceMapState, append_mapping_to_buffer};
 
 /// A sync entry is emitted every `SYNC_INTERVAL` mappings.
 pub const SYNC_INTERVAL: usize = 64;
@@ -201,13 +201,13 @@ impl InternalSourceMap {
     /// entries in `SavedSourceMap`). Do NOT call on views over the standalone
     /// module graph section or any other borrowed memory.
     // TODO(port): conditional ownership — intentionally NOT `impl Drop` because
-    // `InternalSourceMap` is a Copy view and may borrow non-owned memory. Phase B
-    // should split into an owning newtype with `impl Drop`.
+    // `InternalSourceMap` is a Copy view and may borrow non-owned memory. Could
+    // split into an owning newtype with `impl Drop`.
     pub fn free_owned(self) {
         // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
         // the global allocator with this exact length.
         unsafe {
-            drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
+            drop(Box::<[u8]>::from_raw(std::ptr::slice_from_raw_parts_mut(
                 self.data.cast_mut(),
                 self.total_len(),
             )));
@@ -391,7 +391,7 @@ mod win_hdr {
 /// Parses a window header and steps through its deltas in order. Exception
 /// streams are consumed in order, so a reader is forward-only.
 // TODO(port): lifetime — `bytes`/`base`/`src_idx_mask` borrow the blob; kept as
-// raw pointers to avoid struct lifetime params in Phase A.
+// raw pointers to avoid struct lifetime params.
 #[derive(Copy, Clone)]
 struct WindowReader {
     bytes: *const [u8],
@@ -456,9 +456,11 @@ impl WindowReader {
         let gen_col_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
+        // SAFETY: ORIG_LINE_LEN_OFF is a fixed offset within the 32-byte header at `b`.
         let orig_line_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
+        // SAFETY: ORIG_COL_LEN_OFF is a fixed offset within the 32-byte header at `b`.
         let orig_col_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
@@ -585,7 +587,7 @@ impl Default for FindCacheSlot {
             data: ptr::null(),
             sync_idx: 0,
             decoded_count: 0,
-            // PERF(port): was `undefined` init — profile in Phase B
+            // PERF(port): was `undefined` init — profile if hot.
             reader: WindowReader::DANGLING,
             decoded: [State::default(); SYNC_INTERVAL],
         }
@@ -665,8 +667,8 @@ impl FindCache {
 
 impl Default for FindCache {
     fn default() -> Self {
-        // TODO(port): [T::default(); 16] requires T: Copy; FindCacheSlot is large.
-        // Phase B may want core::array::from_fn or a const ZEROED.
+        // `[T::default(); SLOT_COUNT]` requires `T: Copy`; FindCacheSlot is
+        // large, so build via `from_fn` instead.
         FindCache {
             keys: [FindCacheKey::default(); FindCache::SLOT_COUNT],
             slots: core::array::from_fn(|_| FindCacheSlot::default()),
@@ -763,7 +765,7 @@ impl InternalSourceMap {
         let sync_idx = self.locate_window(target_line, target_col)?;
 
         let mut state = State::default();
-        // PERF(port): was `undefined` init — profile in Phase B
+        // PERF(port): was `undefined` init — profile if hot.
         let mut reader = WindowReader::DANGLING;
         self.seed_window(sync_idx, &mut state, &mut reader);
 
@@ -806,7 +808,7 @@ impl Cursor {
             map,
             state: State::default(),
             peek: None,
-            // PERF(port): was `undefined` init — profile in Phase B
+            // PERF(port): was `undefined` init — profile if hot.
             reader: WindowReader::DANGLING,
             sync_idx: 0,
             has_state: false,
@@ -891,7 +893,7 @@ impl InternalSourceMap {
         let mut idx: u32 = 0;
         while idx < n_sync {
             let mut state = State::default();
-            // PERF(port): was `undefined` init — profile in Phase B
+            // PERF(port): was `undefined` init — profile if hot.
             let mut reader = WindowReader::DANGLING;
             self.seed_window(idx, &mut state, &mut reader);
             emit_vlq(&state, &mut prev, &mut generated_line, out);
@@ -1107,9 +1109,9 @@ impl Builder {
             let d_src_idx = src_idx[k + 1] - src_idx[k];
 
             let bit = 1u8 << (k & 7);
-            // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
-            // and the header mask byte offset is within the zeroed 32-byte header.
             if d_gen_line >= 1 {
+                // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
+                // and the header mask byte offset is within the zeroed 32-byte header.
                 unsafe { *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit };
             }
 
@@ -1144,6 +1146,8 @@ impl Builder {
                 // +1 byte (for the 0xFF terminator) is written after the loop.
                 unsafe { *buf_ptr.add(w_gen_line) = k as u8 };
                 w_gen_line += 1;
+                // SAFETY: same sub-range bound as above; after the +1 advance still within
+                // [gen_line_base, gen_line_base + nd*(1+MAX_VARINT_LEN)).
                 w_gen_line += write_varint(unsafe { buf_ptr.add(w_gen_line) }, d_gen_line);
             }
 
@@ -1186,6 +1190,8 @@ impl Builder {
         debug_assert!(gen_col_len <= u16::MAX as usize);
         debug_assert!(orig_line_len <= u16::MAX as usize);
         debug_assert!(orig_col_len <= u16::MAX as usize);
+        // SAFETY: GEN_COL_LEN_OFF/ORIG_LINE_LEN_OFF/ORIG_COL_LEN_OFF are fixed
+        // offsets within the zeroed 32-byte header at `buf_ptr`.
         unsafe {
             buf_ptr
                 .add(win_hdr::GEN_COL_LEN_OFF)

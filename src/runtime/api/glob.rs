@@ -37,10 +37,9 @@ impl ScanOpts {
         _arena: &Arena,
         cwd_val: JSValue,
         absolute: bool,
-        fn_name: &'static str, // PERF(port): was comptime monomorphization — profile in Phase B
+        fn_name: &'static str, // PERF(port): was comptime monomorphization
     ) -> JsResult<Box<[u8]>> {
-        let cwd_string = BunString::from_js(cwd_val, global_this)?;
-        // `cwd_string` drops at scope exit (was `defer cwd_string.deref()`).
+        let cwd_string = bun_core::OwnedString::new(BunString::from_js(cwd_val, global_this)?);
         if cwd_string.is_empty() {
             return Ok(Box::default());
         }
@@ -92,7 +91,7 @@ impl ScanOpts {
     fn from_js(
         global_this: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-        fn_name: &'static str, // PERF(port): was comptime monomorphization — profile in Phase B
+        fn_name: &'static str, // PERF(port): was comptime monomorphization
         arena: &mut Arena,
     ) -> JsResult<Option<ScanOpts>> {
         let Some(opts_obj) = arguments.next_eat() else {
@@ -304,7 +303,7 @@ impl Glob {
         &self,
         global_this: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-        fn_name: &'static str, // PERF(port): was comptime monomorphization — profile in Phase B
+        fn_name: &'static str, // PERF(port): was comptime monomorphization
         arena: &mut Arena,
     ) -> JsResult<Option<Box<GlobWalker>>> {
         let Some(match_opts) = ScanOpts::from_js(global_this, arguments, fn_name, arena)? else {
@@ -414,7 +413,7 @@ impl Glob {
     // fields are read-only after construction (`pattern`) or already atomic
     // (`has_pending_activity`), so no `Cell`/`JsCell` wrapping is needed — the
     // `&mut self` receivers were vestigial. The codegen shim still emits
-    // `this: &mut Glob` until Phase 1 lands; `&mut T` auto-derefs to `&T`.
+    // `this: &mut Glob`; `&mut T` auto-derefs to `&T`.
     #[bun_jsc::host_fn(method)]
     pub fn __scan(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments_ = callframe.arguments_old::<1>();
@@ -488,9 +487,7 @@ impl Glob {
             bun_sys::Result::Ok(()) => {}
         }
 
-        let matched_paths = glob_walk_result_to_js(&mut glob_walker, global_this);
-
-        matched_paths
+        glob_walk_result_to_js(&mut glob_walker, global_this)
     }
 
     #[bun_jsc::host_fn(method)]

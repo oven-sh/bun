@@ -39,7 +39,7 @@ use bun_core::Output;
 #[inline]
 fn stats_enabled() -> bool {
     static CELL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CELL.get_or_init(|| std::env::var_os("BUN_THREADPOOL_STATS").is_some())
+    *CELL.get_or_init(|| bun_core::getenv_z(bun_core::zstr!("BUN_THREADPOOL_STATS")).is_some())
 }
 
 #[derive(Default)]
@@ -62,7 +62,7 @@ struct PoolStats {
 
 // PORT NOTE: Zig's `packed struct(u32)` named `Sync` is kept as `Sync` here for
 // diffability with the .zig. It shadows `core::marker::Sync` within this module;
-// no `T: Sync` bounds are written in this file. Phase B may rename.
+// no `T: Sync` bounds are written in this file.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct Sync(u32);
@@ -211,6 +211,7 @@ pub struct ThreadPool {
 
 /// Configuration options for the thread pool.
 /// TODO: add CPU core affinity?
+#[derive(Clone, Copy)]
 pub struct Config {
     pub stack_size: u32,
     pub max_threads: u32,
@@ -283,7 +284,7 @@ impl ThreadPool {
         } else {
             0.0
         };
-        eprintln!(
+        Output::print_errorln(format_args!(
             "[threadpool {}] workers={} tasks={} wall={:.3}s busy={:.3}s idle={:.3}s util={:.1}% eff_cpus={:.2} sleeps={}",
             label,
             spawned,
@@ -294,7 +295,7 @@ impl ThreadPool {
             util,
             eff,
             sleeps,
-        );
+        ));
     }
 
     pub fn wake_for_idle_events(&self) {
@@ -375,7 +376,7 @@ impl Task {
 }
 
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Batch {
     pub len: usize,
     pub head: Option<NonNull<Task>>,
@@ -481,12 +482,12 @@ impl ThreadPool {
     /// `*mut V`) to an arbitrary worker thread; the raw-pointer round-trip
     /// through the intrusive `Task` callback would otherwise smuggle `!Send`
     /// data across threads with no compiler check (Zig's `anytype` had none).
-    pub fn each<Ctx, V: Copy, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
+    pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
         // TODO(port): narrow bounds — Zig used `anytype` + comptime fn
         F: Fn(&Ctx, V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
-        V: core::marker::Sync + core::marker::Send,
+        V: Copy + core::marker::Sync + core::marker::Send,
     {
         self.each_impl(ctx, ByValue(run_fn), values);
     }
@@ -552,7 +553,7 @@ impl ThreadPool {
             run_fn,
         };
 
-        // PERF(port): was allocator.alloc(RunnerTask, values.len) — using Vec; profile in Phase B
+        // PERF(port): was allocator.alloc(RunnerTask, values.len) — using Vec; profile if hot.
         let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
         let mut batch = Batch::default();
         let mut offset = values.len();
@@ -579,17 +580,18 @@ impl ThreadPool {
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
-    fn schedule_impl(&self, batch: Batch, try_current: bool) {
+    fn schedule_impl(&self, batch: &Batch, try_current: bool) {
+        let Batch { len, head, tail } = *batch;
         // Sanity check
-        if batch.len == 0 {
+        if len == 0 {
             return;
         }
 
         // Extract out the `Node`s from the `Task`s
         // batch.len != 0 implies head/tail are Some.
         let mut list = node::List {
-            head: Task::node_of(batch.head.unwrap()),
-            tail: Task::node_of(batch.tail.unwrap()),
+            head: Task::node_of(head.unwrap()),
+            tail: Task::node_of(tail.unwrap()),
         };
 
         // .monotonic access is okay because:
@@ -602,12 +604,12 @@ impl ThreadPool {
         //   in the thread pool, but `is_running` was necessarily set to true before the
         //   thread was created.
         if self.is_running.load(Ordering::Relaxed) {
-            self.wait_group.add(batch.len);
+            self.wait_group.add(len);
         } else {
             // PERF(port): Zig used `add_unsynchronized` (non-atomic `+=`) when the
             // pool isn't running yet. `&self` precludes `&mut WaitGroup` here, so
             // fall back to the relaxed atomic add — semantically identical.
-            self.wait_group.add(batch.len);
+            self.wait_group.add(len);
         }
 
         let current: *mut Thread = 'blk: {
@@ -636,23 +638,23 @@ impl ThreadPool {
             // SAFETY: current is the calling thread's own Thread; exclusive access.
             unsafe {
                 if (*current).run_buffer.push(&mut list).is_err() {
-                    (*current).run_queue.push(list);
+                    (*current).run_queue.push(&list);
                 }
             }
         } else {
-            self.run_queue.push(list);
+            self.run_queue.push(&list);
         }
         self.force_spawn();
     }
 
     /// Schedule a batch of tasks to be executed by some thread on the thread pool.
     pub fn schedule(&self, batch: Batch) {
-        self.schedule_impl(batch, false);
+        self.schedule_impl(&batch, false);
     }
 
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
-        self.schedule_impl(batch, true);
+        self.schedule_impl(&batch, true);
     }
 
     /// Wait for all tasks to complete. This does not shut down or deinit the thread pool.
@@ -774,7 +776,12 @@ impl ThreadPool {
                 Ok(_handle) => {
                     // Dropping JoinHandle detaches the thread (matches Zig `thread.detach()`).
                 }
-                Err(_) => return unsafe { Self::unregister(self, ptr::null_mut()) },
+                Err(_) => {
+                    // SAFETY: `&self` keeps the pool live; `null` thread makes
+                    // `unregister` return right after undoing the `spawned`
+                    // increment CAS'd above (no per-thread wait past notify).
+                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                }
             }
             sync = new_sync;
         }
@@ -834,6 +841,9 @@ impl ThreadPool {
                                     // detach by dropping
                                 }
                                 Err(_) => {
+                                    // SAFETY: `&self` keeps the pool live; `null` thread makes
+                                    // `unregister` return right after undoing the `spawned`
+                                    // increment CAS'd above (no per-thread wait past notify).
                                     return unsafe { Self::unregister(self, ptr::null_mut()) };
                                 }
                             }
@@ -988,6 +998,8 @@ impl ThreadPool {
         // The last thread to exit must wake up the thread pool join()er
         // who will start the chain to shutdown all the threads.
         if sync.state() == SyncState::Shutdown && sync.spawned() == 1 {
+            // SAFETY: `pool` is live until this notify wakes the joiner (same
+            // invariant as the `fetch_sub` above); not touched after this line.
             unsafe { (*pool).join_event.notify() };
         }
         // ── `*pool` may be invalid past this point. ──
@@ -1149,7 +1161,7 @@ impl Thread {
             head: node_ptr,
             tail: node_ptr,
         };
-        self.idle_queue.push(list);
+        self.idle_queue.push(&list);
     }
 
     /// Thread entry point which runs a worker for the ThreadPool
@@ -1183,7 +1195,7 @@ impl Thread {
                     counter_buf[len] = 0;
                     bun_core::ZStr::from_raw(counter_buf.as_ptr(), len)
                 } else {
-                    bun_core::ZStr::from_raw(b"Bun Pool\0".as_ptr(), 8)
+                    bun_core::ZStr::from_raw(c"Bun Pool".as_ptr().cast(), 8)
                 }
             };
             // Pools whose tasks never consult `StackCheck` (install, HTTP) opt
@@ -1221,7 +1233,19 @@ impl Thread {
             let wait_start = if stats { now_ns() } else { 0 };
             is_waking = match pool.wait(is_waking) {
                 Ok(w) => w,
-                Err(_) => return,
+                Err(_) => {
+                    // `shutdown()` raced `wake_for_idle_events()`: the bundler
+                    // pushes per-worker `deinit_task`s into `idle_queue`, wakes
+                    // us, then immediately drops the (CLI-owned) pool — and
+                    // `wait()` observes `Shutdown` before we loop back to
+                    // `drain_idle_events`. Run them once on the way out so the
+                    // worker thread tears down its own `Worker`/`WorkerData`
+                    // (whose `ThreadLocalArena` is mimalloc thread-local and
+                    // must be freed here, not from the bundler thread).
+                    // SAFETY: self_ptr is our own stack-local Thread.
+                    unsafe { (*self_ptr).drain_idle_events() };
+                    return;
+                }
             };
             if stats {
                 pool.stats
@@ -1263,6 +1287,8 @@ impl Thread {
         while let Some(node) = consumer.pop() {
             // SAFETY: node points to the `node` field of a Task.
             let task = unsafe { Task::from_node(node) };
+            // SAFETY: `task` was dequeued from this thread's idle queue; it is a
+            // live scheduled `Task` whose `callback` was set by the producer.
             unsafe { ((*task).callback)(task) };
         }
     }
@@ -1491,6 +1517,9 @@ pub mod node {
     // bit in `stack` (Acquire on take, Release on give-back), so all `cache`
     // accesses are totally ordered despite `Cell: !Sync`.
     unsafe impl core::marker::Sync for Queue {}
+    // SAFETY: `Queue` holds only an atomic word and a `*mut Node` cache; the
+    // raw pointer is the sole `!Send` field and is only dereferenced under the
+    // `IS_CONSUMING` exclusion described above, so moving the queue is sound.
     unsafe impl Send for Queue {}
 
     impl Default for Queue {
@@ -1510,18 +1539,19 @@ pub mod node {
         const _ALIGN_CHECK: () =
             assert!(core::mem::align_of::<Node>() >= ((Self::IS_CONSUMING | Self::HAS_CACHE) + 1));
 
-        pub(super) fn push(&self, list: List) {
+        pub(super) fn push(&self, list: &List) {
+            let List { head, tail } = *list;
             let mut stack = self.stack.load(Ordering::Relaxed);
             loop {
                 // Attach the list to the stack (pt. 1)
                 // SAFETY: list.tail points to a Node owned by the caller.
                 unsafe {
-                    (*list.tail.as_ptr()).next = (stack & Self::PTR_MASK) as *mut Node;
+                    (*tail.as_ptr()).next = (stack & Self::PTR_MASK) as *mut Node;
                 }
 
                 // Update the stack with the list (pt. 2).
                 // Don't change the HAS_CACHE and IS_CONSUMING bits of the consumer.
-                let mut new_stack = list.head.as_ptr() as usize;
+                let mut new_stack = head.as_ptr() as usize;
                 debug_assert!(new_stack & !Self::PTR_MASK == 0);
                 new_stack |= stack & !Self::PTR_MASK;
 
@@ -1698,7 +1728,7 @@ pub mod node {
     impl Buffer {
         // PORT NOTE: Zig's `.raw` field access (non-atomic) on Atomic(T) is mapped to
         // Relaxed loads here; Rust does not expose unsynchronized access on atomics.
-        // PERF(port): was non-atomic raw read — profile in Phase B.
+        // PERF(port): was non-atomic raw read — profile if hot.
         #[inline]
         fn tail_raw(&self) -> Index {
             self.tail.load(Ordering::Relaxed)

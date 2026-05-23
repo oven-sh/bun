@@ -10,8 +10,8 @@
 
 use crate::ManagedTask;
 // TODO(port): confirm crate for UnboundedQueue (bun.UnboundedQueue) — assuming bun_threading
-use bun_threading::unbounded_queue::{Link, Linked};
 use bun_threading::UnboundedQueue;
+use bun_threading::unbounded_queue::{Link, Linked};
 
 // ─── Module-level constructor forwarders ────────────────────────────────────
 // Zig spelled these as namespace calls (`ConcurrentTask.createFrom(...)`,
@@ -21,18 +21,18 @@ use bun_threading::UnboundedQueue;
 // inherent-method call. Provide thin module-level forwarders so both spellings
 // work — the struct's inherent methods remain the canonical impls below.
 #[inline]
-pub fn create(task: Task) -> *mut ConcurrentTask {
+pub fn create(task: Task) -> core::ptr::NonNull<ConcurrentTask> {
     ConcurrentTask::create(task)
 }
 #[inline]
-pub fn create_from<T: Taskable>(task: *mut T) -> *mut ConcurrentTask {
+pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTask> {
     ConcurrentTask::create_from(task)
 }
 #[inline]
 pub fn from_callback<T>(
     ptr: *mut T,
     callback: fn(*mut T) -> crate::JsResult<()>,
-) -> *mut ConcurrentTask {
+) -> core::ptr::NonNull<ConcurrentTask> {
     ConcurrentTask::from_callback(ptr, callback)
 }
 
@@ -324,15 +324,17 @@ impl ConcurrentTask {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn create(task: Task) -> *mut ConcurrentTask {
-        ConcurrentTask::new(ConcurrentTask {
+    pub fn create(task: Task) -> core::ptr::NonNull<ConcurrentTask> {
+        let raw = ConcurrentTask::new(ConcurrentTask {
             task,
             next: Link::new(),
             auto_delete: true,
-        })
+        });
+        // SAFETY: `new` heap-allocates via `heap::into_raw` — never null.
+        unsafe { core::ptr::NonNull::new_unchecked(raw) }
     }
 
-    pub fn create_from<T: Taskable>(task: *mut T) -> *mut ConcurrentTask {
+    pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTask> {
         // TODO(port): re-enable once `mark_binding!` macro arity matches
         // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
         // bun_core::mark_binding!();
@@ -344,7 +346,7 @@ impl ConcurrentTask {
     /// The matching `heap::take` lives in `bun_runtime::dispatch::run_task`
     /// (or the variant's own `run_from_js_thread`), keyed by `T::TAG`.
     #[inline]
-    pub fn create_boxed<T: Taskable>(task: Box<T>) -> *mut ConcurrentTask {
+    pub fn create_boxed<T: Taskable>(task: Box<T>) -> core::ptr::NonNull<ConcurrentTask> {
         Self::create(Task::from_boxed(task))
     }
 
@@ -357,7 +359,7 @@ impl ConcurrentTask {
     pub fn from_callback<T>(
         ptr: *mut T,
         callback: fn(*mut T) -> crate::JsResult<()>,
-    ) -> *mut ConcurrentTask {
+    ) -> core::ptr::NonNull<ConcurrentTask> {
         // TODO(port): re-enable once `mark_binding!` macro arity matches
         // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
         // bun_core::mark_binding!();

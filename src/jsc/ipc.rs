@@ -317,12 +317,6 @@ mod advanced {
         }
     }
 
-    #[repr(C, packed)]
-    struct VersionPacket {
-        type_: IPCMessageType,
-        version: u32,
-    }
-
     // comptime std.mem.asBytes(&VersionPacket{})
     static VERSION_PACKET_BYTES: [u8; HEADER_LENGTH] = {
         let v = VERSION.to_ne_bytes();
@@ -559,11 +553,11 @@ mod json {
 
         match kind {
             Kind::Regular => Ok(DecodeIPCMessageResult {
-                bytes_consumed: u32::try_from(idx + 1).expect("int cast"),
+                bytes_consumed: idx + 1,
                 message: DecodedIPCMessage::Data(deserialized),
             }),
             Kind::Internal => Ok(DecodeIPCMessageResult {
-                bytes_consumed: u32::try_from(idx + 1).expect("int cast"),
+                bytes_consumed: idx + 1,
                 message: DecodedIPCMessage::Internal(deserialized),
             }),
         }
@@ -1249,7 +1243,7 @@ impl SendQueue {
         );
         self.debug_log_message_queue();
         // defer this.updateRef(global) — handled at every return below.
-        // TODO(port): errdefer — use scopeguard for update_ref-on-exit in Phase B.
+        // TODO(port): errdefer — use scopeguard for update_ref-on-exit.
 
         if self.queue.is_empty() {
             self.update_ref(global);
@@ -1581,13 +1575,6 @@ impl SendQueue {
         // JSC for the VM's lifetime. `opaque_ref` is the safe ZST-handle deref
         // (panics on null) — see `bun_opaque::opaque_deref`.
         crate::GlobalRef::from(JSGlobalObject::opaque_ref(self.owner_ref().global_this()))
-    }
-
-    #[cfg(windows)]
-    extern "C" fn on_server_pipe_close(this: *mut uv::Pipe) {
-        // safely free the pipes
-        // SAFETY: pipe was heap-allocated by the caller that configured it.
-        let _ = unsafe { bun_core::heap::take(this) };
     }
 
     /// # Safety
@@ -2183,9 +2170,7 @@ pub mod IPCHandlers {
                     let IncomingBuffer::Json(json_buf) = &mut send_queue.incoming else {
                         unreachable!()
                     };
-                    debug_assert!(
-                        json_buf.data.len() as usize + nread <= json_buf.data.capacity() as usize
-                    );
+                    debug_assert!(json_buf.data.len() + nread <= json_buf.data.capacity());
                     // libuv wrote `nread` bytes at `data[old_len..]` via the
                     // slice returned from `on_read_alloc`. Only the *count*
                     // is forwarded — re-deriving a `&[u8]` over that region
@@ -2239,7 +2224,7 @@ pub mod IPCHandlers {
                     };
                     // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
                     unsafe { adv_buf.uv_commit(nread) };
-                    let total_len = adv_buf.len() as usize;
+                    let total_len = adv_buf.len();
                     let mut slice_start: usize = 0;
 
                     loop {

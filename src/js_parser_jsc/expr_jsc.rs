@@ -56,7 +56,7 @@ pub fn data_to_js(this: &ExprData, global: &JSGlobalObject) -> Result<JSValue, T
         } else {
             JSValue::FALSE
         }),
-        ExprData::ENumber(e) => Ok(number_to_js(e)),
+        ExprData::ENumber(e) => Ok(number_to_js(*e)),
         // ExprData::EBigInt(e) => e.to_js(ctx, exception),
         ExprData::EInlinedEnum(inlined) => data_to_js(&inlined.value.data, global),
 
@@ -82,7 +82,7 @@ pub fn array_to_js(this: &E::Array, global: &JSGlobalObject) -> Result<JSValue, 
     Ok(array)
 }
 
-pub fn bool_to_js(this: &E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
+pub fn bool_to_js(this: E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
     // Zig returns `jsc.C.JSValueRef` via `JSValueMakeBoolean`; the Rust C-API
     // shim is `#[deprecated]` in favour of `JSValue`. `JSValue::js_boolean`
     // yields the same encoded immediate (`ValueTrue`/`ValueFalse`) without the
@@ -90,7 +90,7 @@ pub fn bool_to_js(this: &E::Boolean, _ctx: &JSGlobalObject) -> JSValue {
     JSValue::js_boolean(this.value)
 }
 
-pub fn number_to_js(this: &E::Number) -> JSValue {
+pub fn number_to_js(this: E::Number) -> JSValue {
     JSValue::js_number(this.value)
 }
 
@@ -138,12 +138,12 @@ macro_rules! impl_string_to_js {
         pub fn $name(s: &$ty, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
             // TODO(port): Zig mutates `s` via `resolveRopeIfNeeded(allocator)`;
             // callers only have `&` and there is no bump arena in scope here.
-            // Phase B should either thread a bump arena + interior-mut rope or
-            // resolve ropes before reaching here. For now, assert non-rope
-            // (current callers feed resolved literals).
+            // Either thread a bump arena + interior-mut rope or resolve ropes
+            // before reaching here. For now, assert non-rope (current callers
+            // feed resolved literals).
             debug_assert!(
                 s.next.is_none(),
-                "string_to_js: rope EString reached without resolveRopeIfNeeded; thread bump arena in Phase B"
+                "string_to_js: rope EString reached without resolveRopeIfNeeded; thread a bump arena"
             );
             if !s.is_present() {
                 let emp = BunString::EMPTY;

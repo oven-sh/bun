@@ -5,11 +5,7 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::dependency::Dependency;
-use bun_install::lockfile::{
-    LoadResult, Lockfile,
-    package::{PackageColumns as _},
-    tree,
-};
+use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, get_cache_directory, package_manager_options::LogLevel,
@@ -36,8 +32,6 @@ pub use crate::cli::scan_command::ScanCommand;
 struct NodeModulesFolder {
     relative_path: bun_core::ZBox,
     dependencies: Box<[DependencyID]>,
-    tree_id: tree::Id,
-    depth: usize,
 }
 
 // PORT NOTE: transient sort-comparator context; lifetime is fn-local (BORROW_PARAM).
@@ -47,18 +41,8 @@ struct ByName<'a> {
 }
 
 impl<'a> ByName<'a> {
-    #[allow(dead_code)]
-    pub fn is_less_than(ctx: &ByName<'a>, lhs: DependencyID, rhs: DependencyID) -> bool {
-        strings::cmp_strings_asc(
-            &(),
-            ctx.dependencies[lhs as usize].name.slice(ctx.buf),
-            ctx.dependencies[rhs as usize].name.slice(ctx.buf),
-        )
-    }
-
     // PORT NOTE: Zig pdq takes a strict-less-than predicate; Rust
-    // `sort_unstable_by` requires a total `Ordering`. Use this 3-way cmp at
-    // sort callsites instead of mapping `is_less_than` → {Less, Greater}.
+    // `sort_unstable_by` requires a total `Ordering`.
     pub fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> Ordering {
         self.dependencies[lhs as usize]
             .name
@@ -92,7 +76,7 @@ impl PackageManagerCommand {
     }
 
     #[cold]
-    pub fn print_hash(ctx: Command::Context, file: File) -> Result<(), bun_core::Error> {
+    pub fn print_hash(ctx: Command::Context, file: &File) -> Result<(), bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
         let (pm, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
         // PORT NOTE: `defer ctx.allocator.free(cwd)` dropped — `_cwd: Box<[u8]>` drops at scope exit.
@@ -121,7 +105,6 @@ impl PackageManagerCommand {
         };
 
         Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-        drop(load_lockfile);
 
         Output::flush();
         Output::disable_buffering();
@@ -353,7 +336,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            drop(load_lockfile);
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
@@ -370,7 +352,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            drop(load_lockfile);
 
             Output::flush();
             Output::disable_buffering();
@@ -381,7 +362,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            drop(load_lockfile);
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
@@ -392,7 +372,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"cache") {
             let mut dir = PathBuffer::uninit();
             let fd = get_cache_directory(pm);
-            let outpath = match bun_sys::get_fd_path(fd.fd(), &mut dir) {
+            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
                 Ok(p) => &p[..],
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
@@ -418,8 +398,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();
-                    let tmp_dir = match bun_sys::open_dir_absolute(tmp) {
-                        Ok(d) => Dir::from_fd(d),
+                    let tmp_dir = match Dir::open(tmp) {
+                        Ok(d) => d,
                         Err(err) => {
                             Output::err(
                                 bun_core::Error::from(err),
@@ -494,7 +474,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            drop(load_lockfile);
 
             Output::flush();
             Output::disable_buffering();
@@ -521,8 +500,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     // SAFETY: NUL terminator just appended above.
                     relative_path: bun_core::ZBox::from_vec_with_nul(path),
                     dependencies,
-                    tree_id: node_modules.tree_id,
-                    depth: node_modules.depth,
                 });
             }
 

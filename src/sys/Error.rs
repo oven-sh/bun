@@ -28,13 +28,6 @@ const TODO_ERRNO: Int = Int::MAX - 1;
 
 pub(crate) type Int = u16;
 
-/// TODO: convert to function
-// TODO(port): was `pub const oom` in Zig; Box<[u8]> fields prevent a true `const` item.
-#[inline]
-pub(crate) fn oom() -> Error {
-    Error::from_code(E::ENOMEM, Tag::read)
-}
-
 #[derive(Clone, Debug)]
 pub struct Error {
     pub errno: Int,
@@ -243,7 +236,7 @@ impl Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
-            // PERF(port): Zig borrowed the slice; we clone into Box — profile in Phase B
+            // PERF(port): Zig borrowed the slice; we clone into Box — profile if hot.
             path: Box::from(path),
             ..Default::default()
         }
@@ -254,7 +247,7 @@ impl Error {
         Error {
             errno: self.errno,
             syscall: syscall_,
-            // PERF(port): Zig borrowed the slice; we clone into Box — profile in Phase B
+            // PERF(port): Zig borrowed the slice; we clone into Box — profile if hot.
             path: Box::from(path),
             ..Default::default()
         }
@@ -283,7 +276,7 @@ impl Error {
         Error {
             errno: self.errno,
             syscall: self.syscall,
-            // PERF(port): Zig borrowed the slices; we clone into Box — profile in Phase B
+            // PERF(port): Zig borrowed the slices; we clone into Box — profile if hot.
             path: Box::from(path),
             dest: Box::from(dest),
             ..Default::default()

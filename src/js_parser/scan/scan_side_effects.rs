@@ -1,4 +1,3 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
 use crate::p::P;
 use bun_alloc::Arena as Bump;
@@ -650,6 +649,13 @@ impl SideEffects {
                 for i in 0..(local.decls.len_u32() as usize) {
                     let binding = local.decls.at(i).binding;
                     Self::find_identifiers(binding, &mut decls);
+                }
+
+                // Drop the statement entirely when the destructuring pattern binds no
+                // identifiers — e.g. `if (0) var []`. An empty `var;` is invalid syntax,
+                // and the printer asserts it never sees an empty decl list.
+                if decls.is_empty() {
+                    return false;
                 }
 
                 local.decls = G::DeclList::move_from_list(decls);

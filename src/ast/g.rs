@@ -16,7 +16,7 @@ pub use crate::flags::FunctionSet as FnFlagsSet;
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
 // adding a `PhantomData<&'arena ()>` to `StoreSlice` in one pass.
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Decl {
     pub binding: BindingNodeIndex,
     pub value: Option<ExprNodeIndex>,
@@ -25,15 +25,6 @@ pub struct Decl {
 // Zig: `pub const List = Vec(Decl);` (nested decl) — inherent assoc types
 // are nightly; free alias.
 pub type DeclList = Vec<Decl, bun_alloc::AstAlloc>;
-
-impl Default for Decl {
-    fn default() -> Self {
-        Self {
-            binding: BindingNodeIndex::default(),
-            value: None,
-        }
-    }
-}
 
 pub struct NamespaceAlias {
     pub namespace_ref: Ref,
@@ -113,14 +104,12 @@ impl Class {
             }
 
             if property.kind == PropertyKind::Normal && f.contains(flags::Property::IsStatic) {
-                for val_ in [property.value, property.initializer] {
-                    if let Some(val) = val_ {
-                        match val.data {
-                            ExprData::EArrow(..) | ExprData::EFunction(..) => {}
-                            _ => {
-                                if !val.data.can_be_moved() {
-                                    return false;
-                                }
+                for val in [property.value, property.initializer].into_iter().flatten() {
+                    match val.data {
+                        ExprData::EArrow(..) | ExprData::EFunction(..) => {}
+                        _ => {
+                            if !val.data.can_be_moved() {
+                                return false;
                             }
                         }
                     }
@@ -269,7 +258,7 @@ pub enum PropertyKind {
 
 impl PropertyKind {
     // TODO(port): Zig `jsonStringify(self, writer: anytype) !void` — maps to a serde-like
-    // protocol writing @tagName(self). Phase B: decide on the json writer trait.
+    // protocol writing @tagName(self). Decide on a shared json writer trait.
     pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
         // Zig: `writer.write(@tagName(self))` on a std.json WriteStream — emits a
         // *quoted* JSON string. Tag names are [a-z_] so no escaping needed.

@@ -3,18 +3,10 @@ use bun_core::String;
 use super::super::types::int_types::Int4;
 use super::new_reader::NewReader;
 
+#[derive(Default)]
 pub struct NegotiateProtocolVersion {
     pub version: Int4,
     pub unrecognized_options: Vec<String>,
-}
-
-impl Default for NegotiateProtocolVersion {
-    fn default() -> Self {
-        Self {
-            version: 0,
-            unrecognized_options: Vec::new(),
-        }
-    }
 }
 
 impl NegotiateProtocolVersion {
@@ -32,8 +24,7 @@ impl NegotiateProtocolVersion {
             unrecognized_options: Vec::new(),
         };
 
-        let unrecognized_options_count: u32 =
-            u32::try_from(reader.int4()?.max(0)).expect("int cast");
+        let unrecognized_options_count: u32 = reader.int4()?;
         this.unrecognized_options.reserve(
             (unrecognized_options_count as usize).saturating_sub(this.unrecognized_options.len()),
         );
@@ -49,9 +40,7 @@ impl NegotiateProtocolVersion {
             // Clone instead — `option` is Temporary into the connection buffer either way.
             this.unrecognized_options
                 .push(String::clone_utf8(option.slice()));
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
-            // TODO(port): Zig borrows `option`'s bytes into a bun.String then deinits `option`
-            // at end-of-iteration — verify Data::deinit vs String::borrow_utf8 lifetime in Phase B.
+            // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
         }
 
         Ok(this)

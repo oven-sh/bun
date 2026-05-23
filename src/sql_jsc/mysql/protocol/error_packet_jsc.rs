@@ -5,7 +5,7 @@ use bun_sql::mysql::protocol::error_packet::{ErrorPacket, MySQLErrorOptions};
 pub fn create_mysql_error(
     global: &JSGlobalObject,
     message: &[u8],
-    options: MySQLErrorOptions,
+    options: &MySQLErrorOptions,
 ) -> JsResult<JSValue> {
     let opts_obj = JSValue::create_empty_object(global, 0);
     opts_obj.ensure_still_alive();
@@ -43,7 +43,7 @@ impl ErrorPacketJsc for ErrorPacket {
         create_mysql_error(
             global,
             msg,
-            MySQLErrorOptions {
+            &MySQLErrorOptions {
                 code: if self.error_code == 1064 {
                     b"ERR_MYSQL_SYNTAX_ERROR"
                 } else {

@@ -27,7 +27,7 @@ impl Percentage {
         Ok(Percentage { v: percent })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let x = self.v * 100.0;
         let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
             // PORT NOTE: Rust `as` saturates on overflow/NaN where Zig is UB.
@@ -52,9 +52,9 @@ impl Percentage {
             let buf = fbs.get_written();
             if self.v < 0.0 {
                 dest.write_char(b'-')?;
-                dest.write_str(bun_core::strings::trim_leading_pattern2(&buf, b'-', b'0'))?;
+                dest.write_str(bun_core::strings::trim_leading_pattern2(buf, b'-', b'0'))?;
             } else {
-                dest.write_str(bun_core::trim_leading_char(&buf, b'0'))?;
+                dest.write_str(bun_core::trim_leading_char(buf, b'0'))?;
             }
             Ok(())
         } else {
@@ -63,7 +63,7 @@ impl Percentage {
     }
 
     #[inline]
-    pub fn eql(&self, other: &Percentage) -> bool {
+    pub fn eql(self, other: Percentage) -> bool {
         self.v == other.v
     }
 
@@ -76,7 +76,7 @@ impl Percentage {
     }
 
     pub fn into_calc(self) -> Calc<Percentage> {
-        // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+        // PERF(port): was arena alloc (bun.create) — profile if hot.
         Calc::Value(Box::new(self))
     }
 
@@ -84,27 +84,27 @@ impl Percentage {
         Percentage { v: self.v * other }
     }
 
-    pub fn is_zero(&self) -> bool {
+    pub fn is_zero(self) -> bool {
         self.v == 0.0
     }
 
-    pub fn sign(&self) -> f32 {
+    pub fn sign(self) -> f32 {
         css::signfns::sign_f32(self.v)
     }
 
-    pub fn try_sign(&self) -> Option<f32> {
+    pub fn try_sign(self) -> Option<f32> {
         Some(self.sign())
     }
 
-    pub fn partial_cmp(&self, other: &Percentage) -> Option<Ordering> {
-        crate::generic::partial_cmp_f32(&self.v, &other.v)
+    pub fn partial_cmp(self, other: Percentage) -> Option<Ordering> {
+        crate::generic::partial_cmp_f32(self.v, other.v)
     }
 
     pub fn try_from_angle(_: Angle) -> Option<Percentage> {
         None
     }
 
-    pub fn try_map(&self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
+    pub fn try_map(self, _map_fn: impl Fn(f32) -> f32) -> Option<Percentage> {
         // Percentages cannot be mapped because we don't know what they will resolve to.
         // For example, they might be positive or negative depending on what they are a
         // percentage of, which we don't know.
@@ -112,8 +112,8 @@ impl Percentage {
     }
 
     pub fn op<C>(
-        &self,
-        other: &Percentage,
+        self,
+        other: Percentage,
         ctx: C,
         op_fn: impl Fn(C, f32, f32) -> f32,
     ) -> Percentage {
@@ -122,13 +122,13 @@ impl Percentage {
         }
     }
 
-    pub fn op_to<R, C>(&self, other: &Percentage, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> R {
+    pub fn op_to<R, C>(self, other: Percentage, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> R {
         op_fn(ctx, self.v, other.v)
     }
 
     pub fn try_op<C>(
-        &self,
-        other: &Percentage,
+        self,
+        other: Percentage,
         ctx: C,
         op_fn: impl Fn(C, f32, f32) -> f32,
     ) -> Option<Percentage> {
@@ -164,14 +164,13 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a == b,
-            (Self::Percentage(a), Self::Percentage(b)) => a.eql(b),
+            (Self::Percentage(a), Self::Percentage(b)) => a.eql(*b),
             (Self::Calc(a), Self::Calc(b)) => **a == **b,
             _ => false,
         }
     }
 }
 
-// ─── B-2 round 5: generic-D method block un-gated ─────────────────────────
 // `Zero`/`MulF32`/`TryAdd`/`Parse` protocol traits live in
 // `crate::values::protocol` until `generics::parse_tocss_numeric_gated`
 // un-gates. The bound set below mirrors the full Zig comptime-method surface
@@ -179,7 +178,7 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
 // `DimensionPercentage<D>` (no behavior) needs only `D: Clone`.
 impl<D> DimensionPercentage<D>
 where
-    // TODO(port): narrow these bounds in Phase B; mirroring methods called on D below.
+    // TODO(port): narrow these bounds; mirroring methods called on D below.
     D: Clone,
 {
     pub fn parse(input: &mut css::Parser) -> CssResult<Self>
@@ -191,7 +190,7 @@ where
             if let Calc::Value(v) = calc_value {
                 return Ok(*v);
             }
-            // PERF(port): was arena alloc (bun.create with input.arena()) — profile in Phase B.
+            // PERF(port): was arena alloc (bun.create with input.arena()) — profile if hot.
             return Ok(Self::Calc(Box::new(calc_value)));
         }
 
@@ -218,7 +217,7 @@ where
         }
     }
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::IsCompatible,
@@ -234,7 +233,7 @@ where
     where
         D: PartialEq,
     {
-        // TODO(port): Zig used css.implementEql (reflection). Phase B: #[derive(PartialEq)] on enum.
+        // PORT NOTE: Zig used css.implementEql (reflection); Rust uses the manual PartialEq impl above.
         self == other
     }
 
@@ -244,7 +243,7 @@ where
             // In Rust, D: Clone covers both — Copy types' clone is a bitwise copy.
             Self::Dimension(d) => Self::Dimension(d.clone()),
             Self::Percentage(p) => Self::Percentage(*p),
-            // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+            // PERF(port): was arena alloc (bun.create) — profile if hot.
             Self::Calc(calc) => Self::Calc(Box::new(calc.deep_clone())),
         }
     }
@@ -256,7 +255,7 @@ where
     where
         D: protocol::Zero,
     {
-        // TODO(port): Zig special-cased D == f32 → 0.0. Handle via trait impl on f32 in Phase B.
+        // TODO(port): Zig special-cased D == f32 → 0.0. Handle via trait impl on f32.
         Self::Dimension(D::zero())
     }
 
@@ -288,7 +287,7 @@ where
         match self {
             Self::Dimension(d) => Self::Dimension(Self::mul_value_f32(d, other)),
             Self::Percentage(p) => Self::Percentage(p.mul_f32(other)),
-            // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+            // PERF(port): was arena alloc (bun.create) — profile if hot.
             Self::Calc(c) => Self::Calc(Box::new(c.mul_f32(other))),
         }
     }
@@ -308,7 +307,7 @@ where
                 Calc::Value(l) => *l,
                 Calc::Function(f) => {
                     if !matches!(*f, MathFunction::Calc(_)) {
-                        // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+                        // PERF(port): was arena alloc (bun.create) — profile if hot.
                         Self::Calc(Box::new(Calc::Function(f)))
                     } else {
                         Self::Calc(Box::new(Calc::Function(Box::new(MathFunction::Calc(
@@ -425,7 +424,7 @@ where
                 a.add_impl(*v)
             }
             (a, b) => {
-                // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+                // PERF(port): was arena alloc (bun.create) — profile if hot.
                 Self::Calc(Box::new(Calc::Sum {
                     left: Box::new(a.into_calc()),
                     right: Box::new(b.into_calc()),
@@ -462,7 +461,7 @@ where
         match self {
             Self::Calc(calc) => match *calc {
                 Calc::Function(f) => match *f {
-                    // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+                    // PERF(port): was arena alloc (bun.create) — profile if hot.
                     MathFunction::Calc(c2) => Self::Calc(Box::new(c2)),
                     other_fn => Self::Calc(Box::new(Calc::Function(Box::new(other_fn)))),
                 },
@@ -478,7 +477,7 @@ where
     {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a.partial_cmp(b),
-            (Self::Percentage(a), Self::Percentage(b)) => a.partial_cmp(b),
+            (Self::Percentage(a), Self::Percentage(b)) => Percentage::partial_cmp(*a, *b),
             _ => None,
         }
     }
@@ -553,7 +552,7 @@ where
     pub fn into_calc(self) -> Calc<DimensionPercentage<D>> {
         match self {
             Self::Calc(calc) => *calc,
-            // PERF(port): was arena alloc (bun.create) — profile in Phase B.
+            // PERF(port): was arena alloc (bun.create) — profile if hot.
             other => Calc::Value(Box::new(other)),
         }
     }
@@ -581,7 +580,7 @@ impl NumberOrPercentage {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(n, dest),
+            NumberOrPercentage::Number(n) => crate::values::number::CSSNumberFns::to_css(*n, dest),
             NumberOrPercentage::Percentage(p) => p.to_css(dest),
         }
     }

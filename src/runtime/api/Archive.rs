@@ -1,24 +1,20 @@
 //! `Bun.Archive` — tar/tgz pack + extract over libarchive.
 
-use core::ffi::{CStr, c_char};
-use core::mem::offset_of;
 use std::ffi::CString;
-use std::sync::Arc;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox};
-use bun_core::{ZigString, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_glob as glob;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSPropertyIterator,
-    JSPropertyIteratorOptions, JSValue, JsResult, WorkPool, WorkPoolTask,
+    self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
+    WorkPool, WorkPoolTask,
 };
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_libarchive as libarchive;
@@ -29,8 +25,9 @@ use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 const FILETYPE_REGULAR: u32 = 0o100000;
 
 /// Compression options for the archive
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub enum Compression {
+    #[default]
     None,
     Gzip(GzipOptions),
 }
@@ -44,12 +41,6 @@ pub struct GzipOptions {
 impl Default for GzipOptions {
     fn default() -> Self {
         Self { level: 6 }
-    }
-}
-
-impl Default for Compression {
-    fn default() -> Self {
-        Compression::None
     }
 }
 
@@ -105,9 +96,9 @@ impl Archive {
         let data = self.store.shared_view();
         let fmt_err = |_: core::fmt::Error| bun_core::err!("FormatError");
 
-        write!(
+        writeln!(
             writer,
-            "Archive ({}) {{\n",
+            "Archive ({}) {{",
             bun_core::fmt::size(data.len(), bun_core::fmt::SizeFormatterOptions::default()),
         )
         .map_err(fmt_err)?;
@@ -312,15 +303,18 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         )));
     }
 
-    if lib::archive_write_open2(
-        archive.as_ptr(),
+    // `archive` is a live `archive_write_new()` handle (see `Archive::write_new`
+    // above); `growing_buffer` is stack-local and outlives all callback invocations
+    // (the archive is closed before this fn returns).
+    let open_rc = lib::archive_write_open2(
+        &archive,
         (&raw mut growing_buffer).cast(),
         Some(lib::GrowingBuffer::open_callback),
         Some(lib::GrowingBuffer::write_callback),
         Some(lib::GrowingBuffer::close_callback),
         None,
-    ) != 0
-    {
+    );
+    if open_rc != 0 {
         return Err(global
             .throw_invalid_arguments(format_args!("Failed to create tarball: ArchiveOpenError")));
     }
@@ -582,7 +576,7 @@ fn parse_pattern_arg(
             }
             let pattern: Box<[u8]> = Box::from(str_slice.slice());
             patterns.push(pattern);
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity.
             i += 1;
         }
 
@@ -743,14 +737,22 @@ impl<C: TaskContext> AsyncTask<C> {
         unsafe { (*this).ctx.run() };
         // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
         unsafe {
-            let ct: *mut ConcurrentTask =
-                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit);
+            let ct = core::ptr::NonNull::from(
+                (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
+            );
             (*(*this).vm).enqueue_task_concurrent(ct);
         }
     }
 
+    /// # Safety
+    /// `this` must be the live `heap::into_raw` allocation produced by
+    /// [`create`](Self::create), called exactly once on the JS thread after
+    /// `run_callback` enqueues it. Takes ownership of the allocation.
+    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
+    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
-        // SAFETY: called once on the JS thread after run_callback enqueued us; reclaim ownership.
+        // SAFETY: see fn-level safety contract.
         let mut owned = unsafe { bun_core::heap::take(this) };
         owned.keep_alive.unref(bun_io::js_vm_ctx());
 
@@ -763,7 +765,7 @@ impl<C: TaskContext> AsyncTask<C> {
         }
 
         let global = vm.global();
-        let mut promise = owned.promise.swap();
+        let promise = owned.promise.swap();
         let result = match owned.ctx.run_from_js(global) {
             Ok(r) => r,
             Err(e) => {
@@ -771,7 +773,7 @@ impl<C: TaskContext> AsyncTask<C> {
                 return promise.reject(global, Ok(global.take_exception(e)));
             }
         };
-        result.fulfill(global, &mut promise)
+        result.fulfill(global, promise)
     }
 }
 
@@ -888,8 +890,6 @@ enum BlobOutputType {
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 enum BlobError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("GzipInitFailed")]
     GzipInitFailed,
     #[error("GzipCompressFailed")]
@@ -992,8 +992,6 @@ fn start_blob_task(
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 enum WriteError {
-    #[error("OutOfMemory")]
-    OutOfMemory,
     #[error("GzipInitFailed")]
     GzipInitFailed,
     #[error("GzipCompressFailed")]
@@ -1065,12 +1063,10 @@ impl WriteContext {
             Ok(f) => f,
         };
 
-        let res = match file.write_all(data_to_write) {
+        match file.write_all(data_to_write) {
             Err(err) => WriteResult::SysErr(err),
             Ok(_) => WriteResult::Success,
-        };
-        let _ = file.close();
-        res
+        }
     }
 }
 
@@ -1133,8 +1129,8 @@ pub struct FilesContext {
 }
 
 impl FilesContext {
-    fn clone_error_string(archive: *mut libarchive::lib::Archive) -> Option<CString> {
-        let err_str = libarchive::lib::Archive::error_string(archive);
+    fn clone_error_string(archive: &libarchive::lib::Archive) -> Option<CString> {
+        let err_str = archive.error_string();
         if err_str.is_empty() {
             return None;
         }
@@ -1147,13 +1143,12 @@ impl FilesContext {
         configure_archive_reader(&archive);
 
         if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            return Ok(
-                if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
-                    FilesResult::LibarchiveErr(err)
-                } else {
-                    FilesResult::Err(FilesError::ReadError)
-                },
-            );
+            // SAFETY: `archive` is the live `read_new()` handle opened above.
+            return Ok(if let Some(err) = Self::clone_error_string(&archive) {
+                FilesResult::LibarchiveErr(err)
+            } else {
+                FilesResult::Err(FilesError::ReadError)
+            });
         }
 
         let mut entries: FileEntryList = Vec::new();
@@ -1190,13 +1185,12 @@ impl FilesContext {
                         // errdefer above won't fire. Free the current buffer and all previously
                         // collected entries manually to avoid leaking them.
                         // PORT NOTE: in Rust both `data` and `entries` drop automatically here.
-                        return Ok(
-                            if let Some(err) = Self::clone_error_string(archive.as_ptr()) {
-                                FilesResult::LibarchiveErr(err)
-                            } else {
-                                FilesResult::Err(FilesError::ReadError)
-                            },
-                        );
+                        // SAFETY: `archive` is the live `read_new()` handle opened above.
+                        return Ok(if let Some(err) = Self::clone_error_string(&archive) {
+                            FilesResult::LibarchiveErr(err)
+                        } else {
+                            FilesResult::Err(FilesError::ReadError)
+                        });
                     }
                     if read == 0 {
                         break;
@@ -1309,8 +1303,6 @@ enum CompressError {
     GzipInitFailed,
     #[error("GzipCompressFailed")]
     GzipCompressFailed,
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
 
 impl From<CompressError> for BlobError {
@@ -1318,7 +1310,6 @@ impl From<CompressError> for BlobError {
         match e {
             CompressError::GzipInitFailed => BlobError::GzipInitFailed,
             CompressError::GzipCompressFailed => BlobError::GzipCompressFailed,
-            CompressError::OutOfMemory => BlobError::OutOfMemory,
         }
     }
 }
@@ -1328,7 +1319,6 @@ impl From<CompressError> for WriteError {
         match e {
             CompressError::GzipInitFailed => WriteError::GzipInitFailed,
             CompressError::GzipCompressFailed => WriteError::GzipCompressFailed,
-            CompressError::OutOfMemory => WriteError::OutOfMemory,
         }
     }
 }
@@ -1342,8 +1332,10 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
         return Err(CompressError::GzipInitFailed);
     }
     // defer compressor.deinit();
-    let _guard = scopeguard::guard(compressor_ptr, |p| unsafe {
-        libdeflate::Compressor::destroy(p)
+    let _guard = scopeguard::guard(compressor_ptr, |p| {
+        // SAFETY: `p` is the non-null pointer returned by `Compressor::alloc` above;
+        // this is the matching free, run once when `_guard` drops on scope exit.
+        unsafe { libdeflate::Compressor::destroy(p) }
     });
     // SAFETY: alloc returned non-null; freed by `_guard` on scope exit.
     let compressor: &mut libdeflate::Compressor = unsafe { &mut *compressor_ptr };

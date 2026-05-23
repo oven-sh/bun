@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code)]
 #![warn(unused_must_use)]
 use crate as css;
 use crate::PrintErr;
@@ -179,14 +178,8 @@ impl TextShadow {
         loop {
             if lengths.is_none() {
                 let value = input.try_parse(|i: &mut css::Parser| -> css::Result<Lengths> {
-                    let horizontal = match Length::parse(i) {
-                        Ok(v) => v,
-                        Err(e) => return Err(e),
-                    };
-                    let vertical = match Length::parse(i) {
-                        Ok(v) => v,
-                        Err(e) => return Err(e),
-                    };
+                    let horizontal = Length::parse(i)?;
+                    let vertical = Length::parse(i)?;
                     let blur = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
                     let spread = i.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
                     Ok((horizontal, vertical, blur, spread))
@@ -243,7 +236,7 @@ impl TextShadow {
         Ok(())
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.color.is_compatible(browsers)
             && self.x_offset.is_compatible(browsers)
             && self.y_offset.is_compatible(browsers)
@@ -268,7 +261,7 @@ impl TextShadow {
 // (DeepClone is bridged via `bridge_deep_clone!(TextShadow)` in generics.rs.)
 impl css::generics::IsCompatible for TextShadow {
     #[inline]
-    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.is_compatible(browsers)
     }
 }
@@ -285,7 +278,9 @@ pub enum TextSizeAdjust {
 
 /// A value for the [direction](https://drafts.csswg.org/css-writing-modes-3/#direction) property.
 // Zig wires eql/hash/parse/toCss/deepClone via `css.DefineEnumProperty(@This())`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty, crate::generics::CssHash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty, crate::generics::CssHash,
+)]
 pub enum Direction {
     /// This value sets inline base direction (bidi directionality) to line-left-to-line-right.
     Ltr,

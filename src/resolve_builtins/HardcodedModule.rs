@@ -367,7 +367,7 @@ macro_rules! entry {
 // (`common ++ bun_extra ++ bun_test_extra`). `phf::phf_map!` only accepts
 // inline literal entries, so it cannot consume const slices directly.
 //
-// TODO(port): Phase B — generate `NODE_ALIASES` / `BUN_ALIASES` /
+// TODO(perf): generate `NODE_ALIASES` / `BUN_ALIASES` /
 // `BUN_TEST_ALIASES` as `phf::Map<&'static [u8], Alias>` via `phf_codegen` in
 // `build.rs`, fed from these const slices. The `get()` lookups below are the
 // only public surface, so swapping the backing store is mechanical.
@@ -789,7 +789,7 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
 
 #[inline]
 fn lookup(tables: &[&[AliasKv]], name: &[u8]) -> Option<Alias> {
-    // PERF(port): O(n) scan; Phase B replaces with phf perfect-hash lookup.
+    // PERF(port): O(n) scan; could replace with a phf perfect-hash lookup.
     for table in tables {
         for (k, v) in *table {
             if *k == name {

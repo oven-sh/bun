@@ -122,8 +122,8 @@ impl<'a> Line for &'a [u16] {
 }
 // TODO(port): Zig also accepted `[:0]const u8`, `[:0]u8`, `[]u8`, `[:0]const u16`,
 // `[:0]u16`, `[]u16` — in Rust these all coerce to `&[u8]`/`&[u16]`, so the two
-// slice impls above cover them. Add `&bun_core::ZStr` / `&bun_core::WStr` impls in
-// Phase B if callers pass those directly.
+// slice impls above cover them. Add `&bun_core::ZStr` / `&bun_core::WStr` impls
+// if callers pass those directly.
 
 /// diffs two sets of lines, returning the minimal number of edits needed to
 /// make them equal.
@@ -182,9 +182,9 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
     /// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
     pub fn diff(actual: &[L], expected: &[L]) -> Result<DiffList<L>, Error> {
         // Edit graph's allocator
-        // PERF(port): was stack-fallback (graph_initial_size bytes) — profile in Phase B
+        // PERF(port): was stack-fallback (graph_initial_size bytes) — profile if it shows up on a hot path
         // Match point trace's allocator
-        // PERF(port): was stack-fallback (opts.initial_trace_capacity bytes) — profile in Phase B
+        // PERF(port): was stack-fallback (opts.initial_trace_capacity bytes) — profile if it shows up on a hot path
 
         // const MAX \in [0, M+N]
         // let V: int array = [-MAX..MAX]. V is a flattened representation of the edit graph.
@@ -229,7 +229,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
             let diff_level: int = i64::try_from(_diff_level).expect("int cast"); // why is this always usize?
             // const new_trace = try TraceFrame.initCapacity(trace_alloc, graph.len);
             let new_trace: Box<[uint]> = graph.clone().into_boxed_slice();
-            // PERF(port): was appendAssumeCapacity — profile in Phase B
+            // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
             trace.push(new_trace);
 
             let diag_start: int = -diff_level;
@@ -285,7 +285,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
     }
 
     fn backtrack(
-        trace: &Vec<Box<[uint]>>,
+        trace: &[Box<[uint]>],
         actual: &[L],
         expected: &[L],
     ) -> Result<DiffList<L>, Error> {
@@ -334,7 +334,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
                     }
                 };
 
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
                 result.push(Diff {
                     kind: DiffKind::Equal,
                     value: line,
@@ -386,31 +386,11 @@ where
     n.try_into().expect("infallible: size matches")
 }
 
-// TODO(port): `printDiff` wrote directly to stdout/stderr via `std.fs.File`.
-// Banned by §Ground rules (no `std::fs`). This is a debug-only helper used by
-// `zig test`; Phase B can route through `bun_core::Output` or drop it.
-pub fn print_diff<T: Line + fmt::Display>(diffs: &Vec<Diff<T>>) {
-    for idx in 0..diffs.len() {
-        let d = &diffs[diffs.len() - (idx + 1)];
-        let op: u8 = match d.kind {
-            DiffKind::Equal => b' ',
-            DiffKind::Insert => b'+',
-            DiffKind::Delete => b'-',
-        };
-        // TODO(port): route through bun_core::Output instead of eprintln!
-        eprintln!("{} {}", op as char, d.value);
-    }
-}
-
 // =============================================================================
 // ============================ EQUALITY FUNCTIONS ============================
 // =============================================================================
 
-#[inline]
-fn are_chars_equal<T: PartialEq>(a: T, b: T) -> bool {
-    a == b
-}
-
+#[cfg(test)]
 #[inline]
 fn are_lines_equal<L: Line, const CHECK_COMMA_DISPARITY: bool>(a: L, b: L) -> bool {
     // PORT NOTE: Zig switched on the concrete type here; the `Line` trait impls
@@ -462,9 +442,6 @@ bun_core::oom_from_alloc!(Error);
 
 // TODO(port): narrow error set — `From<Error> for bun_core::Error` provided by
 // the `IntoStaticStr` derive convention (see PORTING.md §Type map).
-
-#[allow(dead_code)]
-type TraceFrame = Vec<u8>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DiffKind {
@@ -648,8 +625,7 @@ where
     let newline: T = T::from(b'\n');
     //
     // thing
-    let mut lines: Vec<&[T]> = Vec::new();
-    lines.reserve(s.len() >> 4);
+    let mut lines: Vec<&[T]> = Vec::with_capacity(s.len() >> 4);
     // (Zig: errdefer lines.deinit — Drop handles it.)
     for l in s.split(|c| *c == newline) {
         lines.push(l);

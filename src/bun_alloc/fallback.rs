@@ -59,7 +59,7 @@ impl CAllocator {
             let usable = unsafe { libc::malloc_size(buf.as_ptr().cast()) };
             return new_len <= usable;
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // SAFETY: `buf` was allocated by libc malloc on this platform.
             let usable = unsafe { libc::malloc_usable_size(buf.as_mut_ptr().cast()) };
@@ -84,8 +84,15 @@ impl CAllocator {
             };
             return new_len <= usable;
         }
-        #[allow(unreachable_code)]
-        false
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "android",
+            windows
+        )))]
+        {
+            false
+        }
     }
 
     #[inline]
@@ -110,10 +117,17 @@ impl crate::Allocator for CAllocator {}
 
 pub use z::ALLOCATOR as z_allocator;
 
-/// libc can free allocations without being given their size.
-pub fn free_without_size(ptr: *mut c_void) {
-    // SAFETY: `ptr` was allocated by libc malloc/calloc/realloc (or is null, which
-    // libc free accepts as a no-op) — same precondition as Zig `std.c.free`.
+/// libc can free plain `malloc`/`calloc`/`realloc` allocations without being
+/// given their size.
+///
+/// # Safety
+/// `ptr` must be null or a live allocation returned by libc
+/// `malloc`/`calloc`/`realloc`. On Windows, pointers from `_aligned_malloc`
+/// (the over-aligned path in [`CAllocator::raw_alloc`]) are **not** valid here
+/// and must go through [`CAllocator::raw_free`] so `_aligned_free` is used.
+pub unsafe fn free_without_size(ptr: *mut c_void) {
+    // SAFETY: caller contract — ptr is null or a plain malloc-family allocation;
+    // libc free accepts null. Same precondition as Zig `std.c.free`.
     unsafe { libc::free(ptr) }
 }
 

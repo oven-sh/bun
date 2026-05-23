@@ -4,7 +4,7 @@ use bun_jsc::bun_string_jsc::create_utf8_for_js;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
-use bun_core::{self as bstr, ZigStringSlice as Utf8Slice, strings};
+use bun_core::{ZigStringSlice as Utf8Slice, strings};
 use bun_ptr::RawSlice;
 
 pub struct S3ListObjectsOptions {
@@ -21,8 +21,8 @@ pub struct S3ListObjectsOptions {
     pub start_after: Option<RawSlice<u8>>,
 
     // TODO(port): Utf8Slice<'_> lifetime — Zig's ZigString.Slice owns or
-    // ref-holds its backing WTFStringImpl; model as 'static here and let
-    // Phase B pick the real lifetime / collapse the dual fields.
+    // ref-holds its backing WTFStringImpl; modeled as 'static here. Pick
+    // the real lifetime / collapse the dual fields.
     pub _continuation_token: Option<Utf8Slice>,
     pub _delimiter: Option<Utf8Slice>,
     pub _encoding_type: Option<Utf8Slice>,
@@ -35,21 +35,14 @@ pub struct S3ListObjectsOptions {
 
 // PORT NOTE: result structs borrow slices out of the input `xml: &[u8]`
 // passed to `parse_s3_list_objects_result`. The Zig code never frees these
-// (they alias the request body buffer). Represented with an explicit `'a`
-// even though PORTING.md prefers avoiding struct lifetimes in Phase A —
+// (they alias the request body buffer). Represented with an explicit `'a` —
 // the borrow is unambiguous and any other encoding (Box / raw ptr) would
-// misrepresent ownership. Phase B: confirm caller keeps `xml` alive for
-// the result's lifetime (it does — result is consumed by toJS before the
-// response body is freed).
+// misrepresent ownership. The caller keeps `xml` alive for the result's
+// lifetime (result is consumed by toJS before the response body is freed).
 
 struct ObjectOwner<'a> {
     id: Option<&'a [u8]>,
     display_name: Option<&'a [u8]>,
-}
-
-struct ObjectRestoreStatus<'a> {
-    is_restore_in_progress: Option<bool>,
-    restore_expiry_date: Option<&'a [u8]>,
 }
 
 pub struct S3ListObjectsContents<'a> {
@@ -63,7 +56,6 @@ pub struct S3ListObjectsContents<'a> {
     object_size: Option<i64>,
     storage_class: Option<&'a [u8]>,
     owner: Option<ObjectOwner<'a>>,
-    restore_status: Option<ObjectRestoreStatus<'a>>,
 }
 
 // Zig deinit only freed `etag` when owned; Cow handles that in Drop.
@@ -225,7 +217,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
             }
 
             if let Some(end) = strings::index_of(&xml[i + 1..], b">") {
-                i = i + 1;
+                i += 1;
                 let tag_name_end_pos = i + end; // +1 for <
 
                 let tag_name = &xml[i..tag_name_end_pos];
@@ -244,8 +236,6 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                     let mut checksum_algorithme: Option<&[u8]> = None;
                     let mut owner_id: Option<&[u8]> = None;
                     let mut owner_display_name: Option<&[u8]> = None;
-                    let mut is_restore_in_progress: Option<bool> = None;
-                    let mut restore_expiry_date: Option<&[u8]> = None;
 
                     while looking_for_end_tag {
                         if i >= xml.len() {
@@ -359,50 +349,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     if let Some(__tag_end) =
                                         strings::index_of(&xml[i..], b"</RestoreStatus>")
                                     {
-                                        let restore_status = &xml[i..i + __tag_end];
                                         i = i + __tag_end + 16;
-
-                                        if let Some(start) = strings::index_of(
-                                            restore_status,
-                                            b"<IsRestoreInProgress>",
-                                        ) {
-                                            let start_pos = start + 21;
-                                            if let Some(_end) = strings::index_of(
-                                                restore_status,
-                                                b"</IsRestoreInProgress>",
-                                            ) {
-                                                let is_not_empty = start_pos < _end;
-                                                if is_not_empty {
-                                                    let is_restore_in_progress_string =
-                                                        &restore_status[start_pos.._end];
-
-                                                    if is_restore_in_progress_string == b"true" {
-                                                        is_restore_in_progress = Some(true);
-                                                    } else if is_restore_in_progress_string
-                                                        == b"false"
-                                                    {
-                                                        is_restore_in_progress = Some(false);
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if let Some(start) = strings::index_of(
-                                            restore_status,
-                                            b"<RestoreExpiryDate>",
-                                        ) {
-                                            let start_pos = start + 19;
-                                            if let Some(_end) = strings::index_of(
-                                                restore_status,
-                                                b"</RestoreExpiryDate>",
-                                            ) {
-                                                let is_not_empty = start_pos < _end;
-                                                if is_not_empty {
-                                                    restore_expiry_date =
-                                                        Some(&restore_status[start_pos.._end]);
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             } else {
@@ -425,15 +372,6 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             });
                         }
 
-                        let mut restore_status: Option<ObjectRestoreStatus<'_>> = None;
-
-                        if is_restore_in_progress.is_some() || restore_expiry_date.is_some() {
-                            restore_status = Some(ObjectRestoreStatus {
-                                is_restore_in_progress,
-                                restore_expiry_date,
-                            });
-                        }
-
                         contents.push(S3ListObjectsContents {
                             key: object_key_val,
                             etag: match (etag_owned, etag) {
@@ -447,52 +385,51 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             object_size,
                             storage_class,
                             owner,
-                            restore_status,
                         });
                     }
                 } else if tag_name == b"Name" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Name>") {
                         result.name = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"Delimiter" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Delimiter>") {
                         result.delimiter = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"NextContinuationToken" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</NextContinuationToken>") {
                         result.next_continuation_token = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"ContinuationToken" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</ContinuationToken>") {
                         result.continuation_token = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"StartAfter" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</StartAfter>") {
                         result.start_after = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"EncodingType" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</EncodingType>") {
                         result.encoding_type = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"KeyCount" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</KeyCount>") {
                         let key_count = &xml[i..i + _end];
                         result.key_count = bun_core::fmt::parse_decimal::<i64>(key_count);
 
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"MaxKeys" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</MaxKeys>") {
                         let max_keys = &xml[i..i + _end];
                         result.max_keys = bun_core::fmt::parse_decimal::<i64>(max_keys);
 
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"Prefix" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Prefix>") {
@@ -502,7 +439,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             result.prefix = Some(prefix);
                         }
 
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"IsTruncated" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</IsTruncated>") {
@@ -514,12 +451,12 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             result.is_truncated = Some(false);
                         }
 
-                        i = i + _end;
+                        i += _end;
                     }
                 } else if tag_name == b"CommonPrefixes" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</CommonPrefixes>") {
                         let common_prefixes_string = &xml[i..i + _end];
-                        i = i + _end;
+                        i += _end;
 
                         let mut j: usize = 0;
                         while j < common_prefixes_string.len() {
@@ -532,7 +469,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     strings::index_of(&common_prefixes_string[j..], b"</Prefix>")
                                 {
                                     common_prefixes.push(&common_prefixes_string[j..j + __end]);
-                                    j = j + __end;
+                                    j += __end;
                                 }
                             } else {
                                 break;

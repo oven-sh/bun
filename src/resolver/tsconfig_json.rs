@@ -1,7 +1,6 @@
 use bun_collections::ArrayHashMap;
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_js_parser as js_ast;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
 use enumset::{EnumSet, EnumSetType};
@@ -64,12 +63,7 @@ impl JsonCache {
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
         // runs after the `func() catch null` body; here the append is hoisted past the match.
-        let result = match func(source, &mut temp_log, bump) {
-            // Lift the T2 value-subset `bun_ast::Expr` into the full
-            // `bun_ast::Expr` (src/js_parser/ast/Expr.rs `From` impl).
-            Ok(expr) => Some(bun_ast::Expr::from(expr)),
-            Err(_) => None,
-        };
+        let result = func(source, &mut temp_log, bump).ok();
         let _ = temp_log.append_to_maybe_recycled(log, source);
         Ok(result)
     }
@@ -146,7 +140,7 @@ pub type JsxFieldSet = EnumSet<JsxField>;
 
 pub struct TSConfigJSON {
     // TODO(port): lifetime — Zig never frees these string fields (resolver-lifetime arena);
-    // Phase A models them as owned Box<[u8]>. Revisit if profiling shows churn.
+    // modeled here as owned Box<[u8]>. Revisit if profiling shows churn.
     pub abs_path: Box<[u8]>,
 
     /// The absolute path of "compilerOptions.baseUrl"
@@ -369,7 +363,8 @@ impl TSConfigJSON {
         let mut compiler_opts: Option<bun_ast::Expr> = None;
         if let bun_ast::ExprData::EObject(obj) = &json.data {
             for property in obj.properties.slice() {
-                let (Some(key_expr), Some(value)) = (property.key.as_ref(), property.value.as_ref())
+                let (Some(key_expr), Some(value)) =
+                    (property.key.as_ref(), property.value.as_ref())
                 else {
                     continue;
                 };

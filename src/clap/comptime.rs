@@ -15,7 +15,7 @@ use crate::{Names, Param, ParseOptions, Values};
 // array fields. `findParam` is `inline for`, so every `args.flag("--foo")`
 // compiles to a constant index — zero runtime cost.
 //
-// The Phase-A port did all of this at runtime: `convert_params` heap-allocated
+// An earlier draft of this port did all of this at runtime: `convert_params` heap-allocated
 // a `Vec<Param<usize>>` on every CLI start, and `find_param` linear-scanned it
 // for every `flag()`/`option()` lookup (~190 lookups × ~100 params on the
 // `bun run` path). perf put this at ~0.25 % of `bun --version` cycles vs ~0 %
@@ -451,9 +451,7 @@ impl ConvertedTable {
                 let mut j = idx;
                 while j < self.long_index.len() && self.long_index[j].hash == h {
                     let p = &self.converted[self.long_index[j].idx as usize];
-                    if p.names.long.map_or(false, |l| l == key)
-                        || p.names.long_aliases.iter().any(|a| *a == key)
-                    {
+                    if (p.names.long == Some(key)) || p.names.long_aliases.contains(&key) {
                         return p;
                     }
                     j += 1;

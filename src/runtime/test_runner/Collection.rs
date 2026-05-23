@@ -1,7 +1,7 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 use core::ptr::NonNull;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
+use crate::test_runner::expect::make_formatter;
 
 use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
@@ -11,9 +11,8 @@ use crate::test_runner::bun_test::{
     RefDataValue, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
-// TODO(port): jsc.Jest.Jest.runner / jsc.ConsoleObject live under bun_jsc::jest / bun_jsc::console_object — verify module paths in Phase B
+// TODO(port): jsc.Jest.Jest.runner / jsc.ConsoleObject live under bun_jsc::jest / bun_jsc::console_object — verify module paths.
 use crate::test_runner::jest::Jest;
-use bun_jsc::console_object::Formatter as ConsoleFormatter;
 
 pub struct Collection {
     /// set to true after collection phase ends
@@ -47,9 +46,17 @@ pub struct QueuedDescribe {
 // Zig `deinit` only called `callback.deinit()`; `Strong: Drop` covers it — no explicit Drop needed.
 
 impl Collection {
+    /// # Safety
+    /// `bun_test_root` must be a valid, exclusive pointer to a live `BunTestRoot` for the
+    /// duration of this call. The caller (`BunTest::init`) passes a pointer to its own
+    /// `bun_test_root` field.
+    // The `# Safety` contract above documents the deref precondition; the only caller is
+    // `BunTest::init`, which passes a pointer to its own field. Changing the signature to
+    // `&mut BunTestRoot` would require editing the caller in `bun_test.rs`.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn init(bun_test_root: *mut BunTestRoot) -> Collection {
         let _g = group::begin();
-        // SAFETY: caller (BunTest::init) passes a live pointer to its own `bun_test_root` field.
+        // SAFETY: see fn-level Safety doc.
         let bun_test_root = unsafe { &mut *bun_test_root };
 
         let only = if let Some(runner) = Jest::runner() {
@@ -94,6 +101,7 @@ impl Collection {
     /// so the pointer is always valid while `self` is.
     #[inline]
     pub fn active_scope(&self) -> &DescribeScope {
+        // SAFETY: `active_scope` always points into `self.root_scope`'s owned tree; see doc comment above.
         unsafe { self.active_scope.as_ref() }
     }
 
@@ -108,6 +116,7 @@ impl Collection {
     /// `step()`), so it carries write-capable provenance.
     #[inline]
     pub fn active_scope_mut(&mut self) -> &mut DescribeScope {
+        // SAFETY: `active_scope` always points into `self.root_scope`'s owned tree with write provenance; see doc comment above.
         unsafe { self.active_scope.as_mut() }
     }
 
@@ -146,14 +155,14 @@ impl Collection {
         &mut self,
         global_this: &JSGlobalObject,
         _: Option<JSValue>,
-        data: RefDataValue,
+        data: &RefDataValue,
     ) -> JsResult<()> {
         let _g = group::begin();
 
         let _formatter = make_formatter(global_this);
 
         let prev_scope: NonNull<DescribeScope> = match data {
-            RefDataValue::Collection { active_scope } => active_scope,
+            RefDataValue::Collection { active_scope } => *active_scope,
             _ => {
                 debug_assert!(false); // this probably can't happen
                 self.active_scope
@@ -173,9 +182,9 @@ impl Collection {
     }
 
     pub fn step(
-        buntest_strong: BunTestPtr,
+        buntest_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
-        data: RefDataValue,
+        data: &RefDataValue,
     ) -> JsResult<StepResult> {
         let _g = group::begin();
         let buntest = buntest_strong.get();
@@ -230,7 +239,7 @@ impl Collection {
             ));
 
             if let Some(cfg_data) = BunTest::run_test_callback(
-                buntest_strong.clone(),
+                buntest_strong,
                 global_this,
                 callback.get(),
                 false,

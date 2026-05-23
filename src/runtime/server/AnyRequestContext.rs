@@ -98,7 +98,7 @@ impl AnyRequestContext {
 /// Mirrors Zig's `inline fn dispatch(..., comptime cb: anytype, args)` which
 /// `inline for`s over `Pointer.type_map`. Rust closures cannot be generic over
 /// `T`, so a macro is the closest structural equivalent.
-// TODO(port): if Phase B gives all six ctx types a shared `RequestContextLike`
+// TODO(refactor): if all six ctx types gain a shared `RequestContextLike`
 // trait (with `const IS_H3: bool` + `type Resp`), this macro can become a
 // method taking `impl FnOnce(&mut dyn RequestContextLike)` for the simple arms.
 macro_rules! dispatch {
@@ -110,7 +110,6 @@ macro_rules! dispatch {
                 // accessed for the duration of the dispatch arm.
                 let $ctx = unsafe { &mut *this.ptr.cast::<$Ty>() };
                 type $T = $Ty;
-                #[allow(unused)]
                 let _ = core::marker::PhantomData::<$T>;
                 $body
             }};
@@ -131,7 +130,7 @@ macro_rules! dispatch {
 // set_timeout / set_cookies / set_timeout_handler / get_remote_socket_info /
 // on_abort / ref_ / deref / set_signal_aborted forward to RequestContext
 // methods that live in `_gated_state_machine`. Un-gate alongside.
-// TODO(b2-blocked): RequestContext state-machine bodies.
+// TODO(port): RequestContext state-machine bodies.
 
 impl AnyRequestContext {
     pub fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
@@ -205,6 +204,8 @@ impl AnyRequestContext {
             // to `*T.Resp` before forwarding. The Rust `RequestContext::on_abort`
             // takes `uws::AnyResponse` directly (and re-checks H3 internally),
             // so forward the enum as-is — the per-variant assert is redundant.
+            // SAFETY: `ctx` is the live request context this `AnyRequestContext`
+            // wraps; `on_abort` only derefs that exact pointer.
             T::on_abort(core::ptr::from_mut::<T>(ctx), response);
         })
     }
@@ -218,12 +219,12 @@ impl AnyRequestContext {
     }
 
     pub fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
-        // SAFETY: server backref outlives any AnyRequestContext (held only for
-        // the duration of a request callback). `self` is a by-value tagged
-        // pointer, so there is no input lifetime to tie the borrow to.
-        dispatch!(self, None, |_T, ctx| ctx
-            .dev_server()
-            .map(|r| unsafe { bun_ptr::detach_lifetime_ref(r) }))
+        dispatch!(self, None, |_T, ctx| ctx.dev_server().map(|r| {
+            // SAFETY: the server backref outlives any AnyRequestContext (held only
+            // for the duration of a request callback); `self` is a by-value tagged
+            // pointer, so there is no input lifetime to tie the borrow to.
+            unsafe { bun_ptr::detach_lifetime_ref(r) }
+        }))
     }
 
     /// Mutable access to the attached DevServer. Zig passed `*DevServer`
@@ -233,9 +234,10 @@ impl AnyRequestContext {
     /// JS thread.
     pub fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
         dispatch!(self, None, |_T, ctx| {
-            // SAFETY: server backref outlives this context; `dev_server` is a
-            // `Box` field never moved while requests are in flight.
             let server = ctx.server?.as_ptr();
+            // SAFETY: `ctx.server` is a non-null backref that outlives this context
+            // and `dev_server` is a `Box` field never moved while requests are in
+            // flight, so dereferencing for exclusive access on the JS thread is sound.
             let ds = unsafe { (*server).dev_server.as_deref_mut()? };
             Some(core::ptr::from_mut(ds))
         })

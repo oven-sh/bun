@@ -71,8 +71,8 @@ pub use stream::Stream;
 // `*_jsc` crate via extension traits; the base crate has no mention of jsc.
 
 // ═══════════════════════════════════════════════════════════════════════
-// B-2 bridge: thin `h2_*` forwarders on HTTPClient / HTTPContext that the
-// h2_client modules call. The real bodies have since un-gated in lib.rs
+// Thin `h2_*` forwarders on HTTPClient / HTTPContext that the h2_client
+// modules call. The real bodies live in lib.rs
 // (`register_abort_tracker` … `progress_update`) and HTTPContext.rs
 // (`register_h2` / `unregister_h2`); these now monomorphize the const-generic
 // `<IS_SSL>` callees to `<true>` (HTTP/2 is TLS-only) and erase the

@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
 use crate as css;
 use crate::css_values::color::ColorFallbackKind;
@@ -125,8 +124,8 @@ impl Background {
         }
 
         Ok(Background {
-            image: image.unwrap_or_else(Image::default),
-            color: color.unwrap_or_else(CssColor::default),
+            image: image.unwrap_or_default(),
+            color: color.unwrap_or_default(),
             position: position.unwrap_or_else(BackgroundPosition::default),
             repeat: repeat.unwrap_or_else(BackgroundRepeat::default),
             size: size.unwrap_or_else(BackgroundSize::default),
@@ -184,7 +183,7 @@ impl Background {
         }
 
         let output_padding_box = self.origin != BackgroundOrigin::PaddingBox
-            || (!self.clip.eql_origin(&BackgroundOrigin::BorderBox)
+            || (!self.clip.eql_origin(BackgroundOrigin::BorderBox)
                 && self.clip.is_background_box());
 
         if output_padding_box {
@@ -195,8 +194,8 @@ impl Background {
             has_output = true;
         }
 
-        if (output_padding_box && !self.clip.eql_origin(&BackgroundOrigin::BorderBox))
-            || !self.clip.eql_origin(&BackgroundOrigin::BorderBox)
+        if (output_padding_box && !self.clip.eql_origin(BackgroundOrigin::BorderBox))
+            || !self.clip.eql_origin(BackgroundOrigin::BorderBox)
         {
             if has_output {
                 dest.write_str(" ")?;
@@ -236,7 +235,7 @@ impl Background {
         ret
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         self.color.get_necessary_fallbacks(targets)
             | self.get_image().get_necessary_fallbacks(targets)
     }
@@ -355,8 +354,8 @@ pub struct BackgroundPosition {
 }
 
 impl BackgroundPosition {
-    // TODO(port): PropertyFieldMap — Zig comptime struct mapping fields → PropertyIdTag.
-    // Port as associated consts or a trait impl in Phase B.
+    // PORT NOTE: PropertyFieldMap — Zig comptime struct mapping fields → PropertyIdTag.
+    // Encoded here as associated consts.
     pub const PROPERTY_FIELD_MAP_X: PropertyIdTag = PropertyIdTag::BackgroundPositionX;
     pub const PROPERTY_FIELD_MAP_Y: PropertyIdTag = PropertyIdTag::BackgroundPositionY;
 
@@ -430,7 +429,7 @@ impl BackgroundRepeat {
         Ok(BackgroundRepeat { x, y })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         use BackgroundRepeatKeyword::{NoRepeat, Repeat};
 
         if self.x == Repeat && self.y == NoRepeat {
@@ -447,8 +446,8 @@ impl BackgroundRepeat {
         }
     }
 
-    pub fn deep_clone(&self, _arena: &Bump) -> Self {
-        *self
+    pub fn deep_clone(self, _arena: &Bump) -> Self {
+        self
     }
 }
 
@@ -465,9 +464,6 @@ crate::css_eql_partialeq!(
 ///
 /// See [BackgroundRepeat](BackgroundRepeat).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-
-// TODO(port): css.DefineEnumProperty provides eql/hash/parse/to_css/deep_clone via reflection.
-// Phase B: implement as a derive macro or trait that maps kebab-case names.
 pub enum BackgroundRepeatKeyword {
     /// The image is repeated in this direction.
     Repeat,
@@ -500,7 +496,6 @@ impl BackgroundAttachment {
 /// A value for the [background-origin](https://www.w3.org/TR/css-backgrounds-3/#background-origin) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 #[repr(u8)]
-
 pub enum BackgroundOrigin {
     /// The position is relative to the border box.
     BorderBox,
@@ -513,7 +508,6 @@ pub enum BackgroundOrigin {
 /// A value for the [background-clip](https://drafts.csswg.org/css-backgrounds-4/#background-clip) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 #[repr(u8)]
-
 pub enum BackgroundClip {
     /// The background is clipped to the border box.
     BorderBox,
@@ -532,16 +526,16 @@ impl BackgroundClip {
         BackgroundClip::BorderBox
     }
 
-    pub fn eql_origin(&self, other: &BackgroundOrigin) -> bool {
+    pub fn eql_origin(self, other: BackgroundOrigin) -> bool {
         match self {
-            BackgroundClip::BorderBox => *other == BackgroundOrigin::BorderBox,
-            BackgroundClip::PaddingBox => *other == BackgroundOrigin::PaddingBox,
-            BackgroundClip::ContentBox => *other == BackgroundOrigin::ContentBox,
+            BackgroundClip::BorderBox => other == BackgroundOrigin::BorderBox,
+            BackgroundClip::PaddingBox => other == BackgroundOrigin::PaddingBox,
+            BackgroundClip::ContentBox => other == BackgroundOrigin::ContentBox,
             _ => false,
         }
     }
 
-    pub fn is_background_box(&self) -> bool {
+    pub fn is_background_box(self) -> bool {
         matches!(
             self,
             BackgroundClip::BorderBox | BackgroundClip::PaddingBox | BackgroundClip::ContentBox
@@ -550,7 +544,7 @@ impl BackgroundClip {
 }
 
 /// A value for the [aspect-ratio](https://drafts.csswg.org/css-sizing-4/#aspect-ratio) property.
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct AspectRatio {
     /// The `auto` keyword.
     pub auto: bool,
@@ -628,9 +622,9 @@ pub struct BackgroundHandler {
     pub attachments: Option<SmallList<BackgroundAttachment, 1>>,
     pub origins: Option<SmallList<BackgroundOrigin, 1>>,
     pub clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(port): arena Vec — Zig is `ArrayListUnmanaged(Property)` fed `context.arena`
-    // (CSS arena). Should be `bun_alloc::ArenaVec<'bump, Property>`; thread `'bump` on
-    // BackgroundHandler in Phase B.
+    // TODO(perf): arena Vec — Zig is `ArrayListUnmanaged(Property)` fed `context.arena`
+    // (CSS arena). Should be `bun_alloc::ArenaVec<'bump, Property>`; threading `'bump`
+    // through BackgroundHandler would avoid the heap alloc.
     pub decls: Vec<Property>,
     pub flushed_properties: BackgroundProperty,
     pub has_any: bool,
@@ -638,8 +632,8 @@ pub struct BackgroundHandler {
 
 // PORT NOTE: the Zig uses comptime field-name strings + @field for `flushHelper` /
 // `initSmallListHelper` / `push`. Rust cannot index struct fields by string at runtime;
-// these helpers are expanded into small per-field macros below. Phase B may want a
-// derive macro instead.
+// these helpers are expanded into small per-field macros below. A derive macro
+// could replace them.
 
 macro_rules! init_small_list_helper {
     ($this:expr, $field:ident, $length:expr) => {{
@@ -660,7 +654,7 @@ macro_rules! flush_helper {
         if let Some(existing) = &$this.$field {
             if !crate::generic::eql(existing, $val)
                 && $context.targets.browsers.is_some()
-                && !crate::generic::is_compatible($val, $context.targets.browsers.unwrap())
+                && !crate::generic::is_compatible($val, &$context.targets.browsers.unwrap())
             {
                 $this.flush($dest, $context);
             }
@@ -884,26 +878,27 @@ impl BackgroundHandler {
             self.clips.take();
         // Zig had `defer { ... deinit }` here — Drop handles cleanup at scope exit.
 
-        if maybe_color.is_some()
-            && maybe_images.is_some()
-            && maybe_x_positions.is_some()
-            && maybe_y_positions.is_some()
-            && maybe_repeats.is_some()
-            && maybe_sizes.is_some()
-            && maybe_attachments.is_some()
-            && maybe_origins.is_some()
-            && maybe_clips.is_some()
-        {
-            let color = maybe_color.as_ref().unwrap();
-            let images = maybe_images.as_mut().unwrap();
-            let x_positions = maybe_x_positions.as_mut().unwrap();
-            let y_positions = maybe_y_positions.as_mut().unwrap();
-            let repeats = maybe_repeats.as_mut().unwrap();
-            let sizes = maybe_sizes.as_mut().unwrap();
-            let attachments = maybe_attachments.as_mut().unwrap();
-            let origins = maybe_origins.as_mut().unwrap();
-            let clips = maybe_clips.as_mut().unwrap();
-
+        if let (
+            Some(color),
+            Some(images),
+            Some(x_positions),
+            Some(y_positions),
+            Some(repeats),
+            Some(sizes),
+            Some(attachments),
+            Some(origins),
+            Some(clips),
+        ) = (
+            maybe_color.as_ref(),
+            maybe_images.as_mut(),
+            maybe_x_positions.as_mut(),
+            maybe_y_positions.as_mut(),
+            maybe_repeats.as_mut(),
+            maybe_sizes.as_mut(),
+            maybe_attachments.as_mut(),
+            maybe_origins.as_mut(),
+            maybe_clips.as_mut(),
+        ) {
             // Only use shorthand syntax if the number of layers matches on all properties.
             let len = images.len();
             if x_positions.len() == len
@@ -963,11 +958,11 @@ impl BackgroundHandler {
                 // by-value into `backgrounds` above, so clearing prevents double-free.
                 // In Rust we cloned, so the originals will Drop normally; no explicit clear
                 // needed for correctness. Leaving as-is.
-                // PERF(port): was arena bulk-free / move-then-clear — profile in Phase B
+                // PERF(port): was arena bulk-free / move-then-clear — profile if hot.
 
                 if self.flushed_properties.is_empty() {
                     let mut fallbacks =
-                        crate::small_list::get_fallbacks(&mut backgrounds, arena, context.targets);
+                        crate::small_list::get_fallbacks(&mut backgrounds, arena, &context.targets);
                     // PORT NOTE: Vec has no owning iterator; pop in reverse then
                     // re-reverse via a temp Vec to preserve order.
                     let mut tmp: Vec<SmallList<Background, 1>> =
@@ -1006,7 +1001,7 @@ impl BackgroundHandler {
 
         if let Some(mut color) = maybe_color.take() {
             if !self.flushed_properties.contains(BackgroundProperty::COLOR) {
-                let fallbacks = color.get_fallbacks(arena, context.targets);
+                let fallbacks = color.get_fallbacks(arena, &context.targets);
                 for fallback in fallbacks.into_iter() {
                     push_property!(
                         self,
@@ -1029,7 +1024,7 @@ impl BackgroundHandler {
         if let Some(mut images) = maybe_images.take() {
             if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
                 let mut fallbacks =
-                    crate::small_list::get_fallbacks(&mut images, arena, context.targets);
+                    crate::small_list::get_fallbacks(&mut images, arena, &context.targets);
                 // PORT NOTE: Vec has no owning iterator; pop in reverse then
                 // re-reverse via a temp Vec to preserve order.
                 let mut tmp: Vec<SmallList<Image, 1>> = Vec::with_capacity(fallbacks.len());
@@ -1208,7 +1203,7 @@ impl crate::small_list::ImageFallback for Background {
         Background::get_fallback(self, arena, kind)
     }
     #[inline]
-    fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         Background::get_necessary_fallbacks(self, targets)
     }
 }

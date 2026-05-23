@@ -82,7 +82,7 @@ pub mod jsc {
 // `bun_s3_signing::X` are the *same* type (avoids
 // `s3_stub::ACL`-vs-`bun_s3_signing::ACL` mismatches across modules).
 // Remaining names without a real definition stay as opaque unit structs.
-// TODO(b2-blocked): bun_s3 — replace with real crate once it exists.
+// TODO(port): bun_s3 — replace with real crate once it exists.
 pub mod s3_stub {
     macro_rules! opaque { ($($n:ident),* $(,)?) => {$(
         #[derive(Debug, Default)] pub struct $n;
@@ -137,7 +137,12 @@ pub trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
     /// erasure: `fn(*anyopaque) bool`.
-    fn on_auto_flush(this: *mut Self) -> bool;
+    ///
+    /// # Safety
+    /// `this` must be the same pointer that was registered via
+    /// [`AutoFlusher::erased_ctx`] (i.e. a valid, live `*mut Self`), and the
+    /// call must occur on the JS thread with no aliasing `&mut Self`.
+    unsafe fn on_auto_flush(this: *mut Self) -> bool;
 }
 
 impl AutoFlusher {
@@ -146,7 +151,11 @@ impl AutoFlusher {
         // Ctx is opaque ptr identity only; `cast_mut()` does not assert write
         // provenance (no `&mut T` formed) — the trampoline recovers `*mut T`
         // and the impl decides how to borrow.
-        NonNull::new(core::ptr::from_ref::<T>(this).cast_mut().cast::<core::ffi::c_void>())
+        NonNull::new(
+            core::ptr::from_ref::<T>(this)
+                .cast_mut()
+                .cast::<core::ffi::c_void>(),
+        )
     }
 
     #[inline]
@@ -157,7 +166,7 @@ impl AutoFlusher {
             // SAFETY: `ctx` is exactly the `*mut T` registered via
             // `erased_ctx` below; `DeferredTaskQueue::run` feeds it back
             // unchanged.
-            <T as HasAutoFlusher>::on_auto_flush(ctx.cast::<T>())
+            unsafe { <T as HasAutoFlusher>::on_auto_flush(ctx.cast::<T>()) }
         }
         trampoline::<T>
     }
@@ -228,7 +237,9 @@ impl HasAutoFlusher for file_sink::FileSink {
         // R-2: `auto_flusher` is `JsCell`; `JsCell::get` yields `&T`.
         self.auto_flusher.get()
     }
-    fn on_auto_flush(this: *mut Self) -> bool {
+    /// # Safety
+    /// See [`HasAutoFlusher::on_auto_flush`].
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: `this` was registered as the canonical `*mut FileSink` cast to
         // `*mut c_void` (`AutoFlusher::erased_ctx`); `DeferredTaskQueue::run` is
         // single-threaded (drained on the JS thread after microtasks), so no
@@ -249,7 +260,9 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
     }
-    fn on_auto_flush(this: *mut Self) -> bool {
+    /// # Safety
+    /// See [`HasAutoFlusher::on_auto_flush`].
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: see FileSink impl above.
         unsafe { (*this).on_auto_flush() }
     }
@@ -317,7 +330,7 @@ bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 // Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`
 // is green; the shim's `#[repr(transparent)] struct FetchHeaders(usize)` matches the
 // opaque-handle ABI used by the `WebCore__FetchHeaders__*` extern fns.
-// TODO(b2-blocked): bun_jsc::fetch_headers — swap to `pub use bun_jsc::fetch_headers::FetchHeaders;`.
+// TODO(port): bun_jsc::fetch_headers — swap to `pub use bun_jsc::fetch_headers::FetchHeaders;`.
 pub use crate::jsc::FetchHeaders;
 
 #[path = "webcore/EncodingLabel.rs"]
@@ -377,7 +390,7 @@ pub mod s3 {
     pub use super::multipart_options_impl::MultiPartUploadOptions;
     // Forward the credential / enum stubs so `crate::webcore::s3::{ACL, ...}`
     // resolves for S3Client.rs (its `crate::s3` path is being migrated here).
-    // TODO(b2-blocked): replace with real bun_s3 types once that crate exists.
+    // TODO(port): replace with real bun_s3 types once that crate exists.
     pub use super::s3_stub::{
         ACL, S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3DownloadStreamWrapper,
         S3HttpSimpleTask, S3ListObjectsOptions, S3ListObjectsResult, S3SimpleRequestResult,
@@ -430,7 +443,7 @@ pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
 
 // TODO(port): Zig `Wrap(comptime Type, comptime function)` takes a *comptime fn pointer* as a
 // generic argument, which stable Rust cannot express. Reshaped: callers implement `PipeHandler`
-// for their type instead of passing a free fn. Phase B should audit call sites
+// for their type instead of passing a free fn. TODO(refactor): audit call sites
 // (`Wrap(Foo, Foo.onPipe).init(self)` → `Wrap::<Foo>::init(self)`).
 pub trait PipeHandler {
     fn on_pipe(&mut self, stream: streams::Result);

@@ -6,13 +6,10 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
-#[allow(unused_imports)]
-use bun_core::ZigString;
-use bun_core::{self, Environment, Global, Output, Progress, env_var, fmt as bun_fmt};
+use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
-use bun_js_parser as js_ast;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
 use bun_paths::{self, PathBuffer, SEP_STR};
@@ -53,9 +50,7 @@ pub trait FileSystemTmpdirExt {
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
     fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error> {
-        sys::open_dir_absolute(fs::RealFS::tmpdir_path())
-            .map(sys::Dir::from_fd)
-            .map_err(Into::into)
+        sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
     }
 }
 
@@ -507,7 +502,7 @@ impl UpgradeCommand {
     );
 
     const MANUAL_UPGRADE_COMMAND: &'static str = {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
         {
             "curl -fsSL https://bun.com/install | bash"
         }
@@ -515,7 +510,12 @@ impl UpgradeCommand {
         {
             "powershell -c 'irm bun.sh/install.ps1|iex'"
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "windows"
+        )))]
         {
             // TODO(port): Environment.os.displayString() at comptime
             "(TODO: Install script for this platform)"
@@ -594,6 +594,7 @@ impl UpgradeCommand {
                 // `get_latest_version` only touches them on the !SILENT error
                 // path (no overlapping live borrows).
                 Some(unsafe { &mut *refresher }),
+                // SAFETY: progress points into the same leaked allocation (see above).
                 Some(unsafe { &mut *progress }),
                 use_profile,
             )?
@@ -603,6 +604,7 @@ impl UpgradeCommand {
 
             // SAFETY: see above.
             unsafe { (*progress).end() };
+            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
 
             if !Environment::IS_CANARY {
@@ -664,6 +666,7 @@ impl UpgradeCommand {
                 unsafe { (*refresher).start(b"Downloading", version.size as usize) };
             // SAFETY: see above.
             unsafe { (*progress).unit = Progress::Unit::Bytes };
+            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
             // Zig leaks this allocation intentionally — store in CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
@@ -711,6 +714,7 @@ impl UpgradeCommand {
 
             // SAFETY: refresher/progress are leaked allocations.
             unsafe { (*progress).end() };
+            // SAFETY: refresher is a leaked Box (process-lifetime); no other &mut is live.
             unsafe { (*refresher).refresh() };
 
             if bytes.is_empty() {
@@ -767,15 +771,12 @@ impl UpgradeCommand {
             };
 
             // PORT NOTE: Zig used std.fs.Dir.createFileZ(.{ .truncate = true }); mapped to
-            // bun_sys::openat with WRONLY|CREAT|TRUNC and wrapped in sys::File for write_all.
-            let zip_file = match sys::openat_a(
-                save_dir.fd(),
+            // Dir::open_file with WRONLY|CREAT|TRUNC.
+            let zip_file = match save_dir.open_file(
                 tmpname.as_bytes(),
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                 0o644,
-            )
-            .map(sys::File::from_fd)
-            {
+            ) {
                 Ok(f) => f,
                 Err(err) => {
                     Output::pretty_errorln(format_args!(
@@ -788,7 +789,7 @@ impl UpgradeCommand {
 
             {
                 if let Err(err) = zip_file.write_all(bytes) {
-                    let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                    let _ = sys::unlinkat(&save_dir, tmpname);
                     Output::pretty_errorln(format_args!(
                         "<r><red>error:<r> Failed to write to temp file {}",
                         bstr::BStr::new(err.name())
@@ -800,7 +801,7 @@ impl UpgradeCommand {
 
             {
                 scopeguard::defer! {
-                    let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                    let _ = sys::unlinkat(&save_dir, tmpname);
                 }
 
                 #[cfg(unix)]
@@ -812,7 +813,7 @@ impl UpgradeCommand {
                         filesystem.top_level_dir,
                         b"unzip",
                     ) else {
-                        let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                        let _ = sys::unlinkat(&save_dir, tmpname);
                         Output::pretty_errorln(format_args!(
                             "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
                         ));
@@ -842,7 +843,7 @@ impl UpgradeCommand {
                     }) {
                         Ok(Ok(r)) => r,
                         Ok(Err(err)) => {
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 bstr::BStr::new(err.name())
@@ -850,7 +851,7 @@ impl UpgradeCommand {
                             Global::exit(1);
                         }
                         Err(err) => {
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Output::pretty_errorln(format_args!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 err.name()
@@ -866,7 +867,7 @@ impl UpgradeCommand {
                                 "<r><red>Unzip failed<r> (exit code: {})",
                                 e.code
                             ));
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
                         other => {
@@ -874,7 +875,7 @@ impl UpgradeCommand {
                                 "<r><red>Unzip failed<r> ({})",
                                 other
                             ));
-                            let _ = sys::unlinkat(save_dir.fd(), tmpname);
+                            let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
                     }
@@ -898,13 +899,15 @@ impl UpgradeCommand {
                     let mut buf2 = PathBuffer::uninit();
                     let powershell_path: &ZStr = match which(
                         &mut buf,
-                        env_var::PATH.get().unwrap_or(b""),
+                        bun_core::env_var::PATH.get().unwrap_or(b""),
                         b"",
                         b"powershell",
                     ) {
                         Some(p) => p,
                         None => {
-                            let system_root = env_var::SYSTEMROOT.get().unwrap_or(b"C:\\Windows");
+                            let system_root = bun_core::env_var::SYSTEMROOT
+                                .get()
+                                .unwrap_or(b"C:\\Windows");
                             let hardcoded_system_powershell =
                                 bun_paths::join_abs_string_buf_z::<bun_paths::platform::Windows>(
                                     system_root,
@@ -1112,7 +1115,7 @@ impl UpgradeCommand {
                 )
             };
             let target_dir_ = bun_core::dirname(destination_executable)
-                .ok_or(bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
+                .ok_or_else(|| bun_core::err!("UpgradeFailedBecauseOfMissingExecutableDir"))?;
             // safe because the slash will no longer be in use
             let target_dir_len = target_dir_.len();
             // SAFETY: in-bounds; write is at the separator byte between dirname
@@ -1125,8 +1128,8 @@ impl UpgradeCommand {
             // writes. Each mutation re-establishes the NUL before
             // `target_dirname` is read again.
             let target_dirname = unsafe { ZStr::from_raw(buf_ptr, target_dir_len) };
-            let target_dir_it = match sys::open_dir_absolute(target_dirname.as_bytes()) {
-                Ok(d) => sys::Dir::from_fd(d),
+            let target_dir_it = match sys::Dir::open(target_dirname.as_bytes()) {
+                Ok(d) => d,
                 Err(err) => {
                     let _ = save_dir_.delete_tree(&version_name);
                     Output::pretty_errorln(format_args!(
@@ -1148,7 +1151,7 @@ impl UpgradeCommand {
 
             if use_canary {
                 // Check if the versions are the same
-                let target_stat = match sys::fstatat(target_dir.fd(), target_filename) {
+                let target_stat = match sys::fstatat(&target_dir, target_filename) {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);
@@ -1161,7 +1164,7 @@ impl UpgradeCommand {
                     }
                 };
 
-                let dest_stat = match sys::fstatat(save_dir.fd(), exe_z) {
+                let dest_stat = match sys::fstatat(&save_dir, exe_z) {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);
@@ -1179,17 +1182,13 @@ impl UpgradeCommand {
 
                     // PORT NOTE: `Dir::read_file` (Zig std.fs.Dir.readFile) is open + read_all + close.
                     let target_hash = hash(
-                        match sys::File::openat(
-                            target_dir.fd(),
-                            target_filename.as_bytes(),
-                            sys::O::RDONLY,
-                            0,
-                        )
-                        .and_then(|f| {
-                            let n = f.read_all(&mut input_buf);
-                            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                            n
-                        }) {
+                        match target_dir
+                            .open_file(target_filename.as_bytes(), sys::O::RDONLY, 0)
+                            .and_then(|f| {
+                                let n = f.read_all(&mut input_buf);
+                                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                                n
+                            }) {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
@@ -1203,13 +1202,11 @@ impl UpgradeCommand {
                     );
 
                     let source_hash = hash(
-                        match sys::File::openat(save_dir.fd(), exe, sys::O::RDONLY, 0).and_then(
-                            |f| {
-                                let n = f.read_all(&mut input_buf);
-                                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                                n
-                            },
-                        ) {
+                        match save_dir.open_file(exe, sys::O::RDONLY, 0).and_then(|f| {
+                            let n = f.read_all(&mut input_buf);
+                            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                            n
+                        }) {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
@@ -1396,6 +1393,7 @@ pub mod upgrade_js_bindings {
     // worker VM) a `thread_local!` would make the close see `None` and leak the
     // HANDLE. Match the Zig global with a `RacyCell`; access is test-only and
     // effectively single-threaded.
+    #[cfg(windows)]
     static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {

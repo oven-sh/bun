@@ -147,13 +147,10 @@ impl Walker {
 
                         let mut top_idx = top_idx;
                         if kind == sys::EntryKind::Directory {
-                            let new_dir = match sys::open_dir_for_iteration_os_path(
+                            let new_dir = sys::open_dir_for_iteration_os_path(
                                 self.stack[top_idx].iter.dir(),
                                 base.name.as_slice(),
-                            ) {
-                                Ok(fd) => fd,
-                                Err(err) => return Err(err),
-                            };
+                            )?;
                             {
                                 self.stack.push(StackItem {
                                     // TODO(port): Zig passed encoding `if windows .u16 else .u8`;

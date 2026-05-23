@@ -1,6 +1,6 @@
-#[allow(unused_imports)] // c_int / c_uint only used in the macOS-gated extern block
-use core::ffi::{c_char, c_int, c_uint, c_void};
-use std::sync::OnceLock;
+use core::ffi::{c_char, c_void};
+#[cfg(target_os = "macos")]
+use core::ffi::{c_int, c_uint};
 
 // Only referenced from the Darwin `extern "C"` block below; rustc's
 // reachability analysis doesn't see uses inside dead `extern fn` signatures.
@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 type vm_size_t = usize;
 
 // Environment.allow_assert and Environment.isMac and !Environment.enable_asan
-// TODO(port): `enable_asan` mapped to a cargo feature; verify Phase B wires this the same way.
+// TODO(port): `enable_asan` mapped to a cargo feature; verify the build wires this the same way.
 pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
 /// Zig: `fn heapLabel(comptime T: type) [:0]const u8`
@@ -22,7 +22,7 @@ pub trait HeapLabel {
 
 // TODO(port): blanket impl wants `bun.meta.typeBaseName(@typeName(T))` at compile
 // time. `core::any::type_name::<T>()` is not `const fn` and includes the full
-// module path. Phase B: either a proc-macro derive, or require every `T` used
+// module path. Either a proc-macro derive, or require every `T` used
 // with heap_breakdown to impl `HeapLabel` explicitly.
 fn heap_label<T: HeapLabel>() -> &'static str {
     T::HEAP_LABEL
@@ -44,7 +44,7 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
     // TODO(port): callers should prefer `named_allocator!("Name")` / `get_zone!` directly
     // so the OnceLock is per-name. This runtime path falls back to a process-global
     // map and is not zero-cost like the Zig comptime version.
-    // PERF(port): was comptime monomorphization — profile in Phase B
+    // PERF(port): was comptime monomorphization — profile if hot.
     //
     // Zig: `getZone("Bun__" ++ name)` — the "Bun__" prefix is applied HERE, not in
     // `getZone`/`get_zone_runtime`. PORTING.md §Forbidden: no `Box::leak` for
@@ -80,7 +80,7 @@ pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
 /// process-global map for callers that pass a non-literal name (or for
 /// `allocator<T>()`/`get_zone_t<T>()`, which cannot expand a per-T static on
 /// stable Rust without a proc-macro).
-// TODO(port): Phase B may replace with a `#[heap_label]` derive that expands
+// TODO(port): could be replaced with a `#[heap_label]` derive that expands
 // `get_zone!` directly.
 #[allow(clippy::assertions_on_constants)]
 pub fn get_zone(name: &[u8]) -> &'static Zone {
@@ -89,16 +89,21 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
         "heap_breakdown::get_zone called with ENABLED=false"
     );
 
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use core::cell::UnsafeCell;
     // Map key = `name` (no NUL) so lookups match inserts. The NUL-terminated
     // label handed to `malloc_set_zone_name` is stored as the map *value*
     // (alongside the zone) to keep its allocation alive for 'static
     // (PORTING.md §Forbidden: never `Box::leak`).
-    static ZONES: OnceLock<Mutex<HashMap<Vec<u8>, (Vec<u8>, &'static Zone)>>> = OnceLock::new();
-    let map = ZONES.get_or_init(|| Mutex::new(HashMap::default()));
-    let mut map = map.lock().unwrap();
-    if let Some((_, z)) = map.get(name) {
+    struct ZoneTable(UnsafeCell<Vec<(Vec<u8>, Vec<u8>, &'static Zone)>>);
+    // SAFETY: the inner `Vec` is only accessed while `LOCK` is held.
+    unsafe impl Sync for ZoneTable {}
+    static LOCK: crate::Mutex = crate::Mutex::new();
+    static ZONES: ZoneTable = ZoneTable(UnsafeCell::new(Vec::new()));
+    let _guard = LOCK.lock();
+    // SAFETY: exclusive access — `ZONES.0` is only dereferenced while `LOCK`
+    // is held, and `_guard` is live for the rest of this function.
+    let zones = unsafe { &mut *ZONES.0.get() };
+    if let Some((_, _, z)) = zones.iter().find(|(k, _, _)| k.as_slice() == name) {
         return *z;
     }
     // `name` verbatim (no prefix — matches Zig `getZone`), NUL-terminated.
@@ -112,7 +117,7 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     // 'static `ZONES` map immediately below and never freed — valid for process
     // lifetime per `Zone::init` contract.
     let zone = unsafe { Zone::init(raw) };
-    map.insert(name.to_vec(), (owned, zone));
+    zones.push((name.to_vec(), owned, zone));
     zone
 }
 
@@ -133,6 +138,8 @@ bun_opaque::opaque_ffi! {
 // SAFETY: `malloc_zone_t` is internally synchronized by libmalloc; sharing
 // `&Zone` across threads is the documented usage (matches Zig `*Zone` via `std.once`).
 unsafe impl Sync for Zone {}
+// SAFETY: `Zone` is an opaque libmalloc handle with no thread-affine state; the
+// zone API is callable from any thread, so transferring the handle is sound.
 unsafe impl Send for Zone {}
 
 impl Zone {
@@ -207,7 +214,7 @@ impl Zone {
     // `impl crate::Allocator for Zone` (see below); the raw vtable struct is a
     // Zig-ism and is not materialized here, so the `resize`/`free` vtable thunks
     // (and the `malloc_size` helper they used) are not ported.
-    // TODO(port): if Phase B's `bun_alloc::Allocator` is a literal vtable struct
+    // TODO(port): if `bun_alloc::Allocator` ever becomes a literal vtable struct
     // (to match `std.mem.Allocator` ABI), reintroduce a `pub static VTABLE`
     // along with the `resize`/`raw_free` thunks.
 

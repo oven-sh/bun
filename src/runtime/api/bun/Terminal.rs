@@ -10,7 +10,10 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_ulong, c_void};
+#[cfg(unix)]
+use core::ffi::c_ulong;
+use core::ffi::{c_int, c_void};
+#[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
@@ -18,7 +21,9 @@ use crate::webcore::blob::ZigStringBlobExt;
 use bun_core::SignalCode;
 use bun_core::ZigString;
 use bun_io::Loop as AsyncLoop;
-use bun_io::pipe_reader::{BufferedReaderParent, PosixFlags};
+use bun_io::pipe_reader::BufferedReaderParent;
+#[cfg(unix)]
+use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
@@ -94,8 +99,8 @@ pub mod js {
 // `mod js` above and `extern "C" fn finalize` below.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
-// shim still emits `this: &mut Terminal` until Phase 1 lands — `&mut T`
-// auto-derefs to `&T` so the impls below compile against either. The
+// shim still emits `this: &mut Terminal` — `&mut T` auto-derefs to `&T`
+// so the impls below compile against either. The
 // BufferedReader/StreamingWriter parent-vtable thunks deref `*mut Self` as
 // `&*this` (shared); all field mutation routes through the cells.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
@@ -121,15 +126,14 @@ pub struct Terminal {
     /// uv_process_options_t.pseudoconsole.
     #[cfg(windows)]
     hpcon: Cell<Option<windows::HPCON>>,
-    #[cfg(not(windows))]
-    hpcon: (),
 
     /// Current terminal size
     cols: Cell<u16>,
     rows: Cell<u16>,
 
     /// Terminal name (e.g., "xterm-256color"). Read-only after construction.
-    term_name: ZigStringSlice,
+    /// Held for Drop (owns the slice allocation); no getter currently exposes it.
+    _term_name: ZigStringSlice,
 
     /// Event loop handle for callbacks. Read-only after construction.
     event_loop_handle: EventLoopHandle,
@@ -213,27 +217,12 @@ impl Default for Options {
 // resolve to that directly, no shim here.
 trait JSValueTerminalExt {
     fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>>;
-    fn get_optional_slice(
-        self,
-        global: &JSGlobalObject,
-        name: &[u8],
-    ) -> JsResult<Option<ZigStringSlice>>;
     fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>>;
 }
 impl JSValueTerminalExt for JSValue {
     fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>> {
         match self.get(global, name)? {
             Some(v) if !v.is_undefined_or_null() => Ok(Some(v.coerce::<i32>(global)?)),
-            _ => Ok(None),
-        }
-    }
-    fn get_optional_slice(
-        self,
-        global: &JSGlobalObject,
-        name: &[u8],
-    ) -> JsResult<Option<ZigStringSlice>> {
-        match self.get(global, name)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
             _ => Ok(None),
         }
     }
@@ -370,7 +359,7 @@ impl Terminal {
     /// signatures. All field mutation routes through `Cell`/`JsCell`.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
     /// Recover `&Terminal` from the parent back-pointer stashed via
@@ -447,8 +436,6 @@ impl Terminal {
             slave_fd: Cell::new(pty_result.slave),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
-            #[cfg(not(windows))]
-            hpcon: (),
             cols: Cell::new(if cfg!(windows) {
                 u16::try_from(clamp_to_coord(options.cols)).expect("int cast")
             } else {
@@ -459,8 +446,7 @@ impl Terminal {
             } else {
                 options.rows
             }),
-            term_name,
-            // SAFETY: bun_vm() returns the live VM raw pointer for this global.
+            _term_name: term_name,
             event_loop_handle: EventLoopHandle::init(
                 global_object.bun_vm().as_mut().event_loop().cast(),
             ),
@@ -734,9 +720,6 @@ impl Terminal {
             }
         }
     }
-    #[cfg(not(windows))]
-    #[allow(unused)]
-    fn close_pseudoconsole_off_thread(&self, _hpcon: *mut c_void) {}
 }
 
 pub struct PtyResult {
@@ -775,7 +758,7 @@ fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     {
         return create_pty_windows(cols, rows);
     }
-    #[allow(unreachable_code)]
+    #[cfg(not(any(unix, windows)))]
     Err(CreatePtyError::NotSupported)
 }
 
@@ -843,6 +826,7 @@ mod lib_util {
     }
 }
 
+#[cfg(unix)]
 fn get_open_pty_fn() -> Option<OpenPtyFn> {
     // On macOS, openpty is in libc, so we can use it directly
     #[cfg(target_os = "macos")]
@@ -871,7 +855,7 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
         return lib_util::get_open_pty();
     }
 
-    #[allow(unreachable_code)]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     None
 }
 
@@ -925,7 +909,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
                 | libc::BRKINT; // Signal interrupt on break
             // IUTF8: present in Linux/macOS/FreeBSD kernels but Zig std's
             // tc_iflag_t only exposes the field on Linux/macOS, so probe for it.
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             {
                 t.c_iflag |= libc::IUTF8;
             }
@@ -1110,6 +1094,7 @@ fn create_overlapped_pipe_pair(
     Ok(PipePair { server, client })
 }
 
+#[cfg(windows)]
 static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(windows)]
@@ -1221,10 +1206,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
 
     let write_fd = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => {
-            in_server = None;
-            fd
-        }
+        Ok(fd) => fd,
         Err(_) => {
             cleanup!();
             return Err(CreatePtyError::DupFailed);
@@ -1561,31 +1543,17 @@ impl Terminal {
 /// POSIX termios struct for terminal flags manipulation
 #[cfg(unix)]
 type Termios = sys::posix::Termios;
-#[cfg(not(unix))]
-type Termios = ();
 
 /// Get terminal attributes using tcgetattr
+#[cfg(unix)]
 fn get_termios(fd: Fd) -> Option<Termios> {
-    #[cfg(not(unix))]
-    {
-        let _ = fd;
-        return None;
-    }
-    #[cfg(unix)]
     sys::posix::tcgetattr(fd.native()).ok()
 }
 
 /// Set terminal attributes using tcsetattr (TCSANOW = immediate)
+#[cfg(unix)]
 fn set_termios(fd: Fd, termios_p: &Termios) -> bool {
-    #[cfg(not(unix))]
-    {
-        let _ = (fd, termios_p);
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        sys::posix::tcsetattr(fd.native(), sys::posix::TCSA::Now, termios_p).is_ok()
-    }
+    sys::posix::tcsetattr(fd.native(), sys::posix::TCSA::Now, termios_p).is_ok()
 }
 
 impl Terminal {
@@ -1715,7 +1683,7 @@ impl Terminal {
         }
     }
 
-    fn on_writer_error(&self, err: sys::Error) {
+    fn on_writer_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onWriterError: {:?}", err);
         // On write error, close the terminal to prevent further operations
         // This handles cases like broken pipe when the child process exits
@@ -1752,7 +1720,7 @@ impl Terminal {
         }
     }
 
-    pub fn on_reader_error(&self, err: sys::Error) {
+    pub fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
         // R-2: see `on_reader_done` — `&self` + `Cell<Flags>` replaces the
         // prior `black_box` launder.
@@ -1926,7 +1894,7 @@ impl BufferedReaderParent for Terminal {
         Self::from_parent_ptr(this).on_reader_done()
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_reader_error(err)
+        Self::from_parent_ptr(this).on_reader_error(&err)
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
@@ -1953,7 +1921,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
         Self::from_parent_ptr(this).on_write(amount, status)
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(err)
+        Self::from_parent_ptr(this).on_writer_error(&err)
     }
     unsafe fn on_ready(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_ready()
@@ -1997,7 +1965,7 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
         Self::from_parent_ptr(this).on_write(amount, status)
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(err)
+        Self::from_parent_ptr(this).on_writer_error(&err)
     }
     unsafe fn on_writable(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_ready()

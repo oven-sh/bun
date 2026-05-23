@@ -1,14 +1,8 @@
 //! blocking, but off the main thread
 
-use core::ffi::{c_int, c_void};
-use core::marker::ConstParamTy;
-#[cfg(windows)]
-use core::mem::offset_of;
-
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
-#[allow(unused_imports)]
-use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, Store, StoreRef, store};
+use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, StoreRef, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io as aio;
@@ -16,17 +10,22 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
+#[cfg(not(windows))]
+use bun_sys::Stat;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
-use bun_sys::{self, Fd, FdExt, Mode, Stat, SystemError};
+use bun_sys::{self, Fd, FdExt, Mode, SystemError};
 #[cfg(windows)]
 use bun_sys_jsc::ErrorJsc as _;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use core::ffi::c_int;
+use core::ffi::c_void;
+use core::marker::ConstParamTy;
 
 // Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
 // the same Zig `jsc.SystemError` extern struct; map field-by-field because the
 // two Rust definitions order their fields differently.
-#[allow(dead_code)]
-fn to_jsc_system_error(e: SystemError) -> jsc::SystemError {
+fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
     jsc::SystemError {
         errno: e.errno,
         code: e.code,
@@ -46,7 +45,7 @@ fn to_jsc_system_error(e: SystemError) -> jsc::SystemError {
 pub struct CopyFile<'a> {
     pub destination_file_store: store::File,
     pub source_file_store: store::File,
-    // TODO(port): lifetime — heap-allocated across threads; Arc vs raw needs Phase B review
+    // TODO(port): lifetime — heap-allocated across threads; Arc vs raw needs review
     pub store: Option<StoreRef>,
     pub source_store: Option<StoreRef>,
     pub offset: SizeType,
@@ -62,7 +61,7 @@ pub struct CopyFile<'a> {
 
     // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
     // TODO(port): lifetime — this struct is Box-allocated and crosses threads;
-    // `'a` here is unsound in practice. Phase B: likely *const JSGlobalObject.
+    // `'a` here is unsound in practice. Likely should be *const JSGlobalObject.
     pub global_this: &'a JSGlobalObject,
 
     pub mkdirp_if_not_exists: bool,
@@ -108,9 +107,8 @@ impl<'a> CopyFile<'a> {
         let read_file = Box::new(CopyFile {
             destination_file_store: store.data.as_file().clone(),
             source_file_store: source_store.data.as_file().clone(),
-            // store.ref() / source_store.ref() — StoreRef::clone bumps the refcount
-            store: Some(store.clone()),
-            source_store: Some(source_store.clone()),
+            store: Some(store),
+            source_store: Some(source_store),
             offset: off,
             max_length: max_len,
             global_this,
@@ -143,7 +141,7 @@ impl<'a> CopyFile<'a> {
             system_error.message = bun_core::String::static_("Failed to copy file");
         }
 
-        let instance = to_jsc_system_error(system_error)
+        let instance = to_jsc_system_error(&system_error)
             .to_error_instance_with_async_stack(self.global_this, promise);
         if let Some(store) = self.store.take() {
             drop(store); // deref()
@@ -280,8 +278,7 @@ impl<'a> CopyFile<'a> {
                         }
                     }
                     bun_sys::Result::Err(errno) => {
-                        match blob::mkdir_if_not_exists(self, errno.clone(), dest, dest.as_bytes())
-                        {
+                        match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes()) {
                             Retry::Continue => continue,
                             Retry::Fail => {
                                 if matches!(WHICH, IOWhich::Both) {
@@ -340,10 +337,9 @@ impl<'a> CopyFile<'a> {
             // outlives this guard (dropped before fn return); disjoint fields.
             unsafe { *read_len_slot = *total_written_slot as SizeType };
         }
-        // TODO(port): defer captures &mut to disjoint field via raw ptr;
-        // Phase B: reshape to set read_len at each return site instead.
+        // TODO(refactor): defer captures &mut to disjoint field via raw ptr;
+        // reshape to set read_len at each return site instead.
 
-        #[allow(unused_mut, unused_variables)]
         let mut has_unset_append = false;
 
         // If they can't use copy_file_range, they probably also can't
@@ -617,7 +613,7 @@ impl<'a> CopyFile<'a> {
             ) {
                 bun_sys::Result::Err(errno) => {
                     let err_path = self.destination_file_store.pathlike.path().slice().to_vec();
-                    match blob::mkdir_if_not_exists(self, errno.clone(), dest, &err_path) {
+                    match blob::mkdir_if_not_exists(self, &errno, dest, &err_path) {
                         Retry::Continue => continue,
                         Retry::Fail => {}
                         Retry::No => {}
@@ -641,7 +637,10 @@ impl<'a> CopyFile<'a> {
         {
             // defer task.onFinish();
 
+            #[cfg(target_os = "macos")]
             let mut stat_: Option<Stat> = None;
+            #[cfg(not(target_os = "macos"))]
+            let stat_: Option<Stat> = None;
 
             if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
                 self.destination_fd = *fd;
@@ -947,12 +946,11 @@ impl<'a> CopyFile<'a> {
 
 impl Drop for CopyFile<'_> {
     fn drop(&mut self) {
-        // Zig deinit():
         if let PathOrFileDescriptor::Path(p) = &self.source_file_store.pathlike {
             if p.is_string() && self.system_error.is_none() {
                 // TODO(port): the Zig frees the path slice here. In Rust, ownership of
                 // `source_file_store.pathlike.path` should be encoded in the type so
-                // Drop handles it. Phase B: verify Store::File path ownership.
+                // Drop handles it. Verify Store::File path ownership.
             }
         }
         // self.store.?.deref() — Arc drop is automatic
@@ -962,7 +960,9 @@ impl Drop for CopyFile<'_> {
 
 // Port of `bun.sys.preallocate_supported` / `bun.sys.preallocate_length` (sys.zig).
 // Kept local until bun_sys exports them; values match crate::node::fs.
+#[cfg(not(windows))]
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
+#[cfg(not(windows))]
 const PREALLOCATE_LENGTH: SizeType = 2048 * 1024;
 
 const OPEN_DESTINATION_FLAGS: i32 =
@@ -1001,7 +1001,7 @@ pub struct CopyFileWindows<'a> {
     pub destination_mode: Option<Mode>,
     // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
     // TODO(port): lifetime — heap-allocated and re-entered from libuv callbacks;
-    // Phase B: likely *const jsc::EventLoop.
+    // likely should be *const jsc::EventLoop.
     pub event_loop: &'a jsc::event_loop::EventLoop,
 
     pub size: SizeType,
@@ -1449,7 +1449,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match bun_sys::File::from_fd(fd).kind() {
+                    match bun_sys::File::borrow(&fd).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;
@@ -1494,7 +1494,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
-                    match bun_sys::File::from_fd(fd).kind() {
+                    match bun_sys::File::borrow(&fd).kind() {
                         bun_sys::Result::Err(err) => {
                             self.throw(err);
                             return;
@@ -1842,10 +1842,14 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    this.event_loop
-        .enqueue_task_concurrent(jsc::ConcurrentTask::create(
-            jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
-        ));
+    // SAFETY: `event_loop` is the JS-thread loop stored at task creation;
+    // the `ConcurrentTask` heap allocation is freed by the loop after dispatch.
+    unsafe {
+        this.event_loop
+            .enqueue_task_concurrent(jsc::ConcurrentTask::create(
+                jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
+            ));
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1859,6 +1863,7 @@ pub enum IOWhich {
     Both,
 }
 
+#[cfg(not(windows))]
 fn unsupported_directory_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::EISDIR as i32,
@@ -1868,6 +1873,7 @@ fn unsupported_directory_error() -> SystemError {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn unsupported_non_regular_file_error() -> SystemError {
     SystemError {
         errno: bun_sys::SystemErrno::ENOTSUP as i32,
@@ -1877,7 +1883,7 @@ fn unsupported_non_regular_file_error() -> SystemError {
     }
 }
 // TODO(port): Zig had these as `const` values; SystemError contains bun.String which
-// is not const-constructible in Rust. Using fns here. Phase B: consider lazy_static.
+// is not const-constructible in Rust. Using fns here. Consider lazy_static / OnceLock.
 
 pub type CopyFilePromiseTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;

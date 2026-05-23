@@ -143,14 +143,14 @@ impl T {
     }
 
     pub fn is_string(self) -> bool {
-        match self {
+        matches!(
+            self,
             T::TNoSubstitutionTemplateLiteral
-            | T::TStringLiteral
-            | T::TTemplateHead
-            | T::TTemplateMiddle
-            | T::TTemplateTail => true,
-            _ => false,
-        }
+                | T::TStringLiteral
+                | T::TTemplateHead
+                | T::TTemplateMiddle
+                | T::TTemplateTail
+        )
     }
 
     pub fn is_close_brace_or_eof(self) -> bool {
@@ -439,9 +439,9 @@ pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
     }
 }
 
-/// `.rodata` `[&[u8]; T::COUNT]` indexed by [`T`] discriminant. Replaces the
-/// `LazyLock<EnumMap<T, _>>` Phase-A scaffolding so lookup is a plain array
-/// index with zero init code (matches Zig `std.EnumArray`).
+/// `.rodata` `[&[u8]; T::COUNT]` indexed by [`T`] discriminant. Replaces an
+/// earlier `LazyLock<EnumMap<T, _>>` so lookup is a plain array index with
+/// zero init code (matches Zig `std.EnumArray`).
 #[repr(transparent)]
 pub struct TokenEnumType(pub [&'static [u8]; <T as Enum>::LENGTH]);
 

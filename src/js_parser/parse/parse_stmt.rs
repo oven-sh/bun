@@ -1,14 +1,6 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    clippy::single_match
-)]
+#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
-use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
-use bun_core::strings;
 use bun_core::{self, err};
 
 use crate::lexer as js_lexer;
@@ -16,7 +8,7 @@ use crate::p::P;
 use bun_ast as js_ast;
 
 use js_ast::op::Level;
-use js_ast::{Binding, Expr, G, LocRef, S, Stmt, Symbol};
+use js_ast::{Expr, G, LocRef, S, Stmt};
 use js_lexer::T;
 
 use crate::parser::fs;
@@ -454,7 +446,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_ast::b::B::BIdentifier(_) => js_ast::symbol::Kind::CatchIdentifier,
                     _ => js_ast::symbol::Kind::Other,
                 };
-                p.declare_binding(kind, &mut value, &mut stmt_opts)?;
+                p.declare_binding(kind, &mut value, &stmt_opts)?;
                 binding = Some(value);
             }
 
@@ -596,6 +588,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     match res.stmt_or_expr {
                         js_ast::StmtOrExpr::Stmt(stmt) => {
                             bad_let_range = None;
+                            // Keep the "let"/"using" declarations visible to the for-in/for-of
+                            // checks below ("forbid_initializers"), like the "var"/"const" arms.
+                            decls_ptr = bun_ast::StoreSlice::new(res.decls.slice());
                             init_ = Some(stmt);
                         }
                         js_ast::StmtOrExpr::Expr(expr) => {
@@ -1057,7 +1052,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     };
                                 }
                             }
-                            _ => {}
+                            // "interface" turned out not to start an interface
+                            // declaration: the nested statement came back as an
+                            // expression statement ("export default interface = 2",
+                            // "export default interface => 1") or a labeled statement
+                            // ("export default interface: 0"). None of these can be a
+                            // default export value, so report a syntax error instead of
+                            // building an S.ExportDefault that the visit and print
+                            // passes don't support.
+                            _ => {
+                                let r = js_lexer::range_of_identifier(p.source, stmt.loc);
+                                p.log().add_range_error_fmt(
+                                    Some(p.source),
+                                    r,
+                                    format_args!(
+                                        "Unexpected \"{}\"",
+                                        bstr::BStr::new(p.source.text_for_range(r))
+                                    ),
+                                );
+                                return Err(err!("SyntaxError"));
+                            }
                         }
 
                         p.create_default_name(default_loc).expect("unreachable")
@@ -1082,58 +1096,57 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && is_identifier
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                     && name == b"abstract"
+                    && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                 {
-                    match &expr.data {
-                        js_ast::ExprData::EIdentifier(_) => {
-                            let mut stmt_opts = ParseStatementOptions {
-                                ts_decorators: opts.ts_decorators.take(),
-                                is_name_optional: true,
-                                ..Default::default()
-                            };
-                            let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
+                    let mut stmt_opts = ParseStatementOptions {
+                        ts_decorators: opts.ts_decorators.take(),
+                        is_name_optional: true,
+                        ..Default::default()
+                    };
+                    let stmt: Stmt = p.parse_class_stmt(loc, &mut stmt_opts)?;
 
-                            // Use the statement name if present, since it's a better name
-                            let default_name: LocRef = 'default_name_getter: {
-                                match &stmt.data {
-                                    // This was just a type annotation
-                                    js_ast::StmtData::STypeScript(_) => {
-                                        return Ok(stmt);
-                                    }
+                    // Use the statement name if present, since it's a better name
+                    let default_name: LocRef = 'default_name_getter: {
+                        match &stmt.data {
+                            // This was just a type annotation
+                            js_ast::StmtData::STypeScript(_) => {
+                                return Ok(stmt);
+                            }
 
-                                    js_ast::StmtData::SFunction(func_container) => {
-                                        if let Some(_name) = func_container.func.name {
-                                            break 'default_name_getter LocRef {
-                                                loc: default_loc,
-                                                ref_: _name.ref_,
-                                            };
-                                        }
-                                    }
-                                    js_ast::StmtData::SClass(class) => {
-                                        if let Some(_name) = class.class.class_name {
-                                            break 'default_name_getter LocRef {
-                                                loc: default_loc,
-                                                ref_: _name.ref_,
-                                            };
-                                        }
-                                    }
-                                    _ => {}
+                            js_ast::StmtData::SFunction(func_container) => {
+                                if let Some(_name) = func_container.func.name {
+                                    break 'default_name_getter LocRef {
+                                        loc: default_loc,
+                                        ref_: _name.ref_,
+                                    };
                                 }
+                            }
+                            js_ast::StmtData::SClass(class) => {
+                                if let Some(_name) = class.class.class_name {
+                                    break 'default_name_getter LocRef {
+                                        loc: default_loc,
+                                        ref_: _name.ref_,
+                                    };
+                                }
+                            }
+                            _ => {}
+                        }
 
-                                p.create_default_name(default_loc).expect("unreachable")
-                            };
-                            p.has_export_default = true;
-                            return Ok(p.s(
-                                S::ExportDefault {
-                                    default_name,
-                                    value: js_ast::StmtOrExpr::Stmt(stmt),
-                                },
-                                loc,
-                            ));
-                        }
-                        _ => {
-                            p.panic("internal error: unexpected", format_args!(""));
-                        }
-                    }
+                        p.create_default_name(default_loc).expect("unreachable")
+                    };
+                    p.has_export_default = true;
+                    return Ok(p.s(
+                        S::ExportDefault {
+                            default_name,
+                            value: js_ast::StmtOrExpr::Stmt(stmt),
+                        },
+                        loc,
+                    ));
+                }
+
+                // "@decorator export default abstract = 1"
+                if opts.ts_decorators.is_some() {
+                    p.lexer.expected(T::TClass)?;
                 }
 
                 p.lexer.expect_or_insert_semicolon()?;
@@ -1274,7 +1287,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
                     let path_name = fs::PathName::init(parsed_path.text);
-                    // PERF(port): was arena allocPrint — profile in Phase B
+                    // PERF(port): was arena allocPrint — profile if hot.
                     let namespace_ref = {
                         use std::io::Write as _;
                         let mut buf: Vec<u8> = Vec::new();
@@ -1457,6 +1470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let mut default_name = p.lexer.identifier;
+                let default_name_raw = p.lexer.raw();
                 stmt = S::Import {
                     namespace_ref: Ref::NONE,
                     import_record_index: u32::MAX,
@@ -1467,6 +1481,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ..Default::default()
                 };
                 p.lexer.next()?;
+
+                // "import defer * as ns from 'path'"
+                //
+                // https://tc39.es/proposal-defer-import-eval/
+                //
+                // `defer` is only a phase keyword when followed by `*`; in
+                // every other position (`import defer from 'x'`,
+                // `import defer, {x} from 'y'`) it is an ordinary default
+                // binding named `defer`. Compare the raw token so
+                // `def\u0065r` is not treated as the phase keyword.
+                //
+                // `opts.is_export` rules out `export import defer * as ...`
+                // (only reachable via the TypeScript `export import foo = bar`
+                // re-entry) so it falls through to the import-equals handler
+                // and errors there.
+                if default_name_raw == b"defer" && p.lexer.token == T::TAsterisk && !opts.is_export
+                {
+                    // Same scope restriction as `import * as ns from 'path'`:
+                    // ESM import declarations are only valid at module scope
+                    // (or inside a TypeScript `declare namespace`).
+                    if !opts.is_module_scope
+                        && (!opts.is_namespace_scope || !opts.is_typescript_declare)
+                    {
+                        p.lexer.unexpected()?;
+                        return Err(err!("SyntaxError"));
+                    }
+                    p.lexer.next()?;
+                    p.lexer.expect_contextual_keyword(b"as")?;
+                    stmt = S::Import {
+                        namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
+                        star_name_loc: Some(p.lexer.loc()),
+                        import_record_index: u32::MAX,
+                        phase_defer: true,
+                        ..Default::default()
+                    };
+                    p.lexer.expect(T::TIdentifier)?;
+                    p.lexer.expect_contextual_keyword(b"from")?;
+
+                    let path = p.parse_path()?;
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return p.process_import_statement(stmt, path, loc, false);
+                }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
                     // Skip over type-only imports
@@ -1652,17 +1708,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.token == T::TColon && !opts.has_decorators() {
                     return Self::parse_labeled_stmt(p, opts, loc, expr.loc, ident.ref_);
                 }
-            }
 
-            if Self::IS_TYPESCRIPT_ENABLED {
-                if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
-                    // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
-                    // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the
-                    // common `SExpr` fall-through keeps a small stack frame.
-                    if let Some(stmt) =
-                        Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
-                    {
-                        return Ok(stmt);
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
+                        // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
+                        // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the
+                        // common `SExpr` fall-through keeps a small stack frame.
+                        if let Some(stmt) =
+                            Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
+                        {
+                            return Ok(stmt);
+                        }
                     }
                 }
             }
@@ -1760,15 +1816,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.is_contextual_keyword(b"global") {
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
+                    let scope_index = p.scopes_in_order.len();
                     let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.next()?;
+                    // The statements inside are dropped, so discard any scopes they
+                    // recorded or the visit pass will hit a scope order mismatch.
+                    p.discard_scopes_up_to(scope_index);
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
 
                 // "declare const x: any"
+                let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
                 if let Some(decs) = &opts.ts_decorators {
                     p.discard_scopes_up_to(decs.scope_index);
+                } else {
+                    // The statement is dropped below (or reduced to just its bindings
+                    // for "export declare var" inside a namespace), so discard any
+                    // scopes it recorded or the visit pass will hit a scope order
+                    // mismatch (e.g. "declare foo: bar" parses a labeled statement
+                    // that records a Label scope).
+                    p.discard_scopes_up_to(scope_index);
                 }
 
                 // Unlike almost all uses of "declare", statements that use

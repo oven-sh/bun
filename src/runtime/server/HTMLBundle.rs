@@ -15,7 +15,7 @@ use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount, RefCounted};
+use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount};
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::api::js_bundle_completion_task::{
@@ -130,7 +130,7 @@ impl HTMLBundle {
     // Zig `deinit`: only `allocator.free(this.path)` + `bun.destroy(this)`.
     // `path: Box<[u8]>` auto-drops; dealloc handled by IntrusiveRc — no explicit Drop body.
 
-    // TODO(b2-blocked): #[bun_jsc::host_fn(getter)] once codegen attribute lands for this class.
+    // TODO(port): #[bun_jsc::host_fn(getter)] once codegen attribute lands for this class.
     pub fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
@@ -174,15 +174,11 @@ pub struct Route {
     pub method: RouteMethod,
 }
 
+#[derive(Default)]
 pub enum RouteMethod {
+    #[default]
     Any,
     Method(bun_http_types::Method::Set),
-}
-
-impl Default for RouteMethod {
-    fn default() -> Self {
-        RouteMethod::Any
-    }
 }
 
 pub enum State {
@@ -246,9 +242,15 @@ impl Route {
         cost
     }
 
+    /// # Safety
+    /// `html_bundle` must point to a live `IntrusiveRc`-managed `HTMLBundle`
+    /// allocation; this takes one ref on it.
+    // Forwards `html_bundle` to `IntrusiveRc::init_ref` without dereferencing it
+    // here; not_unsafe_ptr_arg_deref is a false positive on forwarding wrappers.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn init(html_bundle: *mut HTMLBundle) -> IntrusiveRc<Route> {
         IntrusiveRc::new(Route {
-            // SAFETY: caller passes a live HTMLBundle pointer.
+            // SAFETY: caller contract.
             bundle: unsafe { IntrusiveRc::<HTMLBundle>::init_ref(html_bundle) },
             pending_responses: JsCell::new(Vec::new()),
             ref_count: RefCount::init(),
@@ -349,7 +351,6 @@ impl Route {
                     let pending = bun_core::heap::into_raw(Box::new(PendingResponse {
                         method,
                         resp,
-                        server: route.server.get(),
                         route: this,
                         is_response_pending: true,
                     }));
@@ -359,7 +360,13 @@ impl Route {
                     // SAFETY: `this` is a live IntrusiveRc-managed allocation;
                     // matched by the deref in `PendingResponse` drop / on_aborted.
                     unsafe { RefCount::<Route>::ref_(this) };
-                    resp.on_aborted(PendingResponse::on_aborted, pending);
+                    resp.on_aborted(
+                        |p, r| {
+                            // SAFETY: `p` was registered from a live `heap::into_raw` allocation above.
+                            unsafe { PendingResponse::on_aborted(p, r) }
+                        },
+                        pending,
+                    );
                     req.set_yield(false);
                 }
                 State::Err(_log) => {
@@ -479,7 +486,7 @@ impl Route {
             // PORT NOTE: Zig bulk-set `entries.len` + `@memcpy` + `reIndex` against
             // `StringArrayHashMap`; Rust `StringMap` exposes only put/insert. Same
             // result, slightly more hash work.
-            // PERF(port): was bulk reIndex — profile in Phase B.
+            // PERF(port): was bulk reIndex — profile if hot.
             for (k, v) in define.keys.iter().zip(define.values.iter()) {
                 config.define.put(k, v)?;
             }
@@ -795,7 +802,6 @@ pub struct PendingResponse {
     method: Method,
     resp: AnyResponse,
     is_response_pending: bool,
-    server: Option<AnyServer>,
     // Raw ptr because the route owns the Vec containing this
     // PendingResponse; an `IntrusiveRc<Route>` field would form a cycle through
     // `Drop`. The ref is bumped/dropped manually via `RefCount::<Route>` calls.
@@ -817,8 +823,12 @@ impl Drop for PendingResponse {
 }
 
 impl PendingResponse {
-    pub fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
-        // SAFETY: `this` was registered with resp.on_aborted from a live heap::alloc allocation.
+    /// # Safety
+    /// `this` must point to a live `PendingResponse` previously boxed via
+    /// `heap::into_raw` and registered with `resp.on_aborted`; it may be freed
+    /// (via `heap::take`) by this call.
+    unsafe fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
+        // SAFETY: caller contract.
         let this_ref = unsafe { &mut *this };
         debug_assert!(this_ref.is_response_pending);
         this_ref.is_response_pending = false;

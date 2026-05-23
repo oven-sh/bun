@@ -135,7 +135,7 @@ pub fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {
     create_postgres_error(
         global_object,
         error_message,
-        PostgresErrorOptions {
+        &PostgresErrorOptions {
             code: error_code,
             errno,
             detail: detail_slice,

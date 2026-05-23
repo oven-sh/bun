@@ -19,7 +19,7 @@ impl Targets {
     /// Set a sane default for bundler
     pub fn browser_default() -> Targets {
         Targets {
-            browsers: Some(*Browsers::BROWSER_DEFAULT),
+            browsers: Some(*BROWSER_DEFAULT),
             ..Default::default()
         }
     }
@@ -32,6 +32,7 @@ impl Targets {
         }
     }
 
+    #[cfg(debug_assertions)]
     fn parse_debug_target(val_: &[u8]) -> Option<u32> {
         let val = strings::trim(val_, b" \n\r\t");
         if val.is_empty() {
@@ -42,7 +43,6 @@ impl Targets {
         }
 
         let mut lhs: u32 = 0;
-        let rhs: u32;
 
         let mut i: usize = 0;
         for (j, &c) in val.iter().enumerate() {
@@ -68,7 +68,7 @@ impl Targets {
             panic!("bad string");
         }
         i += 1;
-        rhs = strings::parse_int::<u32>(&val[i..], 10).expect("invalid bytes");
+        let rhs: u32 = strings::parse_int::<u32>(&val[i..], 10).expect("invalid bytes");
         Some(lhs << rhs)
     }
 
@@ -117,7 +117,7 @@ impl Targets {
                 VendorPrefix::all()
             } else {
                 if let Some(b) = self.browsers {
-                    feature.prefixes_for(b)
+                    feature.prefixes_for(&b)
                 } else {
                     prefix
                 }
@@ -138,11 +138,8 @@ impl Targets {
 
     pub fn should_compile_same(&self, compat_feature: css::compat::Feature) -> bool {
         // PERF(port): was comptime enum param — demoted to runtime (const-generic
-        // would need #[derive(ConstParamTy)] on compat::Feature; revisit in Phase B).
+        // would need #[derive(ConstParamTy)] on compat::Feature).
         // Zig: comptime construct a Features with @field(feature, @tagName(compat_feature)) = true.
-        // TODO(port): comptime reflection — requires a mapping from compat::Feature variant
-        // name to the same-named Features bitflag. Phase B should add
-        // `Features::from_compat(compat::Feature) -> Features` (or a const-generic).
         let target_feature: Features = Features::from_compat(compat_feature);
         self.should_compile(compat_feature, target_feature)
     }
@@ -154,7 +151,7 @@ impl Targets {
 
     pub fn is_compatible(&self, feature: css::compat::Feature) -> bool {
         if let Some(targets) = &self.browsers {
-            return feature.is_compatible(*targets);
+            return feature.is_compatible(targets);
         }
         true
     }
@@ -175,7 +172,7 @@ impl Targets {
 ///   ..Browsers::default()
 /// }
 /// ```
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Browsers {
     pub android: Option<u32>,
     pub chrome: Option<u32>,
@@ -188,20 +185,20 @@ pub struct Browsers {
     pub samsung: Option<u32>,
 }
 
-impl Browsers {
-    // Zig: `pub const browserDefault = convertFromString(&.{...}) catch unreachable;`
-    // convert_from_string is not const-evaluable in Rust; compute once lazily.
-    pub const BROWSER_DEFAULT: std::sync::LazyLock<Browsers> = std::sync::LazyLock::new(|| {
-        Browsers::convert_from_string(&[
-            b"es2020", // support import.meta.url
-            b"edge88",
-            b"firefox78",
-            b"chrome87",
-            b"safari14",
-        ])
-        .expect("unreachable")
-    });
+// Zig: `pub const browserDefault = convertFromString(&.{...}) catch unreachable;`
+// convert_from_string is not const-evaluable in Rust; compute once lazily.
+static BROWSER_DEFAULT: std::sync::LazyLock<Browsers> = std::sync::LazyLock::new(|| {
+    Browsers::convert_from_string(&[
+        b"es2020", // support import.meta.url
+        b"edge88",
+        b"firefox78",
+        b"chrome87",
+        b"safari14",
+    ])
+    .expect("unreachable")
+});
 
+impl Browsers {
     /// Ported from here:
     /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
     pub fn convert_from_string(esbuild_target: &[&[u8]]) -> Result<Browsers, bun_core::Error> {
@@ -222,7 +219,7 @@ impl Browsers {
                 // TODO(port): narrow error set (InvalidCharacter | Overflow)
                 let year = strings::parse_int::<u16>(number_part, 10)
                     .ok()
-                    .ok_or(bun_core::err!("InvalidCharacter"))?;
+                    .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
                 match year {
                     // https://caniuse.com/?search=es2015
                     2015 => {

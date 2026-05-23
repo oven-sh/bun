@@ -1,9 +1,7 @@
 //! CSS custom properties / `var()` / `env()` / unparsed token lists.
 //!
 //! Ported from `src/css/properties/custom.zig`.
-use bun_collections::VecExt;
 //
-// ─── B-2 round 9 status ────────────────────────────────────────────────────
 // `TokenList::{parse, parse_into, parse_with_options, to_css, to_css_raw}`,
 // `UnresolvedColor::{parse, to_css}`, `Variable::{parse, to_css}`,
 // `EnvironmentVariable::{parse, parse_nested, to_css}`,
@@ -122,7 +120,7 @@ mod ext {
         };
 
         if dest.minify && !is_internal {
-            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile in Phase B
+            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile if hot.
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             let _ = Token::UnquotedUrl(url).to_css_generic(&mut buf);
@@ -190,7 +188,7 @@ mod ext {
 // which bound on these traits — provide them here so the cycle closes and
 // `#[derive(CssEql/CssHash/DeepClone)]` on `TokenOrValue` resolves the
 // `Token(Token)` arm. Hand-written (not derived) because `Token` carries
-// `&'static [u8]` payloads (Phase-A arena-lifetime placeholder) and named-field
+// `&'static [u8]` payloads (arena-lifetime placeholder) and named-field
 // variants whose layout lives outside this module's edit scope.
 impl CssEql for crate::Num {
     #[inline]
@@ -304,17 +302,15 @@ impl CssHash for Token {
 impl<'bump> DeepClone<'bump> for Token {
     #[inline]
     fn deep_clone(&self, _bump: &'bump Arena) -> Self {
-        // All `&'static [u8]` payloads borrow the parser source/arena (Phase-A
-        // `'static` placeholder) — identity copy is correct (matches generics.zig
+        // All `&'static [u8]` payloads borrow the parser source/arena (`'static`
+        // is a placeholder) — identity copy is correct (matches generics.zig
         // "const strings" fast-path). `Num`/`Dimension` are POD.
         self.clone()
     }
 }
 
-// PERF(port): css is listed as an AST crate (arena-backed) in PORTING.md, but
-// LIFETIMES.tsv pre-classified the token vecs here as plain `Vec<TokenOrValue>`.
-// Phase A drops arena params and uses global-alloc `Vec`; Phase B may need
-// to thread `&'bump Bump` if profiling shows it.
+// PERF(port): the token vecs here are plain global-alloc `Vec<TokenOrValue>`;
+// the Zig original was arena-backed. Thread `&'bump Bump` if profiling shows it.
 
 /// Zig: `pub fn Result(comptime T: type) type` → `Maybe(T, ParseError(ParserError))`.
 pub use css_parser::CssResult as Result;
@@ -350,8 +346,7 @@ impl TokenList {
                         && !url.is_absolute(dest.get_import_records()?)
                     {
                         let pretty = std::ptr::from_ref::<[u8]>(
-                            dest.get_import_records()?
-                                .at(url.import_record_idx as usize)
+                            dest.get_import_records()?[url.import_record_idx as usize]
                                 .path
                                 .pretty,
                         );
@@ -431,7 +426,7 @@ impl TokenList {
                         has_whitespace = false;
                     }
                     Token::Number(v) => {
-                        CSSNumberFns::to_css(&v.value, dest)?;
+                        CSSNumberFns::to_css(v.value, dest)?;
                         has_whitespace = false;
                     }
                     _ => {
@@ -747,7 +742,7 @@ impl TokenList {
     pub fn get_fallbacks(
         &mut self,
         bump: &Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
     ) -> css::SmallList<Fallbacks, 2> {
         // Get the full list of possible fallbacks, and remove the lowest one, which will replace
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
@@ -799,7 +794,7 @@ impl TokenList {
         res
     }
 
-    pub fn get_necessary_fallbacks(&self, targets: css::targets::Targets) -> ColorFallbackKind {
+    pub fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
         let mut fallbacks = ColorFallbackKind::empty();
         for token_or_value in self.v.iter() {
             match token_or_value {
@@ -913,7 +908,7 @@ impl UnresolvedColor {
                     .should_compile_same(css::compat::Feature::SpaceSeparatedColorNotation)
                 {
                     dest.write_str("hsla(")?;
-                    CSSNumberFns::to_css(h, dest)?;
+                    CSSNumberFns::to_css(*h, dest)?;
                     dest.delim(b',', false)?;
                     Percentage { v: *s }.to_css(dest)?;
                     dest.delim(b',', false)?;
@@ -925,7 +920,7 @@ impl UnresolvedColor {
                 }
 
                 dest.write_str("hsl(")?;
-                CSSNumberFns::to_css(h, dest)?;
+                CSSNumberFns::to_css(*h, dest)?;
                 dest.write_char(b' ')?;
                 Percentage { v: *s }.to_css(dest)?;
                 dest.write_char(b' ')?;
@@ -1005,13 +1000,13 @@ impl UnresolvedColor {
     }
 
     pub fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {
-        let mut lightlist: Vec<TokenOrValue> = Vec::with_capacity(1);
-        lightlist.push(TokenOrValue::UnresolvedColor(light));
-        let mut darklist: Vec<TokenOrValue> = Vec::with_capacity(1);
-        darklist.push(TokenOrValue::UnresolvedColor(dark));
         UnresolvedColor::LightDark {
-            light: TokenList { v: lightlist },
-            dark: TokenList { v: darklist },
+            light: TokenList {
+                v: vec![TokenOrValue::UnresolvedColor(light)],
+            },
+            dark: TokenList {
+                v: vec![TokenOrValue::UnresolvedColor(dark)],
+            },
         }
     }
 }
@@ -1142,7 +1137,7 @@ impl EnvironmentVariable {
 
     pub fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
         EnvironmentVariable {
-            name: self.name.clone(),
+            name: self.name,
             indices: self.indices.clone(),
             fallback: self
                 .fallback
@@ -1233,18 +1228,18 @@ pub enum UAEnvironmentVariable {
 // hash — via `#[derive(CssHash)]` (the derive emits UFCS, so no inherent shim needed).
 impl UAEnvironmentVariable {
     #[inline]
-    pub fn eql(&self, other: &Self) -> bool {
-        *self == *other
+    pub fn eql(self, other: Self) -> bool {
+        self == other
     }
     #[inline]
-    pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        *self
+    pub fn deep_clone(self, _bump: &Arena) -> Self {
+        self
     }
 }
 
 impl EnumProperty for UAEnvironmentVariable {
     fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        // css.todo_stuff.match_ignore_ascii_case — Phase B: phf table.
+        // TODO(perf): css.todo_stuff.match_ignore_ascii_case — replace with a phf table.
         use UAEnvironmentVariable::*;
         const TABLE: &[(&[u8], UAEnvironmentVariable)] = &[
             (b"safe-area-inset-top", SafeAreaInsetTop),
@@ -1371,7 +1366,7 @@ impl Clone for TokenOrValue {
             TokenOrValue::Time(v) => TokenOrValue::Time(*v),
             TokenOrValue::Resolution(v) => TokenOrValue::Resolution(*v),
             TokenOrValue::DashedIdent(v) => TokenOrValue::DashedIdent(*v),
-            TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(v.clone()),
+            TokenOrValue::AnimationName(v) => TokenOrValue::AnimationName(*v),
         }
     }
 }
@@ -1461,11 +1456,10 @@ impl UnparsedProperty {
         Ok(UnparsedProperty { property_id, value })
     }
 
-    // un-gated B-2 round 10: PropertyId::{prefix, with_prefix} + deep_clone are real now.
     pub fn get_prefixed(
         &self,
         bump: &Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
         feature: css::prefixes::Feature,
     ) -> UnparsedProperty {
         let mut clone = self.deep_clone(bump);
@@ -1477,7 +1471,6 @@ impl UnparsedProperty {
     }
 
     /// Returns a new UnparsedProperty with the same value and the given property id.
-    // un-gated B-2 round 10: TokenList::deep_clone is real (arena-threaded).
     pub fn with_property_id(
         &self,
         bump: &Arena,

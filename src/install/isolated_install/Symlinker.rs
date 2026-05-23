@@ -4,7 +4,7 @@ use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub struct Symlinker {
     // TODO(port): bun.Path/RelPath/AbsPath are comptime-config generic (`.{ .sep = .auto }`);
-    // mapped to non-generic bun_paths types here — Phase B may need a `<const SEP: Sep>` param.
+    // mapped to non-generic bun_paths types here — may need a `<const SEP: Sep>` param.
     pub dest: bun_paths::Path,
     pub target: bun_paths::RelPath,
     pub fallback_junction_target: bun_paths::AbsPath,
@@ -109,9 +109,9 @@ impl Symlinker {
                                         false
                                     };
                                     #[cfg(not(windows))]
-                                    let is_dir = if let Some(st) =
-                                        bun_sys::lstat(self.dest.slice_z()).ok()
+                                    let is_dir = if let Ok(st) = bun_sys::lstat(self.dest.slice_z())
                                     {
+                                        // `mode_t` is `u16` on darwin/freebsd/android, `u32` on linux.
                                         bun_sys::posix::s_isdir(st.st_mode as u32)
                                     } else {
                                         false
@@ -166,6 +166,7 @@ impl Symlinker {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Strategy {
     ExpectExisting,
     ExpectMissing,

@@ -1,12 +1,8 @@
-use core::fmt::Write as _;
-
 use crate::node::types::PathLikeExt as _;
 use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, StoreExt as _, StoreRef};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
-#[allow(unused_imports)]
-use crate::webcore::s3::client::error_jsc::S3ErrorJsc as _;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::output;
@@ -100,11 +96,7 @@ where
         write!(
             writer,
             "{}",
-            output::pretty_fmt_args(
-                "offset<d>:<r> <yellow>{}<r>",
-                ENABLE_ANSI_COLORS,
-                (offset,)
-            ),
+            output::pretty_fmt_args("offset<d>:<r> <yellow>{}<r>", ENABLE_ANSI_COLORS, (offset,)),
         )?;
 
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
@@ -241,7 +233,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             }
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            let mut blob_internal = PathOrBlob::Blob(blob);
+            let mut blob_internal = PathOrBlob::Blob(Box::new(blob));
             blob::write_file_internal(
                 global,
                 &mut blob_internal,
@@ -337,9 +329,9 @@ pub fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
                     "Expected a S3 or path to check if it exists"
                 )));
             }
-            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
+            let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::exists(global, &mut blob)
+            S3BlobStatTask::exists(global, &blob)
         }
         PathOrBlob::Blob(blob) => blob.get_exists(global, callframe),
     }
@@ -360,7 +352,7 @@ fn construct_s3_file_internal_store(
             .env_mut()
             .get_s3_credentials(),
     );
-    construct_s3_file_with_s3_credentials(global, path, options, existing_credentials)
+    construct_s3_file_with_s3_credentials(global, path, options, &existing_credentials)
 }
 
 /// if the credentials have changed, we need to clone it, if not we can just ref/deref it
@@ -390,11 +382,11 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
         } else {
             // PORT NOTE: Zig `initS3WithReferencedCredentials` bumps the
             // intrusive ref on `default_credentials` (a `*S3Credentials`).
-            // The Rust `Store::S3` field is `Arc<S3Credentials>` (separate rc
+            // The Rust `Store::S3` field is `Rc<S3Credentials>` (separate rc
             // layer), so we can't share the existing intrusive allocation —
-            // deep-clone the value instead and let `init_s3` `Arc::new` it.
-            // PERF(port): was intrusive ref-bump (no copy) — profile in Phase B
-            // once Store.rs migrates `Arc<S3Credentials>` → `IntrusiveRc`.
+            // deep-clone the value instead and let `init_s3` `Rc::new` it.
+            // PERF(port): was intrusive ref-bump (no copy) — profile if hot
+            // once Store.rs migrates `Rc<S3Credentials>` → `IntrusiveRc`.
             break 'brk blob::Store::init_s3(path, None, default_credentials.clone()).expect("oom");
         }
     };
@@ -404,7 +396,7 @@ pub fn construct_s3_file_with_s3_credentials_and_options(
     store.data.as_s3_mut().storage_class = aws_options.storage_class;
     store.data.as_s3_mut().request_payer = aws_options.request_payer;
 
-    let mut blob = Blob::init_with_store(store, global);
+    let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
         if opts.is_object() {
             if let Some(file_type) = opts.get_truthy(global, "type")? {
@@ -453,10 +445,10 @@ pub fn construct_s3_file_with_s3_credentials(
     global: &JSGlobalObject,
     path: PathLike,
     options: Option<JSValue>,
-    existing_credentials: s3::S3Credentials,
+    existing_credentials: &s3::S3Credentials,
 ) -> JsResult<Blob> {
     let aws_options = <s3::S3Credentials>::get_credentials_with_options(
-        &existing_credentials,
+        existing_credentials,
         Default::default(),
         options,
         None,
@@ -471,7 +463,7 @@ pub fn construct_s3_file_with_s3_credentials(
     store.data.as_s3_mut().storage_class = aws_options.storage_class;
     store.data.as_s3_mut().request_payer = aws_options.request_payer;
 
-    let mut blob = Blob::init_with_store(store, global);
+    let blob = Blob::init_with_store(store, global);
     if let Some(opts) = options {
         if opts.is_object() {
             if let Some(file_type) = opts.get_truthy(global, "type")? {
@@ -793,7 +785,7 @@ pub fn get_presign_url_from(
     let path = s3.path();
 
     let result = match credentials_with_options.credentials.sign_request::<false>(
-        bun_s3_signing::SignOptions {
+        &bun_s3_signing::SignOptions {
             path,
             method,
             acl: credentials_with_options.acl,
@@ -905,9 +897,9 @@ pub fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a S3 or path to get size")));
             }
-            let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
+            let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::stat(global, &mut blob)
+            S3BlobStatTask::stat(global, &blob)
         }
         PathOrBlob::Blob(blob) => S3BlobStatTask::stat(global, blob),
     }

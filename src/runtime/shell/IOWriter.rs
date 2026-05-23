@@ -12,16 +12,13 @@
 //! We also make `IOWriter` reference counted (via `Arc` in the Rust port),
 //! this simplifies management of the file descriptor.
 
-#![allow(dead_code)]
-
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 use core::cell::UnsafeCell;
+#[cfg(not(windows))]
 use core::ffi::c_void;
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-#[cfg(not(windows))]
-use bun_io::pipe_writer::PosixPipeWriter as _;
 use bun_sys::{self as sys, E, Fd};
 
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId};
@@ -121,6 +118,7 @@ struct Writer {
 }
 
 impl Writer {
+    #[cfg(not(windows))]
     #[inline]
     fn wrote_everything(&self) -> bool {
         self.written >= self.len
@@ -149,7 +147,7 @@ impl Writer {
 }
 
 /// Spec: IOWriter.zig `Writers = SmolList(Writer, 2)`.
-// PERF(port): was inline-2 small-vec — profile in Phase B; smallvec crate.
+// PERF(port): was inline-2 small-vec — profile if hot; smallvec crate.
 type Writers = Vec<Writer>;
 
 /// ~128kb. We shrink `buf` when we reach the last writer, but if that never
@@ -199,9 +197,15 @@ impl IOWriter {
     /// Spec: IOWriter.zig `__deinit` (the body `AsyncDeinitWriter` posts back
     /// to main). Tears down the underlying `WriterImpl` and drops the last
     /// strong ref.
+    ///
+    /// # Safety
+    /// `this` must be the `Arc::as_ptr` of a live `Arc<IOWriter>` whose strong
+    /// count is held by the async-deinit task; this call drops that ref.
+    // Forwards `this` to `Arc::decrement_strong_count` without dereferencing it
+    // here; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn deinit_on_main_thread(this: *mut IOWriter) {
-        // SAFETY: `this` is the `Arc::as_ptr` whose strong count was held by
-        // the async-deinit task.
+        // SAFETY: caller contract above.
         unsafe { std::sync::Arc::decrement_strong_count(this) };
     }
 }
@@ -241,6 +245,8 @@ pub struct IOWriter {
 // SAFETY: shell is single-threaded; `Arc` is used purely for refcounting (Zig
 // used `bun.ptr.RefCount`). No cross-thread access.
 unsafe impl Send for IOWriter {}
+// SAFETY: see `Send` — single-threaded, `Arc` is used only for refcounting; no
+// concurrent `&IOWriter` access occurs.
 unsafe impl Sync for IOWriter {}
 
 impl IOWriter {
@@ -248,7 +254,10 @@ impl IOWriter {
     /// a re-entrant `enqueue` from a child callback (Zig had the same hazard
     /// and guards via the `Yield` trampoline).
     #[inline]
+    #[allow(clippy::mut_from_ref)]
     fn state(&self) -> &mut State {
+        // SAFETY: single-threaded; callers uphold the no-overlapping-`&mut State`
+        // invariant documented on this fn (re-derive across re-entrant calls).
         unsafe { &mut *self.state.get() }
     }
 
@@ -297,7 +306,7 @@ impl IOWriter {
                 is_writing: false,
                 started: false,
                 flags,
-                self_weak: w.clone(),
+                self_weak: std::sync::Weak::clone(w),
                 interp: None,
             }),
         });
@@ -316,10 +325,16 @@ impl IOWriter {
 
     /// Stash the interpreter backref so async poll callbacks can drive
     /// `Yield::run`. Idempotent.
+    ///
+    /// # Safety
+    /// `interp` must be null or point to the live owning `Interpreter` (which
+    /// owns the IO struct holding this `Arc`) and outlive it; single-threaded.
+    // Forwards `interp` to `ParentRef::from_nullable_mut` without dereferencing
+    // it here; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: `interp` is the live owning Interpreter (it owns the IO
-        // struct that holds this Arc); single-threaded.
+        // SAFETY: caller contract above.
         self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable_mut(interp) };
     }
 
@@ -350,6 +365,7 @@ impl IOWriter {
     /// `FilePollVTable` round-trips back to the runtime. We pass the address of
     /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
     /// vtable can recover it.
+    #[cfg(not(windows))]
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
@@ -480,7 +496,7 @@ impl IOWriter {
             // destroy us mid-on_error.
             s.started = true;
             if let Err(e) = self.__start() {
-                self.on_error(e);
+                self.on_error(&e);
                 return WriteOutcome::Failed;
             }
             #[cfg(not(windows))]
@@ -497,7 +513,7 @@ impl IOWriter {
                 }
                 return WriteOutcome::Suspended;
             }
-            #[allow(unreachable_code)]
+            #[cfg(windows)]
             return WriteOutcome::Suspended;
         }
 
@@ -509,7 +525,7 @@ impl IOWriter {
             }
             s.is_writing = true;
             if let Err(e) = s.writer.start_with_current_pipe() {
-                self.on_error(e);
+                self.on_error(&e);
                 return WriteOutcome::Failed;
             }
             return WriteOutcome::Suspended;
@@ -529,7 +545,7 @@ impl IOWriter {
                 }
             }
             if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
-                self.on_error(e);
+                self.on_error(&e);
                 return WriteOutcome::Failed;
             }
             WriteOutcome::Suspended
@@ -577,10 +593,6 @@ impl IOWriter {
         s.total_bytes_written >= s.buf.len()
     }
 
-    fn is_last_idx(&self, idx: usize) -> bool {
-        idx == self.state().writers.len().saturating_sub(1)
-    }
-
     /// Only does things on windows. Spec: IOWriter.zig `setWriting`.
     #[inline]
     fn set_writing(&self, writing: bool) {
@@ -606,7 +618,7 @@ impl IOWriter {
             // the `'self` lifetime the signature wants — no raw-parts needed.
             return s.winbuf.as_slice();
         }
-        #[allow(unreachable_code)]
+        #[cfg(not(windows))]
         result
     }
 
@@ -734,7 +746,7 @@ impl IOWriter {
                 );
             }
             bun_io::WriteResult::Err(e) => {
-                self.on_error(e);
+                self.on_error(&e);
                 return Yield::done();
             }
         };
@@ -854,7 +866,7 @@ impl IOWriter {
     }
 
     /// Spec: IOWriter.zig `onError`.
-    fn on_error(&self, err: sys::Error) {
+    fn on_error(&self, err: &sys::Error) {
         let _keepalive = self.keepalive();
         self.set_writing(false);
         let s = self.state();
@@ -959,8 +971,6 @@ impl IOWriter {
             WriteOutcome::IsActuallyFile => self.enqueue_file(),
             // FIXME (matches Zig)
             WriteOutcome::Failed => Yield::failed(),
-            #[cfg(windows)]
-            WriteOutcome::IsActuallyFile => unreachable!(),
         }
     }
 
@@ -1041,6 +1051,7 @@ impl IOWriter {
 enum WriteOutcome {
     Suspended,
     Failed,
+    #[cfg(not(windows))]
     IsActuallyFile,
 }
 
@@ -1127,7 +1138,7 @@ fn drain_buffered_data(
             }
             bun_io::WriteResult::Err(err) => {
                 if drained > 0 {
-                    parent.on_error(err);
+                    parent.on_error(&err);
                     return bun_io::WriteResult::Wrote(drained);
                 }
                 return bun_io::WriteResult::Err(err);

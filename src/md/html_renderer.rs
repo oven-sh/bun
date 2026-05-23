@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use bun_alloc::AllocError;
 
 use bun_core::strings;
@@ -11,8 +9,8 @@ use crate::types::{BlockType, JsResult, Renderer, RendererImpl, SpanDetail, Span
 
 // TODO(port): lifetime — `src_text` and `saved_img_title` borrow the caller's
 // source buffer for the renderer's lifetime (never freed in Zig `deinit`).
-// Phase A guide discourages struct lifetimes, but raw `*const [u8]` is worse
-// here; revisit in Phase B if `'src` causes friction.
+// The porting guide discourages struct lifetimes, but raw `*const [u8]` is
+// worse here; revisit if `'src` causes friction.
 pub struct HtmlRenderer<'src> {
     pub out: OutputBuffer,
     // allocator dropped — non-AST crate uses global mimalloc
@@ -537,7 +535,7 @@ impl<'src> HtmlRenderer<'src> {
                 self.write(&txt[i..]);
                 return;
             };
-            let pos = i + next as usize;
+            let pos = i + next;
             if pos > i {
                 self.write(&txt[i..pos]);
             }
@@ -732,7 +730,7 @@ fn is_disallowed_tag(content: &[u8]) -> bool {
         b"script",
         b"plaintext",
     ];
-    // PERF(port): was `inline for` (comptime unroll) — profile in Phase B
+    // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
     for tag in DISALLOWED.iter() {
         if match_tag_name_ci(content, after_lt, tag) {
             return true;

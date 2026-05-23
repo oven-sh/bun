@@ -9,8 +9,8 @@ use std::sync::{Arc, Weak};
 
 use bun_uws as uws;
 // Zig: `std.hash.Wyhash` (final4 variant). NOT `Wyhash11`.
-use bun_wyhash::Wyhash;
 use bun_threading::Guarded as Mutex;
+use bun_wyhash::Wyhash;
 
 /// Owned, NUL-terminated C-string slice (`?[*:0]const u8` in Zig). The
 /// pointer is heap-owned (allocated via `dupeZ`); freed via
@@ -384,7 +384,9 @@ impl SSLConfig {
         // TODO(port): bun.memory.dropSentinel — reuses the allocation in
         // place; here we copy. PERF(port).
         let owned = bytes.to_vec().into_boxed_slice();
-        bun_core::free_sensitive(p);
+        // SAFETY: `p` was `dupe_z`-allocated when this config was built and
+        // taken (replaced with null) above — sole owner, NUL-terminated.
+        unsafe { bun_core::free_sensitive(p) };
         Some(owned)
     }
 
@@ -395,7 +397,9 @@ impl SSLConfig {
         let p = core::mem::replace(&mut self.server_name, core::ptr::null());
         let bytes = cstr_bytes(p);
         let owned = bytes.to_vec().into_boxed_slice();
-        bun_core::free_sensitive(p);
+        // SAFETY: `p` was `dupe_z`-allocated when this config was built and
+        // taken (replaced with null) above — sole owner, NUL-terminated.
+        unsafe { bun_core::free_sensitive(p) };
         Some(owned)
     }
 }
@@ -442,6 +446,9 @@ impl Drop for SSLConfig {
 // SAFETY: all raw pointers are heap-owned C strings with no interior
 // shared mutable state; cross-thread transfer is safe.
 unsafe impl Send for SSLConfig {}
+// SAFETY: the raw-pointer fields are only read (never written) through `&self`
+// and point to heap-owned immutable C strings; the sole interior-mutable field
+// (`cached_hash`) is an `AtomicU64`, which is itself `Sync`.
 unsafe impl Sync for SSLConfig {}
 
 /// Borrow a non-null, heap-owned, NUL-terminated C string field as bytes.
@@ -469,7 +476,9 @@ fn cstr_eq(a: CStrPtr, b: CStrPtr) -> bool {
 fn free_strings(slice: &mut CStrSlice) {
     if let Some(inner) = slice.take() {
         for s in inner.iter() {
-            bun_core::free_sensitive(*s);
+            // SAFETY: each entry is a `dupe_z` allocation owned by this config;
+            // the slice was `take`n so this is the final owner.
+            unsafe { bun_core::free_sensitive(*s) };
         }
     }
 }
@@ -478,7 +487,9 @@ fn free_string(s: &mut CStrPtr) {
     if s.is_null() {
         return;
     }
-    bun_core::free_sensitive(core::mem::replace(s, core::ptr::null()));
+    // SAFETY: `*s` is a `dupe_z` allocation owned by this config; replaced with
+    // null so no alias remains.
+    unsafe { bun_core::free_sensitive(core::mem::replace(s, core::ptr::null())) };
 }
 
 fn clone_strings(slice: &CStrSlice) -> CStrSlice {
@@ -524,7 +535,7 @@ pub mod global_registry {
     // Backed by a flat `Vec` (linear scan): the number of distinct SSL configs
     // per process is tiny (typically <16) and `ArrayHashMap` is also linear
     // for `eql` collisions, so this is the same complexity class.
-    // PERF(port): was ArrayHashMapUnmanaged — profile in Phase B.
+    // PERF(port): was ArrayHashMapUnmanaged.
     static REGISTRY: Mutex<Vec<(u64, WeakPtr)>> = Mutex::new(Vec::new());
 
     /// Takes a by-value SSLConfig, wraps it in a `SharedPtr` (strong=1), and

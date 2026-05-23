@@ -1,16 +1,15 @@
-#![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
 use crate as css;
 use crate::compat;
 use crate::css_values::length::LengthPercentage;
 use crate::prefixes::Feature;
-use crate::properties::{Property, PropertyId, PropertyIdTag};
+use crate::properties::{Property, PropertyId};
 use crate::{DeclarationList, PropertyHandlerContext, VendorPrefix};
 use crate::{Parser, PrintErr, Printer, Result as CssResult, Token};
 use bun_alloc::ArenaVecExt as _;
 
 use crate::css_properties::flex::{
-    BoxAlign, BoxOrdinalGroup, BoxPack, FlexAlign, FlexItemAlign, FlexLinePack, FlexPack,
+    BoxAlign, BoxPack, FlexAlign, FlexItemAlign, FlexLinePack, FlexPack,
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -18,7 +17,7 @@ use crate::css_properties::flex::{
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [align-content](https://www.w3.org/TR/css-align-3/#propdef-align-content) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 // Zig: `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss` —
 // comptime-reflection generators ported as proc-macro derives.
 #[derive(css::Parse, css::ToCss)]
@@ -38,7 +37,7 @@ pub enum AlignContent {
 // In Rust the equivalent is `#[derive(css::ToCss)]` on the lifted named-field
 // struct (see `css_derive::expand_derive_to_css` struct branch); the enum arm's
 // `__inner.to_css(dest)` then resolves to this generated inherent.
-#[derive(Clone, PartialEq, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
 pub struct AlignContentContentPosition {
     /// An overflow alignment mode.
@@ -67,7 +66,7 @@ impl AlignContentContentPosition {
 
 /// A [`<baseline-position>`](https://www.w3.org/TR/css-align-3/#typedef-baseline-position) value,
 /// as used in the alignment properties.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BaselinePosition {
     /// The first baseline.
     First,
@@ -94,7 +93,7 @@ impl BaselinePosition {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             BaselinePosition::First => dest.write_str("baseline"),
             BaselinePosition::Last => dest.write_str("last baseline"),
@@ -107,7 +106,7 @@ impl BaselinePosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [justify-content](https://www.w3.org/TR/css-align-3/#propdef-justify-content) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum JustifyContent {
     /// Default justification.
     Normal,
@@ -127,7 +126,7 @@ pub enum JustifyContent {
     },
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct JustifyContentContentPosition {
     /// A content position keyword.
     pub value: ContentPosition,
@@ -211,7 +210,7 @@ impl JustifyContent {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [align-self](https://www.w3.org/TR/css-align-3/#align-self-property) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 // Zig: `css.DeriveParse` / `css.DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
 pub enum AlignSelf {
@@ -228,7 +227,7 @@ pub enum AlignSelf {
 }
 
 // Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
-#[derive(Clone, PartialEq, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
 pub struct AlignSelfSelfPosition {
     /// An overflow alignment mode.
@@ -260,7 +259,7 @@ impl AlignSelfSelfPosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [justify-self](https://www.w3.org/TR/css-align-3/#justify-self-property) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum JustifySelf {
     /// Automatic justification.
     Auto,
@@ -284,7 +283,7 @@ pub enum JustifySelf {
     },
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct JustifySelfSelfPosition {
     /// A self position keyword.
     pub value: SelfPosition,
@@ -381,7 +380,7 @@ impl JustifySelf {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [align-items](https://www.w3.org/TR/css-align-3/#align-items-property) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 // Zig: `css.DeriveParse` / `css.DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
 pub enum AlignItems {
@@ -396,7 +395,7 @@ pub enum AlignItems {
 }
 
 // Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
-#[derive(Clone, PartialEq, css::ToCss)]
+#[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
 pub struct AlignItemsSelfPosition {
     /// An overflow alignment mode.
@@ -428,7 +427,7 @@ impl AlignItemsSelfPosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [justify-items](https://www.w3.org/TR/css-align-3/#justify-items-property) property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum JustifyItems {
     /// Default justification.
     Normal,
@@ -452,7 +451,7 @@ pub enum JustifyItems {
     Legacy(LegacyJustify),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct JustifyItemsSelfPosition {
     /// A self position keyword.
     pub value: SelfPosition,
@@ -547,7 +546,7 @@ impl JustifyItems {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A legacy justification keyword, as used in the `justify-items` property.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LegacyJustify {
     /// Left justify.
     Left,
@@ -589,7 +588,7 @@ impl LegacyJustify {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str("legacy ")?;
         match self {
             LegacyJustify::Left => dest.write_str("left"),
@@ -626,7 +625,7 @@ pub struct Gap {
 
 impl Gap {
     // TODO(port): PropertyFieldMap was a comptime struct mapping fields → CSS property names
-    // (.row = "row-gap", .column = "column-gap"). Encode as derive attrs in Phase B.
+    // (.row = "row-gap", .column = "column-gap"); could encode as derive attrs.
 
     pub fn parse(input: &mut Parser) -> CssResult<Self> {
         let row = GapValue::parse(input)?;
@@ -651,7 +650,7 @@ impl Gap {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [place-items](https://www.w3.org/TR/css-align-3/#place-items-property) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlaceItems {
     /// The item alignment.
     pub align: AlignItems,
@@ -716,7 +715,7 @@ impl PlaceItems {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [place-self](https://www.w3.org/TR/css-align-3/#place-self-property) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlaceSelf {
     /// The item alignment.
     pub align: AlignSelf,
@@ -811,7 +810,7 @@ pub enum SelfPosition {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A value for the [place-content](https://www.w3.org/TR/css-align-3/#place-content) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PlaceContent {
     /// The content alignment.
     pub align: AlignContent,
@@ -840,8 +839,8 @@ impl PlaceContent {
                 }
                 AlignContent::ContentPosition(pos) => {
                     JustifyContent::ContentPosition(JustifyContentContentPosition {
-                        overflow: pos.overflow.clone(),
-                        value: pos.value.clone(),
+                        overflow: pos.overflow,
+                        value: pos.value,
                     })
                 }
             },
@@ -946,7 +945,7 @@ pub enum ContentPosition {
 // SelfPositionInner / ContentPositionInner
 // ──────────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SelfPositionInner {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
@@ -954,7 +953,7 @@ pub struct SelfPositionInner {
     pub value: SelfPosition,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ContentPositionInner {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
@@ -989,8 +988,8 @@ pub struct AlignHandler {
 //
 // TODO(port): the Zig source threads field names as comptime strings into helper fns
 // and uses @field/@unionInit for reflection. Rust cannot pass field names as values, so
-// these are macro_rules! that expand at each call site. Phase B may want to dedupe via
-// a small proc-macro if maintenance burden is high.
+// these are macro_rules! that expand at each call site; a small proc-macro could dedupe
+// if maintenance burden is high.
 
 macro_rules! handle_property_maybe_flush {
     ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
@@ -1048,8 +1047,6 @@ macro_rules! flush_standard_property_helper {
     }};
 }
 
-// PORT NOTE: un-gated B-2 round 15 — flex::{BoxPack,FlexPack,BoxAlign,FlexAlign,
-// FlexItemAlign,FlexLinePack}::from_standard + prefixes::Feature::is_flex_2009 are real now.
 macro_rules! flush_legacy_property {
     // variant with both 2009 and 2012
     ($dest:expr, $context:expr, $feature:expr, $key:expr, prop_2009: ($ty2009:ty, $variant2009:ident), prop_2012: ($ty2012:ty, $variant2012:ident)) => {{
@@ -1061,7 +1058,7 @@ macro_rules! flush_legacy_property {
                 // 2009 spec, implemented by webkit and firefox.
                 if let Some(targets) = $context.targets.browsers {
                     let mut prefixes_2009 = VendorPrefix::empty();
-                    if Feature::is_flex_2009(targets) {
+                    if Feature::is_flex_2009(&targets) {
                         prefixes_2009.insert(VendorPrefix::WEBKIT);
                     }
                     if prefix.contains(VendorPrefix::MOZ) {
@@ -1152,7 +1149,7 @@ macro_rules! flush_shorthand_helper {
                         justify_actual.clone(),
                     )));
                     // TODO(port): Zig built `prop.ty{ .align = ..., .justify = ... }` directly.
-                    // Using a `from_align_justify` ctor here; Phase B can inline struct init.
+                    // Using a `from_align_justify` ctor here; could inline the struct init.
 
                     *$align_val = None;
                     *$justify_val = None;
@@ -1482,7 +1479,7 @@ impl AlignHandler {
     }
 
     /// Gets prefixes for standard properties.
-    // PERF(port): was comptime monomorphization (`comptime feature: Feature`) — profile in Phase B
+    // PERF(port): was comptime monomorphization (`comptime feature: Feature`) — profile if hot.
     fn flush_prefixes_helper(
         &self,
         context: &PropertyHandlerContext<'_>,

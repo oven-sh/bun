@@ -1,11 +1,5 @@
 #![feature(allocator_api)]
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 // Allow `use bun_css as css;` from inside the crate — the ported submodules
 // were translated against the crate's public surface and refer to it by name.
@@ -41,16 +35,7 @@ macro_rules! match_ignore_ascii_case {
     }};
 }
 
-// AUTOGEN: mod declarations only — real exports added in B-1.
-//
-// B-2 un-gating in progress: leaf modules compile for real; the heavily
-// inter-dependent hub modules (css_parser, properties/, rules/, values/,
-// selectors/, declaration, generics, media_query, printer, context,
-// css_modules, small_list, dependencies, error) remain gated behind
-// `` until the cross-module re-export web is untangled in a
-// follow-up B-2 round.
-
-// ─── B-2 un-gated modules ─────────────────────────────────────────────────
+// ─── leaf modules ─────────────────────────────────────────────────────────
 #[path = "compat.rs"]
 pub mod compat;
 #[path = "logical.rs"]
@@ -72,14 +57,7 @@ pub mod error;
 pub mod small_list;
 pub use small_list::SmallList;
 
-// ─── B-2 round 3: rule-tree hubs un-gated ─────────────────────────────────
-// `properties/`, `rules/`, `selectors/`, `media_query` now compile for real
-// at the hub level. Each hub's mod.rs internally gates its heavy leaf
-// submodules (which depend on the still-gated `values/` calc lattice +
-// `declaration`/`context`) and exposes data-only stubs for the cross-module
-// surface (`CssRule`, `CssRuleList`, `SelectorList`, `MediaList`,
-// `PropertyId`, ...) so `css_parser::AtRulePrelude` / `TopLevelRuleParser`
-// can flip to the real paths in a follow-up round.
+// ─── rule-tree hubs ───────────────────────────────────────────────────────
 #[path = "media_query.rs"]
 pub mod media_query;
 #[path = "properties/mod.rs"]
@@ -89,15 +67,7 @@ pub mod rules;
 #[path = "selectors/mod.rs"]
 pub mod selectors;
 
-// ─── B-2 round 4: declaration/context un-gated ────────────────────────────
-// `DeclarationBlock` / `DeclarationList` / `DeclarationHandler` and
-// `PropertyHandlerContext` / `DeclarationContext` now compile for real so the
-// `rules/` leaf modules can un-gate against them. The heavy method bodies
-// (parse / to_css / minify / get_*_rules) and the per-property handler
-// fields stay internally ``-gated until `properties/*` un-gate.
-// The `RuleBodyParser`/`RuleBodyItemParser`/`DeclarationParser` traits are
-// now un-gated in css_parser.rs (round 5), so `DeclarationBlock::parse` can
-// flip when `properties_generated` lands.
+// ─── declaration/context ──────────────────────────────────────────────────
 #[path = "context.rs"]
 pub mod context;
 #[path = "declaration.rs"]
@@ -125,19 +95,19 @@ pub use css_parser::{
 
 // ─── selectors/ crate-root surface ────────────────────────────────────────
 // The selector grammar references these via `bun_css::*` (Zig's flat `css.*`
-// namespace). `Str` is the arena-borrowed `[]const u8` slice alias; in Phase A
+// namespace). `Str` is the arena-borrowed `[]const u8` slice alias; here
 // it's `*const [u8]` (matches `error.rs` / `values::ident` field shape) and
 // becomes `&'bump [u8]` once the arena lifetime is plumbed.
 pub type Str = *const [u8];
 
 /// Dereference an arena-owned [`Str`] into a slice borrow.
 ///
-/// This is the **single** named entry point for the Phase-A `&*(p: *const [u8])`
+/// This is the **single** named entry point for the `&*(p: *const [u8])`
 /// pattern; every call site shares the same invariant (parser source/arena is
 /// immutable for the session and outlives every value constructed from it), so
 /// the SAFETY justification lives here once instead of being repeated ~70×.
-/// The `'static` return lifetime is the Phase-A placeholder — Phase B threads
-/// `'bump`, `Str` becomes `&'bump [u8]`, and this fn is deleted.
+/// The `'static` return lifetime is a placeholder — once `'bump` is threaded
+/// through, `Str` becomes `&'bump [u8]` and this fn is deleted.
 ///
 /// # Safety
 /// `p` must be a non-null fat pointer into the parser's source text or bump
@@ -174,27 +144,10 @@ pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
 // `css::serializer` / `css::f32_length_with_5_digits` from value modules.
 pub use css_parser::{dtoa_short, f32_length_with_5_digits, serializer, to_css};
 
-// generics: un-gated (B-2). Core protocol traits (DeepClone/CssEql/CssHash/
-// IsCompatible/ListContainer) compile; Parse/ToCss/Angle impls remain
-// internally gated until css_parser/values un-gate.
 #[path = "generics.rs"]
 pub mod generics;
 
-// ─── B-2 round 2/5: parser core + rule-orchestration un-gated ─────────────
-// `css_parser.rs` now compiles for real: Parser / ParserInput / Tokenizer /
-// Token / Delimiters / VendorPrefix / SourceLocation / serializer / nth /
-// color / dtoa_short. Round 5 un-gates the rule-orchestration *type* layer
-// (AtRulePrelude, TopLevelRuleParser, NestedRuleParser, StyleSheetParser,
-// RuleBodyParser, StyleSheet, StyleAttribute, DeclarationParser/
-// RuleBodyItemParser/ComposesCtx traits) against the now-real `rules/`/
-// `selectors/`/`declaration`/`media_query` hubs. The heavy *behavior* bodies
-// (`AtRuleParser`/`QualifiedRuleParser` impls for Top/NestedRuleParser,
-// `StyleSheet::{parse,minify,to_css}`, `StyleAttribute::{parse,to_css}`)
-// stay internally ``-gated on the rules/ leaf modules +
-// properties_generated. `printer.rs` is real (Printer struct +
-// write/indent/delim). `values/` is real for the leaf submodules; the heavy
-// ones (color, calc, gradient, image, length, syntax) are internally gated
-// inside values/mod.rs.
+// ─── parser core + rule orchestration ─────────────────────────────────────
 #[path = "css_parser.rs"]
 pub mod css_parser;
 #[path = "printer.rs"]
@@ -207,11 +160,8 @@ pub mod values;
 /// were the previous `gated_mod!(values, ...)` body — now a real module so
 /// printer.rs / css_parser.rs can name the types.
 pub mod values_stub {
-    /// `values/color.rs` is now un-gated (B-2 round 6); re-export the real
-    /// data + behavior surface so any remaining `values_stub::color::*` paths
-    /// resolve to the canonical types. The previous data-only stub structs and
-    /// placeholder `into_rgba`/`into_srgb`/`parse`/`to_css` impls are
-    /// superseded by the real bodies in `crate::values::color`.
+    /// Re-export the real `values/color.rs` surface so any remaining
+    /// `values_stub::color::*` paths resolve to the canonical types.
     pub mod color {
         pub use crate::values::color::*;
 
@@ -238,7 +188,7 @@ pub mod values_stub {
 }
 
 // ─── stub re-exports referenced cross-crate ────────────────────────────────
-// TODO(b1): real types come back when modules are un-gated in B-2.
+// TODO(port): replace stub with `rules::custom_media::CustomMediaRule`.
 pub type CustomMedia = ();
 
 /// Hoisted from `css_parser.rs` (gated). Single-variant error type returned by
@@ -250,7 +200,7 @@ pub enum PrintErr {
 }
 impl PrintErr {
     #[inline]
-    pub fn name(&self) -> &'static str {
+    pub fn name(self) -> &'static str {
         "CSSPrintError"
     }
 }
@@ -269,8 +219,8 @@ pub type PrintResult<T = ()> = core::result::Result<T, PrintErr>;
 
 pub use dependencies::Dependency;
 
-// B-2 Track A surface: re-export the stubbed hub types at the crate root so
-// `bun_css::Foo` paths resolve for css_jsc / bundler.
+// Re-export the hub types at the crate root so `bun_css::Foo` paths resolve
+// for css_jsc / bundler.
 pub use css_parser::{
     DefaultAtRule, LocalsResultsMap, MinifyOptions, Parser, ParserFlags, ParserInput,
     ParserOptions, StyleAttribute, StyleSheet, StylesheetExtra, ToCssResult,
@@ -435,7 +385,7 @@ pub struct Num {
     pub int_value: Option<i32>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Dimension {
     pub num: Num,
     /// e.g. "px"
@@ -447,7 +397,7 @@ pub struct Dimension {
 /// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` (gated) since they
 /// depend on `serializer::*` and `generics`.
 // TODO(port): every &'static [u8] payload borrows the parser arena/source;
-// Phase B threads `<'a>` once the bumpalo arena lifetime is plumbed.
+// thread `<'a>` once the bumpalo arena lifetime is plumbed.
 #[derive(Clone, Debug)]
 pub enum Token {
     Ident(&'static [u8]),
@@ -493,9 +443,8 @@ pub enum Token {
 
 impl core::fmt::Display for Token {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // B-2: minimal rendering for error messages. The full Zig
-        // `Token.format` (CSS serialization) lives in `css_parser.rs` and
-        // depends on `serializer::*`; that impl supersedes this when un-gated.
+        // Minimal rendering for error messages. The full Zig `Token.format`
+        // (CSS serialization) lives in `css_parser.rs` via `serializer::*`.
         use bstr::BStr;
         match self {
             Token::Ident(v)

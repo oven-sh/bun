@@ -48,7 +48,7 @@ impl BorderRadius {
 
     // TODO(port): PropertyFieldMap / VendorPrefixMap were Zig anonymous-struct decl literals
     // consumed by comptime DefineShorthand reflection. Represent as assoc consts for now;
-    // Phase B should wire these into the shorthand trait/derive.
+    // wire these into the shorthand trait/derive once it exists.
     pub const PROPERTY_FIELD_MAP: [(&'static str, &'static str); 4] = [
         ("top_left", "border-top-left-radius"),
         ("top_right", "border-top-right-radius"),
@@ -185,7 +185,7 @@ pub struct BorderRadiusHandler {
 #[inline]
 fn size2d_lp_is_compatible(
     val: &Size2D<LengthPercentage>,
-    browsers: css::targets::Browsers,
+    browsers: &css::targets::Browsers,
 ) -> bool {
     val.a.is_compatible(browsers) && val.b.is_compatible(browsers)
 }
@@ -202,7 +202,7 @@ macro_rules! maybe_flush {
 
         if $self.$prop.is_some()
             && $ctx.targets.browsers.is_some()
-            && !size2d_lp_is_compatible($val, $ctx.targets.browsers.unwrap())
+            && !size2d_lp_is_compatible($val, &$ctx.targets.browsers.unwrap())
         {
             $self.flush($d, $ctx);
         }
@@ -428,7 +428,7 @@ impl BorderRadiusHandler {
                             self.flush(dest, context);
                             dest.push(Property::Unparsed(unparsed.get_prefixed(
                                 bump,
-                                context.targets,
+                                &context.targets,
                                 css::prefixes::Feature::BorderRadius,
                             )));
                         }

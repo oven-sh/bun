@@ -13,9 +13,10 @@ use super::ArrayList;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `<keyframes-name> = <custom-ident> | <string>`
-// PORT NOTE: Zig threaded the parser-input lifetime; Phase A keeps
+// PORT NOTE: Zig threaded the parser-input lifetime; this stores
 // `&'static [u8]` per PORTING.md §AST crates and the rules/mod.rs
-// `CssRule<R>` lifetime-erasure note. Phase B re-threads `'bump`.
+// `CssRule<R>` lifetime-erasure note.
+// TODO(refactor): re-thread `'bump` here.
 pub enum KeyframesName {
     /// `<custom-ident>` of a `@keyframes` name.
     Ident(CustomIdent),
@@ -69,9 +70,9 @@ impl KeyframesName {
 
         match self {
             KeyframesName::Ident(ident) => {
-                // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
                 write_ident(
                     dest,
+                    // SAFETY: CustomIdent.v points into the parser arena which outlives the AST.
                     unsafe { crate::arena_str(ident.v) },
                     css_module_animation_enabled,
                 )?;
@@ -106,10 +107,7 @@ impl KeyframesName {
 impl KeyframesName {
     pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
         use bun_core::strings;
-        let tok = match input.next() {
-            Ok(v) => v.clone(),
-            Err(e) => return Err(e),
-        };
+        let tok = input.next()?.clone();
         match tok {
             css::Token::Ident(s) => {
                 // CSS-wide keywords without quotes throws an error.
@@ -324,8 +322,9 @@ impl KeyframesRule {
         // `CssRule` fallbacks here, so there is no rule-level fallback list to return.
         // The faithful port of "compile-time-dead, returns []CssRule(T)" is the empty
         // slice — matches the Zig program's observable behavior (no fallbacks appended)
-        // without a runtime trap. Phase B wires the declaration-level path in
-        // `CssRuleList::minify` directly and may delete this stub.
+        // without a runtime trap.
+        // TODO(refactor): wire the declaration-level path in `CssRuleList::minify`
+        // directly, then delete this stub.
         let _ = self;
         &[]
     }
@@ -440,10 +439,7 @@ const _: () = {
         ) -> Result<Self::QualifiedRule> {
             // For now there are no options that apply within @keyframes
             let options = ParserOptions::default(None);
-            let declarations = match DeclarationBlock::parse(input, &options) {
-                Ok(vv) => vv,
-                Err(e) => return Err(e),
-            };
+            let declarations = DeclarationBlock::parse(input, &options)?;
             Ok(Keyframe {
                 selectors: prelude,
                 declarations,

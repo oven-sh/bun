@@ -2,7 +2,7 @@
 //! `bun_spawn::process` so the fd/action plumbing has no event-loop
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::CStr;
 use core::ffi::c_char;
 #[cfg(target_os = "macos")]
@@ -14,10 +14,9 @@ use core::sync::atomic::Ordering;
 use bun_core::Output;
 use bun_sys::{self, Fd, FdExt as _};
 
-#[allow(unused_imports)]
+#[cfg(not(windows))]
 use crate::posix_spawn::posix_spawn;
 #[cfg(unix)]
-#[allow(unused_imports)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
 
 #[cfg(unix)]
@@ -37,9 +36,9 @@ pub type FdT = libc::c_int;
 #[cfg(not(unix))]
 pub type FdT = i32;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub type PidFdType = FdT;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 pub type PidFdType = (); // u0 in Zig
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -179,9 +178,11 @@ pub trait RusageFields {
 
 #[cfg(unix)]
 impl RusageFields for libc::rusage {
+    // `tv_sec`/`tv_usec` are `i64` on linux but `i32` on darwin (`suseconds_t`);
+    // the `as i64` is required for the latter and a no-op on the former.
     #[inline]
     fn utime_sec(&self) -> i64 {
-        self.ru_utime.tv_sec as i64
+        self.ru_utime.tv_sec
     }
     #[inline]
     fn utime_usec(&self) -> i64 {
@@ -189,7 +190,7 @@ impl RusageFields for libc::rusage {
     }
     #[inline]
     fn stime_sec(&self) -> i64 {
-        self.ru_stime.tv_sec as i64
+        self.ru_stime.tv_sec
     }
     #[inline]
     fn stime_usec(&self) -> i64 {
@@ -345,9 +346,9 @@ pub struct PosixSpawnOptions {
 impl Default for PosixSpawnOptions {
     fn default() -> Self {
         Self {
-            stdin: PosixStdio::Ignore,
-            stdout: PosixStdio::Ignore,
-            stderr: PosixStdio::Ignore,
+            stdin: PosixStdio::Inherit,
+            stdout: PosixStdio::Inherit,
+            stderr: PosixStdio::Inherit,
             ipc: None,
             extra_fds: Box::default(),
             cwd: Box::default(),
@@ -436,6 +437,7 @@ impl PosixStdio {
     }
 }
 
+#[derive(Default)]
 pub struct PosixSpawnResult {
     pub pid: PidT,
     pub pidfd: Option<PidFdType>,
@@ -447,22 +449,6 @@ pub struct PosixSpawnResult {
     pub memfds: [bool; 3],
     // ESRCH can happen when requesting the pidfd
     pub has_exited: bool,
-}
-
-impl Default for PosixSpawnResult {
-    fn default() -> Self {
-        Self {
-            pid: 0,
-            pidfd: None,
-            stdin: None,
-            stdout: None,
-            stderr: None,
-            ipc: None,
-            extra_pipes: Vec::new(),
-            memfds: [false, false, false],
-            has_exited: false,
-        }
-    }
 }
 
 /// Entry in `extra_pipes` for a stdio slot at index >= 3.
@@ -499,7 +485,7 @@ impl PosixSpawnResult {
         self.extra_pipes.shrink_to_fit();
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
         // pidfd_nonblock only supported in 5.10+. The Zig path consults
         // `analytics.kernel_version()` (semver compare); until that helper is
@@ -509,7 +495,7 @@ impl PosixSpawnResult {
         bun_sys::O::NONBLOCK as u32
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
@@ -574,7 +560,7 @@ impl PosixSpawnResult {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
         Err(bun_sys::Error::from_code(
             bun_sys::E::ENOSYS,
@@ -592,38 +578,6 @@ impl PosixSpawnResult {
 pub const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
 #[cfg(target_os = "macos")]
 pub const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
-
-/// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
-/// Replaces the Zig `defer if (fd != .invalid) fd.close()` pattern; [`Fd`]
-/// itself is `Copy` (a thin handle) and so cannot impl `Drop`.
-#[cfg(unix)]
-struct AutoCloseFd(Fd);
-
-#[cfg(unix)]
-impl AutoCloseFd {
-    #[inline]
-    const fn new(fd: Fd) -> Self {
-        Self(fd)
-    }
-    #[inline]
-    const fn invalid() -> Self {
-        Self(Fd::INVALID)
-    }
-    /// Borrow the inner handle (`Fd` is `Copy`).
-    #[inline]
-    fn fd(&self) -> Fd {
-        self.0
-    }
-}
-
-#[cfg(unix)]
-impl Drop for AutoCloseFd {
-    fn drop(&mut self) {
-        if self.0 != Fd::INVALID {
-            self.0.close();
-        }
-    }
-}
 
 /// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
 /// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`
@@ -667,8 +621,13 @@ impl Drop for PosixSpawnFdGuard {
     }
 }
 
+/// # Safety
+/// `argv` must point to a null-terminated array of NUL-terminated C strings
+/// with at least one non-null element (`argv[0]`); `envp` must point to a
+/// null-terminated array of NUL-terminated C strings. Both must remain valid
+/// for the duration of the call.
 #[cfg(unix)]
-pub fn spawn_process_posix(
+pub unsafe fn spawn_process_posix(
     options: &PosixSpawnOptions,
     argv: Argv,
     envp: Envp,
@@ -684,51 +643,56 @@ pub fn spawn_process_posix(
     // but not for Android. Bionic's `<spawn.h>` uses the same values as glibc
     // (`0x04`/`0x08`) — they're POSIX-mandated bit flags, not OS-specific.
     #[cfg(not(target_os = "android"))]
-    let (setsigdef, setsigmask) = (
-        libc::POSIX_SPAWN_SETSIGDEF as i32,
-        libc::POSIX_SPAWN_SETSIGMASK as i32,
-    );
+    let (setsigdef, setsigmask) = (libc::POSIX_SPAWN_SETSIGDEF, libc::POSIX_SPAWN_SETSIGMASK);
     #[cfg(target_os = "android")]
     let (setsigdef, setsigmask) = (0x04_i32, 0x08_i32);
-    let mut flags: i32 = setsigdef | setsigmask;
+    let flags: i32 = {
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        let mut f: i32 = setsigdef | setsigmask;
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        let f: i32 = setsigdef | setsigmask;
 
-    #[cfg(target_os = "macos")]
-    {
-        flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
-
-        if options.use_execve_on_macos {
-            flags |= POSIX_SPAWN_SETEXEC;
-
-            if matches!(options.stdin, PosixStdio::Buffer)
-                || matches!(options.stdout, PosixStdio::Buffer)
-                || matches!(options.stderr, PosixStdio::Buffer)
-            {
-                Output::panic(format_args!(
-                    "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
-                ));
-            }
-        }
-    }
-
-    if options.detached {
-        // TODO(port): @hasDecl check — assume present on platforms that define it.
-        #[cfg(target_os = "linux")]
-        {
-            flags |= libc::POSIX_SPAWN_SETSID as i32;
-        }
         #[cfg(target_os = "macos")]
         {
-            // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
-            flags |= 0x0400;
+            f |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+
+            if options.use_execve_on_macos {
+                f |= POSIX_SPAWN_SETEXEC;
+
+                if matches!(options.stdin, PosixStdio::Buffer)
+                    || matches!(options.stdout, PosixStdio::Buffer)
+                    || matches!(options.stderr, PosixStdio::Buffer)
+                {
+                    Output::panic(format_args!(
+                        "Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true",
+                    ));
+                }
+            }
         }
-        attr.detached = true;
-    }
+
+        if options.detached {
+            // TODO(port): @hasDecl check — assume present on platforms that define it.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;
+                // the libc crate only exposes it for `target_os = "linux"`.
+                f |= 0x80;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                // Darwin <spawn.h>: 0x0400 (libc crate omits the constant).
+                f |= 0x0400;
+            }
+            attr.detached = true;
+        }
+        f
+    };
 
     // Pass PTY slave fd to attr for controlling terminal setup
     attr.pty_slave_fd = options.pty_slave_fd;
     attr.new_process_group = options.new_process_group;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // Explicit per-spawn value wins; otherwise no-orphans mode defaults
         // every child to SIGKILL-on-parent-death so non-Bun descendants are
@@ -773,7 +737,10 @@ pub fn spawn_process_posix(
     let mut dup_stdout_to_stderr: bool = false;
 
     // The label is only referenced from the Linux memfd fast-path below.
-    #[cfg_attr(not(target_os = "linux"), allow(unused_labels))]
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "android")),
+        allow(unused_labels)
+    )]
     'stdio: for i in 0..3usize {
         let fileno = Fd::from_native(FdT::try_from(i).unwrap());
         let flag: u32 = (if i == 0 {
@@ -807,7 +774,7 @@ pub fn spawn_process_posix(
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Buffer => {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 'use_memfd: {
                     if !options.stream && i > 0 && bun_sys::can_use_memfd() {
                         // use memfd if we can
@@ -996,7 +963,7 @@ pub fn spawn_process_posix(
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // If it's spawnSync and we want to block the entire thread
                 // don't even bother with pidfd. It's not necessary.

@@ -7,8 +7,8 @@
 //! map directly to `Box<T>` / `Rc<T>` / `Arc<T>` (and `Box<[T]>`,
 //! `Option<Box<T>>` etc. are spelled at the use site), so the reflection layer
 //! has no Rust counterpart. The skeleton below preserves shape for diffing;
-//! Phase B should likely delete this module once the `bun_ptr` callers are
-//! migrated to std smart pointers.
+//! TODO(refactor): delete this module once the `bun_ptr` callers are migrated
+//! to std smart pointers.
 
 use core::marker::PhantomData;
 
@@ -95,7 +95,7 @@ impl Default for ParseOptions {
 // `.pointer.is_const = true` (recursing through `.optional`) and rebuilds the
 // type via `@Type`. Rust has no type-level function for this; the moral
 // equivalent is an associated type on a trait. Kept as a marker so callers
-// (`Owned::asConst` etc.) have a name to reference during Phase B.
+// (`Owned::asConst` etc.) have a name to reference.
 pub trait AddConst {
     type Output;
 }

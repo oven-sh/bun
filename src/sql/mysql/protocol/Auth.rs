@@ -1,6 +1,7 @@
 // Authentication methods
 
-use core::ffi::{c_char, c_int};
+#[cfg(debug_assertions)]
+use core::ffi::c_char;
 
 use bun_boringssl as boringssl;
 use bun_core::{self, err};
@@ -38,10 +39,12 @@ pub mod mysql_native_password {
         // engine is optional and bun_jsc is higher-tier — pass null (matches
         // bun_install::integrity / bun_exe_format::macho precedent). Revisit if
         // profiling shows the engine matters here (it accelerates HW SHA only).
-        SHA1::hash(password, &mut stage1, core::ptr::null_mut());
+        // SAFETY: engine is null (default).
+        unsafe { SHA1::hash(password, &mut stage1, core::ptr::null_mut()) };
 
         // Stage 2: SHA1(SHA1(password))
-        SHA1::hash(&stage1, &mut stage2, core::ptr::null_mut());
+        // SAFETY: engine is null (default).
+        unsafe { SHA1::hash(&stage1, &mut stage2, core::ptr::null_mut()) };
 
         // Stage 3: SHA1(nonce + SHA1(SHA1(password)))
         let mut sha1 = SHA1::init();
@@ -74,16 +77,19 @@ pub mod caching_sha2_password {
 
         // SHA256(password)
         // TODO(port): see note in mysql_native_password::scramble re: ENGINE*.
-        SHA256::hash(password, &mut digest1, core::ptr::null_mut());
+        // SAFETY: engine is null (default).
+        unsafe { SHA256::hash(password, &mut digest1, core::ptr::null_mut()) };
 
         // SHA256(SHA256(password))
-        SHA256::hash(&digest1, &mut digest2, core::ptr::null_mut());
+        // SAFETY: engine is null (default).
+        unsafe { SHA256::hash(&digest1, &mut digest2, core::ptr::null_mut()) };
 
         // SHA256(SHA256(SHA256(password)) + nonce)
         let mut combined = vec![0u8; nonce.len() + digest2.len()];
         combined[0..nonce.len()].copy_from_slice(nonce);
         combined[nonce.len()..].copy_from_slice(&digest2);
-        SHA256::hash(&combined, &mut digest3, core::ptr::null_mut());
+        // SAFETY: engine is null (default).
+        unsafe { SHA256::hash(&combined, &mut digest3, core::ptr::null_mut()) };
         // `defer bun.default_allocator.free(combined)` → Vec drops at scope exit
 
         // XOR(SHA256(password), digest3)
@@ -157,7 +163,7 @@ pub mod caching_sha2_password {
     // `write()` call. `RawSlice<u8>` (encapsulated fat raw pointer with safe
     // `Deref` under the outlives-holder invariant) avoids the per-method
     // `unsafe { &*self.field }` deref triple while keeping the struct
-    // lifetime-free per PORTING.md Phase-A rules.
+    // lifetime-free per PORTING.md conventions.
     pub struct EncryptedPassword {
         pub password: bun_ptr::RawSlice<u8>,
         pub public_key: bun_ptr::RawSlice<u8>,
@@ -194,7 +200,7 @@ pub mod caching_sha2_password {
                 return Err(err!("InvalidPublicKey"));
             }
             // 1024 is overkill but lets cover all cases
-            // PERF(port): was stack-fallback (1024-byte stack buf with heap overflow path) — profile in Phase B
+            // PERF(port): was stack-fallback (1024-byte stack buf with heap overflow path) — profile if hot.
             let needed_len = password.len() + 1;
             let mut plain_password = vec![0u8; needed_len];
             plain_password[0..password.len()].copy_from_slice(password);
@@ -204,8 +210,7 @@ pub mod caching_sha2_password {
                 *c ^= nonce[i % nonce.len()];
             }
             boringssl::load();
-            // SAFETY: FFI call with no preconditions; clears thread-local error queue.
-            unsafe { boringssl::c::ERR_clear_error() };
+            boringssl::c::ERR_clear_error();
             // Decode public key
             // SAFETY: public_key is non-empty (checked above); BIO_new_mem_buf
             // borrows the buffer for the lifetime of `bio` and does not take ownership.
@@ -265,7 +270,7 @@ pub mod caching_sha2_password {
             // SAFETY: *rsa is a valid RSA*.
             let rsa_size = unsafe { boringssl::c::RSA_size(*rsa) } as usize;
             // should never ne bigger than 4096 but lets cover all cases
-            // PERF(port): was stack-fallback (4096-byte stack buf with heap overflow path) — profile in Phase B
+            // PERF(port): was stack-fallback (4096-byte stack buf with heap overflow path) — profile if hot.
             let mut encrypted_password = vec![0u8; rsa_size];
 
             // SAFETY: plain_password and encrypted_password are valid for the given

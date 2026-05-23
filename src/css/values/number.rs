@@ -21,11 +21,11 @@ impl CSSNumberFns {
         input.expect_number()
     }
 
-    pub fn to_css(this: &CSSNumber, dest: &mut Printer) -> Result<(), PrintErr> {
-        let number: f32 = *this;
+    pub fn to_css(this: CSSNumber, dest: &mut Printer) -> Result<(), PrintErr> {
+        let number: f32 = this;
         if number != 0.0 && number.abs() < 1.0 {
             let mut dtoa_buf: [u8; 129] = [0; 129];
-            // PERF(port): Zig left dtoa_buf uninitialized — profile in Phase B
+            // PERF(port): Zig left dtoa_buf uninitialized — profile if hot.
             let (str, _) = css::dtoa_short(&mut dtoa_buf, number, 6);
             if number < 0.0 {
                 dest.write_char(b'-')?;
@@ -42,11 +42,11 @@ impl CSSNumberFns {
         None
     }
 
-    pub fn sign(this: &CSSNumber) -> f32 {
-        if *this == 0.0 {
-            // Spec-faithful (number.zig:45): both branches return +0.0 — do NOT
+    pub fn sign(this: CSSNumber) -> f32 {
+        if this == 0.0 {
+            // Spec-faithful (number.zig:45): ±0.0 both map to +0.0 — do NOT
             // collapse with `signfns::sign_f32` / `calc::std_math_sign`.
-            return if this.is_sign_positive() { 0.0 } else { 0.0 };
+            return 0.0;
         }
         this.signum()
     }
@@ -64,8 +64,8 @@ impl CSSIntegerFns {
     }
 
     #[inline]
-    pub fn to_css(this: &CSSInteger, dest: &mut Printer) -> Result<(), PrintErr> {
-        css::to_css::integer(*this, dest)
+    pub fn to_css(this: CSSInteger, dest: &mut Printer) -> Result<(), PrintErr> {
+        css::to_css::integer(this, dest)
     }
 }
 

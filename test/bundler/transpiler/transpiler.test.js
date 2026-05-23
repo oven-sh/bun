@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace } from "harness";
+import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -153,6 +153,89 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it("contextual keywords used as plain identifiers keep their statements", () => {
+      const exp = ts.expectPrinted_;
+
+      exp("declare = t => 0;", "declare = (t) => 0;\n");
+      exp("declare = (...t) => R;", "declare = (...t) => R;\n");
+      exp("declare.foo = 1;", "declare.foo = 1;\n");
+      exp("interface = t => 0;", "interface = (t) => 0;\n");
+      exp("type = t => 0;", "type = (t) => 0;\n");
+      exp("namespace = t => 0;", "namespace = (t) => 0;\n");
+      exp("module = t => 0;", "module = (t) => 0;\n");
+      exp("abstract = t => 0;", "abstract = (t) => 0;\n");
+      exp("global = t => 0;", "global = (t) => 0;\n");
+      exp(
+        "abstract = () => {}\nclass Foo { m() { return 1 } }",
+        "abstract = () => {};\n\nclass Foo {\n  m() {\n    return 1;\n  }\n}",
+      );
+
+      exp("declare const x: number", "");
+      exp("declare let x: number", "");
+      exp("declare function f(): void", "");
+      exp("declare class Foo {}", "");
+    });
+
+    it("does not crash when export default abstract is an expression followed by a class", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("export default abstract = 1\nclass Foo {}", "export default abstract = 1;\n\nclass Foo {\n}");
+      exp("export default abstract ?? 1\nclass Foo {}", "export default abstract ?? 1;\n\nclass Foo {\n}");
+      exp("export default abstract = 1", "export default abstract = 1;\n");
+
+      exp("export default abstract class Foo { abstract bar(): void }", "export default class Foo {\n}");
+      exp("export default abstract class {}", "export default class {\n}");
+
+      err("@dec export default abstract = 1", 'Expected "class" but found end of file');
+      err("@dec(() => 0) export default abstract = 1\nclass Foo {}", 'Expected "class" but found "class"');
+    });
+
+    it("scope tracking stays balanced when a contextual keyword starts a larger expression", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("declare = (...t) => R;e((a) => {(u=> uge);\r\n})", "declare = (...t) => R;\ne((a) => {});\n");
+      exp("declare = t => 0; () => () => 0", "declare = (t) => 0;\n");
+      exp("declare = function () {}; () => () => 0", "declare = function() {};\n");
+      exp("declare = t => 0; function f() { () => 0; }\nf();", "declare = (t) => 0;\nfunction f() {}\nf();\n");
+
+      exp(
+        "abstract = (t) => 0\nclass Foo { m() { return () => () => 0 } }",
+        "abstract = (t) => 0;\n\nclass Foo {\n  m() {\n    return () => () => 0;\n  }\n}",
+      );
+      err("type = (t) => 0 Foo = number; () => () => 0", 'Expected ";" but found "Foo"');
+      err("namespace = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
+      err("module = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
+    });
+
+    it("export default interface that is not an interface declaration does not crash", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      const unexpected = 'Unexpected "interface"';
+
+      // "interface" turns out to start an expression or a labeled statement, not an
+      // interface declaration. None of these can be a default export value.
+      err("export default interface=2", unexpected);
+      err("export default interface + 1", unexpected);
+      err("export default interface.foo()", unexpected);
+      err("export default interface => 1", unexpected);
+      err("export default interface: 2", unexpected);
+
+      // The exact fuzz repro: tsx loader, no trailing newline.
+      expect(() => transpiler.transformSync("export default interface=2")).toThrow(unexpected);
+
+      // Same shapes through the plain JavaScript loader must not crash either.
+      const js = new Bun.Transpiler({ loader: "js" });
+      expect(() => js.transformSync("export default interface=2")).toThrow(unexpected);
+      expect(() => js.transformSync("export default interface => 1")).toThrow(unexpected);
+      expect(() => js.transformSync("export default interface: 2")).toThrow(unexpected);
+
+      // Real interface declarations still parse and get erased.
+      exp("export default interface Foo {}", "");
+      exp("export default interface Foo { bar(): void }\nexport const x = 1;", "export const x = 1;\n");
+    });
+
     it("should parse empty type parameters", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -161,6 +244,16 @@ describe("Bun.Transpiler", () => {
       err("class Foo<> {}", 'Expected identifier but found ">"');
       err("function foo<>(): void {}", 'Expected identifier but found ">"');
       err("const x: Foo<> = {}", "Unexpected >");
+    });
+
+    it("does not crash on an unterminated template literal after type arguments", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      err("new C<T>\n`", "Unterminated string literal");
+      err("new C<T>`", "Unterminated string literal");
+      err("f<T>`", "Unterminated string literal");
+      exp("new C<T>`ok`", "new C`ok`;\n");
+      exp("f<T>`ok`", "f`ok`;\n");
     });
 
     it("should parse infer extends ternary correctly #9959", () => {
@@ -927,6 +1020,42 @@ class Test extends Bar {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });
 
+    it("re-declaring an import binding that is kept in the output is an error", () => {
+      const err = ts.expectParseError;
+
+      err('import{Observable}from""\nimport{Observable} from "x"', '"Observable" has already been declared');
+      err('import { Foo } from "./x";\nexport class Foo {}', '"Foo" has already been declared');
+      err('import Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
+      err('import * as Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nfunction Foo() {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nvar Foo = 1;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nvar Foo = 1;\nvar Foo = 2;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nlet Foo = 1;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nenum Foo {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nimport Foo = require("./y");', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nimport Foo = Bar.Baz;', '"Foo" has already been declared');
+      err('import { Foo, Foo } from "./x";', '"Foo" has already been declared');
+    });
+
+    it("re-declaring an elided import binding is allowed", () => {
+      const exp = ts.expectPrinted_;
+
+      exp('import type { Foo } from "./x";\nclass Foo {}', "class Foo {\n}");
+      exp(
+        'import { type Foo, Bar } from "./x";\nclass Foo {}\nconsole.log(Bar);',
+        'import { Bar } from "./x";\n\nclass Foo {\n}\nconsole.log(Bar);\n',
+      );
+      exp('import { Foo } from "./x";\ndeclare class Foo {}\nnew Foo();', 'import { Foo } from "./x";\nnew Foo;\n');
+      exp('import { foo } from "./x";\nfunction foo(): void;', 'import { foo } from "./x";\n');
+
+      const trimming = new Bun.Transpiler({ loader: "ts", trimUnusedImports: true });
+      expect(trimming.transformSync('import { Foo } from "./x";\nexport class Foo {}')).toBe("export class Foo {\n}\n");
+      expect(trimming.transformSync('import{Observable}from""\nimport{Observable} from "x"')).toBe("");
+      expect(trimming.transformSync('import { Foo } from "./x";\nnamespace Foo { export const x = 1 }')).toBe(
+        "var Foo;\n((Foo) => {\n  Foo.x = 1;\n})(Foo ||= {});\n",
+      );
+    });
+
     it("export = {foo: 123}", () => {
       ts.expectPrinted_("export = {foo: 123}", "module.exports = { foo: 123 }");
     });
@@ -1000,6 +1129,28 @@ export default class {
         'const b = { xyz: "foo" };\n',
       );
     });
+
+    it("rejects using declarations in ambient (declare) contexts", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // These used to crash the parser with an index-out-of-bounds panic
+      // because ambient ("declare") bindings are never declared as symbols.
+      err("declare await using basic;var", 'Cannot use "declare" with an "await using" declaration');
+      err("declare using basic;var", 'Cannot use "declare" with a "using" declaration');
+      err("declare using x", 'Cannot use "declare" with a "using" declaration');
+      err("declare await using x", 'Cannot use "declare" with an "await using" declaration');
+      err("declare using x = foo()", 'Cannot use "declare" with a "using" declaration');
+      err("declare await using x = foo()", 'Cannot use "declare" with an "await using" declaration');
+      err("declare namespace NS { using x; }", 'Cannot use "declare" with a "using" declaration');
+      err('declare module "m" { using x; }', 'Cannot use "declare" with a "using" declaration');
+      err("declare global { await using x; }", 'Cannot use "declare" with an "await using" declaration');
+
+      // "declare" on other declarations is still erased without error
+      exp("declare const x: number; var y", "var y");
+      exp("declare let x: number; var y", "var y");
+      exp("declare var x: number; var y", "var y");
+    });
   });
 
   describe("generated closures", () => {
@@ -1061,6 +1212,65 @@ export default class {
 
     it("exported enum", () => {
       ts.expectPrinted_(input4, output4);
+    });
+
+    const input5 = `namespace ns {
+  export class ns {}
+}`;
+    const output5 = `var ns;
+((_ns) => {
+
+  class ns {
+  }
+  _ns.ns = ns;
+})(ns ||= {})`;
+
+    it("namespace argument renamed to avoid a member with the same name", () => {
+      ts.expectPrinted_(input5, output5);
+    });
+
+    const input6 = `namespace m2 {
+  class m2 {}
+  class _m2 {}
+}`;
+    const output6 = `var m2;
+((__m2) => {
+
+  class m2 {
+  }
+
+  class _m2 {
+  }
+})(m2 ||= {})`;
+
+    it("namespace argument does not collide with declarations in the namespace body", () => {
+      ts.expectPrinted_(input6, output6);
+    });
+
+    // The runtime transpiler does not run a renamer, so the generated closure
+    // argument must not shadow declarations inside the namespace body.
+    it("namespace closure argument does not redeclare members at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `namespace m2 {
+            class m2 {}
+            class _m2 {}
+            export const names = [m2.name, _m2.name];
+          }
+          console.log(JSON.stringify(m2.names));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["m2","_m2"]\n');
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -1541,6 +1751,32 @@ console.log(<div {...obj} key="after" />);`),
 }, undefined, true, undefined, this);
 `,
     );
+  });
+
+  // https://github.com/oven-sh/bun/issues/30958
+  // A numeric JSX entity outside the Unicode range (0..=0x10FFFF) used to
+  // trip a debug_assert in u16_lead (src/bun_core/lib.rs) when the lexer
+  // encoded the value as a UTF-16 surrogate pair. The lexer must reject the
+  // entity with the same "JSX entity escape is too big" diagnostic it emits
+  // for i32-overflow, instead of forwarding an invalid code point.
+  describe("rejects out-of-range numeric JSX entities without panicking", () => {
+    const bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+
+    // Covers: the original fuzzer input (0x76B22B), max+1, i32::MAX, and the
+    // negative-i32 path — parse_int::<i32> accepts a leading '-' so `&#-1;`
+    // lands as a negative CodePoint that must be rejected before it reaches
+    // the u32 cast in push_codepoint_utf16.
+    it.each(["&#7777707;", "&#x110000;", "&#2147483647;", "&#-1;"])("%s is rejected", entity => {
+      expect(() => bun.transformSync(`export var x = <div>${entity}</div>`)).toThrow(/JSX entity escape is too big/);
+    });
+
+    // Boundary: 0x10FFFF is the maximum valid code point and must still work.
+    it("&#x10FFFF; (max valid) still transpiles", () => {
+      expect(bun.transformSync("export var x = <div>&#x10FFFF;</div>")).toContain("jsxDEV_");
+    });
   });
 
   it("require with a dynamic non-string expression", () => {
@@ -2164,6 +2400,36 @@ console.log(resolve.length)
       expectParseError("[{a = {}}]\nof()", 'Unexpected "="');
       expectParseError("for ([...a, b] in c) {}", 'Unexpected "," after rest pattern');
       expectParseError("for ([...a, b] of c) {}", 'Unexpected "," after rest pattern');
+    });
+
+    it("for-in and for-of loop initializers", () => {
+      // Annex B: a plain identifier "var" binding may keep its initializer in a sloppy-mode for-in
+      expectPrintedNoTrim("for (var x = 1 in y) ;", "x = 1;\nfor (x in y)\n  ;\nvar x;\n");
+
+      // A destructuring binding can never have an initializer in a for-in/for-of head
+      expectParseError("for (var [a] = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (var {a} = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (var [a] = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (var {a} = 1 of y) ;", "for-of loop variables cannot have an initializer");
+
+      // "let" and "const" bindings can never have an initializer in a for-in/for-of head
+      expectParseError("for (let x = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (let x = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (let [a] = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (let {a} = 1 of y) ;", "for-of loop variables cannot have an initializer");
+      expectParseError("for (const x = 1 in y) ;", "for-in loop variables cannot have an initializer");
+      expectParseError("for (const x = 1 of y) ;", "for-of loop variables cannot have an initializer");
+
+      // for-in/for-of heads must have exactly one declaration
+      expectParseError("for (var x, y in z) ;", "for-in loops must have a single declaration");
+      expectParseError("for (let x, y in z) ;", "for-in loops must have a single declaration");
+      expectParseError("for (let x, y of z) ;", "for-of loops must have a single declaration");
+
+      // Declarations without an initializer are still allowed
+      expectPrintedNoTrim("for (var x in y) ;", "for (x in y)\n  ;\nvar x;\n");
+      expectPrintedNoTrim("for (var [a] in y) ;", "for ([a] in y)\n  ;\nvar a;\n");
+      expectPrintedNoTrim("for (let [a] of y) ;", "for (let [a] of y)\n  ;\n");
+      expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
     });
 
     it("regexp", () => {
@@ -3776,5 +4042,180 @@ const Layout = () => {
     const result = transpiler.transformSync(code);
     expect(result).toContain("a: 1");
     expect(result).not.toContain("fn(");
+  });
+});
+
+describe("export of a block-scoped function declaration", () => {
+  const code = "{\n  function encrypt() {}\n}\nexport { encrypt }";
+
+  function expectNotDeclaredError(loader) {
+    const transpiler = new Bun.Transpiler({ loader });
+    try {
+      transpiler.transformSync(code);
+      expect.unreachable();
+    } catch (e) {
+      const error = e instanceof AggregateError ? e.errors[0] : e;
+      expect(error.message).toBe('"encrypt" is not declared in this file');
+    }
+  }
+
+  it("is a parse error for JavaScript", () => {
+    expectNotDeclaredError("js");
+  });
+
+  it("is a parse error for JSX", () => {
+    expectNotDeclaredError("jsx");
+  });
+
+  it("is stripped like a type-only export for TypeScript", () => {
+    const transpiler = new Bun.Transpiler({ loader: "ts" });
+    const out = transpiler.transformSync(code);
+    expect(out).not.toContain("export { encrypt }");
+  });
+
+  it("still allows exporting a top-level function declaration", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("function encrypt() {}\nexport { encrypt }");
+    expect(out).toContain("export { encrypt }");
+  });
+
+  it("still allows exporting a var declared inside a block", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("{\n  var encrypt = 1;\n}\nexport { encrypt }");
+    expect(out).toContain("export { encrypt }");
+  });
+
+  it("does not affect block-level function declarations in sloppy mode", () => {
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const out = transpiler.transformSync("{\n  function f() {}\n}\nmodule.exports = f;");
+    expect(out).toContain("let f = function");
+    expect(out).toContain("module.exports = f");
+  });
+
+  it("reports the error when running a module with this pattern", async () => {
+    using dir = tempDir("block-scoped-fn-export", {
+      "mod.mjs": code + "\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "mod.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('"encrypt" is not declared in this file');
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe("using declarations in switch statements", () => {
+  const reparse = out => new Bun.Transpiler({ loader: "js" }).transformSync(out);
+
+  it("lowers by wrapping the entire switch in a single try/finally", () => {
+    const input =
+      "switch (dom()) {\n case 0:\n using d23 = { [Se]() {} };\n default:\n using d24 = { [ose]() {} };\n }";
+
+    for (const minifyWhitespace of [false, true]) {
+      const out = new Bun.Transpiler({ loader: "jsx", target: "node", minifyWhitespace }).transformSync(input);
+      expect(() => reparse(out)).not.toThrow();
+      expect(out).toMatch(/try\s*\{\s*switch\s*\(dom\(\)\)/);
+      expect(out.match(/finally/g)).toHaveLength(1);
+    }
+  });
+
+  it("lowers `await using` in switch cases the same way", () => {
+    const input = `async function f(x) {
+      switch (x()) {
+        case 0:
+          await using a = y();
+        default:
+          await using b = z();
+      }
+    }`;
+    const out = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(input);
+    expect(() => reparse(out)).not.toThrow();
+    expect(out).toMatch(/try\s*\{\s*switch\s*\(x\(\)\)/);
+    expect(out.match(/finally/g)).toHaveLength(1);
+  });
+
+  it("keeps generated temp refs unique across sibling switches in the same scope", () => {
+    const input = `
+      switch (a()) { case 0: using x = { [s]() {} }; }
+      switch (b()) { case 1: using y = { [t]() {} }; }
+    `;
+    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
+    expect(() => reparse(out)).not.toThrow();
+    expect(out.match(/finally/g)).toHaveLength(2);
+  });
+
+  it("keeps case bindings const when combined with top-level using declarations", () => {
+    const input = `
+      using top = r();
+      switch (a()) {
+        case 0:
+          using x = { [s]() {} };
+        default:
+          using y = { [t]() {} };
+      }
+    `;
+    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
+    expect(() => reparse(out)).not.toThrow();
+    expect(out).toMatch(/const x\s*=\s*__using/);
+    expect(out).toMatch(/const y\s*=\s*__using/);
+    expect(out).not.toMatch(/var [xy]\b/);
+  });
+
+  it("disposes at switch exit in reverse order and keeps bindings visible across cases", async () => {
+    const source = `
+      const order = [];
+      function resource(name) {
+        return { [Symbol.dispose]() { order.push("dispose " + name); } };
+      }
+      function run(value) {
+        switch (value) {
+          case 0:
+            using a = resource("a");
+            order.push("case 0");
+          default:
+            using b = resource("b");
+            order.push("default sees a: " + (a !== undefined));
+        }
+        order.push("after switch");
+      }
+      run(0);
+      console.log(JSON.stringify(order));
+    `;
+
+    const lowered = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(source);
+    expect(lowered).toContain("__using");
+
+    using dir = tempDir("using-switch-lowering", { "lowered.mjs": lowered });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "lowered.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["case 0", "default sees a: true", "dispose b", "dispose a", "after switch"]);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("minifyWhitespace keeps the space before keyword operators", () => {
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+
+  it("between a single-character identifier and 'instanceof'", () => {
+    expect(minifier.transformSync("x instanceof y")).toBe("x instanceof y;");
+  });
+
+  it("between a single-character identifier and 'in'", () => {
+    expect(minifier.transformSync("x in y")).toBe("x in y;");
+  });
+
+  it("between a numeric literal and 'in'", () => {
+    expect(minifier.transformSync("1 in y")).toBe("1 in y;");
   });
 });

@@ -87,7 +87,7 @@ pub mod sliced_string {
 
     // TODO(port): lifetime — PORTING.md says "no lifetime param on struct for []const u8 fields",
     // but SlicedString is purely a borrowed (ptr+len) view used for offset arithmetic into a
-    // backing buffer; Box/&'static/raw are all wrong here. Phase B: confirm `'a` threading or
+    // backing buffer; Box/&'static/raw are all wrong here. Confirm `'a` threading or
     // swap to raw `*const [u8]` if borrowck fights at call sites.
     #[derive(Copy, Clone)]
     pub struct SlicedString<'a> {
@@ -168,19 +168,10 @@ pub mod external_string {
     use super::semver_string::{Formatter, String};
 
     #[repr(C)]
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub struct ExternalString {
         pub value: String,
         pub hash: u64,
-    }
-
-    impl Default for ExternalString {
-        fn default() -> Self {
-            Self {
-                value: String::default(),
-                hash: 0,
-            }
-        }
     }
 
     impl ExternalString {
@@ -194,7 +185,7 @@ pub mod external_string {
                 return Ordering::Equal;
             }
 
-            self.value.order(&rhs.value, lhs_buf, rhs_buf)
+            self.value.order(rhs.value, lhs_buf, rhs_buf)
         }
 
         /// ExternalString but without the hash
@@ -254,21 +245,13 @@ pub mod semver_string {
 
     /// String type that stores either an offset/length into an external buffer or a string inline directly
     #[repr(C)]
-    #[derive(Copy, Clone, PartialEq, Eq)]
+    #[derive(Copy, Clone, PartialEq, Eq, Default)]
     pub struct String {
         /// This is three different types of string.
         /// 1. Empty string. If it's all zeroes, then it's an empty string.
         /// 2. If the final bit is not set, then it's a string that is stored inline.
         /// 3. If the final bit is set, then it's a string that is stored in an external buffer.
         pub bytes: [u8; String::MAX_INLINE_LEN],
-    }
-
-    impl Default for String {
-        fn default() -> Self {
-            Self {
-                bytes: [0, 0, 0, 0, 0, 0, 0, 0],
-            }
-        }
     }
 
     impl fmt::Debug for String {
@@ -337,7 +320,7 @@ pub mod semver_string {
         }
 
         #[inline]
-        pub fn order(&self, rhs: &String, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+        pub fn order(self, rhs: String, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
             strings::order(self.slice(lhs_buf), rhs.slice(rhs_buf))
         }
 
@@ -401,8 +384,7 @@ pub mod semver_string {
                     // so that's an edge-case
                     if in_[Self::MAX_INLINE_LEN - 1] >= 128 {
                         let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
-                        let packed: u64 =
-                            (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
+                        let packed: u64 = (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK) | (1u64 << 63);
                         String {
                             bytes: packed.to_ne_bytes(),
                         }
@@ -416,8 +398,7 @@ pub mod semver_string {
                 }
                 _ => {
                     let ptr_bits: u64 = Pointer::init(buf, in_).to_bits();
-                    let packed: u64 =
-                        (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
+                    let packed: u64 = (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK) | (1u64 << 63);
                     String {
                         bytes: packed.to_ne_bytes(),
                     }
@@ -510,7 +491,7 @@ pub mod semver_string {
             let items = buf.as_slice();
             let in_buf = &items[items.len() - in_.len()..];
             let ptr_bits: u64 = Pointer::init(items, in_buf).to_bits();
-            let packed: u64 = (0u64 | (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK)) | (1u64 << 63);
+            let packed: u64 = (ptr_bits & MAX_ADDRESSABLE_SPACE_MASK) | (1u64 << 63);
             Ok(String {
                 bytes: packed.to_ne_bytes(),
             })
@@ -527,15 +508,15 @@ pub mod semver_string {
                 let b = that.ptr();
                 let (a_off, a_len) = (a.off as usize, a.len as usize);
                 let (b_off, b_len) = (b.off as usize, b.len as usize);
-                debug_assert!(a_off + a_len <= this_buf.len());
-                debug_assert!(b_off + b_len <= that_buf.len());
-                // SAFETY: Pointer {off,len} is constructed by `init`/`init_append` from a
-                // sub-slice of `buf` and is only ever projected back into the same buffer
-                // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast).
-                strings::eql(
-                    unsafe { this_buf.get_unchecked(a_off..a_off + a_len) },
-                    unsafe { that_buf.get_unchecked(b_off..b_off + b_len) },
-                )
+                // Binary lockfiles raw-cast these offsets from disk; bounds-check in release.
+                // OOB handles must not normalize to "" (would make corrupt entries match).
+                match (
+                    this_buf.get(a_off..a_off + a_len),
+                    that_buf.get(b_off..b_off + b_len),
+                ) {
+                    (Some(a), Some(b)) => strings::eql(a, b),
+                    _ => false,
+                }
             }
         }
 
@@ -552,7 +533,7 @@ pub mod semver_string {
                     match self.bytes[0] {
                         0 => 0,
                         _ => {
-                            // PERF(port): was `inline while` (manually unrolled) — profile in Phase B
+                            // PERF(port): was `inline while` (manually unrolled) — profile if hot.
                             let mut i: usize = 0;
                             while i < self.bytes.len() {
                                 if self.bytes[i] == 0 {
@@ -590,7 +571,7 @@ pub mod semver_string {
                     match self.bytes[0] {
                         0 => b"",
                         _ => {
-                            // PERF(port): was `inline while` (manually unrolled) — profile in Phase B
+                            // PERF(port): was `inline while` (manually unrolled) — profile if hot.
                             let mut i: usize = 0;
                             while i < self.bytes.len() {
                                 if self.bytes[i] == 0 {
@@ -605,12 +586,8 @@ pub mod semver_string {
                 _ => {
                     let ptr_ = self.ptr();
                     let (off, len) = (ptr_.off as usize, ptr_.len as usize);
-                    debug_assert!(off + len <= buf.len());
-                    // SAFETY: Pointer {off,len} is constructed by `init`/`init_append` from a
-                    // sub-slice of `buf` and is only ever projected back into the same buffer
-                    // (Zig: `buf[ptr.off..][0..ptr.len]`, unchecked in ReleaseFast). The two
-                    // checked slice ops here were the dominant cost in install hot loops.
-                    unsafe { buf.get_unchecked(off..off + len) }
+                    // Binary lockfiles raw-cast these offsets from disk; bounds-check in release.
+                    buf.get(off..off + len).unwrap_or_default()
                 }
             }
         }
@@ -802,7 +779,7 @@ pub mod semver_string {
 
     impl<'a> Sorter<'a> {
         pub fn less_than(&self, lhs: String, rhs: String) -> bool {
-            lhs.order(&rhs, self.lhs_buf, self.rhs_buf)
+            lhs.order(rhs, self.lhs_buf, self.rhs_buf)
                 == if self.direction == SortDirection::Asc {
                     Ordering::Less
                 } else {
@@ -948,8 +925,8 @@ pub mod semver_string {
             })
         }
         #[inline]
-        pub fn contains(&self, hash: &u64) -> bool {
-            self.map.contains_key(hash)
+        pub fn contains(&self, hash: u64) -> bool {
+            self.map.contains_key(&hash)
         }
         /// Zig `HashMap.capacity()` — number of slots reservable without rehash.
         #[inline]
@@ -964,23 +941,12 @@ pub mod semver_string {
         }
     }
 
+    #[derive(Default)]
     pub struct Builder {
         pub len: usize,
         pub cap: usize,
         pub ptr: Option<Box<[u8]>>,
         pub string_pool: StringPool,
-    }
-
-    impl Default for Builder {
-        fn default() -> Self {
-            Self {
-                len: 0,
-                cap: 0,
-                ptr: None,
-                // TODO(port): Zig had `= undefined`; callers must initialize before use.
-                string_pool: StringPool::default(),
-            }
-        }
     }
 
     impl Builder {
@@ -1007,7 +973,7 @@ pub mod semver_string {
                 return;
             }
 
-            if !self.string_pool.contains(&hash) {
+            if !self.string_pool.contains(hash) {
                 self.cap += slice_.len();
             }
         }
@@ -1023,7 +989,7 @@ pub mod semver_string {
         }
 
         pub fn allocate(&mut self) -> Result<(), AllocError> {
-            // PERF(port): Zig used uninitialized alloc; using zeroed Box<[u8]> here — profile in Phase B
+            // PERF(port): Zig used uninitialized alloc; using zeroed Box<[u8]> here — profile if hot.
             let ptr_ = vec![0u8; self.cap].into_boxed_slice();
             self.ptr = Some(ptr_);
             Ok(())

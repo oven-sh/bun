@@ -21,7 +21,7 @@ use crate::test_command;
 use crate::test_runner::jest::Summary;
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
-    // PERF(port): was comptime `" " ++ name ++ "=\""` concat — profile in Phase B
+    // PERF(port): was comptime `" " ++ name ++ "=\""` concat.
     let needle = [b" ", name, b"=\""].concat();
     let Some(idx) = strings::index_of(head, &needle) else {
         return 0;
@@ -117,18 +117,14 @@ pub fn merge_junit_fragments(coord: &mut Coordinator, outfile: &[u8], summary: &
             "Failed to write JUnit report to {}\n{}",
             (BStr::new(outfile), e),
         ),
-        bun_sys::Result::Ok(fd) => {
-            let fd = fd; // moved into scope; closed on drop
-            match File::write_all(&fd, &contents) {
-                bun_sys::Result::Err(e) => Output::err(
-                    err!("JUnitReportFailed"),
-                    "Failed to write JUnit report to {}\n{}",
-                    (BStr::new(outfile), e),
-                ),
-                bun_sys::Result::Ok(()) => {}
-            }
-            let _ = fd.close();
-        }
+        bun_sys::Result::Ok(fd) => match File::write_all(&fd, &contents) {
+            bun_sys::Result::Err(e) => Output::err(
+                err!("JUnitReportFailed"),
+                "Failed to write JUnit report to {}\n{}",
+                (BStr::new(outfile), e),
+            ),
+            bun_sys::Result::Ok(()) => {}
+        },
     }
 }
 
@@ -160,7 +156,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     paths: &[&[u8]],
     opts: &mut CodeCoverageOptions,
 ) {
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile in Phase B
+    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator).
 
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
@@ -178,7 +174,7 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 let gop = bun_core::handle_oom(by_file.get_or_put(name));
                 if !gop.found_existing {
                     let owned: Box<[u8]> = Box::from(name);
-                    *gop.key_ptr = owned.clone();
+                    gop.key_ptr.clone_from(&owned);
                     *gop.value_ptr = FileCoverage {
                         path: owned,
                         ..Default::default()
@@ -272,12 +268,8 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                         fc.fnh
                     );
                     for &ln in &sorted {
-                        let _ = write!(
-                            &mut w,
-                            "DA:{},{}\n",
-                            ln,
-                            fc.da.get(&ln).expect("unreachable")
-                        );
+                        let _ =
+                            writeln!(&mut w, "DA:{},{}", ln, fc.da.get(&ln).expect("unreachable"));
                     }
                     let _ = write!(
                         &mut w,
@@ -287,7 +279,6 @@ pub fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     );
                 }
                 let _ = File::write_all(&f, &w);
-                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
             }
         }
     }

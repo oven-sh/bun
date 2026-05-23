@@ -1,10 +1,4 @@
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![warn(unreachable_pub)]
 
@@ -229,8 +223,7 @@ pub mod posix {
     /// duplicate. Resolves to the per-OS `SystemErrno` via the glob re-export
     /// above. TODO(port): Zig's `E` uses unprefixed variant names (`PERM`,
     /// `NOENT`); `SystemErrno` uses `EPERM`, `ENOENT`. Callers matching on
-    /// `E::PERM` must migrate to `E::EPERM` (or this becomes a distinct enum
-    /// in Phase B).
+    /// `E::PERM` must migrate to `E::EPERM` (or this becomes a distinct enum).
     pub type E = crate::SystemErrno;
 
     /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
@@ -409,7 +402,12 @@ mod errno_name_tests {
         assert_eq!(Error::from_errno(0), Error::UNEXPECTED);
         assert_eq!(Error::from_errno(9999), Error::UNEXPECTED);
         // errno 11 is platform-specific: EAGAIN on linux/windows, EDEADLK on darwin/bsd.
-        #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            windows,
+            target_family = "wasm"
+        ))]
         {
             assert_eq!(Error::from_errno(11), Error::intern("EAGAIN"));
             assert_eq!(Error::from_errno(104), Error::intern("ECONNRESET"));
@@ -439,7 +437,7 @@ mod errno_name_tests {
         assert_eq!(Error::from_errno(max as i32), Error::UNEXPECTED);
 
         // Spot-check the last entry on each platform against the Zig source.
-        #[cfg(any(target_os = "linux", target_family = "wasm"))]
+        #[cfg(any(target_os = "linux", target_os = "android", target_family = "wasm"))]
         assert_eq!(system_errno_name(133), Some("EHWPOISON"));
         #[cfg(windows)]
         {
@@ -464,7 +462,12 @@ mod errno_name_tests {
             coreutils_error_map::get(2),
             Some("No such file or directory")
         );
-        #[cfg(any(target_os = "linux", windows, target_family = "wasm"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "android",
+            windows,
+            target_family = "wasm"
+        ))]
         assert_eq!(
             coreutils_error_map::get(11),
             Some("Resource temporarily unavailable")

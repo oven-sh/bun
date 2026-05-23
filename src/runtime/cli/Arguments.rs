@@ -8,7 +8,7 @@
 //! const-fn slice concat (`bun_clap::concat_params!`), matching Zig's comptime
 //! `clap.parseParam(...) ++ ...`.
 
-use bun_options_types::{LoaderExt as _, TargetExt as _};
+use bun_options_types::LoaderExt as _;
 
 use bstr::BStr;
 use bun_bundler::options;
@@ -25,10 +25,8 @@ use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptio
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, platform};
-use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::cli;
-use crate::cli::Bunfig;
 use crate::cli::colon_list_type::ColonListType;
 use crate::cli::command::{self, Context, Tag as CommandTag};
 use crate::cli::concat_params;
@@ -43,7 +41,7 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 
 pub fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Error> {
     let option_loader =
-        bun_ast::Loader::from_string(input).ok_or(bun_core::err!("InvalidLoader"))?;
+        bun_ast::Loader::from_string(input).ok_or_else(|| bun_core::err!("InvalidLoader"))?;
     Ok(option_loader.to_api())
 }
 
@@ -679,7 +677,10 @@ pub const BASE_RUNTIME_TRANSPILER_PARAMS: &[ParamType] =
 // built with `comptime_table!(.., cold)` and stay in plain `.rodata`, where
 // `src/startup.order` can still cluster the ones a sampled cold path actually
 // hits without weighing down the `.rodata.startup` fault-around window.
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".rodata.startup"))]
+#[cfg_attr(
+    any(target_os = "linux", target_os = "android"),
+    unsafe(link_section = ".rodata.startup")
+)]
 pub static AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(AUTO_PARAMS);
 pub static RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(RUN_PARAMS, cold);
 pub static BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(BUILD_PARAMS, cold);
@@ -744,7 +745,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 /// other arms; here `command::tag_params(cmd)` does the runtime lookup, and the
 /// per-`cmd` blocks below are guarded by `if matches!(cmd, …)` instead of
 /// `if comptime cmd == …`.
-// PERF(port): was comptime monomorphization — profile in Phase B.
+// PERF(port): was comptime monomorphization.
 pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions, bun_core::Error> {
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
@@ -1344,10 +1345,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
     }
 
-    if opts.port.is_some() && opts.origin.is_none() {
+    if let (Some(port), true) = (opts.port, opts.origin.is_none()) {
         let mut v: Vec<u8> = Vec::new();
         use std::io::Write;
-        write!(&mut v, "http://localhost:{}/", opts.port.unwrap()).expect("write to Vec");
+        write!(&mut v, "http://localhost:{}/", port).expect("write to Vec");
         opts.origin = Some(v.into_boxed_slice());
     }
 
@@ -1562,7 +1563,6 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
     Ok(opts)
 }
 
-
 /// Cold path: `bun test` option-group parsing — timeout / coverage / reporter /
 /// shard / parallel / seed / etc. Split out of [`parse`] so the `bun run <script>`
 /// and bare-`bun <file>` hot path (`USES_GLOBAL_OPTIONS` ⇒ `parse` runs on every
@@ -1572,34 +1572,33 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if let Some(timeout_ms) = args.option(b"--timeout") {
         if !timeout_ms.is_empty() {
-            ctx.test_options.default_timeout_ms =
-                match strings::parse_int::<u32>(timeout_ms, 10) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error<r>: Invalid timeout: \"{}\"",
-                            BStr::new(timeout_ms)
-                        ));
-                        Output::flush();
-                        Global::exit(1);
-                    }
-                };
+            ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {
+                Ok(v) => v,
+                Err(_) => {
+                    Output::pretty_errorln(format_args!(
+                        "<r><red>error<r>: Invalid timeout: \"{}\"",
+                        BStr::new(timeout_ms)
+                    ));
+                    Output::flush();
+                    Global::exit(1);
+                }
+            };
         }
     }
 
     if let Some(max_concurrency) = args.option(b"--max-concurrency") {
         if !max_concurrency.is_empty() {
-            ctx.test_options.max_concurrency =
-                match strings::parse_int::<u32>(max_concurrency, 10) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        Output::pretty_errorln(format_args!(
-                            "<r><red>error<r>: Invalid max-concurrency: \"{}\"",
-                            BStr::new(max_concurrency)
-                        ));
-                        Global::exit(1);
-                    }
-                };
+            ctx.test_options.max_concurrency = match strings::parse_int::<u32>(max_concurrency, 10)
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    Output::pretty_errorln(format_args!(
+                        "<r><red>error<r>: Invalid max-concurrency: \"{}\"",
+                        BStr::new(max_concurrency)
+                    ));
+                    Global::exit(1);
+                }
+            };
         }
     }
 
@@ -2401,9 +2400,7 @@ fn parse_build_command_options(
                     "Cannot use client-side --target={} with --server-components",
                     format_args!(
                         "{:?}",
-                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(
-                            target
-                        ))
+                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
                     ),
                 );
                 Global::crash();

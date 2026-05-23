@@ -1,12 +1,11 @@
-use core::cell::UnsafeCell;
 use core::ffi::{c_uint, c_void};
 
 use crate::{Loop, SocketGroup, SocketKind};
 
-/// `us_connecting_socket_t` — a connect in flight (DNS / non-blocking
-/// `connect()` / happy-eyeballs). No I/O is possible yet; on success the loop
-/// promotes it to a `us_socket_t` and fires `onOpen`, on failure
-/// `onConnectingError`.
+// `us_connecting_socket_t` — a connect in flight (DNS / non-blocking
+// `connect()` / happy-eyeballs). No I/O is possible yet; on success the loop
+// promotes it to a `us_socket_t` and fires `onOpen`, on failure
+// `onConnectingError`.
 bun_opaque::opaque_ffi! { pub struct ConnectingSocket; }
 
 impl ConnectingSocket {

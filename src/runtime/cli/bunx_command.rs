@@ -1,7 +1,6 @@
 //! Port of `src/cli/bunx_command.zig`.
 
 use bun_collections::VecExt;
-use core::mem::size_of;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -21,7 +20,9 @@ use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER, PathBuffer};
 use bun_resolver::fs::RealFS;
-use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, O};
+#[cfg(windows)]
+use bun_sys::FdExt as _;
+use bun_sys::{self, Fd, FdDirExt as _, O};
 use bun_wyhash::hash;
 use std::env::consts::EXE_SUFFIX;
 
@@ -34,8 +35,8 @@ pub struct BunxCommand;
 
 /// bunx-specific options parsed from argv.
 //
-// PORT NOTE: string fields borrow from `argv` (process-lifetime). Phase A forbids
-// struct lifetime params, so they are typed `&'static [u8]`.
+// PORT NOTE: string fields borrow from `argv` (process-lifetime). The porting
+// convention forbids struct lifetime params, so they are typed `&'static [u8]`.
 // TODO(port): lifetime — these borrow argv, not true 'static.
 pub struct Options {
     /// CLI arguments to pass to the command being run.
@@ -99,7 +100,7 @@ impl Options {
 
             if maybe_package_name.is_some() {
                 opts.passthrough_list.push(Box::<[u8]>::from(positional));
-                // PERF(port): was appendAssumeCapacity — profile in Phase B
+                // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
                 i += 1;
                 continue;
             }
@@ -165,7 +166,7 @@ impl Options {
         }
 
         // Handle --package flag case differently
-        if opts.specified_package.is_some() {
+        if let Some(specified_package) = opts.specified_package {
             if let Some(package_name) = maybe_package_name {
                 if package_name.is_empty() {
                     Output::err_generic(
@@ -188,7 +189,7 @@ impl Options {
                 Global::exit(1);
             }
             opts.binary_name = maybe_package_name;
-            opts.package_name = opts.specified_package.unwrap();
+            opts.package_name = specified_package;
         } else {
             // Normal case: package_name is the first non-flag argument
             if maybe_package_name.is_none() || maybe_package_name.unwrap().is_empty() {
@@ -275,7 +276,23 @@ impl BunxCommand {
     /// 1 day
     const SECONDS_CACHE_VALID: i64 = 60 * 60 * 24;
     /// 1 day
+    #[cfg(windows)]
     const NANOSECONDS_CACHE_VALID: i128 = (Self::SECONDS_CACHE_VALID as i128) * 1_000_000_000;
+
+    /// `bin` keys (and the `name` fallback) in package.json are command
+    /// names, not paths. The bunx cache lives in a world-writable temp dir,
+    /// so a crafted package.json there could yield a key like
+    /// `../../../../tmp/x` or `/tmp/x`; `bun_which::which` resolves
+    /// slash-containing names against the cwd, escaping `node_modules/.bin`
+    /// and skipping the cache-ownership check before execution. Reject
+    /// anything that isn't a plain file name.
+    fn is_safe_bin_name(name: &[u8]) -> bool {
+        !name.is_empty()
+            && name != b"."
+            && name != b".."
+            && strings::index_of_char(name, b'/').is_none()
+            && strings::index_of_char(name, b'\\').is_none()
+    }
 
     fn get_bin_name_from_subpath(
         transpiler: &mut Transpiler,
@@ -283,12 +300,7 @@ impl BunxCommand {
         subpath_z: &ZStr,
     ) -> Result<Box<[u8]>, bun_core::Error> {
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
-        // Zig: `defer target_package_json.close()` — bun_sys::File is a non-owning
-        // Copy handle (no Drop), so guard the fd explicitly.
-        let _close_pkg_json = bun_sys::CloseOnDrop::new(target_package_json_fd);
-        let target_package_json = bun_sys::File {
-            handle: target_package_json_fd,
-        };
+        let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
         // TODO: make this better
         let package_json_bytes = target_package_json.read_to_end()?;
@@ -311,7 +323,7 @@ impl BunxCommand {
                     for prop in object.properties.slice() {
                         if let Some(key) = &prop.key {
                             if let Some(bin_name) = key.as_string(&bump) {
-                                if bin_name.is_empty() {
+                                if !Self::is_safe_bin_name(bin_name) {
                                     continue;
                                 }
                                 return Ok(Box::<[u8]>::from(bin_name));
@@ -322,7 +334,16 @@ impl BunxCommand {
                 ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
                         if let Some(name) = name_expr.as_string(&bump) {
-                            return Ok(Box::<[u8]>::from(name));
+                            // A scoped `name` (`@scope/pkg`) is legitimate here;
+                            // the command name is its unscoped portion.
+                            let bin_name = if name.is_empty() {
+                                name
+                            } else {
+                                bun_install::dependency::unscoped_package_name(name)
+                            };
+                            if Self::is_safe_bin_name(bin_name) {
+                                return Ok(Box::<[u8]>::from(bin_name));
+                            }
                         }
                     }
                 }
@@ -419,9 +440,7 @@ impl BunxCommand {
                 Ok(fd) => fd,
                 Err(_) => return Err(bun_core::err!("NeedToInstall")),
             };
-            let target_package_json = bun_sys::File {
-                handle: target_package_json_fd,
-            };
+            let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
             let is_stale: bool = 'is_stale: {
                 #[cfg(windows)]
@@ -526,6 +545,47 @@ impl BunxCommand {
         }
     }
 
+    /// Refuse to execute a binary resolved from inside the bunx cache unless
+    /// it is owned by the current user.
+    ///
+    /// The bunx cache lives under the world-writable temp dir at a predictable
+    /// path. Another local user could pre-create that path. Bun's bin linker
+    /// creates `.bin/<name>` entries as *symlinks* on Unix
+    /// (`Linker::create_symlink`), so a regular-file-only check would mark every
+    /// legitimate cache hit as untrusted and reinstall on every invocation.
+    /// Accept either a symlink or a regular file owned by the current uid; for
+    /// symlinks, also follow once and require the target to be a uid-owned
+    /// regular file so an attacker-planted, uid-matching link can't redirect
+    /// execution outside the cache.
+    ///
+    /// On non-Unix targets there is no comparable shared world-writable temp
+    /// dir / uid model, so the check is a no-op there.
+    #[cfg(unix)]
+    fn is_trusted_cached_binary(destination: &ZStr, uid: libc::uid_t) -> bool {
+        let lstat_ok = |st: &bun_sys::Stat| {
+            let kind = st.st_mode & libc::S_IFMT;
+            st.st_uid == uid && (kind == libc::S_IFREG || kind == libc::S_IFLNK)
+        };
+        let stat_ok =
+            |st: &bun_sys::Stat| st.st_uid == uid && (st.st_mode & libc::S_IFMT) == libc::S_IFREG;
+        match bun_sys::lstat(destination) {
+            Ok(st) if lstat_ok(&st) => {
+                if (st.st_mode & libc::S_IFMT) == libc::S_IFLNK {
+                    matches!(bun_sys::stat(destination), Ok(target) if stat_ok(&target))
+                } else {
+                    true
+                }
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn is_trusted_cached_binary(_destination: &ZStr, _uid: u32) -> bool {
+        true
+    }
+
     fn exit_with_usage() -> ! {
         crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
         Global::exit(1);
@@ -536,9 +596,12 @@ impl BunxCommand {
         // Don't log stuff
         ctx.debug.silent = true;
 
-        let mut opts = Options::parse(ctx, argv)?;
+        let opts = Options::parse(ctx, argv)?;
 
         let mut requests_buf = update_request::Array::with_capacity(64);
+        // SAFETY: CLI dispatch is single-threaded and `ctx_log` is consumed by
+        // `UpdateRequest::parse` immediately below; it is not held across any
+        // call that may itself reborrow the same `Log`.
         let ctx_log = unsafe { ctx.log_mut() };
         let update_requests = UpdateRequest::parse(
             None,
@@ -561,11 +624,11 @@ impl BunxCommand {
         // BUT: Skip this transformation if --package was explicitly specified
         if opts.specified_package.is_none() {
             if update_request.name == b"tsc" {
-                update_request.name = b"typescript".as_slice().into();
+                update_request.name = b"typescript".as_slice();
             } else if update_request.name == b"claude" {
                 // The npm package "claude" is an unrelated squatter with no bin;
                 // `bunx claude` is much more likely to mean the actual CLI.
-                update_request.name = b"@anthropic-ai/claude-code".as_slice().into();
+                update_request.name = b"@anthropic-ai/claude-code".as_slice();
             }
         }
 
@@ -583,9 +646,9 @@ impl BunxCommand {
         let mut initial_bin_name_is_a_guess = false;
         let initial_bin_name: &[u8] = if let Some(bin_name) = opts.binary_name {
             bin_name
-        } else if &*update_request.name == b"typescript" {
+        } else if update_request.name == b"typescript" {
             b"tsc"
-        } else if &*update_request.name == b"@anthropic-ai/claude-code" {
+        } else if update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
         } else if update_request.version.tag == VersionTag::Github {
             update_request
@@ -593,11 +656,11 @@ impl BunxCommand {
                 .github()
                 .repo
                 .slice(update_request.version_buf())
-        } else if let Some(index) = strings::last_index_of_char(&update_request.name, b'/') {
+        } else if let Some(index) = strings::last_index_of_char(update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;
-            &update_request.name[usize::try_from(index + 1).expect("int cast")..]
+            &update_request.name[index + 1..]
         } else {
-            &update_request.name
+            update_request.name
         };
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
@@ -687,7 +750,7 @@ impl BunxCommand {
             #[cfg(not(windows))]
             const BANNED_PATH_CHARS: &[u8] = b":";
 
-            let has_banned_char = strings::index_of_any(&update_request.name, BANNED_PATH_CHARS)
+            let has_banned_char = strings::index_of_any(update_request.name, BANNED_PATH_CHARS)
                 .is_some()
                 || strings::index_of_any(display_version, BANNED_PATH_CHARS).is_some();
 
@@ -703,7 +766,7 @@ impl BunxCommand {
                     "{}@{}@{}",
                     BStr::new(initial_bin_name),
                     <&'static str>::from(update_request.version.tag),
-                    hash(&update_request.name).wrapping_add(hash(display_version)),
+                    hash(update_request.name).wrapping_add(hash(display_version)),
                 )
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
             } else {
@@ -731,7 +794,7 @@ impl BunxCommand {
                     BStr::new(display_version),
                 )
                 .map_err(|_| bun_core::err!("OutOfMemory"))?;
-                (v, &update_request.name)
+                (v, update_request.name)
             } else {
                 // When there is not a clear package name (URL/GitHub/etc), we force the package name
                 // to be the same as the calculated initial bin name. This allows us to have a predictable
@@ -812,7 +875,7 @@ impl BunxCommand {
 
         // PORT NOTE: Zig used `switch (PATH.len > 0) { inline else => |path_is_nonzero| ... }`
         // to monomorphize the format string. Collapsed to a runtime branch.
-        // PERF(port): was comptime bool dispatch — profile in Phase B
+        // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
         path = {
             let mut v = Vec::new();
             let path_is_nonzero = !path.is_empty();
@@ -923,6 +986,19 @@ impl BunxCommand {
                     // If this directory was installed by bunx, we want to perform cache invalidation on it
                     // this way running `bunx hello` will update hello automatically to the latest version
                     if strings::has_prefix(out, bunx_cache_dir) {
+                        // Refuse to execute a cached binary that wasn't created by the
+                        // current user (another local user could have pre-created the
+                        // path); fall through to a fresh install instead. See
+                        // `is_trusted_cached_binary` for the full rationale.
+                        if !Self::is_trusted_cached_binary(destination, uid) {
+                            bun_output::scoped_log!(
+                                bunx,
+                                "refusing untrusted cached binary: {}",
+                                BStr::new(out)
+                            );
+                            do_cache_bust = true;
+                            break 'try_run_existing;
+                        }
                         let is_stale: bool = 'is_stale: {
                             #[cfg(windows)]
                             {
@@ -1078,6 +1154,22 @@ impl BunxCommand {
                                 };
                                 if let Some(destination) = dest_or_cache2 {
                                     let out: &[u8] = destination.as_bytes();
+                                    // Same hardening as the first cache probe: this path
+                                    // resolves the package's *real* bin name (which may
+                                    // differ from the package name), so it is just as
+                                    // reachable for a binary planted by another local user
+                                    // in the world-writable bunx cache.
+                                    if strings::has_prefix(out, bunx_cache_dir)
+                                        && !Self::is_trusted_cached_binary(destination, uid)
+                                    {
+                                        bun_output::scoped_log!(
+                                            bunx,
+                                            "refusing untrusted cached binary: {}",
+                                            BStr::new(out)
+                                        );
+                                        do_cache_bust = true;
+                                        break 'try_run_existing;
+                                    }
                                     let stored = fs.dirname_store.append_slice(out)?;
                                     Run::run_binary(
                                         ctx,
@@ -1094,24 +1186,13 @@ impl BunxCommand {
                         }
                         Err(err) => {
                             if err == GetBinNameError::NoBinFound {
-                                if opts.specified_package.is_some() && opts.binary_name.is_some() {
-                                    Output::err_generic(
-                                        "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                                        (
-                                            BStr::new(&update_request.name),
-                                            BStr::new(opts.binary_name.unwrap()),
-                                        ),
-                                    );
-                                    Output::prettyln(format_args!(
-                                        "  <d>hint: try running without --package to install and run {} directly<r>",
-                                        BStr::new(opts.binary_name.unwrap()),
-                                    ));
-                                } else {
-                                    Output::err_generic(
-                                        "could not determine executable to run for package <b>{}<r>",
-                                        format_args!("{}", BStr::new(&update_request.name)),
-                                    );
-                                }
+                                // `opts.binary_name` is `None` here (checked at the
+                                // enclosing `if` above), so the `--package` + binary
+                                // hint message can never apply on this path.
+                                Output::err_generic(
+                                    "could not determine executable to run for package <b>{}<r>",
+                                    format_args!("{}", BStr::new(&update_request.name)),
+                                );
                                 Global::exit(1);
                             }
                         }
@@ -1151,8 +1232,6 @@ impl BunxCommand {
                 Err(_) => break 'create_package_json,
             };
             let _ = package_json.write_all(b"{}\n");
-            // Zig: `defer package_json.close()` — bun_sys::File has no Drop.
-            let _ = package_json.close();
         }
 
         let install_args: [&[u8]; 4] = [
@@ -1325,17 +1404,29 @@ impl BunxCommand {
             absolute_in_cache_dir,
         ) {
             let out: &[u8] = destination.as_bytes();
-            let stored = fs.dirname_store.append_slice(out)?;
-            Run::run_binary(
-                ctx,
-                stored,
-                destination,
-                top_level_dir,
-                env_loader,
-                passthrough,
-                None,
-            )?;
-            // run_binary is noreturn
+            // The install we just ran should have created this symlink as the
+            // current user, but the cache lives in a world-writable temp dir; an
+            // attacker can race the install and plant a uid-mismatched entry.
+            // Bail out to the generic error rather than execute it.
+            if Self::is_trusted_cached_binary(destination, uid) {
+                let stored = fs.dirname_store.append_slice(out)?;
+                Run::run_binary(
+                    ctx,
+                    stored,
+                    destination,
+                    top_level_dir,
+                    env_loader,
+                    passthrough,
+                    None,
+                )?;
+                // run_binary is noreturn
+            } else {
+                bun_output::scoped_log!(
+                    bunx,
+                    "refusing untrusted cached binary: {}",
+                    BStr::new(out)
+                );
+            }
         }
 
         // 2. The "bin" is possibly not the same as the package name, so we load the package.json to figure out what "bin" to use
@@ -1376,33 +1467,39 @@ impl BunxCommand {
                         absolute_in_cache_dir,
                     ) {
                         let out: &[u8] = destination.as_bytes();
-                        let stored = fs.dirname_store.append_slice(out)?;
-                        Run::run_binary(
-                            ctx,
-                            stored,
-                            destination,
-                            top_level_dir,
-                            env_loader,
-                            passthrough,
-                            None,
-                        )?;
-                        // run_binary is noreturn
+                        // Same TOCTOU hardening as the post-install probe above.
+                        if Self::is_trusted_cached_binary(destination, uid) {
+                            let stored = fs.dirname_store.append_slice(out)?;
+                            Run::run_binary(
+                                ctx,
+                                stored,
+                                destination,
+                                top_level_dir,
+                                env_loader,
+                                passthrough,
+                                None,
+                            )?;
+                            // run_binary is noreturn
+                        } else {
+                            bun_output::scoped_log!(
+                                bunx,
+                                "refusing untrusted cached binary: {}",
+                                BStr::new(out)
+                            );
+                        }
                     }
                 }
             }
         }
 
-        if opts.specified_package.is_some() && opts.binary_name.is_some() {
+        if let (Some(_), Some(binary_name)) = (opts.specified_package, opts.binary_name) {
             Output::err_generic(
                 "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                (
-                    BStr::new(&update_request.name),
-                    BStr::new(opts.binary_name.unwrap()),
-                ),
+                (BStr::new(&update_request.name), BStr::new(binary_name)),
             );
             Output::prettyln(format_args!(
                 "  <d>hint: try running without --package to install and run {} directly<r>",
-                BStr::new(opts.binary_name.unwrap()),
+                BStr::new(binary_name),
             ));
         } else {
             Output::err_generic(

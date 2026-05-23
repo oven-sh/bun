@@ -2,9 +2,10 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use crate::bun_fs as fs;
+use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
-use bun_collections::{BoundedArray, VecExt};
+use bun_collections::BoundedArray;
 use bun_core::Error;
 use bun_lolhtml_sys::lol_html as lol;
 use bun_paths::fs::Path as FsPath;
@@ -69,8 +70,8 @@ impl<'a> HTMLScanner<'a> {
             input_path
         };
 
-        // Zig: `try this.arena.dupeZ(u8, path_to_use)` — leak into 'static for Path<'static>.
-        let owned: &'static [u8] = path_to_use.to_vec().leak();
+        let owned: &'static [u8] =
+            Box::leak(AstAlloc::vec_from_slice(path_to_use).into_boxed_slice());
         let record = ImportRecord {
             path: FsPath::init(owned),
             kind,

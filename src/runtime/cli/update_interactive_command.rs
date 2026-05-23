@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports, unused_variables)]
-
 use core::fmt;
 use core::fmt::Write as _;
 use std::borrow::Cow;
@@ -12,15 +10,15 @@ use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
-use bun_install::lockfile::package::{PackageColumns as _};
+use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
-    self, LogLevel, ManifestCacheOptions, ManifestLoad, ROOT_PACKAGE_JSON_PATH, Subcommand,
-    WorkspaceFilter, install_with_manager, populate_manifest_cache,
+    LogLevel, ManifestLoad, ROOT_PACKAGE_JSON_PATH, Subcommand, WorkspaceFilter,
+    install_with_manager, populate_manifest_cache,
 };
 use bun_install::{
-    CommandLineArguments, DependencyID, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID,
-    PackageID, PackageManager, WorkspacePackageJsonCacheEntry, resolution,
+    CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
+    PackageManager, WorkspacePackageJsonCacheEntry, resolution,
 };
 use bun_install_types::DependencyGroup;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
@@ -32,7 +30,7 @@ use bun_resolver::fs::FileSystem;
 // `bun_ast::Expr`, which is a distinct struct and would not unify
 // with `MapEntry.root`.
 use bun_ast::Loc;
-use bun_ast::{self, self as js_ast, E, Expr, expr as js_expr};
+use bun_ast::{self, E, Expr, expr as js_expr};
 use bun_core::strings;
 use bun_paths::{self as path, PathBuffer};
 use bun_semver::{self as semver, SlicedString};
@@ -80,8 +78,6 @@ struct OutdatedPackage {
     current_version: Box<[u8]>,
     latest_version: Box<[u8]>,
     update_version: Box<[u8]>,
-    package_id: PackageID,
-    dep_id: DependencyID,
     workspace_pkg_id: PackageID,
     dependency_type: &'static [u8],
     workspace_name: Box<[u8]>,
@@ -114,12 +110,10 @@ struct PackageUpdate {
     target_version: Box<[u8]>,
     dep_type: Box<[u8]>, // "dependencies", "devDependencies", etc.
     workspace_path: Box<[u8]>,
-    original_version: Box<[u8]>,
-    package_id: PackageID,
 }
 
 pub struct CatalogUpdateRequest {
-    // TODO(port): lifetime — these borrow from caller in Zig; using owned for Phase A
+    // TODO(port): lifetime — these borrow from caller in Zig; using owned for now
     package_name: Box<[u8]>,
     new_version: Box<[u8]>,
     catalog_name: Option<Box<[u8]>>,
@@ -207,7 +201,7 @@ impl UpdateInteractiveCommand {
         // re-read — only `source.contents` is written back below.
         if let Err(err) = js_printer::print_json(
             &mut package_json_writer,
-            package_json.root.into(),
+            package_json.root,
             &package_json.source,
             PrintJsonOptions {
                 indent: package_json.indentation,
@@ -241,21 +235,14 @@ impl UpdateInteractiveCommand {
         // Update the cache so installWithManager sees the new package.json
         // This is critical - without this, installWithManager will use the cached old version
         //
-        // PORT NOTE: `Source.contents` is `Cow<'static, [u8]>`. The cached
-        // `root` AST's `EString.data` slices (every JSON key/value string)
-        // borrow the *old* contents buffer — `deep_clone` copies the slice,
-        // not the bytes. Zig overwrote `source.contents` as a raw slice and
-        // leaked the old buffer; assigning a new `Cow::Owned` here would drop
-        // it and leave every cached string dangling, which
-        // `process_workspace_name` then dereferences via `root.get("name")`
-        // during `installWithManager`. Leak the old buffer to match Zig.
-        // PERF(port): `WorkspacePackageJSONCache` is process-lifetime; both
-        // buffers live for the process anyway.
+        // PORT NOTE: cached `root` AST slices still borrow the *old*
+        // `source.contents`; stash it instead of `mem::forget`-ing so it's
+        // freed when the entry drops (`PackageManager::deinit_caches()`).
         let old = core::mem::replace(
             &mut package_json.source.contents,
             Cow::Owned(new_package_json_source.into_vec()),
         );
-        core::mem::forget(old);
+        package_json.stale_contents.push(old);
         Ok(())
     }
 
@@ -406,7 +393,6 @@ impl UpdateInteractiveCommand {
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn update_catalog_definitions(
         manager: &mut PackageManager,
         catalog_updates: &StringHashMap<CatalogUpdate>,
@@ -649,8 +635,6 @@ impl UpdateInteractiveCommand {
                 target_version: Box::from(target_version),
                 dep_type: Box::from(pkg.dependency_type),
                 workspace_path: Box::from(workspace_path),
-                original_version: pkg.current_version.clone(),
-                package_id: pkg.package_id,
             });
         }
 
@@ -927,7 +911,7 @@ impl UpdateInteractiveCommand {
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
-        let excludes = manager.options.minimum_release_age_excludes.as_deref();
+        let excludes = manager.options.minimum_release_age_excludes;
         let update_to_latest = manager.options.do_.update_to_latest();
         let default_url_hash = *bun_install::npm::Registry::DEFAULT_URL_HASH;
         let global_uses_default_registry = manager.options.scope.url_hash == default_url_hash;
@@ -1084,8 +1068,6 @@ impl UpdateInteractiveCommand {
                     current_version: current_version_buf,
                     latest_version: latest_version_buf,
                     update_version: update_version_buf,
-                    package_id,
-                    dep_id: dep_id as DependencyID,
                     workspace_pkg_id,
                     dependency_type: dep_type,
                     workspace_name: Box::from(workspace_name),
@@ -1283,7 +1265,6 @@ impl UpdateInteractiveCommand {
         result.into_boxed_slice()
     }
 
-    #[allow(dead_code)]
     fn prompt_for_updates(
         packages: &mut [OutdatedPackage],
     ) -> Result<Box<[bool]>, bun_core::Error> {
@@ -1524,9 +1505,6 @@ impl UpdateInteractiveCommand {
                     BStr::new(&elipsised_help_text)
                 ));
 
-                // Calculate how many lines the prompt will actually take due to terminal wrapping
-                total_lines = 1;
-
                 // Calculate available space for packages (reserve space for scroll indicators if needed)
                 let needs_scrolling = state.packages.len() > state.viewport_height;
                 let show_top_indicator = needs_scrolling && state.viewport_start > 0;
@@ -1665,11 +1643,7 @@ impl UpdateInteractiveCommand {
                         dev_tag_len = 9; // " optional"
                     }
                     let total_name_len = pkg.name.len() + dev_tag_len;
-                    let name_padding = if total_name_len >= state.max_name_len {
-                        0
-                    } else {
-                        state.max_name_len - total_name_len
-                    };
+                    let name_padding = state.max_name_len.saturating_sub(total_name_len);
 
                     // Determine version change severity for checkbox color
                     let current_ver_parsed = semver::Version::parse(SlicedString::init(
@@ -1912,11 +1886,7 @@ impl UpdateInteractiveCommand {
                         }
                     }
 
-                    let target_padding = if target_width >= state.max_update_len {
-                        0
-                    } else {
-                        state.max_update_len - target_width
-                    };
+                    let target_padding = state.max_update_len.saturating_sub(target_width);
                     j = 0;
                     while j < target_padding + 2 {
                         Output::print(format_args!(" "));
@@ -2003,11 +1973,7 @@ impl UpdateInteractiveCommand {
                     // Workspace column
                     if state.show_workspace {
                         let latest_width: usize = truncated_latest.len();
-                        let latest_padding = if latest_width >= state.max_latest_len {
-                            0
-                        } else {
-                            state.max_latest_len - latest_width
-                        };
+                        let latest_padding = state.max_latest_len.saturating_sub(latest_width);
                         j = 0;
                         while j < latest_padding + 2 {
                             Output::print(format_args!(" "));
@@ -2285,7 +2251,7 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
 
 /// Dupe a byte buffer into the process-lifetime CLI arena to obtain a
 /// `'static` slice for storage in `E::EString.data` (the AST `Str` alias is
-/// `&'static [u8]` until Phase B threads `'bump`). Mirrors Zig's
+/// `&'static [u8]` until `'bump` is threaded through). Mirrors Zig's
 /// `allocator.dupe(u8, ...)` against the singleton `manager.allocator`.
 #[inline]
 fn leak_dup(bytes: &[u8]) -> &'static [u8] {

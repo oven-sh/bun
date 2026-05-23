@@ -12,10 +12,8 @@ type DmpUsize = diff_match_patch::DiffMatchPatch<usize>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    BgAlways,
     BgDiffOnly,
     Fg,
-    FgDiff,
 }
 const MODE: Mode = Mode::BgDiffOnly;
 
@@ -33,7 +31,7 @@ impl DiffConfig {
             min_bytes_before_chunking: if is_agent { 0 } else { 2 * 1024 }, // 2kb
             chunk_context_lines: if is_agent { 1 } else { 5 },
             enable_ansi_colors,
-            truncate_threshold: if is_agent { 1 * 1024 } else { 2 * 1024 }, // 2kb
+            truncate_threshold: if is_agent { 1024 } else { 2 * 1024 }, // 2kb
             truncate_context: if is_agent { 50 } else { 100 },
         }
     }
@@ -53,7 +51,7 @@ pub fn print_diff_main(
     writer: &mut impl Write,
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    // PERF(port): was arena bulk-free — profile in Phase B (all intermediate Vecs below were arena-allocated in Zig)
+    // PERF(port): was arena bulk-free — all intermediate Vecs below were arena-allocated in Zig.
     if not {
         match config.enable_ansi_colors {
             true => write!(
@@ -170,7 +168,7 @@ pub fn print_diff_main(
                     });
                 }
             } else {
-                new_diff_segments.push(diff_segment.clone());
+                new_diff_segments.push(*diff_segment);
             }
         }
 
@@ -284,14 +282,6 @@ mod base_styles {
         prefix: prefix_styles::REMOVED,
         text_color: colors::GREEN,
     };
-    pub const DIM_INSERTED: Style = Style {
-        prefix: prefix_styles::INSERTED,
-        text_color: colors::DIM,
-    };
-    pub const DIM_REMOVED: Style = Style {
-        prefix: prefix_styles::REMOVED,
-        text_color: colors::DIM,
-    };
 }
 
 // TODO(port): Zig selects this namespace via `switch (mode)` at comptime. Since MODE is const
@@ -317,8 +307,8 @@ pub enum DiffSegmentMode {
 }
 
 // TODO(port): lifetime — `removed`/`inserted` borrow from caller input and diff_match_patch output;
-// in Zig these were arena-backed slices. Revisit ownership in Phase B.
-#[derive(Clone)]
+// in Zig these were arena-backed slices. Revisit ownership.
+#[derive(Copy, Clone)]
 pub struct DiffSegment<'a> {
     pub removed: &'a [u8],
     pub inserted: &'a [u8],
@@ -643,9 +633,9 @@ pub fn print_hunk_header(
     changed_line_count: usize,
 ) -> std::fmt::Result {
     if config.enable_ansi_colors {
-        write!(
+        writeln!(
             writer,
-            "{}@@ -{},{} +{},{} @@{}\n",
+            "{}@@ -{},{} +{},{} @@{}",
             colors::YELLOW,
             original_line_number,
             original_line_count,
@@ -654,9 +644,9 @@ pub fn print_hunk_header(
             colors::RESET
         )
     } else {
-        write!(
+        writeln!(
             writer,
-            "@@ -{},{} +{},{} @@\n",
+            "@@ -{},{} +{},{} @@",
             original_line_number, original_line_count, changed_line_number, changed_line_count
         )
     }
@@ -667,7 +657,7 @@ pub fn print_diff(
     diff_segments: &[DiffSegment<'_>],
     config: &DiffConfig,
 ) -> std::fmt::Result {
-    // PERF(port): was arena bulk-free — profile in Phase B
+    // PERF(port): was arena bulk-free.
     let mut removed_line_number: usize = 1;
     let mut inserted_line_number: usize = 1;
     let mut removed_diff_lines: usize = 0;

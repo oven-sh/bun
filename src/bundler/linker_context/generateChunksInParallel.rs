@@ -310,6 +310,30 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug_assert!(chunks_to_do.len() > 0);
             debug!(" START {} postprocess chunks", chunks_to_do.len());
 
+            // `generate_isolated_hash()` runs during parallel post-process and
+            // only takes a shared `LinkerContext`. Preserve the old
+            // `transpiler_for_target(Target::Browser)` behavior by doing any
+            // lazy client-transpiler initialization here, while this serial
+            // setup still has exclusive access.
+            if chunks_to_do.iter().any(|chunk| {
+                chunk
+                    .flags
+                    .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+            }) {
+                // SAFETY: `c` is the `linker` field of `BundleV2`, and this is
+                // still the serial setup phase before worker fan-out.
+                let b: &mut BundleV2 = unsafe {
+                    &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c))
+                };
+                let _ = b.transpiler_for_target(options::Target::Browser);
+            }
+
+            // `generate_isolated_hash()` only has shared access because it runs
+            // in parallel below. Preserve the old serial side effect of
+            // initializing `Source.path.pretty` before metafile/sourcemap code
+            // observes it later.
+            c.prepare_pretty_paths_for_isolated_hash(chunks_to_do)?;
+
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool.
             c.worker_pool().each_ptr(

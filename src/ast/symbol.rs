@@ -574,10 +574,10 @@ impl Map {
         // The bundler never fabricates Refs from untrusted input.
         //
         // (Formerly a separate `get_unchecked` method — inlined: it had no
-        // external callers, so the unchecked fast path need not be public
-        // API surface. `follow()` below uses checked indexing for the same
-        // lookup; this site keeps the unchecked path for the printer's hot
-        // inner loop, narrowed to where the guard is visible.)
+        // external callers, so the unchecked fast path need not be public API
+        // surface. Keep this raw-pointer lookup narrowed to where the validity
+        // guard is visible; `follow()` uses it for the initial arbitrary Ref,
+        // then plain slice indexing while chasing linker-minted links.)
         Some(unsafe {
             let inner = self.symbols_for_source.as_ptr().add(src);
             debug_assert!(idx < (*inner).len());
@@ -625,29 +625,20 @@ impl Map {
     }
 
     pub fn get_with_link(&self, ref_: Ref) -> Option<*mut Symbol> {
-        let symbol_ptr = self.get(ref_)?;
-        // Read `link` through the safe shared accessor (same indices as `get`);
-        // the raw `*mut` is only forwarded to the caller, never derefed here.
-        let symbol = self.get_const(ref_)?;
-        if symbol.has_link() {
-            return Some(self.get(symbol.link.get()).unwrap_or(symbol_ptr));
-        }
-        Some(symbol_ptr)
+        // Resolve the full chain; `follow()` no longer path-compresses, so a
+        // caller must not depend on some earlier read having flattened links.
+        self.get(self.follow(ref_))
     }
 
     pub fn get_with_link_const(&self, ref_: Ref) -> Option<&Symbol> {
-        let symbol = self.get_const(ref_)?;
-        if symbol.has_link() {
-            return Some(self.get_const(symbol.link.get()).unwrap_or(symbol));
-        }
-        Some(symbol)
+        self.get_const(self.follow(ref_))
     }
 
     pub fn follow_all(&mut self) {
         // TODO(port): bun_perf::trace("Symbols.followAll") — RAII guard
-        // `link` is `Cell<Ref>`, so we can iterate the table by shared ref and
-        // mutate `link` in place; `follow()` only takes `&self` and only touches
-        // `link`, so the nested shared borrows coexist.
+        // This is the only path-compression pass. `follow()` is deliberately
+        // read-only so parallel printer tasks can resolve symbols without
+        // racing on `Symbol::link`.
         for symbols in self.symbols_for_source.iter() {
             for symbol in symbols.iter() {
                 if !symbol.has_link() {
@@ -659,14 +650,13 @@ impl Map {
         }
     }
 
-    /// Equivalent to followSymbols in esbuild.
+    /// Equivalent to followSymbols in esbuild, but intentionally read-only.
     ///
-    /// PORT NOTE: Zig's body is naturally recursive (`follow(symbol.link)`).
-    /// Reshaped to an iterative two-phase walk so the per-hop work is just two
-    /// raw pointer adds and a load — no call frame, no `Option` unwrap, no
-    /// repeated tag/null guards. Semantics are identical to Zig's: every node
-    /// on the path from `ref_` to the union-find root has its `link` rewritten
-    /// to the root (full path compression).
+    /// PORT NOTE: Zig's `follow()` path-compresses through `symbol.link`.
+    /// In the Rust port, the same symbol map is read by parallel printer tasks,
+    /// so mutating `Cell<Ref>` from this shared `&self` accessor would be a
+    /// non-atomic cross-thread write. `follow_all(&mut self)` still performs
+    /// the single-threaded compression pass; this helper only chases links.
     pub fn follow(&self, ref_: Ref) -> Ref {
         // Entry guard — `ref_` may be `Ref::None` / a SourceContentsSlice ref
         // (callers pass arbitrary Refs read out of AST nodes). After this,
@@ -674,7 +664,7 @@ impl Map {
         let Some(symbol) = self.get_const(ref_) else {
             return ref_;
         };
-        let mut link = symbol.link.get();
+        let link = symbol.link.get();
         // `has_link()` is `link.is_valid()` (tag != RefTag::Invalid). This is
         // the overwhelmingly common exit — most symbols are roots, especially
         // after `follow_all` has run once.
@@ -682,11 +672,11 @@ impl Map {
             return ref_;
         }
 
-        // Phase 1: find the root. `link.is_valid()` holds here. The only
-        // writers of `Symbol::link` are (a) the default `Ref::NONE`
-        // (tag=Invalid — rejected by `is_valid()` above), (b) `merge()`,
-        // which stores a Ref that came from `declare_symbol` / `new_symbol` /
-        // `LinkerGraph::generate_symbol`, and (c) prior `follow()` path
+        // Find the root. `link.is_valid()` holds here. The only writers of
+        // `Symbol::link` are (a) the default `Ref::NONE` (tag=Invalid —
+        // rejected by `is_valid()` above), (b) `merge()`, which stores a Ref
+        // that came from `declare_symbol` / `new_symbol` /
+        // `LinkerGraph::generate_symbol`, and (c) `follow_all()` path
         // compression, which stores a `root` that itself satisfied (b). All
         // such refs satisfy the in-bounds contract (see `get_const`):
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
@@ -704,29 +694,6 @@ impl Map {
                 break;
             }
             root = next;
-        }
-
-        // Phase 2: path compression. Rewrite `link` on the entry node and every
-        // intermediate node to point directly at `root` (matches the Zig
-        // recursion's post-order `symbol.link = link` writes). The `!=` gate
-        // mirrors Zig's `if (!symbol.link.eql(link))` to avoid a redundant
-        // store when the chain was already length-1. `link` is `Cell<Ref>`, so
-        // writes go through `&Symbol` safely.
-        if !link.eql(root) {
-            symbol.link.set(root);
-            loop {
-                let p = lookup(link);
-                let next = p.link.get();
-                // `next.eql(root)` ⇔ `p.link` already points at root —
-                // mirrors Zig's post-order `if (!symbol.link.eql(link))` gate
-                // and saves a redundant store on the last intermediate plus
-                // the otherwise-wasted lookup of `root` itself.
-                if next.eql(root) || !next.is_valid() {
-                    break;
-                }
-                p.link.set(root);
-                link = next;
-            }
         }
 
         root

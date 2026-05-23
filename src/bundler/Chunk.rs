@@ -127,20 +127,16 @@ impl Default for Content {
 // `files_with_parts_in_chunk` values are bumped via atomic RMW (Zig
 // `@atomicRmw`); the renamer is fully populated before fan-out and treated as
 // read-only by the printer.
-// TODO(ub-audit): `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
-// so the per-chunk renamer is reborrowed mutably from each part-range task;
-// the printer never writes through it, but the borrow should become `&'r`.
+// `Renamer<'r>` borrows `{Number,Minify}Renamer` through shared references, so
+// parallel part-range printers only read the per-chunk renamer.
 unsafe impl Send for Chunk {}
 // SAFETY: shared `&Chunk` access during the worker fan-out touches only
 // `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
 // `files_with_parts_in_chunk` atomic counters; the remaining fields are
-// frozen before fan-out and read single-threaded after the pool join —
-// **except** `renamer`, which the per-part-range printer reborrows `&mut`
-// from each worker (read-only in practice). See `TODO(ub-audit)` above:
-// once `Renamer<'r>` borrows `&'r` instead of `&'r mut`, this caveat (and
-// the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
-// away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
-// the Zig single-pointer fan-out it ports.
+// frozen before fan-out and read single-threaded after the pool join. The
+// renamer is also populated before fan-out and borrowed through shared
+// references by each part-range printer. Pre-existing; this impl mirrors
+// `unsafe impl Send for Chunk` and the Zig single-pointer fan-out it ports.
 unsafe impl Sync for Chunk {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
@@ -242,25 +238,21 @@ impl Chunk {
         // exclusively owned by this caller.
         unsafe {
             // Project to the slots field with no intermediate `&`/`&mut Chunk`.
-            let slots: *mut CompileResultSlots =
-                core::ptr::addr_of_mut!((*chunk).compile_results_for_chunk);
-            // `CompileResultSlots` is `repr(transparent)` over
-            // `Box<[UnsafeCell<CompileResult>]>`; reading the boxed-slice fat
-            // pointer in place (no move/drop) yields `*mut [UnsafeCell<_>]`
-            // without forming `&Box`. `Box<T>` is documented to have the same
-            // layout/ABI as `*mut T` (and `NonNull<T>`).
-            let cells: *mut [UnsafeCell<CompileResult>] =
-                core::ptr::read(slots.cast::<*mut [UnsafeCell<CompileResult>]>());
+            let slots: *const CompileResultSlots =
+                core::ptr::addr_of!((*chunk).compile_results_for_chunk);
+            // Shared references to the slots container are fine: each element is
+            // an `UnsafeCell`, and the caller guarantees that this worker owns
+            // slot `i` exclusively until the pool join.
+            let cells: &[UnsafeCell<CompileResult>] = &(*slots).0;
             debug_assert!(
                 i < cells.len(),
                 "compile_results_for_chunk slot out of bounds"
             );
-            let cell: *mut UnsafeCell<CompileResult> =
-                cells.cast::<UnsafeCell<CompileResult>>().add(i);
+            let cell: *mut CompileResult = cells.get_unchecked(i).get();
             // `UnsafeCell` is `repr(transparent)` — `*mut UnsafeCell<T>` and
             // `*mut T` address the same byte. Drop the previous (default)
             // value in place and store the result.
-            *cell.cast::<CompileResult>() = result;
+            *cell = result;
         }
     }
 

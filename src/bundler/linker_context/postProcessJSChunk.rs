@@ -50,7 +50,7 @@ pub fn post_process_js_chunk(
     let _trace = perf::trace("Bundler.postProcessJSChunk");
 
     let _ = chunk_index;
-    let c: &mut LinkerContext = ctx.c();
+    let c: &LinkerContext = ctx.c();
     debug_assert!(matches!(
         chunk.content,
         crate::chunk::Content::Javascript(_)
@@ -76,8 +76,8 @@ pub fn post_process_js_chunk(
 
     let runtime_input_file =
         c.graph.files.items_input_file()[Index::RUNTIME.value() as usize].get() as usize;
-    let runtime_scope: &mut Scope = &mut c.graph.ast.items_module_scope_mut()[runtime_input_file];
-    let runtime_members = &mut runtime_scope.members;
+    let runtime_scope: &Scope = &c.graph.ast.items_module_scope()[runtime_input_file];
+    let runtime_members = &runtime_scope.members;
     let to_common_js_ref = c
         .graph
         .symbols
@@ -848,7 +848,7 @@ pub fn post_process_js_chunk(
 
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk);
+    chunk.isolated_hash = c.generate_isolated_hash(chunk)?;
     chunk
         .flags
         .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
@@ -880,7 +880,7 @@ fn add_binding_vars_to_module_info(
     mi: &mut ModuleInfo,
     binding: Binding,
     var_kind: analyze_transpiled_module::VarKind,
-    r: &mut js_printer::renamer::Renamer<'_, '_>,
+    r: &js_printer::renamer::Renamer<'_, '_>,
     symbols: &bun_ast::symbol::Map,
 ) {
     match binding.data {
@@ -906,11 +906,10 @@ fn add_binding_vars_to_module_info(
 }
 
 // PORT NOTE: `js_printer::print` ties bump/Options/import_records/renamer to a
-// single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
-// renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
-// share that lifetime.
+// single `'a`. All by-ref params that flow into `print` must share that
+// lifetime.
 pub fn generate_entry_point_tail_js<'a>(
-    c: &'a mut LinkerContext,
+    c: &'a LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     source_index: IndexInt,
@@ -918,7 +917,7 @@ pub fn generate_entry_point_tail_js<'a>(
     // TODO(port): thread &'bump Bump from worker.arena end-to-end.
     arena: &'a Arena,
     temp_arena: &Arena,
-    mut r: js_printer::renamer::Renamer<'a, 'a>,
+    r: js_printer::renamer::Renamer<'a, 'a>,
     mut module_info: Option<&'a mut ModuleInfo>,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
@@ -1333,7 +1332,7 @@ pub fn generate_entry_point_tail_js<'a>(
                             mi,
                             decl.binding,
                             var_kind,
-                            &mut r,
+                            &r,
                             &c.graph.symbols,
                         );
                     }

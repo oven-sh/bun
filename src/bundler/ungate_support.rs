@@ -486,21 +486,21 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
+        pub fn name_for_symbol(&self, ref_: bun_ast::Ref) -> &[u8] {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
                 ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
             }
         }
-        pub fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+        pub fn as_renamer(&self) -> bun_js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
-                // PORT NOTE: `Renamer<'r,'src>` borrows the concrete renamer
-                // (`&'r mut MinifyRenamer`); `ChunkRenamer` owns the `Box`, so
-                // the deref-coerced `&mut **r` yields a per-call borrowed view
-                // exactly like the Zig tag+ptr union.
+                // PORT NOTE: `Renamer<'r,'src>` reads the concrete renamer;
+                // `ChunkRenamer` owns the `Box`, so the deref-coerced shared
+                // borrow yields a per-call view exactly like the Zig tag+ptr
+                // union, without claiming exclusivity during parallel printing.
                 ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
             }
         }

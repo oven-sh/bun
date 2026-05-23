@@ -43,7 +43,7 @@ use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 ///     }, false ],
 ///        ----- "is the module async?"
 pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
-    c: &mut LinkerContext,
+    c: &LinkerContext,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
     bump: &'bump Bump,

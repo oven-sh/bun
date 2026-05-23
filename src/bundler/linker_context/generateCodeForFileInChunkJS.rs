@@ -25,10 +25,10 @@ use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_d
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
-    c: &mut LinkerContext,
+    c: &LinkerContext,
     writer: &mut js_printer::BufferWriter,
     r: renamer::Renamer<'r, 'src>,
-    chunk: &mut Chunk,
+    chunk: &Chunk,
     part_range: PartRange,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
@@ -40,18 +40,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
 
-    // PORT NOTE: reshaped for borrowck — grab raw pointers to the SoA columns up front so
-    // subsequent `&mut c` borrows (convert_stmts_for_chunk, print_code_for_file_in_chunk_js)
-    // don't conflict. Matches Zig which slices once at the top.
-    // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
-    // function (linking has already sized everything).
-    let parts: *mut [Part] = {
-        let list = &mut c.graph.ast.items_parts_mut()[source_index];
-        core::ptr::addr_of_mut!(
-            list.as_mut_slice()
-                [part_range.part_index_begin as usize..part_range.part_index_end as usize]
-        )
-    };
+    let all_parts: &[Part] = c.graph.ast.items_parts()[source_index].as_slice();
+    let parts: &[Part] =
+        &all_parts[part_range.part_index_begin as usize..part_range.part_index_end as usize];
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index];
     let wrapper_part_index = if flags.wrap != WrapKind::None {
         c.graph.meta.items_wrapper_part_index()[source_index]
@@ -81,8 +72,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
-            // SAFETY: see `parts` raw-pointer note above.
-            for part in unsafe { (*parts).iter() } {
+            for part in parts.iter() {
                 let part_stmts: &[Stmt] = part.stmts.slice();
                 if let Err(err) =
                     convert_stmts_for_chunk_for_dev_server(c, stmts, part_stmts, arena, &mut ast)
@@ -280,20 +270,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .expect("unreachable");
     }
 
-    // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
-    // the per-file bitset as a BackRef once. The `parts_live` Vec doesn't
-    // reallocate after `tree_shaking_and_code_splitting` initializes it.
-    let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
-        bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
+    // Use the post-tree-shaking liveness bitset instead of `Part.is_live`.
+    // This mirrors the current main-thread codegen path and avoids consulting
+    // per-Part liveness after upstream moved the hot check into `parts_live`.
+    let parts_live = &c.graph.parts_live[source_index];
 
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)
     {
-        // SAFETY: see `parts` raw-pointer note above; index bounded by the range check just above.
-        let ns_part_stmts: &[Stmt] =
-            unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
+        let ns_part_stmts: &[Stmt] = all_parts[namespace_export_part_index as usize]
+            .stmts
+            .slice();
         if let Err(err) = convert_stmts_for_chunk(
             c,
             source_index as u32,
@@ -330,16 +319,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     }
 
     // Add all other parts in this chunk
-    // SAFETY: see `parts` raw-pointer note above.
-    let parts_len = unsafe { (&*parts).len() };
+    let parts_len = parts.len();
     for index_ in 0..parts_len {
+        let part: &Part = &parts[index_];
         let index = part_range.part_index_begin + (index_ as u32);
         if !parts_live.is_set(index as usize) {
             // Skip the part if it's not in this chunk
             continue;
         }
-        // SAFETY: index in bounds.
-        let part: &Part = unsafe { &(*parts)[index_] };
 
         if index == namespace_export_part_index {
             // Skip the namespace export part because we already handled it above
@@ -934,14 +921,12 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // postProcessJSChunk, because convertStmtsForChunk transforms the AST
     // (e.g. export default expr → var, export stripping) and the converted
     // statements reflect what actually gets printed.
-    let mut r = r;
     if let Some(dc) = decl_collector {
-        dc.collect_from_stmts(out_stmts, &mut r, c);
+        dc.collect_from_stmts(out_stmts, &r, c);
     }
 
     // `get_source` returns `&'static Source` (parse_graph SoA is append-only and
-    // outlives the link step), so it does not borrow `c` — no split-borrow needed
-    // across the `&mut self` call below.
+    // outlives the link step), so it does not borrow `c`.
     let source: &bun_ast::Source = c.get_source(source_index as u32);
     c.print_code_for_file_in_chunk_js(
         r,
@@ -986,7 +971,7 @@ impl DeclCollector {
     pub fn collect_from_stmts(
         &mut self,
         stmts: &[Stmt],
-        r: &mut renamer::Renamer<'_, '_>,
+        r: &renamer::Renamer<'_, '_>,
         c: &LinkerContext,
     ) {
         for stmt in stmts {
@@ -1024,7 +1009,7 @@ impl DeclCollector {
         &mut self,
         binding: Binding,
         kind: DeclInfoKind,
-        r: &mut renamer::Renamer<'_, '_>,
+        r: &renamer::Renamer<'_, '_>,
         c: &LinkerContext,
     ) {
         match binding.data {
@@ -1049,7 +1034,7 @@ impl DeclCollector {
         &mut self,
         ref_: Ref,
         kind: DeclInfoKind,
-        r: &mut renamer::Renamer<'_, '_>,
+        r: &renamer::Renamer<'_, '_>,
         c: &LinkerContext,
     ) {
         let followed = c.graph.symbols.follow(ref_);

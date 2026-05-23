@@ -4,8 +4,6 @@ This is a proof of concept for using a third-party native addon in `Bun.build()`
 
 This uses `mdxjs-rs` to convert MDX to JSX.
 
-TODO: **This needs to be built & published to npm.**
-
 ## Building locally:
 
 ```sh

@@ -566,6 +566,7 @@ describe("pathological bracket inputs", () => {
           ["unclosed angle destination", fill(50000, "[a](<b"), out => out.length > 100000],
           ["unclosed paren title", fill(50000, "[ (]("), out => out.includes("[ (](")],
           ["bracket then backtick flood", "[" + fill(100000, "\`"), out => out.length > 100000],
+          ["unclosed backticks inside link label", "[" + fill(150000, "\`") + "[a](u)](v)", out => out.includes("<a href=") && out.length > 150000],
           ["empty label unclosed destination", fill(50000, "[]("), out => out.includes("[](")],
           ["ref def then nested brackets", "[x]: /url\\n\\n" + fill(60000, "[") + fill(60000, "]"), out => out.includes("[[[") && out.includes("]]]")],
         ];
@@ -600,6 +601,15 @@ describe("pathological bracket inputs", () => {
     const html = Markdown.html(`[${text}](/url)\n`);
     expect(html).toContain('<a href="/url">');
     expect(html).toContain(text);
+  });
+
+  test("bracket inside a code span in a link label is not an inner link", () => {
+    // The unclosed ``-run is literal; the single backticks form a code span
+    // covering [a](u), so the outer construct is a link (code spans bind
+    // tighter than links).
+    const html = Markdown.html("[``x`[a](u)`](v)\n");
+    expect(html).toContain('<a href="v">');
+    expect(html).toContain("<code>[a](u)</code>");
   });
 
   test("link destination parenthesis nesting is capped at 32 (cmark parity)", () => {

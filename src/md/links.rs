@@ -745,8 +745,12 @@ impl Parser<'_> {
                 let count = inlines::count_backticks(label, pos);
                 if let Some(end_pos) = self.find_code_span_end(label, pos + count, count) {
                     pos = end_pos + count;
-                    continue;
+                } else {
+                    // No closer: skip the whole run so it isn't re-counted per
+                    // backtick (quadratic on long unclosed runs in a label).
+                    pos += count;
                 }
+                continue;
             }
             // Skip HTML tags and autolinks
             if label[pos] == b'<' && !self.flags.no_html_spans {

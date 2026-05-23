@@ -77,6 +77,17 @@ impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest)?;
+        } else if !dest.vendor_prefix.is_empty() {
+            // An ancestor style rule is already in the middle of one of its
+            // vendor-prefix passes and is re-serializing its nested rules for
+            // that pass. Starting another pass loop here would print this
+            // rule's entire subtree once per ancestor-pass × own-prefix
+            // combination — exponential in nesting depth — even though the
+            // copies serialize identically, because the innermost assignment
+            // to `dest.vendor_prefix` is what selects the prefixed form (see
+            // `serialize_component` for `Is`/`Any`). Print a single copy
+            // under the ancestor's active prefix instead.
+            self.to_css_base(dest)?;
         } else {
             let mut first_rule = true;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the

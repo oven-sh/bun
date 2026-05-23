@@ -2001,7 +2001,7 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
         client.on("error", () => {});
         client.on("connect", () => {
           try {
-            client.request({ ":path": "/", ["x".repeat(5000)]: "1" });
+            client.request({ ":path": "/", [Buffer.alloc(5000, "x").toString()]: "1" });
             console.log("NO_ERROR");
           } catch (err) {
             console.log("CODE:" + err.code);

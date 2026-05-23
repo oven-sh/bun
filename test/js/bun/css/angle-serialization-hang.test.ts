@@ -52,6 +52,6 @@ test("huge and non-finite radian angle values serialize instead of hanging", asy
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
   expect(JSON.parse(stdout)).toEqual(cases.map(([, expected]) => expected));
+  expect(exitCode).toBe(0);
 });

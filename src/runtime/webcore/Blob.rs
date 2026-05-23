@@ -4144,12 +4144,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
-            // A file-backed Blob record names a path, an open file descriptor,
-            // or an `s3://` URL to re-open. Honoring it for bytes that did not
-            // come from this process's serializer would mint a live read/write
-            // handle from attacker-controlled data, so reject it. In-process
-            // structured clone (postMessage, structuredClone) still carries
-            // file references.
+            // Reconstituting a file-backed Blob from bytes that did not come
+            // from this process's serializer would mint a live file handle
+            // (path/fd/s3 URL) from attacker-controlled data, so reject it.
             if from_wire_bytes {
                 return Err(bun_core::err!("FileBlobFromExternalBytes"));
             }

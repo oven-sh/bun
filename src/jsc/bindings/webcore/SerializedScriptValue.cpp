@@ -5271,9 +5271,6 @@ private:
     // const bool m_canCreateDOMObject;
     // True when the serialized bytes came from outside this process's
     // serializer (bun:jsc / node:v8 deserialize(), child-process IPC).
-    // Deserializers must not mint new capabilities (file-backed Blobs)
-    // from such bytes. Default-initialized to false so the
-    // deserializeString constructor path is unaffected.
     bool m_fromWireBytes { false };
     const uint8_t* m_ptr;
     const uint8_t* const m_end;
@@ -6523,8 +6520,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
                                                 ,
-        // The caller hands us an arbitrary ArrayBuffer (bun:jsc / node:v8
-        // deserialize()); these bytes are always treated as external.
         /* fromWireBytes */ true);
 
     if (arrayBuffer->isShared()) {
@@ -6783,9 +6778,6 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
                                                 ,
-        // false for structuredClone/postMessage/Worker (built via
-        // SerializedScriptValue::create from a live JS value); true only when
-        // this SSV was reconstituted from external bytes (createFromWireBytes).
         m_constructedFromWireBytes);
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;

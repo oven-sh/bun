@@ -176,9 +176,6 @@ public:
     static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data)
     {
         auto result = adoptRef(*new SerializedScriptValue(WTF::move(data)));
-        // These bytes did not come from this process's serializer, so the
-        // deserializer must not honor tags that confer new capabilities
-        // (e.g. file-backed Blobs).
         result->m_constructedFromWireBytes = true;
         return result;
     }

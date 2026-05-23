@@ -87,3 +87,36 @@ test("Bun.TOML.parse rejects array values without comma separators (#31252)", ()
   // Trailing comma is legal TOML.
   expect(Bun.TOML.parse("a = [1, 2,]")).toEqual({ a: [1, 2] });
 });
+
+// https://github.com/oven-sh/bun/issues/31251
+// `parse_value_inner` used to accept `t_identifier` at value position and emit it as
+// an `E.String`. The lexer's identifier class is deliberately broad so bare keys like
+// `foo-bar` work, which meant `a = @`, `a = foo`, `a = $` all silently parsed as
+// strings instead of being syntax errors. Per the TOML spec, the right-hand side
+// of `key = value` must be a quoted string, number, boolean, datetime, array, or
+// inline table — anything else is invalid.
+test("Bun.TOML.parse rejects bare identifiers at value position (#31251)", () => {
+  expect(() => Bun.TOML.parse("a = @")).toThrow();
+  expect(() => Bun.TOML.parse("a = foo")).toThrow();
+  expect(() => Bun.TOML.parse("a = @foo")).toThrow();
+  expect(() => Bun.TOML.parse("a = $")).toThrow();
+  expect(() => Bun.TOML.parse("a = _bar")).toThrow();
+  // inside an inline table
+  expect(() => Bun.TOML.parse("a = { x = foo }")).toThrow();
+  // inside an array
+  expect(() => Bun.TOML.parse("a = [foo]")).toThrow();
+});
+
+// `true`/`false` are kept as booleans — they have their own tokens and never
+// reach the identifier arm.
+test("Bun.TOML.parse still accepts true/false booleans at value position (#31251)", () => {
+  expect(Bun.TOML.parse("a = true\nb = false")).toEqual({ a: true, b: false });
+});
+
+// Bare keys with the same alphabet as the old value-position identifier arm must
+// still work — the fix is value-only.
+test("Bun.TOML.parse still accepts bare keys built from @/$/_/letters/digits/-/: (#31251)", () => {
+  expect(Bun.TOML.parse('@foo = "ok"')).toEqual({ "@foo": "ok" });
+  expect(Bun.TOML.parse('$bar = "ok"')).toEqual({ $bar: "ok" });
+  expect(Bun.TOML.parse('foo-bar = "ok"')).toEqual({ "foo-bar": "ok" });
+});

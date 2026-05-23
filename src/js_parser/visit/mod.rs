@@ -61,7 +61,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // p.temp_refs_to_declare.deinit(p.arena); + reset to empty
         self.temp_refs_to_declare = BumpVec::new_in(self.arena);
-        self.temp_ref_count = 0;
 
         self.visit_stmts(stmts, opts.kind)?;
 

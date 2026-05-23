@@ -109,4 +109,21 @@ describe("brace + glob composition", () => {
     expect(words).toContain("src/a.ts");
     expect(words).toContain("lib/b.ts");
   });
+
+  test("an interpolated comma inside a brace group is one literal branch", async () => {
+    using dir = tempDir("shell-brace-glob3", {
+      "x.ts": "",
+      "x.,foo": "",
+      "x.]foo": "",
+    });
+    // `echo` rather than `ls`: the literal brace variants (`*.ts`, `*.,foo`)
+    // are also emitted as argv words and do not exist as files.
+    const out = (await $`echo *.{ts,${",foo"}}`.cwd(String(dir)).text()).trim();
+    const words = out.split(" ");
+    expect(words).toContain("x.ts");
+    // The interpolated `,foo` is matched as a single literal branch...
+    expect(words).toContain("x.,foo");
+    // ...and does not split into a spurious `]foo` branch.
+    expect(words).not.toContain("x.]foo");
+  });
 });

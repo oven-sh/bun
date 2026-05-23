@@ -322,6 +322,55 @@ impl<'a> ImportScanner<'a> {
                         st.star_name_loc = None;
                     }
 
+                    if is_typescript_enabled {
+                        let default_binding = st
+                            .default_name
+                            .map(|name| (name.ref_.expect("infallible: ref bound"), name.loc));
+                        let star_binding = st.star_name_loc.map(|loc| (st.namespace_ref, loc));
+                        let item_bindings = st.items.slice().iter().map(|item| {
+                            (
+                                item.name.ref_.expect("infallible: ref bound"),
+                                item.name.loc,
+                            )
+                        });
+
+                        for (name_ref, import_loc) in default_binding
+                            .into_iter()
+                            .chain(star_binding)
+                            .chain(item_bindings)
+                        {
+                            // Only report source-level re-declarations: `ReplaceWithNew`
+                            // links the import to the symbol that took over the scope
+                            // member, while generated symbols (e.g. JSX runtime imports)
+                            // link the other way.
+                            let symbol = &p.symbols[name_ref.inner_index() as usize];
+                            let mut link = symbol.link.get();
+                            if !link.is_valid() {
+                                continue;
+                            }
+                            // Follow the chain of replacements to the live symbol.
+                            loop {
+                                let next = p.symbols[link.inner_index() as usize].link.get();
+                                if !next.is_valid() {
+                                    break;
+                                }
+                                link = next;
+                            }
+                            // SAFETY: arena-owned slice valid for 'p.
+                            let name = symbol.original_name.slice();
+                            let member = p
+                                .module_scope()
+                                .get_member_with_hash(name, js_ast::Scope::get_member_hash(name));
+                            if let Some(member) = member {
+                                if member.ref_.eql(link) {
+                                    p.log().add_symbol_already_declared_error(
+                                        p.source, name, member.loc, import_loc,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     if st.default_name.is_some() {
                         record!()
                             .flags

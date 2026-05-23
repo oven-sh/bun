@@ -1310,7 +1310,8 @@ pub fn install_isolated_packages(
                                     pkg_names[pkg_id as usize].slice(string_buf),
                                     pkg_res,
                                 ) || trusted_from_update
-                                    .contains(&(dep_name_hash as crate::TruncatedPackageNameHash))
+                                    .get(&(dep_name_hash as crate::TruncatedPackageNameHash))
+                                    .is_some_and(|n| **n == *dep_name)
                                 {
                                     break 'eligible false;
                                 }

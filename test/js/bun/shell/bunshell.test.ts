@@ -696,6 +696,101 @@ booga"
         expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"));
       })
       .runAsTest("Should work with a different cwd");
+
+    describe("interpolated values cannot inject glob syntax", () => {
+      // Only `*`/`**` written literally in the template act as glob syntax.
+      // Metacharacters arriving via `${...}` interpolation are data and must
+      // match only files containing them literally.
+      TestBuilder.command`echo ${"**/"}*`
+        .ensureTempDir()
+        .file("f.txt", "f")
+        .directory("sub")
+        .file("sub/deep.txt", "deep")
+        .exitCode(1)
+        .stderr("bun: no matches found: **/*\n")
+        .runAsTest("injected ** does not recurse");
+
+      TestBuilder.command`echo a${"?"}*`
+        .ensureTempDir()
+        .file("ax.txt", "ax")
+        .exitCode(1)
+        .stderr("bun: no matches found: a?*\n")
+        .runAsTest("injected ? is literal");
+
+      TestBuilder.command`echo ${"!keep"}*`
+        .ensureTempDir()
+        .file("keep.txt", "")
+        .file("other.txt", "")
+        .file("!keep1.txt", "")
+        .stdout(out => {
+          expect(out).toContain("!keep1.txt");
+          expect(out).not.toContain("other.txt");
+          // `!keep1.txt` does not contain the substring `keep.txt`, so this
+          // asserts the un-negated `keep.txt` fixture was not matched.
+          expect(out).not.toContain("keep.txt");
+        })
+        .runAsTest("injected leading ! does not negate");
+
+      TestBuilder.command`echo a${"[bc]"}*`
+        .ensureTempDir()
+        .file("ab.txt", "")
+        .file("ac.txt", "")
+        .file("a[bc].txt", "")
+        .stdout(out => {
+          expect(out).toContain("a[bc].txt");
+          expect(out).not.toContain("ab.txt");
+          expect(out).not.toContain("ac.txt");
+        })
+        .runAsTest("injected [...] is literal");
+
+      TestBuilder.command`echo ${"foo"}*`
+        .ensureTempDir()
+        .file("foo1.txt", "")
+        .file("foo2.txt", "")
+        .file("bar.txt", "")
+        .stdout(out => {
+          expect(out).toContain("foo1.txt");
+          expect(out).toContain("foo2.txt");
+          expect(out).not.toContain("bar.txt");
+        })
+        .runAsTest("plain interpolation followed by a literal * still globs");
+
+      TestBuilder.command`echo **/*.txt`
+        .ensureTempDir()
+        .file("a.txt", "")
+        .directory("sub")
+        .file("sub/b.txt", "")
+        .stdout(out => {
+          expect(out.replaceAll("\\", "/")).toContain("sub/b.txt");
+        })
+        .runAsTest("literal ** still recurses");
+
+      // A run of interpolated `!` longer than the matcher's brace-nesting
+      // limit (10) must still match literally: neutralizing every `!` as its
+      // own `{!}` group used to overflow the brace stack and turn the whole
+      // word into "no matches found".
+      const bangRun = Buffer.alloc(11, "!").toString();
+
+      TestBuilder.command`echo prefix${bangRun}*`
+        .ensureTempDir()
+        .file(`prefix${bangRun}x.txt`, "")
+        .file("prefixy.txt", "")
+        .stdout(out => {
+          expect(out).toContain(`prefix${bangRun}x.txt`);
+          expect(out).not.toContain("prefixy.txt");
+        })
+        .runAsTest("long run of injected ! inside a word stays literal");
+
+      TestBuilder.command`echo ${bangRun}keep*`
+        .ensureTempDir()
+        .file(`${bangRun}keep1.txt`, "")
+        .file("keep2.txt", "")
+        .stdout(out => {
+          expect(out).toContain(`${bangRun}keep1.txt`);
+          expect(out).not.toContain("keep2.txt");
+        })
+        .runAsTest("long leading run of injected ! stays literal");
+    });
   });
 
   describe("brace expansion", () => {

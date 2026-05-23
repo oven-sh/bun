@@ -1611,9 +1611,9 @@ pub struct WindowsSpawnOptions {
 impl Default for WindowsSpawnOptions {
     fn default() -> Self {
         Self {
-            stdin: WindowsStdio::Ignore,
-            stdout: WindowsStdio::Ignore,
-            stderr: WindowsStdio::Ignore,
+            stdin: WindowsStdio::Inherit,
+            stdout: WindowsStdio::Inherit,
+            stderr: WindowsStdio::Inherit,
             ipc: None,
             extra_fds: Box::new([]),
             cwd: Box::new([]),

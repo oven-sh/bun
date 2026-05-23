@@ -939,6 +939,7 @@ class Test extends Bar {
       err('import { Foo } from "./x";\nlet Foo = 1;', '"Foo" has already been declared');
       err('import { Foo } from "./x";\nenum Foo {}', '"Foo" has already been declared');
       err('import { Foo } from "./x";\nimport Foo = require("./y");', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nimport Foo = Bar.Baz;', '"Foo" has already been declared');
       err('import { Foo, Foo } from "./x";', '"Foo" has already been declared');
     });
 

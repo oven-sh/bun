@@ -340,10 +340,11 @@ impl<'a> TOML<'a> {
                 Ok(result)
             }
             T::t_identifier => {
-                let str = E::String::init(self.lexer.identifier);
-
-                self.lexer.next()?;
-                Ok(self.e(str, loc))
+                // Per TOML 1.0.0, values must be quoted strings, booleans,
+                // numbers, dates/times, or inf/nan. Bare identifiers are not
+                // values — `true`/`false` have their own token kinds above.
+                self.lexer.expected_string(b"value")?;
+                Err(bun_core::err!("SyntaxError"))
             }
             T::t_numeric_literal => {
                 let value = self.lexer.number;

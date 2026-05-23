@@ -87,3 +87,48 @@ test("Bun.TOML.parse rejects array values without comma separators (#31252)", ()
   // Trailing comma is legal TOML.
   expect(Bun.TOML.parse("a = [1, 2,]")).toEqual({ a: [1, 2] });
 });
+
+// https://github.com/oven-sh/bun/issues/31250
+// The lexer's identifier-start set included `@` and `$`, so both were accepted as
+// the start of a bare key AND as a bare (unquoted) value — `a = @` returned
+// `{ a: "@" }`. Per TOML 1.0.0, bare keys are `[A-Za-z0-9_-]+`, and unquoted
+// values are restricted to `true`/`false`, numbers, dates, and `inf`/`nan`. The
+// parser also accepted any `t_identifier` as a string value, so even `a = foo`
+// parsed as `{ a: "foo" }` on an unpatched build.
+test("Bun.TOML.parse rejects bare @ as a value (#31250)", () => {
+  expect(() => Bun.TOML.parse("a = @")).toThrow();
+  expect(() => Bun.TOML.parse("a = @foo")).toThrow();
+});
+
+test("Bun.TOML.parse rejects bare $ as a value (#31250)", () => {
+  expect(() => Bun.TOML.parse("a = $bar")).toThrow();
+});
+
+test("Bun.TOML.parse rejects @ as the start of a bare key (#31250)", () => {
+  expect(() => Bun.TOML.parse("@a = 1")).toThrow();
+});
+
+test("Bun.TOML.parse rejects $ as the start of a bare key (#31250)", () => {
+  expect(() => Bun.TOML.parse("$a = 1")).toThrow();
+});
+
+test("Bun.TOML.parse rejects an unquoted identifier as a value (#31250)", () => {
+  // Bare identifiers other than `true`/`false`/`inf`/`nan` are not valid values
+  // per the TOML spec; they must be quoted.
+  expect(() => Bun.TOML.parse("a = foo")).toThrow();
+  expect(() => Bun.TOML.parse("a = hello")).toThrow();
+});
+
+test("Bun.TOML.parse still accepts true/false as bare values (#31250)", () => {
+  // Guard against the identifier-rejection going too far and eating the
+  // `true`/`false` keywords, which share the lexer's identifier tokenizer.
+  expect(Bun.TOML.parse("a = true\nb = false")).toEqual({ a: true, b: false });
+});
+
+test("Bun.TOML.parse still accepts quoted @-keys (#31250)", () => {
+  // Fixture-style keys like `"@mybigcompany"` must still work — only bare
+  // (unquoted) `@` is being rejected.
+  expect(Bun.TOML.parse(`"@mybigcompany" = { url = "foo" }`)).toEqual({
+    "@mybigcompany": { url: "foo" },
+  });
+});

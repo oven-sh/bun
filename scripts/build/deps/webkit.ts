@@ -6,8 +6,9 @@
 // Preview autobuild of oven-sh/WebKit#235 rebased on current main — the
 // ucontext-SP fix for JSC's signalHandlerSuspendResume (so the GC
 // thread-suspend signal works under SA_ONSTACK, e.g. Go cgo's initsig,
-// instead of spinning forever). Swap back to the next merged hash once
-// #235 lands.
+// instead of spinning forever). Rebased on 782504c968 (current main's
+// pin) so ICU/JSC ABI matches. Swap back to the merged hash once #235
+// lands.
 export const WEBKIT_VERSION = "autobuild-preview-pr-235-f9079851";
 
 /**
@@ -88,13 +89,10 @@ function prebuiltUrl(cfg: Config): string {
  * doesn't reuse a wrong-ABI extraction.
  */
 function prebuiltDestDir(cfg: Config): string {
-  // A raw 40-char git SHA is unique in its first 16 chars; a preview tag
-  // like `autobuild-preview-pr-235-a355e3e0` is NOT (every preview tag
-  // starts with `autobuild-previe` → same dir for every PR). Prefer the
-  // trailing hash when we recognise a preview-tag shape, so worktrees
-  // sharing `$BUN_INSTALL/build-cache` across branches don't collide.
+  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
+  // meaningful sha is at the end, so use the whole thing.
   const v = cfg.webkitVersion;
-  const version16 = v.startsWith("autobuild-") ? v.slice(-16) : v.slice(0, 16);
+  const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
   // so include os+arch in the key — otherwise a FreeBSD/arm64 extraction
   // collides with a Linux/x64 one at the same WebKit version.

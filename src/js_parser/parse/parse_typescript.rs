@@ -399,13 +399,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //
                 //   namespace m { class m {} class _m {} }
                 //
-                let mut prefixed = strings::cat(b"_", name_text)
-                    .expect("unreachable")
-                    .into_vec();
-                while p.current_scope().members.contains_key(prefixed.as_slice()) {
-                    prefixed.insert(0, b'_');
-                }
-                let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
+                // Candidates are built in the parse arena (Zig: `p.allocator`); the
+                // chosen one becomes the symbol's original name and is freed together
+                // with the rest of the AST arena.
+                let mut underscores: usize = 1;
+                let prefixed: &'a [u8] = loop {
+                    let candidate = p
+                        .arena
+                        .alloc_slice_fill_copy(underscores + name_text.len(), b'_');
+                    candidate[underscores..].copy_from_slice(name_text);
+                    if !p.current_scope().members.contains_key(candidate) {
+                        break candidate;
+                    }
+                    underscores += 1;
+                };
                 arg_ref = p
                     .new_symbol(SymbolKind::Hoisted, prefixed)
                     .expect("unreachable");

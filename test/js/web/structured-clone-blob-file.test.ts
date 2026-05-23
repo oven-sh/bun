@@ -484,7 +484,7 @@ describe("structuredClone with Blob and File", () => {
       const payloads = cuts.map(n => full.slice(0, n));
       // All of these must hit the error path; if one accidentally succeeds
       // the test isn't measuring what it thinks it is.
-      for (const p of payloads) expect(() => deserialize(p)).toThrow();
+      for (const p of payloads) expect(() => deserialize(p)).toThrow(TypeError);
 
       const attempt = () => {
         for (const p of payloads) {
@@ -532,8 +532,8 @@ describe("structuredClone with Blob and File", () => {
         // would craft by hand.
         const payload = serialize(Bun.file(secretPath));
 
-        expect(() => deserialize(payload)).toThrow();
-        expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+        expect(() => deserialize(payload)).toThrow(TypeError);
+        expect(() => v8.deserialize(Buffer.from(payload))).toThrow(TypeError);
 
         // The same payload handed to a *fresh* process (the cache/IPC-shaped
         // attack) must not mint a file handle there either.
@@ -574,8 +574,8 @@ describe("structuredClone with Blob and File", () => {
         try {
           const payload = serialize(Bun.file(fd));
 
-          expect(() => deserialize(payload)).toThrow();
-          expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+          expect(() => deserialize(payload)).toThrow(TypeError);
+          expect(() => v8.deserialize(Buffer.from(payload))).toThrow(TypeError);
 
           // In a fresh process that fd number refers to a different (or no)
           // descriptor; deserialize must refuse rather than alias it.
@@ -636,8 +636,8 @@ describe("structuredClone with Blob and File", () => {
         expect(at).toBeGreaterThanOrEqual(0);
         payload.set(s3Bytes, at);
 
-        expect(() => deserialize(payload)).toThrow();
-        expect(() => v8.deserialize(Buffer.from(payload))).toThrow();
+        expect(() => deserialize(payload)).toThrow(TypeError);
+        expect(() => v8.deserialize(Buffer.from(payload))).toThrow(TypeError);
       });
 
       test("in-process structuredClone of a file-backed Blob still works", async () => {

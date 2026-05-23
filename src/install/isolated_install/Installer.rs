@@ -70,13 +70,17 @@ macro_rules! debug {
 }
 
 pub struct Installer<'a> {
+    /// Serializes task-thread pushes to
+    /// `PackageManager.trusted_deps_to_add_to_package_json`.
     pub trusted_dependencies_mutex: Mutex,
     /// Zig: `*Lockfile` — BACKREF. Raw pointer (not `&'a mut`) for the same
     /// reason as `manager`: `Task::run` executes concurrently on the thread
     /// pool and each task derefs this field; a `&'a mut` would assert
-    /// exclusivity every concurrent task violates. Mutated only for
-    /// `lockfile.trusted_dependencies` (under `trusted_dependencies_mutex`,
-    /// narrowed via `addr_of_mut!`). Never null. Read via `lockfile()`.
+    /// exclusivity every concurrent task violates. Never mutated while tasks
+    /// run — task threads read `trusted_dependencies` without a lock, so
+    /// `--trust`ed names they record are folded into the lockfile on the main
+    /// thread only after every task completes (`install_isolated_packages`).
+    /// Never null. Read via `lockfile()`.
     pub lockfile: *mut Lockfile,
 
     pub summary: InstallSummary, // = .{ .successfully_installed = .empty }
@@ -150,12 +154,9 @@ impl<'a> Installer<'a> {
     }
     #[inline]
     pub fn lockfile(&self) -> &'a Lockfile {
-        // SAFETY: BACKREF — never null; pointee outlives `'a`. Never aliased by
-        // a *whole-struct* `&mut Lockfile`; the single mutated field
-        // (`trusted_dependencies`) is written under
-        // `trusted_dependencies_mutex` via a raw narrowed `addr_of_mut!` place
-        // (Task::run), not a `&mut Lockfile`. Callers must not project into
-        // `trusted_dependencies` from this `&Lockfile` across a tick.
+        // SAFETY: BACKREF — never null; pointee outlives `'a`. The lockfile is
+        // never mutated while tasks run (see the `lockfile` field doc), so the
+        // shared reborrow here never aliases a write.
         unsafe { &*self.lockfile }
     }
 
@@ -808,23 +809,24 @@ impl Task {
         // is freely shared). Instead:
         //   * `installer` is a shared `&Installer`; every Installer method called
         //     below takes `&self`.
-        //   * `manager_ptr` / `lockfile_ptr` are reached by raw-reading their
-        //     pointer fields. They point to allocations *outside* `Installer`, so
-        //     they do not overlap `installer`. They stay RAW for the whole body —
-        //     binding a function-scoped `&mut PackageManager` / `&mut Lockfile`
-        //     here would mean every concurrent task thread holds an aliased
-        //     `&mut` to the same object (UB regardless of mutex discipline; Zig's
-        //     `*PackageManager` / `*Lockfile` carry no exclusivity contract).
-        //     Per-site reborrows below are `&*manager_ptr` for read-only access,
-        //     and mutation is narrowed via `addr_of_mut!` to the single field
-        //     being written while `trusted_dependencies_mutex` is held.
-        //   * Never access `installer.manager.*` / mutate `installer.lockfile.*`
-        //     while these locals are live — that would reborrow through
-        //     `&Installer` and alias `*manager_ptr` / `*lockfile_ptr`.
+        //   * `manager_ptr` is reached by raw-reading its pointer field. It points
+        //     to an allocation *outside* `Installer`, so it does not overlap
+        //     `installer`. It stays RAW for the whole body — binding a
+        //     function-scoped `&mut PackageManager` here would mean every
+        //     concurrent task thread holds an aliased `&mut` to the same object
+        //     (UB regardless of mutex discipline; Zig's `*PackageManager` carries
+        //     no exclusivity contract). Per-site reborrows below are
+        //     `&*manager_ptr` for read-only access, and mutation is narrowed via
+        //     `addr_of_mut!` to the single field being written
+        //     (`trusted_deps_to_add_to_package_json`) while
+        //     `trusted_dependencies_mutex` is held.
+        //   * The lockfile is only ever *read* from task threads (shared
+        //     `&Lockfile` below); it is not mutated until every task completes.
+        //   * Never access `installer.manager.*` while these locals are live —
+        //     that would reborrow through `&Installer` and alias `*manager_ptr`.
         let installer_ptr = self.installer;
         let installer = installer_ptr.get();
         let manager_ptr: *mut PackageManager = installer.manager;
-        let lockfile_ptr: *mut Lockfile = installer.lockfile;
         // BACKREF — `manager_ptr` is non-null and the `PackageManager` outlives
         // every `Task` (see top-of-fn note). Wrapped once as `ParentRef` so the
         // read-only deref sites below go through safe `Deref`/`get()` instead
@@ -835,10 +837,7 @@ impl Task {
         let manager_ref = bun_ptr::ParentRef::<PackageManager>::from(
             core::ptr::NonNull::new(manager_ptr).expect("Installer.manager BACKREF is non-null"),
         );
-        // Read-only `&Lockfile` via the BACKREF accessor (centralised deref);
-        // same provenance as `&*lockfile_ptr`. `lockfile_ptr` itself is kept
-        // raw for the narrowed `addr_of_mut!((*lockfile_ptr).trusted_dependencies)`
-        // write under `trusted_dependencies_mutex` below.
+        // Read-only `&Lockfile` via the BACKREF accessor (centralised deref).
         let lockfile: &Lockfile = installer.lockfile();
 
         let pkgs = lockfile.packages.slice();
@@ -1717,30 +1716,22 @@ impl Task {
                                 // no `&mut PackageManager` is formed — concurrent task
                                 // threads' `&*manager_ptr` reborrows of other fields stay
                                 // valid.
+                                //
+                                // `lockfile.trusted_dependencies` is deliberately NOT
+                                // updated here: other task threads read it through
+                                // `has_trusted_dependency` (above and in
+                                // `Scripts::get_list`) without taking this mutex, so an
+                                // insert could reallocate the map out from under them.
+                                // The names collected in this Vec are folded into the
+                                // lockfile on the main thread after every task completes
+                                // (`install_isolated_packages`), before the lockfile is
+                                // saved.
                                 unsafe {
                                     (*core::ptr::addr_of_mut!(
                                         (*manager_ptr).trusted_deps_to_add_to_package_json
                                     ))
                                     .push(trusted_dep_to_add);
                                 }
-                                // SAFETY: `trusted_dependencies_mutex` is held, serializing
-                                // writers. Narrow to the single `trusted_dependencies` field
-                                // via raw place so no `&mut Lockfile` is ever formed — other
-                                // task threads hold `&Lockfile` (and the `pkgs`/`pkg_*`
-                                // slices above borrow it) for their entire run(), and those
-                                // borrows never touch `trusted_dependencies`.
-                                let trusted = unsafe {
-                                    &mut *core::ptr::addr_of_mut!(
-                                        (*lockfile_ptr).trusted_dependencies
-                                    )
-                                };
-                                if trusted.is_none() {
-                                    *trusted = Some(Default::default());
-                                }
-                                trusted
-                                    .as_mut()
-                                    .unwrap()
-                                    .insert(truncated_dep_name_hash, ());
                             }
 
                             if first_index != 0 {

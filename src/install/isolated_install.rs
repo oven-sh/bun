@@ -2592,6 +2592,32 @@ pub fn install_isolated_packages(
             }
         }
 
+        // Every task has completed, so nothing reads `trusted_dependencies`
+        // concurrently anymore. Fold the `--trust`ed names the task threads
+        // recorded (under `trusted_dependencies_mutex`, in
+        // `trusted_deps_to_add_to_package_json`) into the lockfile now so they
+        // are persisted when it is saved after this function returns. Task
+        // threads must not insert these themselves: they read
+        // `trusted_dependencies` without a lock, and an insert could
+        // reallocate the map out from under them.
+        {
+            let new_trusted_deps = &installer.manager().trusted_deps_to_add_to_package_json;
+            if !new_trusted_deps.is_empty() {
+                // SAFETY: narrowed to the single `trusted_dependencies` field —
+                // no `&mut Lockfile` is formed, so the read-only column borrows
+                // above (`string_buf`, `pkgs`, ...) stay valid.
+                let trusted = unsafe { &mut *&raw mut (*lockfile_ptr).trusted_dependencies };
+                let trusted = trusted.get_or_insert_with(Default::default);
+                for name in new_trusted_deps {
+                    trusted.insert(
+                        semver::semver_string::Builder::string_hash(name)
+                            as crate::TruncatedPackageNameHash,
+                        (),
+                    );
+                }
+            }
+        }
+
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();
             *progress = Progress::default();

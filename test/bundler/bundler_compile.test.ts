@@ -541,6 +541,179 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // `__dirname` / `__filename` must not be inlined as the build machine's
+  // absolute file path when producing a standalone executable. They should
+  // resolve to the same virtual `/$bunfs/root/...` path that `import.meta.dir`
+  // and `import.meta.path` return at runtime.
+  itBundled("compile/DirnameFilenameUsesVirtualPath", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import "./nested.cjs";
+        console.log("entry __dirname:", __dirname);
+        console.log("entry __filename:", __filename);
+        if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
+        if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+      `,
+      "/nested.cjs": /* js */ `
+        console.log("nested __dirname:", __dirname);
+        console.log("nested __filename:", __filename);
+        module.exports = 1;
+      `,
+    },
+    run: {
+      stdout:
+        process.platform !== "win32"
+          ? [
+              "nested __dirname: /$bunfs/root",
+              "nested __filename: /$bunfs/root/out",
+              "entry __dirname: /$bunfs/root",
+              "entry __filename: /$bunfs/root/out",
+            ].join("\n")
+          : [
+              "nested __dirname: B:\\~BUN\\root",
+              "nested __filename: B:\\~BUN\\root\\out",
+              "entry __dirname: B:\\~BUN\\root",
+              "entry __filename: B:\\~BUN\\root\\out",
+            ].join("\n"),
+    },
+  });
+  itBundled("compile/DirnameFilenameUsesVirtualPathCJS", {
+    compile: true,
+    format: "cjs",
+    files: {
+      "/entry.ts": /* js */ `
+        require("./nested.cjs");
+        console.log("entry __dirname:", __dirname);
+        console.log("entry __filename:", __filename);
+        console.log("entry import.meta.dir:", import.meta.dir);
+        console.log("entry import.meta.path:", import.meta.path);
+        if (__dirname !== import.meta.dir) throw new Error("__dirname !== import.meta.dir");
+        if (__filename !== import.meta.path) throw new Error("__filename !== import.meta.path");
+      `,
+      "/nested.cjs": /* js */ `
+        console.log("nested __dirname:", __dirname);
+        console.log("nested __filename:", __filename);
+        module.exports = 1;
+      `,
+    },
+    run: {
+      stdout:
+        process.platform !== "win32"
+          ? [
+              "nested __dirname: /$bunfs/root",
+              "nested __filename: /$bunfs/root/out",
+              "entry __dirname: /$bunfs/root",
+              "entry __filename: /$bunfs/root/out",
+              "entry import.meta.dir: /$bunfs/root",
+              "entry import.meta.path: /$bunfs/root/out",
+            ].join("\n")
+          : [
+              "nested __dirname: B:\\~BUN\\root",
+              "nested __filename: B:\\~BUN\\root\\out",
+              "entry __dirname: B:\\~BUN\\root",
+              "entry __filename: B:\\~BUN\\root\\out",
+              "entry import.meta.dir: B:\\~BUN\\root",
+              "entry import.meta.path: B:\\~BUN\\root\\out",
+            ].join("\n"),
+    },
+  });
+  // With `--bytecode`, a module whose only `import.meta` reference is the
+  // synthetic `var __dirname = import.meta.dir` we inject must still be
+  // recorded as containing `import.meta` so the bytecode module record is
+  // created with the ImportMeta feature enabled.
+  itBundled("compile/DirnameFilenameUsesVirtualPathBytecode", {
+    compile: true,
+    bytecode: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const nested = require("./nested.cjs");
+        console.log("entry __dirname:", __dirname);
+        console.log("entry __filename:", __filename);
+        nested.report();
+      `,
+      "/nested.cjs": /* js */ `
+        module.exports.report = function () {
+          console.log("nested __dirname:", __dirname);
+          console.log("nested __filename:", __filename);
+        };
+      `,
+    },
+    run: {
+      stdout:
+        process.platform !== "win32"
+          ? [
+              "entry __dirname: /$bunfs/root",
+              "entry __filename: /$bunfs/root/out",
+              "nested __dirname: /$bunfs/root",
+              "nested __filename: /$bunfs/root/out",
+            ].join("\n")
+          : [
+              "entry __dirname: B:\\~BUN\\root",
+              "entry __filename: B:\\~BUN\\root\\out",
+              "nested __dirname: B:\\~BUN\\root",
+              "nested __filename: B:\\~BUN\\root\\out",
+            ].join("\n"),
+    },
+  });
+  // Browser-side chunks produced by the client transpiler for HTML imports
+  // must keep the string-literal lowering for `__dirname`/`__filename`;
+  // `import.meta.dir`/`.path` are Bun-only and undefined in a real browser.
+  test("compile/DirnameFilenameInBrowserChunk", async () => {
+    using dir = tempDir("compile-dirname-browser", {
+      "frontend.tsx": `
+        console.log("browser __dirname=" + __dirname);
+        console.log("browser __filename=" + __filename);
+      `,
+      "index.html": `<!doctype html>
+        <html><head><script type="module" src="./frontend.tsx" async></script></head>
+        <body><div id="root"></div></body></html>`,
+      "entry.tsx": `
+        import index from "./index.html";
+        const server = Bun.serve({ port: 0, routes: { "/*": index }, development: false });
+        const html = await (await fetch(server.url)).text();
+        const m = html.match(/src="([^"]+\\.js)"/);
+        if (!m) { console.error("no browser JS chunk in HTML"); process.exit(1); }
+        const js = await (await fetch(new URL(m[1], server.url))).text();
+        await server.stop();
+        if (js.includes("import.meta.dir") || js.includes("import.meta.path")) {
+          console.error("browser chunk contains import.meta.dir/path");
+          console.error(js);
+          process.exit(1);
+        }
+        console.log("server __dirname:", __dirname);
+        console.log("browser chunk inlines __dirname as string:", typeof js === "string" && /__dirname\\s*=\\s*"/.test(js));
+      `,
+    });
+    const ext = isWindows ? ".exe" : "";
+    const outfile = join(String(dir), "app" + ext);
+    {
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(String(dir), "entry.tsx"), "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      if (exitCode !== 0) console.error(stdout, stderr);
+      expect(exitCode).toBe(0);
+    }
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const bunfsRoot = isWindows ? "B:\\~BUN\\root" : "/$bunfs/root";
+    expect({ stderr, stdout: stdout.trim() }).toEqual({
+      stderr: "",
+      stdout: ["server __dirname: " + bunfsRoot, "browser chunk inlines __dirname as string: true"].join("\n"),
+    });
+    expect(exitCode).toBe(0);
+  }, 60_000);
   itBundled("compile/VariousBunAPIs", {
     todo: isWindows, // TODO
     compile: true,

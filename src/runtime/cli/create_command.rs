@@ -32,9 +32,10 @@ use crate::cli::which_npm_client::NPMClient;
 #[path = "create/SourceFileProjectGenerator.rs"]
 pub mod SourceFileProjectGenerator;
 
-// PORTING.md §Global mutable state: single-thread CLI scratch buffer →
-// RacyCell. Touched on the main thread for `--open` *and* the spawned git
-// thread (sequenced — git thread writes after main is done with it).
+// PORTING.md §Global mutable state: CLI scratch buffer → RacyCell. Touched on
+// the spawned git thread (`GitHandler::run`) *and* the main thread (`--open`),
+// sequenced by the git thread join — so access goes through `get_unsync`, not
+// the owner-checked `get`.
 static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 // PORT NOTE: bun.OSPathLiteral — `bun_paths` does not (yet) export an
@@ -1623,8 +1624,11 @@ impl CreateCommand {
         Output::flush();
 
         if create_options.open {
-            // SAFETY: single-threaded CLI access to module-level static path buffer
-            let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
+            // SAFETY: module-level static path buffer. Unsync: `GitHandler::run`
+            // also writes this buffer from the spawned git thread, but that
+            // thread is joined (in `GitHandler::wait`) before this block runs,
+            // so the accesses are sequenced by the join.
+            let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get_unsync() };
             if let Some(bin) = which(bun_path_buf, path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 // Zig used `std.process.Child`; PORTING.md bans std::process — route through
@@ -2859,10 +2863,11 @@ impl GitHandler {
         //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
         //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
 
-        // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
-        // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
-        // The two uses are sequenced — git runs before `--open` block. Matches Zig.)
-        let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
+        // SAFETY: module-level static path buffer. Unsync: this fn may run on
+        // the git thread; BUN_PATH_BUF is also touched on the main thread for
+        // `--open`. The two uses are sequenced — the git thread is joined
+        // before the `--open` block runs. Matches Zig.
+        let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get_unsync() };
         // Zig used `std.process.Child` (no libuv). The Rust port routes through
         // `bun.spawnSync`, which on Windows drives `uv_spawn` and needs a uv loop. This fn
         // runs on the dedicated git thread (see `GitHandler::spawn`), so use the

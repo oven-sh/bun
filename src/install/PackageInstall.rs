@@ -554,9 +554,12 @@ impl HardLinkWindowsInstallTask {
         // process-wide `PackageManager` singleton and never changes.
         static INITIALIZED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
+        // (Unsync: written here on the install main thread, read from worker
+        // threads in `run_from_thread_pool`; the thread-pool schedule is the
+        // publication edge as described above.)
         unsafe {
             if INITIALIZED.swap(true, Ordering::Relaxed) {
-                let q = (*HARDLINK_QUEUE.get()).assume_init_ref();
+                let q = (*HARDLINK_QUEUE.get_unsync()).assume_init_ref();
                 *q.errored_task.lock() = None;
                 debug_assert_eq!(
                     q.thread_pool as *const ThreadPool,
@@ -564,13 +567,13 @@ impl HardLinkWindowsInstallTask {
                     "PackageManager singleton changed between install batches",
                 );
             } else {
-                (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
+                (*HARDLINK_QUEUE.get_unsync()).write(HardLinkQueue {
                     thread_pool: &PackageManager::get().thread_pool,
                     errored_task: bun_threading::Guarded::new(None),
                     wait_group: WaitGroup::init(),
                 });
             }
-            (*HARDLINK_QUEUE.get()).assume_init_ref()
+            (*HARDLINK_QUEUE.get_unsync()).assume_init_ref()
         }
     }
 
@@ -599,8 +602,11 @@ impl HardLinkWindowsInstallTask {
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
         // SAFETY: task points to the `task` field of a HardLinkWindowsInstallTask.
         let self_: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
-        // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
-        let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
+        // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling;
+        // the thread-pool task queue's Release/Acquire publishes that write to
+        // this worker thread (unsync — read from a different thread than the
+        // writer).
+        let queue = unsafe { (*HARDLINK_QUEUE.get_unsync()).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }
 
         // SAFETY: self_ is valid until we reclaim the Box below.

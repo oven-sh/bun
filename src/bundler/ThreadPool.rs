@@ -136,8 +136,14 @@ mod io_thread_pool {
                 Ok(_) => {
                     // REF_COUNT != 0 ⇒ THREAD_POOL is initialized (set under MUTEX below).
                     // `UnsafeCell::get` never returns null.
-                    return NonNull::new(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
-                        .expect("UnsafeCell::get is non-null");
+                    // SAFETY: only the address is produced; the Acquire load of
+                    // `REF_COUNT` above pairs with the Release store after init,
+                    // so the pointee is fully written before any deref. Unsync —
+                    // `acquire()` runs on multiple threads under MUTEX/REF_COUNT.
+                    return NonNull::new(
+                        unsafe { THREAD_POOL.get_unsync() }.cast::<ThreadPoolLib::ThreadPool>(),
+                    )
+                    .expect("UnsafeCell::get is non-null");
                 }
                 Err(actual) => count = actual,
             }
@@ -148,9 +154,10 @@ mod io_thread_pool {
         // Relaxed because the store we care about (the one that stores 1 to
         // indicate the thread pool is initialized) is guarded by the mutex.
         if REF_COUNT.load(Ordering::Relaxed) == 0 {
-            // SAFETY: we hold MUTEX and REF_COUNT == 0, so no other thread is reading THREAD_POOL.
+            // SAFETY: we hold MUTEX and REF_COUNT == 0, so no other thread is
+            // reading THREAD_POOL (unsync — the mutex is the synchronization).
             unsafe {
-                (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(
+                (*THREAD_POOL.get_unsync()).write(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config {
                         max_threads: u32::from(bun_core::get_thread_count().clamp(2, 4)),
                         // Use a much smaller stack size for the IO thread pool
@@ -166,7 +173,9 @@ mod io_thread_pool {
             // (the racing acquirer's reference isn't counted). Mirrored.
         }
         // Just initialized (or observed initialized) above. `UnsafeCell::get` never returns null.
-        NonNull::new(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())
+        // SAFETY: only the address is produced; init above happened under MUTEX
+        // which we still hold. Unsync — `acquire()` runs on multiple threads.
+        NonNull::new(unsafe { THREAD_POOL.get_unsync() }.cast::<ThreadPoolLib::ThreadPool>())
             .expect("UnsafeCell::get is non-null")
     }
 
@@ -196,9 +205,10 @@ mod io_thread_pool {
         if REF_COUNT.load(Ordering::Relaxed) != 0 {
             return false;
         }
-        // SAFETY: we hold MUTEX, REF_COUNT == 0, and we previously CAS'd from 1 ⇒ initialized.
+        // SAFETY: we hold MUTEX, REF_COUNT == 0, and we previously CAS'd from 1
+        // ⇒ initialized (unsync — the mutex is the synchronization).
         unsafe {
-            (*THREAD_POOL.get()).assume_init_drop();
+            (*THREAD_POOL.get_unsync()).assume_init_drop();
         }
         // PORT NOTE: Zig source falls off the end of a `bool`-returning fn here
         // (`thread_pool = undefined;` is the last statement). Assuming `true`.

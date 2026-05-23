@@ -248,9 +248,11 @@ impl SharedEnv {
         // SAFETY: `SHARED_ENV` is only initialised from the main install thread
         // during enqueue (single-threaded at that point in Zig too). Once
         // `env` is `Some` it is never reassigned, so the returned `&'static`
-        // remains valid for the program lifetime.
+        // remains valid for the program lifetime. Unsync: the lazily-written
+        // map is read again through this accessor from git task threads; the
+        // task-queue enqueue/dequeue is the happens-before edge for the write.
         unsafe {
-            let this = &mut *SHARED_ENV.get();
+            let this = &mut *SHARED_ENV.get_unsync();
             if this.env.is_none() {
                 // Note: currently if the user sets this to some value that causes
                 // a prompt for a password, the stdout of the prompt will be masked

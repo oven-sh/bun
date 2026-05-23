@@ -1496,9 +1496,12 @@ pub mod upgrade_js_bindings {
             match sys::windows::Win32Error::from_nt_status(rc) {
                 sys::windows::Win32Error::SUCCESS => {
                     // Zig: `bun.FD.fromNative(fd)` — system-kind handle on Windows.
-                    // SAFETY: test-only helper; access is single-threaded (JS thread).
+                    // SAFETY: test-only helper; effectively single-threaded.
+                    // Unsync because the matching close may run on a different
+                    // VM thread (see the static's comment); the JS calls are
+                    // sequenced by the test harness.
                     unsafe {
-                        TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
+                        TEMPDIR_FD.write_unsync(Some(sys::Fd::from_system(fd)));
                     }
                 }
                 _ => {}
@@ -1520,10 +1523,12 @@ pub mod upgrade_js_bindings {
         #[cfg(windows)]
         {
             use bun_sys::FdExt as _;
-            // SAFETY: test-only helper; access is single-threaded (JS thread).
-            // Consume (`take`) the stored fd so a repeat call cannot
+            // SAFETY: test-only helper; effectively single-threaded. Unsync
+            // because open/close may run on different VM threads (see the
+            // static's comment); the JS calls are sequenced by the test
+            // harness. Consume (`take`) the stored fd so a repeat call cannot
             // `CloseHandle` a stale, possibly-reissued HANDLE value.
-            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
+            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get_unsync()) } {
                 fd.close();
             }
 

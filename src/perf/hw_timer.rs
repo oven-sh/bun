@@ -74,7 +74,8 @@ pub fn now_ns() -> u64 {
         CALIBRATE_ONCE.call_once(calibrate);
         // SAFETY: CALIBRATION is only mutated inside `CALIBRATE_ONCE.call_once(calibrate)`;
         // `Once` establishes happens-before, so this read observes the fully-initialized value.
-        let cal = unsafe { CALIBRATION.read() };
+        // Unsync — `now_ns()` is called from any thread.
+        let cal = unsafe { CALIBRATION.read_unsync() };
         if cal.mult != 0 {
             let ticks = read_counter().wrapping_sub(cal.start_counter);
             // u64×u64→u128 widening mul + shift: 2 insns on x64 (`mul`+`shrd`),
@@ -122,9 +123,10 @@ fn calibrate() {
     }
     let start_ns = os_monotonic_ns();
     // SAFETY: only ever invoked via `CALIBRATE_ONCE.call_once`, which guarantees
-    // exclusive access during this write and happens-before for subsequent readers.
+    // exclusive access during this write and happens-before for subsequent readers
+    // (which may be on any thread, hence unsync).
     unsafe {
-        CALIBRATION.write(Calibration {
+        CALIBRATION.write_unsync(Calibration {
             start_counter: read_counter(),
             start_ns,
             mult: u64::try_from(

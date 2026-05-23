@@ -109,14 +109,26 @@ struct Offsets {
     js_cell_offset_of_type: u32,
 }
 
+/// Storage for an extern static whose bytes are written by foreign code.
+/// `#[repr(transparent)]` over `UnsafeCell<Offsets>` so the extern layout is
+/// identical to the C++ `Bun__FFI__offsets` definition while still telling
+/// the optimizer the bytes may change behind Rust's back (a plain non-`mut`
+/// extern static would assert immutability, which is UB once C++ writes it).
+#[repr(transparent)]
+struct ForeignOffsets(core::cell::UnsafeCell<Offsets>);
+// SAFETY: the payload is written exactly once by C++
+// (`Bun__FFI__ensureOffsetsAreLoaded`, gated behind a `Once` in
+// `Offsets::get`) before any Rust read; Rust never writes it. Every access
+// already requires `unsafe` (extern static + raw deref).
+unsafe impl Sync for ForeignOffsets {}
+
 // TODO(port): move to <area>_sys
 unsafe extern "C" {
     // Written once by C++ before any Rust read. C++ mutates these bytes, so a
     // plain non-`mut` extern static would assert immutability to the optimizer
-    // (UB). `RacyCell<T>` is `#[repr(transparent)]` over `UnsafeCell<T>`, so
-    // the extern layout is identical to `Offsets`.
+    // (UB). See `ForeignOffsets`.
     #[link_name = "Bun__FFI__offsets"]
-    static BUN_FFI_OFFSETS: bun_core::RacyCell<Offsets>;
+    static BUN_FFI_OFFSETS: ForeignOffsets;
     #[link_name = "Bun__FFI__ensureOffsetsAreLoaded"]
     fn bun_ffi_ensure_offsets_are_loaded();
 }
@@ -189,8 +201,9 @@ impl Offsets {
     pub fn get() -> &'static Offsets {
         static ONCE: Once = Once::new();
         ONCE.call_once(Self::load_once);
-        // SAFETY: BUN_FFI_OFFSETS is initialized by load_once and never mutated after
-        unsafe { &*BUN_FFI_OFFSETS.get() }
+        // SAFETY: BUN_FFI_OFFSETS is initialized by load_once (under the
+        // `Once`, which is the happens-before edge) and never mutated after.
+        unsafe { &*BUN_FFI_OFFSETS.0.get() }
     }
 }
 

@@ -305,13 +305,21 @@ pub mod Jest {
     // Zig `pub var runner: ?*TestRunner = null`.
     // PORTING.md §Global mutable state: JS-VM-thread-only singleton; RacyCell
     // over `Option<NonNull<_>>` so direct `.read()` projections in
-    // `snapshot.rs` etc. keep their shape.
+    // `snapshot.rs` etc. keep their shape. The reads below are `read_unsync`
+    // because `runner()` is reachable from non-test VM threads (e.g.
+    // `console_on_before_print` on a `Worker` thread); on those threads it
+    // returns the main test thread's pointer (or `None` outside `bun test`),
+    // matching Zig's unguarded global. See the multi-thread findings in the
+    // RacyCell audit.
     pub static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
         bun_core::RacyCell::new(None);
 
     pub fn runner() -> Option<&'static mut TestRunner<'static>> {
-        // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
-        unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
+        // SAFETY: matches Zig's unguarded global access; the pointer is only
+        // ever installed/cleared by the test runner on its own thread, and a
+        // `Copy` `Option<NonNull>` read cannot tear. See `RUNNER`'s comment
+        // for why this is unsync.
+        unsafe { RUNNER.read_unsync().map(|p| &mut *p.as_ptr()) }
     }
 
     /// Raw-pointer accessor for callers that must not materialise
@@ -319,8 +327,8 @@ pub mod Jest {
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
-        unsafe { RUNNER.read() }
+        // SAFETY: see `runner()` above.
+        unsafe { RUNNER.read_unsync() }
     }
 
     #[unsafe(no_mangle)]

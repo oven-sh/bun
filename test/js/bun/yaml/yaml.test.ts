@@ -2124,6 +2124,39 @@ config:
         }
       });
 
+      test("dedup counters never produce duplicate anchor names", () => {
+        const cases: Array<{ obj: Record<string, unknown>; expected: Record<string, unknown> }> = [];
+
+        {
+          // an "item" key's dedup suffix vs array item anchors (both produce item<n>)
+          const a = [1];
+          const b = [2];
+          const c = [3];
+          const d = [4];
+          cases.push({
+            obj: { p: { item: a }, q: { item: b }, arr: [c, c, d, d], x: a, y: b },
+            expected: { p: { item: [1] }, q: { item: [2] }, arr: [[3], [3], [4], [4]], x: [1], y: [2] },
+          });
+        }
+        {
+          // a "foo" key's dedup suffix (foo1) vs a literal "foo1" key
+          const a = [1];
+          const b = [2];
+          const c = [3];
+          cases.push({
+            obj: { p: { foo: a }, q: { foo: b }, foo1: c, x: a, y: b, z: c },
+            expected: { p: { foo: [1] }, q: { foo: [2] }, foo1: [3], x: [1], y: [2], z: [3] },
+          });
+        }
+
+        for (const { obj, expected } of cases) {
+          for (const space of [undefined, 2]) {
+            const parsed = YAML.parse(YAML.stringify(obj, null, space));
+            expect(parsed).toEqual(expected);
+          }
+        }
+      });
+
       test("round-trips parsed documents whose aliased keys contain flow indicators", () => {
         const doc = "\\u{10FFFF}a: &x [1, 2]\nb: *x";
         const value = YAML.parse(doc);

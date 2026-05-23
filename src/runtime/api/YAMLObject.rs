@@ -68,6 +68,8 @@ pub struct Stringifier {
     known_collections: HashMap<JSValue, AnchorAlias>,
     array_item_counter: usize,
     prop_names: StringHashMap<usize>,
+    /// Every anchor name assigned so far, so the same name is never emitted twice.
+    used_anchor_names: StringHashMap<()>,
 
     space: Space,
 }
@@ -199,6 +201,9 @@ impl Stringifier {
         // root anchor/alias
         prop_names.put(b"root", 0)?;
 
+        let mut used_anchor_names: StringHashMap<()> = StringHashMap::default();
+        used_anchor_names.put(b"root", ())?;
+
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
@@ -206,6 +211,7 @@ impl Stringifier {
             known_collections: HashMap::default(),
             array_item_counter: 0,
             prop_names,
+            used_anchor_names,
             space: Space::init(global, space_value)?,
         })
     }
@@ -266,25 +272,41 @@ impl Stringifier {
                     // only one possible
                 }
                 AnchorAliasName::ArrayItem(counter) => {
-                    *counter = self.array_item_counter;
-                    self.array_item_counter += 1;
+                    *counter = claim_anchor_name(
+                        &mut self.used_anchor_names,
+                        b"item",
+                        self.array_item_counter,
+                        false,
+                    )?;
+                    self.array_item_counter = *counter + 1;
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
                     // Unsafe names use generated `value<counter>` anchors, keyed on
                     // "value" so the counter is shared with literal "value" properties.
-                    let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
-                        prop_name.byte_slice()
-                    } else {
-                        b"value"
-                    };
-                    let name_entry = self.prop_names.get_or_put(key)?;
-                    if name_entry.found_existing {
-                        *name_entry.value_ptr += 1;
-                    } else {
-                        *name_entry.value_ptr = 0;
-                    }
+                    let usable = can_use_prop_name_as_anchor(prop_name);
 
-                    *counter = *name_entry.value_ptr;
+                    // Safe names are ASCII, so this is the text the anchor is emitted as.
+                    let ascii_name: Vec<u8>;
+                    let (prefix, key): (&[u8], &[u8]) = if usable {
+                        ascii_name = (0..prop_name.length())
+                            .map(|i| prop_name.char_at(i) as u8)
+                            .collect();
+                        (&ascii_name, prop_name.byte_slice())
+                    } else {
+                        (b"value", b"value")
+                    };
+
+                    let name_entry = self.prop_names.get_or_put(key)?;
+                    let start = if name_entry.found_existing {
+                        *name_entry.value_ptr + 1
+                    } else {
+                        0
+                    };
+
+                    let claimed =
+                        claim_anchor_name(&mut self.used_anchor_names, prefix, start, usable)?;
+                    *name_entry.value_ptr = claimed;
+                    *counter = claimed;
                 }
             }
             return Ok(());
@@ -702,6 +724,33 @@ fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
     }
 
     !matches_generated_anchor_name(str)
+}
+
+/// Claim the first unused anchor name formed from `prefix` plus a counter,
+/// starting at `start`. When `omit_zero` is true a zero counter emits the bare
+/// prefix (how verbatim property names are written); generated `value<n>` and
+/// `item<n>` names always keep the digits.
+fn claim_anchor_name(
+    used_anchor_names: &mut StringHashMap<()>,
+    prefix: &[u8],
+    start: usize,
+    omit_zero: bool,
+) -> Result<usize, StringifyError> {
+    let mut counter = start;
+    let mut candidate: Vec<u8> = Vec::with_capacity(prefix.len() + 20);
+    loop {
+        candidate.clear();
+        candidate.extend_from_slice(prefix);
+        if counter != 0 || !omit_zero {
+            candidate.extend_from_slice(counter.to_string().as_bytes());
+        }
+
+        if !used_anchor_names.get_or_put(&candidate)?.found_existing {
+            return Ok(counter);
+        }
+
+        counter += 1;
+    }
 }
 
 /// `value0`, `item12`, `root1`, ... — names that could duplicate a generated anchor name.

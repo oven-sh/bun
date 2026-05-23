@@ -356,10 +356,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// hard-overflow. Same `MAX_STMT_DEPTH` rationale as `interchange/json.rs`.
     pub parse_stmt_depth: u32,
 
-    /// Set once the visit pass has reported "Maximum call stack size exceeded"
-    /// so sibling subtrees that hit the same stack limit don't each log a
-    /// duplicate error. See `visit_expr_in_out`.
-    pub reported_visit_stack_overflow: bool,
+    /// Set once `report_stack_overflow` has logged "Maximum call stack size
+    /// exceeded" so sibling subtrees that hit the same stack limit don't each
+    /// log a duplicate error. `Cell` because some reporters (`SideEffects::
+    /// to_boolean`) only hold `&P`.
+    pub reported_stack_overflow: core::cell::Cell<bool>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
@@ -779,6 +780,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // allocation as a `NonNull` (not `&mut`), so no long-lived Unique tag
         // exists to be invalidated by this transient reborrow.
         unsafe { &mut *self.log.as_ptr() }
+    }
+
+    /// Logs "Maximum call stack size exceeded" (once per parse) when a pass
+    /// that recurses over the AST runs out of stack. `_parse` halts with a
+    /// SyntaxError as soon as the log has errors, so callers only need to stop
+    /// recursing after calling this.
+    pub fn report_stack_overflow(&self, loc: bun_ast::Loc) {
+        if self.reported_stack_overflow.get() {
+            return;
+        }
+        self.reported_stack_overflow.set(true);
+        self.log()
+            .add_error(Some(self.source), loc, b"Maximum call stack size exceeded");
     }
 
     /// Safe mutable projection of `nearest_stmt_list`.
@@ -5850,9 +5864,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
-        // This walks arbitrarily deep ASTs; answer conservatively rather than
-        // overflowing the stack.
+        // This walks arbitrarily deep ASTs; report the stack overflow instead
+        // of crashing. The parse fails with that error, so the answer is moot.
         if !self.stack_check.is_safe_to_recurse() {
+            self.report_stack_overflow(expr.loc);
             return false;
         }
         match &expr.data {
@@ -9213,7 +9228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log,
             stack_check: bun_core::StackCheck::init(),
             parse_stmt_depth: 0,
-            reported_visit_stack_overflow: false,
+            reported_stack_overflow: core::cell::Cell::new(false),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

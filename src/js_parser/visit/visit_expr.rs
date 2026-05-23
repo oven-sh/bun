@@ -53,14 +53,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // same error the parse pass uses; `_parse` halts on logged errors right
         // after the visit pass, so the partially-visited AST never gets printed.
         if !self.stack_check.is_safe_to_recurse() {
-            if !self.reported_visit_stack_overflow {
-                self.reported_visit_stack_overflow = true;
-                self.log().add_error(
-                    Some(self.source),
-                    e.loc,
-                    b"Maximum call stack size exceeded",
-                );
-            }
+            self.report_stack_overflow(e.loc);
             return;
         }
 

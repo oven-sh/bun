@@ -147,9 +147,11 @@ impl SideEffects {
         if !p.options.features.dead_code_elimination {
             return Some(expr);
         }
-        // This walks arbitrarily deep ASTs; keep the expression as-is rather
-        // than overflowing the stack.
+        // This walks arbitrarily deep ASTs; report the stack overflow instead
+        // of crashing. The parse fails with that error, so the value returned
+        // here never reaches the printer.
         if !p.stack_check.is_safe_to_recurse() {
+            p.report_stack_overflow(expr.loc);
             return Some(expr);
         }
         // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
@@ -888,9 +890,11 @@ impl SideEffects {
         if !p.options.features.dead_code_elimination {
             return Result::default();
         }
-        // Recurses through nested unary/binary operands; answer "unknown"
-        // rather than overflowing the stack.
+        // Recurses through nested unary/binary operands; report the stack
+        // overflow instead of crashing. The parse fails with that error, so
+        // the "unknown" result returned here never affects emitted code.
         if !p.stack_check.is_safe_to_recurse() {
+            p.report_stack_overflow(p.lexer.loc());
             return Result::default();
         }
         match exp {

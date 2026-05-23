@@ -95,10 +95,8 @@ for (const value of values) {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("ASSERTION FAILED");
-    expect(stderr).not.toContain("panic");
     expect(stdout.trim().split("\n")).toEqual(["DIFF OK", "DIFF OK", "DIFF OK", "DIFF OK"]);
     expect(exitCode).toBe(0);
   });

@@ -1192,9 +1192,8 @@ impl<'a> Lexer<'a> {
                 // the character itself hasn't been consumed, so advance `end`
                 // past the codepoint so the reported slice includes the
                 // offending character instead of an empty range.
-                let cp_width = strings::wtf8_byte_sequence_length_with_invalid(
-                    contents[self.start],
-                ) as usize;
+                let cp_width =
+                    strings::wtf8_byte_sequence_length_with_invalid(contents[self.start]) as usize;
                 self.end = (self.start + cp_width).min(contents.len());
                 break 'finder &contents[self.start..self.end];
             }

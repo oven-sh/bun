@@ -354,7 +354,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 return Ok(()); // do not emit a statement here
             }
-            js_ast::StmtData::SExportFrom(st) => {
+            js_ast::StmtData::SExportFrom(mut st) => {
                 let deduped = self.deduplicated_import(
                     p,
                     st.import_record_index,

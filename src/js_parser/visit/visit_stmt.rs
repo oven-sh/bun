@@ -2148,7 +2148,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if lowered_using {
                 let mut ctx = crate::p::LowerUsingDeclarationsContext::init(p)?;
                 for i in 0..cases.len() {
-                    ctx.scan_stmts(p, cases[i].body.slice_mut());
+                    // SAFETY: `cases` is the unique mutable slice for this
+                    // switch body, and the loop visits one case body at a
+                    // time without retaining aliases.
+                    ctx.scan_stmts(p, unsafe { cases[i].body.slice_mut() });
                 }
                 let switch_stmt = p.arena.alloc_slice_copy(&[*stmt]);
                 stmts.extend_from_slice(&ctx.finalize(p, switch_stmt, false));

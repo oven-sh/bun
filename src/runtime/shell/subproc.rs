@@ -1058,8 +1058,6 @@ impl ShellSubprocess {
                 // called since exit_code is set.
                 cmd.on_exit(cmd.exit_code.unwrap());
             }
-        } else {
-            let _ = stdin_is_pipe;
         }
     }
 }
@@ -1147,10 +1145,10 @@ impl Writable {
         event_loop: EventLoopHandle,
         subprocess: *mut Subprocess,
         result: StdioResult,
+        // Written only by the ReadableStream arms (assign_to_stream failure).
         out_assign_error: &mut JSValue,
     ) -> Result<Writable, WritableInitError> {
         assert_stdio_result!(result);
-        let _ = out_assign_error; // used only for ReadableStream paths
 
         // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out via
         // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the

@@ -720,7 +720,10 @@ impl TransformTask {
             input_code,
             output_code: BunString::empty(),
             output_map: BunString::empty(),
-            source_map: config.transform.source_map.unwrap_or(api::SourceMapMode::None),
+            source_map: config
+                .transform
+                .source_map
+                .unwrap_or(api::SourceMapMode::None),
             transpiler: transpiler_copy,
             macro_map: clone_macro_map(&config.macro_map),
             tsconfig: config
@@ -903,9 +906,7 @@ impl TransformTask {
             api::SourceMapMode::Linked => {
                 let mut map_name_buf = bun_paths::PathBuffer::uninit();
                 let map_name = source_map_url_for(source_path, &mut map_name_buf);
-                bun_core::handle_oom(
-                    buffer_writer.buffer.append(b"\n//# sourceMappingURL="),
-                );
+                bun_core::handle_oom(buffer_writer.buffer.append(b"\n//# sourceMappingURL="));
                 bun_core::handle_oom(buffer_writer.buffer.append(map_name));
                 bun_core::handle_oom(buffer_writer.buffer.append_char(b'\n'));
                 self.output_code = BunString::clone_utf8(buffer_writer.buffer.list.as_slice());
@@ -1693,8 +1694,13 @@ impl JSTranspiler {
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
 
-        let result =
-            build_transform_result(global, source_map_mode, &mut buffer_writer, &capture, source_path);
+        let result = build_transform_result(
+            global,
+            source_map_mode,
+            &mut buffer_writer,
+            &capture,
+            source_path,
+        );
         self.buffer_writer.set(Some(buffer_writer));
         result
     }
@@ -1858,7 +1864,13 @@ fn create_code_map_object(
 
     let code_key = ZigString::static_(b"code");
     let map_key = ZigString::static_(b"map");
-    JSValue::create_object2(global, &code_key, &map_key, code_zig.to_js(global), map_zig.to_js(global))
+    JSValue::create_object2(
+        global,
+        &code_key,
+        &map_key,
+        code_zig.to_js(global),
+        map_zig.to_js(global),
+    )
 }
 
 fn named_exports_to_js(

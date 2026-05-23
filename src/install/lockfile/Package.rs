@@ -331,6 +331,7 @@ impl PackageField {
         PackageField::Scripts,
     ];
 
+    #[allow(dead_code)]
     pub(crate) fn name(self) -> &'static [u8] {
         match self {
             PackageField::Name => b"name",

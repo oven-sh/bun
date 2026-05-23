@@ -1463,6 +1463,7 @@ impl CssImportOrder {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn fmt<'a, 'ctx>(
         &'a self,
         ctx: &'a LinkerContext<'ctx>,
@@ -1471,6 +1472,7 @@ impl CssImportOrder {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
     inner: &'a CssImportOrder,
     // PORT NOTE: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,

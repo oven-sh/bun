@@ -194,6 +194,33 @@ describe("Bun.Transpiler", () => {
       err("module = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
     });
 
+    it("export default interface that is not an interface declaration does not crash", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      const reservedWord = '"interface" is a reserved word and cannot be used in strict mode';
+
+      // "interface" turns out to start an expression, not an interface declaration.
+      // Modules are always strict mode, so using it as an identifier is an error.
+      err("export default interface=2", reservedWord);
+      err("export default interface + 1", reservedWord);
+      err("export default interface.foo()", reservedWord);
+
+      // A labeled statement cannot be a default export.
+      err("export default interface: 2", 'Unexpected "interface"');
+
+      // The exact fuzz repro: tsx loader, no trailing newline.
+      expect(() => transpiler.transformSync("export default interface=2")).toThrow(reservedWord);
+
+      // Same shapes through the plain JavaScript loader must not crash either.
+      const js = new Bun.Transpiler({ loader: "js" });
+      expect(() => js.transformSync("export default interface=2")).toThrow(reservedWord);
+      expect(() => js.transformSync("export default interface: 2")).toThrow('Unexpected "interface"');
+
+      // Real interface declarations still parse and get erased.
+      exp("export default interface Foo {}", "");
+      exp("export default interface Foo { bar(): void }\nexport const x = 1;", "export const x = 1;\n");
+    });
+
     it("should parse empty type parameters", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

@@ -60,12 +60,22 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
         ExprData::ENumber(number) => Ok(JSValue::js_number(number.value)),
         ExprData::EString(str) => estring_to_js(str.get(), global),
         ExprData::EArray(arr) => {
-            JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {
-                expr_to_js(*item, global)
-            })
+            let items = arr.slice();
+            let js_arr = JSValue::create_empty_array(global, items.len())?;
+            // `gcProtect` the under-construction array: the recursive
+            // `expr_to_js` and `put_index` calls can allocate and trigger GC,
+            // and `js_arr` is only reachable through this Rust local (which
+            // the JSC collector does not scan). RAII guard unprotects on exit.
+            let _guard = js_arr.protected();
+            for (i, item) in items.iter().enumerate() {
+                js_arr.put_index(global, i as u32, expr_to_js(*item, global)?)?;
+            }
+            Ok(js_arr)
         }
         ExprData::EObject(obj) => {
             let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
+            // Same GC-root concern as the array branch above.
+            let _guard = js_obj.protected();
             for prop in obj.properties.slice() {
                 let key_expr = prop.key.expect("infallible: prop has key");
                 let value = expr_to_js(prop.value.expect("infallible: prop has value"), global)?;

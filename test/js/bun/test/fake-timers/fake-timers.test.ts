@@ -447,3 +447,16 @@ describe("useFakeTimers with options", () => {
     expect(Date.now()).toBe(targetTime + 500);
   });
 });
+
+test("calling a detached, closure-captured useFakeTimers does not leak a scope object", () => {
+  // `useFakeTimers()` returns its `this` value. When the function is called as a bare
+  // identifier that is captured by a closure, JSC passes the enclosing environment record
+  // as the unconverted `this`; that engine-internal object must not escape to JavaScript.
+  const useFakeTimers = vi.useFakeTimers;
+  const useRealTimers = vi.useRealTimers;
+  const capture = () => [useFakeTimers, useRealTimers];
+  expect(capture()).toEqual([useFakeTimers, useRealTimers]);
+
+  expect(useFakeTimers()).toBeUndefined();
+  expect(useRealTimers()).toBeUndefined();
+});

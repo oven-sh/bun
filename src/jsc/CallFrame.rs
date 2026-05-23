@@ -60,7 +60,15 @@ impl CallFrame {
     /// value, but instead the value of `new.target`.
     pub fn this(&self) -> JSValue {
         // SAFETY: OFFSET_THIS_ARGUMENT is a valid slot in the JSC register file.
-        unsafe { *self.as_unsafe_js_value_array().add(OFFSET_THIS_ARGUMENT) }
+        let value = unsafe { *self.as_unsafe_js_value_array().add(OFFSET_THIS_ARGUMENT) };
+        // For `f()` calls where `f` resolves through a scope, JSC passes the resolved
+        // JSScope as the unconverted `this` argument and relies on the callee's ToThis
+        // to normalize it. Host functions never run ToThis, so normalize here instead
+        // of leaking engine-internal scope objects to JavaScript.
+        if value.is_cell() && value.js_type().is_scope() {
+            return JSValue::UNDEFINED;
+        }
+        value
     }
 
     /// `JSValue` for the current function being called.

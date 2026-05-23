@@ -677,6 +677,15 @@ impl JSType {
         self.0 >= JSType::Object.0
     }
 
+    /// JSC-internal scope objects (environment records, `with` scopes, the raw
+    /// global object). These are never supposed to be observable from JavaScript.
+    #[inline]
+    pub fn is_scope(self) -> bool {
+        // static constexpr uint32_t FirstScopeType = GlobalObjectType;
+        // static constexpr uint32_t LastScopeType = WithScopeType;
+        self.0 >= JSType::GlobalObject.0 && self.0 <= JSType::WithScope.0
+    }
+
     pub fn is_function(self) -> bool {
         matches!(
             self,

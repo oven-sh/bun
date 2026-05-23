@@ -112,7 +112,7 @@ const SECRET = process.env.CSRF_SECRET || "my-secret";
 // null when the visitor has no session yet — never fall back to a shared
 // placeholder, or every session-less visitor would share one token binding.
 function getSessionId(req: Request): string | null {
-  return req.headers.get("cookie")?.match(/session=([^;]+)/)?.[1] ?? null;
+  return req.headers.get("cookie")?.match(/(?:^|;\s*)session=([^;]+)/)?.[1] ?? null;
 }
 
 const server = Bun.serve({

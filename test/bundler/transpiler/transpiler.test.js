@@ -179,13 +179,10 @@ describe("Bun.Transpiler", () => {
     it("does not crash when export default abstract is an expression followed by a class", () => {
       const exp = ts.expectPrinted_;
 
-      // "abstract" is a plain identifier expression here, not the start of an
-      // abstract class declaration, even when a class statement follows.
       exp("export default abstract = 1\nclass Foo {}", "export default abstract = 1;\n\nclass Foo {\n}");
       exp("export default abstract ?? 1\nclass Foo {}", "export default abstract ?? 1;\n\nclass Foo {\n}");
       exp("export default abstract = 1", "export default abstract = 1;\n");
 
-      // A real abstract class default export is still stripped down to a class.
       exp("export default abstract class Foo { abstract bar(): void }", "export default class Foo {\n}");
       exp("export default abstract class {}", "export default class {\n}");
     });

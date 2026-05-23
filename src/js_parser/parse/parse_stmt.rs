@@ -1072,10 +1072,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = p.lexer.identifier;
                 let expr = p.parse_expr(Level::Comma)?;
 
-                // Handle the default export of an abstract class in TypeScript. This
-                // only applies when "abstract" was parsed as a plain identifier
-                // expression; anything else (e.g. "export default abstract = 1") is a
-                // regular expression statement that falls through below.
+                // Handle the default export of an abstract class in TypeScript
                 if Self::IS_TYPESCRIPT_ENABLED
                     && is_identifier
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())

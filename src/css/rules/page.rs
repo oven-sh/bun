@@ -21,7 +21,7 @@ pub struct PageSelector {
 impl PageSelector {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if let Some(name) = self.name {
-            dest.write_str(name)?;
+            dest.serialize_identifier(name)?;
         }
 
         for pseudo in &self.pseudo_classes {

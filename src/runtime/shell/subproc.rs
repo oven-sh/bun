@@ -1196,19 +1196,15 @@ impl Writable {
                             );
                             // SAFETY: `pipe_ptr` is live with refcount 1.
                             let assign_result = unsafe { (*pipe_ptr).assign_to_stream(rs, global) };
-                            // On failure assign_to_stream returns the thrown value already
-                            // unwrapped from its JSC::Exception (it may be any JS value, not
-                            // just an Error), on success a promise or empty/undefined. So
-                            // "non-empty and not a promise" is the error signal; a second
-                            // .to_error() here would miss `throw "string"` etc.
-                            if !assign_result.is_empty_or_undefined_or_null()
-                                && assign_result.as_any_promise().is_none()
-                            {
+                            // On failure assign_to_stream returns the JSC::Exception, so
+                            // to_error() yields the thrown value for any throw (Error,
+                            // string, null, ...).
+                            if let Some(err) = assign_result.to_error() {
                                 // Surface to the caller; a still-valid Writable is returned
                                 // so spawn_maybe_sync_impl can tear down the subprocess via
                                 // the same abort_after_failed_start() path it uses for
                                 // other post-spawn start failures.
-                                *out_assign_error = assign_result;
+                                *out_assign_error = err;
                             }
                         }
 
@@ -1348,19 +1344,14 @@ impl Writable {
                     });
 
                     let assign_result = pipe.assign_to_stream(rs, global);
-                    // On failure assign_to_stream returns the thrown value already unwrapped
-                    // from its JSC::Exception (it may be any JS value, not just an Error),
-                    // on success a promise or empty/undefined. So "non-empty and not a
-                    // promise" is the error signal; a second .to_error() here would miss
-                    // `throw "string"` etc.
-                    if !assign_result.is_empty_or_undefined_or_null()
-                        && assign_result.as_any_promise().is_none()
-                    {
+                    // On failure assign_to_stream returns the JSC::Exception, so to_error()
+                    // yields the thrown value for any throw (Error, string, null, ...).
+                    if let Some(err) = assign_result.to_error() {
                         // Surface to the caller; a still-valid Writable is returned so
                         // spawn_maybe_sync_impl can tear down the subprocess via the
                         // same abort_after_failed_start() path it uses for other
                         // post-spawn start failures.
-                        *out_assign_error = assign_result;
+                        *out_assign_error = err;
                     }
 
                     // SAFETY: `create` returns non-null with one owned ref; `adopt`

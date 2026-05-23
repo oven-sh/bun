@@ -238,7 +238,13 @@ impl<'a> Writable<'a> {
                                 subprocess.update_flags(|f| {
                                     f.set(Flags::DEREF_ON_STDIN_DESTROYED, false)
                                 });
-                                Self::pipe_release(pipe_nn);
+                                // Do NOT release the FileSink ref here: assign_to_stream
+                                // already created a JSReadableFileSinkController holding a
+                                // raw m_sinkPtr, and on this synchronous-error path the JS
+                                // builtins never call controller.end()/close() to detach
+                                // it, so the controller's destructor will call
+                                // finalize() → deref() on GC. Releasing here too would
+                                // free the sink early and that GC finalize would UAF.
                                 subprocess.deref();
                                 let _ = global.throw_value(err_val);
                                 return Err(err!(JSError));
@@ -343,7 +349,12 @@ impl<'a> Writable<'a> {
                     if let Some(err_val) = assign_result.to_error() {
                         subprocess.weak_file_sink_stdin_ptr.set(None);
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
-                        Self::pipe_release(pipe_nn);
+                        // Do NOT release the FileSink ref here: assign_to_stream already
+                        // created a JSReadableFileSinkController holding a raw m_sinkPtr,
+                        // and on this synchronous-error path the JS builtins never call
+                        // controller.end()/close() to detach it, so the controller's
+                        // destructor will call finalize() → deref() on GC. Releasing here
+                        // too would free the sink early and that GC finalize would UAF.
                         subprocess.deref();
                         let _ = global.throw_value(err_val);
                         return Err(err!(JSError));

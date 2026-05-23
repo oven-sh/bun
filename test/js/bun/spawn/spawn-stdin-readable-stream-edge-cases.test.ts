@@ -14,6 +14,31 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 describe("spawn stdin ReadableStream edge cases", () => {
+  test("direct ReadableStream that throws synchronously in pull rejects without crashing", async () => {
+    // A direct stream's pull() runs synchronously inside assignToStream, so the
+    // throw surfaces as a spawn-time error instead of a stream error. Cover both
+    // Error and non-Error (null) throws, and force GC afterwards — the error path
+    // used to free the FileSink while the JS controller still pointed at it.
+    for (const thrown of [new Error("sync pull error"), null]) {
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", "process.exit(0)"],
+          stdin: new ReadableStream({
+            type: "direct",
+            pull() {
+              throw thrown;
+            },
+          }),
+          stdout: "ignore",
+          env: bunEnv,
+        }),
+      ).toThrow();
+    }
+    Bun.gc(true);
+    await Bun.sleep(0);
+    Bun.gc(true);
+  });
+
   test("ReadableStream with exception in pull", async () => {
     let pullCount = 0;
     const stream = new ReadableStream({

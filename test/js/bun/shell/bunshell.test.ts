@@ -492,6 +492,18 @@ describe("bunshell", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test("direct ReadableStream that throws null in pull() does not crash", async () => {
+      const stream = new ReadableStream({
+        type: "direct",
+        pull() {
+          throw null;
+        },
+      });
+      const { stderr, exitCode } = await $`${BUN} -e ${"process.exit(0)"} < ${stream}`.env(bunEnv).quiet();
+      expect(stderr.toString()).toContain("Failed to pipe ReadableStream to stdin");
+      expect(exitCode).not.toBe(0);
+    });
+
     test("builtin rejects ReadableStream with a clear error", async () => {
       const stream = new ReadableStream({
         start(controller) {

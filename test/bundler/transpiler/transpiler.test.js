@@ -163,6 +163,16 @@ describe("Bun.Transpiler", () => {
       err("const x: Foo<> = {}", "Unexpected >");
     });
 
+    it("does not crash on an unterminated template literal after type arguments", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      err("new C<T>\n`", "Unterminated string literal");
+      err("new C<T>`", "Unterminated string literal");
+      err("f<T>`", "Unterminated string literal");
+      exp("new C<T>`ok`", "new C`ok`;\n");
+      exp("f<T>`ok`", "f`ok`;\n");
+    });
+
     it("should parse infer extends ternary correctly #9959", () => {
       ts.expectPrinted_("type Foo<T> = T extends infer U ? U : never;", "");
       ts.expectPrinted_("var foo: Foo extends string | infer Foo extends string ? Foo : never", "var foo");

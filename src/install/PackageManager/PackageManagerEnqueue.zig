@@ -846,7 +846,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                         }
 
                         const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-                        try manifest_entry_parse.value_ptr.append(this.allocator, null, @unionInit(TaskCallbackContext, callback_tag, id));
+                        try manifest_entry_parse.value_ptr.append(this.allocator, parent_package_id, @unionInit(TaskCallbackContext, callback_tag, id));
                     }
                     return;
                 }
@@ -904,7 +904,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 var entry = this.task_queue.getOrPutContext(this.allocator, checkout_id, .{}) catch unreachable;
                 if (!entry.found_existing) entry.value_ptr.* = .{};
                 if (this.lockfile.buffers.resolutions.items[id] == invalid_package_id) {
-                    try entry.value_ptr.append(this.allocator, null, ctx);
+                    try entry.value_ptr.append(this.allocator, parent_package_id, ctx);
                 }
 
                 if (dependency.behavior.isPeer()) {
@@ -928,7 +928,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             } else {
                 var entry = this.task_queue.getOrPutContext(this.allocator, clone_id, .{}) catch unreachable;
                 if (!entry.found_existing) entry.value_ptr.* = .{};
-                try entry.value_ptr.append(this.allocator, null, ctx);
+                try entry.value_ptr.append(this.allocator, parent_package_id, ctx);
 
                 if (dependency.behavior.isPeer()) {
                     if (!install_peer) {
@@ -978,7 +978,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 );
 
             const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-            try entry.value_ptr.append(this.allocator, null, @unionInit(TaskCallbackContext, callback_tag, id));
+            try entry.value_ptr.append(this.allocator, parent_package_id, @unionInit(TaskCallbackContext, callback_tag, id));
 
             if (dependency.behavior.isPeer()) {
                 if (!install_peer) {

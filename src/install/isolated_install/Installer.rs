@@ -162,8 +162,6 @@ impl<'a> Installer<'a> {
         // hold `trusted_dependencies_mutex` for any projection into
         // `trusted_dependencies` (e.g. `has_trusted_dependency`) — a
         // concurrent insert can reallocate the map's backing storage.
-        // `Scripts::get_list` no longer reads the map; its callers compute
-        // the trust decision under the mutex and pass it in as a bool.
         unsafe { &*self.lockfile }
     }
 
@@ -1698,13 +1696,9 @@ impl Task {
 
                         let mut log = Log::init();
 
-                        // `get_list`'s node-gyp rebuild heuristic needs the
-                        // same `trusted_dependencies` lookup as the trust
-                        // check above (but keyed on the folder name for both
-                        // arguments). Compute it under the mutex so the read
-                        // serializes with concurrent inserts, without holding
-                        // the lock across `get_list`'s filesystem stat /
-                        // package.json parse. Dropped before the writer below.
+                        // Same `trusted_dependencies` serialization as the trust check
+                        // above; computed here so the lock isn't held across `get_list`'s
+                        // filesystem stat / package.json parse.
                         let folder_name = dep.name.slice(string_buf);
                         let trusted_for_node_gyp = {
                             let _lock = installer.trusted_dependencies_mutex.lock_guard();

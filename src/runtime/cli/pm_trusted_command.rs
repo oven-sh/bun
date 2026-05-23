@@ -142,9 +142,6 @@ impl UntrustedCommand {
                 let folder_saved = node_modules_path.len();
                 let _ = node_modules_path.append(alias);
 
-                // Single-threaded CLI command: no concurrent
-                // `trusted_dependencies` writer, so the lookup needs no
-                // synchronization.
                 let trusted_for_node_gyp =
                     lockfile.has_trusted_dependency(alias, alias, resolution);
                 let result = package_scripts.get_list(
@@ -385,9 +382,6 @@ impl TrustCommand {
                 let folder_saved = node_modules_path.len();
                 let _ = node_modules_path.append(alias);
 
-                // Single-threaded CLI command: no concurrent
-                // `trusted_dependencies` writer, so the lookup needs no
-                // synchronization.
                 let trusted_for_node_gyp =
                     lockfile.has_trusted_dependency(alias, alias, resolution);
                 // SAFETY: `log` derived from `pm.log`; single-threaded CLI.

@@ -3167,7 +3167,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             Expr::init(E::Null {}, mapping_value_start.loc())
                         }
-                        _ => 'value: {
+                        _ => {
                             let parent_indent = if mapping_value_line != key_line {
                                 Some(mapping_indent.add(1))
                             } else {
@@ -3178,13 +3178,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                                 ..Default::default()
                             })?;
 
-                            break 'value self.parse_block_indented(
+                            self.parse_block_indented(
                                 mapping_indent,
                                 mapping_value_line,
                                 mapping_value_start,
                                 false,
                                 false,
-                            )?;
+                            )?
                         }
                     };
 
@@ -3541,73 +3541,46 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut value_anchor: Option<Token<Enc>> = None;
 
         loop {
+            // [196] s-l+block-node(n) reaches content via [197] flow-in-block
+            // (s-separate-lines(n+1)) or [200] block-collection. Either way a
+            // token on a later line at indent ≤ n belongs to the parent —
+            // properties collected so far attach to e-scalar per [161].
+            // [201] BLOCK-OUT relaxation: a block sequence may sit at indent n.
+            if self.token.line != indicator_line {
+                let belongs_to_parent =
+                    if matches!(self.token.data, TokenData::SequenceEntry) {
+                        self.token.indent.is_less_than(n)
+                    } else {
+                        self.token.indent.is_less_than_or_equal(n)
+                    };
+                if belongs_to_parent {
+                    return self.props_to_e_node(
+                        &value_tag,
+                        &value_anchor,
+                        indicator_start.loc(),
+                    );
+                }
+            }
+
             match self.token.data {
                 TokenData::Anchor(_) if value_anchor.is_none() => {
-                    if self.token.line != indicator_line
-                        && self.token.indent.is_less_than_or_equal(n)
-                    {
-                        return self.props_to_e_node(
-                            &value_tag,
-                            &value_anchor,
-                            indicator_start.loc(),
-                        );
-                    }
                     value_anchor = Some(self.token.clone());
-                    let tag = match &value_tag {
-                        Some(Token {
-                            data: TokenData::Tag(t),
-                            ..
-                        }) => *t,
-                        _ => NodeTag::None,
-                    };
-                    self.scan(ScanOptions { tag, ..Default::default() })?;
-                    continue;
                 }
-                TokenData::Tag(tag) if value_tag.is_none() => {
-                    if self.token.line != indicator_line
-                        && self.token.indent.is_less_than_or_equal(n)
-                    {
-                        return self.props_to_e_node(
-                            &value_tag,
-                            &value_anchor,
-                            indicator_start.loc(),
-                        );
-                    }
+                TokenData::Tag(_) if value_tag.is_none() => {
                     value_tag = Some(self.token.clone());
-                    self.scan(ScanOptions { tag, ..Default::default() })?;
-                    continue;
                 }
-                TokenData::SequenceEntry => {
-                    // [185] a compact construct on the indicator's line must
-                    // be at indent >= n+1 via s-indent (spaces). A tab
-                    // separator leaves the token at the line's natural indent,
-                    // which fails this.
+                // [185] a compact `- ` on the indicator's line must be at
+                // indent ≥ n+1 via s-indent (spaces only); tab separation
+                // leaves the token at the line's natural indent.
+                TokenData::SequenceEntry
                     if self.token.line == indicator_line
-                        && self.token.indent.is_less_than_or_equal(n)
-                    {
-                        return Err(Self::unexpected_token());
-                    }
-                    // [200]/[201] block sequence in BLOCK-OUT may sit at
-                    // indent n; only indent < n is the parent's.
-                    if self.token.indent.is_less_than(n) {
-                        return self.props_to_e_node(
-                            &value_tag,
-                            &value_anchor,
-                            indicator_start.loc(),
-                        );
-                    }
-                    return self.parse_node(ParseNodeOptions {
-                        current_mapping_indent: Some(n),
-                        explicit_mapping_key,
-                        scanned_tag: value_tag,
-                        scanned_anchor: value_anchor,
-                        ..Default::default()
-                    });
+                        && self.token.indent.is_less_than_or_equal(n) =>
+                {
+                    return Err(Self::unexpected_token());
                 }
-                // [149] e-node value in flow (`"a":,` / `"a":]`). Gated on
-                // flow_pair_allowed so this only fires for [139]
-                // ns-flow-seq-entry positions, not for a flow-map [147] value
-                // reaching here via the implicit-mapping fallthrough.
+                // [149] e-node pair value in flow (`"a":,` / `"a":]`). Gated
+                // on flow_pair_allowed so this only fires for [139]
+                // ns-flow-seq-entry positions.
                 TokenData::CollectEntry | TokenData::SequenceEnd
                     if flow_pair_allowed
                         && matches!(
@@ -3622,15 +3595,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     );
                 }
                 _ => {
-                    if self.token.line != indicator_line
-                        && self.token.indent.is_less_than_or_equal(n)
-                    {
-                        return self.props_to_e_node(
-                            &value_tag,
-                            &value_anchor,
-                            indicator_start.loc(),
-                        );
-                    }
                     return self.parse_node(ParseNodeOptions {
                         current_mapping_indent: Some(n),
                         explicit_mapping_key,
@@ -3640,6 +3604,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     });
                 }
             }
+
+            // recorded a property — re-dispatch on what follows
+            let tag = match &value_tag {
+                Some(Token {
+                    data: TokenData::Tag(t),
+                    ..
+                }) => *t,
+                _ => NodeTag::None,
+            };
+            self.scan(ScanOptions { tag, ..Default::default() })?;
         }
     }
 

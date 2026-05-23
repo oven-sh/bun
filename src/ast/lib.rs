@@ -1831,6 +1831,8 @@ impl Log {
         // backed by `self.owned_strings` (see `Log::dupe`); move the backing
         // boxes so they outlive the messages now in `other`.
         other.owned_strings.append(&mut self.owned_strings);
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
     }
 
     pub fn clone_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
@@ -1868,6 +1870,8 @@ impl Log {
         self.msgs.shrink_to_fit();
         // See `append_to` — keep `owned_strings` backing alive for the moved msgs.
         other.owned_strings.append(&mut self.owned_strings);
+        // See `reset` — the scan cache goes with the messages.
+        self.line_column_tracker = None;
     }
 
     pub fn append_to_maybe_recycled(&mut self, other: &mut Log, source: &Source) {

@@ -3927,6 +3927,9 @@ pub mod args {
         pub offset: u64,
         pub length: u64,
         pub position: Option<ReadPosition>,
+        /// True when `from_js` pinned `buffer` for the async path; balanced in
+        /// `unprotect()` (the JS-thread release hook).
+        pub pinned: bool,
     }
     impl Read {
         pub fn to_thread_safe(&self) {
@@ -3936,6 +3939,9 @@ pub mod args {
     impl Unprotect for Read {
         #[inline]
         fn unprotect(&mut self) {
+            if self.pinned {
+                self.buffer.buffer.unpin();
+            }
             self.buffer.buffer.value.unprotect();
         }
     }
@@ -3993,6 +3999,7 @@ pub mod args {
                     length: 0,
                     offset: 0,
                     position: None,
+                    pinned: false,
                 });
             }
 
@@ -4105,16 +4112,19 @@ pub mod args {
                 None
             };
 
-            let buffer = if arguments.will_be_async {
+            let (buffer, pinned) = if arguments.will_be_async {
                 match buffer_value.as_pinned_arraybuffer(ctx) {
-                    Some(pinned) => Buffer {
-                        buffer: pinned,
-                        owns_buffer: false,
-                    },
-                    None => buffer,
+                    Some(pinned) => (
+                        Buffer {
+                            buffer: pinned,
+                            owns_buffer: false,
+                        },
+                        true,
+                    ),
+                    None => (buffer, false),
                 }
             } else {
-                buffer
+                (buffer, false)
             };
 
             Ok(Read {
@@ -4123,6 +4133,7 @@ pub mod args {
                 offset,
                 length,
                 position,
+                pinned,
             })
         }
     }

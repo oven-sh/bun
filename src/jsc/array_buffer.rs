@@ -129,11 +129,18 @@ unsafe extern "C" {
     // `RefCounted<ArrayBuffer>` count mutation is interior to the opaque cell.
     safe fn JSC__ArrayBuffer__ref(self_: &JSCArrayBuffer);
     safe fn JSC__ArrayBuffer__deref(self_: &JSCArrayBuffer);
+    // safe: by-value `JSValue`; no-op for non-buffer values.
+    safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
 }
 
 impl ArrayBuffer {
     pub fn is_detached(&self) -> bool {
         self.ptr.is_null()
+    }
+
+    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`].
+    pub fn unpin(&self) {
+        JSC__JSValue__unpinArrayBuffer(self.value);
     }
 
     // require('buffer').kMaxLength.

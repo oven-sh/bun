@@ -280,6 +280,8 @@ pub trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn error_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue);
     fn pending_input_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
     fn pending_output_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn pending_input_get_cached(this_value: JSValue) -> Option<JSValue>;
+    fn pending_output_get_cached(this_value: JSValue) -> Option<JSValue>;
 }
 
 impl<T: CompressionStreamImpl> CompressionStream<T> {
@@ -514,6 +516,19 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this_value.ensure_still_alive();
 
+        for pinned in [
+            T::pending_input_get_cached(this_value),
+            T::pending_output_get_cached(this_value),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if pinned.is_cell() {
+                if let Some(buf) = pinned.as_array_buffer(global) {
+                    buf.unpin();
+                }
+            }
+        }
         T::pending_input_set_cached(this_value, global, JSValue::ZERO);
         T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
@@ -1031,6 +1046,12 @@ macro_rules! __impl_compression_stream {
             }
             #[inline] fn pending_output_set_cached(this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, value: ::bun_jsc::JSValue) {
                 js::pending_output_set_cached(this_value, global, value)
+            }
+            #[inline] fn pending_input_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+                js::pending_input_get_cached(this_value)
+            }
+            #[inline] fn pending_output_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+                js::pending_output_get_cached(this_value)
             }
         }
     };

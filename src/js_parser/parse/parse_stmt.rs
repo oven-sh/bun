@@ -1031,13 +1031,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let default_name: LocRef = 'default_name_getter: {
                         match &stmt.data {
-                            // This was just a type annotation, or "interface" turned
-                            // out to start an expression statement instead of an
-                            // interface declaration ("export default interface + 1").
-                            // Keep the statement as-is like esbuild does; using
-                            // "interface" as an identifier is reported separately
-                            // because modules are always in strict mode.
-                            js_ast::StmtData::STypeScript(_) | js_ast::StmtData::SExpr(_) => {
+                            // This was just a type annotation
+                            js_ast::StmtData::STypeScript(_) => {
                                 return Ok(stmt);
                             }
 
@@ -1057,10 +1052,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     };
                                 }
                             }
-                            // Anything else cannot be a default export value, e.g. a
-                            // labeled statement: "export default interface: 0". Report
-                            // a syntax error instead of building an S.ExportDefault
-                            // that the visit and print passes don't support.
+                            // "interface" turned out not to start an interface
+                            // declaration: the nested statement came back as an
+                            // expression statement ("export default interface = 2",
+                            // "export default interface => 1") or a labeled statement
+                            // ("export default interface: 0"). None of these can be a
+                            // default export value, so report a syntax error instead of
+                            // building an S.ExportDefault that the visit and print
+                            // passes don't support.
                             _ => {
                                 let r = js_lexer::range_of_identifier(p.source, stmt.loc);
                                 p.log().add_range_error_fmt(

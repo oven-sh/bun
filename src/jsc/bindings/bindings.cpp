@@ -6560,6 +6560,17 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     return JSC::JSValue::encode(result);
 }
 
+// True when reading an indexed property of `encodedValue` cannot run user
+// code: it is a JSArray with the original structure, a sane prototype chain,
+// and no indexed accessors/interceptors (any butterfly storage shape).
+extern "C" bool Bun__JSArray__canDoFastIndexedAccess(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isCell() || !JSC::isJSArray(value.asCell()))
+        return false;
+    return uncheckedDowncast<JSC::JSArray>(value.asCell())->canDoFastIndexedAccess();
+}
+
 extern "C" const JSC::EncodedJSValue* Bun__JSArray__getContiguousVector(
     JSC::EncodedJSValue encodedValue,
     uint32_t* outLength)

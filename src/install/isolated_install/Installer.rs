@@ -158,8 +158,11 @@ impl<'a> Installer<'a> {
         // a *whole-struct* `&mut Lockfile`; the single mutated field
         // (`trusted_dependencies`) is written under
         // `trusted_dependencies_mutex` via a raw narrowed `addr_of_mut!` place
-        // (Task::run), not a `&mut Lockfile`. Callers must not project into
-        // `trusted_dependencies` from this `&Lockfile` across a tick.
+        // (Task::run), not a `&mut Lockfile`. Callers on task threads must
+        // hold `trusted_dependencies_mutex` for any projection into
+        // `trusted_dependencies` (including via `has_trusted_dependency` /
+        // `Scripts::get_list`) — a concurrent insert can reallocate the map's
+        // backing storage.
         unsafe { &*self.lockfile }
     }
 
@@ -1637,11 +1640,21 @@ impl Task {
                         {
                             break 'brk (true, true);
                         }
-                        if lockfile.has_trusted_dependency(
-                            dep.name.slice(string_buf),
-                            pkg_name.slice(string_buf),
-                            &pkg_res,
-                        ) {
+                        // `lockfile.trusted_dependencies` is inserted into by
+                        // concurrent tasks under `trusted_dependencies_mutex`
+                        // (below); an insert can reallocate the map's backing
+                        // storage, so this read must serialize with it. The
+                        // guard is dropped before the writer below acquires
+                        // the (non-reentrant) mutex.
+                        let trusted = {
+                            let _lock = installer.trusted_dependencies_mutex.lock_guard();
+                            lockfile.has_trusted_dependency(
+                                dep.name.slice(string_buf),
+                                pkg_name.slice(string_buf),
+                                &pkg_res,
+                            )
+                        };
+                        if trusted {
                             break 'brk (true, false);
                         }
                         break 'brk (false, false);
@@ -1684,13 +1697,21 @@ impl Task {
 
                         let mut log = Log::init();
 
-                        let scripts_list = match pkg_scripts.get_list(
-                            &mut log,
-                            lockfile,
-                            &mut pkg_cwd,
-                            dep.name.slice(string_buf),
-                            &pkg_res,
-                        ) {
+                        // `get_list` re-reads `lockfile.trusted_dependencies`
+                        // (for the node-gyp rebuild heuristic), so it needs the
+                        // same serialization against concurrent inserts as the
+                        // trust check above. Dropped before the writer below.
+                        let scripts_list = {
+                            let _lock = installer.trusted_dependencies_mutex.lock_guard();
+                            pkg_scripts.get_list(
+                                &mut log,
+                                lockfile,
+                                &mut pkg_cwd,
+                                dep.name.slice(string_buf),
+                                &pkg_res,
+                            )
+                        };
+                        let scripts_list = match scripts_list {
                             Ok(v) => v,
                             Err(err) => {
                                 return Ok(Yield::failure(TaskError::RunScripts(err)));
@@ -1729,11 +1750,14 @@ impl Task {
                                     .push(trusted_dep_to_add);
                                 }
                                 // SAFETY: `trusted_dependencies_mutex` is held, serializing
-                                // writers. Narrow to the single `trusted_dependencies` field
-                                // via raw place so no `&mut Lockfile` is ever formed — other
-                                // task threads hold `&Lockfile` (and the `pkgs`/`pkg_*`
-                                // slices above borrow it) for their entire run(), and those
-                                // borrows never touch `trusted_dependencies`.
+                                // this writer with the other task threads' reads of
+                                // `trusted_dependencies` (the trust check and `get_list`
+                                // earlier in this step both take the same mutex). Narrow to
+                                // the single `trusted_dependencies` field via raw place so no
+                                // `&mut Lockfile` is ever formed — other task threads hold
+                                // `&Lockfile` (and the `pkgs`/`pkg_*` slices above borrow it)
+                                // for their entire run(), and their only projections into
+                                // `trusted_dependencies` happen under this mutex.
                                 let trusted = unsafe {
                                     &mut *core::ptr::addr_of_mut!(
                                         (*lockfile_ptr).trusted_dependencies

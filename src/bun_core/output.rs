@@ -878,10 +878,6 @@ pub enum OutputStreamDescriptor {
     Terminal,
 }
 
-#[deprecated(
-    note = "Deprecated to prevent accidentally using the wrong one. Use enable_ansi_colors_stdout or enable_ansi_colors_stderr instead."
-)]
-
 pub static ENABLE_ANSI_COLORS_STDERR: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);
 pub static ENABLE_ANSI_COLORS_STDOUT: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);
 pub(crate) static ENABLE_BUFFERING: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);

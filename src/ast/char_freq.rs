@@ -11,8 +11,6 @@ pub(crate) struct CharAndCount {
 // associated types are unstable in Rust, so it's a free alias here.
 pub(crate) type CharAndCountArray = [CharAndCount; CHAR_FREQ_COUNT];
 
-impl CharAndCount {}
-
 // PERF(port): Zig used `@Vector(CHAR_FREQ_COUNT, i32)` for SIMD adds — profile
 type Buffer = [i32; CHAR_FREQ_COUNT];
 

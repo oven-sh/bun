@@ -193,6 +193,7 @@ impl ToExprWrapper {
     }
 }
 
+/// Zig: `Binding.ToExpr(expr_type, func_type)` returned a *type*; Rust callers
 /// that want the same per-(P, func) nominal type use this alias and construct
 /// via `ToExprWrapper::new`. Kept as a type alias (not a generic struct) so
 /// `P` can store two of these without threading its own generics through.

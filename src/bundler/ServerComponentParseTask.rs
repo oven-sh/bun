@@ -202,8 +202,6 @@ fn task_callback(
     })
 }
 
-impl ServerComponentParseTask {}
-
 impl Default for ServerComponentParseTask {
     /// Mirrors Zig's `task: ThreadPoolLib.Task = .{ .callback = &taskCallbackWrap }`
     /// default-field-value. Callers (`bundle_v2.rs`) supply `data`/`ctx`/`source`

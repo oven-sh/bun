@@ -77,6 +77,7 @@ impl<T, const BUFFER_CAPACITY: usize> Drop for BoundedArrayAligned<T, BUFFER_CAP
     }
 }
 
+/// `pub const Buffer = @FieldType(Self, "buffer");` — inherent assoc types are
 /// unstable; only used for introspection in Zig, so expose as a free alias.
 pub type BoundedBuffer<T, const N: usize> = [MaybeUninit<T>; N];
 

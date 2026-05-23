@@ -289,8 +289,6 @@ pub(crate) struct ExplicitBackgroundSize {
     pub height: LengthPercentageOrAuto,
 }
 
-impl ExplicitBackgroundSize {}
-
 impl BackgroundSize {
     pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Ok(width) = input.try_parse(LengthPercentageOrAuto::parse) {

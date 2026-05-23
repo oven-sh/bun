@@ -267,6 +267,7 @@ pub fn parseFromOverrides(
                     if (dot.expr.data == .e_string) {
                         break :global_override dot.expr;
                     }
+                    try log.addWarningFmt(source, dot.expr.loc, lockfile.allocator, "Invalid \".\" override value for \"{s}\" — expected a string", .{k});
                 }
             }
             break :global_override null;
@@ -298,7 +299,7 @@ pub fn parseFromOverrides(
                 const child_key_str = child_prop.key.?.asString(lockfile.allocator) orelse continue;
                 if (strings.eqlComptime(child_key_str, ".")) continue;
                 if (child_prop.value.?.data != .e_string) {
-                    try log.addWarningFmt(source, child_prop.value.?.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
+                    try log.addWarningFmt(source, child_prop.value.?.loc, lockfile.allocator, "Only one level of nested overrides is supported; non-string override values are not allowed", .{});
                     continue;
                 }
                 const child_version_str = child_prop.value.?.data.e_string.slice(lockfile.allocator);

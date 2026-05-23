@@ -12,14 +12,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Note: The caller has already parsed the "import" keyword
     pub fn parse_import_expr(&mut self, loc: bun_ast::Loc, level: Level) -> Result<Expr, Error> {
         let p = self;
+        // "import.defer(...)" — the dynamic form of the TC39 "Deferred Module
+        // Evaluation" proposal. Unlike "import.meta" it is a dynamic import,
+        // so it does not mark the file as ESM.
+        let mut phase_defer = false;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {
-            p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
             p.lexer.next()?;
             if p.lexer.is_contextual_keyword(b"meta") {
+                p.esm_import_keyword = js_lexer::range_of_identifier(p.source, loc);
                 p.lexer.next()?;
                 p.has_import_meta = true;
                 return Ok(p.new_expr(E::ImportMeta {}, loc));
+            } else if p.lexer.is_contextual_keyword(b"defer") {
+                // ImportCall : `import` `.` `defer` `(` AssignmentExpression `,`? `)`
+                // `is_contextual_keyword` compares the raw token, so an escaped
+                // `def\u0065r` falls through to the error branch instead.
+                p.lexer.next()?;
+                phase_defer = true;
             } else {
                 p.lexer.expected_string(b"\"meta\"")?;
             }
@@ -83,11 +93,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(slice) = slice_opt {
                 let import_record_index =
                     p.add_import_record(bun_ast::ImportKind::Dynamic, value.loc, slice);
+                p.import_records.items_mut()[import_record_index as usize]
+                    .flags
+                    .set(bun_ast::ImportRecordFlags::PHASE_DEFER, phase_defer);
                 return Ok(p.new_expr(
                     E::Import {
                         expr: value,
                         import_record_index,
                         options: import_options,
+                        phase_defer,
                     },
                     loc,
                 ));
@@ -102,6 +116,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // .leading_interior_comments = comments,
                 import_record_index: u32::MAX,
                 options: import_options,
+                phase_defer,
             },
             loc,
         ))

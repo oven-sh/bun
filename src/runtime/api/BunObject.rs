@@ -778,7 +778,7 @@ pub(crate) fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
 }
 
 // HOST_EXPORT(Bun__inspect, c)
-pub(crate) fn bun_inspect(global_this: &JSGlobalObject, value: JSValue) -> BunString {
+pub fn bun_inspect(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     // very stable memory address
     let mut array: Vec<u8> = Vec::new();
 
@@ -790,7 +790,7 @@ pub(crate) fn bun_inspect(global_this: &JSGlobalObject, value: JSValue) -> BunSt
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
-pub(crate) fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
+pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     let mut array: Vec<u8> = Vec::new();
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
@@ -1166,7 +1166,7 @@ pub(crate) fn sleep_sync(
 }
 
 // HOST_EXPORT(Bun__gc, c)
-pub(crate) fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
+pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
     vm.garbage_collect(sync)
 }
 
@@ -1320,7 +1320,7 @@ pub(crate) fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> 
 }
 
 // HOST_EXPORT(Bun__resolve, c)
-pub(crate) fn bun_resolve(
+pub fn bun_resolve(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
@@ -1351,7 +1351,7 @@ pub(crate) fn bun_resolve(
 }
 
 // HOST_EXPORT(Bun__resolveSync, c)
-pub(crate) fn bun_resolve_sync(
+pub fn bun_resolve_sync(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
@@ -1398,7 +1398,7 @@ pub(crate) fn bun_resolve_sync(
 // above. clippy excludes `extern "C"` fns from this lint; the export wrapper
 // lives in generated code, so allow it here.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub(crate) fn bun_resolve_sync_with_paths(
+pub fn bun_resolve_sync_with_paths(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
@@ -1460,7 +1460,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
 bun_output::declare_scope!(importMetaResolve, visible);
 
 // HOST_EXPORT(Bun__resolveSyncWithStrings, c)
-pub(crate) fn bun_resolve_sync_with_strings(
+pub fn bun_resolve_sync_with_strings(
     global: &JSGlobalObject,
     specifier: &BunString,
     source: &BunString,
@@ -1478,7 +1478,7 @@ pub(crate) fn bun_resolve_sync_with_strings(
 }
 
 // HOST_EXPORT(Bun__resolveSyncWithSource, c)
-pub(crate) fn bun_resolve_sync_with_source(
+pub fn bun_resolve_sync_with_source(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: &BunString,
@@ -3234,17 +3234,17 @@ mod stdio_stores {
 }
 
 // HOST_EXPORT(BunObject__createBunStdin)
-pub(crate) fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
+pub fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stdin(global_this)
 }
 
 // HOST_EXPORT(BunObject__createBunStderr)
-pub(crate) fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
+pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stderr(global_this)
 }
 
 // HOST_EXPORT(BunObject__createBunStdout)
-pub(crate) fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
+pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stdout(global_this)
 }
 

@@ -319,7 +319,7 @@ pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 }
 
 // HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
-pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
+pub fn ref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
@@ -327,7 +327,7 @@ pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
 }
 
 // HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
-pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
+pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if !vm.channel_ref_overridden {
         vm.channel_ref.unref(bun_io::js_vm_ctx());
@@ -345,7 +345,7 @@ pub(crate) fn channel_ignore_one_disconnect_event_listener(
 }
 
 // HOST_EXPORT(Bun__shouldIgnoreOneDisconnectEventListener, c)
-pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
+pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }

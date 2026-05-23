@@ -502,7 +502,7 @@ impl DateHeaderTimer {
 // ════════════════════════════════════════════════════════════════════════════
 
 // HOST_EXPORT(Bun__internal_drainTimers, c)
-pub(crate) fn drain_timers_export(vm: *mut VirtualMachine) {
+pub fn drain_timers_export(vm: *mut VirtualMachine) {
     let all = timer_all();
     if all.is_null() {
         return;
@@ -523,7 +523,7 @@ pub(crate) fn drain_timers_export(vm: *mut VirtualMachine) {
 // these in `headers.h` as `(JSGlobalObject*, EncodedJSValue…) -> EncodedJSValue`.
 
 // HOST_EXPORT(Bun__Timer__setImmediate, c)
-pub(crate) fn set_immediate_export(
+pub fn set_immediate_export(
     global: &JSGlobalObject,
     callback: JSValue,
     arguments: JSValue,
@@ -532,7 +532,7 @@ pub(crate) fn set_immediate_export(
 }
 
 // HOST_EXPORT(Bun__Timer__sleep, c)
-pub(crate) fn sleep_export(
+pub fn sleep_export(
     global: &JSGlobalObject,
     promise: JSValue,
     countdown: JSValue,
@@ -541,7 +541,7 @@ pub(crate) fn sleep_export(
 }
 
 // HOST_EXPORT(Bun__Timer__setTimeout, c)
-pub(crate) fn set_timeout_export(
+pub fn set_timeout_export(
     global: &JSGlobalObject,
     callback: JSValue,
     arguments: JSValue,
@@ -551,7 +551,7 @@ pub(crate) fn set_timeout_export(
 }
 
 // HOST_EXPORT(Bun__Timer__setInterval, c)
-pub(crate) fn set_interval_export(
+pub fn set_interval_export(
     global: &JSGlobalObject,
     callback: JSValue,
     arguments: JSValue,
@@ -561,17 +561,17 @@ pub(crate) fn set_interval_export(
 }
 
 // HOST_EXPORT(Bun__Timer__clearImmediate, c)
-pub(crate) fn clear_immediate_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+pub fn clear_immediate_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
     All::clear_immediate(global, id)
 }
 
 // HOST_EXPORT(Bun__Timer__clearTimeout, c)
-pub(crate) fn clear_timeout_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+pub fn clear_timeout_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
     All::clear_timeout(global, id)
 }
 
 // HOST_EXPORT(Bun__Timer__clearInterval, c)
-pub(crate) fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+pub fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
     All::clear_interval(global, id)
 }
 

@@ -58,6 +58,9 @@ pub struct Parser<'a> {
     pub block_bytes: Vec<u8>,
     pub buffer: Vec<u8>,
     pub emph_delims: Vec<EmphDelim>,
+    // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
+    // processing does not allocate a bracket-pair map per block.
+    pub bracket_pairs: Vec<(OFF, OFF)>,
 
     // Number of active containers
     pub n_containers: u32,
@@ -188,6 +191,7 @@ impl<'a> Parser<'a> {
             block_bytes: Vec::new(),
             buffer: Vec::new(),
             emph_delims: Vec::new(),
+            bracket_pairs: Vec::new(),
             n_containers: 0,
             current_block: None,
             current_block_lines: Vec::new(),

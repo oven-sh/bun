@@ -692,8 +692,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 
-  // Static SQLite: off on Apple (uses system), on elsewhere
-  const staticSqlite = partial.staticSqlite ?? !darwin;
+  // Static SQLite: on by default (embeds 3.53.0 for consistency across platforms)
+  const staticSqlite = partial.staticSqlite ?? true;
 
   // Static libatomic: on by default. Arch/Manjaro don't ship libatomic.a —
   // those users pass --static-libatomic=off. Not auto-detected: the link

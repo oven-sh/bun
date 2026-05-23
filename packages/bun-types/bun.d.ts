@@ -2596,20 +2596,13 @@ declare module "bun" {
      *
      * @param code The code to transpile
      */
-    transform(
-      code: Bun.StringOrBuffer,
-      loader?: JavaScriptLoader,
-    ): Promise<TranspilerTransformReturn<SM>>;
+    transform(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): Promise<TranspilerTransformReturn<SM>>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
      * @param code The code to transpile
      */
-    transformSync(
-      code: Bun.StringOrBuffer,
-      loader: JavaScriptLoader,
-      ctx: object,
-    ): TranspilerTransformReturn<SM>;
+    transformSync(code: Bun.StringOrBuffer, loader: JavaScriptLoader, ctx: object): TranspilerTransformReturn<SM>;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
@@ -2629,10 +2622,7 @@ declare module "bun" {
      *
      * @param code The code to transpile
      */
-    transformSync(
-      code: Bun.StringOrBuffer,
-      loader?: JavaScriptLoader,
-    ): TranspilerTransformReturn<SM>;
+    transformSync(code: Bun.StringOrBuffer, loader?: JavaScriptLoader): TranspilerTransformReturn<SM>;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.

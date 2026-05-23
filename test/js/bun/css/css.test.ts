@@ -7486,10 +7486,7 @@ describe("css tests", () => {
       "@font-palette-values --x{override-colors:99999 red}",
       "@font-palette-values --x{override-colors:99999 red}",
     );
-    minify_test(
-      "@font-palette-values --x{override-colors:-1 red}",
-      "@font-palette-values --x{override-colors:-1 red}",
-    );
+    minify_test("@font-palette-values --x{override-colors:-1 red}", "@font-palette-values --x{override-colors:-1 red}");
     // Fuzzer-minimized input: unterminated block with an overflowing index.
     minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
   });

@@ -1690,17 +1690,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.token == T::TColon && !opts.has_decorators() {
                     return Self::parse_labeled_stmt(p, opts, loc, expr.loc, ident.ref_);
                 }
-            }
 
-            if Self::IS_TYPESCRIPT_ENABLED {
-                if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
-                    // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
-                    // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the
-                    // common `SExpr` fall-through keeps a small stack frame.
-                    if let Some(stmt) =
-                        Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
-                    {
-                        return Ok(stmt);
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
+                        // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
+                        // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the
+                        // common `SExpr` fall-through keeps a small stack frame.
+                        if let Some(stmt) =
+                            Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
+                        {
+                            return Ok(stmt);
+                        }
                     }
                 }
             }

@@ -153,6 +153,47 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it("contextual keywords used as plain identifiers keep their statements", () => {
+      const exp = ts.expectPrinted_;
+
+      exp("declare = t => 0;", "declare = (t) => 0;\n");
+      exp("declare = (...t) => R;", "declare = (...t) => R;\n");
+      exp("declare.foo = 1;", "declare.foo = 1;\n");
+      exp("interface = t => 0;", "interface = (t) => 0;\n");
+      exp("type = t => 0;", "type = (t) => 0;\n");
+      exp("namespace = t => 0;", "namespace = (t) => 0;\n");
+      exp("module = t => 0;", "module = (t) => 0;\n");
+      exp("abstract = t => 0;", "abstract = (t) => 0;\n");
+      exp("global = t => 0;", "global = (t) => 0;\n");
+      exp(
+        "abstract = () => {}\nclass Foo { m() { return 1 } }",
+        "abstract = () => {};\n\nclass Foo {\n  m() {\n    return 1;\n  }\n}",
+      );
+
+      exp("declare const x: number", "");
+      exp("declare let x: number", "");
+      exp("declare function f(): void", "");
+      exp("declare class Foo {}", "");
+    });
+
+    it("scope tracking stays balanced when a contextual keyword starts a larger expression", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("declare = (...t) => R;e((a) => {(u=> uge);\r\n})", "declare = (...t) => R;\ne((a) => {});\n");
+      exp("declare = t => 0; () => () => 0", "declare = (t) => 0;\n");
+      exp("declare = function () {}; () => () => 0", "declare = function() {};\n");
+      exp("declare = t => 0; function f() { () => 0; }\nf();", "declare = (t) => 0;\nfunction f() {}\nf();\n");
+
+      exp(
+        "abstract = (t) => 0\nclass Foo { m() { return () => () => 0 } }",
+        "abstract = (t) => 0;\n\nclass Foo {\n  m() {\n    return () => () => 0;\n  }\n}",
+      );
+      err("type = (t) => 0 Foo = number; () => () => 0", 'Expected ";" but found "Foo"');
+      err("namespace = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
+      err("module = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
+    });
+
     it("should parse empty type parameters", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

@@ -677,6 +677,13 @@ describe("async write buffer lifetime", () => {
       expect(input.byteLength).toBe(64);
 
       await promise;
+
+      // Once the write completes the buffers are released and can be
+      // transferred again.
+      out.buffer.transfer();
+      input.buffer.transfer();
+      expect(out.buffer.detached).toBe(true);
+      expect(input.buffer.detached).toBe(true);
     } finally {
       deflate.close();
     }

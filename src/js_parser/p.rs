@@ -356,10 +356,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// hard-overflow. Same `MAX_STMT_DEPTH` rationale as `interchange/json.rs`.
     pub parse_stmt_depth: u32,
 
-    /// Set once `report_stack_overflow` has logged "Maximum call stack size
-    /// exceeded" so sibling subtrees that hit the same stack limit don't each
-    /// log a duplicate error. `Cell` because some reporters (`SideEffects::
-    /// to_boolean`) only hold `&P`.
     pub reported_stack_overflow: core::cell::Cell<bool>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
@@ -782,10 +778,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         unsafe { &mut *self.log.as_ptr() }
     }
 
-    /// Logs "Maximum call stack size exceeded" (once per parse) when a pass
-    /// that recurses over the AST runs out of stack. `_parse` halts with a
-    /// SyntaxError as soon as the log has errors, so callers only need to stop
-    /// recursing after calling this.
     pub fn report_stack_overflow(&self, loc: bun_ast::Loc) {
         if self.reported_stack_overflow.get() {
             return;
@@ -2537,9 +2529,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         replacement: Expr,
         replacement_can_be_removed: bool,
     ) -> Substitution {
-        // Recurses into the left side of every binary operator (among others),
-        // and those chains are built iteratively, so they can be deeper than
-        // the call stack allows; report the stack overflow instead of crashing.
         if !self.stack_check.is_safe_to_recurse() {
             self.report_stack_overflow(expr.loc);
             return Substitution::Failure(expr);
@@ -3608,11 +3597,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind: js_ast::scope::Kind,
         loc: bun_ast::Loc,
     ) -> Result<(), bun_core::Error> {
-        // After a stack-overflow bail the visit pass skips subtrees, so the
-        // scope entries the parse pass recorded for them are never consumed.
-        // Entries are in source order; re-sync by skipping ahead to the entry
-        // this push is asking for so the sanity check below doesn't panic on
-        // an already-failing parse.
         if self.reported_stack_overflow.get() {
             while let Some((head, rest)) = self.scope_order_to_visit.split_first() {
                 if head.loc.start == loc.start && head.scope_ref().kind == kind {
@@ -5885,11 +5869,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
-        // This walks arbitrarily deep ASTs; report the stack overflow instead
-        // of crashing. The parse fails with that error, so the answer is moot.
-        // Once the visit pass has bailed out, parts of the AST were never
-        // visited (identifier refs are still parse-time slices), so skip the
-        // analysis entirely rather than reading them.
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(expr.loc);
             return false;

@@ -3676,10 +3676,6 @@ it("Bun.Transpiler.transform stack overflows", async () => {
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
 });
 
-// Deeply nested expressions (chained prefix unary operators, nested call
-// arguments, nested array literals, ...) used to parse fine but then overflow
-// the native stack in the visit pass, killing the process with SIGSEGV instead
-// of reporting "Maximum call stack size exceeded" like other deep inputs do.
 it("deeply nested expressions error instead of crashing the process", () => {
   const script = `
     const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
@@ -3688,22 +3684,13 @@ it("deeply nested expressions error instead of crashing the process", () => {
       n => repeat("f(", n) + "1" + repeat(")", n),
       n => repeat("[", n) + "1" + repeat("]", n),
       n => "void " + repeat("- ", n) + "1",
-      // a scope-creating leaf inside the deep expression plus a sibling
-      // statement that pushes another scope
       n => repeat("[", n) + "() => 1" + repeat("]", n) + ";{ let x; }",
-      // sibling statements with identifiers that are only resolved if the
-      // visit pass reaches them
       n => repeat("[", n) + "1" + repeat("]", n) + "; someLongIdentifier + anotherIdentifier;",
-      // left-leaning chains are parsed/visited iteratively, then fed whole
-      // into the recursive side-effect/primitive-type analyses
       n => "void ((x" + repeat(" ?? x", n) + ") < 1)",
       n => "(a" + repeat(" && a", n) + ") == 1;",
       n => "f() ? 1 : g()" + repeat(" || g()", n) + ";",
-      // deeply nested destructuring patterns take the binding path, not the
-      // expression path
       n => "let " + repeat("[", n) + "x" + repeat("]", n) + " = y;",
     ];
-    // single-use symbol substitution under --minify walks the full chain
     const minifyShapes = [
       n => "function f(){let x = 1; return a" + repeat(" && a", n) + " && x}",
     ];
@@ -3711,9 +3698,6 @@ it("deeply nested expressions error instead of crashing the process", () => {
       try {
         transpiler.transformSync(src);
       } catch (e) {
-        // Either the parse/visit guard ("Maximum call stack size exceeded")
-        // or the printer guard ("StackOverflow Failed to print code") is an
-        // acceptable clean failure; anything else is a real error.
         if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
       }
     };
@@ -3749,16 +3733,10 @@ it("running a file with deeply nested unary operators does not crash the process
     env: bunEnv,
   });
 
-  // Depending on the available stack this either evaluates fine (exit 0) or
-  // reports a clean "Maximum call stack size exceeded" error (exit 1); it must
-  // never die from a signal or a crash handler exit code.
   expect(signalCode ?? undefined).toBeUndefined();
   expect([0, 1]).toContain(exitCode);
 });
 
-// Simplifying an unused ternary whose test is a comma expression joins the
-// surviving branch onto the comma's right side; it must not also append the
-// branch a second time (that would duplicate its side effects).
 it("does not duplicate the branch when simplifying an unused ternary with a comma test", () => {
   const transpiler = new Bun.Transpiler({ loader: "js" });
   expect(transpiler.transformSync("(f(), g()) ? 1 : h();").trim()).toBe("f(), g() || h();");

@@ -782,10 +782,6 @@ impl Expr {
     // `ConstParamTy` (Op.rs owns the enum); pass at runtime here. Revisit once
     // `Code` gains `ConstParamTy` — call sites are a handful of literal ops.
     pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
-        // Re-associating recurses once per level of same-op nesting in `b`;
-        // such chains are built iteratively and can be deeper than the call
-        // stack allows, so the recursion carries a stack check and falls back
-        // to the unflattened `a op b` shape when it is nearly exhausted.
         Self::join_with_left_associative_op_with_check(op, a, b, bun_core::StackCheck::init())
     }
 
@@ -805,8 +801,6 @@ impl Expr {
                         b,
                         stack_check,
                     );
-                    // `a` now ends with `… op b`; falling through would build
-                    // `a op b` on top of it and duplicate `b`'s side effects.
                     return a;
                 }
             }
@@ -2874,10 +2868,6 @@ impl Data {
     }
 
     pub fn known_primitive(&self) -> PrimitiveType {
-        // Recurses through `??`/`&&`/`||`/`+` operands, ternaries, and unary
-        // values. Those chains are built and visited iteratively, so they can
-        // be deeper than the call stack allows; answer `Unknown` (skip the
-        // optimization) instead of overflowing.
         self.known_primitive_with_check(bun_core::StackCheck::init())
     }
 

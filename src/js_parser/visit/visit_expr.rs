@@ -46,14 +46,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
-        // The visit pass uses noticeably more stack per AST level than the
-        // parse pass, so an expression that parsed under `parse_expr_common`'s
-        // stack check (e.g. tens of thousands of chained unary operators or
-        // nested calls) can still overflow here. Stop descending and report the
-        // same error the parse pass uses; `_parse` halts on logged errors right
-        // after the visit pass, so the partially-visited AST never gets printed.
-        // Once the overflow has been reported the whole pass is failing, so
-        // skip every remaining expression instead of re-approaching the limit.
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(e.loc);
             return;

@@ -1758,11 +1758,6 @@ pub mod __gated_printer {
 
         pub binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
 
-        /// `print_expr` recurses per AST level and its frames can be larger than
-        /// the parser's, so an AST that parsed fine can still exhaust the stack
-        /// here. When that's about to happen `print_expr` bails out and sets
-        /// this flag; the print entry points turn it into an error instead of
-        /// returning truncated output.
         pub stack_check: bun_core::StackCheck,
         pub stack_overflowed: bool,
 
@@ -3264,8 +3259,6 @@ pub mod __gated_printer {
             }
         }
 
-        /// Returns an error if `print_expr` had to bail out on a too-deep AST,
-        /// so callers don't hand back truncated output.
         pub fn check_stack_overflow(&self) -> Result<(), bun_core::Error> {
             if self.stack_overflowed {
                 return Err(bun_core::err!("StackOverflow"));

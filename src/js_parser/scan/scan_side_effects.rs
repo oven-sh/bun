@@ -147,12 +147,6 @@ impl SideEffects {
         if !p.options.features.dead_code_elimination {
             return Some(expr);
         }
-        // This walks arbitrarily deep ASTs; report the stack overflow instead
-        // of crashing. The parse fails with that error, so the value returned
-        // here never reaches the printer. Once the visit pass has bailed out,
-        // parts of the AST were never visited (identifier refs are still
-        // parse-time slices), so skip the analysis entirely rather than
-        // reading them.
         if !p.stack_check.is_safe_to_recurse() || p.reported_stack_overflow.get() {
             p.report_stack_overflow(expr.loc);
             return Some(expr);
@@ -747,9 +741,6 @@ impl SideEffects {
         loc: bun_ast::Loc,
         data: &ExprData,
     ) -> bool {
-        // Recurses through `&&`/`||`/`??` operands and ternary branches, which
-        // are built and visited iteratively and so can be deeper than the call
-        // stack allows; report the stack overflow instead of crashing.
         if !p.stack_check.is_safe_to_recurse() {
             p.report_stack_overflow(loc);
             return false;
@@ -908,10 +899,6 @@ impl SideEffects {
         if !p.options.features.dead_code_elimination {
             return Result::default();
         }
-        // Recurses through nested unary/binary operands; report the stack
-        // overflow instead of crashing. The parse fails with that error, so
-        // the "unknown" result returned here never affects emitted code.
-        // (`ExprData` carries no location, so report with an empty one.)
         if !p.stack_check.is_safe_to_recurse() {
             p.report_stack_overflow(bun_ast::Loc::EMPTY);
             return Result::default();

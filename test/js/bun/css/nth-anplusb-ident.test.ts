@@ -4,18 +4,10 @@ import { bunEnv, bunExe } from "harness";
 
 const { minifyTest } = cssInternals;
 
-// Regression test for an out-of-bounds read in the An+B (`:nth-child()`)
-// parser. The `<ident>` branch compares the user-supplied ident against the
-// keywords "even" / "odd" / "n" / "-n" / "n-" / "-n-" with a case-insensitive
-// helper backed by `strncasecmp(a, b, a.len)`. When the ident is longer than
-// the keyword (e.g. `Nn` vs `n`) the comparison read past the end of the
-// keyword literal, which AddressSanitizer reports as a global-buffer-overflow.
-// Found by fuzzing with the minimized input `:nth-child(Nn`.
+// An+B idents longer than the keyword literals ("n", "n-", ...) used to make the
+// case-insensitive comparison read past the keyword (found by fuzzing `:nth-child(Nn`).
 
 test("An+B idents longer than the keyword literals parse deterministically", () => {
-  // `n-<digits>` idents start with the same bytes as the "n" / "n-" keywords
-  // but are longer than both; they must fall through to the `<ident> =
-  // n-<digits>` production instead of reading past the keyword literals.
   expect(minifyTest(":nth-child(n-3) {width: 20px}", ":nth-child(n-3){width:20px}")).toBe(
     ":nth-child(n-3){width:20px}",
   );
@@ -25,16 +17,12 @@ test("An+B idents longer than the keyword literals parse deterministically", () 
   expect(minifyTest(":nth-last-child(n- 42) {width: 20px}", ":nth-last-child(n-42){width:20px}")).toBe(
     ":nth-last-child(n-42){width:20px}",
   );
-  // Still matches the keywords exactly (case-insensitively).
   expect(minifyTest(":nth-child(N) {width: 20px}", ":nth-child(n){width:20px}")).toBe(":nth-child(n){width:20px}");
-  // An ident that starts like a keyword but is not a valid An+B is a parse
-  // error, not a crash.
   expect(() => minifyTest(":nth-child(NN) {width: 20px}", "")).toThrow("Unexpected token");
 });
 
 test("fuzzer-minimized input: unterminated :nth-child( with an `Nn` ident", async () => {
-  // Exact fuzz input. Run in a child process so a crash in the parser shows up
-  // as a failed assertion here instead of killing the test runner.
+  // Run in a child process so a crash doesn't take down the test runner.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

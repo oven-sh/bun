@@ -3,7 +3,9 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "0d85951a31d3d04684e3e598589de065378c2c59";
+// TEMPORARY: preview build of oven-sh/WebKit#237 (per-item zstd compression
+// of ICU data). Replace with the real autobuild-<sha> once #237 lands.
+export const WEBKIT_VERSION = "autobuild-preview-pr-237-83b6a12f";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -42,7 +44,6 @@ export const WEBKIT_VERSION = "0d85951a31d3d04684e3e598589de065378c2c59";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Config } from "../config.ts";
-import { BuildError } from "../error.ts";
 import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
@@ -75,13 +76,6 @@ function prebuiltUrl(cfg: Config): string {
   const arch = cfg.arm64 ? "arm64" : "amd64";
   const name = `bun-webkit-${os}-${arch}${prebuiltSuffix(cfg)}`;
   const version = cfg.webkitVersion;
-  if (version.startsWith("autobuild-preview-") && !cfg.allowPreviewWebkit) {
-    throw new BuildError(
-      `WEBKIT_VERSION is pinned to a PR preview tag (${version}). ` +
-        `Preview prebuilts are deleted when the PR closes. ` +
-        `Pass --allow-preview-webkit=on to build anyway, or revert to a stable hash before merging.`,
-    );
-  }
   const tag = version.startsWith("autobuild-") ? version : `autobuild-${version}`;
   return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
 }

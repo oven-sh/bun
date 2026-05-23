@@ -1758,6 +1758,14 @@ pub mod __gated_printer {
 
         pub binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
 
+        /// `print_expr` recurses per AST level and its frames can be larger than
+        /// the parser's, so an AST that parsed fine can still exhaust the stack
+        /// here. When that's about to happen `print_expr` bails out and sets
+        /// this flag; the print entry points turn it into an error instead of
+        /// returning truncated output.
+        pub stack_check: bun_core::StackCheck,
+        pub stack_overflowed: bool,
+
         pub was_lazy_export: bool,
         // PORT NOTE: Zig used `if (!may_have_module_info) void else ?*ModuleInfo` — in Rust we always
         // carry the Option and gate at call sites with MAY_HAVE_MODULE_INFO.
@@ -3256,7 +3264,21 @@ pub mod __gated_printer {
             }
         }
 
+        /// Returns an error if `print_expr` had to bail out on a too-deep AST,
+        /// so callers don't hand back truncated output.
+        pub fn check_stack_overflow(&self) -> Result<(), bun_core::Error> {
+            if self.stack_overflowed {
+                return Err(bun_core::err!("StackOverflow"));
+            }
+            Ok(())
+        }
+
         pub fn print_expr(&mut self, expr: Expr, level: Level, in_flags: ExprFlagSet) {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+
             let mut flags = in_flags;
 
             match &expr.data {
@@ -7079,6 +7101,8 @@ pub mod __gated_printer {
                 symbol_counter: 0,
                 temporary_bindings: Vec::new(),
                 binary_expression_stack: Vec::new(),
+                stack_check: bun_core::StackCheck::init(),
+                stack_overflowed: false,
                 was_lazy_export: false,
                 module_info: None,
             };
@@ -8147,6 +8171,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
             printer.print_semicolon_if_needed();
         }
     }
+    printer.check_stack_overflow()?;
 
     let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
         && printer.module_info.is_some();
@@ -8244,6 +8269,7 @@ pub fn print_json<W: WriterTrait>(
     printer.binary_expression_stack = Vec::new();
 
     printer.print_expr(expr, js_ast::op::Level::Lowest, ExprFlagSet::empty());
+    printer.check_stack_overflow()?;
     printer.writer.get_error()?;
     printer.writer.done()?;
 
@@ -8392,6 +8418,10 @@ pub fn print_with_writer_and_platform<
         }
     }
 
+    if let Err(err) = printer.check_stack_overflow() {
+        return PrintResult::Err(err);
+    }
+
     if let Err(err) = printer.writer.done() {
         // In bundle_v2, this is backed by an arena, but incremental uses
         // `dev.allocator` for this buffer, so it must be freed.
@@ -8472,6 +8502,7 @@ pub fn print_common_js<
             printer.print_semicolon_if_needed();
         }
     }
+    printer.check_stack_overflow()?;
 
     // Add a couple extra newlines at the end
     printer.writer.print_slice(b"\n\n");

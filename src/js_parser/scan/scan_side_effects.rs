@@ -147,6 +147,11 @@ impl SideEffects {
         if !p.options.features.dead_code_elimination {
             return Some(expr);
         }
+        // This walks arbitrarily deep ASTs; keep the expression as-is rather
+        // than overflowing the stack.
+        if !p.stack_check.is_safe_to_recurse() {
+            return Some(expr);
+        }
         // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
         // `expr.data` *by value* so `expr` itself is never borrowed across a
         // recursive `simplify_unused_expr(p, ..)` call. Mutations to boxed
@@ -881,6 +886,11 @@ impl SideEffects {
         exp: &ExprData,
     ) -> Result {
         if !p.options.features.dead_code_elimination {
+            return Result::default();
+        }
+        // Recurses through nested unary/binary operands; answer "unknown"
+        // rather than overflowing the stack.
+        if !p.stack_check.is_safe_to_recurse() {
             return Result::default();
         }
         match exp {

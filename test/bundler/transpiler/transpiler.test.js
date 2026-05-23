@@ -3676,6 +3676,57 @@ it("Bun.Transpiler.transform stack overflows", async () => {
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
 });
 
+// Deeply nested expressions (chained prefix unary operators, nested call
+// arguments, nested array literals, ...) used to parse fine but then overflow
+// the native stack in the visit pass, killing the process with SIGSEGV instead
+// of reporting "Maximum call stack size exceeded" like other deep inputs do.
+it("deeply nested expressions error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      n => repeat("- ", n) + "1",
+      n => repeat("f(", n) + "1" + repeat(")", n),
+      n => repeat("[", n) + "1" + repeat("]", n),
+      n => "void " + repeat("- ", n) + "1",
+    ];
+    for (const shape of shapes) {
+      for (const n of [4000, 20000, 100000]) {
+        try {
+          new Bun.Transpiler({ loader: "js" }).transformSync(shape(n));
+        } catch (e) {
+          if (!String(e?.message).includes("Maximum call stack size exceeded")) throw e;
+        }
+      }
+    }
+    console.log("depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+});
+
+it("running a file with deeply nested unary operators does not crash the process", () => {
+  const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";
+  const { exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", code],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  // Depending on the available stack this either evaluates fine or reports a
+  // clean "Maximum call stack size exceeded" error; it must never die from a
+  // signal.
+  expect(signalCode ?? undefined).toBeUndefined();
+  expect(exitCode).not.toBeNull();
+});
+
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {
   const transpiler = new Bun.Transpiler({ loader: "tsx" });
 

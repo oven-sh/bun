@@ -46,6 +46,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+        // The visit pass uses noticeably more stack per AST level than the
+        // parse pass, so an expression that parsed under `parse_expr_common`'s
+        // stack check (e.g. tens of thousands of chained unary operators or
+        // nested calls) can still overflow here. Stop descending and report the
+        // same error the parse pass uses; `_parse` halts on logged errors right
+        // after the visit pass, so the partially-visited AST never gets printed.
+        if !self.stack_check.is_safe_to_recurse() {
+            if !self.reported_visit_stack_overflow {
+                self.reported_visit_stack_overflow = true;
+                self.log().add_error(
+                    Some(self.source),
+                    e.loc,
+                    b"Maximum call stack size exceeded",
+                );
+            }
+            return;
+        }
+
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
             self.log()
                 .add_error(Some(self.source), e.loc, b"Invalid assignment target");

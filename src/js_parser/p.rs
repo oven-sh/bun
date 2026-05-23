@@ -356,6 +356,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// hard-overflow. Same `MAX_STMT_DEPTH` rationale as `interchange/json.rs`.
     pub parse_stmt_depth: u32,
 
+    /// Set once the visit pass has reported "Maximum call stack size exceeded"
+    /// so sibling subtrees that hit the same stack limit don't each log a
+    /// duplicate error. See `visit_expr_in_out`.
+    pub reported_visit_stack_overflow: bool,
+
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
     /// enabled inside each enum body block since TypeScript requires numeric
@@ -5845,6 +5850,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
+        // This walks arbitrarily deep ASTs; answer conservatively rather than
+        // overflowing the stack.
+        if !self.stack_check.is_safe_to_recurse() {
+            return false;
+        }
         match &expr.data {
             js_ast::ExprData::ENull(_)
             | js_ast::ExprData::EUndefined(_)
@@ -9203,6 +9213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log,
             stack_check: bun_core::StackCheck::init(),
             parse_stmt_depth: 0,
+            reported_visit_stack_overflow: false,
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

@@ -950,22 +950,6 @@ impl Expr {
     }
 }
 
-// TODO(refactor): jsonStringify protocol — replace with serde or a custom trait.
-// `Serializable` is its payload shape.
-
-impl Expr {
-    // PORT NOTE: Zig's `jsonStringify` fed `Serializable` to `std.json.stringify`.
-    // The Rust port emits the same shape directly (no serde dependency).
-    pub fn json_stringify(self_: &Expr, writer: &mut impl fmt::Write) -> fmt::Result {
-        let tag: &'static str = self_.data.tag().into();
-        write!(
-            writer,
-            "{{\"type\":\"{}\",\"object\":\"expr\",\"loc\":{}}}",
-            tag, self_.loc.start
-        )
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Static state
 // ───────────────────────────────────────────────────────────────────────────
@@ -1295,11 +1279,6 @@ impl Tag {
             Tag::EClass | Tag::EFunction | Tag::EArrow => b"function",
             _ => return None,
         })
-    }
-
-    // TODO(port): jsonStringify — serde or custom JSON writer
-    pub fn json_stringify(self_: Tag, writer: &mut impl fmt::Write) -> fmt::Result {
-        writer.write_str(<&'static str>::from(self_))
     }
 
     pub fn is_array(self) -> bool {

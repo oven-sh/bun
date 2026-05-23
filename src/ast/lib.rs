@@ -137,16 +137,6 @@ impl ImportKind {
         matches!(self, Self::Require | Self::RequireResolve)
     }
 
-    // TODO(port): Zig `jsonStringify` uses the std.json writer protocol; replace
-    // with a `serde::Serialize` impl or the project's JSON writer trait. For now
-    // emit the quoted string directly — every tag name is a plain ASCII
-    // identifier with no chars that need JSON escaping.
-    pub fn json_stringify<W: core::fmt::Write>(self, writer: &mut W) -> core::fmt::Result {
-        writer.write_char('"')?;
-        writer.write_str(<&'static str>::from(self))?;
-        writer.write_char('"')
-    }
-
     pub fn is_from_css(self) -> bool {
         self == Self::AtConditional
             || self == Self::At
@@ -711,28 +701,6 @@ impl Loc {
     #[inline]
     pub fn is_empty(self) -> bool {
         self.eql(Self::EMPTY)
-    }
-
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        writer.write_i32(self.start)
-    }
-}
-
-// TODO(port): `writer: anytype` for jsonStringify — the Zig calls
-// `writer.write(value)` for arbitrary `value`. Model as a single generic
-// `write<V>` until the real serializer exists.
-pub trait JsonWriter {
-    fn write<V: ?Sized>(&mut self, value: &V) -> core::result::Result<(), bun_core::Error>;
-
-    // Legacy specialised entry points (Loc/Range) — default to `write`.
-    #[inline]
-    fn write_i32(&mut self, v: i32) -> core::result::Result<(), bun_core::Error> {
-        self.write(&v)
-    }
-    #[inline]
-    fn write_i32_pair(&mut self, v: [i32; 2]) -> core::result::Result<(), bun_core::Error> {
-        self.write(&v)
     }
 }
 
@@ -1516,10 +1484,6 @@ impl Range {
     pub fn end_i(self) -> usize {
         // std.math.lossyCast(usize, ...) — saturates negatives to 0.
         (self.loc.start + self.len).max(0) as usize
-    }
-
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
-        writer.write_i32_pair([self.loc.start, self.len + self.loc.start])
     }
 }
 

@@ -303,12 +303,4 @@ pub enum Kind {
     ClassStaticInit,
 }
 
-impl Kind {
-    // TODO(port): std.json.Stringify protocol — confirm Rust-side json writer trait.
-    pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // Zig: writer.write(@tagName(self)) — std.json writer wraps strings in quotes.
-        write!(writer, "\"{}\"", <&'static str>::from(self))
-    }
-}
-
 // ported from: src/js_parser/ast/Scope.zig

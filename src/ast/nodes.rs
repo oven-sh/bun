@@ -9,7 +9,6 @@ pub use bun_collections::VecExt as _VecExtReexport;
 use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
-use crate::JsonWriter;
 use crate::char_freq::CHAR_FREQ_COUNT;
 use crate::{Binding, E, Expr, Index, Ref, Scope, Stmt, symbol};
 
@@ -546,16 +545,6 @@ pub enum ImportItemStatus {
     Missing,
 }
 
-impl ImportItemStatus {
-    // TODO(port): narrow error set
-    pub fn json_stringify(
-        self,
-        writer: &mut impl JsonWriter,
-    ) -> core::result::Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(self))
-    }
-}
-
 #[repr(u8)] // Zig: enum(u2)
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -566,16 +555,6 @@ pub enum AssignTarget {
     Replace = 1,
     /// "a += b"
     Update = 2,
-}
-
-impl AssignTarget {
-    // TODO(port): narrow error set
-    pub fn json_stringify(
-        self,
-        writer: &mut impl JsonWriter,
-    ) -> core::result::Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(self))
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -720,16 +699,6 @@ pub enum OptionalChain {
     /// "a?.b.c" => ".c" is OptionalChain::Continuation
     /// "(a?.b).c" => ".c" is None
     Continuation,
-}
-
-impl OptionalChain {
-    // TODO(port): narrow error set
-    pub fn json_stringify(
-        self,
-        writer: &mut impl JsonWriter,
-    ) -> core::result::Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(self))
-    }
 }
 
 pub struct EnumValue {
@@ -916,14 +885,6 @@ impl ExportsKind {
             self,
             Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs
         )
-    }
-
-    // TODO(port): narrow error set
-    pub fn json_stringify(
-        self,
-        writer: &mut impl JsonWriter,
-    ) -> core::result::Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(self))
     }
 
     // `to_module_type()` lives in `bun_options_types` as
@@ -1180,16 +1141,6 @@ impl Default for Part {
     }
 }
 
-impl Part {
-    // TODO(port): narrow error set
-    pub fn json_stringify(
-        &self,
-        writer: &mut impl JsonWriter,
-    ) -> core::result::Result<(), bun_core::Error> {
-        writer.write(self.stmts.slice())
-    }
-}
-
 #[derive(Clone, Copy)]
 pub enum StmtOrExpr {
     Stmt(Stmt),
@@ -1284,16 +1235,6 @@ pub enum StrictModeKind {
     ImplicitStrictModeExport,
     ImplicitStrictModeTopLevelAwait,
     ImplicitStrictModeClass,
-}
-
-impl StrictModeKind {
-    // TODO(port): narrow error set
-    pub fn json_stringify(
-        self,
-        writer: &mut impl JsonWriter,
-    ) -> core::result::Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(self))
-    }
 }
 
 pub fn printmem(args: fmt::Arguments<'_>) {

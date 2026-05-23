@@ -263,11 +263,11 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             && Child::SAME_REPR
         {
             // PORT NOTE: when the types are identical the Vec is returned as-is.
-            // SAFETY: `SAME_REPR` ⇒ same layout; `from_raw_parts` round-trip.
             let (ptr, len, cap) = {
                 let mut v = ManuallyDrop::new(unmanaged);
                 (v.as_mut_ptr(), v.len(), v.capacity())
             };
+            // SAFETY: `SAME_REPR` ⇒ same layout; `from_raw_parts` round-trip.
             let reused: Vec<Child::ZigType> =
                 unsafe { Vec::from_raw_parts(ptr.cast::<Child::ZigType>(), len, cap) };
             return Self::ZigType::from_unmanaged(reused);
@@ -339,6 +339,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
                 new_capacity
             };
 
+            let items_ptr = storage_ptr.cast::<Child::ZigType>();
             // SAFETY: `storage_ptr` is aligned to ≥ `MI_MAX_ALIGN_SIZE` ≥
             // `align_of::<ZigType>()`; the first `length` slots were just written
             // with valid `ZigType` values; the block is mimalloc-owned and the
@@ -346,7 +347,6 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             // guard above gates entry to this path), so `Vec`'s eventual dealloc
             // — even with `ZigType`'s layout — routes to `mi_free`, which
             // ignores layout.
-            let items_ptr = storage_ptr.cast::<Child::ZigType>();
             let new_unmanaged: Vec<Child::ZigType> =
                 unsafe { Vec::from_raw_parts(items_ptr, length, new_capacity) };
             return Self::ZigType::from_unmanaged(new_unmanaged);

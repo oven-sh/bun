@@ -296,7 +296,7 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
     }
 
     fn then(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let mut promise = self.promise.swap();
+        let promise = self.promise.swap();
         if let Some(err) = self.err {
             promise
                 .reject_with_async_stack(global_this, Ok(create_crypto_error(global_this, err)))?;

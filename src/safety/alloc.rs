@@ -15,8 +15,12 @@
 
 use core::fmt;
 
-use bun_alloc::{NullableAllocator, StdAllocator, basic};
-use bun_core::{Output, StoredTrace};
+#[cfg(debug_assertions)]
+use bun_alloc::NullableAllocator;
+use bun_alloc::{StdAllocator, basic};
+use bun_core::Output;
+#[cfg(debug_assertions)]
+use bun_core::StoredTrace;
 
 /// Returns true if `alloc` definitely has a valid `.ptr`.
 fn has_ptr(alloc: StdAllocator) -> bool {
@@ -33,6 +37,7 @@ fn has_ptr(alloc: StdAllocator) -> bool {
 }
 
 /// Returns true if the allocators are definitely different.
+#[cfg(debug_assertions)]
 fn guaranteed_mismatch(alloc1: StdAllocator, alloc2: StdAllocator) -> bool {
     if !core::ptr::eq(alloc1.vtable, alloc2.vtable) {
         return true;
@@ -128,6 +133,7 @@ impl CheckedAllocator {
     }
 
     pub fn set(&mut self, alloc: StdAllocator) {
+        let _ = alloc;
         if !ENABLED {
             return;
         }
@@ -147,6 +153,7 @@ impl CheckedAllocator {
     }
 
     pub fn assert_eq(&self, alloc: StdAllocator) {
+        let _ = alloc;
         if !ENABLED {
             return;
         }
@@ -191,7 +198,8 @@ impl CheckedAllocator {
     ///
     /// If you only have a `StdAllocator`, see `MimallocArena::Borrowed::downcast`.
     #[inline]
-    pub fn transfer_ownership(&mut self, new_alloc: impl AsMimallocArenaAllocator) {
+    pub fn transfer_ownership(&mut self, new_alloc: &impl AsMimallocArenaAllocator) {
+        let _ = new_alloc;
         if !ENABLED {
             return;
         }
@@ -219,7 +227,7 @@ impl CheckedAllocator {
             }
             panic!(
                 "cannot transfer ownership from non-MimallocArena (old vtable is {:p})",
-                old_allocator.vtable as *const _,
+                std::ptr::from_ref(old_allocator.vtable),
             );
         }
     }
@@ -234,8 +242,5 @@ pub trait AsMimallocArenaAllocator {
 }
 
 pub const ENABLED: bool = cfg!(debug_assertions);
-
-#[allow(dead_code)]
-const TRACES_ENABLED: bool = cfg!(debug_assertions);
 
 // ported from: src/safety/alloc.zig

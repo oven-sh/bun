@@ -1,5 +1,4 @@
 use crate::postgres::postgres_types::Int4;
-use crate::postgres::protocol::decoder_wrap::DecoderWrap;
 use crate::postgres::protocol::new_reader::NewReader;
 
 #[derive(Default)]
@@ -18,7 +17,7 @@ impl ParameterDescription {
         let _ = remaining_bytes;
 
         let count = reader.short()?;
-        let n = usize::try_from(count.max(0)).expect("int cast");
+        let n = usize::from(count);
         let mut parameters: Box<[Int4]> = vec![Int4::default(); n].into_boxed_slice();
 
         let data = reader.read(n * core::mem::size_of::<Int4>())?;

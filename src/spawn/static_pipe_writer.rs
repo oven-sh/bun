@@ -258,7 +258,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
     }
 
-    pub fn on_error(&mut self, err: bun_sys::Error) {
+    pub fn on_error(&mut self, err: &bun_sys::Error) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onError(err={})",

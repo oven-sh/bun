@@ -10,9 +10,8 @@ use bun_core::{Environment, Error, Global, Output, err};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dotenv;
 use bun_http as http;
-use bun_http::HeaderBuilder;
 use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::{self as install, Dependency, Lockfile, Npm, PackageManager, Subcommand};
+use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
@@ -50,7 +49,7 @@ fn json_get_string_cloned<'b>(
 }
 
 use crate::Command;
-use crate::cli::pack_command::{self as pack, PackCommand as Pack};
+use crate::cli::pack_command::{self as pack};
 
 pub struct ReadmeInfo {
     pub filename: Vec<u8>,
@@ -177,7 +176,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     "{}: {}",
                     (
                         bstr::BStr::new(message),
-                        bstr::BStr::new(Archive::error_string(archive)),
+                        // SAFETY: `archive` is the live `read_new()` handle returned in the Err arm.
+                        bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
                     ),
                 );
                 Global::crash();
@@ -197,7 +197,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         "{}: {}",
                         (
                             bstr::BStr::new(message),
-                            bstr::BStr::new(Archive::error_string(archive)),
+                            // SAFETY: `archive` is the live `read_new()` handle returned in the Err arm.
+                            bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
                         ),
                     );
                     Global::crash();
@@ -247,13 +248,19 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     if maybe_package_json_contents.is_none()
                         && strings::eql_case_insensitive_t(filename, b"package.json")
                     {
-                        maybe_package_json_contents = match next.read_entry_data(iter.archive)? {
+                        // SAFETY: `iter.archive` is the live `read_new()` handle this iterator
+                        // was constructed from; `next` is the entry it just yielded.
+                        let r = next.read_entry_data(unsafe { &*iter.archive })?;
+                        maybe_package_json_contents = match r {
                             ArchiveIterResult::Err { archive, message } => {
                                 Output::err_generic(
                                     "{}: {}",
                                     (
                                         bstr::BStr::new(message),
-                                        bstr::BStr::new(Archive::error_string(archive)),
+                                        // SAFETY: `archive` is the same live handle returned in the Err arm.
+                                        bstr::BStr::new(
+                                            Archive::opaque_ref(archive).error_string(),
+                                        ),
                                     ),
                                 );
                                 Global::crash();
@@ -262,13 +269,18 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         };
                     } else if maybe_readme.is_none() && is_readme_os_path(filename) {
                         // First matching README wins — libarchive iteration is one-shot.
-                        let bytes = match next.read_entry_data(iter.archive)? {
+                        // SAFETY: same as the package.json arm above.
+                        let r = next.read_entry_data(unsafe { &*iter.archive })?;
+                        let bytes = match r {
                             ArchiveIterResult::Err { archive, message } => {
                                 Output::err_generic(
                                     "{}: {}",
                                     (
                                         bstr::BStr::new(message),
-                                        bstr::BStr::new(Archive::error_string(archive)),
+                                        // SAFETY: `archive` is the same live handle returned in the Err arm.
+                                        bstr::BStr::new(
+                                            Archive::opaque_ref(archive).error_string(),
+                                        ),
                                     ),
                                 );
                                 Global::crash();
@@ -305,7 +317,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     "{}: {}",
                     (
                         bstr::BStr::new(message),
-                        bstr::BStr::new(Archive::error_string(archive)),
+                        // SAFETY: `archive` is the live `read_new()` handle returned in the Err arm.
+                        bstr::BStr::new(Archive::opaque_ref(archive).error_string()),
                     ),
                 );
                 Global::crash();
@@ -404,14 +417,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         sha512.r#final(&mut integrity);
         drop(sha512);
 
-        // `json_mod::parse_package_json_utf8` returns the value-shaped
-        // `bun_ast::Expr`; `normalized_package` (and `print_json`)
-        // operate on the full parser-shaped `bun_ast::Expr`. Lift via the
-        // documented `From<bun_ast::Expr>` bridge — same conversion
-        // `WorkspacePackageJSONCache::get_with_path` applies before stashing
-        // `MapEntry.root`. The thread-local `data::Store` has already been
-        // initialised by `PackageManager::init`.
-        let mut json: Expr = Expr::from(json);
+        let mut json = json;
         let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
             &package_name,
@@ -468,6 +474,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
+        // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
+        // `log` borrows the disjoint `.log` field, so the aliased `&mut` here mirrors
+        // Zig's freely-aliased `*PackageManager`.
         let load_from_disk_result =
             lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
 
@@ -561,7 +570,7 @@ impl PublishCommand {
             let context = match Context::<false>::from_tarball_path(
                 ctx,
                 manager,
-                &cli.positionals[1],
+                cli.positionals[1],
             ) {
                 Ok(c) => c,
                 Err(err) => {
@@ -1195,7 +1204,6 @@ impl PublishCommand {
                     "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
                 ));
 
-                const OFFSET: usize = 0;
                 const PADDING: usize = 1;
 
                 let horizontal = if Output::enable_ansi_colors_stdout() {
@@ -1231,18 +1239,12 @@ impl PublishCommand {
 
                 let width: usize = (PADDING * 2) + auth_url_str.len();
 
-                for _ in 0..OFFSET {
-                    Output::print(format_args!(" "));
-                }
                 Output::print(format_args!("{}", top_left));
                 for _ in 0..width {
                     Output::print(format_args!("{}", horizontal));
                 }
                 Output::print(format_args!("{}\n", top_right));
 
-                for _ in 0..OFFSET {
-                    Output::print(format_args!(" "));
-                }
                 Output::print(format_args!("{}", vertical));
                 for _ in 0..PADDING {
                     Output::print(format_args!(" "));
@@ -1256,9 +1258,6 @@ impl PublishCommand {
                 }
                 Output::print(format_args!("{}\n", vertical));
 
-                for _ in 0..OFFSET {
-                    Output::print(format_args!(" "));
-                }
                 Output::print(format_args!("{}", bottom_left));
                 for _ in 0..width {
                     Output::print(format_args!("{}", horizontal));
@@ -1855,7 +1854,7 @@ impl PublishCommand {
                             // Dupe into the process-lifetime CLI arena (bytes flow into long-lived `E::String` nodes).
                             let interned: &'static [u8] = crate::cli::cli_dupe(&join);
                             // SAFETY: NUL terminator at interned[join_len] (copied from `join`).
-                            let join_z = ZStr::from_buf(&interned[..], join_len);
+                            let join_z = ZStr::from_buf(interned, join_len);
                             let name_slice_start = join_len - name.len();
                             // SAFETY: name is the trailing segment of `interned`, NUL-terminated
                             let name_z = unsafe {
@@ -2099,13 +2098,12 @@ impl PublishCommand {
         {
             write!(
                 &mut buf,
-                ",\"_attachments\":{{\"{}\":{{\"content_type\":\"{}\",\"data\":\"",
+                ",\"_attachments\":{{\"{}\":{{\"content_type\":\"application/octet-stream\",\"data\":\"",
                 pack::fmt_tarball_filename(
                     &ctx.package_name,
                     &ctx.package_version,
                     pack::TarballNameStyle::Raw
                 ),
-                "application/octet-stream",
             )
             .ok();
 

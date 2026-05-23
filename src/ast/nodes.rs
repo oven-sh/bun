@@ -1,12 +1,12 @@
 //! Core AST node payload types and arena-slice helpers.
-#![allow(non_snake_case, dead_code, clippy::all)]
+#![allow(non_snake_case)]
 
 use core::fmt;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
 pub use bun_collections::VecExt as _VecExtReexport;
-use bun_collections::{ArrayHashMap, MultiArrayList, StringHashMap};
+use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
 use crate::JsonWriter;
@@ -37,6 +37,8 @@ pub struct StoreRef<T>(NonNull<T>);
 // `T: Sync` to share), and a `Send`-moved `StoreRef` yields `&mut T` via
 // `DerefMut` (needs `T: Send`).
 unsafe impl<T: Send> Send for StoreRef<T> {}
+// SAFETY: see the `Send` impl above — same single-threaded bump-arena contract;
+// bounded on `T: Sync` so the `Deref`-yielded `&T` is sound to share.
 unsafe impl<T: Sync> Sync for StoreRef<T> {}
 
 impl<T> StoreRef<T> {
@@ -165,6 +167,8 @@ pub struct StoreStr {
 // `static` Prefill tables; callers must not actually share a Store across
 // threads (unchanged contract).
 unsafe impl Send for StoreStr {}
+// SAFETY: see the `Send` impl above — `StoreStr` is a raw `(ptr, len)` into a
+// single-threaded bump arena; never actually shared across threads.
 unsafe impl Sync for StoreStr {}
 
 impl StoreStr {
@@ -335,9 +339,14 @@ impl<T> Clone for StoreSlice<T> {
 
 // SAFETY: same rationale as `StoreStr` — points into a single-threaded bump
 // arena. Asserted Send/Sync so payload types can sit in `static` Prefill
-// tables; callers must not actually share a Store across threads.
-unsafe impl<T> Send for StoreSlice<T> {}
-unsafe impl<T> Sync for StoreSlice<T> {}
+// tables; callers must not actually share a Store across threads. Bounded on
+// `T: Send` so the impl can't smuggle a non-`Send` payload across a thread
+// boundary through the safe `slice()`/`Deref` accessors.
+unsafe impl<T: Send> Send for StoreSlice<T> {}
+// SAFETY: see the `Send` impl above — `StoreSlice` is a raw `(ptr, len)` into a
+// single-threaded bump arena; never actually shared across threads. Bounded on
+// `T: Sync` for the same reason `Send` is bounded on `T: Send`.
+unsafe impl<T: Sync> Sync for StoreSlice<T> {}
 
 impl<T> StoreSlice<T> {
     pub const EMPTY: StoreSlice<T> = StoreSlice {
@@ -562,10 +571,10 @@ pub enum AssignTarget {
 impl AssignTarget {
     // TODO(port): narrow error set
     pub fn json_stringify(
-        &self,
+        self,
         writer: &mut impl JsonWriter,
     ) -> core::result::Result<(), bun_core::Error> {
-        writer.write(<&'static str>::from(*self))
+        writer.write(<&'static str>::from(self))
     }
 }
 
@@ -626,18 +635,10 @@ impl Default for ClauseItem {
     }
 }
 
-#[derive(Clone)]
+// EnumMap<_, u32>::default() zero-fills (Zig: SlotNamespace.CountsArray.initFill(0)).
+#[derive(Copy, Clone, Default)]
 pub struct SlotCounts {
     pub slots: symbol::SlotNamespaceCountsArray,
-}
-
-impl Default for SlotCounts {
-    fn default() -> Self {
-        // EnumMap<_, u32>::default() zero-fills (Zig: SlotNamespace.CountsArray.initFill(0)).
-        Self {
-            slots: symbol::SlotNamespaceCountsArray::default(),
-        }
-    }
 }
 
 impl SlotCounts {
@@ -978,14 +979,14 @@ impl DeclaredSymbolList {
 
     pub fn append_list(
         &mut self,
-        other: DeclaredSymbolList,
+        other: &DeclaredSymbolList,
     ) -> core::result::Result<(), bun_alloc::AllocError> {
         self.ensure_unused_capacity(other.len())?;
         self.append_list_assume_capacity(other);
         Ok(())
     }
 
-    pub fn append_list_assume_capacity(&mut self, other: DeclaredSymbolList) {
+    pub fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
         // PERF(port): was assume_capacity
         self.entries.append_list_assume_capacity(&other.entries);
     }
@@ -1079,7 +1080,7 @@ impl Default for Dependency {
     }
 }
 
-pub type DependencyList = Vec<Dependency>;
+pub type DependencyList = bun_alloc::AstVec<Dependency>;
 
 pub type ExprList = Vec<Expr>;
 pub type StmtList = Vec<Stmt>;
@@ -1129,10 +1130,9 @@ pub struct Part {
     /// tree shaking isn't enabled.
     pub force_tree_shaking: bool,
 
-    /// This is true if this file has been marked as live by the tree shaking
-    /// algorithm.
-    pub is_live: bool,
-
+    // Liveness moved out to a sidecar `LinkerGraph::parts_live` bitset so the
+    // tree-shaking recursion's hot "already visited?" check touches a few KB
+    // of bitset words instead of striding across every 272-byte `Part`.
     pub tag: PartTag,
 }
 
@@ -1155,8 +1155,13 @@ pub enum PartTag {
 
 // Zig: std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false)
 // TODO(port): bun_collections::ArrayHashMap must accept a custom hasher ctx (RefHashCtx).
-pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use>;
-pub type PartSymbolPropertyUseMap = ArrayHashMap<Ref, StringHashMap<symbol::Use>>;
+pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
+pub type PartSymbolPropertyUseMap = ArrayHashMap<
+    Ref,
+    StringHashMap<symbol::Use, bun_alloc::AstAlloc>,
+    AutoContext,
+    bun_alloc::AstAlloc,
+>;
 
 impl Default for Part {
     fn default() -> Self {
@@ -1167,10 +1172,9 @@ impl Default for Part {
             declared_symbols: DeclaredSymbolList::default(),
             symbol_uses: PartSymbolUseMap::default(),
             import_symbol_property_uses: PartSymbolPropertyUseMap::default(),
-            dependencies: DependencyList::default(),
+            dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
             force_tree_shaking: false,
-            is_live: false,
             tag: PartTag::None,
         }
     }
@@ -1186,6 +1190,7 @@ impl Part {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum StmtOrExpr {
     Stmt(Stmt),
     Expr(Expr),
@@ -1224,7 +1229,7 @@ impl StmtOrExpr {
 
 pub struct NamedImport {
     /// Parts within this file that use this import
-    pub local_parts_with_uses: Vec<u32>,
+    pub local_parts_with_uses: bun_alloc::AstVec<u32>,
 
     /// The original export name from the source module being imported.
     /// Examples:
@@ -1247,6 +1252,20 @@ pub struct NamedImport {
     /// It's useful to flag exported imports because if they are in a TypeScript
     /// file, we can't tell if they are a type or a value.
     pub is_exported: bool,
+}
+
+impl Default for NamedImport {
+    fn default() -> Self {
+        Self {
+            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+            alias: None,
+            alias_loc: None,
+            namespace_ref: None,
+            import_record_index: 0,
+            alias_is_star: false,
+            is_exported: false,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]

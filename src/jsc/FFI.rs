@@ -102,7 +102,7 @@ pub fn jsvalue_to_uint64(value: EncodedJSValue) -> u64 {
 #[inline]
 pub fn jsvalue_to_int64(value: EncodedJSValue) -> i64 {
     if jsvalue_is_int32(value) {
-        return jsvalue_to_int32(value) as c_longlong as i64;
+        return jsvalue_to_int32(value) as c_longlong;
     }
     if jsvalue_is_number(value) {
         return jsvalue_to_double(value) as i64;
@@ -146,7 +146,7 @@ pub fn uint64_to_jsvalue(global_object: *mut c_void, val: u64) -> EncodedJSValue
 #[inline]
 pub fn int64_to_jsvalue(global_object: *mut c_void, val: i64) -> EncodedJSValue {
     if val >= -(2147483648 as c_longlong) && val <= 2147483648 as c_longlong {
-        return int32_to_jsvalue((val as c_int) as i32);
+        return int32_to_jsvalue(val as c_int);
     }
     if val >= -(9007199254740991 as c_longlong) && val <= 9007199254740991 as c_longlong {
         return double_to_jsvalue(val as f64);
@@ -184,14 +184,14 @@ pub fn boolean_to_jsvalue(val: bool) -> EncodedJSValue {
     res.as_int64 = if (val as c_int) != 0 {
         ((2 | 4) | 1) as i64
     } else {
-        ((2 | 4) | 0) as i64
+        (2 | 4) as i64
     };
     res
 }
 
 #[inline]
 pub fn jsvalue_to_int32(val: EncodedJSValue) -> i32 {
-    (val.bits() as c_int) as i32
+    val.bits() as c_int
 }
 
 #[inline]

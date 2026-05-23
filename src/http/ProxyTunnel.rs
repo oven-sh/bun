@@ -1,20 +1,17 @@
 use core::cell::Cell;
-use core::ffi::CStr;
 use core::ptr::{NonNull, addr_of, addr_of_mut};
 use core::sync::atomic::Ordering;
 
 use bun_core::scoped_log;
-use bun_core::{Error, ZStr, err};
+use bun_core::{Error, err};
 use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::HTTPSocket;
 use crate::internal_state::{HTTPStage, Stage};
 use crate::ssl_config::SSLConfig;
-use crate::ssl_wrapper::{
-    self, Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError,
-};
-use crate::{AlpnOffer, GenHttpContext, HTTPClient};
+use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
+use crate::{AlpnOffer, HTTPClient};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
 
@@ -249,31 +246,28 @@ fn on_open(ctx: *mut HTTPClient) {
 
         // PORT NOTE: Zig `configureHTTPClient` is `configureHTTPClientWithALPN(ssl, host, .h1)`;
         // the Rust port already exposes the ALPN form in `crate::configure_http_client_with_alpn`.
+        // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
+        let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
         if bun_core::is_ip_address(_hostname) {
-            crate::configure_http_client_with_alpn(
-                ssl_ptr.as_ptr(),
-                core::ptr::null(),
-                AlpnOffer::H1,
-            );
+            // SNI is null (IP literal — no SNI).
+            crate::configure_http_client_with_alpn(ssl, core::ptr::null(), AlpnOffer::H1);
         } else {
             // SAFETY: TEMP_HOSTNAME is only accessed from the single HTTP thread.
             let temp_hostname = crate::temp_hostname();
             if _hostname.len() < temp_hostname.len() {
                 temp_hostname[.._hostname.len()].copy_from_slice(_hostname);
                 temp_hostname[_hostname.len()] = 0;
+                // `temp_hostname` is NUL-terminated and outlives this call.
                 crate::configure_http_client_with_alpn(
-                    ssl_ptr.as_ptr(),
+                    ssl,
                     temp_hostname.as_ptr().cast(),
                     AlpnOffer::H1,
                 );
             } else {
                 let mut owned = _hostname.to_vec();
                 owned.push(0);
-                crate::configure_http_client_with_alpn(
-                    ssl_ptr.as_ptr(),
-                    owned.as_ptr().cast(),
-                    AlpnOffer::H1,
-                );
+                // `owned` is NUL-terminated and outlives this call.
+                crate::configure_http_client_with_alpn(ssl, owned.as_ptr().cast(), AlpnOffer::H1);
                 // owned drops here (was: defer if hostname_needs_free free(hostname))
             }
         }
@@ -411,14 +405,12 @@ fn on_handshake(
                 return;
             };
 
+            // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's
+            // SSLWrapper for the open inner TLS connection (NonNull invariant).
+            let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
             match ProxyTunnel::socket_of(proxy_nn) {
                 &Socket::Ssl(socket) => {
-                    if !this.check_server_identity::<true>(
-                        socket,
-                        handshake_error,
-                        ssl_ptr.as_ptr(),
-                        false,
-                    ) {
+                    if !this.check_server_identity::<true>(socket, handshake_error, ssl, false) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"
@@ -431,12 +423,7 @@ fn on_handshake(
                     }
                 }
                 &Socket::Tcp(socket) => {
-                    if !this.check_server_identity::<false>(
-                        socket,
-                        handshake_error,
-                        ssl_ptr.as_ptr(),
-                        false,
-                    ) {
+                    if !this.check_server_identity::<false>(socket, handshake_error, ssl, false) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"
@@ -618,7 +605,7 @@ impl ProxyTunnel {
     pub fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
         socket: HTTPSocket<IS_SSL>,
-        ssl_options: SSLConfig,
+        ssl_options: &SSLConfig,
         start_payload: &[u8],
     ) {
         let proxy_tunnel = bun_core::heap::into_raw(Box::new(ProxyTunnel::default()));
@@ -629,7 +616,7 @@ impl ProxyTunnel {
         // We always request the cert so we can verify it and also we manually abort the connection if the hostname doesn't match
         let custom_options = ssl_options.as_usockets_for_client_verification();
         match ProxyTunnelWrapper::init_from_options(
-            custom_options,
+            &custom_options,
             true,
             SSLWrapperHandlers {
                 on_open,
@@ -655,6 +642,8 @@ impl ProxyTunnel {
         // Move the sole strong ref (refcount == 1 from `ProxyTunnel::default`)
         // into the client field; no bump (matches the bare `this.proxy_tunnel =
         // tunnel` in http.zig — Zig's `RefPtr.create` returns the owned ref).
+        // SAFETY: `proxy_nn` is the fresh `heap::into_raw` allocation above with
+        // `ref_count == 1`; `adopt_ref` takes ownership of that sole +1.
         this.proxy_tunnel = Some(unsafe { RefPtr::adopt_ref(proxy_nn.as_ptr()) });
         proxy_tunnel_ref.socket = Socket::from_generic::<IS_SSL>(socket);
         // End the named &mut borrows before calling into the SSLWrapper. start()

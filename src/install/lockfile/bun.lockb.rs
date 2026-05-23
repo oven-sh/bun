@@ -521,15 +521,12 @@ pub fn load(
                 lockfile.trusted_dependencies = Some(Default::default());
                 let td = lockfile.trusted_dependencies.as_mut().unwrap();
                 td.ensure_total_capacity(trusted_dependencies_hashes.len())?;
-
-                // SAFETY: capacity reserved above; keys are fully overwritten
-                // by `copy_from_slice` before `re_index` reads them; value type
-                // is `()` so its column needs no init.
-                unsafe {
-                    td.set_entries_len(trusted_dependencies_hashes.len());
+                // The binary lockfile only stores the truncated hashes, not the
+                // names they were computed from. The empty value is the
+                // "name unknown, hash-only match" sentinel.
+                for &hash in &trusted_dependencies_hashes {
+                    td.put_assume_capacity(hash, Box::<[u8]>::default());
                 }
-                td.keys_mut().copy_from_slice(&trusted_dependencies_hashes);
-                td.re_index()?;
             } else if next_num == HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG {
                 // trusted dependencies exists in package.json but is an empty array.
                 lockfile.trusted_dependencies = Some(Default::default());
@@ -660,7 +657,6 @@ pub fn load(
                         package_manager: manager.as_deref_mut(),
                     };
                     let value = dependency::to_dependency(*dep, &mut context);
-                    drop(context);
                     // PERF(port): was assume_capacity
                     catalogs.default.put_assume_capacity_context(
                         *dep_name,
@@ -688,7 +684,7 @@ pub fn load(
                     } else {
                         let entry = catalogs
                             .groups
-                            .get_or_put_adapted(*catalog_name, StringCtxAdapter(&str_ctx))?;
+                            .get_or_put_adapted(catalog_name, &StringCtxAdapter(&str_ctx))?;
                         if !entry.found_existing {
                             *entry.key_ptr = *catalog_name;
                             *entry.value_ptr = super::catalog_map::Map::default();
@@ -706,7 +702,6 @@ pub fn load(
                             package_manager: manager.as_deref_mut(),
                         };
                         let value = dependency::to_dependency(*dep, &mut context);
-                        drop(context);
                         // PERF(port): was assume_capacity
                         group.put_assume_capacity_context(
                             *dep_name,

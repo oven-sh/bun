@@ -542,12 +542,12 @@ impl ProxyEnvSlots {
     pub fn clone_from(&mut self, parent: &ProxyEnvSlots) {
         // PORT NOTE: reshaped for borrowck — Zig iterated fields via @typeInfo;
         // here Arc::clone bumps the refcount.
-        self.HTTP_PROXY = parent.HTTP_PROXY.clone();
-        self.http_proxy = parent.http_proxy.clone();
-        self.HTTPS_PROXY = parent.HTTPS_PROXY.clone();
-        self.https_proxy = parent.https_proxy.clone();
-        self.NO_PROXY = parent.NO_PROXY.clone();
-        self.no_proxy = parent.no_proxy.clone();
+        self.HTTP_PROXY.clone_from(&parent.HTTP_PROXY);
+        self.http_proxy.clone_from(&parent.http_proxy);
+        self.HTTPS_PROXY.clone_from(&parent.HTTPS_PROXY);
+        self.https_proxy.clone_from(&parent.https_proxy);
+        self.NO_PROXY.clone_from(&parent.NO_PROXY);
+        self.no_proxy.clone_from(&parent.no_proxy);
     }
 
     /// Overwrite proxy-var entries in an env map with this storage's reffed

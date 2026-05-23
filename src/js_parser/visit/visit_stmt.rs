@@ -1,30 +1,16 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    unreachable_code,
-    unused_unsafe
-)]
 #![warn(unused_must_use)]
 use crate::lexer as js_lexer;
-use crate::p::{P, ReactRefreshExportKind, null_expr_data};
+use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::{
-    PrependTempRefsOpts, ReactRefresh, Ref, RelocateVars, RelocateVarsMode, SideEffects, StmtsKind,
+    PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
-use bun_ast::G::Decl;
-use bun_ast::expr::Data as ExprData;
-use bun_ast::expr::PrimitiveType;
 use bun_ast::flags;
-use bun_ast::scope::Kind as ScopeKind;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::ts;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 use bun_collections::VecExt;
 use bun_core::Error;
-use bun_core::strings;
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
 type StmtList<'bump> = BumpVec<'bump, Stmt>;
@@ -34,23 +20,6 @@ use bun_ast::StmtNodeList;
 // ─── file-local arena helpers ────────────────────────────────────────────────
 // Slice fields are `StoreStr` / `StoreSlice<T>` (see ast/mod.rs). All slices
 // are arena-owned and outlive the visit pass.
-
-// Helper: visit a `StmtNodeList` arena slice in-place. Mirrors the
-// `ListManaged.fromOwnedSlice` → `visitStmts` → `.items` pattern from Zig: copy the
-// slice into a fresh arena-backed Vec, visit (which may grow/shrink it), then
-// leak the result back into the bump arena and return the new view.
-#[inline]
-fn visit_stmt_slice<'a, const TS: bool, const SO: bool>(
-    p: &mut P<'a, TS, SO>,
-    slice: StmtNodeList,
-    kind: StmtsKind,
-) -> StmtNodeList {
-    let src: &[Stmt] = slice.slice();
-    let mut list: StmtList<'a> = BumpVec::with_capacity_in(src.len(), p.arena);
-    list.extend_from_slice(src);
-    p.visit_stmts(&mut list, kind).expect("unreachable");
-    StmtNodeList::from_bump(list)
-}
 
 // ─── arena slice ↔ BumpVec helpers ──────────────────────────────────────────
 // `StmtNodeList = StoreSlice<Stmt>` (arena-owned). Zig's `ListManaged.fromOwnedSlice`
@@ -340,7 +309,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // TODO(port): dead branch in Zig — `data.items.len = j;` runs first, so
             // `j == 0 and data.items.len > 0` is always false. Mirrored bug-for-bug.
-            #[allow(unreachable_code)]
             if j == 0 && data.items.len() > 0 {
                 return Ok(());
             }
@@ -1858,21 +1826,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match data.yes.data {
                 StmtData::SExpr(yes_expr) => {
                     if yes_expr.value.is_missing() {
-                        if data.no.is_none() {
-                            if can_remove_test {
+                        if let Some(no) = data.no {
+                            if no.is_missing_expr() && can_remove_test {
                                 return Ok(());
                             }
-                        } else if data.no.unwrap().is_missing_expr() && can_remove_test {
+                        } else if can_remove_test {
                             return Ok(());
                         }
                     }
                 }
                 StmtData::SEmpty(_) => {
-                    if data.no.is_none() {
-                        if can_remove_test {
+                    if let Some(no) = data.no {
+                        if no.is_missing_expr() && can_remove_test {
                             return Ok(());
                         }
-                    } else if data.no.unwrap().is_missing_expr() && can_remove_test {
+                    } else if can_remove_test {
                         return Ok(());
                     }
                 }
@@ -2150,6 +2118,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Switch,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test_);
+        let mut lowered_using = false;
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)
                 .expect("unreachable");
@@ -2164,16 +2133,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     //                 p.warnAboutTypeofAndString(s.Test, *c.Value)
                 }
                 let mut _stmts = stmts_to_list(p.arena, cases[i].body);
-                p.visit_stmts(&mut _stmts, StmtsKind::None)
+                p.visit_stmts(&mut _stmts, StmtsKind::SwitchStmt)
                     .expect("unreachable");
                 cases[i].body = list_to_stmts(_stmts);
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
+
+            for i in 0..cases.len() {
+                if p.should_lower_using_declarations(cases[i].body.slice()) {
+                    lowered_using = true;
+                    break;
+                }
+            }
+            if lowered_using {
+                let mut ctx = crate::p::LowerUsingDeclarationsContext::init(p)?;
+                for i in 0..cases.len() {
+                    ctx.scan_stmts(p, cases[i].body.slice_mut());
+                }
+                let switch_stmt = p.arena.alloc_slice_copy(&[*stmt]);
+                stmts.extend_from_slice(&ctx.finalize(p, switch_stmt, false));
+            }
+
             p.pop_scope();
         }
         // TODO: duplicate case checker
 
-        stmts.push(*stmt);
+        if !lowered_using {
+            stmts.push(*stmt);
+        }
         Ok(())
     }
 

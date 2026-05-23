@@ -65,11 +65,11 @@ pub fn main() -> Result<(), bun_core::Error> {
         end_of_line += 1; // include the \n
 
         if let Some(replace) = SYMBOL_REPLACEMENTS.get(symbol_name) {
-            write!(&mut out, " = {};\n", BStr::new(replace)).expect("unreachable");
+            writeln!(&mut out, " = {};", BStr::new(replace)).expect("unreachable");
         } else if in_bytes[i..].starts_with(b" = __MINGW_NAME_AW(") {
-            write!(
+            writeln!(
                 &mut out,
-                " = @compileError(\"Use '{}W' instead.\");\n",
+                " = @compileError(\"Use '{}W' instead.\");",
                 BStr::new(symbol_name),
             )
             .expect("unreachable");

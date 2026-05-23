@@ -1,11 +1,5 @@
 #![feature(adt_const_params, generic_const_exprs, allocator_api)]
-#![allow(
-    unused,
-    non_snake_case,
-    non_camel_case_types,
-    non_upper_case_globals,
-    clippy::all
-)]
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![allow(incomplete_features)]
 #![warn(unreachable_pub)]

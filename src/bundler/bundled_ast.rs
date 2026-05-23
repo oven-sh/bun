@@ -6,8 +6,6 @@
 //!
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
-use bun_collections::VecExt;
-
 // `bun_css` is a T2 peer crate that does not depend on `bun_js_parser`, so the
 // dep is acyclic. Typing the `css` field concretely removes the `*mut c_void`
 // erasure that forced every bundler/linker call site to `.cast()` back.
@@ -32,7 +30,7 @@ pub type CssCol = Option<CssAstRef>;
 use bun_ast::import_record;
 use bun_core::strings;
 
-use bun_ast::ast_result::{self, Ast};
+use bun_ast::ast_result::Ast;
 use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
 use bun_ast::{part, symbol};
 
@@ -86,9 +84,7 @@ pub struct BundledAst<'arena> {
     // is conveniently fully parallelized.
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
-    // PORT NOTE: Ast owns Box<[u32]>; matching it here avoids the &'arena↔Box
-    // re-alloc on init/to_ast (Zig's `[]u32` is a fat-ptr move either way).
-    pub export_star_import_records: Box<[u32]>,
+    pub export_star_import_records: bun_alloc::AstVec<u32>,
 
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 
@@ -128,7 +124,7 @@ bun_collections::multi_array_columns! {
         tla_check: TlaCheck,
         named_imports: NamedImports,
         named_exports: NamedExports,
-        export_star_import_records: Box<[u32]>,
+        export_star_import_records: bun_alloc::AstVec<u32>,
         top_level_symbols_to_parts: TopLevelSymbolToParts,
         commonjs_named_exports: CommonJSNamedExports,
         redirect_import_record_index: u32,
@@ -184,7 +180,7 @@ impl<'arena> BundledAst<'arena> {
             tla_check: TlaCheck::default(),
             named_imports: NamedImports::default(),
             named_exports: NamedExports::default(),
-            export_star_import_records: Box::default(),
+            export_star_import_records: bun_alloc::AstAlloc::vec(),
             top_level_symbols_to_parts: TopLevelSymbolToParts::default(),
             commonjs_named_exports: CommonJSNamedExports::default(),
             redirect_import_record_index: u32::MAX,

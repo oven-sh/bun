@@ -35,7 +35,10 @@ pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
 /// Trait providing the ordering relation for `Intrusive`.
 /// Implement this on your `Context` type (or a ZST if no context is needed).
 pub trait HeapContext<T> {
-    fn less(&self, a: *mut T, b: *mut T) -> bool;
+    /// # Safety
+    /// `a` and `b` must be non-null, aligned, and point to live nodes currently
+    /// owned by the intrusive heap. Only called from `Intrusive` internals.
+    unsafe fn less(&self, a: *mut T, b: *mut T) -> bool;
 }
 
 /// Trait giving generic access to the embedded `IntrusiveField` on `T`.

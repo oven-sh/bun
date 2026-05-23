@@ -31,8 +31,8 @@ pub struct EditOptions {
 }
 
 #[inline]
-fn arena_str<'a>(arena: &'a bun_alloc::Arena, bytes: Vec<u8>) -> &'a [u8] {
-    arena.alloc_slice_copy(&bytes)
+fn arena_str<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
+    arena.alloc_slice_copy(bytes)
 }
 #[inline]
 fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
@@ -99,18 +99,18 @@ pub fn edit_trusted_dependencies(
 ) -> Result<(), bun_alloc::AllocError> {
     let mut len = names_to_add.len();
 
-    let original_trusted_dependencies: Vec<Expr> = 'brk: {
-        if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-            if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-                break 'brk arr.items.slice().to_vec();
-            }
+    let mut trusted_dependencies: &[Expr] = &[];
+    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
+            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
+            // this function; lifetime erased per the parser's `Str` convention.
+            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
         }
-        Vec::new()
-    };
+    }
 
     for i in 0..names_to_add.len() {
         let name = &names_to_add[i];
-        for item in original_trusted_dependencies.iter() {
+        for item in trusted_dependencies.iter() {
             if let bun_ast::ExprData::EString(s) = &item.data {
                 if s.eql_bytes(name) {
                     names_to_add.swap(i, len - 1);
@@ -118,15 +118,6 @@ pub fn edit_trusted_dependencies(
                     break;
                 }
             }
-        }
-    }
-
-    let mut trusted_dependencies: &[Expr] = &[];
-    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
-            // this function; lifetime erased per the parser's `Str` convention.
-            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
         }
     }
 
@@ -203,15 +194,14 @@ pub fn edit_trusted_dependencies(
             .len_u32()
             == 0
     {
-        let mut root_properties: Vec<G::Property> = Vec::with_capacity(1);
-        root_properties.push(G::Property {
+        let root_properties: Vec<G::Property> = vec![G::Property {
             key: Some(Expr::init(
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                 bun_ast::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
             ..Default::default()
-        });
+        }];
 
         *package_json = Expr::init(
             E::Object {
@@ -357,7 +347,7 @@ pub fn edit_update_no_args(
                                     bstr::BStr::new(&version_literal[0..at_index])
                                 )
                                 .unwrap();
-                                arena_str(arena, v)
+                                arena_str(arena, &v)
                             } else {
                                 b"latest"
                             };
@@ -515,7 +505,7 @@ pub fn edit_update_no_args(
                                             .unwrap();
                                             dep.value = Some(Expr::allocate(
                                                 arena,
-                                                E::EString::init(arena_str(arena, v)),
+                                                E::EString::init(arena_str(arena, &v)),
                                                 bun_ast::Loc::EMPTY,
                                             ));
                                             break 'updated;
@@ -526,7 +516,7 @@ pub fn edit_update_no_args(
 
                                     dep.value = Some(Expr::allocate(
                                         arena,
-                                        E::EString::init(arena_str(arena, new_version)),
+                                        E::EString::init(arena_str(arena, &new_version)),
                                         bun_ast::Loc::EMPTY,
                                     ));
                                     break 'updated;
@@ -572,31 +562,23 @@ pub fn edit(
     // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
     // Try to use the existing spot in the dependencies list if possible
     {
-        let original_trusted_dependencies: Vec<Expr> = 'brk: {
-            if !options.add_trusted_dependencies {
-                break 'brk Vec::new();
-            }
-            if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-                if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-                    // not modifying
-                    break 'brk arr.items.slice().to_vec();
-                }
-            }
-            Vec::new()
-        };
-
         if options.add_trusted_dependencies {
-            // Iterate backwards to avoid index issues when removing items
-            let mut i: usize = manager.trusted_deps_to_add_to_package_json.len();
-            while i > 0 {
-                i -= 1;
-                let trusted_package_name = &manager.trusted_deps_to_add_to_package_json[i];
-                for item in original_trusted_dependencies.iter() {
-                    if let bun_ast::ExprData::EString(s) = &item.data {
-                        if s.eql_bytes(trusted_package_name) {
-                            // PORT NOTE: reshaped for borrowck — drop return value (was allocator.free)
-                            let _ = manager.trusted_deps_to_add_to_package_json.swap_remove(i);
-                            break;
+            if let Some(query) = current_package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+                if let bun_ast::ExprData::EArray(arr) = query.expr.data {
+                    // Iterate backwards to avoid index issues when removing items
+                    let mut i: usize = manager.trusted_deps_to_add_to_package_json.len();
+                    while i > 0 {
+                        i -= 1;
+                        let trusted_package_name = &manager.trusted_deps_to_add_to_package_json[i];
+                        for item in arr.items.slice() {
+                            if let bun_ast::ExprData::EString(s) = &item.data {
+                                if s.eql_bytes(trusted_package_name) {
+                                    // PORT NOTE: reshaped for borrowck — drop return value (was allocator.free)
+                                    let _ =
+                                        manager.trusted_deps_to_add_to_package_json.swap_remove(i);
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -1225,11 +1207,11 @@ pub fn edit(
                                             bstr::BStr::new(&new_version)
                                         )
                                         .unwrap();
-                                        break 'npm arena_str(arena, v);
+                                        break 'npm arena_str(arena, &v);
                                     }
                                 }
 
-                                break 'npm arena_str(arena, new_version);
+                                break 'npm arena_str(arena, &new_version);
                             }
                         }
                         if request.version.tag == dependency::Tag::DistTag
@@ -1270,11 +1252,11 @@ pub fn edit(
                                         bstr::BStr::new(&new_version)
                                     )
                                     .unwrap();
-                                    break 'npm arena_str(arena, v);
+                                    break 'npm arena_str(arena, &v);
                                 }
                             }
 
-                            break 'npm arena_str(arena, new_version);
+                            break 'npm arena_str(arena, &new_version);
                         }
 
                         arena_dup(arena, request.version.literal.slice(request.version_buf()))

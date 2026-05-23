@@ -1,6 +1,5 @@
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use core::mem::offset_of;
 use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
@@ -595,13 +594,16 @@ pub fn compute_chunks(
                     .flags
                     .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
                 {
-                    chunk.template.data = bv2
-                        .transpiler_for_target(Target::Browser)
-                        .options
-                        .entry_naming
-                        .clone();
+                    chunk.template.data.clone_from(
+                        &bv2.transpiler_for_target(Target::Browser)
+                            .options
+                            .entry_naming,
+                    );
                 } else {
-                    chunk.template.data = bv2.transpiler().options.entry_naming.clone();
+                    chunk
+                        .template
+                        .data
+                        .clone_from(&bv2.transpiler().options.entry_naming);
                 }
             }
         } else {
@@ -613,13 +615,16 @@ pub fn compute_chunks(
                     .flags
                     .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
                 {
-                    chunk.template.data = bv2
-                        .transpiler_for_target(Target::Browser)
-                        .options
-                        .chunk_naming
-                        .clone();
+                    chunk.template.data.clone_from(
+                        &bv2.transpiler_for_target(Target::Browser)
+                            .options
+                            .chunk_naming,
+                    );
                 } else {
-                    chunk.template.data = bv2.transpiler().options.chunk_naming.clone();
+                    chunk
+                        .template
+                        .data
+                        .clone_from(&bv2.transpiler().options.chunk_naming);
                 }
             }
         }
@@ -662,7 +667,6 @@ pub fn compute_chunks(
                         &mut real_path_buf.0,
                     );
                 };
-                let _close = bun_sys::CloseOnDrop::file(&dir_file);
 
                 match dir_file.get_path(&mut real_path_buf) {
                     Ok(p) => break 'dir p,

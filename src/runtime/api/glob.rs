@@ -487,9 +487,7 @@ impl Glob {
             bun_sys::Result::Ok(()) => {}
         }
 
-        let matched_paths = glob_walk_result_to_js(&mut glob_walker, global_this);
-
-        matched_paths
+        glob_walk_result_to_js(&mut glob_walker, global_this)
     }
 
     #[bun_jsc::host_fn(method)]

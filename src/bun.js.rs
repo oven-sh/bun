@@ -53,8 +53,10 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     // `defer Output.flush()` — RAII guard flushes buffered stderr on every exit path.
     let _flush = Output::flush_guard();
 
-    // SAFETY: `vm.log` is set in `init`.
     if let Some(mut p) = vm.log {
+        // SAFETY: `vm.log` is set during `VirtualMachine::init` to the VM-owned log and
+        // remains valid for the lifetime of `vm`; the `&mut VirtualMachine` borrow above
+        // guarantees exclusive access to it here.
         let _ = unsafe { p.as_mut() }.print(std::ptr::from_mut(writer));
     }
 }

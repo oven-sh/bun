@@ -1,4 +1,3 @@
-#![allow(unused_imports, dead_code, unused_macros)]
 #![warn(unused_must_use)]
 use crate as css;
 use crate::css_properties::custom::UnparsedProperty;
@@ -7,8 +6,8 @@ use crate::css_values::length::Length;
 use crate::properties::{Property, PropertyId, PropertyIdTag};
 use crate::targets::Browsers;
 use crate::{
-    DeclarationList, Feature, Parser, ParserError, PrintErr, Printer, PropertyCategory,
-    PropertyHandlerContext, Result as CssResult, SmallList, Targets,
+    DeclarationList, Feature, Parser, PrintErr, Printer, PropertyCategory, PropertyHandlerContext,
+    Result as CssResult, SmallList, Targets,
 };
 use bun_alloc::ArenaVecExt as _;
 
@@ -133,10 +132,6 @@ where
                 dest.write_str(b" ")?;
             }
             self.color.to_css(dest)?;
-            #[allow(unused_assignments)]
-            {
-                needs_space = true;
-            }
         }
         Ok(())
     }
@@ -151,8 +146,7 @@ where
         + for<'b> css::generics::DeepClone<'b>
         + css::generics::CssEql,
 {
-    fn get_fallbacks(&mut self, arena: &Bump, targets: Targets) -> SmallList<Self, 2> {
-        use css::generics::DeepClone as _;
+    fn get_fallbacks(&mut self, arena: &Bump, targets: &Targets) -> SmallList<Self, 2> {
         let fallbacks = self.color.get_fallbacks(arena, targets);
         // PERF(port): was arena bulk-free (fallbacks.deinit) — profile if it shows up on a hot path
         let mut out: SmallList<Self, 2> = SmallList::init_capacity(fallbacks.len());
@@ -205,9 +199,10 @@ where
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A [`<line-style>`](https://drafts.csswg.org/css-backgrounds/#typedef-line-style) value, used in the `border-style` property.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)] // TODO(port): provides eql/hash/parse/to_css/deep_clone
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)] // TODO(port): provides eql/hash/parse/to_css/deep_clone
 pub enum LineStyle {
     /// No border.
+    #[default]
     None,
     /// Similar to `none` but with different rules for tables.
     Hidden,
@@ -230,14 +225,8 @@ pub enum LineStyle {
 }
 
 impl LineStyle {
-    pub fn is_compatible(&self, _: Browsers) -> bool {
+    pub fn is_compatible(self, _: &Browsers) -> bool {
         true
-    }
-}
-
-impl Default for LineStyle {
-    fn default() -> Self {
-        LineStyle::None
     }
 }
 
@@ -246,11 +235,12 @@ impl Default for LineStyle {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A value for the [border-width](https://www.w3.org/TR/css-backgrounds-3/#border-width) property.
-#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
+#[derive(Clone, Default, PartialEq, css::Parse, css::ToCss)]
 pub enum BorderSideWidth {
     /// A UA defined `thin` value.
     Thin,
     /// A UA defined `medium` value.
+    #[default]
     Medium,
     /// A UA defined `thick` value.
     Thick,
@@ -260,7 +250,7 @@ pub enum BorderSideWidth {
 
 impl BorderSideWidth {
     // blocked_on: Length::is_compatible
-    pub fn is_compatible(&self, browsers: Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &Browsers) -> bool {
         match self {
             BorderSideWidth::Length(len) => len.is_compatible(browsers),
             _ => true,
@@ -274,12 +264,6 @@ impl BorderSideWidth {
 }
 crate::css_eql_partialeq!(BorderSideWidth);
 
-impl Default for BorderSideWidth {
-    fn default() -> Self {
-        BorderSideWidth::Medium
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // ImplFallbacks (Zig: `pub fn ImplFallbacks(comptime T: type) type`)
 // ──────────────────────────────────────────────────────────────────────────
@@ -292,7 +276,7 @@ macro_rules! impl_fallbacks {
             pub fn get_fallbacks(
                 &mut self,
                 arena: &Bump,
-                targets: Targets,
+                targets: &Targets,
             ) -> SmallList<$T, 2> {
                 let _ = arena;
                 let mut fallbacks = ColorFallbackKind::empty();
@@ -354,6 +338,7 @@ define_rect_shorthand! {
     bottom: BorderBottomStyle,
     left: BorderLeftStyle
 }
+impl Eq for BorderStyle {}
 
 define_rect_shorthand! {
     /// A value for the [border-width](https://drafts.csswg.org/css-backgrounds/#propdef-border-width) shorthand property.
@@ -414,6 +399,7 @@ define_size_shorthand! {
     start: BorderBlockStartStyle,
     end: BorderBlockEndStyle
 }
+impl Eq for BorderBlockStyle {}
 
 define_size_shorthand! {
     /// A value for the [border-block-width](https://drafts.csswg.org/css-logical/#propdef-border-block-width) shorthand property.
@@ -437,6 +423,7 @@ define_size_shorthand! {
     start: BorderInlineStartStyle,
     end: BorderInlineEndStyle
 }
+impl Eq for BorderInlineStyle {}
 
 define_size_shorthand! {
     /// A value for the [border-inline-width](https://drafts.csswg.org/css-logical/#propdef-border-inline-width) shorthand property.
@@ -464,12 +451,9 @@ impl BorderShorthand {
     }
 
     // `border: anytype` — any GenericBorder<S, P>
-    pub fn set_border<S: for<'a> css::DeepClone<'a>, const P: u8>(
-        &mut self,
-        arena: &Bump,
-        border: &GenericBorder<S, P>,
-    ) where
-        S: Into<LineStyle>,
+    pub fn set_border<S, const P: u8>(&mut self, arena: &Bump, border: &GenericBorder<S, P>)
+    where
+        S: for<'a> css::DeepClone<'a> + Into<LineStyle>,
     {
         // TODO(port): Zig accepted `anytype`; all callers pass GenericBorder<LineStyle, _>.
         self.width = Some(border.width.deep_clone(arena));
@@ -670,6 +654,22 @@ mod border_handler_body {
     // PORT NOTE: hoisted above `impl BorderHandler` — macro_rules! is order-
     // sensitive and the flush_category!() callsites in `flush()` need these.
 
+    // Route the large `Property` enum construction through a non-inlined
+    // callee so each temporary lives in the helper's frame, not in
+    // `flush_logical`'s 146 KB monolith (clippy::large_stack_frames).
+    #[inline(never)]
+    fn dest_push_with(dest: &mut DeclarationList, mk: impl FnOnce() -> Property) {
+        dest.push(mk());
+    }
+    #[inline(never)]
+    fn ctx_add_logical_with(
+        ctx: &mut PropertyHandlerContext,
+        mk: impl FnOnce() -> (Property, Property),
+    ) {
+        let (a, b) = mk();
+        ctx.add_logical_rule(a, b);
+    }
+
     struct FlushContext<'a, 'bump, 'ctx> {
         // PORT NOTE: Zig stored `self: *BorderHandler`; we only need flushed_properties
         // here because the per-side BorderShorthand pointers are passed separately.
@@ -695,26 +695,35 @@ mod border_handler_body {
         ($f:expr, BorderLeft, BorderRight, $val:expr) => {{
             let __val: BorderLeft = $val;
             let f = &mut *$f;
-            f.ctx.add_logical_rule(
-                Property::BorderLeft(__val.clone_as(f.arena)),
-                Property::BorderRight(__val.clone_as(f.arena)),
-            );
+            let arena = f.arena;
+            ctx_add_logical_with(f.ctx, || {
+                (
+                    Property::BorderLeft(__val.clone_as(arena)),
+                    Property::BorderRight(__val.clone_as(arena)),
+                )
+            });
         }};
         ($f:expr, BorderRight, BorderLeft, $val:expr) => {{
             let __val: BorderRight = $val;
             let f = &mut *$f;
-            f.ctx.add_logical_rule(
-                Property::BorderRight(__val.clone_as(f.arena)),
-                Property::BorderLeft(__val.clone_as(f.arena)),
-            );
+            let arena = f.arena;
+            ctx_add_logical_with(f.ctx, || {
+                (
+                    Property::BorderRight(__val.clone_as(arena)),
+                    Property::BorderLeft(__val.clone_as(arena)),
+                )
+            });
         }};
         ($f:expr, $ltr:ident, $rtl:ident, $val:expr) => {{
             let __val = $val;
             let f = &mut *$f;
-            f.ctx.add_logical_rule(
-                Property::$ltr(__val.deep_clone(f.arena)),
-                Property::$rtl(__val.deep_clone(f.arena)),
-            );
+            let arena = f.arena;
+            ctx_add_logical_with(f.ctx, || {
+                (
+                    Property::$ltr(__val.deep_clone(arena)),
+                    Property::$rtl(__val.deep_clone(arena)),
+                )
+            });
         }};
     }
 
@@ -726,9 +735,10 @@ mod border_handler_body {
         ($f:expr, $p:ident, $val:expr) => {{
             let __val = $val;
             let f = &mut *$f;
+            let arena = f.arena;
             f.flushed_properties
                 .insert(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap());
-            f.dest.push(Property::$p(__val.deep_clone(f.arena)));
+            dest_push_with(f.dest, || Property::$p(__val.deep_clone(arena)));
         }};
     }
 
@@ -741,9 +751,9 @@ mod border_handler_body {
                 .flushed_properties
                 .contains(BorderProperty::try_from_property_id(PropertyIdTag::$p).unwrap())
             {
-                let fbs = val.get_fallbacks(f.arena, f.ctx.targets);
+                let fbs = val.get_fallbacks(f.arena, &f.ctx.targets);
                 for fallback in css::generic::slice(&fbs) {
-                    f.dest.push(Property::$p(fallback.clone()));
+                    dest_push_with(f.dest, || Property::$p(fallback.clone()));
                 }
             }
             fc_push!(f, $p, val);
@@ -1230,7 +1240,6 @@ mod border_handler_body {
         }
     }};
 }
-    use flush_category;
 
     impl BorderHandler {
         pub fn handle_property(
@@ -1254,7 +1263,10 @@ mod border_handler_body {
                     if let Some(existing) = &self.$key.$prop {
                         if !existing.eql($val)
                             && context.targets.browsers.is_some()
-                            && !css::generic::is_compatible($val, context.targets.browsers.unwrap())
+                            && !css::generic::is_compatible(
+                                $val,
+                                &context.targets.browsers.unwrap(),
+                            )
                         {
                             self.flush(dest, context);
                         }
@@ -1499,6 +1511,26 @@ mod border_handler_body {
 
             self.has_any = false;
 
+            self.flush_physical(dest, context);
+            self.flush_logical(dest, context);
+
+            let arena = dest.bump();
+            self.border_top.reset(arena);
+            self.border_bottom.reset(arena);
+            self.border_left.reset(arena);
+            self.border_right.reset(arena);
+            self.border_block_start.reset(arena);
+            self.border_block_end.reset(arena);
+            self.border_inline_start.reset(arena);
+            self.border_inline_end.reset(arena);
+        }
+
+        #[inline(never)]
+        fn flush_physical(
+            &mut self,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             let logical_shorthand_supported =
                 !context.should_compile_logical(Feature::LogicalBorderShorthand);
@@ -1540,6 +1572,27 @@ mod border_handler_body {
                 &mut self.border_right,
                 is_logical = false
             );
+        }
+
+        #[inline(never)]
+        fn flush_logical(
+            &mut self,
+            dest: &mut DeclarationList,
+            context: &mut PropertyHandlerContext,
+        ) {
+            let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
+            let logical_shorthand_supported =
+                !context.should_compile_logical(Feature::LogicalBorderShorthand);
+
+            let arena = dest.bump();
+            let mut flctx = FlushContext {
+                flushed_properties: &mut self.flushed_properties,
+                dest,
+                ctx: context,
+                arena,
+                logical_supported,
+                logical_shorthand_supported,
+            };
 
             flush_category!(
                 &mut flctx,
@@ -1565,15 +1618,6 @@ mod border_handler_body {
                 &mut self.border_inline_end,
                 is_logical = true
             );
-
-            self.border_top.reset(arena);
-            self.border_bottom.reset(arena);
-            self.border_left.reset(arena);
-            self.border_right.reset(arena);
-            self.border_block_start.reset(arena);
-            self.border_block_end.reset(arena);
-            self.border_inline_start.reset(arena);
-            self.border_inline_end.reset(arena);
         }
 
         fn flush_unparsed(

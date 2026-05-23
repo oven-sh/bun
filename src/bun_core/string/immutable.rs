@@ -52,10 +52,6 @@ pub use unicode_draft::{
     utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
-mod escape_reg_exp {
-    pub(super) use crate::string::escape_reg_exp::*;
-}
-
 /// `bun.strings.visible` — terminal-visible-width helpers (East-Asian-width +
 /// grapheme-aware; SIMD paths demoted to scalar `ScalarVec` — see [`ENABLE_SIMD`]).
 pub use visible_impl::{
@@ -71,7 +67,7 @@ pub use visible_impl::{
 pub mod visible_fallback {
     pub mod width {
         pub mod exclude_ansi_colors {
-            use crate::string::immutable::{index_of_char_usize, wtf8_byte_sequence_length};
+            use crate::string::immutable::wtf8_byte_sequence_length;
 
             /// Skip a CSI/OSC escape starting at `input[0] == ESC`; returns
             /// the byte length consumed (at least 1). Mirrors the parser in
@@ -272,7 +268,7 @@ pub mod unicode {
             let mut buf = [0u8; 4];
             let avail = (self.bytes.len() - self.i).min(4);
             buf[..avail].copy_from_slice(&self.bytes[self.i..self.i + avail]);
-            let cp = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
+            let cp = decode_wtf8_rune_t::<CodePoint>(buf, len, -1);
             self.width = len;
             self.i += len as usize;
             self.c = cp;
@@ -334,7 +330,7 @@ pub mod unicode {
             let take = (len as usize).min(tail.len());
             let mut buf = [0u8; 4];
             buf[..take].copy_from_slice(&tail[..take]);
-            let cp = decode_wtf8_rune_t::<CodePoint>(&buf, len, -1);
+            let cp = decode_wtf8_rune_t::<CodePoint>(buf, len, -1);
             if cp == -1 {
                 cursor.c = super::UNICODE_REPLACEMENT as CodePoint;
                 cursor.width = 1;
@@ -518,11 +514,11 @@ pub mod lexer_step {
             // truncated multibyte at EOF → Zig's empty-slice arm
             -1
         } else {
+            let mut quad = [0u8; 4];
             // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
             // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
             // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
             // never read.
-            let mut quad = [0u8; 4];
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     contents.as_ptr().add(*current),
@@ -530,7 +526,7 @@ pub mod lexer_step {
                     cp_len,
                 );
             }
-            decode_wtf8_rune_t_multibyte(&quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
+            decode_wtf8_rune_t_multibyte(quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
         };
 
         *current += if code_point != UNICODE_REPLACEMENT as CodePoint {
@@ -907,7 +903,7 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
 }
 
 #[inline]
-pub fn last_index_of_char_t<T: Eq>(self_: &[T], char: T) -> Option<usize> {
+pub fn last_index_of_char_t<T: Copy + Eq>(self_: &[T], char: T) -> Option<usize> {
     self_.iter().rposition(|c| *c == char)
 }
 
@@ -1054,7 +1050,7 @@ impl StringOrTinyString {
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        let buf = self.remainder_buf.as_ptr() as *const u8;
+        let buf = self.remainder_buf.as_ptr().cast::<u8>();
         // This is a switch expression instead of a statement to make sure it uses the faster assembly
         match self.meta.is_tiny_string() {
             1 => {
@@ -1064,9 +1060,9 @@ impl StringOrTinyString {
             }
             0 => {
                 const USZ: usize = core::mem::size_of::<usize>();
-                // SAFETY: init() wrote ptr.to_le_bytes() at [0..USZ] and len at [USZ..USZ*2].
                 let mut ptr_bytes = [0u8; USZ];
                 let mut len_bytes = [0u8; USZ];
+                // SAFETY: init() wrote ptr.to_le_bytes() at [0..USZ] and len at [USZ..USZ*2].
                 unsafe {
                     core::ptr::copy_nonoverlapping(buf, ptr_bytes.as_mut_ptr(), USZ);
                     core::ptr::copy_nonoverlapping(buf.add(USZ), len_bytes.as_mut_ptr(), USZ);
@@ -1124,7 +1120,7 @@ impl StringOrTinyString {
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         stringy.as_ptr(),
-                        buf.as_mut_ptr() as *mut u8,
+                        buf.as_mut_ptr().cast::<u8>(),
                         stringy.len(),
                     );
                 }
@@ -1135,7 +1131,7 @@ impl StringOrTinyString {
             }
             _ => {
                 const USZ: usize = core::mem::size_of::<usize>();
-                let dst = buf.as_mut_ptr() as *mut u8;
+                let dst = buf.as_mut_ptr().cast::<u8>();
                 // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
@@ -1168,7 +1164,7 @@ impl StringOrTinyString {
                 // Inline ASCII-lowercase loop (≤31 iters). Avoids forming `&mut [u8]`
                 // over uninit storage that `copy_lowercase` would need; semantics are
                 // identical (Zig's copyLowercase only ASCII-lowercases).
-                let dst = buf.as_mut_ptr() as *mut u8;
+                let dst = buf.as_mut_ptr().cast::<u8>();
                 for (i, &c) in stringy.iter().enumerate() {
                     // SAFETY: i < stringy.len() <= 31 == MAX.
                     unsafe { *dst.add(i) = c.to_ascii_lowercase() };
@@ -1180,7 +1176,7 @@ impl StringOrTinyString {
             }
             _ => {
                 const USZ: usize = core::mem::size_of::<usize>();
-                let dst = buf.as_mut_ptr() as *mut u8;
+                let dst = buf.as_mut_ptr().cast::<u8>();
                 // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
                 unsafe {
                     core::ptr::copy_nonoverlapping(
@@ -1461,32 +1457,12 @@ pub fn has_suffix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
         && eql_comptime_check_len_with_type::<u8, false>(&self_[self_.len() - alt.len()..], alt)
 }
 
-#[cfg(debug_assertions)]
 fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    eql_comptime_debug_runtime_fallback(a, b, check_len)
-}
-#[cfg(not(debug_assertions))]
-fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    eql_comptime_check_len_u8_impl(a, b, check_len)
-}
-
-fn eql_comptime_debug_runtime_fallback(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    if check_len {
-        a == b
-    } else {
-        &a[0..b.len()] == b
-    }
-}
-
-#[allow(dead_code)]
-fn eql_comptime_check_len_u8_impl(a: &[u8], b: &[u8], check_len: bool) -> bool {
     // PERF(port): Zig unrolled at comptime over b.len in usize/u32/u16/u8 chunks.
     // Rust cannot iterate a runtime slice at const-eval. Slice equality compiles
     // to memcmp; for short literals LLVM should emit comparable code.
     if check_len {
-        if a.len() != b.len() {
-            return false;
-        }
+        return a == b;
     }
     debug_assert!(a.len() >= b.len());
     // SAFETY: when `check_len`, the early-return above gives `a.len()==b.len()`.
@@ -2293,7 +2269,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     };
 
-    let mut iter = CodepointIterator::init_offset(text, 0);
+    let iter = CodepointIterator::init_offset(text, 0);
     let mut cursor = unicode::Cursor {
         i: first_newline_or_nonascii_i,
         ..Default::default()
@@ -2498,11 +2474,11 @@ pub fn order_t<T: Ord>(a: &[T], b: &[T]) -> Ordering {
     a.cmp(b)
 }
 
-pub fn cmp_strings_asc(_: &(), a: &[u8], b: &[u8]) -> bool {
+pub fn cmp_strings_asc(_: (), a: &[u8], b: &[u8]) -> bool {
     order(a, b) == Ordering::Less
 }
 
-pub fn cmp_strings_desc(_: &(), a: &[u8], b: &[u8]) -> bool {
+pub fn cmp_strings_desc(_: (), a: &[u8], b: &[u8]) -> bool {
     order(a, b) == Ordering::Greater
 }
 
@@ -2735,7 +2711,7 @@ pub fn has_prefix_with_word_boundary(input: &[u8], prefix: &'static [u8]) -> boo
             if next.len() > 3 { next[3] } else { 0 },
         ];
 
-        let cp = decode_wtf8_rune_t::<i32>(&bytes, wtf8_byte_sequence_length(next[0]), -1);
+        let cp = decode_wtf8_rune_t::<i32>(bytes, wtf8_byte_sequence_length(next[0]), -1);
         if cp < 0 || !crate::string::lexer::is_identifier_continue(cp as u32) {
             return true;
         }

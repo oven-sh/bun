@@ -135,16 +135,16 @@ impl ErrorReportRequest {
         let dev: &DevServer = unsafe { &*ctx }.dev.get();
 
         // Read payload, assemble ZigException
-        let name = read_string32(&mut reader)?;
-        let message = read_string32(&mut reader)?;
-        let browser_url = read_string32(&mut reader)?;
+        let name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+        let message = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+        let browser_url = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let stack_count = reader.read_int_le::<u32>()?.min(255); // does not support more than 255
         let mut frames: Vec<ZigStackFrame> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
             let line = reader.read_int_le::<i32>()?;
             let column = reader.read_int_le::<i32>()?;
-            let function_name = read_string32(&mut reader)?;
-            let file_name = read_string32(&mut reader)?;
+            let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
+            let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             frames.push(ZigStackFrame {
                 function_name: BunString::init(function_name),
                 source_url: BunString::init(file_name),
@@ -575,6 +575,48 @@ fn read_string32<'a>(
     let s = &buf[r.pos..end];
     r.pos = end;
     Ok(s)
+}
+
+/// The report body is attacker-controlled: `/_bun/report_error` accepts a
+/// CORS "simple request" POST from any origin, and these strings are printed
+/// to the developer's terminal. Replace C0 control bytes (except `\t`/`\n`)
+/// and DEL so the payload cannot inject ANSI/OSC escape sequences (cursor
+/// movement, OSC 52 clipboard writes, hyperlinks). UTF-8-encoded C1 controls
+/// (U+0080..=U+009F, i.e. `0xC2 0x80..=0x9F`) are also replaced: xterm-family
+/// terminals decode them back to C1, so `0xC2 0x9B` would otherwise act as CSI.
+fn sanitize_for_terminal<'a>(s: &'a [u8], arena: &'a Arena) -> &'a [u8] {
+    fn is_disallowed(prev: u8, b: u8) -> bool {
+        // Lone 0x80..=0x9F bytes are continuation bytes of legitimate
+        // multi-byte characters and must not be blanked; only the encoded C1
+        // form (a 0xC2 lead byte followed by 0x80..=0x9F) reaches the
+        // terminal as a control.
+        (b < 0x20 && b != b'\t' && b != b'\n')
+            || b == 0x7f
+            || (prev == 0xc2 && (0x80..=0x9f).contains(&b))
+    }
+    let mut prev = 0u8;
+    if !s.iter().any(|&b| {
+        let bad = is_disallowed(prev, b);
+        prev = b;
+        bad
+    }) {
+        return s;
+    }
+    let copy = arena.alloc_slice_copy(s);
+    let mut prev = 0u8;
+    for i in 0..copy.len() {
+        let cur = copy[i];
+        if is_disallowed(prev, cur) {
+            copy[i] = b' ';
+            // For an encoded C1 control, blank the 0xC2 lead byte too so the
+            // output stays valid UTF-8 instead of leaving a dangling lead byte.
+            if prev == 0xc2 && i > 0 {
+                copy[i - 1] = b' ';
+            }
+        }
+        prev = cur;
+    }
+    copy
 }
 
 // ported from: src/bake/DevServer/ErrorReportRequest.zig

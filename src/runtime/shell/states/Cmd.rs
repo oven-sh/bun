@@ -3,8 +3,6 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
-use bun_ptr::AsCtxPtr;
-
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
@@ -17,7 +15,7 @@ use crate::shell::states::expansion::{Expansion, ExpansionOpts};
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
-use bun_collections::{ByteVecExt, VecExt};
+use bun_collections::VecExt;
 
 pub struct Cmd {
     pub base: Base,
@@ -53,16 +51,12 @@ pub enum CmdState {
     Done,
 }
 
+#[derive(Default)]
 pub enum Exec {
+    #[default]
     None,
     Builtin(Box<Builtin>),
     Subproc(Box<SubprocExec>),
-}
-
-impl Default for Exec {
-    fn default() -> Self {
-        Exec::None
-    }
 }
 
 impl Cmd {
@@ -157,8 +151,8 @@ impl BufferedIoClosed {
     /// Spec: `BufferedIoClosed.allClosed`.
     pub fn all_closed(&self) -> bool {
         let stdin_closed = self.stdin.unwrap_or(true);
-        let stdout_closed = self.stdout.as_ref().map_or(true, BufferedIoState::closed);
-        let stderr_closed = self.stderr.as_ref().map_or(true, BufferedIoState::closed);
+        let stdout_closed = self.stdout.as_ref().is_none_or(BufferedIoState::closed);
+        let stderr_closed = self.stderr.as_ref().is_none_or(BufferedIoState::closed);
         let ret = stdin_closed && stdout_closed && stderr_closed;
         log!(
             "BufferedIOClosed all_closed={} stdin={} stdout={} stderr={}",
@@ -529,6 +523,30 @@ impl Cmd {
                 format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
             );
         };
+        // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
+        // re-tokenizes the command line with shell metacharacter rules
+        // (BatBadBut). libuv's MSVCRT-style quoting cannot make that safe, so
+        // reject arguments that cmd.exe would reinterpret.
+        if cfg!(windows) && bun_which::is_batch_file(&resolved) {
+            let unsafe_arg: Option<Vec<u8>> = interp
+                .as_cmd(this)
+                .args
+                .iter()
+                .skip(1)
+                .find(|a| bun_which::batch_arg_has_cmd_metachars(&a[..a.len() - 1]))
+                .map(|a| a[..a.len() - 1].to_vec());
+            if let Some(arg) = unsafe_arg {
+                drop(spawn_args);
+                return Builtin::cmd_write_failing_error(
+                    interp,
+                    this,
+                    format_args!(
+                        "bun: refusing to pass argument with cmd.exe special characters to a batch file: {}\n",
+                        bstr::BStr::new(&arg)
+                    ),
+                );
+            }
+        }
         // Replace argv[0] with the resolved absolute path (NUL-terminated for
         // `execve`).
         resolved.push(0);
@@ -876,6 +894,7 @@ impl Cmd {
         me.args.clear();
         me.redirection_file.clear();
         if let Some(fd) = me.redirection_fd.take() {
+            // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
             CowFd::deref(fd);
         }
         // Spec (Cmd.zig deinit lines 715-730): tear down the running exec.

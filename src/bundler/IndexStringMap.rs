@@ -1,9 +1,7 @@
 use bun_collections::ArrayHashMap;
-use bun_collections::VecExt;
 
 /// `Index.Int` in Zig — the underlying integer repr.
 pub(crate) use crate::IndexInt;
-use bun_ast::Index;
 
 #[derive(Default)]
 pub struct IndexStringMap {

@@ -102,6 +102,7 @@ export interface MySQLDotZig {
     connectionTimeout: number,
     maxLifetime: number,
     useUnnamedPreparedStatements: boolean,
+    allowPublicKeyRetrieval: boolean,
   ) => $ZigGeneratedClasses.MySQLConnection;
   createQuery: (
     sql: string,
@@ -251,6 +252,7 @@ class PooledMySQLConnection {
       maxLifetime = 0,
       prepare = true,
       path,
+      allowPublicKeyRetrieval = false,
     } = options;
 
     let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
@@ -284,6 +286,7 @@ class PooledMySQLConnection {
         connectionTimeout,
         maxLifetime,
         !prepare,
+        !!allowPublicKeyRetrieval,
       );
     } catch (e) {
       process.nextTick(closeNT, onClose, e);

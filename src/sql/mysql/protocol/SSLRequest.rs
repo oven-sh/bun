@@ -3,7 +3,7 @@
 
 use crate::mysql::Capabilities;
 use crate::mysql::protocol::character_set::CharacterSet;
-use crate::mysql::protocol::new_writer::{NewWriter, write_wrap};
+use crate::mysql::protocol::new_writer::NewWriter;
 
 bun_core::declare_scope!(MySQLConnection, hidden);
 

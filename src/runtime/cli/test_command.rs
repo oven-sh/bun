@@ -6,26 +6,22 @@ use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use bun_collections::{ArrayHashMap, BoundedArray, StringHashMap};
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
-use bun_core::{err_generic, pretty_error, pretty_errorln};
+use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
-use bun_http::HTTPThread;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 // `set_time_zone` / `delete_module_registry_entry` take the JSC-side
 // `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
 // JSGlobalObject FFI methods); import that one so the call sites type-check.
 use bun_core::ZigStringSlice;
-use bun_core::immutable::Appender as _;
 use bun_core::{PathString, strings};
-use bun_js_parser as js_ast;
 use bun_jsc::zig_string::ZigString;
-use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
+use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
 use bun_paths::{self as bun_path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
-use bun_uws as uws;
 
 // Debug log scope for test-runner entrypoint loading (Zig: bun.jsc.Jest.bun_test.debug.group).
 bun_output::declare_scope!(bun_test, hidden);
@@ -39,8 +35,7 @@ bun_output::declare_scope!(bun_test, hidden);
 // `code_coverage::{text,lcov}` directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
     pub use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, ByteRangeMappingHashMap, Fraction, Report as CodeCoverageReport,
-        lcov as Lcov,
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
     };
 
     /// `std.sort.pdq(..., isLessThan)` adapter — Rust `sort_by` wants `Ordering`.
@@ -124,9 +119,8 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
-use crate::test_runner::bun_test as bun_test_mod;
 use crate::test_runner::jest::{self, FileColumns as _, FileId, Summary, TestRunner};
-use crate::test_runner::snapshot::{self, InlineSnapshotToWrite, Snapshots};
+use crate::test_runner::snapshot::{InlineSnapshotToWrite, Snapshots};
 
 /// Re-export for `bunfig.rs` (`crate::test_command::CoverageReporters { .. }`).
 pub use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
@@ -136,11 +130,7 @@ mod bun_test {
     //! Façade over `crate::test_runner` that preserves the Zig-shaped paths
     //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
     //! `bun_test::DescribeScope`, …). Drop once the body is normalised.
-    /// Zig nests `FirstLast` under `BunTestRoot`; the Rust port hoisted it to
-    /// module scope. Alias here so `bun_test::FirstLast` paths in
-    /// the body resolve without a 2k-line rewrite. Could be collapsed back into
-    /// an inherent associated type once the body is normalised.
-    pub use crate::test_runner::bun_test::FirstLast as BunTestRootFirstLast;
+
     /// `add_result()` queue payload — Zig spells it `bun_test.ResultMsg.start`;
     /// Rust port collapsed it into `RefDataValue`.
     pub use crate::test_runner::bun_test::RefDataValue as ResultMsg;
@@ -153,14 +143,6 @@ mod bun_test {
         pub use crate::test_runner::execution::*;
     }
 }
-
-// TODO(port): module-level static `var path_buf: bun.PathBuffer = undefined;` — these are
-// process-wide mutable buffers. PORTING.md §Global mutable state: single-thread
-// CLI scratch → RacyCell. Currently unused (Zig parity placeholders).
-#[allow(dead_code)]
-static PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
-#[allow(dead_code)]
-static PATH_BUF2: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 pub fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
@@ -237,6 +219,7 @@ pub fn write_test_status_line(
 // Remaining TODOs:
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
+#[derive(Default)]
 pub struct JunitReporter {
     pub contents: Vec<u8>,
     pub total_metrics: Metrics,
@@ -252,41 +235,13 @@ pub struct JunitReporter {
     pub hostname_value: Option<Box<[u8]>>,
 }
 
-impl Default for JunitReporter {
-    fn default() -> Self {
-        Self {
-            contents: Vec::new(),
-            total_metrics: Metrics::default(),
-            testcases_metrics: Metrics::default(),
-            offset_of_testsuites_value: 0,
-            offset_of_testsuite_value: 0,
-            current_file: Box::default(),
-            properties_list_to_repeat_in_every_test_suite: None,
-            suite_stack: Vec::new(),
-            current_depth: 0,
-            hostname_value: None,
-        }
-    }
-}
-
+#[derive(Default)]
 pub struct SuiteInfo {
     pub name: Box<[u8]>,
     pub offset_of_attributes: usize,
     pub metrics: Metrics,
     pub is_file_suite: bool,
     pub line_number: u32,
-}
-
-impl Default for SuiteInfo {
-    fn default() -> Self {
-        Self {
-            name: Box::default(),
-            offset_of_attributes: 0,
-            metrics: Metrics::default(),
-            is_file_suite: false,
-            line_number: 0,
-        }
-    }
 }
 
 // PORT NOTE: SuiteInfo::deinit only freed `name` when !is_file_suite. With Box<[u8]> the
@@ -658,9 +613,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>\n"
+                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>"
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -672,9 +627,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>\n",
+                    "  <failure message=\"Expected more assertions, but only received {}\" type=\"AssertionError\"/>",
                     assertions
                 );
                 self.contents.extend_from_slice(indent);
@@ -687,9 +642,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"TODO passed\" type=\"AssertionError\"/>\n"
+                    "  <failure message=\"TODO passed\" type=\"AssertionError\"/>"
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -701,9 +656,9 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let _ = write!(
+                let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>\n"
+                    "  <failure message=\"Expected to have assertions, but none were run\" type=\"AssertionError\"/>"
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -805,19 +760,16 @@ impl JunitReporter {
                     (bstr::BStr::new(path), err),
                 );
             }
-            bun_sys::Result::Ok(fd) => {
-                let _close_fd = bun_sys::CloseOnDrop::file(&fd);
-                match File::write_all(&fd, &self.contents) {
-                    bun_sys::Result::Ok(()) => {}
-                    bun_sys::Result::Err(err) => {
-                        Output::err(
-                            bun_core::err!("JUnitReportFailed"),
-                            "Failed to write JUnit report to {}\n{}",
-                            (bstr::BStr::new(path), err),
-                        );
-                    }
+            bun_sys::Result::Ok(fd) => match File::write_all(&fd, &self.contents) {
+                bun_sys::Result::Ok(()) => {}
+                bun_sys::Result::Err(err) => {
+                    Output::err(
+                        bun_core::err!("JUnitReportFailed"),
+                        "Failed to write JUnit report to {}\n{}",
+                        (bstr::BStr::new(path), err),
+                    );
                 }
-            }
+            },
         }
         Ok(())
     }
@@ -1207,13 +1159,11 @@ impl CommandLineReporter {
                     let needed_name =
                         unsafe { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
                     if !strings::eql(&suite_info.name, needed_name) {
-                        suites_to_close = u32::try_from(current_suite_depth).unwrap()
-                            - u32::try_from(suite_index).unwrap();
+                        suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                         break;
                     }
                 } else {
-                    suites_to_close = u32::try_from(current_suite_depth).unwrap()
-                        - u32::try_from(suite_index).unwrap();
+                    suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
                     break;
                 }
                 suite_index += 1;
@@ -1224,7 +1174,6 @@ impl CommandLineReporter {
                     && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite
                 {
                     junit.end_test_suite().expect("oom");
-                    current_suite_depth -= 1;
                     suites_to_close -= 1;
                 } else {
                     break;
@@ -1585,7 +1534,6 @@ impl CommandLineReporter {
             }
             bun_sys::Result::Ok(f) => f,
         };
-        let _close_file = bun_sys::CloseOnDrop::file(&file); // close error is non-actionable (Zig parity: discarded)
         // TODO(port): file.writer().adaptToNewApi(buf) — Zig's buffered writer adapter
         // not present on `bun_sys::File`; buffer in a Vec (impl `bun_io::Write`) and
         // write through in one shot below.
@@ -1606,7 +1554,7 @@ impl CommandLineReporter {
                     continue;
                 }
             }
-            let Some(mut report) =
+            let Some(report) =
                 CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
             else {
                 continue;
@@ -1870,7 +1818,7 @@ impl CommandLineReporter {
                 }
             }
 
-            let Some(mut report) =
+            let Some(report) =
                 CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
             else {
                 continue;
@@ -2152,9 +2100,15 @@ impl TestCommand {
         let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
             ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
-                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+                    .map(|b| {
+                        // SAFETY: backing bytes are owned by `ctx.test_options`
+                        // (process-lifetime) and `exec()` never returns.
+                        unsafe { bun_ptr::detach_lifetime::<u8>(b) }
+                    })
                     .collect()
             });
+        // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
+        // and `exec()` never returns, so detaching to `'static` is sound.
         let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
             .test_options
             .path_ignore_patterns
@@ -2199,13 +2153,16 @@ impl TestCommand {
                     // SAFETY: lifetime-erase to `'static`; the backing locals are
                     // declared in this never-returning frame (`exec()` only exits
                     // via process exit), mirroring Zig's stack-address capture.
-                    file_buf: unsafe { &mut *(&raw mut snapshot_file_buf) },
-                    values: unsafe { &mut *(&raw mut snapshot_values) },
-                    counts: unsafe { &mut *(&raw mut snapshot_counts) },
+                    file_buf: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_file_buf) },
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
+                    values: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_values) },
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
+                    counts: unsafe { bun_ptr::detach_lifetime_mut(&mut snapshot_counts) },
                     _current_file: None,
                     snapshot_dir_path: None,
+                    // SAFETY: same never-returning-frame invariant as `file_buf` above.
                     inline_snapshots_to_write: unsafe {
-                        &mut *(&raw mut inline_snapshots_to_write)
+                        bun_ptr::detach_lifetime_mut(&mut inline_snapshots_to_write)
                     },
                     last_error_snapshot_name: None,
                 },
@@ -2222,7 +2179,7 @@ impl TestCommand {
                 default_timeout_override: u32::MAX,
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
-                test_options: unsafe { &*(&raw const ctx.test_options) },
+                test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
             },
@@ -2347,6 +2304,8 @@ impl TestCommand {
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
+            // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
+            // this never-returning call.
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
@@ -2354,7 +2313,7 @@ impl TestCommand {
         // But, don't block the main thread waiting if they used --inspect-wait.
         vm.ensure_debugger(false)?;
 
-        let mut scanner = Scanner::init(&mut vm.transpiler, ctx.positionals.len()).expect("oom");
+        let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
         // frame, underlying bytes live in `ctx` (process-lifetime).
         scanner.path_ignore_patterns =
@@ -2400,6 +2359,9 @@ impl TestCommand {
                             vm.exit_handler.exit_code = 1;
                             vm.is_shutting_down = true;
                             let vm_ptr: *mut VirtualMachine = vm;
+                            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+                            // `run_with_api_lock` takes `&self` only and `global_exit()`
+                            // diverges, so the closure is the sole mutator.
                             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                         }
                     }
@@ -2415,7 +2377,11 @@ impl TestCommand {
             } else {
                 ctx.positionals[1..]
                     .iter()
-                    .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(&**b) })
+                    .map(|b| {
+                        // SAFETY: bytes live in `ctx.positionals` (process-lifetime)
+                        // and this frame never returns.
+                        unsafe { bun_ptr::detach_lifetime::<u8>(&**b) }
+                    })
                     .collect()
             };
             #[cfg(windows)]
@@ -2495,6 +2461,9 @@ impl TestCommand {
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
                     let vm_ptr: *mut VirtualMachine = vm;
+                    // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+                    // `run_with_api_lock` takes `&self` only and `global_exit()`
+                    // diverges, so the closure is the sole mutator.
                     vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
                 }
             }
@@ -2634,16 +2603,24 @@ impl TestCommand {
 
             match vm.hot_reload {
                 jsc::virtual_machine::HOT_RELOAD_HOT => {
-                    jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        None,
-                    );
+                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
+                    // outlives the leaked reloader.
+                    unsafe {
+                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+                            std::ptr::from_mut::<VirtualMachine>(vm),
+                            None,
+                        );
+                    }
                 }
                 jsc::virtual_machine::HOT_RELOAD_WATCH => {
-                    jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        None,
-                    );
+                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
+                    // outlives the leaked reloader.
+                    unsafe {
+                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                            std::ptr::from_mut::<VirtualMachine>(vm),
+                            None,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -2968,7 +2945,6 @@ impl TestCommand {
 
                         if failed > 0 {
                             if first {
-                                first = false;
                                 pretty_error!("<red>{} failed<r>", failed);
                             } else {
                                 pretty_error!(", <red>{} failed<r>", failed);
@@ -3008,6 +2984,9 @@ impl TestCommand {
 
         if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
             let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only, so the closure holds the
+            // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
         let summary = reporter.summary();
@@ -3020,9 +2999,8 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
+            || reporter.jest.unhandled_errors_between_tests > 0
         {
-            vm.exit_handler.exit_code = 1;
-        } else if reporter.jest.unhandled_errors_between_tests > 0 {
             vm.exit_handler.exit_code = 1;
         }
         vm.is_shutting_down = true;
@@ -3032,15 +3010,19 @@ impl TestCommand {
         // before dropping `reporter` so finalizers running inside the GC can't
         // observe a dangling `TestRunner`.
         reporter.jest.bun_test_root.deinit_for_exit();
+        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
+        // no concurrent reader exists on this shutdown path.
         unsafe {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
         {
             let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only and `global_exit()`
+            // diverges, so the closure is the sole mutator.
             vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
         }
-        #[allow(unreachable_code)]
         Ok(())
     }
 
@@ -3127,10 +3109,10 @@ impl TestCommand {
             vm: vm_,
             files: files_,
         };
+        // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
+        // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
-
-    extern "C" fn timer_noop(_: *mut uws::Timer) {}
 
     pub fn run(
         reporter: &mut CommandLineReporter,
@@ -3279,9 +3261,9 @@ impl TestCommand {
                             (*bun_test_root_ptr).deinit_for_exit();
                             jest::Jest::RUNNER.write(None);
                         }
+                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
                         // SAFETY: global_exit diverges; raw-ptr reborrow mirrors Zig
                         // runWithAPILock(*VM, vm, globalExit).
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
                         unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
                     }
 
@@ -3307,7 +3289,7 @@ impl TestCommand {
                 // `BunTestPtr` is `Rc<BunTestCell>`; clone (refcount++) so the
                 // local `buntest_strong` survives for the post-run drain loop and
                 // the explicit `drop` below (Zig's `defer buntest_strong.deinit()`).
-                bun_test::BunTest::run(buntest_strong.clone(), vm.global())?;
+                bun_test::BunTest::run(&buntest_strong, vm.global())?;
 
                 // Process event loop while bun_test tests are running
                 vm.event_loop_ref().tick();
@@ -3332,7 +3314,7 @@ impl TestCommand {
 
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(std::ptr::from_mut::<VirtualMachine>(vm)) };
+                unsafe { (*el).tick_immediate_tasks(vm) };
                 drop(buntest_strong);
             }
 

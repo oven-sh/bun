@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { renderToString } from "react-dom/server";
 
 const Markdown = Bun.markdown;
@@ -525,5 +526,130 @@ code
       { headings: { ids: true } },
     );
     expect(ids).toEqual(["a", "a-1", "a-2"]);
+  });
+});
+
+// ============================================================================
+// Pathological inputs: the CommonMark unclosed/nested bracket family
+// (cmark's test/pathological_tests.py). These were O(n²) — a ~100 KB flood of
+// "[" took minutes — because every link candidate rescanned the rest of the
+// paragraph for its closing "]". Rendering now happens in linear time; the
+// child process is killed after 30s so a regression fails fast instead of
+// hanging the test runner.
+// ============================================================================
+
+describe("pathological bracket inputs", () => {
+  async function expectRendersQuickly(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }
+
+  test("bracket floods render in linear time (html)", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const cases = [
+          ["unclosed brackets", fill(120000, "["), out => out.length > 120000 && out.includes("[[[[[[[[")],
+          ["balanced nested brackets", fill(60000, "[") + fill(60000, "]"), out => out.includes("[[[") && out.includes("]]]")],
+          ["blockquote bracket flood", fill(8, "> ") + fill(100000, "["), out => out.includes("<blockquote>") && out.includes("[[[")],
+          ["paren + bracket flood", fill(75000, "(") + fill(75000, "["), out => out.includes("(((") && out.includes("[[[")],
+          ["unclosed inline destination", fill(50000, "[a](b"), out => out.includes("[a](b")],
+          ["unclosed angle destination", fill(50000, "[a](<b"), out => out.length > 100000],
+          ["unclosed paren title", fill(50000, "[ (]("), out => out.includes("[ (](")],
+          ["bracket then backtick flood", "[" + fill(100000, "\`"), out => out.length > 100000],
+          ["unclosed backticks inside link label", "[" + fill(150000, "\`") + "[a](u)](v)", out => out.includes("<a href=") && out.length > 150000],
+          ["empty label unclosed destination", fill(50000, "[]("), out => out.includes("[](")],
+          ["ref def then nested brackets", "[x]: /url\\n\\n" + fill(60000, "[") + fill(60000, "]"), out => out.includes("[[[") && out.includes("]]]")],
+        ];
+        for (const [name, input, check] of cases) {
+          const out = Bun.markdown.html(input);
+          if (!check(out)) throw new Error("unexpected output for " + name + ": " + JSON.stringify(out.slice(0, 200)));
+          console.log("OK " + name);
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("bracket floods render in linear time (ansi, wiki links enabled)", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        {
+          const out = Bun.markdown.ansi(fill(100000, "["), { colors: false });
+          if (out.length < 100000) throw new Error("unexpected ansi output length " + out.length);
+          console.log("OK ansi unclosed brackets");
+        }
+        {
+          const out = Bun.markdown.ansi(fill(30000, "[[a|"), { colors: false });
+          if (out.length < 100000) throw new Error("unexpected ansi wiki output length " + out.length);
+          console.log("OK ansi wiki-link flood");
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("long link text is still a link", () => {
+    const text = Buffer.alloc(10_000, "x").toString();
+    const html = Markdown.html(`[${text}](/url)\n`);
+    expect(html).toContain('<a href="/url">');
+    expect(html).toContain(text);
+  });
+
+  test("bracket inside a code span in a link label is not an inner link", () => {
+    // The unclosed ``-run is literal; the single backticks form a code span
+    // covering [a](u), so the outer construct is a link (code spans bind
+    // tighter than links).
+    const html = Markdown.html("[``x`[a](u)`](v)\n");
+    expect(html).toContain('<a href="v">');
+    expect(html).toContain("<code>[a](u)</code>");
+  });
+
+  test("link destination parenthesis nesting is capped at 32 (cmark parity)", () => {
+    const nest = (n: number) => "[a](" + "(".repeat(n) + "b" + ")".repeat(n) + ")\n";
+    expect(Markdown.html(nest(3))).toContain("<a href=");
+    expect(Markdown.html(nest(32))).toContain("<a href=");
+    // Beyond the cap the candidate is not a link, matching cmark/commonmark.js.
+    const over = Markdown.html(nest(40));
+    expect(over).not.toContain("<a href=");
+    expect(over).toContain("[a](");
+    // The 33rd '(' must not be reparsed as a ()-title opener either.
+    const overflowIntoTitle = Markdown.html("[a](" + "(".repeat(33) + "))\n");
+    expect(overflowIntoTitle).not.toContain("<a href=");
+    expect(overflowIntoTitle).toContain("[a](");
+  });
+
+  test("angle-bracket destination may not contain an unescaped '<'", () => {
+    expect(Markdown.html("[a](<b<c>)\n")).not.toContain("<a href=");
+    expect(Markdown.html("[a](<b\\<c>)\n")).toContain('<a href="b%3Cc"');
+  });
+
+  test("()-delimited title may not contain an unescaped '('", () => {
+    expect(Markdown.html("[a](/url (tit(le))\n")).not.toContain("<a href=");
+    expect(Markdown.html("[a](/url (title))\n")).toContain('title="title"');
+    expect(Markdown.html('[a](/url "tit(le")\n')).toContain('title="tit(le"');
+  });
+
+  test("reference labels longer than 999 characters are not reference links", () => {
+    const label999 = Buffer.alloc(999, "y").toString();
+    const label1000 = Buffer.alloc(1000, "y").toString();
+    expect(Markdown.html(`[${label999}]: /url\n\n[${label999}]\n`)).toContain('<a href="/url">');
+    expect(Markdown.html(`[${label1000}]: /url\n\n[${label1000}]\n`)).not.toContain("<a href=");
+  });
+
+  test("wiki link bracket nesting is capped", () => {
+    const wiki = (depth: number) => "[[t|" + "[".repeat(depth) + "x" + "]".repeat(depth) + "]]\n";
+    // Within the cap the whole construct is one wiki link targeting "t".
+    expect(Markdown.html(wiki(3), { wikiLinks: true })).toContain('data-target="t"');
+    expect(Markdown.html(wiki(30), { wikiLinks: true })).toContain('data-target="t"');
+    // Past the cap the outer candidate is rejected.
+    expect(Markdown.html(wiki(40), { wikiLinks: true })).not.toContain('data-target="t"');
   });
 });

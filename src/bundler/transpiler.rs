@@ -186,7 +186,16 @@ impl<'a> Transpiler<'a> {
     /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
     /// resolver itself stays put — only its owned `opts` projection (cloned in
     /// `resolver_bundle_options_subset`) is released.
-    pub fn deinit(&mut self) {
+    ///
+    /// # Safety
+    /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
+    /// `resolve_results`, leaving them logically uninitialized. After this
+    /// returns, `self` must never be dropped (or `deinit`'d again) — every
+    /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
+    /// `VirtualMachine` field, a `MaybeUninit` stack slot, or an arena-backed
+    /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
+    /// normal `Drop` instead.
+    pub unsafe fn deinit(&mut self) {
         // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` was
         // intentionally process-lifetime under Zig (`default_allocator`), but
         // worker VMs run `destroy()` on thread exit and would otherwise strand
@@ -197,12 +206,13 @@ impl<'a> Transpiler<'a> {
             ctx.deinit();
         }
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
-        // read past `destroy()` / the `--changed` scan teardown.
+        // read past `destroy()` / the `--changed` scan teardown. Caller upholds
+        // the no-auto-drop contract above.
         unsafe {
-            core::ptr::drop_in_place(&mut self.options);
-            core::ptr::drop_in_place(&mut self.result);
-            core::ptr::drop_in_place(&mut self.resolver.opts);
-            core::ptr::drop_in_place(&mut self.resolve_results);
+            core::ptr::drop_in_place(&raw mut self.options);
+            core::ptr::drop_in_place(&raw mut self.result);
+            core::ptr::drop_in_place(&raw mut self.resolver.opts);
+            core::ptr::drop_in_place(&raw mut self.resolve_results);
         }
     }
 
@@ -426,14 +436,12 @@ impl<'a> Transpiler<'a> {
         // evaluation pins the store via `DisableStoreReset`, and
         // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
         // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
-        // and `AST_HEAP` belongs to that scope's arena, NOT the side-arena).
-        // If we ran `store_ast_alloc_heap::reset()` there it would (a)
-        // `mi_heap_destroy` whatever side-arena buffers earlier main-thread
-        // transpiles left and (b) clobber `AST_HEAP` to the side-arena's new
-        // heap, so subsequent `AstVec` allocations land in the side-arena
-        // instead of the active `ASTMemoryAllocator` arena and survive its
-        // `enter()` reset → cross-reset UAF (hot.test.ts "Unexpected NUL" /
-        // transpiled `:1:12` coords on aarch64).
+        // and the active `AstAlloc` state belongs to that scope, NOT the
+        // side module). If we ran `store_ast_alloc_heap::reset()` there it
+        // would bulk-free whatever side-state buffers earlier main-thread
+        // transpiles left while `--define`/install still hold `StoreRef`s
+        // into them (and the side module's debug assert that *its* state is
+        // the installed one would fire).
         if !bun_ast::stmt::data::Store::disable_reset()
             && bun_ast::stmt::data::Store::memory_allocator().is_null()
         {
@@ -660,7 +668,7 @@ impl<'a> Transpiler<'a> {
 // `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
 // ══════════════════════════════════════════════════════════════════════════
 
-use bun_resolver::tsconfig_json::{JsxField, TSConfigJSON};
+use bun_resolver::tsconfig_json::TSConfigJSON;
 
 /// D042: resolver-side and bundler-side `jsx::Pragma` are now the SAME
 /// nominal type (`bun_options_types::jsx::Pragma`). Identity clone; kept so
@@ -823,7 +831,6 @@ impl<'a> Transpiler<'a> {
 // per-loader transpile branches.
 // ══════════════════════════════════════════════════════════════════════════
 
-use crate::cache::RuntimeTranspilerCacheExt as _;
 use crate::entry_points as EntryPoints;
 use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
 use bun_ast::RuntimeTranspilerCache;
@@ -832,18 +839,14 @@ use bun_resolver::package_json::MacroMap as MacroRemap;
 use bun_sys::Fd as FD;
 
 /// Port of `transpiler.zig:ParseResult.AlreadyBundled` (tagged union).
+#[derive(Default)]
 pub enum AlreadyBundled {
+    #[default]
     None,
     SourceCode,
     SourceCodeCjs,
     Bytecode(Box<[u8]>),
     BytecodeCjs(Box<[u8]>),
-}
-
-impl Default for AlreadyBundled {
-    fn default() -> Self {
-        AlreadyBundled::None
-    }
 }
 
 impl AlreadyBundled {
@@ -1222,6 +1225,11 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader<'static>>,
     ) -> Result<(), bun_core::Error> {
+        // Caller contract: `log` is the freshly-boxed per-VM `Log` from
+        // `VirtualMachine::init` and is never null. Validate up front so the
+        // deref sites below go through `NonNull` rather than the raw argument.
+        let log_nn =
+            core::ptr::NonNull::new(log).expect("Transpiler::init_in_place: log is non-null");
         // TODO(port): narrow error set
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
@@ -1294,7 +1302,7 @@ impl<'a> Transpiler<'a> {
         // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
         // leak above; no other live `&mut` to either at this point.
         unsafe {
-            (*env_loader).quiet = !(*log).level.at_least(bun_ast::Level::Info);
+            (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
         }
 
         // var pool = try arena.create(ThreadPool);
@@ -1339,14 +1347,14 @@ impl<'a> Transpiler<'a> {
         // loader, as in the original struct literal).
         unsafe {
             core::ptr::addr_of_mut!((*p).options).write(bundle_options);
-            core::ptr::addr_of_mut!((*p).log).write(log);
+            core::ptr::addr_of_mut!((*p).log).write(log_nn.as_ptr());
             core::ptr::addr_of_mut!((*p).arena).write(arena);
             core::ptr::addr_of_mut!((*p).result).write(options::TransformResult {
                 outbase,
                 ..Default::default()
             });
             core::ptr::addr_of_mut!((*p).resolver).write(Resolver::init1(
-                core::ptr::NonNull::new(log).expect("Transpiler::init_in_place: log is non-null"),
+                log_nn,
                 fs,
                 resolver_opts,
             ));
@@ -1545,10 +1553,8 @@ impl<'a> Transpiler<'a> {
             // the erasure.
             let contents: &'static [u8] =
                 unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
-            match bun_ast::Source::init_recycled_file(bun_ast::PathContentsPair {
-                path: path.clone(),
-                contents,
-            }) {
+            match bun_ast::Source::init_recycled_file(&bun_ast::PathContentsPair { path, contents })
+            {
                 Ok(s) => break 'brk s,
                 Err(_) => return None,
             }
@@ -1648,7 +1654,7 @@ impl<'a> Transpiler<'a> {
                 opts.features.trim_unused_imports = self
                     .options
                     .trim_unused_imports
-                    .unwrap_or(loader.is_typescript());
+                    .unwrap_or_else(|| loader.is_typescript());
                 opts.features.no_macros = self.options.no_macros;
                 // `bun_ast::RuntimeTranspilerCache` is the single nominal
                 // type on both sides; thread the pointer directly.
@@ -1725,15 +1731,17 @@ impl<'a> Transpiler<'a> {
                 // `crate::defines::Define` IS
                 // `bun_js_parser::defines::Define`. Hand the parser the real
                 // table so user `--define` values apply at parse time.
+                let define: &'a js_ast::defines::Define;
                 // SAFETY: `self.options.define` / `self.macro_context` are
                 // owned by the long-lived `Transpiler`; the parser borrows
                 // them for `'a` (arena lifetime). Erase to `'a` so the
                 // returned `Ast<'a>` is not pinned to the `&mut self` borrow
                 // — neither field is dropped while a parse is in flight
                 // (Zig held `*const Define` / `*MacroContext`).
-                let define: &'a js_ast::defines::Define;
                 unsafe {
-                    define = &*(&raw const *self.options.define);
+                    let define_ptr: *const js_ast::defines::Define =
+                        &raw const *self.options.define;
+                    define = &*define_ptr;
                     opts.macro_context = self
                         .macro_context
                         .as_mut()
@@ -2453,7 +2461,7 @@ impl<'a> Transpiler<'a> {
                     self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, true>(
                         print_arena,
                         writer,
-                        ast,
+                        &ast,
                         symbols,
                         source,
                         source_map_context,
@@ -2465,7 +2473,7 @@ impl<'a> Transpiler<'a> {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
                         print_arena,
                         writer,
-                        ast,
+                        &ast,
                         symbols,
                         source,
                         source_map_context,
@@ -2581,7 +2589,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
-        ast: bun_ast::Ast,
+        ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
@@ -2610,7 +2618,7 @@ impl<'a> Transpiler<'a> {
         &mut self,
         print_arena: &Arena,
         writer: &mut js_printer::BufferPrinter,
-        ast: bun_ast::Ast,
+        ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
@@ -2660,7 +2668,7 @@ impl<'a> Transpiler<'a> {
             writer,
             // Per-call scratch arena (rope flattening) — same as the Cjs arm.
             print_arena,
-            &ast,
+            ast,
             symbols,
             source,
             opts,
@@ -2819,7 +2827,7 @@ impl<'a> Transpiler<'a> {
 
         // PORT NOTE: snapshot entry points so the `&mut self` resolver call
         // does not conflict with the `&self.options` borrow.
-        let entries: Vec<Box<[u8]>> = self.options.entry_points.iter().cloned().collect();
+        let entries: Vec<Box<[u8]>> = self.options.entry_points.to_vec();
         let top_level_dir = self.fs().top_level_dir;
 
         for _entry in entries.iter() {
@@ -2933,9 +2941,9 @@ impl<'a> Transpiler<'a> {
         let outbase: Box<[u8]> = self.result.outbase.clone();
         let output_files: Box<[options::OutputFile]> =
             std::mem::take(&mut self.output_files).into_boxed_slice();
-        // SAFETY: see above.
+        // SAFETY: see above (`self.log` is the same pointer as `log`).
         let mut final_result =
-            options::TransformResult::init(outbase, output_files, unsafe { &mut *log })?;
+            options::TransformResult::init(outbase, output_files, unsafe { &mut *self.log })?;
         final_result.root_dir = self.options.output_dir_handle;
         Ok(final_result)
     }
@@ -2953,9 +2961,9 @@ impl<'a> Transpiler<'a> {
             bun_ast::store_ast_alloc_heap::reset();
 
             let output_file = match self.build_with_resolve_result_eager(
-                item,
+                &item,
                 import_path_format,
-                &outstream,
+                outstream,
                 None,
             ) {
                 Ok(Some(f)) => f,
@@ -2969,9 +2977,9 @@ impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:380 buildWithResolveResultEager`.
     fn build_with_resolve_result_eager(
         &mut self,
-        resolve_result: resolver::Result,
+        resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
-        _outstream: &TransformOutstream,
+        _outstream: TransformOutstream,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Result<Option<options::OutputFile>, bun_core::Error> {
         if resolve_result.flags.is_external() {
@@ -2986,7 +2994,7 @@ impl<'a> Transpiler<'a> {
         // expect `bun_paths::fs::Path<'_>` / `bun_paths::fs::Path<'static>`. Re-init via
         // `text` (the only field both shapes share semantically).
         let file_path_text: &'static [u8] = crate::linker::dupe(file_path_ref.text);
-        let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name.ext);
+        let file_path_ext: &'static [u8] = crate::linker::dupe(file_path_ref.name().ext);
 
         // Step 1. Parse & scan
         // Spec (transpiler.zig:397) keys the loader on the ORIGINAL resolve
@@ -3000,7 +3008,7 @@ impl<'a> Transpiler<'a> {
         let (file_path_text, file_path_ext) = if let Some(cep) = client_entry_point_.as_deref() {
             (
                 crate::linker::dupe(cep.source.path.text),
-                crate::linker::dupe(cep.source.path.name.ext),
+                crate::linker::dupe(cep.source.path.name().ext),
             )
         } else {
             (file_path_text, file_path_ext)
@@ -3240,7 +3248,7 @@ impl<'a> Transpiler<'a> {
         let symbols = bun_ast::symbol::Map::init_list(Default::default());
         let result = match sheet.to_css(
             alloc,
-            bun_css::PrinterOptions {
+            &bun_css::PrinterOptions {
                 targets: bun_css::Targets::for_bundler_target(self.options.target),
                 minify: self.options.minify_whitespace,
                 ..bun_css::PrinterOptions::default()
@@ -3278,7 +3286,7 @@ impl<'a> Transpiler<'a> {
             .linker
             .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
         let mut pathname = Vec::with_capacity(hashed_name.len() + file_path_ext.len());
-        pathname.extend_from_slice(&hashed_name);
+        pathname.extend_from_slice(hashed_name);
         pathname.extend_from_slice(file_path_ext);
         Ok(crate::output_file::Value::Copy(
             crate::output_file::FileOperation {
@@ -3298,28 +3306,18 @@ impl<'a> Transpiler<'a> {
 /// `processResolveQueue` / `buildWithResolveResultEager` — Zig switched on
 /// `bun.sys.File` vs `std.fs.Dir` at the type level; collapse to a runtime
 /// enum since the only behavioural difference is unused (`_ = outstream`).
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum TransformOutstream {
     Stdout,
-    Dir(bun_sys::Fd),
+    Dir(#[expect(dead_code)] bun_sys::Fd),
 }
 
 /// Port of `transpiler.zig:374 BuildResolveResultPair`.
+#[derive(Default)]
 pub struct BuildResolveResultPair {
     pub written: usize,
     pub input_fd: Option<FD>,
     pub empty: bool,
-}
-
-impl Default for BuildResolveResultPair {
-    fn default() -> Self {
-        Self {
-            written: 0,
-            input_fd: None,
-            empty: false,
-        }
-    }
 }
 
 /// Port of `transpiler.zig:1405 ServeResult`.

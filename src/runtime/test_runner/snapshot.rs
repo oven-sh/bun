@@ -1,22 +1,20 @@
-use bun_collections::{VecExt, ByteVecExt};
 use core::ffi::c_ulong;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 use std::io::Write as _;
 
-use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
-use bun_core::{self, Error};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_js_parser::{self as js_parser, lexer as js_lexer};
-use bun_core::printer as js_printer;
+use bun_collections::{HashMap, StringHashMap};
 use bun_core::output as bun_output;
-use bun_paths::{self, PathBuffer, MAX_PATH_BYTES, SEP};
-use bun_core::{strings, ZStr};
-use bun_sys::{self, Fd};
+use bun_core::printer as js_printer;
+use bun_core::{self, Error};
+use bun_core::{ZStr, strings};
+use bun_js_parser::{self as js_parser, lexer as js_lexer};
+use bun_jsc::virtual_machine::VirtualMachine;
+use bun_paths::{self, PathBuffer};
+use bun_sys::{self};
 use bun_wyhash::hash;
 
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
-use super::jest::{Jest, TestRunner, FileColumns as _};
+use super::jest::{FileColumns as _, Jest};
 
 // TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
 type FileId = super::jest::FileId;
@@ -48,14 +46,12 @@ pub struct Snapshots<'a> {
 pub use bun_collections::ArrayHashMap as IndexMap;
 
 impl<'a> Snapshots<'a> {
-    const FILE_HEADER: &'static [u8] =
-        b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+    const FILE_HEADER: &'static [u8] = b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
 
     #[cfg(windows)]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__\\";
     #[cfg(not(windows))]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
-
 }
 
 // std.HashMap(usize, string, bun.IdentityContext(usize), default_max_load_percentage)
@@ -108,18 +104,17 @@ impl<'a> Snapshots<'a> {
         }
     }
 
-    pub fn add_count(
-        &mut self,
-        expect: &Expect,
-        hint: &[u8],
-    ) -> Result<(Vec<u8>, usize), Error> {
+    pub fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         // TODO(port): narrow error set
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
         // PORT NOTE: reshaped for borrowck — Zig's getOrPut returns key_ptr/value_ptr together.
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
-        let gop = self.counts.get_or_put(&snapshot_name).map_err(Error::from)?;
+        let gop = self
+            .counts
+            .get_or_put(&snapshot_name)
+            .map_err(Error::from)?;
         if gop.found_existing {
             *gop.value_ptr += 1;
         } else {
@@ -136,10 +131,9 @@ impl<'a> Snapshots<'a> {
         hint: &[u8],
     ) -> Result<Option<&[u8]>, Error> {
         // TODO(port): narrow error set
-        let mut buntest_strong = expect
+        let buntest_strong = expect
             .bun_test()
-            .ok_or(bun_core::err!("SnapshotFailed"))?;
-        // defer buntest_strong.deinit() → Drop
+            .ok_or_else(|| bun_core::err!("SnapshotFailed"))?;
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
@@ -166,7 +160,6 @@ impl<'a> Snapshots<'a> {
         name_with_counter.extend_from_slice(&name);
         name_with_counter.push(b' ');
         name_with_counter.extend_from_slice(counter_string);
-        // defer free → Drop
 
         let name_hash: u64 = hash(&name_with_counter);
         // PORT NOTE: reshaped for borrowck — `get` then early-return borrows `*self.values`
@@ -182,7 +175,6 @@ impl<'a> Snapshots<'a> {
         if crate::cli::ci_info::is_ci() {
             if !self.update_snapshots {
                 // Store the snapshot name for error reporting
-                // (old name dropped automatically on reassign)
                 self.last_error_snapshot_name = Some(name_with_counter.into_boxed_slice());
                 return Err(bun_core::err!("SnapshotCreationNotAllowedInCI"));
             }
@@ -197,13 +189,26 @@ impl<'a> Snapshots<'a> {
         write!(
             self.file_buf,
             "\nexports[`{}`] = `{}`;\n",
-            strings::format_escapes(&name_with_counter, strings::QuoteEscapeFormatFlags { quote_char: b'`', ..Default::default() }),
-            strings::format_escapes(target_value, strings::QuoteEscapeFormatFlags { quote_char: b'`', ..Default::default() }),
+            strings::format_escapes(
+                &name_with_counter,
+                strings::QuoteEscapeFormatFlags {
+                    quote_char: b'`',
+                    ..Default::default()
+                }
+            ),
+            strings::format_escapes(
+                target_value,
+                strings::QuoteEscapeFormatFlags {
+                    quote_char: b'`',
+                    ..Default::default()
+                }
+            ),
         )
         .map_err(|_| bun_core::err!("WriteError"))?;
 
         self.added += 1;
-        self.values.insert(name_hash, Box::<[u8]>::from(target_value));
+        self.values
+            .insert(name_hash, Box::<[u8]>::from(target_value));
         Ok(None)
     }
 
@@ -217,7 +222,7 @@ impl<'a> Snapshots<'a> {
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
         let opts = js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone().into(),
+            vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Js,
         );
         // PERF(port): Zig used `this.allocator` (default_allocator). Thread a per-call arena
@@ -236,8 +241,9 @@ impl<'a> Snapshots<'a> {
             let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
             &(*p).files.items_source()[file.id as usize]
         };
-        let test_filename = test_file_source.path.name.filename;
-        let dir_path = test_file_source.path.name.dir_with_trailing_slash();
+        let name = test_file_source.path.name();
+        let test_filename = name.filename;
+        let dir_path = name.dir_with_trailing_slash();
 
         let mut snapshot_file_path_buf = PathBuffer::uninit();
         let buf = snapshot_file_path_buf.0.as_mut_slice();
@@ -254,7 +260,10 @@ impl<'a> Snapshots<'a> {
         // SAFETY: buf[pos] == 0 written above
         let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-        let source = bun_ast::Source::init_path_string(snapshot_file_path.as_bytes(), self.file_buf.as_slice());
+        let source = bun_ast::Source::init_path_string(
+            snapshot_file_path.as_bytes(),
+            self.file_buf.as_slice(),
+        );
 
         let parser = js_parser::Parser::init(
             opts,
@@ -269,7 +278,6 @@ impl<'a> Snapshots<'a> {
             bun_js_parser::Result::Ast(ast) => ast,
             _ => return Err(bun_core::err!("ParseError")),
         };
-        // defer ast.deinit() → Drop
 
         if ast.exports_ref.is_empty() {
             return Ok(());
@@ -301,13 +309,14 @@ impl<'a> Snapshots<'a> {
                                         bun_ast::ExprData::EIdentifier(target) if target.ref_.eql(exports_ref)
                                     );
                                     if target_is_exports {
-                                        if let bun_ast::ExprData::EString(index) = &mut e_index.index.data {
+                                        if let bun_ast::ExprData::EString(index) =
+                                            &mut e_index.index.data
+                                        {
                                             if let bun_ast::ExprData::EString(value_string) =
                                                 &mut right.data
                                             {
                                                 let key = index.slice(&arena);
                                                 let value = value_string.slice(&arena);
-                                                // defer { if !isUTF8 free } → arena drop
                                                 let value_clone: Box<[u8]> =
                                                     Box::<[u8]>::from(value);
                                                 let name_hash: u64 = hash(key);
@@ -331,7 +340,7 @@ impl<'a> Snapshots<'a> {
 
     pub fn write_snapshot_file(&mut self) -> Result<(), Error> {
         // TODO(port): narrow error set
-        if let Some(mut file) = self._current_file.take() {
+        if let Some(file) = self._current_file.take() {
             file.file
                 .write_all(self.file_buf)
                 .map_err(|_| bun_core::err!("FailedToWriteSnapshotFile"))?;
@@ -339,11 +348,9 @@ impl<'a> Snapshots<'a> {
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
 
-            // values: owned strings dropped by clear()
             self.values.clear();
             // PERF(port): Zig clearAndFree() also releases capacity; HashMap::clear keeps it.
 
-            // counts: owned key strings dropped by clear()
             self.counts.clear();
         }
         Ok(())
@@ -390,7 +397,9 @@ impl<'a> Snapshots<'a> {
             // Runs on every exit of the loop body (continue, fall-through, AND `?` early-return).
             let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
                 if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(bun_output::error_writer()));
+                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        bun_output::error_writer(),
+                    ));
                     success.set(false);
                 }
             });
@@ -421,8 +430,7 @@ impl<'a> Snapshots<'a> {
                 v.into_boxed_slice()
             };
             // SAFETY: NUL appended above
-            let test_filename_z =
-                ZStr::from_slice_with_nul(&test_filename[..]);
+            let test_filename_z = ZStr::from_slice_with_nul(&test_filename[..]);
 
             let fd = match bun_sys::open(test_filename_z, bun_sys::O::RDWR, 0o644) {
                 bun_sys::Result::Ok(r) => r,
@@ -438,20 +446,15 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
             };
-            // Zig: `errdefer file.file.close()` — fires on `?` error returns only.
-            // PORT NOTE: Zig never closes on the success path (or `continue`); preserve that by
-            // disarming via `into_inner` on every non-`?` exit below.
-            let mut file = scopeguard::guard(
-                File { id: file_id, file: bun_sys::File::from_fd(fd) },
-                |f| { let _ = bun_sys::close(f.file.handle); },
-            );
+            let file = File {
+                id: file_id,
+                file: bun_sys::File::from_fd(fd),
+            };
 
-            let file_text: Vec<u8> = file
-                .file
-                .read_to_end()
-                .map_err(|e| Error::from(e))?;
+            let file_text: Vec<u8> = file.file.read_to_end().map_err(Error::from)?;
 
-            let source = bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
+            let source =
+                bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
 
             let mut result_text: Vec<u8> = Vec::new();
 
@@ -486,12 +489,9 @@ impl<'a> Snapshots<'a> {
                     continue;
                 }
 
-                bun_core::scoped_log!(
-                    inline_snapshot,
-                    "Finding byte for {}/{}",
-                    ils.line,
-                    ils.col
-                );
+                bun_core::scoped_log!(inline_snapshot, "Finding byte for {}/{}", ils.line, ils.col);
+                // c_ulong is u32 on Windows (LLP64); widen explicitly.
+                #[allow(clippy::useless_conversion)]
                 let Some(byte_offset_add) = bun_ast::Source::line_col_to_byte_offset(
                     &file_text[last_byte..],
                     u64::from(last_line),
@@ -559,6 +559,9 @@ impl<'a> Snapshots<'a> {
                     // discussion.
                     let log_ptr: *mut bun_ast::Log = &raw mut *log;
                     let mut lexer = js_lexer::Lexer::init_without_reading(
+                        // SAFETY: `log_ptr` derived from `&raw mut *log` just above; `log`
+                        // outlives `'blk` and no other `&mut Log` is live until `lexer` is
+                        // moved into `parser` below.
                         unsafe { &mut *log_ptr },
                         &source,
                         &arena,
@@ -572,7 +575,7 @@ impl<'a> Snapshots<'a> {
                     // PORT NOTE: `ParserOptions` isn't `Clone`; rebuild per-iteration
                     // (Zig passed by value-copy).
                     let opts = js_parser::ParserOptions::init(
-                        vm.transpiler.options.jsx.clone().into(),
+                        vm.transpiler.options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
                     // PORT NOTE: `P::init` takes an out-param (Zig:
@@ -623,9 +626,7 @@ impl<'a> Snapshots<'a> {
                         log.add_error_fmt(
                             &source,
                             parser.lexer.loc(),
-                            format_args!(
-                                "Failed to update inline snapshot: Spread is not allowed"
-                            ),
+                            format_args!("Failed to update inline snapshot: Spread is not allowed"),
                         );
                         continue 'ils;
                     }
@@ -666,9 +667,7 @@ impl<'a> Snapshots<'a> {
                         log.add_error_fmt(
                             &source,
                             parser.lexer.loc(),
-                            format_args!(
-                                "Failed to update inline snapshot: Spread is not allowed"
-                            ),
+                            format_args!("Failed to update inline snapshot: Spread is not allowed"),
                         );
                         continue 'ils;
                     }
@@ -718,7 +717,8 @@ impl<'a> Snapshots<'a> {
                     final_end_usize
                 );
 
-                if final_end_usize < final_start_usize || final_start_usize < uncommitted_segment_end
+                if final_end_usize < final_start_usize
+                    || final_start_usize < uncommitted_segment_end
                 {
                     log.add_error_fmt(
                         &source,
@@ -738,13 +738,11 @@ impl<'a> Snapshots<'a> {
                     Some(s) => s,
                     None => 'd: {
                         let source_until_final_start = &source.contents[..final_start_usize];
-                        let line_start = match source_until_final_start
-                            .iter()
-                            .rposition(|&b| b == b'\n')
-                        {
-                            Some(newline_loc) => newline_loc + 1,
-                            None => 0,
-                        };
+                        let line_start =
+                            match source_until_final_start.iter().rposition(|&b| b == b'\n') {
+                                Some(newline_loc) => newline_loc + 1,
+                                None => 0,
+                            };
                         let tail = &source_until_final_start[line_start..];
                         let indent_count = tail
                             .iter()
@@ -783,9 +781,8 @@ impl<'a> Snapshots<'a> {
                         re_indented_source = &re_indented_source[next_newline..];
                     }
                     // indent before backtick
-                    re_indented_string.extend_from_slice(
-                        ils.end_indent.as_deref().unwrap_or(start_indent),
-                    );
+                    re_indented_string
+                        .extend_from_slice(ils.end_indent.as_deref().unwrap_or(start_indent));
                     &re_indented_string
                 } else {
                     &ils.value
@@ -818,7 +815,6 @@ impl<'a> Snapshots<'a> {
 
             if log.errors > 0 {
                 // skip writing the file if there were errors — `log` guard prints on drop.
-                let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
 
@@ -832,7 +828,6 @@ impl<'a> Snapshots<'a> {
                         bstr::BStr::new(e.name()),
                     ),
                 );
-                let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
 
@@ -845,19 +840,13 @@ impl<'a> Snapshots<'a> {
                         bstr::BStr::new(e.name()),
                     ),
                 );
-                let _ = scopeguard::ScopeGuard::into_inner(file);
                 continue;
             }
             if result_text.len() < file_text.len() {
                 if bun_sys::ftruncate(file.file.handle, result_text.len() as i64).is_err() {
-                    panic!(
-                        "Failed to update inline snapshot: File was left in an invalid state"
-                    );
+                    panic!("Failed to update inline snapshot: File was left in an invalid state");
                 }
             }
-
-            // disarm errdefer (success path) — Zig never closes on success.
-            let _ = scopeguard::ScopeGuard::into_inner(file);
         }
         Ok(success.get())
     }
@@ -873,8 +862,9 @@ impl<'a> Snapshots<'a> {
                 let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
             };
-            let test_filename = test_file_source.path.name.filename;
-            let dir_path = test_file_source.path.name.dir_with_trailing_slash();
+            let name = test_file_source.path.name();
+            let test_filename = name.filename;
+            let dir_path = name.dir_with_trailing_slash();
 
             let mut snapshot_file_path_buf = PathBuffer::uninit();
             let buf = snapshot_file_path_buf.0.as_mut_slice();
@@ -931,11 +921,6 @@ impl<'a> Snapshots<'a> {
                 id: file_id,
                 file: bun_sys::File::from_fd(fd),
             };
-            // PORT NOTE: `errdefer file.file.close()` — close fd on `?` early-return.
-            // Guard the `Fd` (Copy) directly so we don't need to move out of `bun_sys::File`.
-            let guard = scopeguard::guard(fd, |fd| {
-                let _ = bun_sys::close(fd);
-            });
 
             if self.update_snapshots {
                 self.file_buf.extend_from_slice(Self::FILE_HEADER);
@@ -951,13 +936,10 @@ impl<'a> Snapshots<'a> {
                         file.file.seek_to(0).map_err(Error::from)?;
                     }
                     self.file_buf.extend_from_slice(&tmp);
-                    // tmp dropped here (was: allocator.free(buf))
                 }
             }
 
-            // errdefer stays armed across parse_file — if it errors, guard closes the fd.
             self.parse_file(&file)?;
-            scopeguard::ScopeGuard::into_inner(guard);
             self._current_file = Some(file);
         }
 

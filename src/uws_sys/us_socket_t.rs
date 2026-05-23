@@ -9,13 +9,13 @@ bun_core::declare_scope!(uws, visible);
 
 const MAX_I32: usize = i32::MAX as usize;
 
-/// Rust bindings for `us_socket_t`.
-///
-/// TLS is per-socket (`s->ssl != NULL` in C); there is no `int ssl` selector.
-/// Dispatch is by `kind()` — see `SocketKind` and `dispatch.rs`.
-///
-/// Higher-level wrappers (`uws::SocketTCP`/`SocketTLS`) cover named pipes,
-/// upgraded duplexes, and async DNS.
+// Rust bindings for `us_socket_t`.
+//
+// TLS is per-socket (`s->ssl != NULL` in C); there is no `int ssl` selector.
+// Dispatch is by `kind()` — see `SocketKind` and `dispatch.rs`.
+//
+// Higher-level wrappers (`uws::SocketTCP`/`SocketTLS`) cover named pipes,
+// upgraded duplexes, and async DNS.
 bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 
 #[repr(i32)]
@@ -422,6 +422,7 @@ mod c {
         pub safe fn us_socket_is_tls(s: &us_socket_t) -> i32;
 
         pub fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
+        #[cfg(not(windows))]
         pub fn us_socket_ipc_write_fd(
             s: *mut us_socket_t,
             data: *const u8,

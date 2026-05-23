@@ -1,17 +1,15 @@
 use core::ffi::c_char;
-use std::io::Write as _;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMapExt, Entry, GetOrPutResult, StringArrayHashMap};
+use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringArrayHashMap};
 use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
-use bun_wyhash;
 
 use bun_core::analytics;
 
@@ -240,61 +238,59 @@ impl<'a> Loader<'a> {
     pub fn load_tracy(&self) {}
 
     pub fn get_s3_credentials(&mut self) -> &S3Credentials {
-        if self.aws_credentials.is_some() {
-            return self.aws_credentials.as_ref().unwrap();
+        if self.aws_credentials.is_none() {
+            // PORT NOTE: reshaped for borrowck — Zig stored borrowed `[]const u8` slices into
+            // the env map; here we copy to `Box<[u8]>` so the cached struct owns its bytes and
+            // we can release the `&self` borrow before writing `&mut self.aws_credentials`.
+            // PERF(port): one-shot, cached — copies are negligible.
+            let access_key_id: Box<[u8]> = self
+                .get(b"S3_ACCESS_KEY_ID")
+                .or_else(|| self.get(b"AWS_ACCESS_KEY_ID"))
+                .map(Box::from)
+                .unwrap_or_default();
+            let secret_access_key: Box<[u8]> = self
+                .get(b"S3_SECRET_ACCESS_KEY")
+                .or_else(|| self.get(b"AWS_SECRET_ACCESS_KEY"))
+                .map(Box::from)
+                .unwrap_or_default();
+            let region: Box<[u8]> = self
+                .get(b"S3_REGION")
+                .or_else(|| self.get(b"AWS_REGION"))
+                .map(Box::from)
+                .unwrap_or_default();
+
+            let mut endpoint: Box<[u8]> = Box::default();
+            let mut insecure_http = false;
+            if let Some(endpoint_) = self
+                .get(b"S3_ENDPOINT")
+                .or_else(|| self.get(b"AWS_ENDPOINT"))
+            {
+                let url = URL::parse(endpoint_);
+                endpoint = Box::from(url.host_with_path());
+                insecure_http = url.is_http();
+            }
+
+            let bucket: Box<[u8]> = self
+                .get(b"S3_BUCKET")
+                .or_else(|| self.get(b"AWS_BUCKET"))
+                .map(Box::from)
+                .unwrap_or_default();
+            let session_token: Box<[u8]> = self
+                .get(b"S3_SESSION_TOKEN")
+                .or_else(|| self.get(b"AWS_SESSION_TOKEN"))
+                .map(Box::from)
+                .unwrap_or_default();
+
+            self.aws_credentials = Some(S3Credentials {
+                access_key_id,
+                secret_access_key,
+                region,
+                endpoint,
+                bucket,
+                session_token,
+                insecure_http,
+            });
         }
-
-        // PORT NOTE: reshaped for borrowck — Zig stored borrowed `[]const u8` slices into
-        // the env map; here we copy to `Box<[u8]>` so the cached struct owns its bytes and
-        // we can release the `&self` borrow before writing `&mut self.aws_credentials`.
-        // PERF(port): one-shot, cached — copies are negligible.
-        let access_key_id: Box<[u8]> = self
-            .get(b"S3_ACCESS_KEY_ID")
-            .or_else(|| self.get(b"AWS_ACCESS_KEY_ID"))
-            .map(Box::from)
-            .unwrap_or_default();
-        let secret_access_key: Box<[u8]> = self
-            .get(b"S3_SECRET_ACCESS_KEY")
-            .or_else(|| self.get(b"AWS_SECRET_ACCESS_KEY"))
-            .map(Box::from)
-            .unwrap_or_default();
-        let region: Box<[u8]> = self
-            .get(b"S3_REGION")
-            .or_else(|| self.get(b"AWS_REGION"))
-            .map(Box::from)
-            .unwrap_or_default();
-
-        let mut endpoint: Box<[u8]> = Box::default();
-        let mut insecure_http = false;
-        if let Some(endpoint_) = self
-            .get(b"S3_ENDPOINT")
-            .or_else(|| self.get(b"AWS_ENDPOINT"))
-        {
-            let url = URL::parse(endpoint_);
-            endpoint = Box::from(url.host_with_path());
-            insecure_http = url.is_http();
-        }
-
-        let bucket: Box<[u8]> = self
-            .get(b"S3_BUCKET")
-            .or_else(|| self.get(b"AWS_BUCKET"))
-            .map(Box::from)
-            .unwrap_or_default();
-        let session_token: Box<[u8]> = self
-            .get(b"S3_SESSION_TOKEN")
-            .or_else(|| self.get(b"AWS_SESSION_TOKEN"))
-            .map(Box::from)
-            .unwrap_or_default();
-
-        self.aws_credentials = Some(S3Credentials {
-            access_key_id,
-            secret_access_key,
-            region,
-            endpoint,
-            bucket,
-            session_token,
-            insecure_http,
-        });
 
         self.aws_credentials.as_ref().unwrap()
     }
@@ -352,11 +348,12 @@ impl<'a> Loader<'a> {
         // by returning `[]const u8` borrowing the loader's map. Encapsulating
         // the extension here keeps every caller (PackageManager, fetch,
         // upgrade, create) free of `transmute` (PORTING.md §Forbidden).
-        //
-        // SAFETY: see above — `s` points into a `Box<[u8]>` owned by
-        // `*self.map`, which outlives `'a`.
-        let extend =
-            |s: &[u8]| -> &'a [u8] { unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) } };
+        let extend = |s: &[u8]| -> &'a [u8] {
+            // SAFETY: `s` points into a `Box<[u8]>` owned by `*self.map`, which is
+            // borrowed for `'a`; the boxed allocation is address-stable and never
+            // removed for the proxy env vars (see lifetime note above).
+            unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
+        };
 
         let mut http_proxy: Option<URL<'a>> = None;
 
@@ -912,7 +909,6 @@ impl<'a> Loader<'a> {
                     }
                 }
             };
-        let _close = bun_sys::CloseOnDrop::file(&file);
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}
@@ -962,7 +958,6 @@ impl<'a> Loader<'a> {
                 return Ok(());
             }
         };
-        let _close = bun_sys::CloseOnDrop::file(&file);
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}
@@ -1028,7 +1023,7 @@ const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \xA0\n\r";
 impl<'a> Parser<'a> {
     fn skip_line(&mut self) {
         if let Some(i) = strings::index_of_any(&self.src[self.pos..], b"\n\r") {
-            self.pos += i as usize + 1;
+            self.pos += i + 1;
         } else {
             self.pos = self.src.len();
         }
@@ -1175,9 +1170,9 @@ impl<'a> Parser<'a> {
         // `self.value_buffer`; capture only its length, then re-borrow the buffer
         // after the match so the unquoted fallthrough can re-borrow `self`.
         let quoted_len: Option<usize> = match self.src[end] {
-            b'`' => self.parse_quoted::<{ b'`' }>()?.map(|v| v.len()),
-            b'"' => self.parse_quoted::<{ b'"' }>()?.map(|v| v.len()),
-            b'\'' => self.parse_quoted::<{ b'\'' }>()?.map(|v| v.len()),
+            b'`' => self.parse_quoted::<b'`'>()?.map(|v| v.len()),
+            b'"' => self.parse_quoted::<b'"'>()?.map(|v| v.len()),
+            b'\'' => self.parse_quoted::<b'\''>()?.map(|v| v.len()),
             _ => None,
         };
         if let Some(len) = quoted_len {
@@ -1326,14 +1321,6 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    pub(crate) fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
-        source: &bun_ast::Source,
-        map: &mut Map,
-        value_buffer: &mut Vec<u8>,
-    ) -> Result<(), AllocError> {
-        Self::parse_bytes::<OVERRIDE, IS_PROCESS, EXPAND>(&source.contents, map, value_buffer)
-    }
-
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
@@ -1397,7 +1384,6 @@ impl Map {
         let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
         {
             let mut it = self.map.iterator();
-            let mut i: usize = 0;
             while let Some(pair) = it.next() {
                 let klen = pair.key_ptr.len();
                 let vlen = pair.value_ptr.value.len();
@@ -1408,14 +1394,12 @@ impl Map {
                 // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
                 envp_buf.push(env_buf.as_ptr().cast::<c_char>());
                 storage.push(env_buf);
-                i += 1;
             }
-            #[cfg(debug_assertions)]
-            debug_assert!(i == envp_count);
+            debug_assert!(envp_buf.len() == envp_count);
         }
         envp_buf.push(core::ptr::null()); // sentinel
         Ok(NullDelimitedEnvMap {
-            storage,
+            _storage: storage,
             envp: envp_buf.into_boxed_slice(),
         })
     }
@@ -1475,7 +1459,6 @@ impl Map {
         result[i] = 0;
         i += 1;
         result[i] = 0;
-        i += 1;
 
         Ok(result.as_ptr())
     }
@@ -1596,7 +1579,7 @@ impl Map {
             writer.write_str(&String::from_utf8_lossy(k))?;
             writer.write_str(": ")?;
             writer.write_str(&String::from_utf8_lossy(&v.value))?;
-            if i + 1 <= count - 1 {
+            if i < count - 1 {
                 writer.write_str(", ")?;
             }
         }
@@ -1651,7 +1634,7 @@ impl Map {
 /// Zig's `?[*:0]const u8` *is* a single nullable thin pointer; the Rust
 /// equivalent for FFI is `*const c_char`, not `Option<*const c_char>`.
 pub struct NullDelimitedEnvMap {
-    storage: Vec<Box<[u8]>>,
+    _storage: Vec<Box<[u8]>>,
     envp: Box<[*const c_char]>,
 }
 

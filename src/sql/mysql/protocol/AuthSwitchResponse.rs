@@ -1,6 +1,6 @@
 // Auth switch response packet
 
-use crate::mysql::protocol::new_writer::{NewWriter, write_wrap};
+use crate::mysql::protocol::new_writer::NewWriter;
 use crate::shared::Data;
 
 #[derive(Default)]

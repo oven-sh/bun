@@ -36,7 +36,7 @@ impl<const CAPACITY: usize> HiveBitSet<CAPACITY> {
     const NUM_WORDS: usize = if CAPACITY == 0 {
         0
     } else {
-        (CAPACITY + WORD_BITS - 1) / WORD_BITS
+        CAPACITY.div_ceil(WORD_BITS)
     };
     const _FITS: () = assert!(
         CAPACITY <= HIVE_BITSET_WORDS * WORD_BITS,
@@ -1436,8 +1436,9 @@ mod tests {
             assert_eq!(a.used.find_first_set(), None);
             let p = a.get_init(7).unwrap();
             assert_eq!(*p.as_ptr(), 7);
-            // SAFETY: `p` is the only token for its slot.
-            assert!(unsafe { a.put_raw(p.as_ptr()) });
+            // `p` is the only token for its slot; already inside the outer
+            // `unsafe` block.
+            assert!(a.put_raw(p.as_ptr()));
         }
     }
 

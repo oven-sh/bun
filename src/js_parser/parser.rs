@@ -5,7 +5,6 @@
 
 use bun_ast::ImportRecord;
 use bun_collections::{ArrayHashMap, HashMap, StringArrayHashMap, StringHashMap};
-use bun_core::Output;
 // Zig `std.hash.Wyhash` (final4 variant) — used by `hash_for_runtime_transpiler`
 // (runtime.zig:272) and `ReactRefresh.HookContext` (parser.zig:1140). NOT
 // interchangeable with `bun_wyhash::Wyhash11`.
@@ -47,7 +46,6 @@ pub mod options {
     /// `RuntimeFeatures.server_components` resolve to one type.
     pub(crate) use crate::parser::Runtime::ServerComponentsMode as ServerComponents;
     pub use JSX::Runtime as JSXRuntime;
-    #[allow(non_snake_case)]
     pub use bun_options_types::jsx as JSX;
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     #[allow(non_camel_case_types)]
@@ -95,19 +93,15 @@ pub mod options {
     /// is captured.
     pub type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Default)]
     pub enum AllowUnresolved {
         /// Default. Skip all checks — current behavior.
+        #[default]
         All,
         /// Always error on dynamic specifiers.
         None,
         /// Glob patterns; at least one must match the extracted shape.
         Patterns(Box<[Box<[u8]>]>, AllowUnresolvedMatcher),
-    }
-    impl Default for AllowUnresolved {
-        fn default() -> Self {
-            AllowUnresolved::All
-        }
     }
     impl AllowUnresolved {
         // Zig: `pub const default: AllowUnresolved = .all;` — taken by address
@@ -1068,7 +1062,9 @@ impl<'a> JSXTag<'a> {
 
             if let Some(index) = strings::index_of_char(member, b'-') {
                 let source = p.source();
-                p.log().add_error(
+                // SAFETY: `log_ptr()` returns the externally-lent `&mut Log`;
+                // sole live alias while `P` lives.
+                unsafe { p.log_ptr().as_mut() }.add_error(
                     Some(source),
                     bun_ast::Loc {
                         start: member_range.loc.start + i32::try_from(index).expect("int cast"),
@@ -1170,8 +1166,8 @@ pub struct ExprOrLetStmt {
     // PORT NOTE: Zig writes `.decls = decls.slice()` borrowing the heap buffer
     // that was just moved into `S::Local`. The buffer pointer is stable across
     // the move, but borrowck can't see that — store as `RawSlice` to record the
-    // outlives-holder invariant without a per-site unsafe cast. (Neither caller
-    // currently reads this field, matching parseStmt.zig:829-836.)
+    // outlives-holder invariant without a per-site unsafe cast. Read by the
+    // for-loop parser so for-in/for-of heads can validate "let"/"using" decls.
     pub decls: bun_collections::RawSlice<G::Decl>,
 }
 
@@ -1414,30 +1410,16 @@ pub enum StmtsKind {
     FnBody,
 }
 
-#[cold]
-#[allow(dead_code)]
-fn notimpl() -> ! {
-    Output::panic(format_args!("Not implemented yet!!"));
-}
-
 #[derive(Default)]
 pub struct ExprBindingTuple {
     pub expr: Option<ExprNodeIndex>,
     pub binding: Option<Binding>,
 }
 
+#[derive(Default)]
 pub struct TempRef {
     pub r#ref: Ref,
     pub value: Option<Expr>,
-}
-
-impl Default for TempRef {
-    fn default() -> Self {
-        Self {
-            r#ref: Ref::default(),
-            value: None,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1462,6 +1444,7 @@ impl Default for ThenCatchChain {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ParsedPath<'a> {
     pub loc: bun_ast::Loc,
     pub text: &'a [u8],
@@ -1975,8 +1958,6 @@ pub mod prefill {
     use super::*;
 
     pub mod hot_module_reloading {
-        #[allow(unused_imports)]
-        use super::*;
         // TODO(port): mutable static Expr arrays — need `static mut` or `LazyLock`.
         // pub static DEBUG_ENABLED_ARGS: [Expr; 1] = [...];
         // pub static DEBUG_DISABLED: [Expr; 1] = [...];
@@ -2029,13 +2010,6 @@ pub mod prefill {
         pub const THIS: js_ast::ExprData = js_ast::ExprData::EThis(E::This {});
         pub const ZERO: js_ast::ExprData = js_ast::ExprData::ENumber(value::ZERO);
     }
-}
-
-#[derive(Default)]
-#[allow(dead_code)]
-struct ReactJSX {
-    // TODO(port): ArrayHashMap with bun.ArrayIdentityContext (identity hash on Ref)
-    hoisted_elements: ArrayHashMap<Ref, G::Decl>,
 }
 
 pub struct ImportOrRequireScanResults {
@@ -2437,12 +2411,12 @@ impl ReactRefresh<'_> {
         if id.is_empty() {
             return false;
         }
-        matches!(id[0], b'A'..=b'Z')
+        id[0].is_ascii_uppercase()
     }
 
     /// https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L408
     pub fn is_hook_name(id: &[u8]) -> bool {
-        id.len() >= 4 && id.starts_with(b"use") && matches!(id[3], b'A'..=b'Z')
+        id.len() >= 4 && id.starts_with(b"use") && id[3].is_ascii_uppercase()
     }
 }
 

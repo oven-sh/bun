@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use bun_alloc::AllocError;
 
 use bun_core::strings;
@@ -537,7 +535,7 @@ impl<'src> HtmlRenderer<'src> {
                 self.write(&txt[i..]);
                 return;
             };
-            let pos = i + next as usize;
+            let pos = i + next;
             if pos > i {
                 self.write(&txt[i..pos]);
             }

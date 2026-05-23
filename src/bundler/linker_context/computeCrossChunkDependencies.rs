@@ -1,17 +1,14 @@
 use crate::bun_renamer as renamer;
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::ImportRecord;
-use bun_ast::{Part, Symbol};
 use bun_collections::{ArrayHashMap, VecExt};
-use bun_js_parser as js_ast;
 
 use crate::LinkerContext;
 use crate::js_meta;
 use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
 use crate::{
-    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt,
-    JSMeta, Ref, RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
+    Chunk, CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, Index, IndexInt, Ref,
+    RefImportData, ResolvedExports, StableRef, WrapKind, chunk,
 };
 
 pub fn compute_cross_chunk_dependencies(
@@ -101,8 +98,7 @@ pub struct CrossChunkDependencies<'a, 'bump> {
     imports_to_bind: &'a [RefImportData],
     wrapper_refs: &'a [Ref],
     exports_refs: &'a [Ref],
-    // Zig: []const []const string → SoA column type is Box<[Box<[u8]>]>
-    sorted_and_filtered_export_aliases: &'a [Box<[Box<[u8]>]>],
+    sorted_and_filtered_export_aliases: &'a [js_meta::SortedAndFilteredExportAliases],
     resolved_exports: &'a [ResolvedExports],
     // PORT NOTE: `BackRef` — Zig stores `*LinkerContext` / `*Symbol.Map` and freely
     // aliases `c.graph` columns alongside; borrowck cannot express that split, so
@@ -157,13 +153,14 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
 
             // Go over each part in this file that's marked for inclusion in this chunk
             let parts = deps.parts[source_index as usize].as_slice();
+            let parts_live = &ctx.graph.parts_live[source_index as usize];
             let import_records = deps.import_records[source_index as usize].as_mut_slice();
             let imports_to_bind = &deps.imports_to_bind[source_index as usize];
             let wrap = deps.flags[source_index as usize].wrap;
             let wrapper_ref = deps.wrapper_refs[source_index as usize];
 
-            for part in parts.iter() {
-                if !part.is_live {
+            for (part_index, part) in parts.iter().enumerate() {
+                if !parts_live.is_set(part_index) {
                     continue;
                 }
 

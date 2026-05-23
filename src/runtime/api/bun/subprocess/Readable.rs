@@ -1,7 +1,6 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_core::output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
@@ -59,15 +58,17 @@ impl Readable {
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Consume an owned `IntrusiveRc<PipeReader>`, clear its `process` backref,
-    /// and release the ref (Zig: `pipe.detach()`). Centralises what was the
-    /// `into_raw()` + `unsafe { PipeReader::detach(raw) }` dance so the three
-    /// callers in `finalize` / `to_js` / `to_buffered_value` stay safe — the
-    /// owned `IntrusiveRc` already encodes the "live + one ref" invariant
-    /// `detach()` needs, and `RefPtr::deref` is the safe drop.
+    /// Clear the `PipeReader`'s `process` backref and release the caller's ref
+    /// (Zig: `pipe.detach()`). Centralises what was the `into_raw()` +
+    /// `unsafe { PipeReader::detach(raw) }` dance so the three callers in
+    /// `finalize` / `to_js` / `to_buffered_value` stay safe — the caller's
+    /// `IntrusiveRc` encodes the "live + one ref" invariant `detach()` needs,
+    /// and `RefPtr::deref` is the safe drop. Callers pass the `IntrusiveRc`
+    /// they just moved out of `self` and drop it (a no-op — `RefPtr` has no
+    /// `Drop`) immediately after.
     #[inline]
-    fn pipe_detach(pipe: IntrusiveRc<PipeReader>) {
-        Self::pipe_reader_mut(&pipe).process = None;
+    fn pipe_detach(pipe: &IntrusiveRc<PipeReader>) {
+        Self::pipe_reader_mut(pipe).process = None;
         pipe.deref();
     }
 
@@ -113,7 +114,7 @@ impl Readable {
         _is_sync: bool,
     ) -> Readable {
         // PORT NOTE: Zig `allocator` param dropped (was unused / autofix); global mimalloc assumed.
-        Subprocess::assert_stdio_result(&result);
+        super::assert_stdio_result!(result);
 
         // Ownership of any resource inside `stdio` (notably `.memfd`) is being
         // *transferred* into the returned `Readable` — Zig's `Readable.init`
@@ -236,7 +237,7 @@ impl Readable {
                         unsafe { PipeReader::deref(pipe.as_ptr()) };
                     }
                 }
-                Self::pipe_detach(pipe);
+                Self::pipe_detach(&pipe);
             }
             Readable::Buffer(_) => {
                 // PORT NOTE: Zig calls `buf.deinit(default_allocator)` without resetting the tag.
@@ -259,7 +260,7 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_js(global);
-                Self::pipe_detach(pipe);
+                Self::pipe_detach(&pipe);
                 result
             }
             Readable::Buffer(_) => {
@@ -301,7 +302,7 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
-                Self::pipe_detach(pipe);
+                Self::pipe_detach(&pipe);
                 Ok(result)
             }
             Readable::Buffer(_) => {
@@ -328,7 +329,6 @@ impl Readable {
     }
 }
 
-#[allow(unused_imports)]
 use bun_core as _; // bun.Output → bun_core (panics inlined as panic!())
 
 // ported from: src/runtime/api/bun/subprocess/Readable.zig

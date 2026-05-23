@@ -4,11 +4,11 @@ use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
 use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
-use crate::options_impl::{LoaderExt as _, TargetExt as _};
+use crate::options_impl::TargetExt as _;
 use crate::ungate_support::DeclInfoKind;
 use crate::{
-    Chunk, CompileResult, CompileResultForSourceMap, Index, JSAst, JSMeta, RefImportData,
-    ResolvedExports, ThreadPool,
+    Chunk, CompileResult, CompileResultForSourceMap, Index, RefImportData, ResolvedExports,
+    ThreadPool,
 };
 use bun_alloc::Arena;
 use bun_ast::{
@@ -68,7 +68,7 @@ pub fn post_process_js_chunk(
     // the renamer field, or an explicit `chunk.renamer.take()` at fn exit. Verify.
 
     // PERF(port): was arena bulk-free — profile if hot.
-    let mut arena = Arena::new();
+    let arena = Arena::new();
 
     // Also generate the cross-chunk binding code
     let mut cross_chunk_prefix: PrintResult;
@@ -680,8 +680,19 @@ pub fn post_process_js_chunk(
                 }
             }
 
-            j.push_static(pretty);
-            line_offset.advance(pretty);
+            // A `*/` in the path would terminate the block comment early and
+            // turn the rest of the path into generated JavaScript.
+            if matches!(comment_type, CommentType::Multiline) && strings::contains(pretty, b"*/") {
+                let mut sanitized = pretty.to_vec();
+                while let Some(i) = strings::index_of(&sanitized, b"*/") {
+                    sanitized[i + 1] = b'_';
+                }
+                line_offset.advance(&sanitized);
+                j.push_owned(sanitized.into_boxed_slice());
+            } else {
+                j.push_static(pretty);
+                line_offset.advance(pretty);
+            }
 
             if emit_targets_in_commands {
                 j.push_static(b" (");
@@ -854,7 +865,7 @@ pub fn post_process_js_chunk(
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
-            compile_results_for_source_map,
+            &compile_results_for_source_map,
             &resolver.opts.output_dir,
             can_have_shifts,
         )?;

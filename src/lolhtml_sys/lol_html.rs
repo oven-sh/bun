@@ -1,5 +1,4 @@
-use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
+use core::ffi::{c_char, c_int, c_void};
 use core::ptr::NonNull;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
@@ -62,14 +61,18 @@ mod sealed {
 }
 pub trait Opaque: sealed::Sealed {
     /// Null-checked deref. See trait doc for the soundness argument.
+    // `Self` is a zero-sized `UnsafeCell<[u8; 0]>` opaque (sealed impls only);
+    // a non-null pointer to a ZST is dereferenceable for 0 bytes and `&mut`
+    // over `UnsafeCell` carries no `noalias`. There is no caller precondition —
+    // null returns `None` — so the method is safe; clippy can't see the ZST
+    // invariant established by the sealed impls.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline(always)]
     fn from_ptr<'a>(p: *mut Self) -> Option<&'a mut Self>
     where
         Self: Sized,
     {
-        // SAFETY: `Self` is a zero-sized `UnsafeCell<[u8; 0]>` opaque (sealed
-        // impls only); a non-null pointer to a ZST is always dereferenceable
-        // for 0 bytes and `&mut` over `UnsafeCell` carries no `noalias`.
+        // SAFETY: see above — ZST deref of any non-null pointer is sound.
         unsafe { p.as_mut() }
     }
 }
@@ -167,15 +170,6 @@ unsafe extern "C" {
     ) -> c_int;
     fn lol_html_rewriter_builder_free(builder: *mut HTMLRewriterBuilder);
     fn lol_html_rewriter_build(
-        builder: *mut HTMLRewriterBuilder,
-        encoding: *const u8,
-        encoding_len: usize,
-        memory_settings: MemorySettings,
-        output_sink: Option<OutputSinkFn>,
-        output_sink_user_data: *mut c_void,
-        strict: bool,
-    ) -> *mut HTMLRewriter;
-    fn unstable_lol_html_rewriter_build_with_esi_tags(
         builder: *mut HTMLRewriterBuilder,
         encoding: *const u8,
         encoding_len: usize,
@@ -390,7 +384,10 @@ unsafe extern "C" fn output_sink_function<S: OutputSink>(
     let this = unsafe { bun_core::callback_ctx::<S>(user_data) };
     match len {
         0 => this.done(),
-        _ => this.write(unsafe { bun_core::ffi::slice(ptr, len) }),
+        _ => this.write(
+            // SAFETY: len > 0 here and lol-html guarantees ptr[0..len] is valid for this callback
+            unsafe { bun_core::ffi::slice(ptr, len) },
+        ),
     }
 }
 
@@ -1056,12 +1053,12 @@ impl AttributeIterator {
     pub fn next<'a>(&mut self) -> Option<&'a Attribute> {
         auto_disable();
         let p = lol_html_attributes_iterator_next(self);
-        // SAFETY: lol-html guarantees the returned pointer (when non-null) is
-        // valid until the next call to `next` or `free`; `Attribute` is an
-        // opaque `UnsafeCell<[u8; 0]>` so `&Attribute` carries no `dereferenceable`.
         if p.is_null() {
             None
         } else {
+            // SAFETY: lol-html guarantees the returned pointer (when non-null) is
+            // valid until the next call to `next` or `free`; `Attribute` is an
+            // opaque `UnsafeCell<[u8; 0]>` so `&Attribute` carries no `dereferenceable`.
             Some(unsafe { &*p })
         }
     }
@@ -1094,16 +1091,8 @@ unsafe extern "C" {
         content_len: usize,
         is_html: bool,
     ) -> c_int;
-    fn lol_html_comment_replace(
-        comment: *mut Comment,
-        content: *const u8,
-        content_len: usize,
-        is_html: bool,
-    ) -> c_int;
     safe fn lol_html_comment_remove(comment: &mut Comment);
     safe fn lol_html_comment_is_removed(comment: &Comment) -> bool;
-    safe fn lol_html_comment_user_data_set(comment: &Comment, user_data: *mut c_void);
-    safe fn lol_html_comment_user_data_get(comment: &Comment) -> *mut c_void;
     safe fn lol_html_comment_source_location_bytes(comment: &Comment) -> SourceLocationBytes;
 }
 
@@ -1266,8 +1255,6 @@ unsafe extern "C" {
     safe fn lol_html_doctype_name_get(doctype: &DocType) -> HTMLString;
     safe fn lol_html_doctype_public_id_get(doctype: &DocType) -> HTMLString;
     safe fn lol_html_doctype_system_id_get(doctype: &DocType) -> HTMLString;
-    safe fn lol_html_doctype_user_data_set(doctype: &DocType, user_data: *mut c_void);
-    safe fn lol_html_doctype_user_data_get(doctype: &DocType) -> *mut c_void;
     safe fn lol_html_doctype_remove(doctype: &mut DocType);
     safe fn lol_html_doctype_is_removed(doctype: &DocType) -> bool;
     safe fn lol_html_doctype_source_location_bytes(doctype: &DocType) -> SourceLocationBytes;

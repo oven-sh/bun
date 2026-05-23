@@ -105,6 +105,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
                 // `install_with_cli`.
                 let cli = unsafe { &mut *this.cli };
                 cli.positionals = positionals.as_slice();
+                // SAFETY: see above — same invariant covers `this.ctx`.
                 let ctx = unsafe { &mut *this.ctx };
 
                 install_with_cli(ctx, cli.clone())?;
@@ -132,7 +133,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             cli: &raw mut cli,
         };
 
-        let mut fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
+        let fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
 
         // Zig: `bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher)`.
         // `Command.get()` resolves to the same `*ContextData` already held in
@@ -141,7 +142,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
         // still-live `ctx` parameter under stacked borrows).
         // SAFETY: `ctx_ptr` was just derived from the live `ctx: &mut
         // ContextData` parameter; `ctx` is not accessed again in this branch.
-        BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&mut fetcher))?;
+        BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&fetcher))?;
         return Ok(());
     }
 

@@ -699,7 +699,7 @@ impl<T: ToAst> ToAst for &T {
 impl<T: ToAst> ToAst for [T] {
     fn to_ast(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
         let mut exprs = BumpVec::with_capacity_in(self.len(), bump);
-        for (_i, ex) in self.iter().enumerate() {
+        for ex in self.iter() {
             exprs.push(ex.to_ast(bump)?);
         }
         Ok(Expr::init(
@@ -957,18 +957,10 @@ pub fn parse_package_json_utf8(
     parser.parse_expr(false, true)
 }
 
+#[derive(Default)]
 pub struct JsonResult {
     pub root: Expr,
     pub indentation: Indentation,
-}
-
-impl Default for JsonResult {
-    fn default() -> Self {
-        Self {
-            root: Expr::default(),
-            indentation: Indentation::default(),
-        }
-    }
 }
 
 // Zig signature takes `comptime opts: js_lexer.JSONOptions`. The 8-bool

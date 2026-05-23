@@ -10,11 +10,8 @@ use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
 use crate::linker_context_mod::{StmtList, StmtListWhich};
 use crate::options::Format as OutputFormat;
 use crate::ungate_support::generic_path_with_pretty_initialized;
-use crate::{
-    Chunk, DeclInfo, DeclInfoKind, Index, JSAst, JSMeta, LinkerContext, Part, PartRange, WrapKind,
-};
+use crate::{Chunk, DeclInfo, DeclInfoKind, Index, LinkerContext, Part, PartRange, WrapKind};
 
-use bun_ast as js_ast;
 use bun_ast::StoreRef;
 use bun_ast::binding::ToExprWrapper;
 use bun_ast::{B, Binding, E, Expr, G, Ref, S, Stmt};
@@ -48,7 +45,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // don't conflict. Matches Zig which slices once at the top.
     // SAFETY: the underlying MultiArrayList storage is not resized for the duration of this
     // function (linking has already sized everything).
-    let parts: *mut [Part] = unsafe {
+    let parts: *mut [Part] = {
         let list = &mut c.graph.ast.items_parts_mut()[source_index];
         core::ptr::addr_of_mut!(
             list.as_mut_slice()
@@ -194,14 +191,14 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             // mutates `.path`, and passes `&source`. `bun_ast::Source` is not `Clone`
             // (its `Cow` fields would deep-copy `Owned` data); instead, build a
             // borrowed-field shadow only when the path needs fixing.
-            let mut source_storage: bun_ast::Source;
+            let source_storage: bun_ast::Source;
             let source: &bun_ast::Source = if core::ptr::eq(
                 source_ref.path.text.as_ptr(),
                 source_ref.path.pretty.as_ptr(),
             ) {
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
                 let new_path = bun_core::handle_oom(generic_path_with_pretty_initialized(
-                    source_ref.path.clone(),
+                    &source_ref.path,
                     c.options.target,
                     top_level_dir,
                     arena,
@@ -214,6 +211,8 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         &*std::ptr::from_ref::<[u8]>(source_ref.contents.as_ref())
                     }),
                     contents_is_recycled: source_ref.contents_is_recycled,
+                    // SAFETY: `source_ref` is `&'static Source`, so re-borrowing its
+                    // `Cow` payload as `&'static [u8]` is sound regardless of arm.
                     identifier_name: std::borrow::Cow::Borrowed(unsafe {
                         &*std::ptr::from_ref::<[u8]>(source_ref.identifier_name.as_ref())
                     }),
@@ -281,12 +280,18 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             .expect("unreachable");
     }
 
+    // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
+    // the per-file bitset as a BackRef once. The `parts_live` Vec doesn't
+    // reallocate after `tree_shaking_and_code_splitting` initializes it.
+    let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
+        bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
+
     // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
-        // SAFETY: see `parts` raw-pointer note above.
-        && unsafe { (*parts)[namespace_export_part_index as usize].is_live }
+        && parts_live.is_set(namespace_export_part_index as usize)
     {
+        // SAFETY: see `parts` raw-pointer note above; index bounded by the range check just above.
         let ns_part_stmts: &[Stmt] =
             unsafe { (*parts)[namespace_export_part_index as usize].stmts }.slice();
         if let Err(err) = convert_stmts_for_chunk(
@@ -328,13 +333,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // SAFETY: see `parts` raw-pointer note above.
     let parts_len = unsafe { (&*parts).len() };
     for index_ in 0..parts_len {
-        // SAFETY: index in bounds.
-        let part: &Part = unsafe { &(*parts)[index_] };
         let index = part_range.part_index_begin + (index_ as u32);
-        if !part.is_live {
+        if !parts_live.is_set(index as usize) {
             // Skip the part if it's not in this chunk
             continue;
         }
+        // SAFETY: index in bounds.
+        let part: &Part = unsafe { &(*parts)[index_] };
 
         if index == namespace_export_part_index {
             // Skip the namespace export part because we already handled it above
@@ -410,7 +415,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         new_properties.as_mut_ptr(),
                         src_len,
                     );
-                    unsafe { new_properties.set_len((src_len as u32) as usize) };
+                    new_properties.set_len((src_len as u32) as usize);
                 }
 
                 let resolved_exports = &c.graph.meta.items_resolved_exports()[source_index];
@@ -442,8 +447,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             .graph
                             .top_level_symbol_to_parts(source_index as u32, export_ref)[0]
                             as usize;
-                        let export_part = &ast.parts.as_slice()[part_idx];
-                        if export_part.is_live {
+                        if parts_live.is_set(part_idx) {
                             // PTR_AUDIT(#1): `*prop` is a bitwise copy of
                             // `e_object.properties[i]` (see `copy_nonoverlapping`
                             // above). A plain `*prop = …` would run `Drop` on the

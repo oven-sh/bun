@@ -85,7 +85,7 @@ impl Clone for OutputFile {
                 ..fs::Path::init(text)
             }
         } else {
-            self.src_path.clone()
+            self.src_path
         };
         OutputFile {
             loader: self.loader,
@@ -121,10 +121,6 @@ pub struct BakeExtra {
 // Zig: `pub const Index = bun.GenericIndex(u32, OutputFile);`
 pub type Index = bun_core::GenericIndex<u32, OutputFile>;
 pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
-
-// Zig `deinit` only freed owned fields (value / src_path.text / dest_path /
-// referenced_css_chunks); all are now owned types that drop automatically, so no
-// explicit `impl Drop` is needed (and an empty one would block field moves).
 
 // Depending on:
 // - The target
@@ -228,9 +224,6 @@ impl Clone for Value {
 }
 
 impl Value {
-    // Zig `deinit` only freed `.buffer.bytes`; `Box<[u8]>` drops automatically, so no
-    // explicit `Drop` impl is needed.
-
     pub fn as_slice(&self) -> &[u8] {
         match self {
             Value::Buffer { bytes } => bytes,
@@ -414,7 +407,7 @@ pub struct Options {
 
 impl OutputFile {
     pub fn init(options: Options) -> OutputFile {
-        let size = options.size.unwrap_or_else(|| match &options.data {
+        let size = options.size.unwrap_or(match &options.data {
             OptionsData::Buffer { data } => data.len(),
             OptionsData::File { size, .. } => *size,
             OptionsData::Saved(_) => 0,
@@ -468,16 +461,15 @@ impl OutputFile {
                     // Zig: `std.fs.path.dirname` returns `null` when there's no
                     // separator; the Rust port returns `b""` instead.
                     let parent = resolve_path::dirname::<platform::Auto>(rel_path);
-                    if !parent.is_empty() && parent.len() > root_dir_path.len() {
-                        // Zig `root_dir.makePath(parent)` (std.fs.Dir).
-                        bun_sys::make_path(bun_sys::Dir::from_fd(root_dir), parent)?;
+                    if !parent.is_empty() {
+                        bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                     }
                 }
 
                 let mut path_buf = PathBuffer::uninit();
                 let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
-                    bun_sys::WriteFileArgs {
+                    &bun_sys::WriteFileArgs {
                         data: bun_sys::WriteFileData::Buffer {
                             // Zig built a JSC ArrayBuffer view over `bytes` via
                             // `@constCast`; the Rust side just borrows the slice.
@@ -529,8 +521,6 @@ impl OutputFile {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        #[allow(unused_mut)]
-        let mut do_close = false;
         let mut in_buf = PathBuffer::uninit();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
@@ -541,20 +531,15 @@ impl OutputFile {
 
         #[cfg(windows)]
         {
-            // SAFETY: `FileSystem::instance()` is initialized before any bundler
-            // output is produced.
-            do_close = crate::bun_fs::FileSystem::get().fs.need_to_close_files();
-
+            let _ = (fd_out, fd_in);
             // use paths instead of bun.getFdPathW()
             panic!("TODO windows");
         }
-
-        let _close_out = do_close.then(|| bun_sys::CloseOnDrop::new(fd_out));
-        let _close_in = do_close.then(|| bun_sys::CloseOnDrop::new(fd_in));
-
-        bun_sys::copy_file(fd_in, fd_out)?;
-
-        Ok(())
+        #[cfg(not(windows))]
+        {
+            bun_sys::copy_file(fd_in, fd_out)?;
+            Ok(())
+        }
     }
 }
 

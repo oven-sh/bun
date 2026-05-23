@@ -1,10 +1,4 @@
-#![allow(
-    unused_imports,
-    unused_variables,
-    dead_code,
-    unused_mut,
-    clippy::single_match
-)]
+#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
 use bun_core::{Error, err};
 
@@ -14,7 +8,7 @@ use crate::parser::DeferredErrors;
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
-use bun_ast::{self as js_ast, E, Expr, ExprData, Op, OpCode, OptionalChain};
+use bun_ast::{E, Expr, ExprData, OpCode, OptionalChain};
 
 // Zig: `fn ParseSuffix(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
@@ -253,7 +247,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     *left = p.new_expr(
                         E::Dot {
                             target,
-                            name: name.into(),
+                            name,
                             name_loc,
                             optional_chain: optional_start,
                             ..Default::default()
@@ -325,7 +319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *left = p.new_expr(
             E::Template {
                 tag: Some(tag),
-                head: E::TemplateContents::Raw(head.into()),
+                head: E::TemplateContents::Raw(head),
                 parts,
             },
             loc,
@@ -440,7 +434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // PORT NOTE: Zig allocates an E::If with `undefined` yes/no then writes through the
         // arena pointer (`ternary.data.e_if.yes`). The `Data::EIf(StoreRef<E::If>)` payload is a
         // boxed arena slot, so we mirror that: allocate first, then fill via DerefMut on StoreRef.
-        let mut ternary = p.new_expr(
+        let ternary = p.new_expr(
             E::If {
                 test_: prev,
                 yes: Expr::EMPTY,

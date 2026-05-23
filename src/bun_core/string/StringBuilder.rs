@@ -2,7 +2,7 @@ use core::fmt;
 use core::ptr::NonNull;
 use core::slice;
 
-use crate::string::{self as strings_mod, String as BunString, StringPointer, ZStr};
+use crate::string::{String as BunString, StringPointer, ZStr};
 use bun_simdutf_sys::simdutf;
 
 /// Two-phase string builder: callers first `count()` every slice they will
@@ -23,9 +23,8 @@ pub struct StringBuilder {
 impl StringBuilder {
     pub fn init_capacity(cap: usize) -> StringBuilder {
         // allocator.alloc(u8, cap)
-        let mut buf = Box::<[u8]>::new_uninit_slice(cap);
-        let ptr = NonNull::new(buf.as_mut_ptr().cast::<u8>());
-        core::mem::forget(buf);
+        let buf = Box::<[u8]>::new_uninit_slice(cap);
+        let ptr = NonNull::new(crate::heap::into_raw(buf).cast::<u8>());
         StringBuilder { cap, len: 0, ptr }
     }
 
@@ -38,9 +37,8 @@ impl StringBuilder {
     }
 
     pub fn allocate(&mut self) -> Result<(), bun_alloc::AllocError> {
-        let mut buf = Box::<[u8]>::new_uninit_slice(self.cap);
-        self.ptr = NonNull::new(buf.as_mut_ptr().cast::<u8>());
-        core::mem::forget(buf);
+        let buf = Box::<[u8]>::new_uninit_slice(self.cap);
+        self.ptr = NonNull::new(crate::heap::into_raw(buf).cast::<u8>());
         self.len = 0;
         Ok(())
     }
@@ -103,7 +101,7 @@ impl StringBuilder {
     }
 
     pub fn append_z(&mut self, slice: &[u8]) -> &ZStr {
-        debug_assert!(self.len + 1 <= self.cap); // didn't count everything
+        debug_assert!(self.len < self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
         let start = self.len;
@@ -328,7 +326,7 @@ impl StringBuilder {
         // SAFETY: ptr came from Box::<[u8]>::new_uninit_slice(cap) leaked above;
         // all `cap` bytes have been written iff caller appended everything counted.
         // TODO(port): if not fully written this reads uninit bytes — Zig didn't care.
-        unsafe { crate::heap::take(slice::from_raw_parts_mut(ptr.as_ptr(), cap)) }
+        unsafe { crate::heap::take(std::ptr::slice_from_raw_parts_mut(ptr.as_ptr(), cap)) }
     }
 }
 
@@ -341,10 +339,9 @@ impl Drop for StringBuilder {
         // SAFETY: ptr came from Box::<[MaybeUninit<u8>]>::new_uninit_slice(self.cap)
         // leaked in init_capacity/allocate; reconstruct to free via global allocator.
         unsafe {
-            crate::heap::destroy::<[core::mem::MaybeUninit<u8>]>(slice::from_raw_parts_mut(
-                ptr.as_ptr().cast(),
-                self.cap,
-            ));
+            crate::heap::destroy::<[core::mem::MaybeUninit<u8>]>(
+                std::ptr::slice_from_raw_parts_mut(ptr.as_ptr().cast(), self.cap),
+            );
         }
     }
 }

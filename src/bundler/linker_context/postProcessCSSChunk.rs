@@ -1,6 +1,5 @@
 use crate::mal_prelude::*;
 use bun_collections::MultiArrayList;
-use bun_collections::VecExt;
 use bun_core::string_joiner::{StringJoiner, Watcher};
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
@@ -74,8 +73,22 @@ pub fn post_process_css_chunk(
             j.push_static(b"/* ");
             line_offset.advance(b"/* ");
 
-            j.push_static(pretty);
-            line_offset.advance(pretty);
+            // A `*/` in the path would terminate the comment early and let the
+            // rest of the path be parsed as CSS in the bundled output.
+            if bun_core::strings::contains(pretty, b"*/") {
+                let mut escaped = Vec::with_capacity(pretty.len() + 1);
+                for &byte in pretty {
+                    if byte == b'/' && escaped.last() == Some(&b'*') {
+                        escaped.push(b'\\');
+                    }
+                    escaped.push(byte);
+                }
+                line_offset.advance(&escaped);
+                j.push_owned(escaped.into_boxed_slice());
+            } else {
+                j.push_static(pretty);
+                line_offset.advance(pretty);
+            }
 
             j.push_static(b" */\n");
             line_offset.advance(b" */\n");
@@ -146,7 +159,7 @@ pub fn post_process_css_chunk(
         chunk.output_source_map = c.generate_source_map_for_chunk(
             chunk.isolated_hash,
             worker,
-            compile_results_for_source_map,
+            &compile_results_for_source_map,
             output_dir,
             can_have_shifts,
         )?;

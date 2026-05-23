@@ -15,13 +15,13 @@ use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket
 // PORT NOTE: reshaped for borrowck — Rust forbids safe `static mut`; use AtomicBool.
 pub static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
-/// This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
-/// setDefaultAutoSelectFamilyAttemptTimeout functions, not currently read by any other code. It's
-/// `threadlocal` because Node.js expects each Worker to have its own copy of this, and currently
-/// it can only be accessed by accessor functions which run on each Worker's main JavaScript thread.
-///
-/// If this becomes used in more places, and especially if it can be read by other threads, we may
-/// need to store it as a field in the VirtualMachine instead of in a `threadlocal`.
+// This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and
+// setDefaultAutoSelectFamilyAttemptTimeout functions, not currently read by any other code. It's
+// `threadlocal` because Node.js expects each Worker to have its own copy of this, and currently
+// it can only be accessed by accessor functions which run on each Worker's main JavaScript thread.
+//
+// If this becomes used in more places, and especially if it can be read by other threads, we may
+// need to store it as a field in the VirtualMachine instead of in a `threadlocal`.
 thread_local! {
     pub static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT: Cell<u32> = const { Cell::new(250) };
 }

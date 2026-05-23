@@ -215,6 +215,7 @@ impl<'a> SpanDetail<'a> {
         SpanDetail {
             // SAFETY: caller contract.
             href: unsafe { &*core::ptr::from_ref::<[u8]>(self.href) },
+            // SAFETY: caller contract.
             title: unsafe { &*core::ptr::from_ref::<[u8]>(self.title) },
             autolink: self.autolink,
             autolink_email: self.autolink_email,

@@ -7,7 +7,6 @@ use bun_semver::String as SemverString;
 
 use crate::lockfile_real::package::Alphabetizer;
 use bun_install::Dependency;
-use bun_install::Lockfile;
 use bun_install::PackageID;
 use bun_install::Resolution;
 use bun_install::dependency::{self, Behavior, VersionExt as _};
@@ -149,7 +148,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
                         }
                     }
                     writer.write_all(b", ")?;
-                    needs_comma = false;
                 }
                 let version_name: &[u8] = dependency_version.literal.slice(string_buf);
                 let needs_quote = always_needs_quote
@@ -198,7 +196,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
 
             if meta.integrity.tag != integrity::Tag::UNKNOWN {
                 // Integrity is...never quoted?
-                write!(writer, "  integrity {}\n", &meta.integrity)?;
+                writeln!(writer, "  integrity {}", meta.integrity)?;
             }
 
             if !dependencies.is_empty() {

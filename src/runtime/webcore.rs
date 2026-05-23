@@ -137,7 +137,12 @@ pub trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
     /// erasure: `fn(*anyopaque) bool`.
-    fn on_auto_flush(this: *mut Self) -> bool;
+    ///
+    /// # Safety
+    /// `this` must be the same pointer that was registered via
+    /// [`AutoFlusher::erased_ctx`] (i.e. a valid, live `*mut Self`), and the
+    /// call must occur on the JS thread with no aliasing `&mut Self`.
+    unsafe fn on_auto_flush(this: *mut Self) -> bool;
 }
 
 impl AutoFlusher {
@@ -161,7 +166,7 @@ impl AutoFlusher {
             // SAFETY: `ctx` is exactly the `*mut T` registered via
             // `erased_ctx` below; `DeferredTaskQueue::run` feeds it back
             // unchanged.
-            <T as HasAutoFlusher>::on_auto_flush(ctx.cast::<T>())
+            unsafe { <T as HasAutoFlusher>::on_auto_flush(ctx.cast::<T>()) }
         }
         trampoline::<T>
     }
@@ -232,7 +237,9 @@ impl HasAutoFlusher for file_sink::FileSink {
         // R-2: `auto_flusher` is `JsCell`; `JsCell::get` yields `&T`.
         self.auto_flusher.get()
     }
-    fn on_auto_flush(this: *mut Self) -> bool {
+    /// # Safety
+    /// See [`HasAutoFlusher::on_auto_flush`].
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: `this` was registered as the canonical `*mut FileSink` cast to
         // `*mut c_void` (`AutoFlusher::erased_ctx`); `DeferredTaskQueue::run` is
         // single-threaded (drained on the JS thread after microtasks), so no
@@ -253,7 +260,9 @@ impl<const SSL: bool, const HTTP3: bool> HasAutoFlusher
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
     }
-    fn on_auto_flush(this: *mut Self) -> bool {
+    /// # Safety
+    /// See [`HasAutoFlusher::on_auto_flush`].
+    unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: see FileSink impl above.
         unsafe { (*this).on_auto_flush() }
     }

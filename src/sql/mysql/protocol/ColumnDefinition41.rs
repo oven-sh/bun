@@ -1,4 +1,4 @@
-use crate::mysql::mysql_types::{self as types, FieldType};
+use crate::mysql::mysql_types::FieldType;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::column_identifier::ColumnIdentifier;
 use crate::shared::data::Data;

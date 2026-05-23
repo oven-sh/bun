@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
-use bun_collections::{ByteVecExt, TaggedPtrUnion, VecExt};
+use bun_collections::{TaggedPtrUnion, VecExt};
 use bun_core::Output;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue};
@@ -85,9 +85,9 @@ pub enum Data {
 /// Trait capturing the duck-typed methods `VTable::wrap` expects on `Wrapped`.
 /// Zig used `@hasDecl`/direct method calls; Rust expresses this as a trait bound.
 pub trait SinkHandler {
-    fn write(&mut self, data: streams::Result) -> streams::result::Writable;
-    fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable;
-    fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable;
+    fn write(&mut self, data: &streams::Result) -> streams::result::Writable;
+    fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
+    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn connect(&mut self, signal: Signal) -> sys::Result<()>;
 }
@@ -123,21 +123,21 @@ macro_rules! impl_sink_handler {
             #[inline]
             fn write(
                 &mut self,
-                data: $crate::webcore::streams::Result,
+                data: &$crate::webcore::streams::Result,
             ) -> $crate::webcore::streams::result::Writable {
                 <$Ty>::write(self, data)
             }
             #[inline]
             fn write_latin1(
                 &mut self,
-                data: $crate::webcore::streams::Result,
+                data: &$crate::webcore::streams::Result,
             ) -> $crate::webcore::streams::result::Writable {
                 <$Ty>::write_latin1(self, data)
             }
             #[inline]
             fn write_utf16(
                 &mut self,
-                data: $crate::webcore::streams::Result,
+                data: &$crate::webcore::streams::Result,
             ) -> $crate::webcore::streams::result::Writable {
                 <$Ty>::write_utf16(self, data)
             }
@@ -201,8 +201,8 @@ impl UTF8Fallback {
 
     pub fn write_latin1<Ctx>(
         ctx: &mut Ctx,
-        input: streams::Result,
-        write_fn: fn(&mut Ctx, streams::Result) -> streams::result::Writable,
+        input: &streams::Result,
+        write_fn: fn(&mut Ctx, &streams::Result) -> streams::result::Writable,
     ) -> streams::result::Writable {
         // PERF(port): `write_fn` was `comptime anytype` (monomorphized); now a fn pointer.
         let str_ = input.slice();
@@ -218,10 +218,10 @@ impl UTF8Fallback {
             // Borrowed view is consumed by `write_fn` before `buf` drops.
             let borrowed = bun_ptr::RawSlice::new(&buf[..str_.len()]);
             if input.is_done() {
-                let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
+                let result = write_fn(ctx, &streams::Result::TemporaryAndDone(borrowed));
                 return result;
             } else {
-                let result = write_fn(ctx, streams::Result::Temporary(borrowed));
+                let result = write_fn(ctx, &streams::Result::Temporary(borrowed));
                 return result;
             }
         }
@@ -237,14 +237,14 @@ impl UTF8Fallback {
             if input.is_done() {
                 write_fn(
                     ctx,
-                    streams::Result::OwnedAndDone(Vec::<u8>::from_owned_slice(
+                    &streams::Result::OwnedAndDone(Vec::<u8>::from_owned_slice(
                         slice.into_boxed_slice(),
                     )),
                 )
             } else {
                 write_fn(
                     ctx,
-                    streams::Result::Owned(Vec::<u8>::from_owned_slice(slice.into_boxed_slice())),
+                    &streams::Result::Owned(Vec::<u8>::from_owned_slice(slice.into_boxed_slice())),
                 )
             }
         }
@@ -252,8 +252,8 @@ impl UTF8Fallback {
 
     pub fn write_utf16<Ctx>(
         ctx: &mut Ctx,
-        input: streams::Result,
-        write_fn: fn(&mut Ctx, streams::Result) -> streams::result::Writable,
+        input: &streams::Result,
+        write_fn: fn(&mut Ctx, &streams::Result) -> streams::result::Writable,
     ) -> streams::result::Writable {
         // PERF(port): `write_fn` was `comptime anytype` (monomorphized); now a fn pointer.
         let bytes = input.slice();
@@ -269,10 +269,10 @@ impl UTF8Fallback {
             // Borrowed view is consumed by `write_fn` before `buf` drops.
             let borrowed = bun_ptr::RawSlice::new(&buf[..copied.written as usize]);
             if input.is_done() {
-                let result = write_fn(ctx, streams::Result::TemporaryAndDone(borrowed));
+                let result = write_fn(ctx, &streams::Result::TemporaryAndDone(borrowed));
                 return result;
             } else {
-                let result = write_fn(ctx, streams::Result::Temporary(borrowed));
+                let result = write_fn(ctx, &streams::Result::Temporary(borrowed));
                 return result;
             }
         }
@@ -286,14 +286,14 @@ impl UTF8Fallback {
             if input.is_done() {
                 write_fn(
                     ctx,
-                    streams::Result::OwnedAndDone(Vec::<u8>::from_owned_slice(
+                    &streams::Result::OwnedAndDone(Vec::<u8>::from_owned_slice(
                         allocated.into_boxed_slice(),
                     )),
                 )
             } else {
                 write_fn(
                     ctx,
-                    streams::Result::Owned(Vec::<u8>::from_owned_slice(
+                    &streams::Result::Owned(Vec::<u8>::from_owned_slice(
                         allocated.into_boxed_slice(),
                     )),
                 )
@@ -302,9 +302,9 @@ impl UTF8Fallback {
     }
 }
 
-pub type WriteUtf16Fn = fn(*mut (), streams::Result) -> streams::result::Writable;
-pub type WriteUtf8Fn = fn(*mut (), streams::Result) -> streams::result::Writable;
-pub type WriteLatin1Fn = fn(*mut (), streams::Result) -> streams::result::Writable;
+pub type WriteUtf16Fn = fn(*mut (), &streams::Result) -> streams::result::Writable;
+pub type WriteUtf8Fn = fn(*mut (), &streams::Result) -> streams::result::Writable;
+pub type WriteLatin1Fn = fn(*mut (), &streams::Result) -> streams::result::Writable;
 pub type EndFn = fn(*mut (), Option<SysError>) -> sys::Result<()>;
 pub type ConnectFn = fn(*mut (), Signal) -> sys::Result<()>;
 
@@ -328,7 +328,7 @@ impl VTable {
     /// if that invariant is ever violated we get a deterministic panic instead of a wild jump.
     pub const PENDING: VTable = {
         #[cold]
-        fn trap_write(_: *mut (), _: streams::Result) -> streams::result::Writable {
+        fn trap_write(_: *mut (), _: &streams::Result) -> streams::result::Writable {
             unreachable!("Sink vtable called while pending (status == Closed)")
         }
         #[cold]
@@ -351,7 +351,7 @@ impl VTable {
     pub fn wrap<Wrapped: SinkHandler>() -> VTable {
         fn on_write<W: SinkHandler>(
             this: *mut (),
-            data: streams::Result,
+            data: &streams::Result,
         ) -> streams::result::Writable {
             // SAFETY: `this` was erased from `&mut W` in init_with_type.
             unsafe { &mut *this.cast::<W>() }.write(data)
@@ -362,14 +362,14 @@ impl VTable {
         }
         fn on_write_latin1<W: SinkHandler>(
             this: *mut (),
-            data: streams::Result,
+            data: &streams::Result,
         ) -> streams::result::Writable {
             // SAFETY: see on_write
             unsafe { &mut *this.cast::<W>() }.write_latin1(data)
         }
         fn on_write_utf16<W: SinkHandler>(
             this: *mut (),
-            data: streams::Result,
+            data: &streams::Result,
         ) -> streams::result::Writable {
             // SAFETY: see on_write
             unsafe { &mut *this.cast::<W>() }.write_utf16(data)
@@ -399,7 +399,7 @@ impl<'a> Sink<'a> {
         (self.vtable.end)(std::ptr::from_mut::<()>(self.ptr), err)
     }
 
-    pub fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable {
+    pub fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
         if self.status == Status::Closed {
             return streams::result::Writable::Done;
         }
@@ -414,7 +414,7 @@ impl<'a> Sink<'a> {
         res
     }
 
-    pub fn write_bytes(&mut self, data: streams::Result) -> streams::result::Writable {
+    pub fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
         if self.status == Status::Closed {
             return streams::result::Writable::Done;
         }
@@ -429,7 +429,7 @@ impl<'a> Sink<'a> {
         res
     }
 
-    pub fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable {
+    pub fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
         if self.status == Status::Closed {
             return streams::result::Writable::Done;
         }
@@ -444,7 +444,7 @@ impl<'a> Sink<'a> {
         res
     }
 
-    pub fn write(&mut self, data: Data) -> streams::result::Writable {
+    pub fn write(&mut self, data: &Data) -> streams::result::Writable {
         match data {
             Data::Utf16(str_) => self.write_utf16(str_),
             Data::Latin1(str_) => self.write_latin1(str_),
@@ -759,9 +759,9 @@ pub trait JsSinkType: Sized {
 
     fn memory_cost(&self) -> usize;
     fn finalize(&mut self);
-    fn write_bytes(&mut self, data: streams::Result) -> streams::result::Writable;
-    fn write_utf16(&mut self, data: streams::Result) -> streams::result::Writable;
-    fn write_latin1(&mut self, data: streams::Result) -> streams::result::Writable;
+    fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
+    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
+    fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
@@ -830,7 +830,6 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<&'a mut JSSink<T>> {
-        use crate::webcore::jsc::JsError;
         let raw = T::from_js_extern(frame.this());
         match raw {
             from_js_result::DETACHED => Err(global.throw(format_args!(
@@ -906,7 +905,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             let data = bun_ptr::RawSlice::new(slice);
             return Ok(this
                 .sink
-                .write_bytes(streams::Result::Temporary(data))
+                .write_bytes(&streams::Result::Temporary(data))
                 .to_js(global));
         }
 
@@ -932,7 +931,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             let data = bun_ptr::RawSlice::new(bytes);
             return Ok(this
                 .sink
-                .write_utf16(streams::Result::Temporary(data))
+                .write_utf16(&streams::Result::Temporary(data))
                 .to_js(global));
         }
 
@@ -940,7 +939,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         let data = bun_ptr::RawSlice::new(view.slice());
         Ok(this
             .sink
-            .write_latin1(streams::Result::Temporary(data))
+            .write_latin1(&streams::Result::Temporary(data))
             .to_js(global))
     }
 

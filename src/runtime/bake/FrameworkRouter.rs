@@ -77,15 +77,6 @@ pub struct FrameworkRouter {
     pub freed_edges: Vec<RouteEdgeIndex>,
 }
 
-/// The above structure is optimized for incremental updates, but
-/// production has a different set of requirements:
-/// - Trivially serializable to a binary file (no pointers)
-/// - As little memory indirection as possible.
-/// - Routes cannot be updated after serialization.
-pub struct Serialized {
-    // TODO:
-}
-
 pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
 // TODO(port): ArrayHashMap with custom context (EffectiveURLContext) — needs custom Hash/Eq adapter
 pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
@@ -254,8 +245,8 @@ impl FrameworkRouter {
 
 /// Route patterns are serialized in a stable byte format so it can be treated
 /// as a string, while easily decodable as []Part.
-// Clone: bitwise OK — `data` borrows from `pattern_string_arena`; the arena owns it.
-#[derive(Clone)]
+// Copy: bitwise OK — `data` borrows from `pattern_string_arena`; the arena owns it.
+#[derive(Copy, Clone)]
 pub struct EncodedPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `EncodedPattern` — see `RawSlice` invariant in `bun_ptr`).
@@ -1067,30 +1058,11 @@ pub enum InsertError {
 }
 bun_core::oom_from_alloc!(InsertError);
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum InsertKind {
-    Static,
-    Dynamic,
-}
-
 // PERF(port): Zig used `comptime insertion_kind` with dependent type `insertion_kind.Pattern()`.
 // Rust models this as a runtime enum carrying both pattern shapes; profile if hot.
 pub enum InsertPattern {
     Static(StaticPattern),
     Dynamic(EncodedPattern),
-}
-
-impl InsertPattern {
-    fn next_part<'a>(
-        &'a self,
-        static_it: &mut Option<StaticPatternIterator<'a>>,
-        dynamic_it: &mut Option<EncodedPatternIterator<'a>>,
-    ) -> Option<Part<'a>> {
-        match self {
-            InsertPattern::Static(_) => static_it.as_mut().unwrap().next(),
-            InsertPattern::Dynamic(_) => dynamic_it.as_mut().unwrap().next(),
-        }
-    }
 }
 
 impl FrameworkRouter {
@@ -1257,7 +1229,7 @@ impl<'a> Part<'a> {
         // safe-signature wrapper does not hide the lifetime-widen.
         #[inline(always)]
         unsafe fn d(s: &[u8]) -> &'static [u8] {
-            // SAFETY (`Interned::assume` — Population B, holder-backed): every
+            // SAFETY: (`Interned::assume` — Population B, holder-backed) every
             // payload slice points into `FrameworkRouter::pattern_string_arena`,
             // which is owned by the `FrameworkRouter` and freed only on
             // router drop/reset — strictly after every `Route` holding a
@@ -1276,16 +1248,9 @@ impl<'a> Part<'a> {
 }
 
 /// An enforced upper bound of 64 unique patterns allows routing to use no heap allocation
+#[derive(Default)]
 pub struct MatchedParams {
     pub params: BoundedArray<MatchedParamEntry, { MatchedParams::MAX_COUNT }>,
-}
-
-impl Default for MatchedParams {
-    fn default() -> Self {
-        Self {
-            params: BoundedArray::default(),
-        }
-    }
 }
 
 #[derive(Copy, Clone)]
@@ -1368,18 +1333,6 @@ impl FrameworkRouter {
         self.routes.push(route_data);
         Ok(RouteIndex::init(u32::try_from(i).expect("int cast")))
     }
-
-    #[allow(dead_code)]
-    fn new_edge(&mut self, edge_data: RouteEdge) -> Result<RouteEdgeIndex, AllocError> {
-        if let Some(i) = self.freed_edges.pop() {
-            self.edges[i.get_usize()] = edge_data;
-            Ok(i)
-        } else {
-            let i = self.edges.len();
-            self.edges.push(edge_data);
-            Ok(RouteEdgeIndex::from_usize(i))
-        }
-    }
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -1452,11 +1405,11 @@ impl TinyLog {
     pub fn print(&self, rel_path: &[u8]) {
         let cursor_at = self.cursor_at as usize;
         let cursor_len = self.cursor_len as usize;
-        let after = &rel_path[cursor_at.max(0)..];
+        let after = &rel_path[cursor_at..];
         Output::err_generic(
             "\"{}<blue>{}<r>{}\" is not a valid route",
             (
-                bstr::BStr::new(&rel_path[0..cursor_at.max(0)]),
+                bstr::BStr::new(&rel_path[0..cursor_at]),
                 bstr::BStr::new(&after[0..cursor_len.min(after.len())]),
                 bstr::BStr::new(&after[cursor_len.min(after.len())..]),
             ),
@@ -1563,7 +1516,9 @@ impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashCont
     #[inline]
     fn ctx_hash(key: &Box<[u8]>) -> u64 {
         // Zig: `std.hash.Wyhash.hash(0, s)` — `bun_wyhash::hash` is the final4
-        // variant with seed 0 (NOT the legacy `Wyhash11` used by `OneShotHasher`).
+        // variant with seed 0. (Don't route through `auto_hash`/`OneShotHasher`
+        // here: Rust's `<[u8] as Hash>` mixes in a length prefix, which would
+        // shift the bucket layout the snapshot below depends on.)
         bun_wyhash::hash(key)
     }
     #[inline]
@@ -1603,6 +1558,8 @@ impl FrameworkRouter {
         // program lifetime. Resolver mutex serializes mutation. We hold a raw pointer (no borrow)
         // so `r.read_dir_info_ignore_error(&mut self)` below does not conflict.
         let fs_ref = unsafe { &*fs };
+        // SAFETY: `fs` is the non-null process-global FileSystem singleton (see above);
+        // `addr_of_mut!` only computes a field address without forming a reference.
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
         if let Some(entries) = dir_info.get_entries_const() {
@@ -1625,9 +1582,9 @@ impl FrameworkRouter {
             }
             let mut it = zig_order.iter();
             'outer: while let Some(entry) = it.next() {
+                let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
                 // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton; entries
                 // outlive this scan and are serialized via `RealFS.entries_mutex`.
-                let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
                 let file = unsafe { &*file_ptr };
                 let base = file.base();
                 // PORT NOTE: reshaped for borrowck — fetch type fields fresh each iteration.
@@ -2124,20 +2081,6 @@ impl JSFrameworkRouter {
         );
         obj.put(global, b"pattern", out.transfer_to_js(global)?);
         Ok(obj)
-    }
-
-    fn encoded_pattern_to_js(
-        global: &JSGlobalObject,
-        pattern: &EncodedPattern,
-    ) -> JsResult<JSValue> {
-        let mut rendered: Vec<u8> = Vec::with_capacity(pattern.data().len());
-        let mut it = pattern.iterate();
-        while let Some(part) = it.next() {
-            part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
-                .expect("ByteFmtWriter is infallible");
-        }
-        let mut str = bun_core::String::clone_utf8(&rendered);
-        str.transfer_to_js(global)
     }
 
     fn part_to_js(global: &JSGlobalObject, part: &Part<'_>) -> JsResult<JSValue> {

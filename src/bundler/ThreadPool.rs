@@ -12,14 +12,12 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_alloc::Arena as ThreadLocalArena; // Zig: bun.allocators.MimallocArena
-use bun_collections::VecExt;
 use bun_collections::{ArrayHashMap, MapEntry};
-use bun_core::{self, FeatureFlags, env_var, output as Output};
+use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
 use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
 
-#[allow(unused_imports)]
-use crate::cache::{self as CacheSet, Contents, Entry as CacheEntry, ExternalFreeFunction};
+use crate::cache::{Contents, Entry as CacheEntry, ExternalFreeFunction};
 use crate::linker_context_mod::StmtList;
 // PORT NOTE: `crate::options::Target` is the lower-tier `bun_options_types`
 // enum (re-exported for downstream crates); `BundleOptions.target` is the
@@ -77,6 +75,10 @@ pub struct ThreadPool {
 // the raw-pointer fields are externally synchronized exactly as in the Zig
 // source.
 unsafe impl Send for ThreadPool {}
+// SAFETY: `&ThreadPool` is read concurrently from worker-pool threads via
+// `get_worker(&self)`; the only field mutated under `&self` is
+// `workers_assignments` (through its `bun_threading::Guarded` lock), and the
+// raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
 unsafe impl Sync for ThreadPool {}
 
 impl Default for ThreadPool {
@@ -150,7 +152,7 @@ mod io_thread_pool {
             unsafe {
                 (*THREAD_POOL.get()).write(ThreadPoolLib::ThreadPool::init(
                     ThreadPoolLib::Config {
-                        max_threads: u32::from(bun_core::get_thread_count().min(4).max(2)),
+                        max_threads: u32::from(bun_core::get_thread_count().clamp(2, 4)),
                         // Use a much smaller stack size for the IO thread pool
                         stack_size: 512 * 1024,
                     },
@@ -316,14 +318,11 @@ impl ThreadPool {
             return false;
         }
 
+        // 4 was the sweet spot on macOS. Didn't check the sweet spot on Windows.
         #[cfg(any(target_os = "macos", windows))]
-        {
-            // 4 was the sweet spot on macOS. Didn't check the sweet spot on Windows.
-            return bun_core::get_thread_count() > 3;
-        }
-
-        #[allow(unreachable_code)]
-        false
+        return bun_core::get_thread_count() > 3;
+        #[cfg(not(any(target_os = "macos", windows)))]
+        return false;
     }
 
     /// Shut down the IO pool, if and only if no `ThreadPool`s exist right now.
@@ -337,7 +336,11 @@ impl ThreadPool {
         }
     }
 
-    pub fn schedule_with_options(&self, parse_task: &mut ParseTask, is_inside_thread_pool: bool) {
+    fn schedule_with_options(&self, parse_task: *mut ParseTask, is_inside_thread_pool: bool) {
+        // SAFETY: callers (`schedule`/`schedule_inside_thread_pool`) pass a
+        // live, exclusively-owned ParseTask (heap- or arena-allocated raw
+        // pointer); see call sites in bundle_v2.rs.
+        let parse_task = unsafe { &mut *parse_task };
         if matches!(parse_task.contents_or_fd, ContentsOrFd::Contents(_))
             && matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode)
         {
@@ -396,14 +399,11 @@ impl ThreadPool {
     // PORT NOTE: takes `*mut` (Zig: `*ParseTask`) so callers can pass either a
     // raw heap pointer (e.g. `load.parse_task`) or a `&mut` (auto-coerces).
     pub fn schedule(&self, parse_task: *mut ParseTask) {
-        // SAFETY: caller passes a live, exclusively-owned ParseTask (heap- or
-        // arena-allocated raw pointer); see call sites in bundle_v2.rs.
-        self.schedule_with_options(unsafe { &mut *parse_task }, false);
+        self.schedule_with_options(parse_task, false);
     }
 
     pub fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
-        // SAFETY: see `schedule` above.
-        self.schedule_with_options(unsafe { &mut *parse_task }, true);
+        self.schedule_with_options(parse_task, true);
     }
 
     // PORT NOTE: returns `&'static mut` — the `Worker` is `heap::alloc`'d
@@ -599,7 +599,7 @@ impl Worker {
     /// `Task.callback` field type at the struct-init site). `task` is the
     /// `deinit_task` field of a live boxed `Worker` — guaranteed by
     /// [`Self::deinit_soon`], the sole scheduler of this callback.
-    pub fn deinit_callback(task: *mut ThreadPoolLib::Task) {
+    fn deinit_callback(task: *mut ThreadPoolLib::Task) {
         bun_core::scoped_log!(ThreadPool, "Worker.deinit()");
         // SAFETY: `task` points to `Worker.deinit_task` (intrusive field) —
         // only ever invoked by the thread pool against a `Worker` enqueued via
@@ -628,7 +628,7 @@ impl Worker {
             // SAFETY: `self` is the heap-allocated Worker; sole owner now that
             // the caller is about to `clear_retaining_capacity()` the
             // `workers_assignments` map.
-            unsafe { Self::deinit(self as *mut Self) };
+            unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
         }
     }
 
@@ -655,6 +655,7 @@ impl Worker {
                         ctx.deinit();
                     }
                 }
+                js_ast::Macro::collect_vm_garbage();
             }
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
             // first, then the arenas it references.
@@ -812,8 +813,5 @@ impl Worker {
         }
     }
 }
-
-use bun_ast::Index;
-use bun_ast::Ref;
 
 // ported from: src/bundler/ThreadPool.zig

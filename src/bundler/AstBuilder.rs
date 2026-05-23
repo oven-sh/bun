@@ -11,13 +11,12 @@ use core::ptr::NonNull;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
-use bun_ast::{ImportKind, ImportRecord, import_record};
+use bun_ast::{ImportKind, ImportRecord};
 use bun_ast::{Loc, Log, Range, Source};
 use bun_collections::VecExt;
 use bun_core::Output;
 use bun_core::{MutableString, strings};
 
-use bun_ast as js_ast;
 use bun_ast::ast_result::{NamedExports, NamedImports, TopLevelSymbolToParts};
 use bun_ast::b::B;
 use bun_ast::base::{RefInt, RefTag};
@@ -27,7 +26,7 @@ use bun_ast::stmt::StatementData;
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{
     Binding, ClauseItem, DeclaredSymbol, DeclaredSymbolList, ExportsKind, Expr, LocRef,
-    NamedExport, Part, PartList, PartSymbolUseMap, Scope, Stmt, Symbol,
+    NamedExport, Part, PartSymbolUseMap, Scope, Stmt, Symbol,
 };
 use bun_ast::{E, G, S};
 use bun_js_parser as js_parser;
@@ -345,7 +344,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // Zig shallow-copied a single `Vec(u32){1}`; `Vec` is move-only
         // in Rust, so allocate a fresh one per key.
         for &ref_ in module_scope_ref.generated.slice() {
-            top_level_symbols_to_parts.put_assume_capacity(ref_, Vec::<u32>::from_slice(&[1]));
+            top_level_symbols_to_parts
+                .put_assume_capacity(ref_, bun_alloc::AstAlloc::vec_from_slice(&[1]));
         }
         top_level_symbols_to_parts.re_index()?;
 
@@ -400,7 +400,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                 },
                             )?;
                         }
@@ -553,7 +553,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     import_record_index: st.import_record_index,
                                     alias_is_star: false,
                                     is_exported: false,
-                                    local_parts_with_uses: Default::default(),
+                                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                 },
                             )?;
                         }
@@ -597,7 +597,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 core::mem::take(&mut self.import_records),
                 self.bump,
             ),
-            export_star_import_records: Box::default(),
+            export_star_import_records: bun_alloc::AstAlloc::vec(),
             approximate_newline_count: 1,
             exports_kind: ExportsKind::Esm,
             named_imports: core::mem::take(&mut self.named_imports),
@@ -693,8 +693,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 }
 
 use bun_ast::Ref;
-
-use bun_ast::Index;
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;

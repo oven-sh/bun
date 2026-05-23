@@ -93,7 +93,6 @@ pub struct WebWorker {
     // crosses threads; the backref invariant (parent outlives child via
     // `parent_poll_ref`) is documented above.
     parent: bun_ptr::BackRef<VirtualMachine>,
-    parent_context_id: u32,
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -225,7 +224,7 @@ unsafe extern "C" {
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         cpp_worker: *mut c_void,
-        message: BunString,
+        message: &mut BunString,
         err: JSValue,
     );
 }
@@ -475,13 +474,13 @@ impl WebWorker {
     /// set and nothing to clean up (no keep-alive held, no allocation
     /// outstanding).
     #[unsafe(export_name = "WebWorker__create")]
-    pub extern "C" fn create(
+    pub unsafe extern "C" fn create(
         cpp_worker: *mut c_void,
         parent: *mut VirtualMachine,
         name_str: BunString,
         specifier_str: BunString,
         error_message: &mut BunString,
-        parent_context_id: u32,
+        _parent_context_id: u32,
         this_context_id: u32,
         mini: bool,
         default_unref: bool,
@@ -543,7 +542,6 @@ impl WebWorker {
             cpp_worker,
             // `parent` is the calling thread's live VM; non-null by FFI contract.
             parent: bun_ptr::BackRef::from(NonNull::new(parent).expect("parent VM")),
-            parent_context_id,
             execution_context_id: this_context_id,
             mini,
             eval_mode,
@@ -620,7 +618,9 @@ impl WebWorker {
                 live_workers::unregister(worker);
                 // `worker` not yet shared (spawn failed); parent thread.
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
-                Self::destroy(worker);
+                // SAFETY: `worker` is the heap allocation from `heap::into_raw`
+                // above; spawn failed so it was never shared with another thread.
+                unsafe { Self::destroy(worker) };
                 *error_message = BunString::static_(b"Failed to spawn worker thread");
                 core::ptr::null_mut()
             }
@@ -632,7 +632,7 @@ impl WebWorker {
     /// allocator is mimalloc (thread-safe), so the caller's thread doesn't
     /// matter.
     #[unsafe(export_name = "WebWorker__destroy")]
-    pub extern "C" fn destroy(this: *mut WebWorker) {
+    pub unsafe extern "C" fn destroy(this: *mut WebWorker) {
         // SAFETY: this was heap-allocated in create(); C++ owns it and calls
         // destroy exactly once.
         let this = unsafe { bun_core::heap::take(this) };
@@ -870,10 +870,12 @@ impl WebWorker {
             // only honours `--no-addons`; the hook owns the temporary UTF-8
             // alloc + clap parse + `args.deinit()` (the full `defer` chain in
             // the .zig). `None` ↔ Zig's `catch break :parse_new_args` arm.
-            // SAFETY: hook contract.
-            if let Some(allow_addons) =
-                unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) }
-            {
+
+            // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the
+            // owning `WebCore::Worker` for `self`'s lifetime; the hook only
+            // reads the slice and owns its own temporary allocations.
+            let parsed = unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) };
+            if let Some(allow_addons) = parsed {
                 // override the existing even if it was set
                 transform_options.allow_addons = Some(allow_addons);
             }
@@ -1060,7 +1062,7 @@ impl WebWorker {
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // PORT NOTE: Zig's slice-copy assignment; here `preload: Vec<Box<[u8]>>`
         // so clone the boxes (cheap, ≤handful).
-        vm.as_mut().preload = self.preloads.clone();
+        vm.as_mut().preload.clone_from(&self.preloads);
 
         // Resolve the entry point on the worker thread (the parent only stored
         // the raw specifier). The returned slice is BORROWED — every exit from
@@ -1271,6 +1273,10 @@ impl WebWorker {
                 // PORT NOTE: reshaped for borrowck — `close_all_socket_groups`
                 // wants `&VirtualMachine` while `rare` is `&mut` borrowed from
                 // `vm`. Re-derive `vm` through the raw ptr (sole owner).
+
+                // SAFETY: `vm_ptr` was unpublished under `vm_lock` above, so this
+                // thread is the sole owner; the JSC VM is still alive (teardown
+                // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
             exit_code = i32::from(vm.exit_handler.exit_code);
@@ -1432,11 +1438,10 @@ impl WebWorker {
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
         };
-        // RAII: Zig's `defer str.deref()` — released on scope exit.
-        scopeguard::defer! { str.deref(); }
+        let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
             // `cpp_worker` is the opaque C++-owned handle; `str` reffed for the call.
-            WebWorker__dispatchError(global, self.cpp_worker, str, err)
+            WebWorker__dispatchError(global, self.cpp_worker, &mut str, err)
         });
         if let Err(e) = dispatch {
             // Spec web_worker.zig:810 — `.asException(..).?`: `take_exception`
@@ -1479,8 +1484,7 @@ fn on_unhandled_rejection(
     let format_result = jsc::console_object::format2(
         jsc::console_object::MessageLevel::Debug,
         global_object,
-        [error_instance].as_ptr(),
-        1,
+        &[error_instance],
         &mut array,
         jsc::console_object::FormatOptions {
             enable_colors: false,
@@ -1514,12 +1518,13 @@ fn on_unhandled_rejection(
     // (declares + checks a TopExceptionScope around the FFI call, same as
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
+    let mut error_message = bun_core::OwnedString::new(BunString::clone_utf8(&array));
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`.
         WebWorker__dispatchError(
             global_object,
             worker.cpp_worker,
-            BunString::clone_utf8(&array),
+            &mut error_message,
             error_instance,
         );
     })
@@ -1664,6 +1669,8 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // satisfy that. The cross-thread readers under `vm_lock` never touch
     // `transpiler`.
     let global = unsafe { (*parent).global };
+    // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
+    // owning thread (the caller's thread per fn contract).
     let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
         Ok(r) => r,
         Err(_) => {

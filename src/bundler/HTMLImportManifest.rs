@@ -45,7 +45,7 @@ use bun_js_printer::Encoding;
 use bun_paths::resolve_path::relative_normalized;
 use bun_resolver::fs::FileSystem;
 
-use crate::Graph::{Graph, InputFileColumns as _};
+use crate::Graph::Graph;
 use crate::chunk::{Content, Flags};
 use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;

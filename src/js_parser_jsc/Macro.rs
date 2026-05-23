@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_ast::DisableStoreReset;
-use bun_ast::{self as js_ast, E, Expr, ExprData, ExprNodeList, G, S, ToJSError};
+use bun_ast::{E, Expr, ExprData, ExprNodeList, G, S, ToJSError};
 use bun_ast::{Log, Range, Source};
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::{ArrayHashMap, HashMap};
@@ -154,7 +154,7 @@ impl MacroContext {
                             bstr::BStr::new(import_record_path)
                         ),
                         import_record_path,
-                        bun_ast::ImportKind::Stmt.into(),
+                        bun_ast::ImportKind::Stmt,
                         e,
                     );
                     return Err(err!("MacroNotFound"));
@@ -306,6 +306,17 @@ pub fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
     // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
     // (→ `mi_heap_destroy`) on the lazily-created `bump`.
     drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
+    bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
+}
+
+/// Exposed for `bun_bundler::ThreadPool::Worker::deinit` (which has no
+/// `bun_jsc` dependency) to sweep the per-worker macro VM after the worker's
+/// `MacroContext` boxes are freed. See [`collect_macro_vm_garbage`].
+///
+/// [`collect_macro_vm_garbage`]: bun_jsc::virtual_machine::collect_macro_vm_garbage
+#[unsafe(no_mangle)]
+pub fn __bun_macro_collect_vm_garbage() {
+    bun_jsc::virtual_machine::collect_macro_vm_garbage();
 }
 
 #[unsafe(no_mangle)]
@@ -348,9 +359,12 @@ pub fn __bun_macro_context_get_remap(
     // the `'static` borrow is sound for callers that drop it before the
     // `Transpiler` does (matches the Zig by-value copy of the map header).
     let inner = unsafe { &*data.cast::<MacroContext>() };
-    inner
-        .get_remap(path)
-        .map(|e| unsafe { &*(e as *const js_parser::Macro::MacroRemapEntry) })
+    inner.get_remap(path).map(|e| {
+        // SAFETY: `e` borrows an entry in the remap table owned by
+        // `Transpiler.options`, which outlives every parse that calls this fn,
+        // so extending the borrow to `'static` upholds the function-level contract.
+        unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) }
+    })
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -426,8 +440,8 @@ impl Macro {
         hash: i32,
     ) -> Result<Macro, Error> {
         // TODO(port): narrow error set
-        let vm: *mut VirtualMachine = if VirtualMachine::is_loaded() {
-            VirtualMachine::get_mut_ptr()
+        let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
+            (VirtualMachine::get_mut_ptr(), false)
         } else {
             // PORT NOTE: Zig saved/restored `resolver.opts.transform_options`
             // across this block because `VirtualMachine.init` (via
@@ -450,20 +464,21 @@ impl Macro {
                 is_main_thread: false,
                 ..Default::default()
             })?;
-
-            // SAFETY: `_vm` is the freshly-allocated per-thread VM.
-            unsafe {
-                (*_vm).enable_macro_mode();
-                (*(*_vm).event_loop()).ensure_waker();
-                (*_vm).transpiler.configure_defines()?;
-            }
-            _vm
+            (_vm, true)
         };
 
+        // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
+        // (which runs the macro module's top-level JS via `wait_for_promise`) so
+        // a top-level `Bun.Transpiler#transformSync` doesn't see
+        // `macro_guard_depth == 0` and free the printer mid-init. Drops on every
+        // exit (success, `?`, Rejected) so depth/state can't leak; the caller's
+        // own `MacroModeGuard` re-enables for the actual macro call.
+        let _init_guard = MacroModeGuard::new(vm);
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        unsafe {
-            (*vm).enable_macro_mode();
-            (*(*vm).event_loop()).ensure_waker();
+        unsafe { (*(*vm).event_loop()).ensure_waker() };
+        if is_new_vm {
+            // SAFETY: `vm` is the freshly-allocated per-thread VM.
+            unsafe { (*vm).transpiler.configure_defines()? };
         }
 
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
@@ -481,7 +496,6 @@ impl Macro {
             // is a live promise cell.
             unsafe {
                 (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
-                (*vm).disable_macro_mode();
             }
             return Err(err!("MacroLoadError"));
         }
@@ -683,7 +697,6 @@ impl<'a> Run<'a> {
                 }
 
                 let mut blob_: Option<*const WebCore::Blob> = None;
-                let mime_type: Option<&[u8]> = None;
 
                 if value.js_type() == jsc::JSType::DOMWrapper {
                     // LAYERING: `Response`/`Request` (and their `BodyMixin::
@@ -713,14 +726,8 @@ impl<'a> Run<'a> {
                     // shared-view/content-type slices borrow its store.
                     let (bytes, ct) =
                         unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
-                    return expr_from_blob(
-                        bytes,
-                        self.bump,
-                        mime_type.unwrap_or(ct),
-                        self.log,
-                        self.caller.loc,
-                    )
-                    .map_err(|_| MacroError::MacroFailed);
+                    return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
+                        .map_err(|_| MacroError::MacroFailed);
                 }
 
                 return Ok(Expr::init(E::EString::EMPTY, self.caller.loc));
@@ -772,7 +779,7 @@ impl<'a> Run<'a> {
                 // recursion releases `self`.
                 if let ExprData::EArray(mut e_array) = expr.data {
                     e_array.items = array;
-                    e_array.items.truncate((i) as usize);
+                    e_array.items.truncate(i);
                 }
                 return Ok(expr);
             }

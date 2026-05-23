@@ -62,12 +62,12 @@ impl<R> StyleRule<R> {
             self.vendor_prefix = selector::downlevel_selectors(
                 context.arena,
                 self.selectors.v.slice_mut(),
-                *context.targets,
+                context.targets,
             );
         }
     }
 
-    pub fn is_compatible(&self, targets: css::targets::Targets) -> bool {
+    pub fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
 }
@@ -244,7 +244,6 @@ impl<R> StyleRule<R> {
     {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
-        #[allow(unused_mut)]
         let mut unused = false;
         // TODO(port): blocked_on key-type mismatch — `selector::is_unused` takes
         // `&ArrayHashMap<&[u8], ()>` but `MinifyContext.unused_symbols` is

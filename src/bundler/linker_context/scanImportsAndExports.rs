@@ -12,22 +12,20 @@
 // `bun_collections::multi_array_list::Slice::items_raw`.
 
 use crate::mal_prelude::*;
-use bun_alloc::AllocError;
 use bun_ast::Source;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
-use bun_collections::{HashMap, MultiArrayList, VecExt};
+use bun_collections::{HashMap, VecExt};
 use bun_core::FeatureFlags;
 
 use crate::bundled_ast::{self, NamedExports, NamedImports};
 use crate::options::{self, Format, Loader};
 use crate::ungate_support::perf;
 use crate::{
-    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, JSMeta, LinkerContext,
-    Part, RefImportData, ResolvedExports, WrapKind, js_meta,
+    EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext, Part,
+    RefImportData, ResolvedExports, WrapKind, js_meta,
 };
 use bun_ast::symbol::{self, Kind as SymbolKind};
 use bun_ast::{Dependency, ExportsKind, PartList, Ref};
-use bun_js_parser as js_ast;
 
 use crate::linker_context_mod::LinkerCtx;
 
@@ -112,7 +110,7 @@ pub fn scan_imports_and_exports(
     let named_exports: *mut [NamedExports] = ast.named_exports;
     let flags: *mut [js_meta::Flags] = meta.flags;
     let ast_flags_list: *mut [AstFlags] = ast.flags;
-    let export_star_import_records: *mut [Box<[u32]>] = ast.export_star_import_records;
+    let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
@@ -128,8 +126,9 @@ pub fn scan_imports_and_exports(
     let resolved_export_stars: *mut [ExportData] = meta.resolved_export_star;
     let imports_to_bind_list: *mut [RefImportData] = meta.imports_to_bind;
     let wrapper_part_indices: *mut [Index] = meta.wrapper_part_index;
-    let sorted_aliases: *mut [Box<[Box<[u8]>]>] = meta.sorted_and_filtered_export_aliases;
-    let cjs_export_copies: *mut [Box<[Ref]>] = meta.cjs_export_copies;
+    let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
+        meta.sorted_and_filtered_export_aliases;
+    let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
     let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
     // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
@@ -462,7 +461,10 @@ pub fn scan_imports_and_exports(
                         .graph
                         .symbols
                         .follow(col_ref!(module_refs)[source_index]);
+                    // SAFETY: `follow` returns a valid in-bounds `Ref`; no other
+                    // borrow into `this.graph.symbols` is live across this write.
                     unsafe { this.graph.symbol_mut(exports_ref) }.kind = SymbolKind::Unbound;
+                    // SAFETY: same as above; `module_ref` is a distinct slot.
                     unsafe { this.graph.symbol_mut(module_ref) }.kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
@@ -552,7 +554,7 @@ pub fn scan_imports_and_exports(
             let id = source_index as usize;
 
             let is_entry_point = col_ref!(entry_point_kinds)[id].is_entry_point();
-            let aliases: &[Box<[u8]>] = &col_ref!(sorted_aliases)[id];
+            let aliases = &col_ref!(sorted_aliases)[id];
             let flag = col_ref!(flags)[id];
             let wrap = flag.wrap;
             let export_kind = col_ref!(exports_kind)[id];
@@ -628,7 +630,9 @@ pub fn scan_imports_and_exports(
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if is_entry_point && output_format == Format::Esm {
-                let mut copies = vec![Ref::NONE; aliases.len()].into_boxed_slice();
+                let mut copies: bun_alloc::AstVec<Ref> =
+                    bun_alloc::AstAlloc::vec_with_capacity(aliases.len());
+                copies.resize(aliases.len(), Ref::NONE);
 
                 debug_assert_eq!(aliases.len(), copies.len());
                 for (alias, copy) in aliases.iter().zip(copies.iter_mut()) {
@@ -654,6 +658,8 @@ pub fn scan_imports_and_exports(
                     builder.append(ident);
                     let end = builder.len;
                     let original_name = &builder.allocated_slice()[start..end];
+                    // SAFETY: `r#ref` was checked `is_valid()` above; no other
+                    // borrow into `this.graph.symbols` is live across this write.
                     unsafe { this.graph.symbol_mut(r#ref) }.original_name =
                         bun_ast::StoreStr::new(original_name);
                 }
@@ -741,29 +747,29 @@ pub fn scan_imports_and_exports(
                     }
 
                     if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
-                        // PERF(port): clone to avoid holding column borrow across `&mut this.graph`.
-                        let local_parts: Vec<u32> =
-                            named_import.local_parts_with_uses.slice().to_vec();
-                        for part_index in local_parts {
-                            let parts_declaring_symbol: Vec<u32> = this
-                                .graph
-                                .top_level_symbol_to_parts(import_source_index, import_ref)
-                                .to_vec();
-                            // PERF(port): was zero-copy slice borrow; profile.
-
+                        // `local_parts_with_uses` and the `top_level_symbol_to_parts`
+                        // result are both arena-backed AstVec slices that this loop
+                        // body never resizes; capture them as BackRefs (same
+                        // discipline as `re_exports_ptr` above) so we can take
+                        // `&mut col!(parts_list)[id]` without cloning.
+                        let local_parts: bun_ptr::BackRef<[u32]> =
+                            bun_ptr::BackRef::new(named_import.local_parts_with_uses.slice());
+                        let parts_declaring_symbol: bun_ptr::BackRef<[u32]> = bun_ptr::BackRef::new(
+                            this.graph
+                                .top_level_symbol_to_parts(import_source_index, import_ref),
+                        );
+                        for &part_index in &*local_parts {
                             let part: &mut Part =
                                 &mut col!(parts_list)[id].as_mut_slice()[part_index as usize];
                             let re_exports: &[Dependency] = &re_exports_ptr;
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
                                 + part.dependencies.len() as usize;
-                            // PORT NOTE: bun.handleOom dropped — Vec growth aborts on OOM.
                             part.dependencies.ensure_total_capacity(total_len);
 
                             // Depend on the file containing the imported symbol
-                            for resolved_part_index in parts_declaring_symbol {
-                                // PERF(port): was appendAssumeCapacity
-                                part.dependencies.push(Dependency {
+                            for &resolved_part_index in &*parts_declaring_symbol {
+                                part.dependencies.append_assume_capacity(Dependency {
                                     source_index: bun_ast::Index::source(
                                         import_source_index as usize,
                                     ),
@@ -773,10 +779,7 @@ pub fn scan_imports_and_exports(
 
                             // Also depend on any files that re-exported this symbol in between the
                             // file containing the import and the file containing the imported symbol
-                            // PERF(port): was appendSliceAssumeCapacity
-                            for dep in re_exports {
-                                part.dependencies.push(*dep);
-                            }
+                            part.dependencies.append_slice_assume_capacity(re_exports);
                         }
                     }
 
@@ -791,7 +794,8 @@ pub fn scan_imports_and_exports(
 
                 let extra_count = (force_include_exports as usize) + (add_wrapper as usize);
 
-                let mut dependencies: Vec<Dependency> = Vec::with_capacity(extra_count);
+                let mut dependencies =
+                    bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
 
                 for alias in col_ref!(sorted_aliases)[id].iter() {
                     let exp = col_ref!(resolved_exports)[id].get(alias).unwrap();
@@ -852,7 +856,7 @@ pub fn scan_imports_and_exports(
                 let entry_point_part_index = this.graph.add_part_to_file(
                     source_index,
                     Part {
-                        dependencies: Vec::<Dependency>::move_from_list(dependencies),
+                        dependencies,
                         can_be_removed_if_unused: false,
                         ..Default::default()
                     },
@@ -1186,7 +1190,7 @@ struct DependencyWrapper<'a> {
     import_records: &'a [ImportRecordList<'a>],
     export_star_map: HashMap<IndexInt, ()>,
     entry_point_kinds: &'a [EntryPoint::Kind],
-    export_star_records: &'a [Box<[u32]>],
+    export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
 }
 
@@ -1272,7 +1276,7 @@ struct ExportStarContext<'a> {
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
-    export_star_records: *mut [Box<[u32]>],
+    export_star_records: *mut [bun_alloc::AstVec<u32>],
 }
 
 impl<'a> ExportStarContext<'a> {
@@ -1421,7 +1425,7 @@ mod __css_validation {
             // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`
             // (std `Hash` over the byte slice → wyhash truncated to u32).
             use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-            AutoContext::default().hash(key)
+            AutoContext.hash(key)
         }
         fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
             a == &**b
@@ -1463,7 +1467,7 @@ mod __css_validation {
                     let name_v = name.v();
                     if !other_css_ast
                         .local_scope
-                        .contains_adapted(name_v, SliceBoxAdapter)
+                        .contains_adapted(name_v, &SliceBoxAdapter)
                     {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         let _ = this.log_disjoint().add_error_fmt(
@@ -1654,7 +1658,7 @@ mod __css_validation {
                                 for name in compose.names.slice() {
                                     let name_v = name.v();
                                     let Some(other_name) =
-                                        other_ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                        other_ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
                                     else {
                                         continue;
                                     };
@@ -1677,7 +1681,7 @@ mod __css_validation {
                             for name in compose.names.slice() {
                                 let name_v = name.v();
                                 let Some(name_entry) =
-                                    ast.local_scope.get_adapted(name_v, SliceBoxAdapter)
+                                    ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
                                 else {
                                     continue;
                                 };

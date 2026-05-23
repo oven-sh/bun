@@ -1,5 +1,4 @@
 use bun_collections::VecExt;
-use core::ffi::c_char;
 use core::fmt;
 use std::io::Write as _;
 
@@ -7,7 +6,7 @@ use crate::cli::Command;
 use crate::cli::publish_command as Publish;
 use bun_alloc::AllocError;
 use bun_collections::StringHashMap;
-use bun_core::{self as bun, Global, Output, Progress, fmt as bun_fmt};
+use bun_core::{Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
@@ -42,17 +41,14 @@ use bun_sys::{
 // local shims for upstream-stub gaps
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `std.fs.Dir.openDirZ(path, .{ .iterate = true })` — `bun_sys::Dir` has no
-/// such inherent method; route through `bun_sys::open_dir_at`.
+/// `std.fs.Dir.openDirZ(path, .{ .iterate = true })`.
 #[inline]
 fn dir_open_dir_z(
     dir: &Dir,
     path: &ZStr,
-    _opts: bun_sys::OpenDirOptions,
+    opts: bun_sys::OpenDirOptions,
 ) -> Result<Dir, bun_core::Error> {
-    bun_sys::open_dir_at(dir.fd, path.as_bytes())
-        .map(Dir::from_fd)
-        .map_err(Into::into)
+    dir.open_dir(path.as_bytes(), opts)
 }
 
 /// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
@@ -511,7 +507,7 @@ fn iterate_included_project_tree(
     bins: &[BinInfo],
     includes: &[Pattern],
     excludes: &[Pattern],
-    root_dir: Dir,
+    root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
     if cfg!(debug_assertions) {
@@ -528,7 +524,7 @@ fn iterate_included_project_tree(
     let _ = &mut ignores; // unused in this fn body in Zig too (declared but not read)
 
     let mut dirs: Vec<DirInfo> = Vec::new();
-    dirs.push(DirInfo(root_dir, Box::from(&b""[..]), 1));
+    dirs.push(DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1));
 
     let mut included_dirs: Vec<DirInfo> = Vec::new();
 
@@ -537,8 +533,13 @@ fn iterate_included_project_tree(
     // first find included dirs and files
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        // Root (depth 1) is borrowed `Fd::cwd()`-ish; only close subdirs we opened.
-        let close_guard = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
+        // Root (depth 1) is borrowed from the caller's `root_dir`; only close
+        // subdirs we opened.
+        let dir = scopeguard::guard(dir, move |d| {
+            if dir_depth == 1 {
+                let _ = d.into_raw();
+            }
+        });
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
@@ -690,7 +691,7 @@ fn iterate_included_project_tree(
             }
         }
 
-        drop(close_guard);
+        drop(dir);
     }
 
     // for each included dir, traverse its entries, exclude any with `negate_no_match`.
@@ -745,13 +746,11 @@ fn add_entire_tree(
 
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        let _close = CloseOnDrop::dir(dir);
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {
                 break;
             }
-            // last.deinit() handled by Drop
             ignores.pop();
         }
 
@@ -903,7 +902,7 @@ fn iterate_bundled_deps(
         return Ok(bundled_pack_queue);
     }
 
-    let mut dir: Dir = match dir_open_dir_z(
+    let dir: Dir = match dir_open_dir_z(
         root_dir,
         ZStr::from_static(b"node_modules\0"),
         bun_sys::OpenDirOptions {
@@ -925,7 +924,6 @@ fn iterate_bundled_deps(
             Global::crash();
         }
     };
-    let _close = CloseOnDrop::dir(dir);
 
     // A set of bundled dependency locations
     // - node_modules/is-even
@@ -947,7 +945,7 @@ fn iterate_bundled_deps(
         if strings::starts_with_char(_entry_name, b'@') {
             let concat = entry_subpath(b"node_modules", _entry_name)?;
 
-            let mut scoped_dir: Dir = match dir_open_dir_z(
+            let scoped_dir: Dir = match dir_open_dir_z(
                 root_dir,
                 &concat,
                 bun_sys::OpenDirOptions {
@@ -958,7 +956,6 @@ fn iterate_bundled_deps(
                 Ok(d) => d,
                 Err(_) => continue,
             };
-            let _close_scoped = CloseOnDrop::dir(scoped_dir);
 
             let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
@@ -1074,7 +1071,6 @@ fn add_bundled_dep(
 
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        let _close = CloseOnDrop::dir(dir);
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
         while let Some(entry) = iter.next().ok().flatten() {
@@ -1317,7 +1313,11 @@ fn iterate_project_tree(
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
         // Root (depth 1) is caller-owned; only close subdirs we opened.
-        let _close = (dir_depth != 1).then(|| CloseOnDrop::dir(dir));
+        let dir = scopeguard::guard(dir, move |d| {
+            if dir_depth == 1 {
+                let _ = d.into_raw();
+            }
+        });
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {
@@ -1454,7 +1454,7 @@ fn get_bundled_deps(
                 let Some(b) = bundled_deps.as_bool() else {
                     return Ok(Some(Vec::new()));
                 };
-                if !b == true {
+                if !b {
                     return Ok(Some(Vec::new()));
                 }
 
@@ -1722,26 +1722,6 @@ type BufferedFileReader = bun_core::deprecated::BufferedReader<{ 1024 * 512 }, b
 // ───────────────────────────────────────────────────────────────────────────
 
 use bun_libarchive::lib::Result as ArchiveResult;
-use bun_sys::FdDirExt as _;
-
-/// `Expr::as_string`/`as_string_cloned` now require a `&Bump`; package.json
-/// JSON strings are always UTF-8 literals, so route through
-/// `as_utf8_string_literal` until an arena is threaded through.
-#[allow(dead_code)]
-trait PackExprExt {
-    fn pack_as_string(&self) -> Option<&[u8]>;
-    fn pack_as_string_cloned(&self) -> Result<Option<Box<[u8]>>, AllocError>;
-}
-impl PackExprExt for Expr {
-    #[inline]
-    fn pack_as_string(&self) -> Option<&[u8]> {
-        self.as_utf8_string_literal()
-    }
-    #[inline]
-    fn pack_as_string_cloned(&self) -> Result<Option<Box<[u8]>>, AllocError> {
-        Ok(self.as_utf8_string_literal().map(Box::from))
-    }
-}
 
 /// NUL-terminated literal → `&'static ZStr` (replacement for missing
 /// `ZStr::from_lit`).
@@ -1813,7 +1793,10 @@ impl ArchivePtrExt for *mut Archive {
     }
     #[inline]
     fn error_string(self) -> &'static [u8] {
-        Archive::error_string(self)
+        // Every `ArchivePtrExt` call site holds a live `*mut Archive` from
+        // `archive_{read,write}_new()` (the trait exists precisely so those
+        // sites avoid per-call `unsafe { &* }`).
+        Archive::opaque_ref(self).error_string()
     }
     #[inline]
     fn read_support_format_tar(self) -> ArchiveResult {
@@ -1889,9 +1872,14 @@ fn new_boxed_buffered_file_reader(file: bun_sys::File) -> Box<BufferedFileReader
 /// Re-seat the underlying file and reset the buffer cursor in place — avoids
 /// the 512 KiB stack temporary that `*file_reader = BufferedFileReader { ... }`
 /// would create. Zig: `file_reader.* = .{ .unbuffered_reader = ..., .buf = undefined }`.
+///
+/// `unbuffered_reader` is a *view* of a fd that the call site owns (e.g. via
+/// a `CloseOnDrop` or a `File` whose Drop fires after the read loop). The
+/// previous fd may already be closed; disarm its `File::Drop` before
+/// overwriting so we never close a stale (potentially-recycled) fd.
 #[inline]
 fn reset_buffered_file_reader(r: &mut BufferedFileReader, file: bun_sys::File) {
-    r.unbuffered_reader = file;
+    let _ = core::mem::replace(&mut r.unbuffered_reader, file).into_raw();
     r.start = 0;
     r.end = 0;
 }
@@ -1934,10 +1922,6 @@ fn opt_pack_filename(m: &PackageManager) -> &[u8] {
 #[inline]
 fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
     m.options.pack_gzip_level
-}
-#[inline]
-fn manager_env<'a>(m: &'a PackageManager) -> &'a bun_dotenv::Loader<'static> {
-    m.env()
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2041,7 +2025,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
         }
     }
-    // defer if (!for_publish) free(package_name) — handled by Drop
     if package_name.is_empty() {
         return Err(PackError::InvalidPackageName);
     }
@@ -2292,9 +2275,9 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
 
     // Create the edited package.json content after lifecycle scripts have run
-    let edited_package_json = edit_root_package_json(ctx.lockfile, &mut json)?;
+    let edited_package_json = edit_root_package_json(ctx.lockfile, json)?;
 
-    let mut root_dir: Dir = 'root_dir: {
+    let root_dir: Dir = 'root_dir: {
         let mut path_buf = PathBuffer::uninit();
         path_buf[..abs_workspace_path.len()].copy_from_slice(abs_workspace_path);
         path_buf[abs_workspace_path.len()] = 0;
@@ -2319,7 +2302,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
             }
         }
     };
-    let _close_root = CloseOnDrop::dir(root_dir);
 
     // Scan for a README file so the registry receives the same
     // `readme` / `readmeFilename` metadata that `npm publish` sends.
@@ -2340,7 +2322,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut pack_queue: PackQueue = new_pack_queue();
 
     let bins = get_package_bins(&json.root)?;
-    // defer free(bin.path) — handled by Drop on Vec<BinInfo>
 
     for bin in &bins {
         match bin.ty {
@@ -2417,7 +2398,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
                         &bins,
                         &includes,
                         &excludes,
-                        root_dir, // TODO(port): borrowck — root_dir reused after this; could pass &Dir
+                        &root_dir,
                         log_level,
                     )?;
                     break 'iterate_project_tree;
@@ -2434,8 +2415,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             iterate_project_tree(
                 &mut pack_queue,
                 &bins,
-                DirInfo(root_dir, Box::from(&b""[..]), 1),
-                // TODO(port): borrowck — root_dir reused after this; could pass &Dir or dup fd
+                DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
                 log_level,
             )?;
         }
@@ -2461,8 +2441,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 Output::pretty(format_args!(
                     "\n{}\n",
                     fmt_tarball_filename(
-                        &package_name,
-                        &package_version,
+                        package_name,
+                        package_version,
                         TarballNameStyle::Normalize
                     )
                 ));
@@ -2472,8 +2452,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     opt_pack_destination(ctx.manager),
                     opt_pack_filename(ctx.manager),
                     abs_workspace_path,
-                    &package_name,
-                    &package_version,
+                    package_name,
+                    package_version,
                     &mut dest_buf[..],
                 );
                 Output::pretty(format_args!(
@@ -2502,17 +2482,21 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 opt_pack_destination(ctx.manager),
                 opt_pack_filename(ctx.manager),
                 abs_workspace_path,
-                &package_name,
-                &package_version,
+                package_name,
+                package_version,
                 &mut dest_buf[..],
             );
             // PORT NOTE: `manager`/`command_ctx` reborrowed via raw pointer —
             // Zig freely aliased `*PackageManager`/`*ContextData` between
             // `pack::Context` and `Publish::Context`; both are process-lifetime
             // singletons (see `cli::command::GLOBAL_CLI_CTX`).
-            // SAFETY: pointers came from `&mut` and outlive the returned value.
             return Ok(Some(Publish::Context {
+                // SAFETY: `manager_ptr` was derived from `&mut *ctx.manager`; the
+                // process-lifetime singleton outlives the returned `Publish::Context`.
                 manager: unsafe { &mut *manager_ptr },
+                // SAFETY: `ctx.command_ctx` aliases the process-lifetime
+                // `GLOBAL_CLI_CTX` singleton (see PORT NOTE above); reborrowed
+                // disjointly from `manager`.
                 command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
                 package_name: package_name.into(),
                 package_version: package_version.into(),
@@ -2601,8 +2585,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
         opt_pack_destination(ctx.manager),
         opt_pack_filename(ctx.manager),
         abs_workspace_path,
-        &package_name,
-        &package_version,
+        package_name,
+        package_version,
         &mut dest_buf[..],
     );
     // PORT NOTE: reshaped for borrowck — abs_tarball_dest borrows dest_buf
@@ -2614,7 +2598,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         dest_buf[abs_tarball_dest_dir_end] = 0;
         // SAFETY: NUL written above
         let abs_tarball_dest_dir = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_dir_end);
-        let _ = bun_sys::make_path(Dir::cwd(), abs_tarball_dest_dir.as_bytes());
+        let _ = bun_sys::Dir::cwd().make_path(abs_tarball_dest_dir.as_bytes());
         dest_buf[abs_tarball_dest_dir_end] = most_likely_a_slash;
     }
 
@@ -2640,7 +2624,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
     let mut file_reader: Box<BufferedFileReader> =
         new_boxed_buffered_file_reader(File::from_fd(Fd::invalid()));
 
-    let mut entry = ArchiveEntry::new2(archive);
+    // SAFETY: `archive` is the live `archive_write_new()` handle opened above.
+    let mut entry = ArchiveEntry::new2(unsafe { &*archive });
 
     {
         let mut progress = Progress::Progress::default();
@@ -2659,6 +2644,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
 
         entry = archive_package_json(
             ctx,
+            // SAFETY: `archive` is the non-null `*mut Archive` returned by
+            // `Archive::write_new()` above; only this thread accesses it.
             unsafe { &mut *archive },
             entry,
             &root_dir,
@@ -2737,6 +2724,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
+                // SAFETY: `archive` is the non-null `*mut Archive` returned by
+                // `Archive::write_new()` above; only this thread accesses it.
                 unsafe { &mut *archive },
                 entry,
                 &mut print_buf,
@@ -2751,12 +2740,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         }
 
         while let Some(item) = bundled_pack_queue.remove_or_null() {
-            let file = match File::openat(
-                Fd::from_std_dir(&root_dir),
-                &item.path,
-                bun_sys::O::RDONLY,
-                0,
-            ) {
+            let file = match root_dir.open_file(&item.path, bun_sys::O::RDONLY, 0) {
                 Ok(f) => f,
                 Err(err) => {
                     if item.optional {
@@ -2776,7 +2760,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
                     Global::crash();
                 }
             };
-            let _close_file = CloseOnDrop::file(&file);
             let stat = match file.stat() {
                 Ok(s) => s,
                 Err(err) => {
@@ -2796,6 +2779,8 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
+                // SAFETY: `archive` is the non-null `*mut Archive` returned by
+                // `Archive::write_new()` above; only this thread accesses it.
                 unsafe { &mut *archive },
                 entry,
                 &mut print_buf,
@@ -2855,7 +2840,6 @@ pub fn pack<const FOR_PUBLISH: bool>(
                 Global::crash();
             }
         };
-        let _close_tarball = CloseOnDrop::file(&tarball_file);
 
         let mut sha1 = sha::SHA1::init();
         let mut sha512 = sha::SHA512::init();
@@ -2884,7 +2868,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
             break 'tarball_bytes Some(bytes);
         }
 
-        reset_buffered_file_reader(&mut file_reader, File::from_fd(tarball_file.handle));
+        reset_buffered_file_reader(&mut file_reader, File::from_fd(tarball_file.into_raw()));
 
         let mut size: usize = 0;
         let mut read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {
@@ -2921,18 +2905,19 @@ pub fn pack<const FOR_PUBLISH: bool>(
         ctx.stats.packed_size = size;
         None
     };
+    let _ = core::mem::replace(
+        &mut file_reader.unbuffered_reader,
+        File::from_fd(Fd::invalid()),
+    );
 
     let normalized_pkg_info: Option<Box<[u8]>> = if FOR_PUBLISH {
-        // `normalized_package` operates on the full T4 `bun_ast::Expr`
-        // (it injects new properties before printing); lift the T2 value-subset
-        // root via the `From` impl. The mutated tree is consumed inside
-        // `normalized_package` (it prints the JSON itself), so the lifted copy
-        // doesn't need to flow back into `json.root`.
-        let mut root_full = bun_ast::Expr::from(json.root);
+        // The mutated tree is consumed inside `normalized_package` (it prints
+        // the JSON itself), so the copy doesn't need to flow back into `json.root`.
+        let mut root_full = json.root;
         Some(Publish::PublishCommand::normalized_package(
             manager,
-            &package_name,
-            &package_version,
+            package_name,
+            package_version,
             &mut root_full,
             &json.source,
             shasum,
@@ -2954,7 +2939,7 @@ pub fn pack<const FOR_PUBLISH: bool>(
         if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
             Output::pretty(format_args!(
                 "\n{}\n",
-                fmt_tarball_filename(&package_name, &package_version, TarballNameStyle::Normalize)
+                fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize)
             ));
         } else {
             Output::pretty(format_args!(
@@ -2983,10 +2968,13 @@ pub fn pack<const FOR_PUBLISH: bool>(
     }
 
     if FOR_PUBLISH {
-        // SAFETY: see dry-run construction above — `manager`/`command_ctx` are
-        // process-lifetime singletons aliased exactly as Zig's `*T` did.
         return Ok(Some(Publish::Context {
+            // SAFETY: `manager_ptr` was derived from `&mut *ctx.manager`; the
+            // process-lifetime singleton outlives the returned `Publish::Context`.
             manager: unsafe { &mut *manager_ptr },
+            // SAFETY: `ctx.command_ctx` aliases the process-lifetime
+            // `GLOBAL_CLI_CTX` singleton (see dry-run PORT NOTE above);
+            // reborrowed disjointly from `manager`.
             command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
             package_name: package_name.into(),
             package_version: package_version.into(),
@@ -3230,7 +3218,7 @@ fn archive_package_json(
     entry.set_size(i64::try_from(edited_package_json.len()).expect("int cast"));
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
-    entry.set_perm(u32::try_from(stat.st_mode).expect("int cast"));
+    entry.set_perm(bun_sys::Mode::try_from(stat.st_mode).expect("int cast"));
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
     entry.set_mtime(499162500, 0);
@@ -3241,9 +3229,7 @@ fn archive_package_json(
                 "failed to write tarball header: {}",
                 format_args!(
                     "{}",
-                    bstr::BStr::new(Archive::error_string(std::ptr::from_mut::<Archive>(
-                        archive
-                    )))
+                    bstr::BStr::new(std::ptr::from_mut::<Archive>(archive).error_string())
                 ),
             );
             Global::crash();
@@ -3287,7 +3273,7 @@ fn add_archive_entry(
     entry.set_pathname(pathname);
     print_buf.clear();
 
-    entry.set_size(i64::try_from(stat.st_size).expect("int cast"));
+    entry.set_size(stat.st_size as i64);
 
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
@@ -3297,7 +3283,7 @@ fn add_archive_entry(
     if is_package_bin(bins, filename.as_bytes()) {
         perm |= 0o111;
     }
-    entry.set_perm(u32::try_from(perm).expect("int cast"));
+    entry.set_perm(perm);
 
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
@@ -3309,9 +3295,7 @@ fn add_archive_entry(
                 "failed to write tarball header: {}",
                 format_args!(
                     "{}",
-                    bstr::BStr::new(Archive::error_string(std::ptr::from_mut::<Archive>(
-                        archive
-                    )))
+                    bstr::BStr::new(std::ptr::from_mut::<Archive>(archive).error_string())
                 ),
             );
             Global::crash();
@@ -3347,6 +3331,12 @@ fn add_archive_entry(
             }
         };
     }
+
+    // `file` is the caller's fd (closed by its `_close_fd` / `File` after this
+    // returns). Reset the reader's view to a sentinel so neither the next
+    // `reset_buffered_file_reader` nor `file_reader`'s eventual Drop tries to
+    // close a fd we don't own.
+    reset_buffered_file_reader(file_reader, File::from_fd(Fd::invalid()));
 
     Ok(entry.clear())
 }
@@ -3564,9 +3554,7 @@ fn edit_root_package_json(
 
     let written = match js_printer::print_json(
         &mut package_json_writer,
-        // `print_json` is monomorphized over the full T4 `Expr`; lift the T2
-        // value-subset root (lossless — every T2 variant maps 1:1).
-        bun_ast::Expr::from(json.root),
+        json.root,
         // shouldn't be used
         &json.source,
         js_printer::PrintJsonOptions {
@@ -3719,8 +3707,6 @@ impl Pattern {
     }
 }
 
-// deinit → Drop on CowString handles freeing
-
 // ───────────────────────────────────────────────────────────────────────────
 // IgnorePatterns
 // ───────────────────────────────────────────────────────────────────────────
@@ -3792,12 +3778,6 @@ impl IgnorePatterns {
         line
     }
 
-    #[allow(dead_code)]
-    fn maybe_trim_leading_spaces(line: &[u8]) -> &[u8] {
-        // npm will trim, git will not
-        line
-    }
-
     /// ignore files are always ignored, don't need to worry about opening or reading twice
     pub fn read_from_disk(
         dir: &Dir,
@@ -3807,7 +3787,7 @@ impl IgnorePatterns {
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;
 
-        let ignore_file: File = match File::openat(dir.fd(), b".npmignore", bun_sys::O::RDONLY, 0) {
+        let ignore_file: File = match dir.open_file(b".npmignore", bun_sys::O::RDONLY, 0) {
             Ok(f) => f,
             Err(err) => 'ignore_file: {
                 if err.get_errno() != bun_sys::E::ENOENT {
@@ -3821,7 +3801,7 @@ impl IgnorePatterns {
                     );
                 }
                 ignore_kind = IgnorePatternsKind::Gitignore;
-                match File::openat(dir.fd(), b".gitignore", bun_sys::O::RDONLY, 0) {
+                match dir.open_file(b".gitignore", bun_sys::O::RDONLY, 0) {
                     Ok(f) => break 'ignore_file f,
                     Err(err2) => {
                         if err2.get_errno() != bun_sys::E::ENOENT {
@@ -3845,7 +3825,6 @@ impl IgnorePatterns {
             }
         };
         let _ = ignore_file.close();
-        // contents freed by Drop
 
         let mut has_rel_path = false;
 
@@ -3890,8 +3869,6 @@ impl IgnorePatterns {
         }))
     }
 }
-
-// deinit → Drop on Box<[Pattern]> + each Pattern's CowString
 
 // ───────────────────────────────────────────────────────────────────────────
 // printArchivedFilesAndPackages
@@ -4082,8 +4059,7 @@ pub mod bindings {
     use super::*;
     use bun_core::String as BunString;
     use bun_jsc::{
-        CallFrame, JSArray, JSGlobalObject, JSObject, JSValue, JsResult, StringJsc as _,
-        bun_string_jsc,
+        CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc,
     };
 
     #[bun_jsc::host_fn]
@@ -4121,7 +4097,6 @@ pub mod bindings {
             }
         };
         let _ = tarball_file.close();
-        // tarball freed by Drop
 
         let mut sha1_digest: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
         let mut sha1 = sha::SHA1::init();
@@ -4144,7 +4119,6 @@ pub mod bindings {
             pathname: BunString,
             kind: BunString,
             perm: bun_sys::Mode,
-            size: Option<usize>,
             contents: Option<BunString>,
         }
         let mut entries_info: Vec<EntryInfo> = Vec::new();
@@ -4223,7 +4197,7 @@ pub mod bindings {
                     let pathname_string = {
                         let pathname_w = archive_entry_ref.pathname_w();
                         // bun.handleOom — panic on OOM
-                        let result = bun::handle_oom(strings::to_utf8_list_with_type(
+                        let result = bun_core::handle_oom(strings::to_utf8_list_with_type(
                             Vec::new(),
                             pathname_w,
                         ));
@@ -4239,7 +4213,6 @@ pub mod bindings {
                         pathname: pathname_string,
                         kind: BunString::static_(file_kind_tag(kind)),
                         perm,
-                        size: None,
                         contents: None,
                     };
 

@@ -143,7 +143,9 @@ pub struct Result {
     /// returned source code by the plugin.
     pub external: ExternalFreeFunction,
 }
-
+// `Result` lives in a bump arena (no Drop on free); boxing the large arm
+// would leak the heap allocation. The size diff is acceptable.
+#[allow(clippy::large_enum_variant)]
 pub enum ResultValue {
     Success(Success),
     Err(ResultError),
@@ -231,10 +233,10 @@ impl ParseTask {
         // provenance to read-only, making the later `&mut *ctx` UB).
         ctx: *mut BundleV2<'_>,
     ) -> ParseTask {
-        // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
-        // arena outlives the bundle pass, so deref'ing the raw pointer here to
-        // borrow `name`/`version` is sound.
         let (package_name, package_version) = match resolve_result.package_json {
+            // SAFETY: `package_json` is `Option<*const PackageJSON>`; the resolver
+            // arena outlives the bundle pass, so deref'ing the raw pointer here to
+            // borrow `name`/`version` is sound.
             Some(pj) => unsafe {
                 let pj = &*pj;
                 (
@@ -244,13 +246,13 @@ impl ParseTask {
             },
             None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
         };
-        // SAFETY: caller passes a live `&mut BundleV2` coerced to `*mut`; we
-        // only read `transpiler().options.target` here.
-        let known_target = unsafe { (*ctx).transpiler().options.target };
+        // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
+        // write provenance from the `*mut BundleV2` parameter; caller passes a
+        // live `&mut BundleV2` coerced to `*mut`.
+        let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
+        let known_target = ctx_ref.get().transpiler().options.target;
         ParseTask {
-            // SAFETY: lifetime erased — `ctx` outlives the ParseTask (BACKREF);
-            // write provenance from the `*mut BundleV2` parameter.
-            ctx: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) }),
+            ctx: Some(ctx_ref),
             path: resolve_result.path_pair.primary,
             contents_or_fd: ContentsOrFd::Fd {
                 dir: resolve_result.dirname_fd,
@@ -346,7 +348,10 @@ impl Default for ParseTask {
 // shared (`Worker::get`, `ctx.graph.pool`, `ctx.transpiler.options`).
 // `ParseTask` is `Send` because its non-auto-`Send` fields are bundle-
 // lifetime arena slices / backref pointers (`ctx`, `path`, `contents`).
-pub fn io_task_callback(task: *mut ThreadPoolLib::Task) {
+/// # Safety
+/// `task` must point at the `io_task` intrusive field of a live `ParseTask`
+/// scheduled by the thread pool, with provenance over the full `ParseTask`.
+pub unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.io_task` (intrusive field) — only
     // ever invoked by the thread pool against a `ParseTask` it scheduled, so
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
@@ -356,7 +361,10 @@ pub fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 }
 
 // CONCURRENCY: see `io_task_callback` — same task, different intrusive field.
-pub fn task_callback(task: *mut ThreadPoolLib::Task) {
+/// # Safety
+/// `task` must point at the `task` intrusive field of a live `ParseTask`
+/// scheduled by the thread pool, with provenance over the full `ParseTask`.
+pub unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.task` (intrusive field) — see
     // `io_task_callback` for the dispatch invariant.
     let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, task, task) };
@@ -575,7 +583,6 @@ pub mod parse_worker {
             path: bun_paths::fs::Path {
                 text: b"runtime",
                 namespace: b"bun:runtime",
-                name: bun_paths::fs::PathName::init(b"runtime"),
                 pretty: b"",
                 is_disabled: false,
                 is_symlink: false,
@@ -664,12 +671,12 @@ pub mod parse_worker {
     // ───────────────────────────────────────────────────────────────────────────
 
     fn css_symbols_to_parser_symbols(
-        src: Vec<bun_ast::Symbol>,
+        src: &[bun_ast::Symbol],
         bump: &'static Bump,
     ) -> bun_ast::symbol::List<'static> {
         use bun_ast::symbol::{Kind as PKind, Symbol as PSym};
         let mut out = bun_ast::symbol::List::with_capacity_in(src.len(), bump);
-        for s in src.slice() {
+        for s in src {
             // Post-dedup `bun_ast::Symbol` IS `bun_ast::symbol::Symbol`, so
             // `s.kind`/`s.import_item_status` are already the target nominal types
             // — the former `#[repr(u8)]` round-trip bridge is no longer needed.
@@ -1171,9 +1178,11 @@ pub mod parse_worker {
                 // gave up on figuring out how to fix it so that
                 // this feature could ship.
                 ast.has_lazy_export = false;
+                // Liveness for this synthetic part is seeded in
+                // `tree_shaking_and_code_splitting` (the per-part bitset
+                // does not exist at parse time).
                 ast.parts.as_mut_slice()[1] = Part {
                     stmts: ast::StoreSlice::EMPTY,
-                    is_live: true,
                     import_record_indices: {
                         // Generate a single part that depends on all the import records.
                         // This is to ensure that we generate a JavaScript bundle containing all the user's code.
@@ -1268,7 +1277,7 @@ pub mod parse_worker {
                 // `Vec<bun_ast::Symbol>`. Both port the same Zig
                 // `js_ast.Symbol`; convert field-by-field so CSS-module local refs
                 // index a populated symbol table (.zig:613).
-                let symbols = css_symbols_to_parser_symbols(extra.symbols, bump);
+                let symbols = css_symbols_to_parser_symbols(&extra.symbols, bump);
                 // PORT NOTE: Zig `defer temp_log.appendToMaybeRecycled(log, source)`
                 // (.zig:564-566) flushes on EVERY exit including this `try`; mirror
                 // by matching explicitly so accumulated CSS-module diagnostics are
@@ -1388,7 +1397,7 @@ pub mod parse_worker {
         resolver: *mut Resolver,
         bump: &Bump,
         file_path: &mut Fs::Path,
-        loader: Loader,
+        _loader: Loader,
     ) -> core::result::Result<CacheEntry, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
@@ -1593,6 +1602,7 @@ pub mod parse_worker {
             deferred_error: None,
             should_continue_running: &should_continue_running,
             result: core::ptr::null_mut(),
+            original_contents: None,
         };
 
         // SAFETY: ctx backref is valid for the bundle pass (outlives `'r`).
@@ -1631,6 +1641,11 @@ pub mod parse_worker {
         // the parent via offset_of; a `&mut` here would (a) shrink provenance to
         // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
         result: *mut OnBeforeParseResult,
+        // Owns the `Contents` fetched by `fetch_source_code` so the buffer the
+        // native plugin reads through `wrapper.original_source` stays alive for
+        // the duration of `run`. Returned to the caller when the plugin keeps
+        // the original source, dropped otherwise.
+        original_contents: Option<crate::cache::Contents>,
     }
 
     #[repr(C)]
@@ -1809,7 +1824,11 @@ pub mod parse_worker {
             let _ = log.add_msg(msg);
         }
 
-        pub extern "C" fn log_fn(
+        /// # Safety
+        /// `args_` and `log_options_`, when non-null, must point at live
+        /// `OnBeforeParseArguments` / `BunLogOptions` for the duration of the
+        /// call (the native-plugin FFI contract).
+        pub unsafe extern "C" fn log_fn(
             args_: *mut OnBeforeParseArguments,
             log_options_: *mut BunLogOptions,
         ) {
@@ -1817,6 +1836,8 @@ pub mod parse_worker {
             let Some(args) = (unsafe { args_.as_mut() }) else {
                 return;
             };
+            // SAFETY: called from C plugin; when non-null, `log_options_` points
+            // to a live `BunLogOptions` for the duration of the call.
             let Some(log_options) = (unsafe { log_options_.as_ref() }) else {
                 return;
             };
@@ -1848,16 +1869,22 @@ pub mod parse_worker {
         pub loader: Loader,
 
         pub fetch_source_code_fn:
-            extern "C" fn(*mut OnBeforeParseArguments, *mut OnBeforeParseResult) -> i32,
+            unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut OnBeforeParseResult) -> i32,
 
         pub user_context: *mut c_void,
         pub free_user_context: Option<extern "C" fn(*mut c_void)>,
 
-        pub log: extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
+        pub log: unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
     }
 
     impl OnBeforeParseResult {
-        pub fn get_wrapper(result: *mut OnBeforeParseResult) -> *mut OnBeforeParseResultWrapper {
+        /// # Safety
+        /// `result` must be the `.result` field of a live
+        /// `OnBeforeParseResultWrapper`, with provenance covering the wrapper
+        /// (derived via `addr_of_mut!(wrapper.result)`).
+        pub unsafe fn get_wrapper(
+            result: *mut OnBeforeParseResult,
+        ) -> *mut OnBeforeParseResultWrapper {
             // SAFETY: result points to OnBeforeParseResultWrapper.result (always
             // constructed that way in `OnBeforeParsePlugin::run`).
             let wrapper =
@@ -1871,7 +1898,11 @@ pub mod parse_worker {
 
     // blocked_on: calls `get_code_for_parse_task_without_plugins` (gated above).
 
-    pub extern "C" fn fetch_source_code(
+    /// # Safety
+    /// `args` and `result_ptr` must point at the live `OnBeforeParseArguments`
+    /// / `OnBeforeParseResultWrapper.result` set up by `OnBeforeParsePlugin::run`
+    /// (the native-plugin FFI contract).
+    pub unsafe extern "C" fn fetch_source_code(
         args: *mut OnBeforeParseArguments,
         result_ptr: *mut OnBeforeParseResult,
     ) -> i32 {
@@ -1881,6 +1912,8 @@ pub mod parse_worker {
         // `OnBeforeParseArguments` stack local vs. the `OnBeforeParsePlugin` it
         // points back to), so holding both `&mut` is sound.
         let args = unsafe { &mut *args };
+        // SAFETY: `args.context` points to the `OnBeforeParsePlugin` that owns
+        // this callback invocation; disjoint from `*args` (see above).
         let this = unsafe { &mut *args.context };
         if this.log.errors > 0
             || this.deferred_error.is_some()
@@ -1889,14 +1922,14 @@ pub mod parse_worker {
             return 1;
         }
 
-        // SAFETY: `result_ptr` is the `.result` field of an
-        // `OnBeforeParseResultWrapper` (see `OnBeforeParsePlugin::run`). Keep the
-        // raw pointer un-shadowed so `get_wrapper`'s `from_field_ptr!` walk-back
-        // retains provenance over the enclosing wrapper; a `&mut *result_ptr` here
-        // would shrink provenance to just the `OnBeforeParseResult` and make the
-        // later offset-walk UB. The `&mut` reborrow below is scoped to end before
-        // any wrapper access so no overlapping `&mut` exists.
         {
+            // SAFETY: `result_ptr` is the `.result` field of an
+            // `OnBeforeParseResultWrapper` (see `OnBeforeParsePlugin::run`). Keep the
+            // raw pointer un-shadowed so `get_wrapper`'s `from_field_ptr!` walk-back
+            // retains provenance over the enclosing wrapper; a `&mut *result_ptr` here
+            // would shrink provenance to just the `OnBeforeParseResult` and make the
+            // later offset-walk UB. The `&mut` reborrow below is scoped to end before
+            // any wrapper access so no overlapping `&mut` exists.
             let result = unsafe { &mut *result_ptr };
             if !result.source_ptr.is_null() {
                 return 0;
@@ -1925,43 +1958,51 @@ pub mod parse_worker {
             // `.rs:1287` / `resolver/lib.rs:2285`) frees on drop, which would
             // leave `result.source_ptr` / `wrapper.original_source` dangling for
             // the native plugin and `OnBeforeParsePlugin::run` to read through.
-            // Mirror the Zig contract by transferring ownership out of `entry`
-            // and leaking the buffer for the plugin pass: extract ptr/len/fd,
-            // then `mem::forget` the `Contents` so the bytes outlive the wrapper.
+            // Stash ownership on `this.original_contents` so the bytes outlive
+            // the wrapper; `OnBeforeParsePlugin::run` returns it when the
+            // plugin keeps the original source, or drops it when the plugin
+            // replaces the source.
             let fd = entry.fd;
-            let contents = core::mem::take(&mut entry.contents);
-            let contents_slice = contents.as_slice();
+            this.original_contents = Some(core::mem::take(&mut entry.contents));
+            let contents_slice = this
+                .original_contents
+                .as_ref()
+                .expect("just set")
+                .as_slice();
             let source_ptr = contents_slice.as_ptr();
             let source_len = contents_slice.len();
             result.source_ptr = source_ptr;
             result.source_len = source_len;
             result.free_user_context = None;
             result.user_context = core::ptr::null_mut();
+            // SAFETY: `result_ptr` is `OnBeforeParseResultWrapper.result` (see above).
+            let wrapper = unsafe { OnBeforeParseResult::get_wrapper(result_ptr) };
             // SAFETY: result is always embedded in a wrapper. Write wrapper fields
             // via raw pointer — `wrapper.result`
             // *is* `*result_ptr`, so materializing `&mut *wrapper` here would
             // overlap the live `result` borrow above (aliased-`&mut` UB).
-            let wrapper = OnBeforeParseResult::get_wrapper(result_ptr);
             unsafe {
                 (*wrapper).original_source = source_ptr;
                 (*wrapper).original_source_len = source_len;
                 (*wrapper).original_source_fd = fd;
             }
-            // Keep the bytes alive past this scope — `OnBeforeParsePlugin::run`
-            // returns them as the `CacheEntry` (see `Contents::External` below).
-            core::mem::forget(contents);
         }
         0
     }
 
+    /// # Safety
+    /// `this` must be the `.result` field of a live `OnBeforeParseResultWrapper`
+    /// constructed by `OnBeforeParsePlugin::run` (called from C++ with that
+    /// pointer).
     #[unsafe(no_mangle)]
-    pub extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
+    pub unsafe extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
+        // SAFETY: `this` is the wrapper's `.result` field (caller contract).
+        let wrapper = unsafe { OnBeforeParseResult::get_wrapper(this) };
         // SAFETY: called from C++ with valid ptr embedded in wrapper. Operate on
         // raw pointers throughout: `wrapper.result`
         // *is* `*this`, so materializing `&mut *this` alongside `&mut *wrapper`
         // would be aliased-`&mut` UB, and forming `&mut *this` first would shrink
         // provenance so `from_field_ptr!` in `get_wrapper` walks out of bounds.
-        let wrapper = OnBeforeParseResult::get_wrapper(this);
         unsafe {
             (*this).loader = (*wrapper).loader;
             if !(*wrapper).original_source.is_null() {
@@ -1974,8 +2015,13 @@ pub mod parse_worker {
         }
     }
 
+    /// # Safety
+    /// `this` must point at the live `OnBeforeParsePlugin` set up by
+    /// `OnBeforeParsePlugin::run` (called from C++ with that pointer).
     #[unsafe(no_mangle)]
-    pub extern "C" fn OnBeforeParsePlugin__isDone(this: *mut OnBeforeParsePlugin<'_, '_>) -> i32 {
+    pub unsafe extern "C" fn OnBeforeParsePlugin__isDone(
+        this: *mut OnBeforeParsePlugin<'_, '_>,
+    ) -> i32 {
         // SAFETY: called from C++ with valid ptr. Read via raw pointers (mirrors
         // Zig `@fieldParentPtr`) — `wrapper.result` aliases `*result`, so forming
         // overlapping references would be UB, and a `&mut`-derived `*mut` would
@@ -2147,11 +2193,24 @@ pub mod parse_worker {
                     }
                     *from_plugin = true;
                     *self.loader = wrapper.result.loader;
+                    // If the plugin called `fetch_source_code` and left the
+                    // source unchanged, hand the original `Contents` back to
+                    // the caller so the buffer is reclaimed instead of leaked.
+                    // Otherwise the plugin replaced the source; the original
+                    // (if any) drops with `self`.
+                    let contents =
+                        if !wrapper.original_source.is_null() && ptr == wrapper.original_source {
+                            self.original_contents
+                                .take()
+                                .expect("original_contents set alongside original_source")
+                        } else {
+                            crate::cache::Contents::External {
+                                ptr,
+                                len: wrapper.result.source_len,
+                            }
+                        };
                     return Ok(CacheEntry {
-                        contents: crate::cache::Contents::External {
-                            ptr,
-                            len: wrapper.result.source_len,
-                        },
+                        contents,
                         external_free_function: ExternalFreeFunction {
                             ctx: wrapper.result.user_context,
                             function: free_fn,
@@ -2380,7 +2439,6 @@ pub mod parse_worker {
             path: bun_paths::fs::Path {
                 text: file_path.text,
                 namespace: file_path.namespace,
-                name: bun_paths::fs::PathName::init(file_path.text),
                 pretty: file_path.pretty,
                 is_disabled: file_path.is_disabled,
                 is_symlink: file_path.is_symlink,
@@ -2444,8 +2502,11 @@ pub mod parse_worker {
         // it is set before any ParseTask runs.
         // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
         // `'static` erasure: the context outlives the parse.
-        opts.macro_context =
-            unsafe { Some(&mut *((*transpiler).macro_context.as_mut().unwrap() as *mut _)) };
+        opts.macro_context = unsafe {
+            Some(&mut *std::ptr::from_mut(
+                (*transpiler).macro_context.as_mut().unwrap(),
+            ))
+        };
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
@@ -2829,17 +2890,23 @@ pub mod parse_worker {
             bun_event_loop::AnyEventLoop::Js { owner } => {
                 owner.enqueue_task_concurrent(
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                        on_complete(p);
+                        // SAFETY: `p` is the `result` Box leaked above; ownership
+                        // transfers to `on_complete`, which deallocates it.
+                        unsafe { on_complete(p) };
                         Ok(())
                     }),
                 );
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
-                mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
-                    result,
-                    on_complete_mini,
-                    offset_of!(Result, task),
-                );
+                // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
+                // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
+                unsafe {
+                    mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
+                        result,
+                        on_complete_mini,
+                        offset_of!(Result, task),
+                    );
+                }
             }
         }
         // Zig: `defer worker.unget()` — runs at function exit, i.e. after enqueue.
@@ -2877,7 +2944,13 @@ pub mod parse_worker {
         unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
     }
 
-    pub fn on_complete(result: *mut Result) {
+    /// # Safety
+    /// `result` must be a live, uniquely-owned heap allocation produced by
+    /// `bun_core::heap::into_raw(Box<Result>)` in `run_from_thread_pool_impl`
+    /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
+    /// this fn, which deallocates `result` before returning. Must run on the
+    /// main/bundler thread (it dereferences `result.ctx` mutably).
+    pub unsafe fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
         let ctx = r.ctx;
@@ -2899,8 +2972,6 @@ pub use parse_worker::{FileLoaderHash, OnBeforeParsePlugin, get_runtime_source, 
 // ───────────────────────────────────────────────────────────────────────────
 // Re-exports
 // ───────────────────────────────────────────────────────────────────────────
-
-use bun_ast::Ref;
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 

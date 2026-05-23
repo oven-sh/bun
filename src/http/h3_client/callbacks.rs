@@ -158,6 +158,10 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         );
     }
     let _ = H3::live_sessions.fetch_sub(1, Ordering::Relaxed);
+    // SAFETY: `session` is the live heap allocation recovered from the ext slot
+    // (see `session_of`); this releases the +1 ref `ClientContext::connect`
+    // installed via `ClientSession::new`. `on_conn_close` is lsquic's terminal
+    // callback for this socket, so no later callback dereferences `session`.
     unsafe { ClientSession::deref(session) };
 }
 

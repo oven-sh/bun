@@ -2,7 +2,7 @@
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
 #![cfg(windows)]
 
-use core::ffi::{CStr, c_char, c_int, c_uint};
+use core::ffi::{c_char, c_int, c_uint};
 
 use bstr::BStr;
 

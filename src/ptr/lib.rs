@@ -1,11 +1,14 @@
+#![feature(allocator_api)]
 #![allow(
-    unused,
     non_snake_case,
     non_camel_case_types,
     non_upper_case_globals,
-    deprecated,
-    clippy::all
+    deprecated
 )]
+// bun_ptr is a T0 foundation crate that bun_threading and bun_collections
+// depend on; importing either to satisfy disallowed-types would create a
+// dependency cycle.
+#![allow(clippy::disallowed_types)]
 #![warn(unused_must_use)]
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!
@@ -300,6 +303,13 @@ pub unsafe trait LaunderedSelf: Sized {
     /// the laundered raw pointer carries no `noalias`, so the compiler may not
     /// cache fields across re-entry. See the trait-level safety contract for
     /// the encapsulated invariant.
+    // The safety contract is on `unsafe impl LaunderedSelf` (the implementor
+    // promises every `this` it passes is a live laundered `&mut self`); the
+    // method is safe-to-call by design — that's the point of `unsafe trait`.
+    // Clippy's `not_unsafe_ptr_arg_deref` doesn't see the trait-level
+    // invariant; making this `unsafe fn` would force 89 call sites to restate
+    // a contract they cannot violate.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline(always)]
     fn r<'a>(this: *mut Self) -> &'a mut Self {
         debug_assert!(!this.is_null());
@@ -333,10 +343,10 @@ pub use detach_lifetime_ref as detach_ref;
 /// outside the bundler SoA-column read-only fan-out it was written for.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn boxed_slices_as_borrowed<T>(s: &[Box<[T]>]) -> &[&[T]] {
+pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T], A>]) -> &[&[T]] {
     const {
-        assert!(core::mem::size_of::<Box<[T]>>() == core::mem::size_of::<&[T]>());
-        assert!(core::mem::align_of::<Box<[T]>>() == core::mem::align_of::<&[T]>());
+        assert!(core::mem::size_of::<Box<[T], A>>() == core::mem::size_of::<&[T]>());
+        assert!(core::mem::align_of::<Box<[T], A>>() == core::mem::align_of::<&[T]>());
     }
     // SAFETY: layout-identical per the const asserts above; every `Box<[T]>`
     // element is a valid non-null `(ptr, len)` pair, which is exactly the
@@ -624,6 +634,8 @@ where
 // that additionally call `get_mut` across threads must separately ensure
 // `T: Send` at the call site (no different from `NonNull<T>` today).
 unsafe impl<T: ?Sized + Sync> Send for BackRef<T> {}
+// SAFETY: `&BackRef<T>` only yields `&T` (via `get`/`Deref`); `&T: Sync` holds
+// exactly when `T: Sync`, so sharing the back-reference across threads is sound.
 unsafe impl<T: ?Sized + Sync> Sync for BackRef<T> {}
 
 // ─────────────────────────────────────────────────────────────────────────────

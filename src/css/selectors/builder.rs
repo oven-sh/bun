@@ -169,7 +169,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         let mut components: Vec<GenericComponent<Impl>, ArenaPtr> = Vec::new_in(self.alloc);
 
         let mut current_simple_selectors_i: usize = 0;
-        let mut combinator_i: i64 = i64::try_from(combinators_len).expect("int cast") - 1;
+        let mut combinator_i: i64 = i64::from(combinators_len) - 1;
         let mut rest_of_simple_selectors = rest;
         let mut current_simple_selectors = current;
 

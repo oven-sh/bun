@@ -1,6 +1,5 @@
 use super::new_writer::NewWriter;
 use super::portal_or_prepared_statement::PortalOrPreparedStatement;
-use super::write_wrap::WriteWrap;
 use crate::postgres::types::int_types::Int4;
 
 pub struct Execute<'a> {

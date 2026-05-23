@@ -1,4 +1,3 @@
-use super::decoder_wrap::DecoderWrap;
 use super::new_reader::NewReader;
 
 #[derive(Default)]
@@ -25,8 +24,8 @@ impl BackendKeyData {
 
         Ok(Self {
             // @bitCast i32 -> u32: same-width signed→unsigned `as` cast preserves bits.
-            process_id: reader.int4()? as u32,
-            secret_key: reader.int4()? as u32,
+            process_id: reader.int4()?,
+            secret_key: reader.int4()?,
         })
     }
 }

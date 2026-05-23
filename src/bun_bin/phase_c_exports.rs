@@ -13,8 +13,8 @@
 //! unimplemented anywhere (no Zig `export fn`, no C++ body) — those are
 //! `unreachable!` so a stray call is loud rather than silent garbage.
 //!
-//! `__wrap_gettid` and `Bun__captureStackTrace` are NOT here — they live in
-//! `bun_core` (their proper, already-linked home).
+//! `__wrap_gettid` is NOT here — it lives in `bun_core` (its proper,
+//! already-linked home).
 //!
 //! Calling convention: `jsc.conv` is plain `"C"` on every non-Windows-x64
 //! target, so `extern "C"` is correct on Linux/macOS. The Windows path is not
@@ -22,12 +22,11 @@
 
 #![allow(
     non_snake_case,
-    unused_variables,
     clippy::missing_safety_doc,
     clippy::not_unsafe_ptr_arg_deref
 )]
 
-use core::ffi::{c_int, c_long, c_void};
+use core::ffi::c_void;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Opaque handles — pointer-sized, never dereferenced here.
@@ -66,10 +65,10 @@ type VirtualMachine = c_void;
 // REAL: src/main.rs (binary-level export; defined here directly)
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
-    // SAFETY: caller guarantees `msg` is valid for `len` bytes.
     let bytes = if msg.is_null() {
         &b""[..]
     } else {
+        // SAFETY: `msg` is non-null (checked above) and the C++ caller guarantees it is valid for reading `len` bytes for the duration of this call.
         unsafe { core::slice::from_raw_parts(msg, len) }
     };
     bun_core::output::panic(format_args!("{}", String::from_utf8_lossy(bytes)));
@@ -133,7 +132,7 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // Bun__VM__allowRejectionHandledWarning
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__scriptExecutionStatus(vm: *const VirtualMachine) -> i32 {
+pub extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachine) -> i32 {
     // jsc.ScriptExecutionStatus.running = 0
     0
 }
@@ -259,8 +258,8 @@ pub extern "C" fn Bun__VM__scriptExecutionStatus(vm: *const VirtualMachine) -> i
 // Declared `CPP_DECL` in headers.h:279 but bindings.cpp never defines it.
 #[unsafe(no_mangle)]
 pub extern "C" fn JSC__JSValue__parseJSON(
-    string: *const c_void,
-    global: *const JSGlobalObject,
+    _string: *const c_void,
+    _global: *const JSGlobalObject,
 ) -> JSValue {
     unreachable!(
         "JSC__JSValue__parseJSON: not implemented in Zig either (CPP_DECL with no C++ body)"
@@ -270,8 +269,8 @@ pub extern "C" fn JSC__JSValue__parseJSON(
 // Imported by bun_jsc/bun_sys_jsc as extern but no provider in C++ or Zig.
 #[unsafe(no_mangle)]
 pub extern "C" fn BunString__toErrorInstance(
-    this: *const c_void,
-    global: *mut JSGlobalObject,
+    _this: *const c_void,
+    _global: *mut JSGlobalObject,
 ) -> JSValue {
     unreachable!("BunString__toErrorInstance: not implemented in Zig either (no C++ body)")
 }

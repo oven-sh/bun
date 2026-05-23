@@ -608,11 +608,12 @@ extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* 
     worker->fireEarlyMessages(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString message, JSC::EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString* message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
+    WTF::String messageStr = message->transferToWTFString();
     ErrorEvent::Init init;
-    init.message = message.toWTFString(BunString::ZeroCopy).isolatedCopy();
+    init.message = messageStr.isolatedCopy();
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
@@ -620,11 +621,11 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr));
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
             // If serialization threw an error, use the string instead
-            worker->dispatchErrorWithMessage(message.toWTFString(BunString::ZeroCopy));
+            worker->dispatchErrorWithMessage(WTF::move(messageStr));
         }
         return;
     }

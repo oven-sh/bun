@@ -92,7 +92,7 @@ use bun_collections::VecExt as _;
 use bun_core::MutableString;
 
 use crate::vlq::decode as vlq_decode;
-use crate::{LineColumnOffset, Mapping, SourceMapState, VLQ, append_mapping_to_buffer};
+use crate::{LineColumnOffset, Mapping, SourceMapState, append_mapping_to_buffer};
 
 /// A sync entry is emitted every `SYNC_INTERVAL` mappings.
 pub const SYNC_INTERVAL: usize = 64;
@@ -207,7 +207,7 @@ impl InternalSourceMap {
         // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
         // the global allocator with this exact length.
         unsafe {
-            drop(Box::<[u8]>::from_raw(core::slice::from_raw_parts_mut(
+            drop(Box::<[u8]>::from_raw(std::ptr::slice_from_raw_parts_mut(
                 self.data.cast_mut(),
                 self.total_len(),
             )));
@@ -456,9 +456,11 @@ impl WindowReader {
         let gen_col_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::GEN_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
+        // SAFETY: ORIG_LINE_LEN_OFF is a fixed offset within the 32-byte header at `b`.
         let orig_line_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_LINE_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
+        // SAFETY: ORIG_COL_LEN_OFF is a fixed offset within the 32-byte header at `b`.
         let orig_col_len: usize =
             unsafe { u16::from_ne_bytes(*b.add(win_hdr::ORIG_COL_LEN_OFF).cast::<[u8; 2]>()) }
                 as usize;
@@ -1107,9 +1109,9 @@ impl Builder {
             let d_src_idx = src_idx[k + 1] - src_idx[k];
 
             let bit = 1u8 << (k & 7);
-            // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
-            // and the header mask byte offset is within the zeroed 32-byte header.
             if d_gen_line >= 1 {
+                // SAFETY: k < n_deltas <= SYNC_INTERVAL-1 == 63, so `k >> 3 <= 7`
+                // and the header mask byte offset is within the zeroed 32-byte header.
                 unsafe { *buf_ptr.add(win_hdr::GEN_LINE_MASK_OFF + (k >> 3)) |= bit };
             }
 
@@ -1144,6 +1146,8 @@ impl Builder {
                 // +1 byte (for the 0xFF terminator) is written after the loop.
                 unsafe { *buf_ptr.add(w_gen_line) = k as u8 };
                 w_gen_line += 1;
+                // SAFETY: same sub-range bound as above; after the +1 advance still within
+                // [gen_line_base, gen_line_base + nd*(1+MAX_VARINT_LEN)).
                 w_gen_line += write_varint(unsafe { buf_ptr.add(w_gen_line) }, d_gen_line);
             }
 
@@ -1186,6 +1190,8 @@ impl Builder {
         debug_assert!(gen_col_len <= u16::MAX as usize);
         debug_assert!(orig_line_len <= u16::MAX as usize);
         debug_assert!(orig_col_len <= u16::MAX as usize);
+        // SAFETY: GEN_COL_LEN_OFF/ORIG_LINE_LEN_OFF/ORIG_COL_LEN_OFF are fixed
+        // offsets within the zeroed 32-byte header at `buf_ptr`.
         unsafe {
             buf_ptr
                 .add(win_hdr::GEN_COL_LEN_OFF)

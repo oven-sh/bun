@@ -378,6 +378,17 @@ declare module "bun" {
        * @default true
        */
       prepare?: boolean | undefined;
+
+      /**
+       * MySQL only. Allow the client to request the server's RSA public key
+       * during `caching_sha2_password` / `sha256_password` authentication when
+       * the connection is not protected by TLS. Disabled by default because a
+       * network attacker can substitute their own key and recover the
+       * plaintext password. Enable only for trusted local connections, or use
+       * TLS instead.
+       * @default false
+       */
+      allowPublicKeyRetrieval?: boolean | undefined;
     }
 
     /**

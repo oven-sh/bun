@@ -29,7 +29,7 @@ pub fn is_emph_boundary_resolved(content: &[u8], al: Autolink, resolved: &[EmphD
                 // Verify it's actually resolved.
                 let mut found_resolved = false;
                 for d in resolved {
-                    if d.pos <= al.beg - 1
+                    if d.pos < al.beg
                         && al.beg - 1 < d.pos + d.count
                         && (d.open_count + d.close_count > 0)
                     {
@@ -264,12 +264,11 @@ pub fn find_permissive_autolink(content: &[u8], pos: usize, allow_emph: bool) ->
         // Scan backward for username
         let mut beg = pos;
         while beg > 0 {
-            if helpers::is_alpha_num(content[beg - 1]) {
-                beg -= 1;
-            } else if beg >= 2
-                && helpers::is_alpha_num(content[beg - 2])
-                && is_in_set(content[beg - 1], b".-_+")
-                && helpers::is_alpha_num(content[beg])
+            if helpers::is_alpha_num(content[beg - 1])
+                || (beg >= 2
+                    && helpers::is_alpha_num(content[beg - 2])
+                    && is_in_set(content[beg - 1], b".-_+")
+                    && helpers::is_alpha_num(content[beg]))
             {
                 beg -= 1;
             } else {

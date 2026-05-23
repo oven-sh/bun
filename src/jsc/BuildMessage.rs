@@ -89,7 +89,7 @@ impl BuildMessage {
         // resolve_result: *const Resolver.Result,
     ) -> JsResult<JSValue> {
         let build_error = BuildMessage {
-            msg: msg.clone(),
+            msg,
             // resolve_result: resolve_result.*,
             logged: Cell::new(false),
         };

@@ -1,7 +1,6 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{JSGlobalObject, JSValue, JsResult, VM};
+use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 
 bun_opaque::opaque_ffi! {
@@ -11,7 +10,6 @@ bun_opaque::opaque_ffi! {
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
-    safe fn WebCore__DOMFormData__cast_(js_value0: JSValue, arg1: &VM) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__DOMFormData__createFromURLQuery(
         arg0: &JSGlobalObject,
@@ -45,15 +43,6 @@ unsafe extern "C" {
     );
     safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
 
-    // Declared in the Zig but never called (WebCore__DOMFormData__toQueryString is used instead).
-    // Kept for symbol parity.
-    #[allow(dead_code)]
-    fn DOMFormData__toQueryString(
-        this: *mut DOMFormData,
-        ctx: *mut c_void,
-        callback: extern "C" fn(ctx: *mut c_void, arg1: *mut ZigString),
-    );
-
     // safe: same opaque-handle/round-trip-ctx contract as `toQueryString` above.
     safe fn DOMFormData__forEach(this: &mut DOMFormData, ctx: *mut c_void, cb: ForEachFunction);
 }
@@ -81,8 +70,9 @@ impl DOMFormData {
         F: FnMut(ZigString),
     {
         extern "C" fn run<F: FnMut(ZigString)>(c: *mut c_void, str_: *mut ZigString) {
-            // SAFETY: `c` is the `&mut F` passed below; `str_` is valid for this call.
+            // SAFETY: `c` is the `&mut F` passed below.
             let cb = unsafe { bun_ptr::callback_ctx::<F>(c) };
+            // SAFETY: `str_` is a valid non-null *ZigString for the synchronous callback scope.
             cb(unsafe { *str_ });
         }
 

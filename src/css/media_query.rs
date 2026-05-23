@@ -55,6 +55,9 @@ pub trait QueryCondition: Sized + ToCss {
         Self::parse_feature(input)
     }
     // Mutually-defaulting pairs: override exactly one of each.
+    // `Box<Self>` is the trait-method signature; impls in `rules/container.rs`
+    // override it with a `Box<Self>` payload, so the signature can't change.
+    #[expect(clippy::boxed_local)]
     fn create_negation(condition: Box<Self>) -> Self {
         Self::create_negation_in(*condition, ArenaPtr::global())
     }
@@ -168,8 +171,8 @@ pub enum Qualifier {
 }
 
 /// A [media type](https://drafts.csswg.org/mediaqueries/#media-types).
-// Clone: bitwise OK — `Custom` borrows arena-owned parser input (non-owning).
-#[derive(Debug, Clone)]
+// Copy: bitwise OK — `Custom` borrows arena-owned parser input (non-owning).
+#[derive(Debug, Copy, Clone)]
 pub enum MediaType {
     /// `all` (default).
     All,
@@ -199,7 +202,7 @@ impl PartialEq for MediaType {
     }
 }
 
-/// Flags for `parse_query_condition`.
+// Flags for `parse_query_condition`.
 // PORT NOTE: Zig `packed struct(u8)` with two bool fields → bitflags!
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +230,7 @@ impl QueryConditionFlags {
 /// Represents a media condition. Implements `QueryCondition`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MediaCondition {
-    Feature(MediaFeature),
+    Feature(Box<MediaFeature, ArenaPtr>),
     Not(Box<MediaCondition, ArenaPtr>),
     Operation {
         operator: Operator,
@@ -552,7 +555,7 @@ pub enum MediaFeatureId {
 
 impl MediaFeatureId {
     // Zig: `pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;`
-    pub fn value_type(&self) -> MediaFeatureType {
+    pub fn value_type(self) -> MediaFeatureType {
         use MediaFeatureId::*;
         use MediaFeatureType as T;
         match self {
@@ -596,7 +599,7 @@ impl MediaFeatureId {
 
 impl FeatureIdTrait for MediaFeatureId {
     fn value_type(&self) -> MediaFeatureType {
-        MediaFeatureId::value_type(self)
+        MediaFeatureId::value_type(*self)
     }
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // Zig: `css.DefineEnumProperty(@This()).toCss` — emits the lowercase
@@ -811,7 +814,7 @@ impl QueryCondition for MediaCondition {
 
     fn as_feature(&self) -> Option<&MediaFeature> {
         if let Self::Feature(f) = self {
-            Some(f)
+            Some(&**f)
         } else {
             None
         }
@@ -840,14 +843,20 @@ impl QueryCondition for MediaCondition {
 
     fn parse_feature(input: &mut Parser) -> Result<Self> {
         let feature = MediaFeature::parse(input)?;
-        Ok(MediaCondition::Feature(feature))
+        Ok(MediaCondition::Feature(Box::new_in(
+            feature,
+            ArenaPtr::new(input.arena()),
+        )))
     }
     fn parse_feature_with_options(
         input: &mut Parser,
         options: &css::ParserOptions,
     ) -> Result<Self> {
         let feature = MediaFeature::parse_with_options(input, options)?;
-        Ok(MediaCondition::Feature(feature))
+        Ok(MediaCondition::Feature(Box::new_in(
+            feature,
+            ArenaPtr::new(input.arena()),
+        )))
     }
     fn create_negation_in(condition: Self, alloc: ArenaPtr) -> Self {
         MediaCondition::Not(Box::new_in(condition, alloc))
@@ -1046,7 +1055,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
 }
 
 impl MediaFeatureComparison {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             // PORT NOTE(suspect): Zig emits '-' for `Equal` (media_query.zig:1156),
             // diverging from the spec `=` and from this enum's strum tag. Ported
@@ -1318,7 +1327,7 @@ impl MediaType {
     /// slice (identity copy under the generics.zig "const strings" rule).
     #[inline]
     pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        self.clone()
+        *self
     }
 }
 
@@ -1327,7 +1336,9 @@ impl MediaCondition {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         let alloc = ArenaPtr::new(bump);
         match self {
-            MediaCondition::Feature(f) => MediaCondition::Feature(f.deep_clone(bump)),
+            MediaCondition::Feature(f) => {
+                MediaCondition::Feature(Box::new_in(f.deep_clone(bump), alloc))
+            }
             // Zig: `bun.create(arena, MediaCondition, c.deepClone(arena))`
             MediaCondition::Not(c) => MediaCondition::Not(Box::new_in(c.deep_clone(bump), alloc)),
             MediaCondition::Operation {

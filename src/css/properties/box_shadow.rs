@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports)]
 use crate as css;
 use crate::PrintErr;
 use crate::Printer;
@@ -47,7 +46,7 @@ impl css::generic::CssEql for BoxShadow {
 }
 impl css::generic::IsCompatible for BoxShadow {
     #[inline]
-    fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         BoxShadow::is_compatible(self, browsers)
     }
 }
@@ -77,14 +76,8 @@ impl BoxShadow {
 
             if lengths.is_none() {
                 let value = input.try_parse(|p: &mut css::Parser| -> css::Result<Lengths> {
-                    let horizontal = match Length::parse(p) {
-                        Ok(v) => v,
-                        Err(e) => return Err(e),
-                    };
-                    let vertical = match Length::parse(p) {
-                        Ok(v) => v,
-                        Err(e) => return Err(e),
-                    };
+                    let horizontal = Length::parse(p)?;
+                    let vertical = Length::parse(p)?;
                     let blur = p.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
                     let spread = p.try_parse(Length::parse).ok().unwrap_or_else(Length::zero);
                     Ok(Lengths {
@@ -102,7 +95,7 @@ impl BoxShadow {
             }
 
             if color.is_none() {
-                if let Some(c) = input.try_parse(CssColor::parse).ok() {
+                if let Ok(c) = input.try_parse(CssColor::parse) {
                     color = Some(c);
                     continue;
                 }
@@ -177,7 +170,7 @@ impl BoxShadow {
             && self.inset == rhs.inset
     }
 
-    pub fn is_compatible(&self, browsers: css::targets::Browsers) -> bool {
+    pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.color.is_compatible(browsers)
             && self.x_offset.is_compatible(browsers)
             && self.y_offset.is_compatible(browsers)
@@ -206,7 +199,7 @@ impl BoxShadowHandler {
                 let prefix: VendorPrefix = b.1;
                 if self.box_shadows.is_some()
                     && context.targets.browsers.is_some()
-                    && !box_shadows.is_compatible(context.targets.browsers.unwrap())
+                    && !box_shadows.is_compatible(&context.targets.browsers.unwrap())
                 {
                     self.flush(dest, context);
                 }
@@ -281,7 +274,7 @@ impl BoxShadowHandler {
             let mut prefixes = context.targets.prefixes(prefixes2, Feature::BoxShadow);
             let mut fallbacks = ColorFallbackKind::empty();
             for shadow in box_shadows.slice() {
-                fallbacks.insert(shadow.color.get_necessary_fallbacks(context.targets));
+                fallbacks.insert(shadow.color.get_necessary_fallbacks(&context.targets));
             }
 
             // PORT NOTE: Zig used `initCapacity(len)` + `setLen(len)` + per-index field

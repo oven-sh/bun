@@ -143,14 +143,14 @@ impl T {
     }
 
     pub fn is_string(self) -> bool {
-        match self {
+        matches!(
+            self,
             T::TNoSubstitutionTemplateLiteral
-            | T::TStringLiteral
-            | T::TTemplateHead
-            | T::TTemplateMiddle
-            | T::TTemplateTail => true,
-            _ => false,
-        }
+                | T::TStringLiteral
+                | T::TTemplateHead
+                | T::TTemplateMiddle
+                | T::TTemplateTail
+        )
     }
 
     pub fn is_close_brace_or_eof(self) -> bool {

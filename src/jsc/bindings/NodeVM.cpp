@@ -274,7 +274,7 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, RefP
     if (isUseMainContextDefaultLoaderConstant(globalObject, dynamicImportCallback)) {
         auto defer = fetcher->temporarilyUseDefaultLoader();
         Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
-        RELEASE_AND_RETURN(scope, zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin));
+        RELEASE_AND_RETURN(scope, zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin, false));
     } else if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return nullptr;
@@ -707,8 +707,12 @@ template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMS
         [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeVMSpecialSandbox = std::forward<decltype(space)>(space); });
 }
 
-NodeVMSpecialSandbox* NodeVMSpecialSandbox::create(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject)
+NodeVMSpecialSandbox* NodeVMSpecialSandbox::create(VM& vm, NodeVMGlobalObject* globalObject)
 {
+    // The structure's prototype must be the sandbox realm's Object.prototype so that the
+    // prototype chain of globalThis inside a DONT_CONTEXTIFY context never reaches the
+    // host realm. This can't be cached on the host global because it differs per sandbox.
+    auto* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
     NodeVMSpecialSandbox* ptr = new (NotNull, allocateCell<NodeVMSpecialSandbox>(vm)) NodeVMSpecialSandbox(vm, structure, globalObject);
     ptr->finishCreation(vm);
     return ptr;
@@ -1405,7 +1409,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
 
     if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, zigGlobalObject->NodeVMSpecialSandboxStructure(), targetContext);
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
         RETURN_IF_EXCEPTION(scope, {});
         targetContext->setSpecialSandbox(specialSandbox);
         return JSValue::encode(targetContext->specialSandbox());
@@ -1472,8 +1476,9 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
     return promise;
 }
 
-JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin)
+JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin, bool deferred)
 {
+    UNUSED_PARAM(deferred);
     auto* nodeVmGlobalObject = static_cast<NodeVMGlobalObject*>(globalObject);
 
     if (JSPromise* result = NodeVM::importModule(nodeVmGlobalObject, moduleName, parameters, sourceOrigin)) {
@@ -1614,11 +1619,6 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
     globalObject->m_cachedNodeVMGlobalObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(createNodeVMGlobalObjectStructure(init.vm));
-        });
-
-    globalObject->m_cachedNodeVMSpecialSandboxStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(NodeVMSpecialSandbox::createStructure(init.vm, init.owner, init.owner->objectPrototype())); // TODO(@heimskr): or maybe jsNull() for the prototype?
         });
 }
 

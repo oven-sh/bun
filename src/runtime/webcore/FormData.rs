@@ -444,7 +444,10 @@ pub fn for_each_multipart_entry<C>(
                 // reflected verbatim into outgoing request headers. HTAB stays
                 // allowed: it is valid optional whitespace inside a field value
                 // and cannot start a new header line.
-                if trimmed.iter().all(|&b| b == b'\t' || (0x20..=0x7E).contains(&b)) {
+                if trimmed
+                    .iter()
+                    .all(|&b| b == b'\t' || (0x20..=0x7E).contains(&b))
+                {
                     field.content_type = subslicer.sub(trimmed).value();
                 }
             }

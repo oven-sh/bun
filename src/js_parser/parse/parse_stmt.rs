@@ -1125,6 +1125,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
 
+                // "@decorator export default abstract = 1"
+                if opts.ts_decorators.is_some() {
+                    p.lexer.expected(T::TClass)?;
+                }
+
                 p.lexer.expect_or_insert_semicolon()?;
 
                 // Use the expression name if present, since it's a better name

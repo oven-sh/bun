@@ -835,6 +835,7 @@ mod draft {
     }
 
     /// Where the crash trace is seeded from. Each call site has exactly one.
+    #[derive(Clone, Copy)]
     pub enum TraceSeed<'a> {
         /// Signal/exception handler saved the fault register context: walk frame
         /// pointers from `fp` (POSIX) / RtlCapture and trim by `pc` (Windows). `pc`

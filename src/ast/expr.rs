@@ -805,6 +805,9 @@ impl Expr {
                         b,
                         stack_check,
                     );
+                    // `a` now ends with `… op b`; falling through would build
+                    // `a op b` on top of it and duplicate `b`'s side effects.
+                    return a;
                 }
             }
 

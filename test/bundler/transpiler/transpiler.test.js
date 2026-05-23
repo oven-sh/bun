@@ -3756,6 +3756,15 @@ it("running a file with deeply nested unary operators does not crash the process
   expect([0, 1]).toContain(exitCode);
 });
 
+// Simplifying an unused ternary whose test is a comma expression joins the
+// surviving branch onto the comma's right side; it must not also append the
+// branch a second time (that would duplicate its side effects).
+it("does not duplicate the branch when simplifying an unused ternary with a comma test", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  expect(transpiler.transformSync("(f(), g()) ? 1 : h();").trim()).toBe("f(), g() || h();");
+  expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("f(), g() && h();");
+});
+
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {
   const transpiler = new Bun.Transpiler({ loader: "tsx" });
 

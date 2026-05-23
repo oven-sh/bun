@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 test("BuildError is modifiable", async () => {
@@ -32,10 +32,18 @@ test("importing a module with many build errors does not crash while reporting t
     "index.js": `import("./bad.js");`,
   });
 
+  // Windows + collectContinuously is prohibitively slow in CI and the code
+  // path is platform-agnostic, so rely on zombie mode alone there.
+  const gcEnv: Record<string, string | undefined> = {
+    ...bunEnv,
+    BUN_JSC_useZombieMode: "1",
+  };
+  if (!isWindows) gcEnv.BUN_JSC_collectContinuously = "1";
+
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.js"],
     cwd: String(dir),
-    env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+    env: gcEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

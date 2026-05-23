@@ -314,6 +314,7 @@ impl Parser<'_> {
             // Parse destination
             let mut dest_start = pos;
             let dest_end;
+            let mut dest_valid = true;
 
             if pos < content.len() && content[pos] == b'<' {
                 // Angle-bracket destination (no newlines or unescaped '<' allowed)
@@ -345,6 +346,7 @@ impl Parser<'_> {
                     if content[pos] == b'(' {
                         paren_depth += 1;
                         if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
+                            dest_valid = false;
                             break;
                         }
                     } else if content[pos] == b')' {
@@ -360,6 +362,14 @@ impl Parser<'_> {
                     }
                 }
                 dest_end = pos;
+            }
+
+            if !dest_valid {
+                // Destination exceeded the paren-nesting cap: not an inline
+                // link (cmark rejects it too). Skip the title and ')' checks —
+                // the offending '(' must not be reparsed as a title opener —
+                // but keep the reference/shortcut fallback below reachable.
+                pos = content.len();
             }
 
             // Skip whitespace (including newlines)
@@ -601,6 +611,10 @@ impl Parser<'_> {
                     if content[p] == b'(' {
                         paren_depth += 1;
                         if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
+                            // Not an inline link; skip the title/')' checks but
+                            // keep the reference/shortcut fallback reachable
+                            // (mirrors process_link).
+                            p = content.len();
                             break;
                         }
                     } else if content[p] == b')' {

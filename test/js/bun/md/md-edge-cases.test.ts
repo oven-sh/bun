@@ -610,6 +610,10 @@ describe("pathological bracket inputs", () => {
     const over = Markdown.html(nest(40));
     expect(over).not.toContain("<a href=");
     expect(over).toContain("[a](");
+    // The 33rd '(' must not be reparsed as a ()-title opener either.
+    const overflowIntoTitle = Markdown.html("[a](" + "(".repeat(33) + "))\n");
+    expect(overflowIntoTitle).not.toContain("<a href=");
+    expect(overflowIntoTitle).toContain("[a](");
   });
 
   test("angle-bracket destination may not contain an unescaped '<'", () => {

@@ -7466,6 +7466,34 @@ describe("css tests", () => {
     minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
   });
 
+  describe("font-palette-values", () => {
+    minify_test(
+      "@font-palette-values --x{font-family:Foo;base-palette:2}",
+      "@font-palette-values --x{font-family:Foo;base-palette:2}",
+    );
+    minify_test("@font-palette-values --x{base-palette:light}", "@font-palette-values --x{base-palette:light}");
+    minify_test("@font-palette-values --x{base-palette:65535}", "@font-palette-values --x{base-palette:65535}");
+    minify_test(
+      "@font-palette-values --x{override-colors:0 red,1 #00f}",
+      "@font-palette-values --x{override-colors:0 red,1 #00f}",
+    );
+
+    // Out-of-range palette indices don't fit the internal u16 storage; they
+    // must be preserved as unknown declarations instead of panicking.
+    minify_test("@font-palette-values --x{base-palette:99999}", "@font-palette-values --x{base-palette:99999}");
+    minify_test("@font-palette-values --x{base-palette:-1}", "@font-palette-values --x{base-palette:-1}");
+    minify_test(
+      "@font-palette-values --x{override-colors:99999 red}",
+      "@font-palette-values --x{override-colors:99999 red}",
+    );
+    minify_test(
+      "@font-palette-values --x{override-colors:-1 red}",
+      "@font-palette-values --x{override-colors:-1 red}",
+    );
+    // Fuzzer-minimized input: unterminated block with an overflowing index.
+    minify_test("@font-palette-values --{base-palette:99999", "@font-palette-values --{base-palette:99999}");
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

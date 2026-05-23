@@ -35,6 +35,12 @@ static_assert(ZSTD_MAGICNUMBER == 0xFD2FB528);
 #if OS(WINDOWS)
 extern "C" const unsigned char bun_icu_zstd_dict[];
 extern "C" const unsigned int bun_icu_zstd_dict_size;
+// Fall back to empty when sicudt.lib predates the repack (hook is then
+// unreachable, but we still need to link).
+extern "C" const unsigned char bun_icu_zstd_dict_stub[1] = {};
+extern "C" const unsigned int bun_icu_zstd_dict_size_stub = 0;
+#pragma comment(linker, "/alternatename:bun_icu_zstd_dict=bun_icu_zstd_dict_stub")
+#pragma comment(linker, "/alternatename:bun_icu_zstd_dict_size=bun_icu_zstd_dict_size_stub")
 #else
 extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
 extern "C" __attribute__((weak)) const unsigned int bun_icu_zstd_dict_size;

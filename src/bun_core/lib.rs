@@ -1441,8 +1441,11 @@ pub(crate) mod strings_impl {
     /// Zig: `strings.eqlCaseInsensitiveASCII` (src/string/immutable.zig).
     /// Spec-faithful port: defers to libc `strncasecmp`/`_strnicmp` for the
     /// hot path (CSS parser, HTTP header matching). When `check_len` is false
-    /// the caller guarantees `a.len() <= b.len()` and both are non-empty
-    /// (matches Zig's `bun.unsafeAssert`).
+    /// the comparison covers `a.len()` bytes, so `a` longer than `b` is a
+    /// mismatch: Zig call sites pass NUL-terminated literals for `b` and rely
+    /// on strncasecmp stopping at the terminator, but Rust byte literals carry
+    /// no terminator, so that case is rejected up front instead of letting
+    /// strncasecmp read past the end of `b`.
     #[inline]
     pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
         if check_len {
@@ -1452,12 +1455,15 @@ pub(crate) mod strings_impl {
             if a.is_empty() {
                 return true;
             }
+        } else if a.len() > b.len() {
+            return false;
         }
 
         debug_assert!(!b.is_empty());
         debug_assert!(!a.is_empty());
 
-        // SAFETY: a and b are non-empty; strncasecmp reads up to a.len() bytes from each.
+        // SAFETY: a and b are non-empty and a.len() <= b.len(); strncasecmp reads
+        // at most a.len() bytes from each.
         #[cfg(not(windows))]
         unsafe {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0

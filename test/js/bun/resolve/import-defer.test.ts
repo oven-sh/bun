@@ -665,8 +665,8 @@ describe.concurrent("dynamic import.defer()", () => {
       const { exitCode, stderr } = await run({
         "main.js": `const x = import.defer; console.log(x);`,
       });
-      expect(exitCode).not.toBe(0);
       expect(stderr.toLowerCase()).toContain("error");
+      expect(exitCode).not.toBe(0);
     });
 
     test("'defer' with an escape sequence is not the phase keyword", async () => {
@@ -674,8 +674,8 @@ describe.concurrent("dynamic import.defer()", () => {
         "main.js": `import.def\\u0065r("./dep.js");`,
         "dep.js": `export const x = 1;`,
       });
-      expect(exitCode).not.toBe(0);
       expect(stderr.toLowerCase()).toContain("error");
+      expect(exitCode).not.toBe(0);
     });
 
     test("other identifiers after 'import.' are still rejected", async () => {
@@ -683,8 +683,8 @@ describe.concurrent("dynamic import.defer()", () => {
         "main.js": `import.source("./dep.js");`,
         "dep.js": `export const x = 1;`,
       });
-      expect(exitCode).not.toBe(0);
       expect(stderr.toLowerCase()).toContain("error");
+      expect(exitCode).not.toBe(0);
     });
   });
 });

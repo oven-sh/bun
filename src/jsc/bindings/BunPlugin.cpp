@@ -302,8 +302,11 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     auto targetValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (targetValue) {
-        if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
+        auto* targetJSString = targetValue.toStringOrNull(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (targetJSString) {
             String targetString = targetJSString->value(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
                 JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
                 return {};

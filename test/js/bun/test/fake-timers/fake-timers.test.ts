@@ -1,3 +1,4 @@
+import { bunEnv, bunExe, tempDir } from "harness";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -446,4 +447,36 @@ describe("useFakeTimers with options", () => {
     expect(performance.now()).toBe(500);
     expect(Date.now()).toBe(targetTime + 500);
   });
+});
+
+test("useFakeTimers does not return the caller's scope object as `this`", async () => {
+  // In a sloppy-mode CommonJS module containing a `with` statement, a call through a
+  // scope-resolved binding passes an internal JSC scope object as `this`. Returning it
+  // from useFakeTimers() exposed uninitialized (TDZ) bindings and crashed the process.
+  using dir = tempDir("fake-timers-this", {
+    "leak-this-fixture.cjs": `const useFakeTimers = Bun.jest().jest.useFakeTimers;
+const leaked = useFakeTimers();
+if (leaked !== undefined) {
+  const t = typeof leaked.LaterClass;
+  throw new Error("useFakeTimers() leaked an internal scope object as \`this\` (" + t + ")");
+}
+console.log("ok");
+class LaterClass extends URLSearchParams {}
+with (Object) {}
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "leak-this-fixture.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
 });

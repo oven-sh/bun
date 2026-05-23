@@ -4,7 +4,7 @@ use bun_threading::RwLock;
 
 use bun_core::Environment;
 use bun_core::Timespec;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSType, JSValue, JsResult};
 use crate::timer::{
     self, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
     TimerObjectInternals, TimeoutObject, TimerHeap,
@@ -347,6 +347,23 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
     }
 }
 
+/// The `this` value to return for chaining. When the call was resolved through the
+/// scope chain (e.g. `const f = jest.useFakeTimers; f()` in a CommonJS module with a
+/// `with` statement), JSC passes the resolved scope object as `this`; internal scope
+/// objects must never be returned to JS (mirrors `JSValue::toThis`).
+fn this_for_chaining(frame: &CallFrame) -> JSValue {
+    let this = frame.this();
+    match this.js_type() {
+        JSType::GlobalObject
+        | JSType::GlobalLexicalEnvironment
+        | JSType::LexicalEnvironment
+        | JSType::ModuleEnvironment
+        | JSType::StrictEvalActivation
+        | JSType::WithScope => JSValue::UNDEFINED,
+        _ => this,
+    }
+}
+
 #[bun_jsc::host_fn]
 fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let timers = timer_all();
@@ -387,7 +404,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.
     set_fake_timer_marker(global, true);
 
-    Ok(frame.this())
+    Ok(this_for_chaining(frame))
 }
 
 #[bun_jsc::host_fn]
@@ -408,7 +425,7 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // Remove the setTimeout.clock marker when switching back to real timers.
     set_fake_timer_marker(global, false);
 
-    Ok(frame.this())
+    Ok(this_for_chaining(frame))
 }
 
 #[bun_jsc::host_fn]
@@ -417,7 +434,7 @@ fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> J
 
     let _ = FakeTimers::execute_next(global);
 
-    Ok(frame.this())
+    Ok(this_for_chaining(frame))
 }
 
 #[bun_jsc::host_fn]
@@ -452,7 +469,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     FakeTimers::execute_until(global, target);
     CURRENT_TIME.set(global, &target, None);
 
-    Ok(frame.this())
+    Ok(this_for_chaining(frame))
 }
 
 #[bun_jsc::host_fn]
@@ -461,7 +478,7 @@ fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
     FakeTimers::execute_only_pending_timers(global);
 
-    Ok(frame.this())
+    Ok(this_for_chaining(frame))
 }
 
 #[bun_jsc::host_fn]
@@ -470,7 +487,7 @@ fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 
     FakeTimers::execute_all_timers(global);
 
-    Ok(frame.this())
+    Ok(this_for_chaining(frame))
 }
 
 #[bun_jsc::host_fn]
@@ -504,7 +521,7 @@ fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         TimerObjectInternals::release_heap_pin(p, vm);
     }
 
-    Ok(frame.this())
+    Ok(this_for_chaining(frame))
 }
 
 #[bun_jsc::host_fn]

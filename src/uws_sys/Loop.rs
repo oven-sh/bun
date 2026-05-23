@@ -601,7 +601,7 @@ mod c {
         pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
         pub fn us_loop_run(loop_: *mut Loop);
         #[cfg(windows)]
-        pub fn us_loop_pump(loop_: *mut Loop);
+        pub(super) fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
         pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
@@ -613,7 +613,7 @@ mod c {
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
-        pub fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
+        pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
         pub(super) fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: DeferCb);
         pub(super) fn uws_res_clear_corked_socket(loop_: *mut Loop);
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);

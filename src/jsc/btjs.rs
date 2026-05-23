@@ -29,7 +29,7 @@ mod zig_std_debug {
     #[cfg(not(windows))]
     pub(super) type ThreadContext = libc::ucontext_t;
     #[cfg(windows)]
-    pub type ThreadContext = bun_sys::windows::CONTEXT;
+    pub(super) type ThreadContext = bun_sys::windows::CONTEXT;
 
     // Zig: `pub const have_ucontext = posix.ucontext_t != void;`
     pub(super) const HAVE_UCONTEXT: bool = cfg!(not(windows));

@@ -17,7 +17,6 @@
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
 // Cow/CowSlice → std (PORTING.md says these ARE std::borrow::Cow)
-#![warn(unreachable_pub)]
 pub use std::borrow::Cow;
 pub type CowSlice<'a, T> = Cow<'a, [T]>;
 pub type CowSliceZ<'a> = Cow<'a, core::ffi::CStr>;

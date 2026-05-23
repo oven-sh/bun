@@ -17,7 +17,6 @@
 // EntriesOption, Implementation) until the body switches to `fs_full::*`
 // wholesale. `fs_full` compiles to validate the port and is link-dead until
 // re-exported.
-#![warn(unreachable_pub)]
 pub mod data_url;
 pub mod dir_info;
 #[path = "fs.rs"]

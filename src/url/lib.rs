@@ -1,6 +1,5 @@
 // This is close to WHATWG URL, but we don't want the validation errors
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::cell::RefCell;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};

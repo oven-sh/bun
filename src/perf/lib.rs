@@ -4,7 +4,6 @@
 //! callers that cannot reach this crate; that subset is Linux-only (ftrace
 //! needs no high-tier deps) and reports disabled on macOS, so callers above T0
 //! should use `bun_perf::trace` to keep os_signpost coverage.
-#![warn(unreachable_pub)]
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 

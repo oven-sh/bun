@@ -22,7 +22,6 @@
 #![allow(internal_features)]
 #![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
 

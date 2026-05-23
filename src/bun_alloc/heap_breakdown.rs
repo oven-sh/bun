@@ -330,7 +330,7 @@ mod stubs {
     pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) {
         unreachable!()
     }
-    pub fn malloc_zone_memalign(_: &Zone, _: usize, _: usize) -> *mut c_void {
+    pub(crate) fn malloc_zone_memalign(_: &Zone, _: usize, _: usize) -> *mut c_void {
         unreachable!()
     }
 }

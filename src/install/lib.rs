@@ -15,7 +15,6 @@ extern crate self as bun_install;
 // `bun_output::` path resolves in un-gated install modules.
 extern crate bun_analytics as analytics;
 extern crate bun_core as bun_output;
-// `bun_simdutf` → real crate is `bun_simdutf_sys`.
 
 /// `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 pub(crate) mod bun_schema {

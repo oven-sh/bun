@@ -1,4 +1,3 @@
-#![warn(unreachable_pub)]
 use core::fmt;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::OnceLock;

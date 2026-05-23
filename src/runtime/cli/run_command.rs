@@ -3943,11 +3943,11 @@ mod bunx_fast_path_buffers {
     use super::*;
     // PORTING.md §Global mutable state: Windows-only single-thread CLI scratch
     // buffers (bunx fast-path runs once on the main thread) → RacyCell.
-    pub static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
+    pub(super) static DIRECT_LAUNCH_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
     // Zig spec (run_command.zig:2014): `var environment_buffer: bun.WPathBuffer`
     // — same `[PATH_MAX_WIDE]u16` shape as the launch buffer.
-    pub static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
+    pub(super) static ENVIRONMENT_BUFFER: bun_core::RacyCell<WPathBuffer> =
         bun_core::RacyCell::new(WPathBuffer::ZEROED);
 }
 

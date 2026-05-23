@@ -54,7 +54,7 @@ mod dom_call_slowpath {
         ($( $sym:ident => $target:path ),* $(,)?) => {$(
             #[unsafe(no_mangle)]
             #[bun_jsc::host_call]
-            pub fn $sym(
+            pub(crate) fn $sym(
                 global: *mut JSGlobalObject,
                 this_value: JSValue,
                 arguments_ptr: *const JSValue,
@@ -133,7 +133,7 @@ mod TCC {
         target_os = "freebsd",
         all(windows, target_arch = "aarch64")
     ))]
-    pub unsafe fn tcc_delete(_s: *mut State) {
+    pub(super) unsafe fn tcc_delete(_s: *mut State) {
         unreachable!("tcc_delete: TinyCC not built on this target (cfg.tinycc = false)");
     }
 }

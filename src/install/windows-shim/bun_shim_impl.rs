@@ -86,10 +86,10 @@ bun_output::declare_scope!(bun_shim_impl, hidden);
 mod nt {
     use super::*;
 
-    pub type Status = NTSTATUS;
+    pub(super) type Status = NTSTATUS;
 
     /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile
-    pub use w::ntdll::NtCreateFile;
+    pub(super) use w::ntdll::NtCreateFile;
 
     // SAFETY: ntdll syscalls; signatures match WDK headers. Declared locally as
     // `safe fn` (vs. re-exporting the `unsafe fn` from `w::ntdll`) because
@@ -102,10 +102,10 @@ mod nt {
     #[link(name = "ntdll")]
     unsafe extern "system" {
         /// undocumented
-        pub safe fn RtlExitUserProcess(ExitStatus: u32) -> !;
+        pub(super) safe fn RtlExitUserProcess(ExitStatus: u32) -> !;
 
         /// https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntclose
-        pub safe fn NtClose(Handle: HANDLE) -> Status;
+        pub(super) safe fn NtClose(Handle: HANDLE) -> Status;
     }
 
     // TODO(port): move to <install>_sys (or bun_sys::windows::ntdll)
@@ -115,7 +115,7 @@ mod nt {
     unsafe extern "system" {
         /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntreadfile
         #[link_name = "NtReadFile"]
-        pub fn NtReadFile(
+        pub(super) fn NtReadFile(
             FileHandle: HANDLE, // [in]
             // PORT NOTE: Zig `?w.HANDLE` is pointer-sized via null-niche. Rust
             // `Option<*mut c_void>` is NOT (raw pointers can already be null →
@@ -133,7 +133,7 @@ mod nt {
 
         /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntwritefile
         #[link_name = "NtWriteFile"]
-        pub fn NtWriteFile(
+        pub(super) fn NtWriteFile(
             FileHandle: HANDLE,                  // [in]
             Event: HANDLE, // [in, optional] (see NtReadFile note re: Option<HANDLE>)
             ApcRoutine: *mut c_void, // [in, optional]
@@ -151,9 +151,9 @@ mod nt {
 mod k32 {
     use super::*;
 
-    pub use w::kernel32::CreateProcessW;
+    pub(super) use w::kernel32::CreateProcessW;
     /// https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror
-    pub use w::kernel32::GetLastError;
+    pub(super) use w::kernel32::GetLastError;
 
     // SAFETY: kernel32 externs; signatures match SDK. Declared locally as
     // `safe fn` (vs. re-exporting `unsafe fn` from `w::kernel32`) because
@@ -166,16 +166,16 @@ mod k32 {
     #[link(name = "kernel32")]
     unsafe extern "system" {
         /// https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject
-        pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
+        pub(super) safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
 
         /// https://learn.microsoft.com/en-us/windows/console/setconsolemode
-        pub safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
+        pub(super) safe fn SetConsoleMode(hConsoleHandle: HANDLE, dwMode: DWORD) -> BOOL;
 
         /// https://learn.microsoft.com/en-us/windows/console/getconsolemode
-        pub safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
+        pub(super) safe fn GetConsoleMode(hConsoleHandle: HANDLE, lpMode: &mut DWORD) -> BOOL;
 
         /// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess
-        pub safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
+        pub(super) safe fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: &mut DWORD) -> BOOL;
     }
 }
 

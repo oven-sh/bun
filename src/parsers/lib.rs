@@ -1,8 +1,5 @@
 #![warn(unused_must_use)]
 #![allow(unexpected_cfgs)]
-// PORTING.md crate-map calls the string crate `bun_str`; the workspace package
-// is `bun_string`. Alias once here so submodule `use bun_core::…` paths resolve.
-#![warn(unreachable_pub)]
 
 // ───── json_lexer ─────────────────────────────────────────────────────────
 // JSON-only subset of `bun_js_parser::js_lexer`, sliced from

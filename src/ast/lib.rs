@@ -17,7 +17,6 @@
 //! a real ownership story (likely `bun_core::String` or a `'source` lifetime
 //! threaded through `Location`/`Data`/`Msg`) is still needed.
 
-#![warn(unreachable_pub)]
 use core::fmt;
 use std::borrow::Cow;
 

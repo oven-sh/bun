@@ -8,7 +8,6 @@
 
 // `Fd` struct + pure-data accessors are hoisted to `bun_core::Fd`
 // (canonical T0). `fd.rs` is `pub trait FdExt` over that.
-#![warn(unreachable_pub)]
 
 // `bun_str` is the historical Zig namespace name; keep a public alias to
 // `bun_core` so any external `bun_sys::bun_core::…` paths continue to resolve.

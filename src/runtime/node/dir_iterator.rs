@@ -522,7 +522,7 @@ mod platform {
         }
     }
     // Map the const bool to the marker type.
-    pub type Select<const B: bool> = <() as SelectImpl<B>>::T;
+    pub(super) type Select<const B: bool> = <() as SelectImpl<B>>::T;
     pub trait SelectImpl<const B: bool> {
         type T: WindowsOsPath;
     }

@@ -1,4 +1,3 @@
-#![warn(unreachable_pub)]
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
 
 pub use zig_base64::STANDARD_ALPHABET_CHARS;

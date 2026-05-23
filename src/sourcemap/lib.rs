@@ -7,7 +7,6 @@
 //! `Mapping.rs`, `ParsedSourceMap.rs`, `VLQ.rs`.
 
 // ── crate aliases ─────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
 use bun_collections::VecExt;
 
 // ── sibling modules ───────────────────────────────────────────────────────

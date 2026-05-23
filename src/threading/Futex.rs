@@ -393,7 +393,11 @@ mod freebsd_impl {
     use bun_sys::E;
     use core::ffi::{c_int, c_ulong, c_void};
 
-    pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(super) fn wait(
+        ptr: &AtomicU32,
+        expect: u32,
+        timeout: Option<u64>,
+    ) -> Result<(), TimeoutError> {
         let mut tm_size: usize = 0;
         // SAFETY: all-zero is a valid `_umtx_time` (POD).
         let mut tm: libc::_umtx_time = bun_core::ffi::zeroed();
@@ -435,7 +439,7 @@ mod freebsd_impl {
         }
     }
 
-    pub fn wake(ptr: &AtomicU32, max_waiters: u32) {
+    pub(super) fn wake(ptr: &AtomicU32, max_waiters: u32) {
         // The kernel reads n_wake as `int`; passing maxInt(u32) truncates to
         // -1 and umtxq_signal_queue's `++ret >= n_wake` returns after one
         // wakeup. _umtx_op(2): "Specify INT_MAX to wake up all waiters."

@@ -705,8 +705,9 @@ impl PathWatcherManager {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod inotify_masks {
     use bun_sys::linux::IN;
-    pub const WATCH_FILE_MASK: u32 = IN::MODIFY | IN::ATTRIB | IN::MOVE_SELF | IN::DELETE_SELF;
-    pub const WATCH_DIR_MASK: u32 = IN::MODIFY
+    pub(super) const WATCH_FILE_MASK: u32 =
+        IN::MODIFY | IN::ATTRIB | IN::MOVE_SELF | IN::DELETE_SELF;
+    pub(super) const WATCH_DIR_MASK: u32 = IN::MODIFY
         | IN::ATTRIB
         | IN::CREATE
         | IN::DELETE

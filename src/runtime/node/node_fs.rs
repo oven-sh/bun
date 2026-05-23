@@ -5957,7 +5957,7 @@ impl NodeFS {
                                     // `parent` aliases `working_mem` (== sync_error_buf). Copy it
                                     // out to a temp before re-deriving `&mut PathBuffer` so we
                                     // never hold `&mut buf` and `&buf[..]` simultaneously.
-                                    let stripped = without_nt_prefix((&parent[..]));
+                                    let stripped = without_nt_prefix(&parent[..]);
                                     let n = stripped.len();
                                     let mut tmp = paths::os_path_buffer_pool::get();
                                     tmp[..n].copy_from_slice(stripped);

@@ -798,7 +798,7 @@ mod lib_util {
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
     static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-    pub fn get_handle() -> Option<*mut c_void> {
+    pub(super) fn get_handle() -> Option<*mut c_void> {
         use core::sync::atomic::Ordering::Relaxed;
         if LOADED.load(Relaxed) {
             let h = HANDLE.load(Relaxed);
@@ -821,7 +821,7 @@ mod lib_util {
         None
     }
 
-    pub fn get_open_pty() -> Option<OpenPtyFn> {
+    pub(super) fn get_open_pty() -> Option<OpenPtyFn> {
         sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle())
     }
 }

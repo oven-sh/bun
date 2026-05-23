@@ -958,7 +958,7 @@ macro_rules! __impl_compression_stream {
         /// `generate-classes.ts` for `values: ["writeCallback",
         /// "errorCallback", "dictionary"]`.
         #[allow(unused)]
-        pub mod js {
+        pub(crate) mod js {
             ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary);
         }
 

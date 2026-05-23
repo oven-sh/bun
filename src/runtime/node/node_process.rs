@@ -513,7 +513,7 @@ mod _impl {
     // TODO: switch this to using *bun.wtf.String when it is added
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
-    pub extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
+    pub(super) extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;

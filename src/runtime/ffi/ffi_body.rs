@@ -384,7 +384,7 @@ mod stdarg {
     #[cfg(not(target_os = "macos"))]
     mod mac {
         use super::*;
-        pub fn inject(_: &mut TCC::State) {}
+        pub(super) fn inject(_: &mut TCC::State) {}
     }
 
     pub(super) fn inject(state: &mut TCC::State) {

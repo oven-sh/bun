@@ -51,13 +51,15 @@ pub(crate) mod netc {
     };
 }
 #[cfg(windows)]
-pub mod netc {
+pub(crate) mod netc {
     /// `AI_ADDRCONFIG` (`ws2def.h`). Only consulted when
     /// `BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG` is set; default hints on Windows
     /// leave `ai_flags = 0` (matches dns.zig — `addrconfig = is_posix`).
-    pub use bun_dns::AI_ADDRCONFIG;
-    pub use bun_libuv_sys::{addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
-    pub use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
+    pub(crate) use bun_dns::AI_ADDRCONFIG;
+    pub(crate) use bun_libuv_sys::{
+        addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
+    };
+    pub(crate) use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
 }
 type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
@@ -367,7 +369,7 @@ pub(super) mod lib_c {
 
 /// The windows implementation borrows the struct used for libc getaddrinfo
 #[cfg(windows)]
-pub mod lib_uv_backend {
+pub(super) mod lib_uv_backend {
     use super::*;
 
     struct Holder {
@@ -416,7 +418,7 @@ pub mod lib_uv_backend {
         }
     }
 
-    pub fn lookup(
+    pub(crate) fn lookup(
         this: &Resolver,
         query: GetAddrInfo,
         global_this: &JSGlobalObject,
@@ -6075,7 +6077,7 @@ macro_rules! export_host_fn {
         const _: () = {
             #[cfg(all(windows, target_arch = "x86_64"))]
             #[unsafe(export_name = $name)]
-            pub unsafe extern "sysv64" fn __shim(
+            pub(crate) unsafe extern "sysv64" fn __shim(
                 g: *mut ::bun_jsc::JSGlobalObject,
                 f: *mut ::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JSValue {
@@ -6085,7 +6087,7 @@ macro_rules! export_host_fn {
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             #[unsafe(export_name = $name)]
-            pub unsafe extern "C" fn __shim(
+            pub(crate) unsafe extern "C" fn __shim(
                 g: *mut ::bun_jsc::JSGlobalObject,
                 f: *mut ::bun_jsc::CallFrame,
             ) -> ::bun_jsc::JSValue {

@@ -3,7 +3,6 @@
 //! by generating and validating tokens using HMAC signatures
 
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use bun_boringssl_sys as boring;
 use bun_core::strings;
 use bun_sha_hmac::hmac;

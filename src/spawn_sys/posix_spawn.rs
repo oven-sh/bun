@@ -69,7 +69,7 @@ mod posix_compat {
     #[cfg(unix)]
     pub(super) type pid_t = libc::pid_t;
     #[cfg(not(unix))]
-    pub type pid_t = i32;
+    pub(super) type pid_t = i32;
     #[cfg(target_os = "macos")]
     pub(super) use bun_sys::posix::mode_t;
 

@@ -14,9 +14,9 @@ use crate::api::bun::process::sync;
 #[cfg(target_os = "macos")]
 pub(super) const OPENER: &[u8] = b"/usr/bin/open";
 #[cfg(windows)]
-pub const OPENER: &[u8] = b"start";
+pub(super) const OPENER: &[u8] = b"start";
 #[cfg(not(any(target_os = "macos", windows)))]
-pub const OPENER: &[u8] = b"xdg-open";
+pub(super) const OPENER: &[u8] = b"xdg-open";
 
 // ──────────────────────────────────────────────────────────────────────────
 

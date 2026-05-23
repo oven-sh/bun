@@ -5,7 +5,6 @@
 // below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
 // on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
 use core::ffi::{c_int, c_void};
 use core::ptr;
 

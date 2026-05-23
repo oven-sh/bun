@@ -4,7 +4,6 @@
 // schema (`BunInstall`/`NpmRegistry`) are gated behind `// TODO(port):`
 // markers pointing at the missing lower-tier symbol.
 // ──────────────────────────────────────────────────────────────────────────
-#![warn(unreachable_pub)]
 use core::fmt;
 
 use bun_alloc::AllocError;

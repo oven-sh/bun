@@ -176,6 +176,21 @@ describe("Bun.Transpiler", () => {
       exp("declare class Foo {}", "");
     });
 
+    it("does not crash when export default abstract is an expression followed by a class", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("export default abstract = 1\nclass Foo {}", "export default abstract = 1;\n\nclass Foo {\n}");
+      exp("export default abstract ?? 1\nclass Foo {}", "export default abstract ?? 1;\n\nclass Foo {\n}");
+      exp("export default abstract = 1", "export default abstract = 1;\n");
+
+      exp("export default abstract class Foo { abstract bar(): void }", "export default class Foo {\n}");
+      exp("export default abstract class {}", "export default class {\n}");
+
+      err("@dec export default abstract = 1", 'Expected "class" but found end of file');
+      err("@dec(() => 0) export default abstract = 1\nclass Foo {}", 'Expected "class" but found "class"');
+    });
+
     it("scope tracking stays balanced when a contextual keyword starts a larger expression", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

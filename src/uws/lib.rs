@@ -1000,9 +1000,9 @@ pub mod ssl_wrapper {
                                 self.renegotiation_count < MAX_RENEGOTIATIONS;
                             self.renegotiation_count = self.renegotiation_count.saturating_add(1);
                             // SAFETY: ssl is still valid.
-                            if !renegotiation_allowed
-                                || unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } == 0
-                            {
+                            let renegotiated = renegotiation_allowed
+                                && unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0;
+                            if !renegotiated {
                                 self.flags
                                     .set_handshake_state(HandshakeState::HandshakeCompleted);
                                 // we failed to renegotiate

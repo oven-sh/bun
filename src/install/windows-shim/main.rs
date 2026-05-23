@@ -38,12 +38,17 @@
 )]
 #![feature(adt_const_params)]
 
+// `unreachable_pub`: these files are shared with `bun_install`, where their
+// `pub` items are cross-crate API (`bun_install::windows_shim::*`). Compiled
+// here as private modules of a binary, every `pub` is trivially unreachable.
 #[cfg(windows)]
 #[path = "BinLinkingShim.rs"]
+#[allow(unreachable_pub)]
 mod _bin_linking_shim;
 
 #[cfg(windows)]
 #[path = "bun_shim_impl.rs"]
+#[allow(unreachable_pub)]
 mod _bun_shim_impl;
 
 // ── /NODEFAULTLIB CRT stubs ────────────────────────────────────────────────

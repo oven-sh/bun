@@ -1570,8 +1570,11 @@ pub struct Log {
 
     /// Incremental line/column scanner for the messages this log creates, so
     /// a flood of diagnostics against one source doesn't rescan it from byte
-    /// 0 for every message; see [`LineColumnTracker`].
-    pub line_column_tracker: LineColumnTracker,
+    /// 0 for every message; see [`LineColumnTracker`]. Boxed and allocated
+    /// lazily by the first located diagnostic: most logs never report
+    /// anything, and `Log` is embedded by value in types that are sensitive
+    /// to its size (e.g. `TaskError` in the isolated installer).
+    pub line_column_tracker: Option<Box<LineColumnTracker>>,
 }
 
 impl Default for Log {
@@ -1587,7 +1590,7 @@ impl Default for Log {
             },
             clone_line_text: false,
             owned_strings: Vec::new(),
-            line_column_tracker: LineColumnTracker::default(),
+            line_column_tracker: None,
         }
     }
 }
@@ -1673,9 +1676,18 @@ impl Log {
         r: Range,
         text: impl IntoText,
     ) -> Data {
+        let location = if source.is_some() {
+            Location::init_or_null_tracked(
+                source,
+                r,
+                self.line_column_tracker.get_or_insert_default(),
+            )
+        } else {
+            Location::init_or_null(source, r)
+        };
         Data {
             text: text.into_text(),
-            location: Location::init_or_null_tracked(source, r, &mut self.line_column_tracker),
+            location,
         }
     }
 

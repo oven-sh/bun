@@ -69,6 +69,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "async_hooks"_s,
     "buffer"_s,
     "bun:ffi"_s,
+    "bun:guard"_s,
     "bun:jsc"_s,
     "bun:sqlite"_s,
     "bun:test"_s,

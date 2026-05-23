@@ -3701,7 +3701,10 @@ it("deeply nested expressions error instead of crashing the process", () => {
         try {
           new Bun.Transpiler({ loader: "js" }).transformSync(shape(n));
         } catch (e) {
-          if (!String(e?.message).includes("Maximum call stack size exceeded")) throw e;
+          // Either the parse/visit guard ("Maximum call stack size exceeded")
+          // or the printer guard ("StackOverflow Failed to print code") is an
+          // acceptable clean failure; anything else is a real error.
+          if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
         }
       }
     }

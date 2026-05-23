@@ -311,8 +311,12 @@ impl SideEffects {
                     | Op::Code::BinGt
                     | Op::Code::BinLe
                     | Op::Code::BinGe => {
-                        if Self::is_primitive_with_side_effects(p, &bin.left.data)
-                            && Self::is_primitive_with_side_effects(p, &bin.right.data)
+                        if Self::is_primitive_with_side_effects(p, bin.left.loc, &bin.left.data)
+                            && Self::is_primitive_with_side_effects(
+                                p,
+                                bin.right.loc,
+                                &bin.right.data,
+                            )
                         {
                             let left = bin.left;
                             let right = bin.right;
@@ -737,13 +741,14 @@ impl SideEffects {
 
     pub fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, TS, SCAN>,
+        loc: bun_ast::Loc,
         data: &ExprData,
     ) -> bool {
         // Recurses through `&&`/`||`/`??` operands and ternary branches, which
         // are built and visited iteratively and so can be deeper than the call
         // stack allows; report the stack overflow instead of crashing.
         if !p.stack_check.is_safe_to_recurse() {
-            p.report_stack_overflow(p.lexer.loc());
+            p.report_stack_overflow(loc);
             return false;
         }
         match data {
@@ -790,17 +795,17 @@ impl SideEffects {
                 Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing
                 | Op::Code::BinLogicalAndAssign | Op::Code::BinLogicalOrAssign
                 | Op::Code::BinNullishCoalescingAssign => {
-                    Self::is_primitive_with_side_effects(p, &e.left.data)
-                        && Self::is_primitive_with_side_effects(p, &e.right.data)
+                    Self::is_primitive_with_side_effects(p, e.left.loc, &e.left.data)
+                        && Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)
                 }
                 Op::Code::BinComma => {
-                    Self::is_primitive_with_side_effects(p, &e.right.data)
+                    Self::is_primitive_with_side_effects(p, e.right.loc, &e.right.data)
                 }
                 _ => false,
             },
             ExprData::EIf(e) => {
-                Self::is_primitive_with_side_effects(p, &e.yes.data)
-                    && Self::is_primitive_with_side_effects(p, &e.no.data)
+                Self::is_primitive_with_side_effects(p, e.yes.loc, &e.yes.data)
+                    && Self::is_primitive_with_side_effects(p, e.no.loc, &e.no.data)
             }
             _ => false,
         }
@@ -903,8 +908,9 @@ impl SideEffects {
         // Recurses through nested unary/binary operands; report the stack
         // overflow instead of crashing. The parse fails with that error, so
         // the "unknown" result returned here never affects emitted code.
+        // (`ExprData` carries no location, so report with an empty one.)
         if !p.stack_check.is_safe_to_recurse() {
-            p.report_stack_overflow(p.lexer.loc());
+            p.report_stack_overflow(bun_ast::Loc::EMPTY);
             return Result::default();
         }
         match exp {

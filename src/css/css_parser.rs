@@ -2667,10 +2667,9 @@ mod stylesheet_impl {
             if self.rules.minify(&mut minify_ctx, false).is_err() {
                 // Minify errors report the rich error out-of-band through the
                 // context (the in-band error is just a tag).
-                let err = minify_ctx
-                    .err
-                    .take()
-                    .expect("CssRuleList::minify returned an error without setting MinifyContext::err");
+                let err = minify_ctx.err.take().expect(
+                    "CssRuleList::minify returned an error without setting MinifyContext::err",
+                );
                 return Err(self.minify_error_with_location(err));
             }
 

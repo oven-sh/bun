@@ -401,12 +401,7 @@ describe.concurrent("dynamic import.defer()", () => {
       `,
     });
     expect(stderr).toBe("");
-    expect(stdout.split("\n").filter(Boolean)).toEqual([
-      "before access",
-      "dep evaluated",
-      "value: 42",
-      "add: 3",
-    ]);
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["before access", "dep evaluated", "value: 42", "add: 3"]);
     expect(exitCode).toBe(0);
   });
 

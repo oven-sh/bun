@@ -82,4 +82,15 @@ RUN --mount=type=bind,from=build,source=/usr/bin,target=/usr/bin \
   ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/nodebun
 EOF
 
+# libgcc_s.so.1 is dlopen'd by glibc for stack unwinding during pthread_exit
+# / pthread_cancel, which is how `worker_threads` terminates workers. The
+# base image ships libc but not libgcc, so without this copy
+# worker.terminate() prints "libgcc_s.so.1 must be installed for pthread_exit
+# to work" and the worker thread aborts. One COPY per supported arch — the
+# `[1]` char-class glob expands to the single file on the matching arch and
+# to zero files on the other, which BuildKit treats as a no-op. Destination
+# is `/lib/<arch>/`, matching where the base image keeps libc.
+COPY --from=build /usr/lib/x86_64-linux-gnu/libgcc_s.so.[1] /lib/x86_64-linux-gnu/
+COPY --from=build /usr/lib/aarch64-linux-gnu/libgcc_s.so.[1] /lib/aarch64-linux-gnu/
+
 ENTRYPOINT ["/usr/local/bin/bun"]

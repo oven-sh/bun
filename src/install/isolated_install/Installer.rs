@@ -160,9 +160,10 @@ impl<'a> Installer<'a> {
         // `trusted_dependencies_mutex` via a raw narrowed `addr_of_mut!` place
         // (Task::run), not a `&mut Lockfile`. Callers on task threads must
         // hold `trusted_dependencies_mutex` for any projection into
-        // `trusted_dependencies` (including via `has_trusted_dependency` /
-        // `Scripts::get_list`) — a concurrent insert can reallocate the map's
-        // backing storage.
+        // `trusted_dependencies` (e.g. `has_trusted_dependency`) — a
+        // concurrent insert can reallocate the map's backing storage.
+        // `Scripts::get_list` no longer reads the map; its callers compute
+        // the trust decision under the mutex and pass it in as a bool.
         unsafe { &*self.lockfile }
     }
 
@@ -1757,8 +1758,9 @@ impl Task {
                                 }
                                 // SAFETY: `trusted_dependencies_mutex` is held, serializing
                                 // this writer with the other task threads' reads of
-                                // `trusted_dependencies` (the trust check and `get_list`
-                                // earlier in this step both take the same mutex). Narrow to
+                                // `trusted_dependencies` (the trust check and the
+                                // `trusted_for_node_gyp` precompute earlier in this step
+                                // both take the same mutex). Narrow to
                                 // the single `trusted_dependencies` field via raw place so no
                                 // `&mut Lockfile` is ever formed — other task threads hold
                                 // `&Lockfile` (and the `pkgs`/`pkg_*` slices above borrow it)

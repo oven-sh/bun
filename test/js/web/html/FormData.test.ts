@@ -800,6 +800,11 @@ it("drops multipart part Content-Type values containing control characters", asy
     'Content-Disposition: form-data; name="good"; filename="good.txt"\r\n' +
     "\r\n" +
     "world\r\n" +
+    "--formboundary\r\n" +
+    "Content-Type: text/plain;\tcharset=utf-8\r\n" +
+    'Content-Disposition: form-data; name="tabbed"; filename="tabbed.txt"\r\n' +
+    "\r\n" +
+    "tabbed\r\n" +
     "--formboundary--\r\n";
 
   const response = new Response(body, {
@@ -820,4 +825,10 @@ it("drops multipart part Content-Type values containing control characters", asy
   expect(good instanceof Blob).toBe(true);
   expect(await good.text()).toBe("world");
   expect(good.type).toBe("text/plain");
+
+  // An interior HTAB is valid optional whitespace, not an injection vector.
+  const tabbed = formData.get("tabbed") as File;
+  expect(tabbed instanceof Blob).toBe(true);
+  expect(await tabbed.text()).toBe("tabbed");
+  expect(tabbed.type).toBe("text/plain;\tcharset=utf-8");
 });

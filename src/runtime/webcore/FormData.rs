@@ -441,8 +441,10 @@ pub fn for_each_multipart_entry<C>(
                 // Only an exact `\r\n` terminates a header line above, so a bare
                 // CR or LF can survive into the value. Reject anything outside
                 // printable ASCII so it cannot reach `blob.content_type` and be
-                // reflected verbatim into outgoing request headers.
-                if trimmed.iter().all(|&b| (0x20..=0x7E).contains(&b)) {
+                // reflected verbatim into outgoing request headers. HTAB stays
+                // allowed: it is valid optional whitespace inside a field value
+                // and cannot start a new header line.
+                if trimmed.iter().all(|&b| b == b'\t' || (0x20..=0x7E).contains(&b)) {
                     field.content_type = subslicer.sub(trimmed).value();
                 }
             }

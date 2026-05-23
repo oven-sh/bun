@@ -815,9 +815,13 @@ static int ssl_renegotiate(struct us_socket_t *s) {
     ssl_trigger_handshake(s, 0);
     return 0;
   }
+  /* Wall-clock time can step backwards (NTP, manual adjustment); the
+   * unsigned subtraction below would underflow and reset the window every
+   * time. Only treat the window as elapsed when time has moved forward. */
   uint64_t now_ms = (uint64_t)time(NULL) * 1000;
   if (st->count == 0 ||
-      (window && now_ms - st->window_start_ms >= (uint64_t)window * 1000)) {
+      (window && now_ms >= st->window_start_ms &&
+       now_ms - st->window_start_ms >= (uint64_t)window * 1000)) {
     st->window_start_ms = now_ms;
     st->count = 0;
   }

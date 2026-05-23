@@ -120,19 +120,21 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
     // Forbid re-entrant execution of a new buffer while a previous execute()
     // is still on the stack: llhttp keeps span pointers into the in-progress
     // buffer, and a nested run over a different buffer corrupts them.
-    if (data != nullptr && m_currentBufferData != nullptr) {
+    // m_inExecute is set and cleared only by execute() itself, so a nested
+    // finish() (data == nullptr) cannot disarm this guard.
+    if (data != nullptr && m_inExecute) {
         throwTypeError(globalObject, scope, "HTTPParser.execute is not reentrant"_s);
         return {};
     }
-
-    m_currentBufferLen = len;
-    m_currentBufferData = data;
 
     llhttp_errno_t err;
 
     if (data == nullptr) {
         err = llhttp_finish(&m_parserData);
     } else {
+        m_inExecute = true;
+        m_currentBufferLen = len;
+        m_currentBufferData = data;
         err = llhttp_execute(&m_parserData, data, len);
         save();
     }
@@ -159,8 +161,11 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
         llhttp_pause(&m_parserData);
     }
 
-    m_currentBufferLen = 0;
-    m_currentBufferData = nullptr;
+    if (data != nullptr) {
+        m_currentBufferLen = 0;
+        m_currentBufferData = nullptr;
+        m_inExecute = false;
+    }
 
     RETURN_IF_EXCEPTION(scope, {});
 

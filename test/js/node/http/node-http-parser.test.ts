@@ -90,6 +90,36 @@ describe("HTTPParser.prototype.finish", () => {
   });
 });
 
+describe("HTTPParser.prototype.execute", () => {
+  test("rejects re-entrant execute, even after a nested finish()", async () => {
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {});
+    const input = Buffer.from("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n");
+    const other = Buffer.from("GET /other HTTP/1.1\r\nHost: example.com\r\n\r\n");
+    const { promise, resolve, reject } = Promise.withResolvers();
+    let entered = false;
+    parser[kOnHeadersComplete] = function () {
+      if (entered) return;
+      entered = true;
+      try {
+        // Re-entering execute() while a buffer is still being parsed would
+        // corrupt llhttp's span pointers, so it must be rejected.
+        expect(() => this.execute(other)).toThrow("HTTPParser.execute is not reentrant");
+        // A nested finish() must not disarm the re-entrancy guard.
+        this.finish();
+        expect(() => this.execute(other)).toThrow("HTTPParser.execute is not reentrant");
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    };
+    expect(parser.execute(input)).toBe(input.length);
+    await promise;
+    // Once the outer execute() has returned, the parser accepts new data again.
+    expect(parser.execute(input)).toBe(input.length);
+  });
+});
+
 test("HTTPParser.prototype.getCurrentBuffer", async () => {
   const parser = new HTTPParser();
   parser.initialize(HTTPParser.REQUEST, {});

@@ -7459,6 +7459,7 @@ describe("css tests", () => {
     minify_test("@page:left{margin:1em}", "@page:left{margin:1em}");
     minify_test("@page:first{margin:1em}", "@page:first{margin:1em}");
     minify_test("@page:blank:first{margin:1em}", "@page:blank:first{margin:1em}");
+    minify_test("@page LandscapeTable{margin:1em}", "@page LandscapeTable{margin:1em}");
     minify_test("@page:first,:blank{margin:1em}", "@page:first,:blank{margin:1em}");
     minify_test("@page toc,index{margin:1em}", "@page toc,index{margin:1em}");
     minify_test("@page CompanyLetterHead:first{margin:1em}", "@page CompanyLetterHead:first{margin:1em}");

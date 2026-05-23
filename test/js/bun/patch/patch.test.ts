@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { patchInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import fs from "fs/promises";
-import { tempDirWithFiles as __tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles as __tempDirWithFiles } from "harness";
 import { join as __join } from "node:path";
 const { parse, apply, makeDiff } = patchInternals;
 
@@ -473,6 +473,34 @@ describe("apply", () => {
 
   describe("No newline at end of file", () => {
     // TODO: simple, multiline, multiple hunks
+  });
+
+  // Each of these hits an error path in `parse_apply_args`. The native code must
+  // surface the failure as a catchable JS exception; it used to return a normal
+  // value while the exception was still pending, which aborts debug/ASAN builds
+  // with "Unexpected exception observed" (releaseAssertNoException).
+  test("invalid arguments throw a catchable error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { patchInternals } = require("bun:internal-for-testing");
+         try { patchInternals.apply("@@"); console.log("no-error"); } catch (e) { console.log("invalid-patchfile: " + e.message); }
+         try { patchInternals.apply(); console.log("no-error"); } catch (e) { console.log("missing-argument: " + e.message); }
+         try { patchInternals.apply("@@", "bun-patch-test-nonexistent-dir"); console.log("no-error"); } catch (e) { console.log("bad-dir: " + e.code); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual([
+      "invalid-patchfile: bad_header_line failed to parse patchfile",
+      "missing-argument: apply: expected at least 1 argument, got 0",
+      "bad-dir: ENOENT",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 

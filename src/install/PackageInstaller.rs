@@ -105,10 +105,8 @@ pub struct PackageInstaller<'a> {
     pub tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
 
-    /// Keyed by truncated name hash; the value is the exact alias bytes the
-    /// hash was computed from. Lookups must compare the name so a
-    /// hash-colliding alias can't be trusted (or written back to
-    /// package.json/the lockfile) through `--trust`.
+    /// Value is the alias bytes the key hash was computed from; lookups must
+    /// compare it since truncated hashes can collide.
     pub trusted_dependencies_from_update_requests:
         ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
 

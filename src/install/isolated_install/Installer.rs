@@ -108,10 +108,9 @@ pub struct Installer<'a> {
     /// round-trip via `Method::from_u8` at the load sites below.
     pub supported_backend: AtomicU8,
 
-    /// Keyed by truncated name hash; the value is the exact alias bytes the
-    /// hash was computed from. Lookups must compare the name so a
-    /// hash-colliding alias can't be trusted through `--trust`. Built before
-    /// tasks spawn and only read concurrently afterwards.
+    /// Value is the alias bytes the key hash was computed from; lookups must
+    /// compare it since truncated hashes can collide. Built before tasks
+    /// spawn and only read concurrently afterwards.
     pub trusted_dependencies_from_update_requests:
         ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
 

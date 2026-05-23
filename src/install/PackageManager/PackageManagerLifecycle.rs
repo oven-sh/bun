@@ -499,10 +499,6 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Returns a map keyed by truncated name hash whose value is the exact
-    /// alias bytes the hash was computed from. Callers must compare the name
-    /// before trusting an entry: the truncated hash alone is not a sufficient
-    /// identity check.
     pub fn find_trusted_dependencies_from_update_requests(
         &mut self,
     ) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {

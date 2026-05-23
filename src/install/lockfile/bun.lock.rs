@@ -387,15 +387,9 @@ impl Stringifier {
                         if let Some(trusted_name) =
                             trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
                         {
-                            // Only persist the entry under this dependency's name when
-                            // the stored name matches; a truncated-hash collision must
-                            // not launder a different alias into the lockfile. The
-                            // `is_empty()` arm exists for entries loaded from a legacy
-                            // bun.lockb (no name stored): it persists that hash-only
-                            // grant under the colliding graph dep's name when migrating
-                            // bun.lockb -> bun.lock, preserving today's migration
-                            // behavior so existing binary-lockfile projects don't
-                            // silently lose trusted entries.
+                            // The `is_empty()` arm keeps hash-only entries from a
+                            // legacy bun.lockb (no name stored) when migrating to
+                            // bun.lock.
                             if trusted_name.is_empty() || **trusted_name == *dep.name.slice(buf) {
                                 found_trusted_dependencies.insert(dep.name_hash, dep.name);
                             }
@@ -1552,11 +1546,8 @@ pub fn parse_into_binary_lockfile(
                 log.add_error(Some(source), dep.loc, b"Expected a string");
                 return Err(ParseError::InvalidTrustedDependenciesSet);
             };
-            // Store the exact bytes the hash is computed from so trust lookups
-            // can confirm the name instead of relying on the truncated hash
-            // alone. JSON-parsed strings are always UTF-8; the UTF-16 arm is
-            // kept for the unreachable branch (transcode so the stored name
-            // and the hash agree).
+            // JSON-parsed strings are always UTF-8; the UTF-16 arm is kept for
+            // the unreachable branch so the stored name and the hash agree.
             let name: Box<[u8]> = if s.is_utf8() {
                 Box::from(s.slice8())
             } else {

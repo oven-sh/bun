@@ -987,8 +987,7 @@ pub enum DiffOp {
 }
 
 /// A trusted dependency newly added by the current diff. `name` is the exact
-/// byte string the truncated key hash was computed from; consumers must
-/// compare it before granting trust so a hash-colliding alias can't match.
+/// byte string the truncated key hash was computed from.
 pub struct AddedTrustedDependency {
     /// Whether this dependency should be added to lockfile trusted
     /// dependencies. It is false when the new trusted dependency is coming
@@ -1265,10 +1264,7 @@ impl Diff {
             ) {
                 // added
                 for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    // The truncated hash is only a bucket index; require the
-                    // stored names to match (empty = legacy bun.lockb
-                    // hash-only sentinel) so replacing a trusted name with a
-                    // colliding one is still reported as an add + remove.
+                    // Empty name = legacy bun.lockb hash-only sentinel.
                     let already_trusted =
                         from_trusted_dependencies
                             .get(&to_trusted)

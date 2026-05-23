@@ -6306,10 +6306,6 @@ fn stat_to_js_mtime(stat: &bun_sys::Stat) -> jsc::JSTimeType {
 
 /// resolve file stat like size, last_modified
 fn resolve_file_stat(store: &StoreRef) {
-    // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
-    // `StoreRef` liveness invariant; the caller holds the only ref across
-    // this call, so an exclusive borrow is sound.
-    //
     // SAFETY: callers (`get_last_modified`, `resolve_size`, `resolved_size`)
     // pass `store` from the JS thread and drop any prior `Data` borrow
     // before calling; no other JS-thread `&`/`&mut Data` is live.

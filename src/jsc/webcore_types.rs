@@ -1170,9 +1170,10 @@ pub mod store {
     // `Rc::drop` on that same `S3Credentials`. Callers that route a `Store`
     // across threads (worker-pool `ReadFile`/`CopyFile`/`WriteFile`) only do
     // so for `Data::File`/`Data::Bytes` variants; the S3 I/O paths run
-    // entirely on the JS thread (see `src/runtime/webcore/fetch/s3.rs`), so
-    // no such `Send` actually happens today. If an S3 store ever does need
-    // to cross threads, convert the credentials refcount to `Arc` first.
+    // entirely on the JS thread (see `src/runtime/webcore/S3File.rs` and
+    // `src/runtime/webcore/s3/`), so no such `Send` actually happens today.
+    // If an S3 store ever does need to cross threads, convert the credentials
+    // refcount to `Arc` first.
     unsafe impl Send for StoreRef {}
     // Intentionally NOT `Sync`: the only way to mutate `Store::data` through
     // an existing `StoreRef` is `unsafe fn data_mut`, whose precondition is

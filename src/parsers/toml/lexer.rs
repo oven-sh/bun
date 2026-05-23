@@ -1200,15 +1200,20 @@ impl<'a> Lexer<'a> {
 
             if self.start == contents.len() {
                 break 'finder b"end of file";
-            } else {
-                // `self.end` still points at the first byte of the current
-                // codepoint (set by `next_codepoint` in the preceding `step()`);
-                // the character itself hasn't been consumed, so advance `end`
-                // past the codepoint so the reported slice includes the
-                // offending character instead of an empty range.
+            } else if self.start == self.end {
+                // Called from `next()`'s `_` arm: the bad character hasn't been
+                // consumed yet (`self.start = self.end` at the top of `next()`
+                // and no `step()` ran). Advance `end` past the codepoint so the
+                // reported slice includes the offending character instead of
+                // an empty range.
                 let cp_width =
                     strings::wtf8_byte_sequence_length_with_invalid(contents[self.start]) as usize;
                 self.end = (self.start + cp_width).min(contents.len());
+                break 'finder &contents[self.start..self.end];
+            } else {
+                // Called from the parser with a full token already lexed
+                // (e.g. `parse_value_inner`'s `_` arm); `start..end` already
+                // spans the token's bytes — don't truncate it.
                 break 'finder &contents[self.start..self.end];
             }
         };

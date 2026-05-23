@@ -2344,6 +2344,14 @@ impl<'a> HTTPClient<'a> {
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
 
+        // Now that the old socket has been pooled or closed (with the override
+        // still visible to the guard above), drop the per-request Host override
+        // for the cross-origin follow-up connection.
+        if self.state.flags.clear_hostname_on_redirect {
+            self.state.flags.clear_hostname_on_redirect = false;
+            self.hostname = None;
+        }
+
         // TODO: should this check be before decrementing the redirect count?
         // the current logic will allow one less redirect than requested
         if self.remaining_redirect_count == 0 {
@@ -4697,9 +4705,12 @@ impl<'a> HTTPClient<'a> {
                         // override so TLS SNI, certificate verification, and
                         // the Host header for the follow-up connection are
                         // re-derived from the redirect target's URL instead of
-                        // the previous origin's Host header.
+                        // the previous origin's Host header. Deferred to
+                        // `do_redirect`: its socket pool/close decision must
+                        // still see the override to know the old socket's
+                        // handshake was verified against it.
                         if !is_same_origin {
-                            self.hostname = None;
+                            self.state.flags.clear_hostname_on_redirect = true;
                         }
 
                         // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch

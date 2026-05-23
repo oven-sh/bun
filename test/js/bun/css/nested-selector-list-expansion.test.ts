@@ -64,6 +64,27 @@ test("deep nesting is preserved as-is for targets that support CSS nesting", () 
   expect(out.length).toBeLessThan(10_000);
 });
 
+// `:user-valid` is treated as unsupported for every target, but the lists below
+// have no pseudo-elements and equal specificity, so the minifier collapses each
+// list into a single `:is(& .a:user-valid, & .b:user-valid)` selector instead
+// of splitting it into cloned rules.
+
+test("incompatible selector lists that collapse into :is() don't hit the limit when nesting is preserved", () => {
+  // Nothing is cloned and nesting stays native, so the output is linear and no
+  // limit applies — even though a per-level multiplier would naively reach 2^20.
+  const src = nestedRules(".a:user-valid, .b:user-valid", 20);
+  const out = minifyTest(src, "", MODERN_TARGETS);
+  expect(out).toContain("color:red");
+  expect(out.length).toBeLessThan(100_000);
+});
+
+test("collapsed :is() lists still hit the limit when nesting has to be compiled away", () => {
+  // The :is() wrap keeps one `&` per original selector, so compiling nesting
+  // away still doubles the printed selector per level (~34 MB at this depth).
+  const src = nestedRules(".a:user-valid, .b:user-valid", 20);
+  expect(() => minifyTest(src, "", { chrome: 100 << 16 })).toThrow(LIMIT_ERROR);
+});
+
 test("bun build reports an error instead of exploding on deeply nested multi-selector css", async () => {
   using dir = tempDir("css-nested-selector-expansion", {
     "input.css": nestedRules("co :is(.bar), .bar :is(.baz)", 17),

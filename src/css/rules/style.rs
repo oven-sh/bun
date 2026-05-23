@@ -321,12 +321,24 @@ impl<R> StyleRule<R> {
             // When the targets require compiling nesting away (or splitting
             // this rule's selectors for compatibility), each of this rule's
             // selectors multiplies the expansion of every nested rule.
+            //
+            // Mirrors the selector-compatibility branch in `minify_style_arm`
+            // (rules/mod.rs): an incompatible selector list is either collapsed
+            // into a single `:is()` selector (nothing cloned) or partitioned
+            // into one cloned rule per selector (fan-out = selector count).
+            // Only the partition case multiplies on its own — but the `:is()`
+            // wrap keeps one `&` reference per original selector, so when
+            // nesting is compiled away the printed output still fans out per
+            // selector, which is why the nesting branch bumps unconditionally.
             let saved_expansion_multiplier = context.selector_expansion_multiplier;
-            if context.targets.should_compile_same(css::Feature::Nesting)
-                || (self.selectors.v.len() > 1
-                    && context.targets.should_compile_selectors()
-                    && !self.is_compatible(context.targets))
-            {
+            let selectors_incompatible = self.selectors.v.len() > 1
+                && context.targets.should_compile_selectors()
+                && !self.is_compatible(context.targets);
+            let splits_selectors = selectors_incompatible
+                && !(context.targets.is_compatible(css::Feature::IsSelector)
+                    && !self.selectors.any_has_pseudo_element()
+                    && self.selectors.specifities_all_equal());
+            if context.targets.should_compile_same(css::Feature::Nesting) || splits_selectors {
                 context.selector_expansion_multiplier = context
                     .selector_expansion_multiplier
                     .saturating_mul(self.selectors.v.len().max(1));

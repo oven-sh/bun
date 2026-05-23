@@ -39,8 +39,11 @@ pub const Config = struct {
 
     dead_code_elimination: bool = true,
     minify_whitespace: bool = false,
-    minify_identifiers: bool = false,
-    minify_syntax: bool = false,
+    // null = user didn't set it, defer to target-derived default from fromApi()
+    // (e.g. target: "bun" auto-enables minify_syntax). An explicit true/false
+    // from the user overrides.
+    minify_identifiers: ?bool = null,
+    minify_syntax: ?bool = null,
     no_macros: bool = false,
     repl_mode: bool = false,
 
@@ -242,10 +245,6 @@ pub const Config = struct {
             this.runtime.inlining = flag;
         }
 
-        if (try object.getBooleanLoose(globalThis, "minifyWhitespace")) |flag| {
-            this.minify_whitespace = flag;
-        }
-
         if (try object.getBooleanLoose(globalThis, "deadCodeElimination")) |flag| {
             this.dead_code_elimination = flag;
         }
@@ -272,6 +271,20 @@ pub const Config = struct {
             } else {
                 return globalThis.throwInvalidArguments("Expected minify to be a boolean or an object", .{});
             }
+        }
+
+        // Top-level minify flags override the composite `minify` option above,
+        // so `{ minify: true, minifyIdentifiers: false }` disables identifiers.
+        if (try object.getBooleanLoose(globalThis, "minifyWhitespace")) |flag| {
+            this.minify_whitespace = flag;
+        }
+
+        if (try object.getBooleanLoose(globalThis, "minifySyntax")) |flag| {
+            this.minify_syntax = flag;
+        }
+
+        if (try object.getBooleanLoose(globalThis, "minifyIdentifiers")) |flag| {
+            this.minify_identifiers = flag;
         }
 
         if (try object.get(globalThis, "sourcemap")) |flag| {
@@ -703,6 +716,21 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.no_macros = config.no_macros;
     transpiler.configureLinkerWithAutoJSX(false);
     transpiler.options.env.behavior = .disable;
+
+    // These must be set before configureDefines() because loadDefines()
+    // derives omit_unused_global_calls from dead_code_elimination and minify_syntax.
+    // REPL mode disables DCE to preserve expressions like `42`
+    transpiler.options.dead_code_elimination = config.dead_code_elimination and !config.repl_mode;
+    transpiler.options.minify_whitespace = config.minify_whitespace;
+    // Only write through when the user set the flag. This preserves the
+    // target-derived default from fromApi() (e.g. target: "bun" auto-enables
+    // minify_syntax) when unset, while letting an explicit `minifySyntax: false`
+    // override it.
+    if (config.minify_syntax) |flag|
+        transpiler.options.minify_syntax = flag;
+    if (config.minify_identifiers) |flag|
+        transpiler.options.minify_identifiers = flag;
+
     transpiler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
             return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to load define"));
@@ -713,17 +741,6 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     if (config.macro_map.count() > 0) {
         transpiler.options.macro_remap = config.macro_map;
     }
-
-    // REPL mode disables DCE to preserve expressions like `42`
-    transpiler.options.dead_code_elimination = config.dead_code_elimination and !config.repl_mode;
-    transpiler.options.minify_whitespace = config.minify_whitespace;
-
-    // Keep defaults for these
-    if (config.minify_syntax)
-        transpiler.options.minify_syntax = true;
-
-    if (config.minify_identifiers)
-        transpiler.options.minify_identifiers = true;
 
     transpiler.options.transform_only = !transpiler.options.allow_runtime;
 

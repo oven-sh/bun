@@ -85,8 +85,11 @@ pub struct Config {
 
     pub dead_code_elimination: bool,
     pub minify_whitespace: bool,
-    pub minify_identifiers: bool,
-    pub minify_syntax: bool,
+    // `None` = user didn't set it, defer to target-derived default from
+    // `BundleOptions::from_api()` (e.g. target: "bun" auto-enables
+    // minify_syntax). An explicit true/false overrides.
+    pub minify_identifiers: Option<bool>,
+    pub minify_syntax: Option<bool>,
     pub no_macros: bool,
     pub repl_mode: bool,
 }
@@ -110,8 +113,8 @@ impl Default for Config {
             inlining: false,
             dead_code_elimination: true,
             minify_whitespace: false,
-            minify_identifiers: false,
-            minify_syntax: false,
+            minify_identifiers: None,
+            minify_syntax: None,
             no_macros: false,
             repl_mode: false,
         }
@@ -406,10 +409,6 @@ impl Config {
             self.runtime.inlining = flag;
         }
 
-        if let Some(flag) = object.get_boolean_loose(global, "minifyWhitespace")? {
-            self.minify_whitespace = flag;
-        }
-
         if let Some(flag) = object.get_boolean_loose(global, "deadCodeElimination")? {
             self.dead_code_elimination = flag;
         }
@@ -421,23 +420,37 @@ impl Config {
         if let Some(minify) = object.get_truthy(global, "minify")? {
             if minify.is_boolean() {
                 self.minify_whitespace = minify.to_boolean();
-                self.minify_syntax = self.minify_whitespace;
+                self.minify_syntax = Some(self.minify_whitespace);
                 self.minify_identifiers = self.minify_syntax;
             } else if minify.is_object() {
                 if let Some(whitespace) = minify.get_boolean_loose(global, "whitespace")? {
                     self.minify_whitespace = whitespace;
                 }
                 if let Some(syntax) = minify.get_boolean_loose(global, "syntax")? {
-                    self.minify_syntax = syntax;
+                    self.minify_syntax = Some(syntax);
                 }
-                if let Some(syntax) = minify.get_boolean_loose(global, "identifiers")? {
-                    self.minify_identifiers = syntax;
+                if let Some(identifiers) = minify.get_boolean_loose(global, "identifiers")? {
+                    self.minify_identifiers = Some(identifiers);
                 }
             } else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Expected minify to be a boolean or an object",
                 )));
             }
+        }
+
+        // Top-level minify flags override the composite `minify` option above,
+        // so `{ minify: true, minifyIdentifiers: false }` disables identifiers.
+        if let Some(flag) = object.get_boolean_loose(global, "minifyWhitespace")? {
+            self.minify_whitespace = flag;
+        }
+
+        if let Some(flag) = object.get_boolean_loose(global, "minifySyntax")? {
+            self.minify_syntax = Some(flag);
+        }
+
+        if let Some(flag) = object.get_boolean_loose(global, "minifyIdentifiers")? {
+            self.minify_identifiers = Some(flag);
         }
 
         if let Some(flag) = object.get(global, "sourcemap")? {
@@ -1079,6 +1092,24 @@ impl JSTranspiler {
         transpiler.options.no_macros = config.no_macros;
         transpiler.configure_linker_with_auto_jsx(false);
         transpiler.options.env.behavior = options::EnvBehavior::disable;
+
+        // These must be set before configure_defines() because load_defines()
+        // derives omit_unused_global_calls from dead_code_elimination and minify_syntax.
+        // REPL mode disables DCE to preserve expressions like `42`
+        transpiler.options.dead_code_elimination =
+            config.dead_code_elimination && !config.repl_mode;
+        transpiler.options.minify_whitespace = config.minify_whitespace;
+        // Only write through when the user set the flag. This preserves the
+        // target-derived default from `from_api()` (e.g. target: "bun"
+        // auto-enables minify_syntax) when unset, while letting an explicit
+        // `minifySyntax: false` override it.
+        if let Some(flag) = config.minify_syntax {
+            transpiler.options.minify_syntax = flag;
+        }
+        if let Some(flag) = config.minify_identifiers {
+            transpiler.options.minify_identifiers = flag;
+        }
+
         if let Err(err) = transpiler.configure_defines() {
             let log = &mut config.log;
             if (log.warnings + log.errors) > 0 {
@@ -1089,20 +1120,6 @@ impl JSTranspiler {
 
         if config.macro_map.count() > 0 {
             transpiler.options.macro_remap = clone_macro_map(&config.macro_map);
-        }
-
-        // REPL mode disables DCE to preserve expressions like `42`
-        transpiler.options.dead_code_elimination =
-            config.dead_code_elimination && !config.repl_mode;
-        transpiler.options.minify_whitespace = config.minify_whitespace;
-
-        // Keep defaults for these
-        if config.minify_syntax {
-            transpiler.options.minify_syntax = true;
-        }
-
-        if config.minify_identifiers {
-            transpiler.options.minify_identifiers = true;
         }
 
         transpiler.options.transform_only = !transpiler.options.allow_runtime;

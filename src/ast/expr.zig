@@ -2987,6 +2987,17 @@ pub const Data = union(Tag) {
                     .e_null, .e_undefined => {
                         return Equality.false;
                     },
+                    .e_string => {
+                        if (comptime kind == .strict) {
+                            return Equality.false;
+                        }
+                    },
+                    .e_inlined_enum => |r| {
+                        if (comptime kind == .strict) {
+                            if (r.value.data == .e_string or r.value.data == .e_number)
+                                return Equality.false;
+                        }
+                    },
                     else => {},
                 }
             },
@@ -2998,11 +3009,17 @@ pub const Data = union(Tag) {
                             .equal = l.value == r.value,
                         };
                     },
-                    .e_inlined_enum => |r| if (r.value.data == .e_number) {
-                        return .{
-                            .ok = true,
-                            .equal = l.value == r.value.data.e_number.value,
-                        };
+                    .e_inlined_enum => |r| {
+                        if (r.value.data == .e_number) {
+                            return .{
+                                .ok = true,
+                                .equal = l.value == r.value.data.e_number.value,
+                            };
+                        }
+                        // Different types under === are never equal
+                        if (comptime kind == .strict) {
+                            if (r.value.data == .e_string) return Equality.false;
+                        }
                     },
                     .e_boolean, .e_branch_boolean => |r| {
                         if (comptime kind == .loose) {
@@ -3024,6 +3041,21 @@ pub const Data = union(Tag) {
                     .e_null, .e_undefined => {
                         // "(not null or undefined) == undefined" is false
                         return Equality.false;
+                    },
+                    .e_string => |r| {
+                        if (comptime kind == .strict) {
+                            // "42 === 'x'" is false (different types)
+                            return Equality.false;
+                        }
+                        // Loose: "0" == 0 is true, "" == 0 is true
+                        r.resolveRopeIfNeeded(p.allocator);
+                        if (l.value == 0 and (r.isBlank() or r.eqlComptime("0"))) {
+                            return Equality.true;
+                        }
+                        if (l.value == 1 and r.eqlComptime("1")) {
+                            return Equality.true;
+                        }
+                        return Equality.unknown;
                     },
                     else => {},
                 }
@@ -3068,6 +3100,11 @@ pub const Data = union(Tag) {
                                 .equal = r.eql(E.String, l),
                             };
                         }
+                        if (comptime kind == .strict) {
+                            // e_string vs e_inlined_enum wrapping a non-string type
+                            if (inlined.value.data == .e_number or inlined.value.data == .e_boolean)
+                                return Equality.false;
+                        }
                     },
                     .e_null, .e_undefined => {
                         return Equality.false;
@@ -3086,6 +3123,11 @@ pub const Data = union(Tag) {
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
                             return Equality.unknown;
                         } else {
+                            return Equality.false;
+                        }
+                    },
+                    .e_boolean, .e_branch_boolean => {
+                        if (comptime kind == .strict) {
                             return Equality.false;
                         }
                     },

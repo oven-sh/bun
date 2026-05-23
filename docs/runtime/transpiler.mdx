@@ -234,6 +234,16 @@ interface TranspilerOptions {
   // Experimental whitespace minification
   minifyWhitespace?: boolean,
 
+  // Experimental syntax minification (constant folding, dead code elimination)
+  minifySyntax?: boolean,
+
+  // Experimental identifier minification (rename to shorter names)
+  minifyIdentifiers?: boolean,
+
+  // Enable all minification (`true`) or a selective subset. Top-level
+  // minifyWhitespace/minifySyntax/minifyIdentifiers override the nested fields.
+  minify?: boolean | { whitespace?: boolean, syntax?: boolean, identifiers?: boolean },
+
   // Whether to inline constant values
   // Typically improves performance and decreases bundle size
   // Default: true

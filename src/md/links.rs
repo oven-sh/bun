@@ -734,13 +734,6 @@ impl Parser<'_> {
         brackets: &BracketMatches,
         base: usize,
     ) -> bool {
-        // This walk scans `label` sub-slices with find_html_tag, which keys its
-        // unterminated-scan memo by slice; give the walk its own memo and hand
-        // the enclosing slice's back afterwards so the enclosing scan does not
-        // lose what it already learned (rescanning it per link candidate is
-        // quadratic on link floods with unterminated HTML openers).
-        let outer_html_scan_memo = self.html_scan_memo.replace(inlines::HtmlScanMemo::EMPTY);
-        let mut found = false;
         let mut pos: usize = 0;
         while pos < label.len() {
             if label[pos] == b'\\' && pos + 1 < label.len() {
@@ -776,8 +769,7 @@ impl Parser<'_> {
                 // Try to find matching ] and check for link syntax
                 let inner = self.try_match_bracket_link(label, pos, brackets, base);
                 if inner.is_link && !is_inner_image {
-                    found = true;
-                    break;
+                    return true;
                 }
                 if inner.link_end > pos {
                     // Skip past entire construct (including (url) or [ref] for images)
@@ -787,8 +779,7 @@ impl Parser<'_> {
             }
             pos += 1;
         }
-        self.html_scan_memo.set(outer_html_scan_memo);
-        found
+        false
     }
 
     /// Process wiki link: [[destination]] or [[destination|label]]

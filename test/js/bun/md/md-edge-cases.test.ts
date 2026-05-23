@@ -695,6 +695,7 @@ describe("pathological inline HTML inputs", () => {
           ["reference links between unterminated comments", "[r]: /u\\n\\n" + fill(20000, "[a][r] <!-- x "), out => out.includes('<a href="/u">') && out.includes("&lt;!-- x")],
           ["one link with a comment-flooded label", "[" + fill(40000, "<!-- x ") + "](u)", out => out.includes('<a href="u">') && out.includes("&lt;!-- x")],
           ["comment-label link before a comment-flooded label", "[<!-- a](u)[" + fill(40000, "<!-- x ") + "](v) <!-- tail", out => out.includes('<a href="v">') && out.includes("&lt;!-- tail")],
+          ["nested comment-label links", fill(20000, "[<!-- ") + "x" + fill(20000, "](u)"), out => out.includes('<a href="u">') && out.includes("[&lt;!--")],
         ];
         for (const [name, input, check] of cases) {
           const out = Bun.markdown.html(input);
@@ -752,6 +753,11 @@ describe("pathological inline HTML inputs", () => {
     );
     expect(Markdown.html("[<!-- a](u)[<!-- b](v) <!-- c\n")).toBe(
       '<p><a href="u">&lt;!-- a</a><a href="v">&lt;!-- b</a> &lt;!-- c</p>\n',
+    );
+    // Nested link candidates: only the innermost is a link (links cannot
+    // contain links), and the unterminated openers at every level stay text.
+    expect(Markdown.html("[<!-- [<!-- [<!-- x](u)](u)](u)\n")).toBe(
+      '<p>[&lt;!-- [&lt;!-- <a href="u">&lt;!-- x</a>](u)](u)</p>\n',
     );
   });
 });

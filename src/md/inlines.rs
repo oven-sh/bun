@@ -66,18 +66,20 @@ pub const HTML_SCAN_KIND_COUNT: usize = 4;
 /// A `<!--` / `<?` / `<!DECL` / `<![CDATA[` candidate scans forward for a
 /// terminator that may not exist, reaching the end of the inline slice. Once
 /// one such scan has failed from some position, any later scan of the same
-/// kind over the same slice starting at or beyond that position must fail
-/// too, so it can return immediately instead of rescanning to the end — that
-/// rescan is quadratic on inputs with many unterminated openers in one
-/// paragraph (found by fuzzing).
+/// kind starting at or beyond that position must fail too, so it can return
+/// immediately instead of rescanning to the end — that rescan is quadratic on
+/// inputs with many unterminated openers in one paragraph (found by fuzzing).
 ///
-/// The memo describes one slice at a time and is keyed to that slice's
-/// identity (address + length). Every scope that scans a different slice —
-/// `process_inline_content` for each paragraph, table cell or recursively
-/// rendered link label, and `label_contains_link` for its label walk — starts
-/// from an empty memo and restores the caller's memo when it returns, so
-/// scans for different slices never evict each other's state and recycled or
-/// transient buffers can never alias a previous slice's entry.
+/// The memo describes one slice at a time, keyed by address + length. Because
+/// `find_html_tag` is also called on link-label sub-slices of that slice (with
+/// their own coordinates), a recorded fact serves any sub-slice query by
+/// translating positions with the sub-slice's offset: "no terminator at or
+/// after position P of the paragraph" covers every later position of every
+/// label inside it. Sub-slice scans never overwrite the enclosing slice's
+/// entry (they prove nothing beyond their own extent), and
+/// `process_inline_content` starts each slice from an empty memo and restores
+/// the caller's on return, so recycled merged-line buffers and transient
+/// table-cell buffers can never alias a previous slice's entry.
 #[derive(Clone, Copy)]
 pub struct HtmlScanMemo {
     slice_addr: usize,
@@ -94,6 +96,17 @@ impl HtmlScanMemo {
 
     fn applies_to(&self, content: &[u8]) -> bool {
         self.slice_addr == content.as_ptr() as usize && self.slice_len == content.len()
+    }
+
+    /// If `content` lies within the memoized slice, returns its offset from
+    /// that slice's start (0 for the memoized slice itself).
+    fn offset_within(&self, content: &[u8]) -> Option<usize> {
+        let addr = content.as_ptr() as usize;
+        if self.slice_addr <= addr && addr + content.len() <= self.slice_addr + self.slice_len {
+            Some(addr - self.slice_addr)
+        } else {
+            None
+        }
     }
 }
 
@@ -790,8 +803,9 @@ impl Parser<'_> {
         helpers::find_entity(content, start)
     }
 
-    /// True if a previous scan over this same `content` slice already proved
-    /// there is no `kind` terminator at or after `scan_start`.
+    /// True if a previous scan already proved there is no `kind` terminator at
+    /// or after `scan_start` of `content` — either recorded for `content`
+    /// itself or for an enclosing slice that contains it.
     fn html_scan_known_unterminated(
         &self,
         content: &[u8],
@@ -799,7 +813,10 @@ impl Parser<'_> {
         scan_start: usize,
     ) -> bool {
         let memo = self.html_scan_memo.get();
-        memo.applies_to(content) && scan_start >= memo.no_terminator_from[kind as usize]
+        let Some(offset) = memo.offset_within(content) else {
+            return false;
+        };
+        offset + scan_start >= memo.no_terminator_from[kind as usize]
     }
 
     /// Record that the search for `kind`'s terminator starting at `scan_start`
@@ -807,6 +824,13 @@ impl Parser<'_> {
     fn note_unterminated_html_scan(&self, content: &[u8], kind: HtmlScanKind, scan_start: usize) {
         let mut memo = self.html_scan_memo.get();
         if !memo.applies_to(content) {
+            if memo.offset_within(content).is_some() {
+                // A sub-slice scan stops at the sub-slice's end, so it proves
+                // nothing about the rest of the enclosing slice; keep the
+                // enclosing entry (it already answers the sub-slice's later
+                // queries via offset_within).
+                return;
+            }
             memo = HtmlScanMemo::EMPTY;
             memo.slice_addr = content.as_ptr() as usize;
             memo.slice_len = content.len();

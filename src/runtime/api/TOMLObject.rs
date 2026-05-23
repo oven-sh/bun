@@ -26,6 +26,15 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 }
             };
 
+            // The TOML lexer's `expect` logs mismatches via `add_range_error`
+            // and falls through to `next()` for error recovery, so the parser
+            // can return `Ok` with a partial AST even after reporting an
+            // error (e.g. a missing comma in `[1 2]`). Surface any such
+            // diagnostics here instead of silently accepting the partial AST.
+            if log.has_errors() {
+                return Err(global.throw_value(log.to_js(global, "Failed to parse toml")?));
+            }
+
             // for now...
             let buffer_writer = js_printer::BufferWriter::init();
             let mut writer = js_printer::BufferPrinter::init(buffer_writer);

@@ -59,11 +59,25 @@ impl<R> StyleRule<R> {
         if self.vendor_prefix.contains(VendorPrefix::NONE)
             && context.targets.should_compile_selectors()
         {
-            self.vendor_prefix = selector::downlevel_selectors(
+            let downleveled = selector::downlevel_selectors(
                 context.arena,
                 self.selectors.v.slice_mut(),
                 context.targets,
             );
+            // A rule with multiple vendor prefixes is re-printed once per
+            // prefix, nested rules included, so prefixed selectors at every
+            // nesting level multiply the output. Only take the extra prefixes
+            // if the expansion budget covers the additional copies; otherwise
+            // keep the unprefixed form.
+            let extra_prefixes = (downleveled.bits().count_ones() as usize).saturating_sub(1);
+            let cost = if self.rules.v.is_empty() {
+                0
+            } else {
+                extra_prefixes.saturating_mul(1 + self.rules.compat_expansion_weight())
+            };
+            if context.try_reserve_nested_expansion(cost) {
+                self.vendor_prefix = downleveled;
+            }
         }
     }
 
@@ -73,6 +87,30 @@ impl<R> StyleRule<R> {
 }
 
 // ─── to_css ───────────────────────────────────────────────────────────────
+
+/// Maximum value of [`nesting_expansion_factor`] for which nested rules are
+/// still rewritten after their parent when the targets lack CSS nesting
+/// support. Real stylesheets stay far below this; fuzzer-generated deeply
+/// nested selector lists would otherwise expand exponentially.
+const MAX_NESTING_EXPANSION_FACTOR: usize = 256;
+
+/// Product of the selector-list lengths along the current nesting chain
+/// (this rule plus every ancestor in the printer's style context). This is
+/// how many times the ancestor selectors are repeated when a descendant's
+/// `&` is expanded for targets without CSS nesting support.
+fn nesting_expansion_factor(dest: &Printer, own_selector_count: usize) -> usize {
+    let mut factor = own_selector_count.max(1);
+    let mut ctx = dest.ctx;
+    while let Some(style_ctx) = ctx {
+        if factor > MAX_NESTING_EXPANSION_FACTOR {
+            break;
+        }
+        factor = factor.saturating_mul((style_ctx.selectors.v.len() as usize).max(1));
+        ctx = style_ctx.parent;
+    }
+    factor
+}
+
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
@@ -109,7 +147,18 @@ impl<R> StyleRule<R> {
 
         // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
         let supports_nesting = self.rules.v.len() == 0
-            || !css::targets::Targets::should_compile_same(&dest.targets, css::Feature::Nesting);
+            || !css::targets::Targets::should_compile_same(&dest.targets, css::Feature::Nesting)
+            // Inside a block whose nesting was preserved, descendants must stay
+            // nested too: their `&` refers to the enclosing rule in the output.
+            || dest.preserved_nesting
+            // Rewriting nested rules after the parent repeats every ancestor
+            // selector list inside each descendant selector (`&` expands to
+            // `:is(<parent list>)`, recursively), so the flattened output grows
+            // with the product of the selector-list lengths along the nesting
+            // chain. Past this limit, keep the nested syntax instead of
+            // expanding it exponentially.
+            || nesting_expansion_factor(dest, self.selectors.v.len() as usize)
+                > MAX_NESTING_EXPANSION_FACTOR;
 
         let len =
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
@@ -219,7 +268,14 @@ impl<R> StyleRule<R> {
         // Write nested rules after the parent.
         if supports_nesting {
             helpers_newline(self, dest, supports_nesting, len)?;
-            self.rules.to_css(dest)?;
+            // The nested rules stay nested inside this rule's block, so their
+            // `&` refers to this rule: clear any outer style context (as
+            // @scope does) and mark the region so `&` serializes literally.
+            let saved_preserved_nesting = dest.preserved_nesting;
+            dest.preserved_nesting = true;
+            let result = dest.with_cleared_context(&self.rules, |rules, d| rules.to_css(d));
+            dest.preserved_nesting = saved_preserved_nesting;
+            result?;
             helpers_end(dest, has_declarations)?;
         } else {
             helpers_end(dest, has_declarations)?;

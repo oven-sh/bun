@@ -658,6 +658,40 @@ impl<R> CssRuleList<R> {
             v: self.v.iter().map(|r| r.deep_clone(bump)).collect(),
         }
     }
+
+    /// Approximate number of rules that serializing this list will emit,
+    /// counting nested rules and vendor-prefix duplicates (`StyleRule::to_css`
+    /// re-prints a rule — nested rules included — once per vendor prefix bit).
+    ///
+    /// Used to budget compatibility transforms that clone or re-print whole
+    /// nested subtrees; see [`MinifyContext::try_reserve_nested_expansion`].
+    pub(crate) fn compat_expansion_weight(&self) -> usize {
+        let mut weight: usize = 0;
+        for rule in self.v.iter() {
+            weight = weight.saturating_add(match rule {
+                CssRule::Style(style) => {
+                    let prefixes = (style.vendor_prefix.bits().count_ones() as usize).max(1);
+                    prefixes.saturating_mul(1 + style.rules.compat_expansion_weight())
+                }
+                CssRule::Nesting(nesting) => {
+                    let prefixes =
+                        (nesting.style.vendor_prefix.bits().count_ones() as usize).max(1);
+                    prefixes.saturating_mul(1 + nesting.style.rules.compat_expansion_weight())
+                }
+                CssRule::Media(media) => 1 + media.rules.compat_expansion_weight(),
+                CssRule::Supports(supports) => 1 + supports.rules.compat_expansion_weight(),
+                CssRule::LayerBlock(layer) => 1 + layer.rules.compat_expansion_weight(),
+                CssRule::Container(container) => 1 + container.rules.compat_expansion_weight(),
+                CssRule::MozDocument(document) => 1 + document.rules.compat_expansion_weight(),
+                CssRule::Scope(scope) => 1 + scope.rules.compat_expansion_weight(),
+                CssRule::StartingStyle(starting_style) => {
+                    1 + starting_style.rules.compat_expansion_weight()
+                }
+                _ => 1,
+            });
+        }
+        weight
+    }
 }
 
 // ── `.style` arm body — preserved verbatim port, gated on StyleRule
@@ -702,21 +736,37 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             sty.selectors = SelectorList { v: list };
             SmallList::default()
         } else {
-            // Otherwise, partition the selectors and keep the compatible ones in this rule.
-            // We will generate additional rules for incompatible selectors later.
-            let mut incompatible = SmallList::<Selector, 1>::default();
-            let mut i: u32 = 0;
-            while i < sty.selectors.v.len() {
-                if selector::is_compatible(
-                    &sty.selectors.v.slice()[i as usize..i as usize + 1],
-                    context.targets,
-                ) {
-                    i += 1;
-                } else {
-                    incompatible.append(sty.selectors.v.ordered_remove(i));
+            // Splitting clones the entire nested-rule subtree once per
+            // incompatible selector, and nested levels compound (children are
+            // split before their parents), so charge the expansion budget
+            // before partitioning. If it doesn't fit, keep the selector list
+            // as written instead of exploding it into per-selector copies.
+            let mut incompatible_count: usize = 0;
+            for sel in sty.selectors.v.slice().chunks_exact(1) {
+                if !selector::is_compatible(sel, context.targets) {
+                    incompatible_count += 1;
                 }
             }
-            incompatible
+            let cost = incompatible_count.saturating_mul(sty.rules.compat_expansion_weight());
+            if !context.try_reserve_nested_expansion(cost) {
+                SmallList::default()
+            } else {
+                // Otherwise, partition the selectors and keep the compatible ones in this rule.
+                // We will generate additional rules for incompatible selectors later.
+                let mut incompatible = SmallList::<Selector, 1>::default();
+                let mut i: u32 = 0;
+                while i < sty.selectors.v.len() {
+                    if selector::is_compatible(
+                        &sty.selectors.v.slice()[i as usize..i as usize + 1],
+                        context.targets,
+                    ) {
+                        i += 1;
+                    } else {
+                        incompatible.append(sty.selectors.v.ordered_remove(i));
+                    }
+                }
+                incompatible
+            }
         }
     } else {
         SmallList::default()
@@ -1051,6 +1101,35 @@ pub struct MinifyContext<'a, 'bump> {
     pub css_modules: bool,
     /// First minification error encountered (Zig surfaced this out-of-band).
     pub err: Option<css::error::MinifyError>,
+    /// Remaining budget for compatibility transforms that duplicate entire
+    /// nested-rule subtrees: splitting an incompatible selector list into one
+    /// rule per selector (which deep-clones the nested rules for each), and
+    /// multi-prefix vendor downleveling of rules that contain nested rules
+    /// (which re-prints the subtree once per prefix). Every nesting level
+    /// multiplies those copies, so without a cap a ~1KB deeply nested
+    /// stylesheet can expand to gigabytes. Once the budget is exhausted the
+    /// transform is skipped and the affected rules keep their modern syntax.
+    pub nested_expansion_budget: usize,
+}
+
+/// Starting value for [`MinifyContext::nested_expansion_budget`], per
+/// stylesheet. Orders of magnitude above anything real-world nesting produces
+/// (charges only accrue when a rule with *nested* rules is split or
+/// multi-prefixed), while keeping the worst-case expansion of adversarial
+/// input to a few thousand rules instead of an exponential blowup.
+pub const NESTED_EXPANSION_BUDGET: usize = 8192;
+
+impl MinifyContext<'_, '_> {
+    /// Try to reserve `cost` units of the nested-expansion budget. Returns
+    /// `true` (and decrements the budget) if the cost fits, `false` if the
+    /// caller should skip the expansion. A zero cost always fits.
+    pub(crate) fn try_reserve_nested_expansion(&mut self, cost: usize) -> bool {
+        if cost > self.nested_expansion_budget {
+            return false;
+        }
+        self.nested_expansion_budget -= cost;
+        true
+    }
 }
 
 // ported from: src/css/rules/rules.zig

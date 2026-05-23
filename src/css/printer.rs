@@ -144,6 +144,12 @@ pub struct Printer<'a> {
     // TODO(port): lifetime — ctx is set to a stack-local during with_context() and restored
     // after; `&'a StyleContext<'a>` will not borrow-check there. May need raw `*const StyleContext`.
     pub ctx: Option<&'a css::StyleContext<'a>>,
+    /// True while printing rules that are physically nested inside an
+    /// enclosing style rule in the output (the targets support CSS nesting, or
+    /// the nesting-expansion cap preserved the nested syntax). In that
+    /// position `&` refers to the enclosing rule and must be written literally
+    /// rather than rewritten to `:scope`.
+    pub preserved_nesting: bool,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,
     pub import_info: Option<ImportInfo<'a>>,
@@ -310,6 +316,7 @@ impl<'a> Printer<'a> {
             in_calc: false,
             css_module: None,
             ctx: None,
+            preserved_nesting: false,
             error_kind: None,
         }
     }

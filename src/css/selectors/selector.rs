@@ -1385,7 +1385,9 @@ pub mod serialize {
         } else {
             // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
             // Otherwise, if nesting is supported, serialize the nesting selector directly.
-            if dest.targets.should_compile_same(Feature::Nesting) {
+            // Inside a block whose nested rules were preserved in the output,
+            // `&` refers to the enclosing rule and must stay `&`.
+            if dest.targets.should_compile_same(Feature::Nesting) && !dest.preserved_nesting {
                 dest.write_str(b":scope")?;
             } else {
                 dest.write_char(b'&')?;

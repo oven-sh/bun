@@ -2662,6 +2662,7 @@ mod stylesheet_impl {
                 css_modules: self.options.css_modules.is_some(),
                 extra,
                 err: None,
+                nested_expansion_budget: css_rules::NESTED_EXPANSION_BUDGET,
             };
 
             if self.rules.minify(&mut minify_ctx, false).is_err() {

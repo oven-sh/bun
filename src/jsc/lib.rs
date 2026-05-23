@@ -1257,7 +1257,6 @@ pub mod resolved_source_tag {
         b"node:zlib" => ResolvedSourceTag(643),
         b"isomorphic-fetch" => ResolvedSourceTag(644),
         b"node-fetch" => ResolvedSourceTag(645),
-        b"undici" => ResolvedSourceTag(646),
         b"vercel_fetch" => ResolvedSourceTag(647),
         b"@vercel/fetch" => ResolvedSourceTag(647),
         b"ws" => ResolvedSourceTag(648),

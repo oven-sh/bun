@@ -1,158 +1,528 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { request } from "undici";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { isBuiltin } from "node:module";
+import * as undiciModule from "undici";
+import {
+  Agent,
+  Client,
+  Dispatcher,
+  MockAgent,
+  Pool,
+  errors,
+  getCookies,
+  getGlobalDispatcher,
+  getSetCookies,
+  interceptors,
+  parseMIMEType,
+  request,
+  serializeAMimeType,
+  setCookie,
+  setGlobalDispatcher,
+} from "undici";
 
-import { createServer } from "../../../http-test-server";
+let server: ReturnType<typeof Bun.serve>;
+let baseUrl: string;
 
-describe("undici", () => {
-  let serverCtl: ReturnType<typeof createServer>;
-  let hostUrl: string;
-  let port: number;
-  let host: string;
+// Counter for retry endpoint
+let retryAttempts = 0;
 
-  beforeAll(() => {
-    serverCtl = createServer();
-    port = serverCtl.port;
-    host = `${serverCtl.hostname}:${port}`;
-    hostUrl = `http://${host}`;
+beforeAll(() => {
+  server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      const path = url.pathname;
+
+      if (path === "/json") {
+        return Response.json({ hello: "world" });
+      }
+
+      if (path === "/echo") {
+        const body = await req.text();
+        return Response.json({
+          method: req.method,
+          body,
+          url: req.url,
+        });
+      }
+
+      if (path === "/headers") {
+        const headers: Record<string, string> = {};
+        req.headers.forEach((value, key) => {
+          headers[key] = value;
+        });
+        return Response.json(headers);
+      }
+
+      if (path.startsWith("/status/")) {
+        const code = parseInt(path.split("/")[2], 10);
+        return new Response(`status ${code}`, { status: code });
+      }
+
+      if (path === "/redirect") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: `${baseUrl}/json` },
+        });
+      }
+
+      if (path === "/redirect-chain") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: `${baseUrl}/redirect` },
+        });
+      }
+
+      if (path === "/retry") {
+        retryAttempts++;
+        if (retryAttempts <= 2) {
+          return new Response("fail", { status: 500 });
+        }
+        return Response.json({ retried: true, attempts: retryAttempts });
+      }
+
+      return new Response("not found", { status: 404 });
+    },
+  });
+  baseUrl = `http://localhost:${server.port}`;
+});
+
+afterAll(() => {
+  server.stop(true);
+});
+
+// ---------------------------------------------------------------------------
+// Module exports
+// ---------------------------------------------------------------------------
+describe("module exports", () => {
+  it("exports all expected top-level APIs", () => {
+    const expectedExports = [
+      "Agent",
+      "BalancedPool",
+      "Client",
+      "Dispatcher",
+      "MockAgent",
+      "MockClient",
+      "MockPool",
+      "Pool",
+      "ProxyAgent",
+      "RetryAgent",
+      "RetryHandler",
+      "DecoratorHandler",
+      "RedirectHandler",
+      "EnvHttpProxyAgent",
+      "errors",
+      "interceptors",
+      "request",
+      "fetch",
+      "stream",
+      "pipeline",
+      "connect",
+      "upgrade",
+      "setGlobalDispatcher",
+      "getGlobalDispatcher",
+      "setGlobalOrigin",
+      "getGlobalOrigin",
+      "getCookies",
+      "setCookie",
+      "deleteCookie",
+      "getSetCookies",
+      "parseMIMEType",
+      "serializeAMimeType",
+      "buildConnector",
+      "caches",
+      "mockErrors",
+      "util",
+    ];
+    for (const name of expectedExports) {
+      expect((undiciModule as any)[name]).toBeDefined();
+    }
   });
 
-  afterAll(() => {
-    serverCtl.stop();
+  it("undici is not a builtin module", () => {
+    expect(isBuiltin("undici")).toBe(false);
   });
 
-  describe("request", () => {
-    it("should make a GET request when passed a URL string", async () => {
-      const { body } = await request(`${hostUrl}/get`);
-      expect(body).toBeDefined();
-      const json = (await body.json()) as { url: string };
-      expect(json.url).toBe(`${hostUrl}/get`);
+  it("require and import resolve the same module", () => {
+    const cjsUndici = require("undici");
+    expect(typeof cjsUndici.request).toBe("function");
+    expect(typeof cjsUndici.Client).toBe("function");
+    expect(typeof undiciModule.request).toBe("function");
+    expect(typeof undiciModule.Client).toBe("function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// request()
+// ---------------------------------------------------------------------------
+describe("request()", () => {
+  it("makes a GET request with URL string", async () => {
+    const { statusCode, body } = await request(`${baseUrl}/json`);
+    expect(statusCode).toBe(200);
+    expect(await body.json()).toEqual({ hello: "world" });
+  });
+
+  it("makes a GET request with URL object", async () => {
+    const { statusCode, body } = await request(new URL(`${baseUrl}/json`));
+    expect(statusCode).toBe(200);
+    expect(await body.json()).toEqual({ hello: "world" });
+  });
+
+  it("makes a POST request with string body", async () => {
+    const { statusCode, body } = await request(`${baseUrl}/echo`, {
+      method: "POST",
+      body: "hello",
     });
+    expect(statusCode).toBe(200);
+    const data = await body.json();
+    expect(data.method).toBe("POST");
+    expect(data.body).toBe("hello");
+  });
 
-    it("should error when body has already been consumed", async () => {
-      const { body } = await request(`${hostUrl}/get`);
+  it("makes a POST request with JSON body", async () => {
+    const payload = { key: "value", num: 42 };
+    const { statusCode, body } = await request(`${baseUrl}/echo`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    expect(statusCode).toBe(200);
+    const data = await body.json();
+    expect(data.method).toBe("POST");
+    expect(JSON.parse(data.body)).toEqual(payload);
+  });
+
+  it("sends custom headers", async () => {
+    const { statusCode, body } = await request(`${baseUrl}/headers`, {
+      headers: { "x-custom-header": "test-value" },
+    });
+    expect(statusCode).toBe(200);
+    const headers = await body.json();
+    expect(headers["x-custom-header"]).toBe("test-value");
+  });
+
+  it("handles query parameters in URL", async () => {
+    const { statusCode, body } = await request(`${baseUrl}/echo?foo=bar&baz=1`);
+    expect(statusCode).toBe(200);
+    const data = await body.json();
+    expect(data.url).toContain("foo=bar");
+    expect(data.url).toContain("baz=1");
+  });
+
+  it("consumes body as text", async () => {
+    const { body } = await request(`${baseUrl}/status/200`);
+    const text = await body.text();
+    expect(text).toBe("status 200");
+  });
+
+  it("supports AbortSignal", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(request(`${baseUrl}/json`, { signal: controller.signal })).rejects.toThrow();
+  });
+
+  it("handles various status codes without throwing", async () => {
+    const res404 = await request(`${baseUrl}/status/404`);
+    expect(res404.statusCode).toBe(404);
+    await res404.body.text();
+
+    const res500 = await request(`${baseUrl}/status/500`);
+    expect(res500.statusCode).toBe(500);
+    await res500.body.text();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
+describe("Client", () => {
+  it("creates a client and makes a GET request", async () => {
+    const client = new Client(baseUrl);
+    const { statusCode, body } = await client.request({ path: "/json", method: "GET" });
+    expect(statusCode).toBe(200);
+    expect(await body.json()).toEqual({ hello: "world" });
+    await client.close();
+  });
+
+  it("makes multiple sequential requests on same client", async () => {
+    const client = new Client(baseUrl);
+    for (let i = 0; i < 3; i++) {
+      const { statusCode, body } = await client.request({ path: "/json", method: "GET" });
+      expect(statusCode).toBe(200);
       await body.json();
-      expect(body.bodyUsed).toBe(true);
-      try {
-        await body.json();
-        throw new Error("Should have errored");
-      } catch (e) {
-        expect((e as Error).message).toBe("unusable");
-      }
+    }
+    await client.close();
+  });
+
+  it("supports POST with body", async () => {
+    const client = new Client(baseUrl);
+    const { statusCode, body } = await client.request({
+      path: "/echo",
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "client-data",
     });
+    expect(statusCode).toBe(200);
+    const data = await body.json();
+    expect(data.method).toBe("POST");
+    expect(data.body).toBe("client-data");
+    await client.close();
+  });
 
-    it("should make a POST request when provided a body and POST method", async () => {
-      const { body } = await request(`${hostUrl}/post`, {
-        method: "POST",
-        body: "Hello world",
-      });
-      expect(body).toBeDefined();
-      const json = (await body.json()) as { data: string };
-      expect(json.data).toBe("Hello world");
+  it("close() and destroy() resolve cleanly", async () => {
+    const client1 = new Client(baseUrl);
+    await client1.close();
+
+    const client2 = new Client(baseUrl);
+    await client2.destroy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pool
+// ---------------------------------------------------------------------------
+describe("Pool", () => {
+  it("creates a pool and makes a request", async () => {
+    const pool = new Pool(baseUrl);
+    const { statusCode, body } = await pool.request({ path: "/json", method: "GET" });
+    expect(statusCode).toBe(200);
+    expect(await body.json()).toEqual({ hello: "world" });
+    await pool.close();
+  });
+
+  it("handles concurrent requests", async () => {
+    const pool = new Pool(baseUrl);
+    const results = await Promise.all(Array.from({ length: 5 }, () => pool.request({ path: "/json", method: "GET" })));
+    for (const { statusCode, body } of results) {
+      expect(statusCode).toBe(200);
+      expect(await body.json()).toEqual({ hello: "world" });
+    }
+    await pool.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Agent
+// ---------------------------------------------------------------------------
+describe("Agent", () => {
+  it("creates an agent and dispatches requests", async () => {
+    const agent = new Agent();
+    const { statusCode, body } = await request(`${baseUrl}/json`, { dispatcher: agent });
+    expect(statusCode).toBe(200);
+    expect(await body.json()).toEqual({ hello: "world" });
+    await agent.close();
+  });
+
+  it("can be used as global dispatcher", async () => {
+    const original = getGlobalDispatcher();
+    try {
+      const agent = new Agent();
+      setGlobalDispatcher(agent);
+      expect(getGlobalDispatcher()).toBe(agent);
+      await agent.close();
+    } finally {
+      setGlobalDispatcher(original);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dispatcher.compose() and interceptors
+// ---------------------------------------------------------------------------
+describe("Dispatcher.compose() and interceptors", () => {
+  it("compose() exists on Agent and Client instances", async () => {
+    const agent = new Agent();
+    expect(typeof agent.compose).toBe("function");
+    await agent.close();
+
+    const client = new Client(baseUrl);
+    expect(typeof client.compose).toBe("function");
+    await client.close();
+  });
+
+  it("compose() with a custom interceptor that adds a header", async () => {
+    const client = new Client(baseUrl);
+    const intercepted = client.compose((dispatch: Dispatcher.DispatchInterceptor) => {
+      return (opts: any, handler: any) => {
+        if (!opts.headers) opts.headers = [];
+        if (Array.isArray(opts.headers)) {
+          opts.headers.push("x-intercepted", "true");
+        }
+        return dispatch(opts, handler);
+      };
     });
-
-    it("should accept a URL class object", async () => {
-      const { body } = await request(new URL(`${hostUrl}/get`));
-      expect(body).toBeDefined();
-      const json = (await body.json()) as { url: string };
-      expect(json.url).toBe(`${hostUrl}/get`);
+    const { statusCode, body } = await intercepted.request({
+      path: "/headers",
+      method: "GET",
     });
+    expect(statusCode).toBe(200);
+    const headers = await body.json();
+    expect(headers["x-intercepted"]).toBe("true");
+    await client.close();
+  });
 
-    // it("should accept an undici UrlObject", async () => {
-    //   // @ts-ignore
-    //   const { body } = await request({ protocol: "https:", hostname: host, path: "/get" });
-    //   expect(body).toBeDefined();
-    //   const json = (await body.json()) as { url: string };
-    //   expect(json.url).toBe(`${hostUrl}/get`);
-    // });
-
-    it("should prevent body from being attached to GET or HEAD requests", async () => {
-      try {
-        await request(`${hostUrl}/get`, {
-          method: "GET",
-          body: "Hello world",
-        });
-        throw new Error("Should have errored");
-      } catch (e) {
-        expect((e as Error).message).toBe("Body not allowed for GET or HEAD requests");
-      }
-
-      try {
-        await request(`${hostUrl}/head`, {
-          method: "HEAD",
-          body: "Hello world",
-        });
-        throw new Error("Should have errored");
-      } catch (e) {
-        expect((e as Error).message).toBe("Body not allowed for GET or HEAD requests");
-      }
+  it("interceptors.redirect follows redirects", async () => {
+    const client = new Client(baseUrl).compose(interceptors.redirect({ maxRedirections: 3 }));
+    const { statusCode, body } = await client.request({
+      path: "/redirect",
+      method: "GET",
     });
+    expect(statusCode).toBe(200);
+    expect(await body.json()).toEqual({ hello: "world" });
+    await client.close();
+  });
 
-    it("should allow a query string to be passed", async () => {
-      const { body } = await request(`${hostUrl}/get?foo=bar`);
-      expect(body).toBeDefined();
-      const json = (await body.json()) as { args: { foo: string } };
-      expect(json.args.foo).toBe("bar");
-
-      const { body: body2 } = await request(`${hostUrl}/get`, {
-        query: { foo: "bar" },
-      });
-      expect(body2).toBeDefined();
-      const json2 = (await body2.json()) as { args: { foo: string } };
-      expect(json2.args.foo).toBe("bar");
+  it("interceptors.retry retries on failure", async () => {
+    retryAttempts = 0;
+    const client = new Client(baseUrl).compose(
+      interceptors.retry({
+        maxRetries: 3,
+        minTimeout: 10,
+        maxTimeout: 100,
+        timeoutFactor: 1,
+        retryAfter: false,
+      }),
+    );
+    const { statusCode, body } = await client.request({
+      path: "/retry",
+      method: "GET",
     });
+    expect(statusCode).toBe(200);
+    const data = await body.json();
+    expect(data.retried).toBe(true);
+    expect(data.attempts).toBeGreaterThan(1);
+    await client.close();
+  });
 
-    it("should throw on HTTP 4xx or 5xx error when throwOnError is true", async () => {
-      try {
-        await request(`${hostUrl}/status/404`, { throwOnError: true });
-        throw new Error("Should have errored");
-      } catch (e) {
-        expect((e as Error).message).toBe("Request failed with status code 404");
-      }
-
-      try {
-        await request(`${hostUrl}/status/500`, { throwOnError: true });
-        throw new Error("Should have errored");
-      } catch (e) {
-        expect((e as Error).message).toBe("Request failed with status code 500");
-      }
+  it("compose() chains multiple interceptors", async () => {
+    const client = new Client(baseUrl).compose(
+      interceptors.redirect({ maxRedirections: 3 }),
+      (dispatch: Dispatcher.DispatchInterceptor) => {
+        return (opts: any, handler: any) => {
+          if (!opts.headers) opts.headers = [];
+          if (Array.isArray(opts.headers)) {
+            opts.headers.push("x-chained", "yes");
+          }
+          return dispatch(opts, handler);
+        };
+      },
+    );
+    const { statusCode, body } = await client.request({
+      path: "/headers",
+      method: "GET",
     });
+    expect(statusCode).toBe(200);
+    const headers = await body.json();
+    expect(headers["x-chained"]).toBe("yes");
+    await client.close();
+  });
+});
 
-    it("should allow us to abort the request with a signal", async () => {
-      const controller = new AbortController();
-      try {
-        setTimeout(() => controller.abort(), 500);
-        const req = await request(`${hostUrl}/delay/5`, {
-          signal: controller.signal,
-        });
-        await req.body.json();
-        throw new Error("Should have errored");
-      } catch (e) {
-        expect((e as Error).message).toBe("The operation was aborted.");
-      }
-    });
+// ---------------------------------------------------------------------------
+// MockAgent
+// ---------------------------------------------------------------------------
+describe("MockAgent", () => {
+  let originalDispatcher: Dispatcher;
 
-    it("should properly append headers to the request", async () => {
-      const { body } = await request(`${hostUrl}/headers`, {
-        headers: {
-          "x-foo": "bar",
-        },
-      });
-      expect(body).toBeDefined();
-      const json = (await body.json()) as { headers: { "x-foo": string } };
-      expect(json.headers["x-foo"]).toBe("bar");
-    });
+  beforeEach(() => {
+    originalDispatcher = getGlobalDispatcher();
+  });
 
-    // it("should allow the use of FormData", async () => {
-    //   const form = new FormData();
-    //   form.append("foo", "bar");
-    //   const { body } = await request(`${hostUrl}/post`, {
-    //     method: "POST",
-    //     body: form,
-    //   });
+  afterEach(() => {
+    setGlobalDispatcher(originalDispatcher);
+  });
 
-    //   expect(body).toBeDefined();
-    //   const json = (await body.json()) as { form: { foo: string } };
-    //   expect(json.form.foo).toBe("bar");
-    // });
+  it("intercepts requests with mock responses", async () => {
+    const mockAgent = new MockAgent();
+    setGlobalDispatcher(mockAgent);
+    const mockPool = mockAgent.get(baseUrl);
+    mockPool.intercept({ path: "/mock", method: "GET" }).reply(200, { mocked: true });
+    const { statusCode, body } = await request(`${baseUrl}/mock`);
+    expect(statusCode).toBe(200);
+    expect(await body.json()).toEqual({ mocked: true });
+    await mockAgent.close();
+  });
+
+  it("assertNoPendingInterceptors() works", async () => {
+    const mockAgent = new MockAgent();
+    setGlobalDispatcher(mockAgent);
+    const mockPool = mockAgent.get(baseUrl);
+    mockPool.intercept({ path: "/pending", method: "GET" }).reply(200, "ok");
+
+    // Unconsumed interceptor should throw
+    expect(() => mockAgent.assertNoPendingInterceptors()).toThrow();
+
+    // Consume it
+    await request(`${baseUrl}/pending`).then(r => r.body.text());
+
+    // Now should not throw
+    expect(() => mockAgent.assertNoPendingInterceptors()).not.toThrow();
+    await mockAgent.close();
+  });
+
+  it("disableNetConnect() blocks real requests", async () => {
+    const mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    setGlobalDispatcher(mockAgent);
+    await expect(request(`${baseUrl}/json`)).rejects.toThrow();
+    await mockAgent.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// errors
+// ---------------------------------------------------------------------------
+describe("errors", () => {
+  it("has expected error classes", () => {
+    const expectedErrors = [
+      "UndiciError",
+      "ConnectTimeoutError",
+      "HeadersTimeoutError",
+      "BodyTimeoutError",
+      "InvalidArgumentError",
+      "RequestAbortedError",
+      "ResponseStatusCodeError",
+      "ClientDestroyedError",
+      "ClientClosedError",
+    ];
+    for (const name of expectedErrors) {
+      expect((errors as any)[name]).toBeDefined();
+      expect(typeof (errors as any)[name]).toBe("function");
+    }
+  });
+
+  it("error instances follow correct hierarchy", () => {
+    const err = new errors.InvalidArgumentError("test");
+    expect(err).toBeInstanceOf(errors.UndiciError);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe("test");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cookie and MIME utilities
+// ---------------------------------------------------------------------------
+describe("cookie and MIME utilities", () => {
+  it("getCookies() parses cookies from headers", () => {
+    const headers = new Headers({ cookie: "foo=bar; baz=qux" });
+    const cookies = getCookies(headers);
+    expect(cookies).toEqual({ foo: "bar", baz: "qux" });
+  });
+
+  it("setCookie() and getSetCookies() work together", () => {
+    const headers = new Headers();
+    setCookie(headers, { name: "session", value: "abc123", path: "/" });
+    const cookies = getSetCookies(headers);
+    expect(cookies.length).toBeGreaterThanOrEqual(1);
+    expect(cookies[0].name).toBe("session");
+    expect(cookies[0].value).toBe("abc123");
+  });
+
+  it("parseMIMEType() and serializeAMimeType() round-trip", () => {
+    const parsed = parseMIMEType("text/html; charset=utf-8");
+    expect(parsed).toBeDefined();
+    expect(parsed!.type).toBe("text");
+    expect(parsed!.subtype).toBe("html");
+    const serialized = serializeAMimeType(parsed!);
+    expect(serialized).toContain("text/html");
   });
 });

@@ -55,7 +55,6 @@ pub const HardcodedModule = enum {
     @"node:zlib",
     @"node:worker_threads",
     @"node:punycode",
-    undici,
     ws,
     @"isomorphic-fetch",
     @"node-fetch",
@@ -171,7 +170,6 @@ pub const HardcodedModule = enum {
 
         .{ "node-fetch", HardcodedModule.@"node-fetch" },
         .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
-        .{ "undici", HardcodedModule.undici },
         .{ "ws", HardcodedModule.ws },
         .{ "@vercel/fetch", HardcodedModule.vercel_fetch },
         .{ "utf-8-validate", HardcodedModule.@"utf-8-validate" },
@@ -375,7 +373,6 @@ pub const HardcodedModule = enum {
             .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
             .{ "isomorphic-fetch", .{ .path = "isomorphic-fetch" } },
             .{ "node-fetch", .{ .path = "node-fetch" } },
-            .{ "undici", .{ .path = "undici" } },
             .{ "utf-8-validate", .{ .path = "utf-8-validate" } },
             .{ "ws", .{ .path = "ws" } },
             .{ "ws/lib/websocket", .{ .path = "ws" } },
@@ -387,7 +384,6 @@ pub const HardcodedModule = enum {
             // To force Next.js to not use bundled dependencies.
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },
-            .{ "next/dist/compiled/undici", .{ .path = "undici" } },
         };
 
         const bun_test_extra_alias_kvs = [_]struct { string, Alias }{

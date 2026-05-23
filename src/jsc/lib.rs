@@ -2143,12 +2143,16 @@ impl LogJsc for bun_ast::Log {
             0 => Ok(JSValue::UNDEFINED),
             1 => msg_to_js(&msgs[0], global),
             _ => {
-                let mut errors_stack: Vec<JSValue> = Vec::with_capacity(count);
-                for msg in &msgs[0..count] {
-                    errors_stack.push(msg_to_js(msg, global)?);
+                // On-stack array: conservative GC stack scan keeps these
+                // JSValues alive (see PORTING.md §JSC) — creating later
+                // messages can trigger a GC, and a heap `Vec` is invisible
+                // to the scan.
+                let mut errors_stack: [JSValue; 256] = [JSValue::default(); 256];
+                for (i, msg) in msgs[0..count].iter().enumerate() {
+                    errors_stack[i] = msg_to_js(msg, global)?;
                 }
                 let out = bun_core::ZigString::init(message.as_bytes());
-                global.create_aggregate_error(&errors_stack, &out)
+                global.create_aggregate_error(&errors_stack[..count], &out)
             }
         }
     }

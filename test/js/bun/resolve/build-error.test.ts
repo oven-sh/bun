@@ -1,4 +1,4 @@
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 test("BuildError is modifiable", async () => {
@@ -17,6 +17,37 @@ test("BuildError is modifiable", async () => {
   expect(() => (error!.message = "new message")).not.toThrow();
   expect(error!.message).toBe("new message");
   expect(error!.message).not.toBe(message);
+});
+
+test("importing a module with many build errors does not crash while reporting them", async () => {
+  // The AggregateError for a failed module build is assembled from one
+  // BuildMessage wrapper per log message. Those wrappers used to be collected
+  // only in a heap Vec (invisible to the conservative GC scan), so a GC during
+  // the loop could finalize earlier wrappers and free their native
+  // BuildMessage before the AggregateError was created, causing a
+  // use-after-free when the unhandled rejection was printed.
+  using dir = tempDir("build-error-many", {
+    // 40 declarations + 80 redeclarations -> ~80 build errors in one module
+    "bad.js": Array.from({ length: 120 }, (_, i) => `const x${i % 40} = 1;`).join("\n"),
+    "index.js": `import("./bad.js");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // Every error in the AggregateError should have been printed.
+  expect(stderr).toContain('"x0" has already been declared');
+  expect(stderr).toContain('"x39" has already been declared');
+  expect(stderr).not.toContain("AddressSanitizer");
+  // Unhandled rejection -> clean exit with code 1, not a crash.
+  expect(exitCode).toBe(1);
 });
 
 test("BuildMessage finalize frees with the same allocator it was created with", async () => {

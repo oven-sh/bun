@@ -2496,7 +2496,7 @@ it("rejects a response with an unparseable Content-Length instead of treating it
       .then(res => res.text())
       .catch(e => e);
     expect(result).toBeInstanceOf(Error);
-    expect((result as any).code).toBe("InvalidHTTPResponse");
+    expect((result as any).code).toBe("InvalidContentLength");
   }
 
   // A well-formed Content-Length is still delivered normally.

@@ -4284,7 +4284,7 @@ impl<'a> HTTPClient<'a> {
                     // into the keep-alive pool.
                     let Ok(content_length) = bun_core::parse_unsigned::<usize>(header.value(), 10)
                     else {
-                        return Err(err!(InvalidHTTPResponse));
+                        return Err(err!(InvalidContentLength));
                     };
                     if self.method.has_body() {
                         if self
@@ -4292,7 +4292,7 @@ impl<'a> HTTPClient<'a> {
                             .content_length
                             .is_some_and(|prev| prev != content_length)
                         {
-                            return Err(err!(InvalidHTTPResponse));
+                            return Err(err!(InvalidContentLength));
                         }
                         self.state.content_length = Some(content_length);
                     } else {

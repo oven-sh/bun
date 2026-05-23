@@ -4971,6 +4971,11 @@ pub mod __gated_printer {
         }
 
         pub fn print_binding(&mut self, binding: Binding, tlm: TopLevelAndIsExport) {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+
             match &binding.data {
                 BindingData::BMissing(_) => {}
                 BindingData::BIdentifier(b) => {

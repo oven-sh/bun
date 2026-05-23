@@ -3699,17 +3699,32 @@ it("deeply nested expressions error instead of crashing the process", () => {
       n => "void ((x" + repeat(" ?? x", n) + ") < 1)",
       n => "(a" + repeat(" && a", n) + ") == 1;",
       n => "f() ? 1 : g()" + repeat(" || g()", n) + ";",
+      // deeply nested destructuring patterns take the binding path, not the
+      // expression path
+      n => "let " + repeat("[", n) + "x" + repeat("]", n) + " = y;",
     ];
+    // single-use symbol substitution under --minify walks the full chain
+    const minifyShapes = [
+      n => "function f(){let x = 1; return a" + repeat(" && a", n) + " && x}",
+    ];
+    const check = (transpiler, src) => {
+      try {
+        transpiler.transformSync(src);
+      } catch (e) {
+        // Either the parse/visit guard ("Maximum call stack size exceeded")
+        // or the printer guard ("StackOverflow Failed to print code") is an
+        // acceptable clean failure; anything else is a real error.
+        if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+      }
+    };
     for (const shape of shapes) {
       for (const n of [4000, 20000, 100000]) {
-        try {
-          new Bun.Transpiler({ loader: "js" }).transformSync(shape(n));
-        } catch (e) {
-          // Either the parse/visit guard ("Maximum call stack size exceeded")
-          // or the printer guard ("StackOverflow Failed to print code") is an
-          // acceptable clean failure; anything else is a real error.
-          if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
-        }
+        check(new Bun.Transpiler({ loader: "js" }), shape(n));
+      }
+    }
+    for (const shape of minifyShapes) {
+      for (const n of [4000, 20000, 100000]) {
+        check(new Bun.Transpiler({ loader: "js", minify: true }), shape(n));
       }
     }
     console.log("depth-ok");

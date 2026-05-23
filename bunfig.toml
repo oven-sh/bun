@@ -17,4 +17,4 @@ linker = "isolated"
 # The feature is exercised by test/cli/install/isolated-install.test.ts.
 globalStore = false
 minimumReleaseAge = 259200 # three days
-minimumReleaseAgeExcludes = ["typescript"]
+minimumReleaseAgeExcludes = ["@types/bun", "typescript"]

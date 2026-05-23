@@ -2146,6 +2146,37 @@ pub fn install_isolated_packages(
             let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
             let pkg_res: Resolution = pkg_resolutions[pkg_id as usize];
 
+            // The package name and each dependency alias become
+            // `node_modules/<name>` path components when this entry is
+            // materialized (store entry contents, dependency symlinks, hidden
+            // hoisted links). Reject any name that could escape the
+            // destination directory before any filesystem work happens.
+            {
+                let mut unsafe_folder_name: Option<&[u8]> = None;
+                let name = pkg_name.slice(string_buf);
+                if !name.is_empty() && !crate::dependency::is_safe_install_folder_name(name) {
+                    unsafe_folder_name = Some(name);
+                } else {
+                    for dep in entry_dependencies[entry_id.get() as usize].slice() {
+                        let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id as usize]
+                            .name
+                            .slice(string_buf);
+                        if !crate::dependency::is_safe_install_folder_name(dep_name) {
+                            unsafe_folder_name = Some(dep_name);
+                            break;
+                        }
+                    }
+                }
+                if let Some(name) = unsafe_folder_name {
+                    Output::err_generic(
+                        "\"{}\" is not a valid install folder name",
+                        (BStr::new(name),),
+                    );
+                    Output::flush();
+                    Global::exit(1);
+                }
+            }
+
             match pkg_res.tag {
                 ResolutionTag::Root => {
                     if dep_id == invalid_dependency_id {

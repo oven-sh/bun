@@ -79,7 +79,7 @@ function prebuiltUrl(cfg: Config): string {
     throw new BuildError(
       `WEBKIT_VERSION is pinned to a PR preview tag (${version}). ` +
         `Preview prebuilts are deleted when the PR closes. ` +
-        `Pass --allow-preview-webkit=on to build anyway, or revert to a stable hash before merging.`
+        `Pass --allow-preview-webkit=on to build anyway, or revert to a stable hash before merging.`,
     );
   }
   const tag = version.startsWith("autobuild-") ? version : `autobuild-${version}`;

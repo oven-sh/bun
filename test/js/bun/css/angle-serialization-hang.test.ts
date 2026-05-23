@@ -17,10 +17,7 @@ import { bunEnv, bunExe } from "harness";
 const cases: [css: string, expected: string][] = [
   // Fuzzer repros: huge radian values in a known property, an unknown
   // property (token list path), and an unparsed/invalid declaration.
-  [
-    "a { rotate: 99999999999999999999999999999999999999999999999999rad }",
-    "a{rotate:3.40282e38rad}",
-  ],
+  ["a { rotate: 99999999999999999999999999999999999999999999999999rad }", "a{rotate:3.40282e38rad}"],
   ["a { ro: 1.3157e308rad }", "a{ro:3.40282e38rad}"],
   [
     "a { rotate: 0.0000000000000000000000000000000000000\t00000000000000000000000000000000000200000000000000000000000000000001rad }",

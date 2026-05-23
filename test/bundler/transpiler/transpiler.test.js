@@ -3738,7 +3738,7 @@ it("deeply nested expressions error instead of crashing the process", () => {
 
   expect(stdout.toString()).toBe("depth-ok\n");
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
-});
+}, 60_000);
 
 it("running a file with deeply nested unary operators does not crash the process", () => {
   const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";

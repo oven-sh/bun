@@ -86,4 +86,47 @@ describe("XML bundler", () => {
     expect(JSON.parse(stdout.trim())).toEqual({ r: { "@a": "1", "#text": "hello" } });
     expect(exitCode).toBe(0);
   });
+
+  test("plugin onLoad can return loader: 'xml'", async () => {
+    // Exercises the $LoaderLabelToId mapping in BundlerPlugin — "xml" must
+    // map to the XML parser, not silently fall through to another loader.
+    using dir = tempDir("xml-bundler-plugin", {
+      "entry.ts": `
+        import data from "virtual-xml";
+        console.log(JSON.stringify(data));
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [String(dir) + "/entry.ts"],
+      target: "bun",
+      plugins: [
+        {
+          name: "virtual-xml",
+          setup(builder) {
+            builder.onResolve({ filter: /^virtual-xml$/ }, () => ({
+              path: "virtual.xml-data",
+              namespace: "vxml",
+            }));
+            builder.onLoad({ filter: /.*/, namespace: "vxml" }, () => ({
+              contents: `<root><v>from-plugin</v><v>two</v></root>`,
+              loader: "xml",
+            }));
+          },
+        },
+      ],
+    });
+    expect(build.success).toBe(true);
+    const code = await build.outputs[0].text();
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim())).toEqual({ root: { v: ["from-plugin", "two"] } });
+    expect(exitCode).toBe(0);
+  });
 });

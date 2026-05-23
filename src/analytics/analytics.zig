@@ -89,11 +89,14 @@ pub const Features = struct {
     pub var yarn_migration: usize = 0;
     pub var pnpm_migration: usize = 0;
     pub var yaml_parse: usize = 0;
-    pub var xml_parse: usize = 0;
     pub var cpu_profile: usize = 0;
     pub var heap_snapshot: usize = 0;
     pub var webview_chrome: usize = 0;
     pub var webview_webkit: usize = 0;
+    // Appended (not inserted next to yaml_parse) so the declaration-order
+    // derived PackedFeatures bit indices of existing features stay stable
+    // and match the explicit indices in src/analytics/lib.rs.
+    pub var xml_parse: usize = 0;
 
     comptime {
         @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });

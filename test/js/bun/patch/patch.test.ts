@@ -2,7 +2,7 @@ import { $ } from "bun";
 import { patchInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import fs from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles as __tempDirWithFiles } from "harness";
+import { tempDirWithFiles as __tempDirWithFiles, bunEnv, bunExe } from "harness";
 import { join as __join } from "node:path";
 const { parse, apply, makeDiff } = patchInternals;
 

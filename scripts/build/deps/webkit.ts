@@ -3,11 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// TEMPORARY: preview build of oven-sh/WebKit#237 (per-item zstd compression
-// of ICU data). Replace with the real autobuild-<sha> once #237 lands on
-// main. DO NOT MERGE with this value — the --allow-preview-webkit guard
-// below enforces this.
-export const WEBKIT_VERSION = "autobuild-preview-pr-237-83b6a12f";
+export const WEBKIT_VERSION = "0d85951a31d3d04684e3e598589de065378c2c59";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

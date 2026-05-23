@@ -46,6 +46,54 @@ impl Default for EmphDelim {
     }
 }
 
+/// Closing-delimiter kinds tracked by `HtmlScanMemo`.
+#[derive(Clone, Copy)]
+pub enum HtmlScanKind {
+    /// `<!--` … `-->`
+    Comment = 0,
+    /// `<?` … `?>`
+    ProcessingInstruction = 1,
+    /// `<!` + uppercase letter … `>`
+    Declaration = 2,
+    /// `<![CDATA[` … `]]>`
+    Cdata = 3,
+}
+
+pub const HTML_SCAN_KIND_COUNT: usize = 4;
+
+/// Memo of failed closing-delimiter searches in `find_html_tag`.
+///
+/// A `<!--` / `<?` / `<!DECL` / `<![CDATA[` candidate scans forward for a
+/// terminator that may not exist, reaching the end of the inline slice. Once
+/// one such scan has failed from some position, any later scan of the same
+/// kind over the same slice starting at or beyond that position must fail
+/// too, so it can return immediately instead of rescanning to the end — that
+/// rescan is quadratic on inputs with many unterminated openers in one
+/// paragraph (found by fuzzing).
+///
+/// The memo is keyed to the content slice identity (address + length) because
+/// `find_html_tag` is also called on link-label sub-slices with their own
+/// coordinates; `process_inline_content` clears it per slice so recycled
+/// merged-line buffers can never alias a previous block's entries.
+#[derive(Clone, Copy)]
+pub struct HtmlScanMemo {
+    slice_addr: usize,
+    slice_len: usize,
+    no_terminator_from: [usize; HTML_SCAN_KIND_COUNT],
+}
+
+impl HtmlScanMemo {
+    pub const EMPTY: HtmlScanMemo = HtmlScanMemo {
+        slice_addr: 0,
+        slice_len: 0,
+        no_terminator_from: [usize::MAX; HTML_SCAN_KIND_COUNT],
+    };
+
+    fn applies_to(&self, content: &[u8]) -> bool {
+        self.slice_addr == content.as_ptr() as usize && self.slice_len == content.len()
+    }
+}
+
 impl Parser<'_> {
     /// Merge all lines into buffer with \n between them (unmodified),
     /// then process inlines on the merged text. Hard/soft breaks are detected
@@ -100,6 +148,11 @@ impl Parser<'_> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(parser::Error::StackOverflow);
         }
+
+        // Failed HTML terminator searches recorded for a previous slice must
+        // not leak into this one (the merged-line buffer is recycled across
+        // blocks, so a stale entry could alias a new slice of the same length).
+        self.html_scan_memo.set(HtmlScanMemo::EMPTY);
 
         // Bracket-pair map for this slice: link processing looks up the ']'
         // matching a '[' here instead of rescanning the rest of the slice for
@@ -729,6 +782,32 @@ impl Parser<'_> {
         helpers::find_entity(content, start)
     }
 
+    /// True if a previous scan over this same `content` slice already proved
+    /// there is no `kind` terminator at or after `scan_start`.
+    fn html_scan_known_unterminated(
+        &self,
+        content: &[u8],
+        kind: HtmlScanKind,
+        scan_start: usize,
+    ) -> bool {
+        let memo = self.html_scan_memo.get();
+        memo.applies_to(content) && scan_start >= memo.no_terminator_from[kind as usize]
+    }
+
+    /// Record that the search for `kind`'s terminator starting at `scan_start`
+    /// reached the end of `content` without a match.
+    fn note_unterminated_html_scan(&self, content: &[u8], kind: HtmlScanKind, scan_start: usize) {
+        let mut memo = self.html_scan_memo.get();
+        if !memo.applies_to(content) {
+            memo = HtmlScanMemo::EMPTY;
+            memo.slice_addr = content.as_ptr() as usize;
+            memo.slice_len = content.len();
+        }
+        let slot = &mut memo.no_terminator_from[kind as usize];
+        *slot = (*slot).min(scan_start);
+        self.html_scan_memo.set(memo);
+    }
+
     pub fn find_html_tag(&self, content: &[u8], start: usize) -> Option<usize> {
         if start + 1 >= content.len() {
             return None;
@@ -774,12 +853,17 @@ impl Parser<'_> {
             if pos + 1 < content.len() && content[pos] == b'-' && content[pos + 1] == b'>' {
                 return Some(pos + 2);
             }
+            if self.html_scan_known_unterminated(content, HtmlScanKind::Comment, pos) {
+                return None;
+            }
+            let scan_start = pos;
             while pos + 2 < content.len() {
                 if content[pos] == b'-' && content[pos + 1] == b'-' && content[pos + 2] == b'>' {
                     return Some(pos + 3);
                 }
                 pos += 1;
             }
+            self.note_unterminated_html_scan(content, HtmlScanKind::Comment, scan_start);
             return None;
         }
 
@@ -790,12 +874,17 @@ impl Parser<'_> {
             && content[pos + 1] <= b'Z'
         {
             pos += 2;
+            if self.html_scan_known_unterminated(content, HtmlScanKind::Declaration, pos) {
+                return None;
+            }
+            let scan_start = pos;
             while pos < content.len() && content[pos] != b'>' {
                 pos += 1;
             }
             if pos < content.len() {
                 return Some(pos + 1);
             }
+            self.note_unterminated_html_scan(content, HtmlScanKind::Declaration, scan_start);
             return None;
         }
 
@@ -811,24 +900,39 @@ impl Parser<'_> {
             && content[pos + 7] == b'['
         {
             pos += 8;
+            if self.html_scan_known_unterminated(content, HtmlScanKind::Cdata, pos) {
+                return None;
+            }
+            let scan_start = pos;
             while pos + 2 < content.len() {
                 if content[pos] == b']' && content[pos + 1] == b']' && content[pos + 2] == b'>' {
                     return Some(pos + 3);
                 }
                 pos += 1;
             }
+            self.note_unterminated_html_scan(content, HtmlScanKind::Cdata, scan_start);
             return None;
         }
 
         // Processing instruction: <? ... ?>
         if c == b'?' {
             pos += 1;
+            if self.html_scan_known_unterminated(content, HtmlScanKind::ProcessingInstruction, pos)
+            {
+                return None;
+            }
+            let scan_start = pos;
             while pos + 1 < content.len() {
                 if content[pos] == b'?' && content[pos + 1] == b'>' {
                     return Some(pos + 2);
                 }
                 pos += 1;
             }
+            self.note_unterminated_html_scan(
+                content,
+                HtmlScanKind::ProcessingInstruction,
+                scan_start,
+            );
             return None;
         }
 

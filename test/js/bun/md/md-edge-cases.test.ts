@@ -653,3 +653,83 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html(wiki(40), { wikiLinks: true })).not.toContain('data-target="t"');
   });
 });
+
+// ============================================================================
+// Pathological inputs: unterminated inline HTML openers. Every `<!--` / `<?` /
+// `<!DECL` / `<![CDATA[` candidate used to rescan from its own position to the
+// end of the paragraph for a terminator that never appears, so a paragraph
+// with many such openers was O(n²) (found by fuzzing: a ~260 KB flood of
+// bracket runs + `<!--` spun in find_html_tag). The child process is killed
+// after 30s so a regression fails fast instead of hanging the test runner.
+// ============================================================================
+
+describe("pathological inline HTML inputs", () => {
+  async function expectRendersQuickly(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+  }
+
+  test("unterminated inline HTML openers render in linear time", async () => {
+    await expectRendersQuickly(`
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const cases = [
+          ["unterminated comments", fill(100000, "x <!-- y --\\n"), out => out.includes("&lt;!-- y")],
+          ["unterminated processing instructions", fill(100000, "x <? y\\n"), out => out.includes("&lt;? y")],
+          ["unterminated declarations", fill(100000, "x <!DOCTYPE y\\n"), out => out.includes("&lt;!DOCTYPE y")],
+          ["unterminated CDATA sections", fill(100000, "x <![CDATA[ y\\n"), out => out.includes("&lt;![CDATA[ y")],
+          ["bracket runs with unterminated comments", fill(20000, "[[[[[[[ foo <!-- this is a --\\n"), out => out.includes("[[[[[[[") && out.includes("&lt;!--")],
+        ];
+        for (const [name, input, check] of cases) {
+          const out = Bun.markdown.html(input);
+          if (!check(out)) throw new Error("unexpected output for " + name + ": " + JSON.stringify(out.slice(0, 200)));
+          console.log("OK " + name);
+        }
+        // The fuzzer hit this through the custom-renderer API — exercise it too.
+        if (typeof Bun.markdown.render(fill(20000, "[[[[[[[ foo <!-- this is a --\\n"), {}) !== "string") {
+          throw new Error("render() did not return a string");
+        }
+        console.log("DONE");
+      `);
+  }, 90_000);
+
+  test("unterminated inline HTML openers stay escaped text", () => {
+    expect(Markdown.html("a <!-- b\n")).toBe("<p>a &lt;!-- b</p>\n");
+    expect(Markdown.html("a <? b\n")).toBe("<p>a &lt;? b</p>\n");
+    expect(Markdown.html("a <!D b\n")).toBe("<p>a &lt;!D b</p>\n");
+    expect(Markdown.html("a <![CDATA[ b\n")).toBe("<p>a &lt;![CDATA[ b</p>\n");
+  });
+
+  test("a terminated HTML span after an unterminated opener of another kind is still recognized", () => {
+    // The failed `<?` scan must not suppress the later `<!-- c -->` comment.
+    expect(Markdown.html("a <? x y <!-- c --> d\n")).toBe("<p>a &lt;? x y <!-- c --> d</p>\n");
+    // And the other way around: a failed `<!--` scan with a later `?>`-less `<?`.
+    expect(Markdown.html("a <!-- x y <? c d\n")).toBe("<p>a &lt;!-- x y &lt;? c d</p>\n");
+  });
+
+  test("inline comments spanning multiple lines still become raw HTML", () => {
+    expect(Markdown.html("before <!-- mid\nstill comment --> after\n")).toBe(
+      "<p>before <!-- mid\nstill comment --> after</p>\n",
+    );
+    expect(Markdown.html("x <!-- y -- z <!--> w\n")).toBe("<p>x <!-- y -- z <!--> w</p>\n");
+  });
+
+  test("consecutive same-length paragraphs do not share unterminated-scan state", () => {
+    // Both paragraphs merge to 12-byte inline slices; the recycled buffer must
+    // not carry the first paragraph's failed `-->` search into the second.
+    expect(Markdown.html("a <!-- bcdef\n\na <!-- b -->\n")).toBe("<p>a &lt;!-- bcdef</p>\n<p>a <!-- b --></p>\n");
+  });
+
+  test("unterminated comment openers inside link labels keep the surrounding text literal", () => {
+    expect(Markdown.html("[t <!-- u](v) <!-- w --> q\n")).toBe("<p>[t <!-- u](v) <!-- w --> q</p>\n");
+  });
+});

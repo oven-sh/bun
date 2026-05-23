@@ -2123,7 +2123,11 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
 // napi_create_error must succeed even when a VM-level exception is pending.
 // This test uses napi_run_script("throw ...") to create a VM-level exception,
 // not Napi::Error::New which only sets a NAPI env-level pending exception
-// and would not actually exercise the RETURN_IF_EXCEPTION code path.
+// (m_pendingException) and would not actually exercise the RETURN_IF_EXCEPTION
+// code path. RETURN_IF_EXCEPTION checks vm.m_exception specifically (via
+// vm.hasExceptionsAfterHandlingTraps()), and napi_run_script sets vm.m_exception
+// via JSC::evaluate() before calling scheduleException() which only sets
+// m_pendingException.
 static napi_value test_issue_22259(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_status status;

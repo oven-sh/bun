@@ -225,6 +225,25 @@ mod _impl {
             let write_callback =
                 validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
 
+            // Validate `params` before any native state is initialized so the
+            // error path needs no cleanup. `as_u32` reinterprets the view's
+            // bytes, so the element type must actually be Uint32Array.
+            let params_value = arguments.ptr[0];
+            let Some(mut params_buf) = params_value.as_array_buffer(global_this) else {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "params",
+                    "Uint32Array",
+                    params_value,
+                ));
+            };
+            if params_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
+                return Err(global_this.throw_invalid_argument_type_value(
+                    "params",
+                    "Uint32Array",
+                    params_value,
+                ));
+            }
+
             self.write_result.set(Some(write_result));
 
             js::write_callback_set_cached(
@@ -239,7 +258,6 @@ mod _impl {
                 return Ok(JSValue::FALSE);
             }
 
-            let mut params_buf = arguments.ptr[0].as_array_buffer(global_this).unwrap();
             let params_ = params_buf.as_u32();
 
             for (i, &d) in params_.iter().enumerate() {

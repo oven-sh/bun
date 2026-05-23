@@ -179,7 +179,17 @@ mod _impl {
             let dictionary = if arguments.ptr[6].is_undefined() {
                 None
             } else {
-                dictionary_buf = arguments.ptr[6].as_array_buffer(global).unwrap();
+                let dictionary_value = arguments.ptr[6];
+                dictionary_buf = match dictionary_value.as_array_buffer(global) {
+                    Some(buf) => buf,
+                    None => {
+                        return Err(global.throw_invalid_argument_type_value(
+                            "dictionary",
+                            "Buffer, TypedArray, or DataView",
+                            dictionary_value,
+                        ));
+                    }
+                };
                 Some(dictionary_buf.byte_slice())
             };
 

@@ -65,7 +65,7 @@ brew install bun
 
 # with Docker
 docker pull oven/bun
-docker run --rm --init --ulimit memlock=-1:-1 oven/bun
+docker run --rm -it --init --ulimit memlock=-1:-1 oven/bun
 ```
 
 ### Upgrade

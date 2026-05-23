@@ -33,7 +33,7 @@ bun_core::declare_scope!(NodeHTTPResponse, visible);
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[bun_jsc::JsClass(no_constructor)]
-pub(crate) struct NodeHTTPResponse {
+pub struct NodeHTTPResponse {
     pub ref_count: Cell<u32>,
 
     pub raw_response: Cell<Option<uws::AnyResponse>>,

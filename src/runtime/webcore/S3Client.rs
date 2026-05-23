@@ -240,7 +240,7 @@ where
 }
 
 #[bun_jsc::JsClass]
-pub(crate) struct S3Client {
+pub struct S3Client {
     pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,

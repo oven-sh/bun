@@ -11,7 +11,7 @@ bun_output::declare_scope!(TextEncoderStreamEncoder, visible);
 // mutable field is `Cell<Option<u16>>` (Copy).
 #[derive(Default)]
 #[bun_jsc::JsClass]
-pub(crate) struct TextEncoderStreamEncoder {
+pub struct TextEncoderStreamEncoder {
     pending_lead_surrogate: Cell<Option<u16>>,
 }
 

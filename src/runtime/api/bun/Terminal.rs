@@ -111,7 +111,7 @@ pub mod js {
 #[bun_jsc::JsClass(no_construct, no_finalize)]
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = deinit_and_destroy)]
-pub(crate) struct Terminal {
+pub struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 
     /// The master side of the PTY (original fd, used for ioctl operations)

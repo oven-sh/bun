@@ -1235,7 +1235,7 @@ thread_local! {
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit_raw)]
-pub(crate) struct H2FrameParser {
+pub struct H2FrameParser {
     strong_this: JsCell<JsRef>,
     global_this: GlobalRef, // JSC_BORROW — read-only after construction
     // allocator field dropped — global mimalloc

@@ -512,7 +512,7 @@ impl StatWatcherScheduler {
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = Self::deinit)]
-pub(crate) struct StatWatcher {
+pub struct StatWatcher {
     pub next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
     // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher. `BackRef` gives

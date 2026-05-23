@@ -1228,13 +1228,25 @@ folded: >
           expect(YAML.parse("? a\n:\n  ? b\n  : c\n")).toEqual({ a: { b: "c" } });
         });
 
-        test.todo("seq-item property followed by non-`- ` at parent indent", () => {
-          // parse_block_sequence's property loop only checks SequenceEntry at
-          // indent ≤ n; other tokens (Scalar, MappingKey) at parent indent
-          // still fall through to parse_node and consume sibling content.
-          // Pre-existing; same [185] production as the helper.
-          expect(() => YAML.parse("- &a\nk: v\n")).toThrow();
-          expect(() => YAML.parse("- &a\nb\n")).toThrow();
+        test("seq-item property followed by non-`- ` at parent indent", () => {
+          // [185] s-l+block-indented(n, BLOCK-IN): content on a later line at
+          // indent ≤ n belongs to the parent.
+          expect(() => YAML.parse("- &a\nk: v\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("- &a\nb\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("-\na\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("-\ta: b\n")).toThrow("Unexpected token");
+        });
+
+        test("two anchors on a seq item: [200] collection vs first-key", () => {
+          // The helper falls through on a second anchor so parse_node's
+          // mapping-anchor split applies. Only valid when the content is a
+          // mapping (so the second anchors the first key).
+          expect(YAML.parse("- &outer\n  &inner b: 1\n- *outer\n- *inner\n")).toEqual([
+            { b: 1 },
+            { b: 1 },
+            "b",
+          ]);
+          expect(() => YAML.parse("- &x &y a\n")).toThrow("Multiple anchors");
         });
       });
 

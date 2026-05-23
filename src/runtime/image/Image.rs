@@ -129,9 +129,7 @@ pub enum Source {
 // Image-specific (they pin/adopt typed-array storage for the off-thread
 // pipeline) and have no `bun_jsc` wrapper.
 unsafe extern "C" {
-    /// By-value `JSValue`; the C++ side null-checks → `safe fn`. Must match
-    /// the declarations in `node_fs.rs` / `node_zlib_binding.rs`.
-    safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
+    fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
     /// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
     /// helper adopts the storage in-place (createAdopted — no byte copy) and
@@ -753,8 +751,8 @@ impl Image {
                     // `transfer()` while the worker reads.
                     2 => {
                         if len == 0 {
-                            // The helper pinned `v`; unpin before erroring.
-                            JSC__JSValue__unpinArrayBuffer(v);
+                            // SAFETY: helper pinned `v`; unpin before erroring.
+                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned for the lifetime of the task;
@@ -1436,9 +1434,9 @@ impl Input {
     }
     fn release(mut self) {
         if !self.pinned.is_empty() {
-            // JS thread; `pinned` was returned by
+            // SAFETY: JS thread; `pinned` was returned by
             // `JSC__JSValue__borrowBytesForOffThread` with mode 2.
-            JSC__JSValue__unpinArrayBuffer(self.pinned);
+            unsafe { JSC__JSValue__unpinArrayBuffer(self.pinned) };
         }
         self.copied = None;
     }

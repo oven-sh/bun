@@ -3921,35 +3921,12 @@ pub mod args {
         }
     }
 
-    // TODO(port): move to bun_jsc — also declared locally in `Image.rs` /
-    // `MySQLValue.rs`.
-    unsafe extern "C" {
-        /// Pin `v`'s backing `JSC::ArrayBuffer` so `transfer()` / structured-clone
-        /// transfer copy instead of detaching and freeing the storage while a
-        /// work-pool thread is writing into it. Returns false if `v` has no
-        /// ArrayBuffer impl. By-value `JSValue`; C++ null-checks → `safe fn`.
-        safe fn JSC__JSValue__pinArrayBuffer(v: JSValue) -> bool;
-        /// Balance a successful `JSC__JSValue__pinArrayBuffer`.
-        safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    }
-
     pub struct Read {
         pub fd: FD,
         pub buffer: Buffer,
         pub offset: u64,
         pub length: u64,
         pub position: Option<ReadPosition>,
-        /// JS TypedArray/ArrayBuffer whose backing store is pinned for the
-        /// async work-pool read; `JSValue::ZERO` on the sync path. Unpinned in
-        /// `Drop`, which runs on the JS thread for every arg-lifecycle path.
-        pub pinned: JSValue,
-    }
-    impl Drop for Read {
-        fn drop(&mut self) {
-            if !self.pinned.is_empty() {
-                JSC__JSValue__unpinArrayBuffer(self.pinned);
-            }
-        }
     }
     impl Read {
         pub fn to_thread_safe(&self) {
@@ -4016,7 +3993,6 @@ pub mod args {
                     length: 0,
                     offset: 0,
                     position: None,
-                    pinned: JSValue::ZERO,
                 });
             }
 
@@ -4129,24 +4105,17 @@ pub mod args {
                 None
             };
 
-            // The async path writes into `buffer.ptr` from the work pool long
-            // after JS regains control, and `value.protect()` (in
-            // `to_thread_safe`) only prevents GC — it does not stop
-            // `ArrayBuffer.prototype.transfer()` from detaching and freeing the
-            // backing store mid-read. Pin the ArrayBuffer so a transfer copies
-            // instead of detaching, then re-snapshot the descriptor: pinning a
-            // small (FastTypedArray) view migrates its storage into a real
-            // ArrayBuffer, which would otherwise leave `ptr` pointing at the
-            // abandoned GC-heap vector. `Drop` unpins on the JS thread.
-            let (buffer, pinned) =
-                if arguments.will_be_async && JSC__JSValue__pinArrayBuffer(buffer_value) {
-                    (
-                        Buffer::from_js(ctx, buffer_value).unwrap_or(buffer),
-                        buffer_value,
-                    )
-                } else {
-                    (buffer, JSValue::ZERO)
-                };
+            let buffer = if arguments.will_be_async {
+                match buffer_value.as_pinned_arraybuffer(ctx) {
+                    Some(pinned) => Buffer {
+                        buffer: pinned,
+                        owns_buffer: false,
+                    },
+                    None => buffer,
+                }
+            } else {
+                buffer
+            };
 
             Ok(Read {
                 fd,
@@ -4154,7 +4123,6 @@ pub mod args {
                 offset,
                 length,
                 position,
-                pinned,
             })
         }
     }

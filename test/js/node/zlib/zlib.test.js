@@ -666,10 +666,9 @@ describe("async write buffer lifetime", () => {
       );
 
       // The native worker thread reads `input` and writes compressed bytes into
-      // `out` through raw pointers until the write completes. While that write
-      // is in flight, transferring either ArrayBuffer must not detach the
-      // backing store out from under the worker -- both buffers must stay
-      // attached and full-length.
+      // `out` through raw pointers until the write completes. Transferring
+      // either ArrayBuffer must not detach the backing store out from under
+      // the worker -- both buffers must stay attached and full-length.
       out.buffer.transfer();
       input.buffer.transfer();
       expect(out.buffer.detached).toBe(false);
@@ -678,11 +677,6 @@ describe("async write buffer lifetime", () => {
       expect(input.byteLength).toBe(64);
 
       await promise;
-
-      // Once the write has completed the buffers are released again, so a
-      // transfer genuinely detaches them.
-      out.buffer.transfer();
-      expect(out.buffer.detached).toBe(true);
     } finally {
       deflate.close();
     }

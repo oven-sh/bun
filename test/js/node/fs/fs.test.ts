@@ -4128,10 +4128,10 @@ it("writevSync does not write bytes from a buffer detached by an index getter du
   closeSync(fd);
   expect(readFileSync(file, "latin1")).toBe("AAAABBBB");
 
-  // An accessor on index 1 detaches element 0's ArrayBuffer while the
-  // argument array is still being converted. The bytes captured from element
-  // 0 before the detach must not reach the file: a detached element
-  // contributes nothing to the write.
+  // An accessor on index 1 could detach element 0's ArrayBuffer while the
+  // argument array is still being converted, after element 0's pointer has
+  // already been captured. Arrays whose elements cannot be read without
+  // running user code are rejected outright.
   const first = new Uint8Array(new ArrayBuffer(16)).fill(0x41);
   const second = new Uint8Array(8).fill(0x42);
   const buffers: Uint8Array[] = [first];
@@ -4147,10 +4147,9 @@ it("writevSync does not write bytes from a buffer detached by an index getter du
 
   fd = openSync(file, "w");
   try {
-    const written = writevSync(fd, buffers);
-    expect(written).toBe(8);
+    expect(() => writevSync(fd, buffers)).toThrow();
   } finally {
     closeSync(fd);
   }
-  expect(readFileSync(file, "latin1")).toBe("BBBBBBBB");
+  expect(first.buffer.detached).toBe(false);
 });

@@ -63,9 +63,7 @@ mod _impl {
         StrongOptional, WorkPoolTask,
     };
 
-    use crate::node::node_zlib_binding::{
-        CompressionStream, CountedKeepAlive, Error, PinnedWriteBuffers,
-    };
+    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
     // Intrusive refcount: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`.
@@ -93,7 +91,6 @@ mod _impl {
         pub poll_ref: JsCell<CountedKeepAlive>,
         // TODO(port): Strong on m_ctx self-ref → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
         pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
-        pub pinned_buffers: JsCell<PinnedWriteBuffers>,
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
         pub pending_reset: Cell<bool>,
@@ -151,7 +148,6 @@ mod _impl {
                 write_result: Cell::new(None),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
-                pinned_buffers: JsCell::new(PinnedWriteBuffers::default()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
                 pending_reset: Cell::new(false),

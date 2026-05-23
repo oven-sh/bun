@@ -1423,58 +1423,42 @@ impl VectorArrayBuffer {
 
 impl VectorArrayBuffer {
     pub fn from_js(global_object: &JSGlobalObject, val: JSValue) -> JsResult<VectorArrayBuffer> {
-        if !val.js_type().is_array_like() {
+        // Only accept a plain contiguous JSArray: its elements can be read
+        // without running user code, so no element can be detached between
+        // here and the syscall.
+        if val.js_type() != jsc::JSType::Array {
+            return Err(
+                global_object.throw_invalid_arguments(format_args!("Expected ArrayBufferView[]"))
+            );
+        }
+        let mut iter = val.array_iterator(global_object)?;
+        if iter.fast.is_none() && iter.len != 0 {
             return Err(
                 global_object.throw_invalid_arguments(format_args!("Expected ArrayBufferView[]"))
             );
         }
 
-        let len = val.get_length(global_object)? as usize;
+        let mut bufferlist: Vec<PlatformIoVec> = Vec::new();
+        bufferlist.reserve_exact(iter.len as usize);
 
-        // `get_index` can re-enter JavaScript (Proxy traps, index getters), which
-        // could detach or resize an ArrayBuffer whose raw pointer we already
-        // collected. Gather and validate every element first; only derive the
-        // iovec pointers once no more JavaScript can run.
-        //
-        // A heap-backed `Vec<JSValue>` is not scanned by JSC's conservative GC
-        // (PORTING.md §JSC types), and an index getter can return a freshly
-        // allocated view that is reachable through nothing else — so each
-        // collected element is also appended to a stack-rooted
-        // `MarkedArgumentBuffer`, which keeps it alive until the iovec
-        // pointers have been derived.
-        jsc::MarkedArgumentBuffer::new(|roots| {
-            let mut elements: Vec<JSValue> = Vec::new();
-            elements.reserve_exact(len);
-            let mut i: usize = 0;
-            while i < len {
-                let element = val.get_index(global_object, i as u32)?;
-
-                if !element.is_cell() || element.as_array_buffer(global_object).is_none() {
-                    return Err(global_object
-                        .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
-                }
-
-                roots.append(element);
-                elements.push(element);
-                i += 1;
+        while let Some(element) = iter.next()? {
+            if !element.is_cell() {
+                return Err(global_object
+                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
             }
 
-            let mut bufferlist: Vec<PlatformIoVec> = Vec::new();
-            bufferlist.reserve_exact(len);
-            for element in elements {
-                let Some(mut array_buffer) = element.as_array_buffer(global_object) else {
-                    return Err(global_object
-                        .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
-                };
+            let Some(mut array_buffer) = element.as_array_buffer(global_object) else {
+                return Err(global_object
+                    .throw_invalid_arguments(format_args!("Expected ArrayBufferView[]")));
+            };
 
-                let buf = array_buffer.byte_slice_mut();
-                bufferlist.push(bun_sys::platform_iovec_create(buf));
-            }
+            let buf = array_buffer.byte_slice_mut();
+            bufferlist.push(bun_sys::platform_iovec_create(buf));
+        }
 
-            Ok(VectorArrayBuffer {
-                value: val,
-                buffers: bufferlist,
-            })
+        Ok(VectorArrayBuffer {
+            value: val,
+            buffers: bufferlist,
         })
     }
 }

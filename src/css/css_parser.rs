@@ -2670,10 +2670,10 @@ mod stylesheet_impl {
                 // Rule-level minify signals failure with the unit `MinifyErr`
                 // and records the diagnostic out-of-band on the context.
                 debug_assert!(minify_ctx.err.is_some());
-                let e = minify_ctx
-                    .err
-                    .take()
-                    .expect("MinifyContext.err must be set when rule minification fails");
+                let e = minify_ctx.err.take().unwrap_or_else(|| MinifyError {
+                    kind: MinifyErrorKind::unknown,
+                    loc: crate::Location::default(),
+                });
                 let filename: &[u8] = self
                     .sources
                     .get(e.loc.source_index as usize)

@@ -13,12 +13,11 @@
 
 #include "root.h"
 
-// The repacked libicudata.a (and the patched udata.cpp that calls this hook)
-// are produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl only. On every
-// other platform ICU is unmodified, so there is nothing to decompress and the
-// weak externs below have no definer — gate the whole implementation to keep
-// non-ELF weak-symbol semantics out of the picture.
-#if OS(LINUX)
+// The repacked libicudata (and the patched udata.cpp that calls this hook) are
+// produced by oven-sh/WebKit's Dockerfile{,.musl} on Linux and build-icu.ps1
+// on Windows. Elsewhere ICU is unmodified — nothing to decompress, and the
+// dict externs below have no definer.
+#if OS(LINUX) || OS(WINDOWS)
 
 #include "MimallocWTFMalloc.h"
 
@@ -33,8 +32,13 @@ static_assert(ZSTD_MAGICNUMBER == 0xFD2FB528);
 // Raw ICU items have bytes[2..3] == {0xda, 0x27} (ucmndata.h MAGIC1/MAGIC2),
 // so their first u32 is 0x27da'hhhh — cannot collide with zstd's magic.
 
+#if OS(WINDOWS)
+extern "C" const unsigned char bun_icu_zstd_dict[];
+extern "C" const unsigned int bun_icu_zstd_dict_size;
+#else
 extern "C" __attribute__((weak)) const unsigned char bun_icu_zstd_dict[];
 extern "C" __attribute__((weak)) const unsigned int bun_icu_zstd_dict_size;
+#endif
 
 namespace Bun {
 
@@ -115,4 +119,4 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
     return Bun::ICUDecompressor::get().decompress(p, length);
 }
 
-#endif // OS(LINUX)
+#endif // OS(LINUX) || OS(WINDOWS)

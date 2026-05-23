@@ -245,8 +245,7 @@ pub mod ssl_wrapper {
     /// a CPU DoS (CVE-2011-1473).
     const MAX_RENEGOTIATIONS: u8 = 3;
     /// See [`MAX_RENEGOTIATIONS`].
-    const MAX_RENEGOTIATION_WINDOW: core::time::Duration =
-        core::time::Duration::from_secs(600);
+    const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
 
     pub struct SSLWrapper<T: Copy> {
         pub handlers: Handlers<T>,
@@ -1001,8 +1000,7 @@ pub mod ssl_wrapper {
                             let now = std::time::Instant::now();
                             match self.renegotiation_window_start {
                                 Some(start)
-                                    if now.duration_since(start)
-                                        < MAX_RENEGOTIATION_WINDOW => {}
+                                    if now.duration_since(start) < MAX_RENEGOTIATION_WINDOW => {}
                                 _ => {
                                     self.renegotiation_window_start = Some(now);
                                     self.renegotiation_count = 0;

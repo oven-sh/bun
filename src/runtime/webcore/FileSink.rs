@@ -1689,6 +1689,11 @@ impl FileSink {
 
         if promise_result.to_error().is_some() {
             self.readable_stream.set(readable_stream::Strong::default());
+            // Close the writer now so the destination fd / FilePoll are released
+            // immediately (what handle_reject_stream does for async failures);
+            // without this a spawned child reading from the pipe would block on
+            // the open write-end until GC finalizes the JS controller.
+            self.writer.with_mut(|w| w.end());
             // Return the original result (a JSC::Exception when the stream's pull()
             // threw synchronously) rather than the unwrapped thrown value, so callers
             // can detect failure with a single `.to_error()` even when the thrown

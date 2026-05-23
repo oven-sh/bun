@@ -41,7 +41,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 22: Serialize `has_tla` in the cached ESM record flags byte. Entries
 /// written before #30888 carried `has_tla=false` for every module; the cache-HIT
 /// path reinstates the bug for any previously-cached TLA module (#30887).
-const EXPECTED_VERSION: u32 = 22;
+/// Version 23: Parser no longer inlines const declarations across switch case bodies (#30932).
+const EXPECTED_VERSION: u32 = 23;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

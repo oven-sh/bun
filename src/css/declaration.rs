@@ -1,4 +1,5 @@
 use crate::css_parser as css;
+use crate::generics::CssEql as _;
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 pub use css::Error;
@@ -128,9 +129,7 @@ impl<'bump> DeclarationBlock<'bump> {
                     // — move the value out and overwrite the slot with a
                     // non-allocating placeholder so the source list's drop is a
                     // no-op.
-                    hndlr
-                        .decls
-                        .push(core::mem::replace(prop, placeholder_property()));
+                    hndlr.push_unhandled(core::mem::replace(prop, placeholder_property()));
                 }
             }
         }
@@ -538,6 +537,16 @@ pub struct DeclarationHandler<'bump> {
     pub fallback: FallbackHandler,
     pub direction: Option<Direction>,
     pub decls: DeclarationList<'bump>,
+    /// Index in `decls` of the most recently pushed declaration for each
+    /// property that no handler claimed (keyed by `unhandled_property_key`).
+    /// Lets `push_unhandled` drop exact repeats and let a later custom
+    /// property override the earlier one in place instead of accumulating
+    /// duplicates. Bounding those duplicates matters because
+    /// `merge_style_rules` re-runs this handler over the whole accumulated
+    /// declaration block every time an adjacent rule with the same selector
+    /// is merged — unbounded duplicates make that loop quadratic in the
+    /// number of merged rules.
+    unhandled_indices: bun_collections::HashMap<u64, usize>,
 }
 
 impl<'bump> DeclarationHandler<'bump> {
@@ -565,6 +574,75 @@ impl<'bump> DeclarationHandler<'bump> {
         self.box_shadow.finalize(&mut self.decls, context);
         self.color_scheme.finalize(&mut self.decls, context);
         self.fallback.finalize(&mut self.decls, context);
+        self.drop_exact_duplicates();
+        // `decls` is handed back to the declaration block right after this
+        // returns, so the recorded indices would be stale on the next block.
+        self.unhandled_indices.clear();
+    }
+
+    /// Drop declarations that are exact duplicates (same property, identical
+    /// value) of the most recent declaration for that property. Handlers that
+    /// pass unparsed/`var()` values straight through to `decls` re-emit them
+    /// on every pass, so without this the block grows by one copy per merged
+    /// rule and `CssRuleList::minify`'s merge loop goes quadratic.
+    fn drop_exact_duplicates(&mut self) {
+        if self.decls.len() < 2 {
+            return;
+        }
+        // Detection pass: the common case has no duplicates and allocates
+        // nothing beyond the reused index map.
+        self.unhandled_indices.clear();
+        let mut has_duplicate = false;
+        for (i, decl) in self.decls.iter().enumerate() {
+            let key = unhandled_property_key(decl);
+            if let Some(&prev) = self.unhandled_indices.get(&key)
+                && self.decls[prev].eql(decl)
+            {
+                has_duplicate = true;
+                break;
+            }
+            self.unhandled_indices.insert(key, i);
+        }
+        if !has_duplicate {
+            return;
+        }
+        // Rebuild the list without the duplicates, reusing `push_unhandled`'s
+        // skip/replace logic.
+        let bump: &'bump Bump = self.decls.bump();
+        let old = core::mem::replace(&mut self.decls, DeclarationList::new_in(bump));
+        self.unhandled_indices.clear();
+        for decl in old {
+            self.push_unhandled(decl);
+        }
+    }
+
+    /// Append a declaration that no property handler claimed.
+    ///
+    /// Mirrors lightningcss's custom-property handling: a later declaration
+    /// for the same dashed custom property replaces the earlier one in place,
+    /// and a declaration identical to the most recent one for the same
+    /// property is dropped (the earlier copy can never win the cascade).
+    /// Declarations for the same property with *different* values are kept —
+    /// they may be intentional fallbacks for older browsers.
+    fn push_unhandled(&mut self, property: css::Property) {
+        let key = unhandled_property_key(&property);
+        if let Some(&index) = self.unhandled_indices.get(&key)
+            && let Some(existing) = self.decls.get_mut(index)
+        {
+            if existing.eql(&property) {
+                return;
+            }
+            if let (css::Property::Custom(existing_custom), css::Property::Custom(new_custom)) =
+                (&*existing, &property)
+                && matches!(new_custom.name, CustomPropertyName::Custom(_))
+                && existing_custom.name.eql(&new_custom.name)
+            {
+                *existing = property;
+                return;
+            }
+        }
+        self.unhandled_indices.insert(key, self.decls.len());
+        self.decls.push(property);
     }
 
     pub fn handle_property(
@@ -638,8 +716,23 @@ impl<'bump> DeclarationHandler<'bump> {
             fallback: Default::default(),
             direction: None,
             decls: DeclarationList::new_in(bump),
+            unhandled_indices: Default::default(),
         }
     }
+}
+
+/// Hash key identifying "the same property" for
+/// `DeclarationHandler::push_unhandled`: the property id tag, plus the name
+/// for custom/unknown properties (every custom property shares the `custom`
+/// tag).
+fn unhandled_property_key(property: &css::Property) -> u64 {
+    let mut hasher = bun_wyhash::Wyhash::init(0);
+    let tag = property.property_id().tag() as u16;
+    hasher.update(&tag.to_ne_bytes());
+    if let css::Property::Custom(custom) = property {
+        hasher.update(custom.name.as_str());
+    }
+    hasher.final_()
 }
 
 // ported from: src/css/declaration.zig

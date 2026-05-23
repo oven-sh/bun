@@ -187,7 +187,13 @@ pub enum Appearance {
 }
 
 #[derive(Default)]
-pub struct ColorSchemeHandler;
+pub struct ColorSchemeHandler {
+    /// The most recent `color-scheme` value emitted during the current
+    /// declaration-block pass. Exact repeats are dropped so that merging
+    /// adjacent duplicate rules doesn't accumulate identical declarations
+    /// (and re-emit their fallback variables) on every merge pass.
+    last: Option<ColorScheme>,
+}
 
 // PORT NOTE: `context.arena` was dropped from PropertyHandlerContext;
 // `define_var` no longer needs an arena because `TokenList.v` is a std
@@ -202,6 +208,10 @@ impl ColorSchemeHandler {
         match property {
             Property::ColorScheme(color_scheme_) => {
                 let color_scheme: ColorScheme = *color_scheme_;
+                if self.last == Some(color_scheme) {
+                    return true;
+                }
+                self.last = Some(color_scheme);
                 if !context
                     .targets
                     .is_compatible(css::compat::Feature::LightDark)
@@ -239,6 +249,7 @@ impl ColorSchemeHandler {
         _: &mut css::DeclarationList<'_>,
         _: &mut PropertyHandlerContext<'_>,
     ) {
+        self.last = None;
     }
 }
 

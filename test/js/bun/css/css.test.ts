@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import "harness";
 import { join } from "path";
 import {
@@ -7443,6 +7443,49 @@ describe("css tests", () => {
         `,
       { chrome: Some(90 << 16) },
     );
+  });
+
+  describe("duplicate declarations", () => {
+    // Exact duplicates (same property, identical value) can never win the
+    // cascade, so only one copy is kept. Without this, merging adjacent rules
+    // with the same selector re-appends the duplicate on every merge and
+    // minification becomes quadratic in the number of rules (found by
+    // fuzzing: hang in the declaration handler chain).
+    minify_test(".foo { color-scheme: dark } .foo { color-scheme: dark }", ".foo{color-scheme:dark}");
+    minify_test(".foo { opacity: .5 } .foo { opacity: .5 }", ".foo{opacity:.5}");
+    minify_test(".foo { opacity: .5; opacity: .5 }", ".foo{opacity:.5}");
+    minify_test(".foo { colorz: red; colorz: red }", ".foo{colorz:red}");
+    minify_test(".foo { width: var(--w); width: var(--w) }", ".foo{width:var(--w)}");
+    minify_test(".foo { transition: var(--t) } .foo { transition: var(--t) }", ".foo{transition:var(--t)}");
+
+    // A later declaration for the same custom property replaces the earlier
+    // one in place (matches lightningcss).
+    minify_test(".foo { --x: 1; --x: 2 }", ".foo{--x:2}");
+    minify_test(".foo { --x: 1; --x: 1 }", ".foo{--x:1}");
+    minify_test(".foo { --x: 1; opacity: .5; --x: 2 }", ".foo{--x:2;opacity:.5}");
+    minify_test(".foo { --x: 1 } .foo { --x: 2 }", ".foo{--x:2}");
+
+    // Same property with a different value may be an intentional fallback for
+    // older browsers — both copies are kept.
+    minify_test(".foo { opacity: .5; opacity: var(--x) }", ".foo{opacity:.5;opacity:var(--x)}");
+    minify_test(".foo { opacity: .5; opacity: .6 }", ".foo{opacity:.5;opacity:.6}");
+    minify_test(".foo { color-scheme: dark; color-scheme: light }", ".foo{color-scheme:dark;color-scheme:light}");
+    minify_test(".foo { colorz: red; colorz: blue }", ".foo{colorz:red;colorz:blue}");
+
+    // Normal and !important declarations are tracked separately.
+    minify_test(".foo { --x: 1 !important; --x: 2 }", ".foo{--x:2;--x:1!important}");
+
+    // Repeated identical rules collapse to a single declaration instead of
+    // growing the merged declaration block on every merge.
+    test("merging many identical rules stays bounded", () => {
+      const repeat = (rule: string, n: number) => Array(n).fill(rule).join("\n");
+      expect(minify_test_with_options(repeat(".foo { color-scheme: only light; }", 2000), "")).toBe(
+        ".foo{color-scheme:light only}",
+      );
+      expect(minify_test_with_options(repeat(".foo { width: var(--w); }", 2000), "")).toBe(".foo{width:var(--w)}");
+      expect(minify_test_with_options(repeat(".foo { opacity: 0.5; }", 2000), "")).toBe(".foo{opacity:.5}");
+      expect(minify_test_with_options(repeat(".foo { --x: 1; }", 2000), "")).toBe(".foo{--x:1}");
+    });
   });
 
   describe("page", () => {

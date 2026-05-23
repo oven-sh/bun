@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-import { describe, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import "harness";
 import { join } from "path";
 import {
@@ -7443,6 +7443,41 @@ describe("css tests", () => {
         `,
       { chrome: Some(90 << 16) },
     );
+  });
+
+  describe("duplicate rule merging", () => {
+    // When same-selector rules are merged, a declaration that is exactly
+    // duplicated by a later one is dropped. Previously every duplicated rule
+    // re-added its declarations to the merged rule and the whole (ever-growing)
+    // list was re-minified, so stylesheets made of thousands of identical rules
+    // minified in quadratic time — a ~30 KB input of repeated
+    // `.foo { color-scheme: only foo dark bar; }` rules tripped the CSS
+    // fuzzer's hang detector.
+    minify_test(".foo { color-scheme: dark; } .foo { color-scheme: dark; }", ".foo{color-scheme:dark}");
+    minify_test(
+      ".foo { color-scheme: only foo dark bar; } .foo { color-scheme: only foo dark bar; }",
+      ".foo{color-scheme:dark only}",
+    );
+    minify_test(".foo { --x: 1; } .foo { --x: 1; } .foo { --x: 1; }", ".foo{--x:1}");
+    minify_test(
+      ".foo { color-scheme: dark !important; } .foo { color-scheme: dark !important; }",
+      ".foo{color-scheme:dark!important}",
+    );
+    // Only exact duplicates collapse; differing values keep their cascade order
+    // so fallback declarations survive.
+    minify_test(
+      ".foo { unknown-prop: a; } .foo { unknown-prop: b; } .foo { unknown-prop: a; }",
+      ".foo{unknown-prop:b;unknown-prop:a}",
+    );
+    minify_test(".foo { unknown-prop: a; } .foo { unknown-prop: b; }", ".foo{unknown-prop:a;unknown-prop:b}");
+
+    test("minifying thousands of identical rules stays fast", () => {
+      // Same shape as the fuzzer input that hit the hang detector: one rule
+      // repeated until the stylesheet is tens of kilobytes.
+      const rule = ".foo { color-scheme: only foo dark bar; }\n";
+      const source = Buffer.alloc(rule.length * 1000, rule).toString();
+      expect(minify_test_with_options(source, "")).toEqual(".foo{color-scheme:dark only}");
+    });
   });
 
   describe("page", () => {

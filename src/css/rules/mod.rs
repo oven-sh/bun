@@ -930,6 +930,32 @@ impl StyleRuleKeyMap {
 
 // ─── merge_style_rules ─────────────────────────────────────────────────────
 
+/// Remove declarations from `existing` that are exactly duplicated (same
+/// property, equal value) by a declaration in `incoming`.
+///
+/// Used when merging same-selector rules: the incoming declarations are
+/// appended *after* the existing ones, so dropping the earlier identical copy
+/// cannot change the cascade in any browser. It does, however, keep the merged
+/// block from growing by one copy per duplicated source rule — without this,
+/// every merge re-minifies an ever-growing declaration list and minifying a
+/// stylesheet made of thousands of identical rules becomes quadratic.
+fn remove_duplicate_declarations<'a, 'b>(
+    existing: &mut css::DeclarationList<'a>,
+    incoming: &css::DeclarationList<'b>,
+) {
+    if existing.is_empty() || incoming.is_empty() {
+        return;
+    }
+    let mut i = 0;
+    while i < existing.len() {
+        if incoming.iter().any(|new| new.eql(&existing[i])) {
+            existing.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
 /// Merge `sty` into `last_style_rule` if their selectors/declarations allow.
 /// Returns `true` if merged (caller should drop `sty`).
 pub fn merge_style_rules<R>(
@@ -947,6 +973,14 @@ pub fn merge_style_rules<R>(
         && last_style_rule.rules.v.is_empty()
         && (!context.css_modules || sty.loc.source_index == last_style_rule.loc.source_index)
     {
+        remove_duplicate_declarations(
+            &mut last_style_rule.declarations.declarations,
+            &sty.declarations.declarations,
+        );
+        remove_duplicate_declarations(
+            &mut last_style_rule.declarations.important_declarations,
+            &sty.declarations.important_declarations,
+        );
         last_style_rule
             .declarations
             .declarations

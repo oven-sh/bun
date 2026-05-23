@@ -1324,7 +1324,20 @@ pub fn parseIntoBinaryLockfile(
                 };
                 const parent_str = name_str[0..split_at];
                 const child_str = name_str[split_at + 1 ..];
-                const parent_hash = String.Builder.stringHash(parent_str);
+                const parent_name_stripped = name_stripped: {
+                    if (parent_str.len > 0 and parent_str[0] == '@') {
+                        const first_slash = strings.indexOfChar(parent_str, '/') orelse break :name_stripped parent_str;
+                        if (strings.indexOfChar(parent_str[first_slash + 1 ..], '@')) |at_idx| {
+                            break :name_stripped parent_str[0 .. first_slash + 1 + at_idx];
+                        }
+                        break :name_stripped parent_str;
+                    }
+                    if (strings.indexOfChar(parent_str, '@')) |at_idx| {
+                        break :name_stripped parent_str[0..at_idx];
+                    }
+                    break :name_stripped parent_str;
+                };
+                const parent_hash = String.Builder.stringHash(parent_name_stripped);
                 const child_hash = String.Builder.stringHash(child_str);
                 const child_name = try string_buf.appendWithHash(child_str, child_hash);
                 const child_version_sliced = version.sliced(string_buf.bytes.items);

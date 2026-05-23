@@ -3970,3 +3970,19 @@ describe("export of a block-scoped function declaration", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe("minifyWhitespace keeps the space before keyword operators", () => {
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+
+  it("between a single-character identifier and 'instanceof'", () => {
+    expect(minifier.transformSync("x instanceof y")).toBe("x instanceof y;");
+  });
+
+  it("between a single-character identifier and 'in'", () => {
+    expect(minifier.transformSync("x in y")).toBe("x in y;");
+  });
+
+  it("between a numeric literal and 'in'", () => {
+    expect(minifier.transformSync("1 in y")).toBe("1 in y;");
+  });
+});

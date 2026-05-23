@@ -2223,6 +2223,12 @@ impl<'a> PackageInstaller<'a> {
     ) -> bool {
         let mut scripts: PackageScripts =
             self.lockfile().packages.items_scripts()[package_id as usize];
+        // Main-thread-only caller: no concurrent `trusted_dependencies`
+        // writer exists in the hoisted installer, so the lookup needs no
+        // synchronization.
+        let trusted_for_node_gyp =
+            self.lockfile()
+                .has_trusted_dependency(folder_name, folder_name, resolution);
         let log = self.manager().log_mut();
         let scripts_list = match scripts.get_list(
             log,
@@ -2230,6 +2236,7 @@ impl<'a> PackageInstaller<'a> {
             package_path,
             folder_name,
             resolution,
+            trusted_for_node_gyp,
         ) {
             Ok(v) => v,
             Err(err) => {

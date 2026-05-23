@@ -1697,20 +1697,26 @@ impl Task {
 
                         let mut log = Log::init();
 
-                        // `get_list` re-reads `lockfile.trusted_dependencies`
-                        // (for the node-gyp rebuild heuristic), so it needs the
-                        // same serialization against concurrent inserts as the
-                        // trust check above. Dropped before the writer below.
-                        let scripts_list = {
+                        // `get_list`'s node-gyp rebuild heuristic needs the
+                        // same `trusted_dependencies` lookup as the trust
+                        // check above (but keyed on the folder name for both
+                        // arguments). Compute it under the mutex so the read
+                        // serializes with concurrent inserts, without holding
+                        // the lock across `get_list`'s filesystem stat /
+                        // package.json parse. Dropped before the writer below.
+                        let folder_name = dep.name.slice(string_buf);
+                        let trusted_for_node_gyp = {
                             let _lock = installer.trusted_dependencies_mutex.lock_guard();
-                            pkg_scripts.get_list(
-                                &mut log,
-                                lockfile,
-                                &mut pkg_cwd,
-                                dep.name.slice(string_buf),
-                                &pkg_res,
-                            )
+                            lockfile.has_trusted_dependency(folder_name, folder_name, &pkg_res)
                         };
+                        let scripts_list = pkg_scripts.get_list(
+                            &mut log,
+                            lockfile,
+                            &mut pkg_cwd,
+                            folder_name,
+                            &pkg_res,
+                            trusted_for_node_gyp,
+                        );
                         let scripts_list = match scripts_list {
                             Ok(v) => v,
                             Err(err) => {

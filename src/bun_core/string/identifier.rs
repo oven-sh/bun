@@ -85,10 +85,6 @@ pub fn is_identifier_utf16(text: &[u16]) -> bool {
 // PORT NOTE: Zig `u21` codepoint type → `u32`. Callers must pass cp <= 0x10FFFF
 // (stage1 tables are sized for that range); out-of-range indexes panic.
 
-mod id_start_es5 {}
-
-mod id_continue_es5 {}
-
 /// isIDStartESNext checks if a codepoint is valid in the isIDStartESNext category
 pub(crate) fn is_id_start_es_next(cp: u32) -> bool {
     let high = (cp >> 8) as usize;

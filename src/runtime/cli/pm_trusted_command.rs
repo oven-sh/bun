@@ -637,7 +637,7 @@ impl TrustCommand {
                     .put(
                         bun_semver::string::Builder::string_hash(name)
                             as install::TruncatedPackageNameHash,
-                        (),
+                        Box::<[u8]>::from(&**name),
                     )?;
             }
         }

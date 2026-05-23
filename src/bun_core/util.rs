@@ -5121,7 +5121,22 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
                 }
             };
 
-            let req = spawn_ffi::BunSpawnRequest::default();
+            // dup2(n, n) for fds 0..=2 — posix_spawn_bun's Dup2 same-fd path
+            // clears CLOEXEC and bumps the close-range floor past stdio. An
+            // empty actions list would start the close-range at fd 1.
+            let inherit_stdio: [spawn_ffi::Action; 3] =
+                core::array::from_fn(|fd| spawn_ffi::Action {
+                    kind: spawn_ffi::FileActionType::Dup2,
+                    fds: [fd as core::ffi::c_int, fd as core::ffi::c_int],
+                    ..Default::default()
+                });
+            let req = spawn_ffi::BunSpawnRequest {
+                actions: spawn_ffi::ActionsList {
+                    ptr: inherit_stdio.as_ptr(),
+                    len: inherit_stdio.len(),
+                },
+                ..Default::default()
+            };
             let mut pid: core::ffi::c_int = 0;
             // SAFETY: exe/ptrs/environ are NUL-terminated; req layout matches C.
             let rc = spawn_ffi::posix_spawn_bun(

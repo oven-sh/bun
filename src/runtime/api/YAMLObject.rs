@@ -270,7 +270,14 @@ impl Stringifier {
                     self.array_item_counter += 1;
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    let name_entry = self.prop_names.get_or_put(prop_name.byte_slice())?;
+                    // Unsafe names use generated `value<counter>` anchors, keyed on
+                    // "value" so the counter is shared with literal "value" properties.
+                    let key: &[u8] = if can_use_prop_name_as_anchor(prop_name) {
+                        prop_name.byte_slice()
+                    } else {
+                        b"value"
+                    };
+                    let name_entry = self.prop_names.get_or_put(key)?;
                     if name_entry.found_existing {
                         *name_entry.value_ptr += 1;
                     } else {
@@ -408,7 +415,7 @@ impl Stringifier {
                     self.builder.append_usize(*counter);
                 }
                 AnchorAliasName::PropValue { prop_name, counter } => {
-                    if prop_name.length() == 0 {
+                    if !can_use_prop_name_as_anchor(prop_name) {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
@@ -672,6 +679,56 @@ impl Stringifier {
 /// Does this object property value need a newline? True for arrays and objects.
 fn prop_value_needs_newline(value: JSValue) -> bool {
     !value.is_number() && !value.is_boolean() && !value.is_null() && !value.is_string()
+}
+
+/// Can this property name be emitted verbatim as an anchor/alias name?
+/// Anchor names can't be quoted or escaped, so only unambiguously safe characters
+/// are reused; anything else falls back to a generated `value<counter>` name.
+fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
+    if str.is_empty() {
+        return false;
+    }
+
+    for i in 0..str.length() {
+        match str.char_at(i) {
+            0x30..=0x39 /* '0'..='9' */
+            | 0x41..=0x5a /* 'A'..='Z' */
+            | 0x61..=0x7a /* 'a'..='z' */
+            | 0x2d /* '-' */
+            | 0x2e /* '.' */
+            | 0x5f /* '_' */ => {}
+            _ => return false,
+        }
+    }
+
+    !matches_generated_anchor_name(str)
+}
+
+/// `value0`, `item12`, `root1`, ... — names that could duplicate a generated anchor name.
+fn matches_generated_anchor_name(str: &BunString) -> bool {
+    const PREFIXES: [&[u8]; 3] = [b"value", b"item", b"root"];
+
+    'next_prefix: for prefix in PREFIXES {
+        if str.length() <= prefix.len() {
+            continue;
+        }
+
+        for (i, &byte) in prefix.iter().enumerate() {
+            if str.char_at(i) != u16::from(byte) {
+                continue 'next_prefix;
+            }
+        }
+
+        for i in prefix.len()..str.length() {
+            if !matches!(str.char_at(i), 0x30..=0x39 /* '0'..='9' */) {
+                continue 'next_prefix;
+            }
+        }
+
+        return true;
+    }
+
+    false
 }
 
 fn string_needs_quotes(str: &BunString) -> bool {

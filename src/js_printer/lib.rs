@@ -2231,7 +2231,10 @@ pub mod __gated_printer {
 
         #[inline]
         pub fn print_space_before_identifier(&mut self) {
-            if self.writer.written() > 0
+            // `writer.written()` starts at -1, so `>= 0` means "at least one byte has
+            // been written". Using `> 0` here would skip the space when exactly one
+            // byte precedes a keyword (e.g. `x instanceof y` minified to `xinstanceof y`).
+            if self.writer.written() >= 0
                 && (lexer::is_identifier_continue(self.writer.prev_char() as i32)
                     || self.writer.written() == self.prev_reg_exp_end)
             {

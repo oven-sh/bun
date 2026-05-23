@@ -384,10 +384,15 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if trusted_dependencies
-                            .contains(&(dep.name_hash as TruncatedPackageNameHash))
+                        if let Some(trusted_name) =
+                            trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
                         {
-                            found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                            // The `is_empty()` arm keeps hash-only entries from a
+                            // legacy bun.lockb (no name stored) when migrating to
+                            // bun.lock.
+                            if trusted_name.is_empty() || **trusted_name == *dep.name.slice(buf) {
+                                found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                            }
                         }
                     }
                 }
@@ -1537,14 +1542,24 @@ pub fn parse_into_binary_lockfile(
             .items
             .slice()
         {
-            if !dep.is_string() {
+            let ExprData::EString(s) = &dep.data else {
                 log.add_error(Some(source), dep.loc, b"Expected a string");
                 return Err(ParseError::InvalidTrustedDependenciesSet);
-            }
+            };
+            // JSON-parsed strings are always UTF-8; the UTF-16 arm is kept for
+            // the unreachable branch so the stored name and the hash agree.
+            let name: Box<[u8]> = if s.is_utf8() {
+                Box::from(s.slice8())
+            } else {
+                debug_assert!(
+                    false,
+                    "trustedDependencies: UTF-16 EString from JSON parser"
+                );
+                strings::to_utf8_alloc(s.slice16()).into_boxed_slice()
+            };
             let name_hash: TruncatedPackageNameHash =
-                dep.as_string_hash_utf8(StringBuilder::string_hash)?
-                    .unwrap() as TruncatedPackageNameHash;
-            trusted_dependencies.insert(name_hash, ());
+                StringBuilder::string_hash(&name) as TruncatedPackageNameHash;
+            trusted_dependencies.insert(name_hash, name);
         }
 
         lockfile.trusted_dependencies = Some(trusted_dependencies);

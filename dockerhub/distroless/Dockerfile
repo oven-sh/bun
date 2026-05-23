@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM debian:trixie-slim AS build
 
 # https://github.com/oven-sh/bun/releases
@@ -86,11 +87,10 @@ EOF
 # / pthread_cancel, which is how `worker_threads` terminates workers. The
 # base image ships libc but not libgcc, so without this copy
 # worker.terminate() prints "libgcc_s.so.1 must be installed for pthread_exit
-# to work" and the worker thread aborts. One COPY per supported arch — the
-# `[1]` char-class glob expands to the single file on the matching arch and
-# to zero files on the other, which BuildKit treats as a no-op. Destination
-# is `/lib/<arch>/`, matching where the base image keeps libc.
-COPY --from=build /usr/lib/x86_64-linux-gnu/libgcc_s.so.[1] /lib/x86_64-linux-gnu/
-COPY --from=build /usr/lib/aarch64-linux-gnu/libgcc_s.so.[1] /lib/aarch64-linux-gnu/
+# to work" and the worker thread aborts. `--parents` preserves the
+# `/usr/lib/<arch>-linux-gnu/` prefix so the file lands alongside libc in
+# the dynamic linker's search path. Only the current build arch's subdir
+# exists in the build stage; the `*` matches it and nothing else.
+COPY --from=build --parents /usr/lib/*-linux-gnu/libgcc_s.so.1 /
 
 ENTRYPOINT ["/usr/local/bin/bun"]

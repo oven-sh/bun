@@ -2991,7 +2991,9 @@ impl Data {
                 _ => PrimitiveType::Unknown,
             },
 
-            Data::EInlinedEnum(inlined) => inlined.value.data.known_primitive_with_check(stack_check),
+            Data::EInlinedEnum(inlined) => {
+                inlined.value.data.known_primitive_with_check(stack_check)
+            }
 
             _ => PrimitiveType::Unknown,
         }

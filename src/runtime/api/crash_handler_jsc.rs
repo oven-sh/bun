@@ -84,8 +84,7 @@ pub mod js_bindings {
         if Environment::ENABLE_ASAN {
             crash_handler::crash_handler(
                 crash_handler::CrashReason::SegmentationFault(0xDEADBEEF),
-                None,
-                Some(crash_handler::debug::return_address()),
+                crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
             );
         }
         // SAFETY: intentionally dereferencing an invalid address to trigger SIGSEGV for testing.

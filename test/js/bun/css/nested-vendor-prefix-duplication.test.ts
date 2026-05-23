@@ -18,7 +18,7 @@ import path from "node:path";
 // the final prefix pass of their ancestor, so the output stays linear in
 // nesting depth.
 
-const { minifyTest } = cssInternals;
+const { minifyTest, prefixTest } = cssInternals;
 
 // Safari 8: `:fullscreen` requires the `-webkit-` prefix and CSS nesting is
 // unsupported, so nesting gets compiled away and selectors get prefixed.
@@ -64,6 +64,16 @@ test("unprefixed nested rules still expand once per ancestor prefix pass", () =>
   expect(output).toBe(":-webkit-full-screen div{color:red}:fullscreen div{color:red}");
 });
 
+test("pretty-printed output has no dangling separators around skipped passes", () => {
+  // Non-minified output: a non-final prefix pass of the outer rule emits
+  // nothing (its only nested rule is prefixed and deferred to the final
+  // pass), so no blank-line separator may be emitted for it either.
+  const output = prefixTest(nestedFullscreen(2, "color: red;"), "", safari8);
+  expect(output).toBe(
+    ":-webkit-full-screen :-webkit-full-screen {\n  color: red;\n}\n\n:fullscreen :fullscreen {\n  color: red;\n}\n",
+  );
+});
+
 test("bun build --target=browser does not blow up on deeply nested prefixed selectors", async () => {
   // Mirrors the fuzzer input: deeply nested `:fullscreen` blocks. The default
   // browser targets (safari 14) require the `-webkit-` prefix for
@@ -95,4 +105,4 @@ test("bun build --target=browser does not blow up on deeply nested prefixed sele
   expect(output.length).toBeLessThan(10_000);
   expect(output).toContain(Array(depth).fill(":-webkit-full-screen").join(" "));
   expect(output).toContain(Array(depth).fill(":fullscreen").join(" "));
-}, 120_000);
+});

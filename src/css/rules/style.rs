@@ -86,9 +86,7 @@ impl<R> StyleRule<R> {
             for &prefix in VendorPrefix::FIELDS {
                 if self.vendor_prefix.contains(prefix) {
                     remaining_prefixes.remove(prefix);
-                    if first_rule {
-                        first_rule = false;
-                    } else {
+                    if !first_rule {
                         if !dest.minify {
                             dest.write_char(b'\n')?; // no indent
                         }
@@ -96,7 +94,15 @@ impl<R> StyleRule<R> {
                     }
 
                     dest.vendor_prefix = prefix;
+                    let (line, col) = (dest.line, dest.col);
                     self.to_css_base(dest, remaining_prefixes.is_empty())?;
+                    // A non-final pass emits nothing when the rule has no
+                    // declarations of its own and all of its nested rules are
+                    // deferred to the final pass; don't write a separator
+                    // after such a pass.
+                    if dest.line != line || dest.col != col {
+                        first_rule = false;
+                    }
                 }
             }
 

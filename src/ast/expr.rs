@@ -2845,6 +2845,13 @@ impl Data {
     }
 
     pub fn known_primitive(&self) -> PrimitiveType {
+        // Recurses through `??`/`&&`/`||`/`+` operands, ternaries, and unary
+        // values. Those chains are built and visited iteratively, so they can
+        // be deeper than the call stack allows; answer `Unknown` (skip the
+        // optimization) instead of overflowing.
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            return PrimitiveType::Unknown;
+        }
         match self {
             Data::EBigInt(_) => PrimitiveType::Bigint,
             Data::EBoolean(_) | Data::EBranchBoolean(_) => PrimitiveType::Boolean,

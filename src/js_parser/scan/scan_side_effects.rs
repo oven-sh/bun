@@ -311,8 +311,8 @@ impl SideEffects {
                     | Op::Code::BinGt
                     | Op::Code::BinLe
                     | Op::Code::BinGe => {
-                        if Self::is_primitive_with_side_effects(&bin.left.data)
-                            && Self::is_primitive_with_side_effects(&bin.right.data)
+                        if Self::is_primitive_with_side_effects(p, &bin.left.data)
+                            && Self::is_primitive_with_side_effects(p, &bin.right.data)
                         {
                             let left = bin.left;
                             let right = bin.right;
@@ -735,7 +735,17 @@ impl SideEffects {
         }
     }
 
-    pub fn is_primitive_with_side_effects(data: &ExprData) -> bool {
+    pub fn is_primitive_with_side_effects<'a, const TS: bool, const SCAN: bool>(
+        p: &P<'a, TS, SCAN>,
+        data: &ExprData,
+    ) -> bool {
+        // Recurses through `&&`/`||`/`??` operands and ternary branches, which
+        // are built and visited iteratively and so can be deeper than the call
+        // stack allows; report the stack overflow instead of crashing.
+        if !p.stack_check.is_safe_to_recurse() {
+            p.report_stack_overflow(p.lexer.loc());
+            return false;
+        }
         match data {
             ExprData::ENull(_)
             | ExprData::EUndefined(_)
@@ -780,17 +790,17 @@ impl SideEffects {
                 Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr | Op::Code::BinNullishCoalescing
                 | Op::Code::BinLogicalAndAssign | Op::Code::BinLogicalOrAssign
                 | Op::Code::BinNullishCoalescingAssign => {
-                    Self::is_primitive_with_side_effects(&e.left.data)
-                        && Self::is_primitive_with_side_effects(&e.right.data)
+                    Self::is_primitive_with_side_effects(p, &e.left.data)
+                        && Self::is_primitive_with_side_effects(p, &e.right.data)
                 }
                 Op::Code::BinComma => {
-                    Self::is_primitive_with_side_effects(&e.right.data)
+                    Self::is_primitive_with_side_effects(p, &e.right.data)
                 }
                 _ => false,
             },
             ExprData::EIf(e) => {
-                Self::is_primitive_with_side_effects(&e.yes.data)
-                    && Self::is_primitive_with_side_effects(&e.no.data)
+                Self::is_primitive_with_side_effects(p, &e.yes.data)
+                    && Self::is_primitive_with_side_effects(p, &e.no.data)
             }
             _ => false,
         }

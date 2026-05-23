@@ -3688,6 +3688,13 @@ it("deeply nested expressions error instead of crashing the process", () => {
       n => repeat("f(", n) + "1" + repeat(")", n),
       n => repeat("[", n) + "1" + repeat("]", n),
       n => "void " + repeat("- ", n) + "1",
+      // a scope-creating leaf inside the deep expression plus a sibling
+      // statement that pushes another scope
+      n => repeat("[", n) + "() => 1" + repeat("]", n) + ";{ let x; }",
+      // left-leaning chains are parsed/visited iteratively, then fed whole
+      // into the recursive side-effect/primitive-type analyses
+      n => "void ((x" + repeat(" ?? x", n) + ") < 1)",
+      n => "(a" + repeat(" && a", n) + ") == 1;",
     ];
     for (const shape of shapes) {
       for (const n of [4000, 20000, 100000]) {
@@ -3720,11 +3727,11 @@ it("running a file with deeply nested unary operators does not crash the process
     env: bunEnv,
   });
 
-  // Depending on the available stack this either evaluates fine or reports a
-  // clean "Maximum call stack size exceeded" error; it must never die from a
-  // signal.
+  // Depending on the available stack this either evaluates fine (exit 0) or
+  // reports a clean "Maximum call stack size exceeded" error (exit 1); it must
+  // never die from a signal or a crash handler exit code.
   expect(signalCode ?? undefined).toBeUndefined();
-  expect(exitCode).not.toBeNull();
+  expect([0, 1]).toContain(exitCode);
 });
 
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {

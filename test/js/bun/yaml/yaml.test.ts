@@ -1180,6 +1180,15 @@ folded: >
           expect(() => YAML.parse("{? a: b: c}\n")).toThrow();
         });
 
+        test.todo("flow-seq pair value on next line at column ≤ key indent", () => {
+          // [149]/[80] s-separate(n,FLOW-IN) = s-separate-lines, so a newline
+          // before the value at any indentation is valid. Currently rejects:
+          // parse_block_mapping's block-semantics e-node check (line!=, indent<=)
+          // fires when reached via the implicit-pair path in flow context.
+          expect(YAML.parse('["a":\nb]\n')).toEqual([{ a: "b" }]);
+          expect(YAML.parse("[a: \nb]\n")).toEqual([{ a: "b" }]);
+        });
+
         test.todo("multiline JSON-style key check ordering", () => {
           // [148] c-ns-flow-map-json-key-entry uses s-separate which spans
           // lines; either accept all JSON-style multiline keys (eemeli) or

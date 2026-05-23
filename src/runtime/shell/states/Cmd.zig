@@ -589,20 +589,9 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                     } else if (this.node.redirect.stderr) {
                         try spawn_args.stdio[stderr_no].extractBlob(global, .{ .Blob = blob }, stderr_no);
                     }
-                } else if (try jsc.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream_| {
-                    if (!this.node.redirect.stdin) {
-                        return global.throwInvalidArguments("ReadableStream can only be redirected to stdin", .{});
-                    }
-                    var rstream = rstream_;
-                    if (rstream.toAnyBlob(global)) |blob| {
-                        // File/Bytes streams that are already complete can skip the async pipe path.
-                        try spawn_args.stdio[stdin_no].extractBlob(global, blob, stdin_no);
-                    } else {
-                        if (rstream.isDisturbed(global)) {
-                            return global.ERR(.INVALID_STATE, "ReadableStream has already been used", .{}).throw();
-                        }
-                        spawn_args.stdio[stdin_no] = .{ .readable_stream = rstream };
-                    }
+                } else if (try jsc.WebCore.ReadableStream.fromJS(this.base.interpreter.jsobjs[val.idx], global)) |rstream| {
+                    _ = rstream;
+                    @panic("TODO SHELL READABLE STREAM");
                 } else if (this.base.interpreter.jsobjs[val.idx].as(jsc.WebCore.Response)) |req| {
                     req.getBodyValue().toBlobIfPossible();
                     if (this.node.redirect.stdin) {

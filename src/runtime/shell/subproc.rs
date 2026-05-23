@@ -943,11 +943,12 @@ impl ShellSubprocess {
             // detach never happens, so the controller's dtor WILL call
             // `finalize()` → `deref()` on the sink. If we dropped the
             // `FileSinkPtr` here (via `abort_after_failed_start`), the sink
-            // would be freed and the later GC finalize would UAF (this same UAF
-            // exists in `Bun.spawn`'s equivalent error path on main). Forget the
-            // `FileSinkPtr` so the controller owns the remaining +1 and frees
-            // the sink on GC. (ManuallyDrop rather than mem::forget — clippy
-            // rejects forget on types with Drop fields.)
+            // would be freed and the later GC finalize would UAF (Bun.spawn's
+            // equivalent error path in api/bun/subprocess/Writable.rs handles
+            // this the same way). Forget the `FileSinkPtr` so the controller
+            // owns the remaining +1 and frees the sink on GC. (ManuallyDrop
+            // rather than mem::forget — clippy rejects forget on types with
+            // Drop fields.)
             if let Writable::Pipe(_) = &subproc.stdin {
                 let _ = core::mem::ManuallyDrop::new(core::mem::replace(
                     &mut subproc.stdin,

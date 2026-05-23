@@ -146,10 +146,10 @@ pub struct Printer<'a> {
     pub ctx: Option<&'a css::StyleContext<'a>>,
     /// Number of parent-selector substitutions performed for `&` while
     /// serializing the current rule prelude with compiled nesting (targets
-    /// without CSS nesting support). Reset per prelude in
-    /// `StyleRule::to_css_base` and bounded in `serialize::serialize_nesting`
-    /// so deeply nested rules with multiple `&` references per level cannot
-    /// expand exponentially.
+    /// without CSS nesting support). Reset per prelude (in
+    /// `StyleRule::to_css_base` and `ScopeRule::to_css`) and bounded in
+    /// `serialize::serialize_nesting` so deeply nested rules with multiple
+    /// `&` references per level cannot expand exponentially.
     pub nesting_expansions: u32,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,

@@ -1446,7 +1446,9 @@ pub(crate) mod strings_impl {
     /// `strncasecmp` stop at `b`'s sentinel and report a mismatch when `a` was
     /// longer; Rust slices carry no terminator, so reject that case up front
     /// instead of reading past `b` (e.g. the CSS An+B parser comparing an
-    /// arbitrary ident against `b"n"`).
+    /// arbitrary ident against `b"n"`). Callers are still expected to pass
+    /// non-empty slices (mirrors Zig's `bun.unsafeAssert`; see the
+    /// `debug_assert`s below).
     #[inline]
     pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
         if check_len {

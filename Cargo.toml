@@ -19,8 +19,6 @@ members = [
   "src/js",
   "src/libarchive",
   "src/md",
-  "src/meta",
-  "src/node-fallbacks",
   "src/paths",
   "src/resolver",
   "src/safety",
@@ -50,7 +48,6 @@ members = [
   "src/js_parser",
   "src/js_parser_jsc",
   "src/js_printer",
-  "src/libarchive_sys",
   "src/libdeflate_sys",
   "src/libuv_sys",
   "src/ast",
@@ -64,7 +61,6 @@ members = [
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
-  "src/url_jsc",
   "src/zlib_sys",
   "src/dispatch",
   "src/brotli",
@@ -81,7 +77,6 @@ members = [
   "src/brotli_sys",
   "src/bun_alloc",
   "src/mimalloc_sys",
-  "src/picohttp_sys",
   "src/semver_jsc",
   "src/standalone_graph",
   "src/uws",
@@ -338,7 +333,6 @@ memchr = "2"
 rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
 bitflags = "2"
 thiserror = "2"
-crossbeam = "0.8"
 smallvec = "1"
 bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
@@ -360,8 +354,6 @@ bun_io = { path = "src/io" }
 bun_js = { path = "src/js" }
 bun_libarchive = { path = "src/libarchive" }
 bun_md = { path = "src/md" }
-bun_meta = { path = "src/meta" }
-bun_node-fallbacks = { path = "src/node-fallbacks" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
@@ -391,7 +383,6 @@ bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
 bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
-bun_libarchive_sys = { path = "src/libarchive_sys" }
 bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
@@ -405,7 +396,6 @@ bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
-bun_url_jsc = { path = "src/url_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
 bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
@@ -422,7 +412,6 @@ bun_boringssl = { path = "src/boringssl" }
 bun_brotli_sys = { path = "src/brotli_sys" }
 bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
-bun_picohttp_sys = { path = "src/picohttp_sys" }
 bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }

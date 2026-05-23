@@ -472,6 +472,21 @@ impl<R> CssRuleList<R> {
                 continue;
             }
 
+            // While re-serializing nested rules for a non-final vendor prefix
+            // pass of an ancestor style rule, skip style rules that carry
+            // their own vendor prefixes: they override `dest.vendor_prefix`,
+            // so this pass would emit an exact duplicate of what the final
+            // pass emits.
+            if dest.skip_prefixed_nested_rules
+                && match rule {
+                    CssRule::Style(style) => !style.vendor_prefix.is_empty(),
+                    CssRule::Nesting(nesting) => !nesting.style.vendor_prefix.is_empty(),
+                    _ => false,
+                }
+            {
+                continue;
+            }
+
             // Skip @import rules if collecting dependencies.
             if let CssRule::Import(import_rule) = rule
                 && dest.remove_imports

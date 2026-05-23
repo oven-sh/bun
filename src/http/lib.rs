@@ -3772,6 +3772,15 @@ impl<'a> HTTPClient<'a> {
     fn do_redirect_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
         bun_core::scoped_log!(fetch, "doRedirectMultiplexed");
+        // See `do_redirect`: the cross-origin redirect must drop the
+        // per-request Host override before the follow-up connection derives
+        // its SNI / certificate-verification hostname. The h2/h3 path never
+        // reaches `do_redirect`'s consume-and-clear, so mirror it here before
+        // `state.reset()` discards the flag.
+        if self.state.flags.clear_hostname_on_redirect {
+            self.state.flags.clear_hostname_on_redirect = false;
+            self.hostname = None;
+        }
         if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
             self.flags.is_streaming_request_body = false;
         }

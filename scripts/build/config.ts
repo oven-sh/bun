@@ -692,8 +692,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 
-  // Static SQLite: off on Apple (uses system), on elsewhere
-  const staticSqlite = partial.staticSqlite ?? !darwin;
+  // Static SQLite: always on. We ship the bundled amalgamation so every
+  // platform gets the same (up-to-date) SQLite. Apple's system
+  // libsqlite3.dylib lags by years (10+ minor versions on macOS 15) and
+  // ships with SQLITE_OMIT_LOAD_EXTENSION, so dlopen'ing it cost macOS
+  // users loadExtension() AND left them on a release with known FTS5
+  // corruption (#31247). setCustomSQLite() is still honored so you can
+  // point bun:sqlite at a homebrew/system build if you need a specific one.
+  const staticSqlite = partial.staticSqlite ?? true;
 
   // Static libatomic: on by default. Arch/Manjaro don't ship libatomic.a —
   // those users pass --static-libatomic=off. Not auto-detected: the link

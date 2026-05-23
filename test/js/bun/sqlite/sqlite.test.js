@@ -1544,3 +1544,40 @@ it("internal SQL helpers reject out-of-range database handles", async () => {
     exitCode: 0,
   });
 });
+
+describe("bundled sqlite (#31247)", () => {
+  // Regression: on macOS, bun:sqlite used to dlopen the system
+  // /usr/lib/libsqlite3.dylib, which on macOS 15 is sqlite 3.43.2 — years
+  // behind the bundled amalgamation (3.53.0) and affected by a known FTS5
+  // corruption bug. bun now statically links the bundled SQLite on every
+  // platform, so sqlite_version() and FTS5 external-content tables behave
+  // the same on macOS, linux, and windows.
+
+  // SQLITE_VERSION_NUMBER format: X*1000000 + Y*1000 + Z. Keep the floor at
+  // 3.53.0 so any regression that takes us back to a system dylib is caught.
+  const MIN_SQLITE_VERSION_NUMBER = 3_053_000;
+
+  function versionToNumber(v) {
+    const [maj, min, patch] = v.split(".").map(Number);
+    return maj * 1_000_000 + min * 1_000 + (patch ?? 0);
+  }
+
+  it("ships SQLite >= 3.53.0", () => {
+    const db = new Database(":memory:");
+    const { "sqlite_version()": version } = db.query("SELECT sqlite_version()").get();
+    expect(typeof version).toBe("string");
+    expect(versionToNumber(version)).toBeGreaterThanOrEqual(MIN_SQLITE_VERSION_NUMBER);
+  });
+
+  it("UPDATE on a table with an external-content FTS5 index does not corrupt", () => {
+    // Reproducer from #31247: on sqlite 3.43.2 this throws
+    // "database disk image is malformed" (SQLITE_CORRUPT_VTAB / errno 267).
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE docs (id INTEGER PRIMARY KEY, title TEXT, content TEXT)");
+    db.run("INSERT INTO docs (title, content) VALUES ('a', 'b')");
+    db.run("CREATE VIRTUAL TABLE docs_fts USING fts5(title, content, content='docs', content_rowid='id')");
+    db.run("INSERT INTO docs_fts(docs_fts) VALUES('rebuild')");
+    expect(() => db.run("UPDATE docs SET content = ? WHERE id = ?", ["c", 1])).not.toThrow();
+    expect(() => db.run("DELETE FROM docs WHERE id = ?", [1])).not.toThrow();
+  });
+});

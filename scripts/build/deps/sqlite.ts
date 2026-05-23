@@ -4,9 +4,10 @@
  * Source lives IN THE BUN REPO at src/jsc/bindings/sqlite/ — it's the
  * sqlite3 amalgamation (single .c file). No fetch step; tracked in git.
  *
- * Only built when staticSqlite=true. Otherwise bun dlopen()s the system
- * sqlite at runtime (macOS ships a recent sqlite; most linux distros don't,
- * so static is the default on linux).
+ * Statically linked on every platform so bun:sqlite ships a consistent,
+ * up-to-date SQLite. (Apple's system libsqlite3.dylib is years behind
+ * and has SQLITE_OMIT_LOAD_EXTENSION compiled in.) Users can still point
+ * bun:sqlite at another build at runtime with Database.setCustomSQLite().
  */
 
 import type { Dependency } from "../source.ts";

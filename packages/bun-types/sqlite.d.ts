@@ -311,9 +311,11 @@ declare module "bun:sqlite" {
     /**
      * Load a SQLite3 extension
      *
-     * macOS requires a custom SQLite3 library to be linked because the Apple build of SQLite for macOS disables loading extensions. See {@link Database.setCustomSQLite}
-     *
-     * Bun chooses the Apple build of SQLite on macOS because it brings a ~50% performance improvement.
+     * Bun bundles its own SQLite build with extension loading enabled on every
+     * platform. Older versions of Bun used macOS's system `libsqlite3.dylib`,
+     * which ships with `SQLITE_OMIT_LOAD_EXTENSION` and rejects this method;
+     * if your code used {@link Database.setCustomSQLite} to switch to a build
+     * that also omits extension loading, this method will still throw.
      *
      * @param extension name/path of the extension to load
      * @param entryPoint optional entry point of the extension
@@ -321,15 +323,14 @@ declare module "bun:sqlite" {
     loadExtension(extension: string, entryPoint?: string): void;
 
     /**
-     * Change the dynamic library path to SQLite
+     * Load SQLite from a dynamic library instead of the version bundled with Bun.
      *
-     * @note macOS-only
+     * Pass the path to a `libsqlite3.dylib` / `.so` / `.dll`. Must be called
+     * before the first `new Database()` in the process; SQLite only loads once.
      *
-     * This only works before SQLite is loaded, so
-     * that's before you call `new Database()`.
-     *
-     * It can only be run once because this will load
-     * the SQLite library into the process.
+     * Bun statically links SQLite on every platform, so this is rarely needed.
+     * It's kept for users who want a specific build (e.g. Homebrew's SQLCipher,
+     * or Apple's system SQLite for compatibility).
      *
      * @param path The path to the SQLite library
      */

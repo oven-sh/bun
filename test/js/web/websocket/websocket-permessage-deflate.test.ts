@@ -303,13 +303,13 @@ test("server enforces maxPayloadLength on compressed messages inflated through t
   client.onclose = () => record("close");
 
   // A compressible message within the limit is still delivered and echoed back.
-  client.send("B".repeat(900));
+  client.send(Buffer.alloc(900, "B").toString());
   await waitForEventCount(1);
   expect(events[0]).toBe("message:900");
 
   // A compressible message that inflates past the limit must not be delivered;
   // the server drops the connection instead of echoing it back.
-  client.send("A".repeat(4000));
+  client.send(Buffer.alloc(4000, "A").toString());
   await waitForEventCount(2);
   expect(events[1]).toBe("close");
 

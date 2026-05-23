@@ -1079,11 +1079,12 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         js_message.isString() && (js_code.isEmpty() || js_code.isString()),
         napi_string_expected);
 
-    // napi_create_error-like functions should succeed even when a VM-level
-    // exception is already pending (matching Node.js behavior). We remember
-    // whether an exception was already present on entry so we only report
-    // NEW exceptions that may be raised by our own operations below.
-    bool hadPreexistingException = vm.hasExceptionsAfterHandlingTraps();
+    // napi_create_error and friends must succeed even when a VM-level exception
+    // is already pending (matching Node.js behavior). Our operations (getString
+    // on already-validated strings, createErrorWithCode) do not consult
+    // vm.m_exception and run correctly in its presence. We only detect a NEW
+    // exception that appeared when there was none before.
+    JSC::Exception* preExistingException = vm.exception();
 
     auto wtf_code = js_code.isEmpty() ? WTF::String() : js_code.getString(globalObject);
     auto wtf_message = js_message.getString(globalObject);
@@ -1092,9 +1093,7 @@ static napi_status createErrorWithNapiValues(napi_env env, napi_value code, napi
         createErrorWithCode(vm, globalObject, wtf_code, wtf_message, type),
         globalObject);
 
-    // Surface new exceptions originating from getString() / createErrorWithCode(),
-    // but ignore any exception that was already pending before we entered.
-    if (!hadPreexistingException && vm.hasExceptionsAfterHandlingTraps()) {
+    if (!preExistingException && vm.exception()) {
         return napi_set_last_error(env, napi_pending_exception);
     }
     return napi_set_last_error(env, napi_ok);

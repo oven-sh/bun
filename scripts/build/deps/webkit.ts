@@ -4,11 +4,10 @@
  * From https://github.com/oven-sh/WebKit releases.
  */
 // TEMPORARY: preview build of oven-sh/WebKit#237 (per-item zstd compression
-// of ICU display-name trees). Pinned to the pre-#236 preview commit because
-// Bun's bindings haven't adapted to #236's JSC API changes yet (bun#31169).
-// Replace with the real autobuild-<sha> once both #237 and bun#31169 land.
-// DO NOT MERGE with this value.
-export const WEBKIT_VERSION = "autobuild-preview-pr-237-72c07745";
+// of ICU data). Replace with the real autobuild-<sha> once #237 lands on
+// main. DO NOT MERGE with this value — the --allow-preview-webkit guard
+// below enforces this.
+export const WEBKIT_VERSION = "autobuild-preview-pr-237-83b6a12f";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

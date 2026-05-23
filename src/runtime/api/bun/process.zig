@@ -1051,9 +1051,9 @@ const WaiterThreadPosix = struct {
 };
 
 pub const PosixSpawnOptions = struct {
-    stdin: Stdio = .ignore,
-    stdout: Stdio = .ignore,
-    stderr: Stdio = .ignore,
+    stdin: Stdio = .inherit,
+    stdout: Stdio = .inherit,
+    stderr: Stdio = .inherit,
     ipc: ?bun.FD = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",
@@ -1145,9 +1145,9 @@ pub const WindowsSpawnResult = struct {
 };
 
 pub const WindowsSpawnOptions = struct {
-    stdin: Stdio = .ignore,
-    stdout: Stdio = .ignore,
-    stderr: Stdio = .ignore,
+    stdin: Stdio = .inherit,
+    stdout: Stdio = .inherit,
+    stderr: Stdio = .inherit,
     ipc: ?bun.FD = null,
     extra_fds: []const Stdio = &.{},
     cwd: []const u8 = "",

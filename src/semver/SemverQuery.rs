@@ -33,6 +33,17 @@ pub struct Query {
     pub next: Option<Box<Query>>,
 }
 
+impl Drop for Query {
+    fn drop(&mut self) {
+        // Unlink the chain iteratively so the derived recursive drop glue
+        // can't overflow the stack on very long AND chains.
+        let mut next = self.next.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+        }
+    }
+}
+
 pub struct QueryFormatter<'a> {
     query: &'a Query,
     buffer: &'a [u8],
@@ -132,6 +143,17 @@ unsafe impl Send for List {}
 // SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range`);
 // `&List` exposes no unsynchronized interior mutability.
 unsafe impl Sync for List {}
+
+impl Drop for List {
+    fn drop(&mut self) {
+        // Unlink the chain iteratively so the derived recursive drop glue
+        // can't overflow the stack on very long OR chains.
+        let mut next = self.next.take();
+        while let Some(mut node) = next {
+            next = node.next.take();
+        }
+    }
+}
 
 impl Clone for List {
     fn clone(&self) -> Self {
@@ -369,8 +391,8 @@ impl Group {
         writer.write_str("\"")
     }
 
-    // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by Drop.
-    // PERF(port): recursive Box drop could overflow stack on very long chains.
+    // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
+    // iterative `Drop` impls on `Query` and `List`.
 
     pub fn get_exact_version(&self) -> Option<Version> {
         let range = &self.head.head.range;
@@ -402,7 +424,8 @@ impl Group {
                     },
                     next: None,
                 },
-                ..Default::default()
+                tail: None,
+                next: None,
             },
             ..Default::default()
         }
@@ -995,6 +1018,15 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 }
 
                 i += second_parsed.len as usize + 1;
+            } else if token.tag == TokenTag::None {
+                // No pending comparator token for this chunk, so skip it instead of
+                // emitting a comparator, the same way skipped tags like "boop" in
+                // "1.0.0 || boop" are ignored (any pending "||" is preserved). This
+                // covers a leading "--foo" (treat "--foo" the same as "-foo", example:
+                // foo/bar@1.2.3@--canary.24) as well as a dangling "-" after a skipped
+                // tag, like "1 || - foo".
+                token.wildcard = Wildcard::None;
+                continue;
             } else if count == 0 && token.tag == TokenTag::Version {
                 match parse_result.wildcard {
                     Wildcard::None => {
@@ -1005,14 +1037,6 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     }
                 }
             } else if count == 0 {
-                // From a semver perspective, treat "--foo" the same as "-foo"
-                // example: foo/bar@1.2.3@--canary.24
-                //                         ^
-                if token.tag == TokenTag::None {
-                    is_or = false;
-                    token.wildcard = Wildcard::None;
-                    continue;
-                }
                 list.and_range(&token.to_range(&parse_result.version))?;
             } else if is_or {
                 list.or_range(&token.to_range(&parse_result.version))?;

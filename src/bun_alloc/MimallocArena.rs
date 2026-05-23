@@ -239,7 +239,6 @@ impl MimallocArena {
             HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
             HEAP_NEW_COUNT.fetch_add(1, Ordering::Relaxed);
         }
-        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         // SAFETY: `self.heap` was obtained from `mi_heap_new` and has not been
         // destroyed (we own it). After this call all outstanding allocations
         // are freed; replacing `self.heap` with a fresh heap restores the
@@ -588,7 +587,6 @@ impl Drop for MimallocArena {
         HEAP_DESTROY_COUNT.fetch_add(1, Ordering::Relaxed);
         // Zig: `deinit` → `mi_heap_destroy`. Destroys the heap and bulk-frees
         // every block still allocated in it without running per-block free.
-        crate::ast_alloc::bump_invalidate_heap(self.heap_ptr());
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and
         // is destroyed exactly once here.
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };

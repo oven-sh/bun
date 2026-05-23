@@ -5121,7 +5121,22 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
                 }
             };
 
-            let req = spawn_ffi::BunSpawnRequest::default();
+            // dup2(n, n) for fds 0..=2 — posix_spawn_bun's Dup2 same-fd path
+            // clears CLOEXEC and bumps the close-range floor past stdio. An
+            // empty actions list would start the close-range at fd 1.
+            let inherit_stdio: [spawn_ffi::Action; 3] =
+                core::array::from_fn(|fd| spawn_ffi::Action {
+                    kind: spawn_ffi::FileActionType::Dup2,
+                    fds: [fd as core::ffi::c_int, fd as core::ffi::c_int],
+                    ..Default::default()
+                });
+            let req = spawn_ffi::BunSpawnRequest {
+                actions: spawn_ffi::ActionsList {
+                    ptr: inherit_stdio.as_ptr(),
+                    len: inherit_stdio.len(),
+                },
+                ..Default::default()
+            };
             let mut pid: core::ffi::c_int = 0;
             // SAFETY: exe/ptrs/environ are NUL-terminated; req layout matches C.
             let rc = spawn_ffi::posix_spawn_bun(
@@ -5786,21 +5801,53 @@ pub mod form_data {
 
     /// `FormData.getBoundary` — borrow the `boundary=` value out of a
     /// `Content-Type` header. Returns `None` on malformed quoting.
+    ///
+    /// Parameters are `;`-delimited per RFC 7231 and the parameter *name* must
+    /// be exactly `boundary`, so a different parameter (`xboundary=FAKE`) or a
+    /// `boundary=` substring inside another parameter's value is not picked up
+    /// by an unanchored substring search. A `;` inside a quoted parameter
+    /// value (RFC 7230 quoted-string, `\` escapes the next byte) does not
+    /// delimit parameters.
     pub fn get_boundary(content_type: &[u8]) -> Option<&[u8]> {
-        let idx = ::bstr::ByteSlice::find(content_type, b"boundary=")?;
-        let begin = &content_type[idx + b"boundary=".len()..];
-        if begin.is_empty() {
-            return None;
-        }
-        let end = crate::strings_impl::index_of_char(begin, b';').unwrap_or(begin.len());
-        if begin[0] == b'"' {
-            if end > 1 && begin[end - 1] == b'"' {
-                return Some(&begin[1..end - 1]);
+        let mut rest = content_type;
+        loop {
+            let semi = index_of_unquoted_semicolon(rest)?;
+            rest = &rest[semi + 1..];
+            let Some(begin) =
+                crate::strings_impl::trim_left(rest, b" \t").strip_prefix(b"boundary=")
+            else {
+                continue;
+            };
+            if begin.is_empty() {
+                return None;
             }
-            // Opening quote with no matching closing quote — malformed.
-            return None;
+            let end = crate::strings_impl::index_of_char(begin, b';').unwrap_or(begin.len());
+            if begin[0] == b'"' {
+                if end > 1 && begin[end - 1] == b'"' {
+                    return Some(&begin[1..end - 1]);
+                }
+                // Opening quote with no matching closing quote — malformed.
+                return None;
+            }
+            return Some(&begin[..end]);
         }
-        Some(&begin[..end])
+    }
+
+    /// Index of the next `;` in `s` that is not inside an RFC 7230
+    /// quoted-string (`\` escapes the following byte inside quotes).
+    fn index_of_unquoted_semicolon(s: &[u8]) -> Option<usize> {
+        let mut in_quotes = false;
+        let mut i = 0;
+        while i < s.len() {
+            match s[i] {
+                b'"' => in_quotes = !in_quotes,
+                b'\\' if in_quotes => i += 1,
+                b';' if !in_quotes => return Some(i),
+                _ => {}
+            }
+            i += 1;
+        }
+        None
     }
 
     /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.

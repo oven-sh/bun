@@ -588,6 +588,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     match res.stmt_or_expr {
                         js_ast::StmtOrExpr::Stmt(stmt) => {
                             bad_let_range = None;
+                            // Keep the "let"/"using" declarations visible to the for-in/for-of
+                            // checks below ("forbid_initializers"), like the "var"/"const" arms.
+                            decls_ptr = bun_ast::StoreSlice::new(res.decls.slice());
                             init_ = Some(stmt);
                         }
                         js_ast::StmtOrExpr::Expr(expr) => {
@@ -1687,17 +1690,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.token == T::TColon && !opts.has_decorators() {
                     return Self::parse_labeled_stmt(p, opts, loc, expr.loc, ident.ref_);
                 }
-            }
 
-            if Self::IS_TYPESCRIPT_ENABLED {
-                if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
-                    // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
-                    // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the
-                    // common `SExpr` fall-through keeps a small stack frame.
-                    if let Some(stmt) =
-                        Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
-                    {
-                        return Ok(stmt);
+                if Self::IS_TYPESCRIPT_ENABLED {
+                    if let Some(ts_stmt) = js_lexer::TypescriptStmtKeyword::from_bytes(name) {
+                        // Hand the cold TS-keyword statement forms (`type`/`interface`/`namespace`/
+                        // `module`/`abstract`/`global`/`declare`) to an out-of-line helper so the
+                        // common `SExpr` fall-through keeps a small stack frame.
+                        if let Some(stmt) =
+                            Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
+                        {
+                            return Ok(stmt);
+                        }
                     }
                 }
             }
@@ -1795,15 +1798,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.lexer.is_contextual_keyword(b"global") {
                     p.lexer.next()?;
                     p.lexer.expect(T::TOpenBrace)?;
+                    let scope_index = p.scopes_in_order.len();
                     let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.next()?;
+                    // The statements inside are dropped, so discard any scopes they
+                    // recorded or the visit pass will hit a scope order mismatch.
+                    p.discard_scopes_up_to(scope_index);
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
 
                 // "declare const x: any"
+                let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
                 if let Some(decs) = &opts.ts_decorators {
                     p.discard_scopes_up_to(decs.scope_index);
+                } else {
+                    // The statement is dropped below (or reduced to just its bindings
+                    // for "export declare var" inside a namespace), so discard any
+                    // scopes it recorded or the visit pass will hit a scope order
+                    // mismatch (e.g. "declare foo: bar" parses a labeled statement
+                    // that records a Label scope).
+                    p.discard_scopes_up_to(scope_index);
                 }
 
                 // Unlike almost all uses of "declare", statements that use

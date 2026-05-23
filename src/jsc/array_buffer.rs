@@ -133,6 +133,14 @@ unsafe extern "C" {
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
 }
 
+impl JSValue {
+    /// Releases a pin taken on this value's backing `JSC::ArrayBuffer` by
+    /// [`JSValue::as_pinned_arraybuffer`] or a pinning collector.
+    pub fn unpin_array_buffer(self) {
+        JSC__JSValue__unpinArrayBuffer(self);
+    }
+}
+
 impl ArrayBuffer {
     pub fn is_detached(&self) -> bool {
         self.ptr.is_null()
@@ -140,7 +148,7 @@ impl ArrayBuffer {
 
     /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`].
     pub fn unpin(&self) {
-        JSC__JSValue__unpinArrayBuffer(self.value);
+        self.value.unpin_array_buffer();
     }
 
     // require('buffer').kMaxLength.

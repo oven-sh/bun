@@ -2885,6 +2885,7 @@ pub mod args {
     impl Unprotect for FdVectorIo {
         #[inline]
         fn unprotect(&mut self) {
+            self.buffers.release();
             self.buffers.value.unprotect();
             // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
         }
@@ -2901,6 +2902,9 @@ pub mod args {
                 arguments.protect_eat_next().ok_or_else(|| {
                     ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]"))
                 })?,
+                // The iovec pointers outlive this call on the async path; root
+                // each element and pin its backing store until completion.
+                arguments.will_be_async,
             )?;
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {

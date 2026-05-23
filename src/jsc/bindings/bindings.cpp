@@ -3345,8 +3345,9 @@ bool JSC__JSValue__asArrayBuffer(
 
 // Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
 // transfer()/detach() throw while a native borrower holds a slice into it.
-// `pin` is a no-op on SharedArrayBuffer (already non-detachable). Returns
-// false if `value` has no ArrayBuffer impl.
+// SharedArrayBuffer is never detachable and never moves, so it is left
+// unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
+// impl.
 static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 {
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
@@ -3358,15 +3359,18 @@ static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
 CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 {
     if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
-        buf->pin();
+        if (!buf->isShared())
+            buf->pin();
         return true;
     }
     return false;
 }
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
-    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v)))
-        buf->unpin();
+    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
+        if (!buf->isShared())
+            buf->unpin();
+    }
 }
 
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
@@ -3406,7 +3410,8 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
         // contract allows it).
         auto* buf = view->possiblySharedBuffer();
         if (!buf) return 0;
-        buf->pin();
+        if (!buf->isShared())
+            buf->pin();
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
         return 2;
@@ -3414,7 +3419,8 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();
         if (!buf || buf->isDetached()) return 0;
-        buf->pin();
+        if (!buf->isShared())
+            buf->pin();
         *out_ptr = static_cast<const uint8_t*>(buf->data());
         *out_len = buf->byteLength();
         return 2;
@@ -6560,15 +6566,66 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     return JSC::JSValue::encode(result);
 }
 
-// True when reading an indexed property of `encodedValue` cannot run user
-// code: it is a JSArray with the original structure, a sane prototype chain,
-// and no indexed accessors/interceptors (any butterfly storage shape).
-extern "C" bool Bun__JSArray__canDoFastIndexedAccess(JSC::EncodedJSValue encodedValue)
+// Collects every ArrayBufferView in a JSArray and the (data, byteLength) span
+// of each. Two passes, mirroring Buffer.concat: the first reads every element
+// into a MarkedArgumentBuffer, so any user code an indexed read can run
+// (getters, proxy traps) finishes before the second pass takes raw pointers.
+// A backing store detached during the first pass reads back as a zero-length
+// span.
+//
+// When `pinBuffers` is true, each view's backing ArrayBuffer is materialized
+// and pinned before its data pointer is read, so the span stays valid after
+// control returns to JS (an in-flight async I/O). The caller must balance
+// every pinned element with `JSC__JSValue__unpinArrayBuffer`. SharedArrayBuffer
+// is never detachable and never moves, so it is left unpinned.
+//
+// Returns 0 on success, 1 if the value is not a JSArray or an element is not
+// an ArrayBufferView, 2 on allocation failure, -1 if an exception is pending.
+extern "C" int32_t Bun__JSArray__collectBufferSpans(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue encodedValue,
+    bool pinBuffers,
+    void* ctx,
+    void (*append)(void* ctx, JSC::EncodedJSValue element, void* data, size_t byteLength))
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     if (!value.isCell() || !JSC::isJSArray(value.asCell()))
-        return false;
-    return uncheckedDowncast<JSC::JSArray>(value.asCell())->canDoFastIndexedAccess();
+        return 1;
+    JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(value.asCell());
+
+    JSC::MarkedArgumentBuffer values;
+    values.ensureCapacity(array->length());
+    if (values.hasOverflowed()) [[unlikely]]
+        return 2;
+
+    JSC::forEachInArrayLike(globalObject, array, [&](JSC::JSValue element) -> bool {
+        values.append(element);
+        return true;
+    });
+    RETURN_IF_EXCEPTION(scope, -1);
+    if (values.hasOverflowed()) [[unlikely]]
+        return 2;
+
+    for (unsigned i = 0; i < unsigned(values.size()); i++) {
+        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(values.at(i));
+        if (!view)
+            return 1;
+        if (pinBuffers) {
+            // possiblySharedBuffer() converts a FastTypedArray (GC-movable
+            // storage, no ArrayBuffer yet) into a malloc-backed one and can
+            // repoint m_vector, so it must run before vector() is read.
+            auto* buf = view->possiblySharedBuffer();
+            if (!buf) [[unlikely]]
+                return 2;
+            if (!buf->isShared())
+                buf->pin();
+        }
+        append(ctx, JSC::JSValue::encode(view), view->vector(), view->byteLength());
+    }
+    return 0;
 }
 
 extern "C" const JSC::EncodedJSValue* Bun__JSArray__getContiguousVector(

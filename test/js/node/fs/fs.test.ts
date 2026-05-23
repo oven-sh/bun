@@ -4128,10 +4128,10 @@ it("writevSync does not write bytes from a buffer detached by an index getter du
   closeSync(fd);
   expect(readFileSync(file, "latin1")).toBe("AAAABBBB");
 
-  // An accessor on index 1 could detach element 0's ArrayBuffer while the
-  // argument array is still being converted, after element 0's pointer has
-  // already been captured. Arrays whose elements cannot be read without
-  // running user code are rejected outright.
+  // An accessor on index 1 detaches element 0's ArrayBuffer while the
+  // argument array is still being converted. Every element is read before any
+  // data pointer is captured, so the detached element contributes zero bytes
+  // instead of a dangling pointer.
   const first = new Uint8Array(new ArrayBuffer(16)).fill(0x41);
   const second = new Uint8Array(8).fill(0x42);
   const buffers: Uint8Array[] = [first];
@@ -4147,9 +4147,35 @@ it("writevSync does not write bytes from a buffer detached by an index getter du
 
   fd = openSync(file, "w");
   try {
-    expect(() => writevSync(fd, buffers)).toThrow();
+    expect(writevSync(fd, buffers)).toBe(8);
   } finally {
     closeSync(fd);
   }
-  expect(first.buffer.detached).toBe(false);
+  expect(first.buffer.detached).toBe(true);
+  expect(readFileSync(file, "latin1")).toBe("BBBBBBBB");
+});
+
+it("fs.writev keeps buffers attached while the write is in flight", async () => {
+  using dir = tempDir("fs-writev-pin", {});
+  const file = join(String(dir), "out.bin");
+  const fd = openSync(file, "w");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x43);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  try {
+    fs.writev(fd, [buf], 0, (err, written) => (err ? reject(err) : resolve(written)));
+
+    // The native write runs on the thread pool; the backing store cannot be
+    // detached out from under it.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(false);
+
+    expect(await promise).toBe(8);
+
+    // Released once the write completes.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(true);
+  } finally {
+    closeSync(fd);
+  }
+  expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
 });

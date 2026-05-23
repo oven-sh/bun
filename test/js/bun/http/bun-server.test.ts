@@ -1463,7 +1463,8 @@ test("HEAD request for a Response with an S3 file body reports the object size a
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe("s3-head-ok");
   expect(exitCode).toBe(0);
 });

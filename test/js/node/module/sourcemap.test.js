@@ -209,7 +209,8 @@ console.log("done");`,
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toBe("test.js\ndone\n");
   expect(exitCode).toBe(0);
 });

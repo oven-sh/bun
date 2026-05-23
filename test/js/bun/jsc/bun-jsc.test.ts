@@ -247,7 +247,8 @@ it("deserialize rejects an object reference index outside the deserialized objec
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toBe('rejected\n{"a":1}\n');
   expect(exitCode).toBe(0);
 });
@@ -299,7 +300,8 @@ it("deserialize rejects a typed array whose backing store is not an array buffer
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toBe("rejected\ntrue 1,2,3,4\ntrue 513,1027\n");
   expect(exitCode).toBe(0);
 });

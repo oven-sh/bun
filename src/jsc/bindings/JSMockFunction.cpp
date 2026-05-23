@@ -839,7 +839,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     }
 
     JSC::ArgList args = JSC::ArgList(callframe);
-    JSValue thisValue = callframe->thisValue();
+    JSValue thisValue = callframe->thisValue().toThis(globalObject, ECMAMode::strict());
     JSC::JSArray* argumentsArray = nullptr;
     {
         JSC::ObjectInitializationScope object(vm);

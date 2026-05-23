@@ -449,24 +449,25 @@ describe("useFakeTimers with options", () => {
   });
 });
 
-test("fake timer functions do not return the caller's scope object as `this`", async () => {
+test("jest host functions do not leak the caller's scope object as `this`", async () => {
   // In a sloppy-mode CommonJS module containing a `with` statement, a call through a
-  // scope-resolved binding passes an internal JSC scope object as `this`. Returning it
-  // from useFakeTimers()/setSystemTime() exposed uninitialized (TDZ) bindings and
-  // crashed the process.
+  // scope-resolved binding passes an internal JSC scope object as `this`. Exposing it
+  // through useFakeTimers()/setSystemTime()/mockReturnThis()/mock.contexts gave user
+  // code access to uninitialized (TDZ) bindings and crashed the process.
   using dir = tempDir("fake-timers-this", {
     "leak-this-fixture.cjs": `const useFakeTimers = Bun.jest().jest.useFakeTimers;
 const setSystemTime = Bun.jest().jest.setSystemTime;
-const leakedFromUseFakeTimers = useFakeTimers();
-if (leakedFromUseFakeTimers !== undefined) {
-  const t = typeof leakedFromUseFakeTimers.LaterClass;
-  throw new Error("useFakeTimers() leaked an internal scope object as \`this\` (" + t + ")");
+const mockFn = Bun.jest().jest.fn().mockReturnThis();
+function check(name, leaked) {
+  if (leaked !== undefined) {
+    const t = typeof leaked.LaterClass;
+    throw new Error(name + " leaked an internal scope object as \`this\` (" + t + ")");
+  }
 }
-const leakedFromSetSystemTime = setSystemTime(0);
-if (leakedFromSetSystemTime !== undefined) {
-  const t = typeof leakedFromSetSystemTime.LaterClass;
-  throw new Error("setSystemTime() leaked an internal scope object as \`this\` (" + t + ")");
-}
+check("useFakeTimers()", useFakeTimers());
+check("setSystemTime()", setSystemTime(0));
+check("mockReturnThis()", mockFn());
+check("mock.contexts[0]", mockFn.mock.contexts[0]);
 console.log("ok");
 class LaterClass extends URLSearchParams {}
 with (Object) {}

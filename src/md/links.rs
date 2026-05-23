@@ -35,6 +35,13 @@ pub struct Autolink {
     pub is_email: bool,
 }
 
+/// Characters that can affect bracket matching: the brackets themselves,
+/// backslash escapes, code spans, and (unless HTML spans are disabled) HTML
+/// tags/autolinks. Used to SIMD-skip runs of ordinary text while building the
+/// bracket-pair map.
+const BRACKET_SCAN_CHARS: &[u8] = b"[]\\`<";
+const BRACKET_SCAN_CHARS_NO_HTML: &[u8] = b"[]\\`";
+
 /// Result of matching a `[` against its closing `]`.
 struct BracketScan {
     /// Position of the matching `]`.
@@ -56,25 +63,37 @@ enum BracketLookup {
 /// Bracket-pair map for one inline content slice, built in a single pass so
 /// link processing can find the `]` matching a given `[` without rescanning
 /// the rest of the slice for every opener — that rescan is quadratic on
-/// inputs like `"[".repeat(n)`.
+/// inputs like `"[".repeat(n)`. The backing vec is recycled through
+/// `Parser.bracket_pairs`, so steady-state rendering does not allocate here.
 pub struct BracketMatches {
     /// `(open, close)` position of every `[` seen outside code spans, HTML
     /// tags/autolinks and backslash escapes, ordered by `open`.
     /// `close == UNMATCHED` marks an opener with no matching `]`.
-    pairs: Vec<(usize, usize)>,
+    pairs: Vec<(OFF, OFF)>,
+    /// The slice contains no `]` at all, so every opener is unmatched and
+    /// `pairs` was left empty.
+    no_closers: bool,
 }
 
 impl BracketMatches {
-    const UNMATCHED: usize = usize::MAX;
+    const UNMATCHED: OFF = OFF::MAX;
+
+    /// Hand the backing storage back for reuse by the next inline slice.
+    pub(crate) fn into_storage(self) -> Vec<(OFF, OFF)> {
+        self.pairs
+    }
 
     fn get(&self, open: usize) -> BracketLookup {
-        match self.pairs.binary_search_by_key(&open, |&(o, _)| o) {
+        if self.no_closers {
+            return BracketLookup::Unmatched;
+        }
+        match self.pairs.binary_search_by_key(&(open as OFF), |&(o, _)| o) {
             Ok(idx) => {
                 let close = self.pairs[idx].1;
                 if close == Self::UNMATCHED {
                     BracketLookup::Unmatched
                 } else {
-                    BracketLookup::Matched(close)
+                    BracketLookup::Matched(close as usize)
                 }
             }
             Err(_) => BracketLookup::Unknown,
@@ -83,60 +102,107 @@ impl BracketMatches {
 
     /// Whether any `[` opener was seen strictly between `lo` and `hi`.
     fn has_opener_between(&self, lo: usize, hi: usize) -> bool {
-        let idx = self.pairs.partition_point(|&(o, _)| o <= lo);
-        idx < self.pairs.len() && self.pairs[idx].0 < hi
+        let idx = self.pairs.partition_point(|&(o, _)| (o as usize) <= lo);
+        idx < self.pairs.len() && (self.pairs[idx].0 as usize) < hi
     }
 }
 
 impl Parser<'_> {
     /// Build the bracket-pair map for `content` in a single pass, using the
     /// same tokenization as the matching scan (code spans, HTML tags,
-    /// autolinks and backslash escapes hide brackets).
-    pub fn compute_bracket_matches(&self, content: &[u8]) -> BracketMatches {
-        let mut pairs: Vec<(usize, usize)> = Vec::new();
-        if bun_core::strings::index_of_char(content, b'[').is_none() {
-            return BracketMatches { pairs };
+    /// autolinks and backslash escapes hide brackets). `storage` is the
+    /// recycled backing vec from `Parser.bracket_pairs`.
+    pub fn compute_bracket_matches(
+        &self,
+        content: &[u8],
+        mut storage: Vec<(OFF, OFF)>,
+    ) -> BracketMatches {
+        storage.clear();
+        debug_assert!(content.len() <= OFF::MAX as usize);
+
+        // No '[' means nothing will ever be looked up; no ']' means every
+        // opener is trivially unmatched (e.g. "[".repeat(n)) — skip the walk.
+        if bun_core::immutable::index_of_char(content, b'[').is_none() {
+            return BracketMatches {
+                pairs: storage,
+                no_closers: false,
+            };
         }
-        let mut stack: Vec<usize> = Vec::new();
+        if bun_core::immutable::index_of_char(content, b']').is_none() {
+            return BracketMatches {
+                pairs: storage,
+                no_closers: true,
+            };
+        }
+
+        let scan_chars: &'static [u8] = if self.flags.no_html_spans {
+            BRACKET_SCAN_CHARS_NO_HTML
+        } else {
+            BRACKET_SCAN_CHARS
+        };
+
+        // While an opener is still unmatched, its `close` slot holds the index
+        // of the previous unmatched opener — a stack threaded through the vec
+        // itself, so no separate stack allocation is needed. Whatever is left
+        // on that stack at the end is rewritten to UNMATCHED.
+        let mut top: OFF = BracketMatches::UNMATCHED;
         let mut pos: usize = 0;
         while pos < content.len() {
-            let c = content[pos];
-            if c == b'\\' && pos + 1 < content.len() {
-                pos += 2;
-                continue;
-            }
-            // Skip code spans — they take precedence over brackets (CommonMark §6.3)
-            if c == b'`' {
-                let count = inlines::count_backticks(content, pos);
-                if let Some(end_pos) = self.find_code_span_end(content, pos + count, count) {
-                    pos = end_pos + count;
-                } else {
-                    pos += count;
+            match content[pos] {
+                b'\\' => pos += 2,
+                // Code spans take precedence over brackets (CommonMark §6.3)
+                b'`' => {
+                    let count = inlines::count_backticks(content, pos);
+                    if let Some(end_pos) = self.find_code_span_end(content, pos + count, count) {
+                        pos = end_pos + count;
+                    } else {
+                        pos += count;
+                    }
                 }
-                continue;
-            }
-            // Skip HTML tags and autolinks — they take precedence over brackets
-            if c == b'<' && !self.flags.no_html_spans {
-                if let Some(tag_end) = self.find_html_tag(content, pos) {
-                    pos = tag_end;
-                    continue;
+                // HTML tags and autolinks take precedence over brackets
+                b'<' if !self.flags.no_html_spans => {
+                    if let Some(tag_end) = self.find_html_tag(content, pos) {
+                        pos = tag_end;
+                    } else if let Some(autolink) = self.find_autolink(content, pos) {
+                        pos = autolink.end_pos;
+                    } else {
+                        pos += 1;
+                    }
                 }
-                if let Some(autolink) = self.find_autolink(content, pos) {
-                    pos = autolink.end_pos;
-                    continue;
+                b'[' => {
+                    let idx = storage.len() as OFF;
+                    storage.push((pos as OFF, top));
+                    top = idx;
+                    pos += 1;
                 }
-            }
-            if c == b'[' {
-                stack.push(pairs.len());
-                pairs.push((pos, BracketMatches::UNMATCHED));
-            } else if c == b']' {
-                if let Some(idx) = stack.pop() {
-                    pairs[idx].1 = pos;
+                b']' => {
+                    if top != BracketMatches::UNMATCHED {
+                        let idx = top as usize;
+                        top = storage[idx].1;
+                        storage[idx].1 = pos as OFF;
+                    }
+                    pos += 1;
                 }
+                // Ordinary text: SIMD-jump to the next character that can
+                // affect bracket matching.
+                _ => match bun_core::immutable::index_of_any(&content[pos..], scan_chars) {
+                    Some(rel) => pos += rel as usize,
+                    None => break,
+                },
             }
-            pos += 1;
         }
-        BracketMatches { pairs }
+
+        // Openers still on the threaded stack have no matching ']'.
+        while top != BracketMatches::UNMATCHED {
+            let idx = top as usize;
+            top = storage[idx].1;
+            storage[idx].1 = BracketMatches::UNMATCHED;
+        }
+
+        BracketMatches {
+            pairs: storage,
+            no_closers: false,
+        }
     }
 
     /// Find the `]` matching the `[` at `start` in `content`. `base` is the

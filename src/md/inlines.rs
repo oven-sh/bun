@@ -103,8 +103,10 @@ impl Parser<'_> {
 
         // Bracket-pair map for this slice: link processing looks up the ']'
         // matching a '[' here instead of rescanning the rest of the slice for
-        // every opener.
-        let brackets = self.compute_bracket_matches(content);
+        // every opener. The backing storage is recycled via self.bracket_pairs
+        // (recursive calls for link labels simply build their own small map).
+        let bracket_storage = core::mem::take(&mut self.bracket_pairs);
+        let brackets = self.compute_bracket_matches(content, bracket_storage);
 
         // Phase 1: Collect and resolve emphasis delimiters
         self.collect_emphasis_delimiters(content, &brackets);
@@ -416,6 +418,8 @@ impl Parser<'_> {
         if text_start < content.len() {
             self.emit_text(TextType::Normal, &content[text_start..])?;
         }
+        // Hand the bracket-map storage back for reuse by the next block.
+        self.bracket_pairs = brackets.into_storage();
         Ok(())
     }
 

@@ -349,10 +349,7 @@ impl<'a> ImportScanner<'a> {
                             if let Some(member) = member {
                                 if !member.ref_.eql(name_ref) {
                                     p.log().add_symbol_already_declared_error(
-                                        p.source,
-                                        name,
-                                        member.loc,
-                                        import_loc,
+                                        p.source, name, member.loc, import_loc,
                                     );
                                 }
                             }

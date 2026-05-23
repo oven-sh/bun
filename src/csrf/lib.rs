@@ -112,10 +112,9 @@ pub fn generate<'a>(
     payload_buf[8..24].copy_from_slice(&nonce);
     payload_buf[24..32].copy_from_slice(&expires_in_bytes);
 
-    // Sign the payload. When a session id is provided, it is mixed into the
-    // HMAC input as associated data (`payload || session_id`) but never
-    // written to the token, so the token only verifies for that principal.
-    // The fixed 32-byte payload prefix keeps the concatenation unambiguous.
+    // Sign the payload. A session id is mixed into the HMAC input as
+    // `payload || session_id` but never written to the token; the fixed
+    // 32-byte payload prefix keeps the concatenation unambiguous.
     let mut digest_buf = [0u8; boring::EVP_MAX_MD_SIZE as usize];
     let digest = if options.session_id.is_empty() {
         hmac::generate(
@@ -249,9 +248,7 @@ pub fn verify(options: &VerifyOptions<'_>) -> bool {
     let payload = &decoded[0..32]; // timestamp + nonce + expires_in
     let received_signature = &decoded[32..];
 
-    // Verify the signature. The session id (if any) is appended to the
-    // payload exactly as in `generate`, so a token bound to one principal
-    // fails verification for any other principal or for no principal.
+    // Verify the signature
     let mut expected_signature = [0u8; boring::EVP_MAX_MD_SIZE as usize];
     let signature = if options.session_id.is_empty() {
         hmac::generate(

@@ -120,3 +120,40 @@ test("Bun.TOML.parse still accepts bare keys built from @/$/_/letters/digits/-/:
   expect(Bun.TOML.parse('$bar = "ok"')).toEqual({ $bar: "ok" });
   expect(Bun.TOML.parse('foo-bar = "ok"')).toEqual({ "foo-bar": "ok" });
 });
+
+// Per TOML 1.0.0 §Float, `inf`, `+inf`, `-inf`, `nan`, `+nan`, `-nan` are valid
+// floats. Before this fix:
+//  - `a = inf` / `a = nan` silently parsed as the strings `"inf"` / `"nan"`
+//    (they fell into `parse_value_inner`'s `t_identifier` arm).
+//  - `a = +inf` / `a = -inf` / `a = ±nan` produced `0` (the `t_plus` / `t_minus`
+//    arms read `self.lexer.number` before `expect(t_numeric_literal)`, which
+//    fails on an identifier — the 0 was whatever `number` was last set to).
+// The lexer now promotes bare `inf` / `nan` to `t_numeric_literal` with
+// `f64::INFINITY` / `f64::NAN`, which also feeds the `t_plus` / `t_minus` arms.
+// Requires the TOMLObject JSValue pipeline to bypass the `print_json → JSONParse`
+// round-trip (strict JSON has no `Infinity` / `NaN`); that's done in the same
+// patch.
+test("Bun.TOML.parse accepts inf and nan as float values (#31251)", () => {
+  expect(Bun.TOML.parse("a = inf").a).toBe(Infinity);
+  expect(Bun.TOML.parse("a = +inf").a).toBe(Infinity);
+  expect(Bun.TOML.parse("a = -inf").a).toBe(-Infinity);
+  expect(Bun.TOML.parse("a = nan").a).toBeNaN();
+  expect(Bun.TOML.parse("a = +nan").a).toBeNaN();
+  expect(Bun.TOML.parse("a = -nan").a).toBeNaN();
+});
+
+// Bare keys spelled exactly `inf` / `nan` must keep working. The lexer now emits
+// `t_numeric_literal`, and `parse_key_segment`'s numeric-literal arm uses the raw
+// source text (`self.lexer.raw()`) as the key string, preserving the spelling.
+test("Bun.TOML.parse still accepts bare keys named inf and nan (#31251)", () => {
+  expect(Bun.TOML.parse('inf = "ok"')).toEqual({ inf: "ok" });
+  expect(Bun.TOML.parse('nan = "ok"')).toEqual({ nan: "ok" });
+});
+
+// Identifiers that merely contain `inf` / `nan` (`infinity`, `nan1`, `inf-foo`)
+// still fall through to `t_identifier` and are rejected at value position.
+test("Bun.TOML.parse rejects inf-like/nan-like identifiers at value position (#31251)", () => {
+  expect(() => Bun.TOML.parse("a = infinity")).toThrow();
+  expect(() => Bun.TOML.parse("a = nan1")).toThrow();
+  expect(() => Bun.TOML.parse("a = inf-foo")).toThrow();
+});

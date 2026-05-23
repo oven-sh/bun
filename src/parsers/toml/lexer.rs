@@ -836,6 +836,24 @@ impl<'a> Lexer<'a> {
                     }
                     self.identifier = self.raw();
                     self.token = match self.identifier.len() {
+                        // TOML 1.0.0 §Float lists `inf` and `nan` as valid floats
+                        // (also `+inf`/`-inf`/`+nan`/`-nan`, handled by the `t_plus`/
+                        // `t_minus` arms in `parse_value_inner` which require a
+                        // following `t_numeric_literal`). Promote the bare keywords
+                        // here. Bare keys spelled `inf`/`nan` keep working because
+                        // `parse_key_segment`'s `t_numeric_literal` arm uses
+                        // `self.lexer.raw()` (not `self.number`) for the key name.
+                        3 => {
+                            if strings::eql_comptime_ignore_len(self.identifier, b"inf") {
+                                self.number = f64::INFINITY;
+                                T::t_numeric_literal
+                            } else if strings::eql_comptime_ignore_len(self.identifier, b"nan") {
+                                self.number = f64::NAN;
+                                T::t_numeric_literal
+                            } else {
+                                T::t_identifier
+                            }
+                        }
                         4 => {
                             if strings::eql_comptime_ignore_len(self.identifier, b"true") {
                                 T::t_true

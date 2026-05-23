@@ -431,7 +431,7 @@ pub fn install_with_manager(
                     {
                         for (key, value) in lockfile.patched_dependencies.iter() {
                             let pkg_name_and_version_hash = *key;
-                            debug_assert!(value.patchfile_hash_is_null);
+                            debug_assert!(value.patchfile_hash_is_null());
                             let gop = lf.patched_dependencies.entry(pkg_name_and_version_hash);
                             // PORT NOTE: ArrayHashMap getOrPut semantics → entry API approximation
                             match gop {

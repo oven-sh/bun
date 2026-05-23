@@ -1290,7 +1290,7 @@ impl<'a> PackageInstaller<'a> {
                 }
                 break 'brk (None, None, None, false);
             };
-            debug_assert!(!patchdep.patchfile_hash_is_null);
+            debug_assert!(!patchdep.patchfile_hash_is_null());
             // if (!patchdep.patchfile_hash_is_null) {
             //     this.manager.enqueuePatchTask(PatchTask.newCalcPatchHash(this, package_id, name_and_version_hash, dependency_id, url: string))
             // }

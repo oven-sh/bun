@@ -171,7 +171,7 @@ impl PackageManager {
                     };
                     // Zig: `defer out_name_and_version_hash.* = name_and_version_hash;`
                     // Runs on every exit path after this point.
-                    if patched_dep.patchfile_hash_is_null {
+                    if patched_dep.patchfile_hash_is_null() {
                         *out_name_and_version_hash = Some(name_and_version_hash);
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::CalcPatchHash);
                         return PreinstallState::CalcPatchHash;

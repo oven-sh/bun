@@ -34,6 +34,11 @@ const values = [];
   Object.defineProperty(map, "size", { value: BigUint64Array });
   values.push(map);
 }
+{
+  const weakSet = new WeakSet();
+  weakSet.size = Symbol("size");
+  values.push(weakSet);
+}
 for (const value of values) {
   try {
     Bun.jest().expect(BigUint64Array).toEqual(value);
@@ -51,7 +56,7 @@ for (const value of values) {
 
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim().split("\n")).toEqual(["DIFF OK", "DIFF OK", "DIFF OK", "DIFF OK"]);
+    expect(stdout.trim().split("\n")).toEqual(["DIFF OK", "DIFF OK", "DIFF OK", "DIFF OK", "DIFF OK"]);
     expect(exitCode).toBe(0);
   });
 });

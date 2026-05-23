@@ -7454,8 +7454,6 @@ describe("css tests", () => {
     minify_test("@page :first, :blank { margin: 1em }", "@page:first,:blank{margin:1em}");
     minify_test("@page toc, index { margin: 1em }", "@page toc,index{margin:1em}");
 
-    // Minified @page rules have no whitespace between the selector and the block
-    // or after the selector-list commas; that output must reparse.
     minify_test("@page:left{margin:1em}", "@page:left{margin:1em}");
     minify_test("@page:first{margin:1em}", "@page:first{margin:1em}");
     minify_test("@page:blank:first{margin:1em}", "@page:blank:first{margin:1em}");

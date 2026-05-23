@@ -85,9 +85,10 @@ function prebuiltUrl(cfg: Config): string {
  * doesn't reuse a wrong-ABI extraction.
  */
 function prebuiltDestDir(cfg: Config): string {
-  // Strip the autobuild- prefix (matches prebuiltUrl) so two different
-  // preview/tag pins don't collapse to the same "autobuild-previe" cache key.
-  const version16 = cfg.webkitVersion.replace(/^autobuild-/, "").slice(0, 16);
+  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
+  // meaningful sha is at the end, so use the whole thing.
+  const v = cfg.webkitVersion;
+  const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
   // so include os+arch in the key — otherwise a FreeBSD/arm64 extraction
   // collides with a Linux/x64 one at the same WebKit version.

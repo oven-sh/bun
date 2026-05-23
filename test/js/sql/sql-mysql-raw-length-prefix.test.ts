@@ -288,6 +288,83 @@ test(".raw() strips length-prefix bytes (#30039) — binary protocol", async () 
   }
 });
 
+// A COM_QUERY whose payload exceeds the 24-bit packet length limit cannot be
+// framed as a single MySQL packet. It must be rejected client-side AND rolled
+// back out of the connection's write buffer: leaving the partially-serialized
+// packet behind desynchronizes the protocol stream, and the next query gets
+// appended after the garbage and reparsed by the server as bogus packets.
+test("oversized COM_QUERY is rejected and rolled back out of the write buffer", async () => {
+  const queries: string[] = [];
+  let desynced = false;
+
+  const server = net.createServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    socket.write(handshakeV10());
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      while (buffered.length >= 4) {
+        const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
+        if (buffered.length < 4 + len) break;
+        const seq = buffered[3];
+        const payload = buffered.subarray(4, 4 + len);
+        buffered = buffered.subarray(4 + len);
+
+        if (!authed) {
+          authed = true;
+          socket.write(okPacket(seq + 1));
+          continue;
+        }
+        if (payload[0] === 0x03 /* COM_QUERY */) {
+          queries.push(payload.subarray(1).toString("utf-8"));
+          socket.write(textResultSet(seq + 1, shortText, jsonText));
+        } else if (payload[0] === 0x01 /* COM_QUIT */) {
+          socket.end();
+        } else {
+          // A zero-length packet or one that does not start with a known
+          // command byte means the client's outgoing stream is no longer
+          // aligned on packet boundaries. Destroy the socket so the test
+          // fails fast instead of hanging.
+          desynced = true;
+          socket.destroy();
+        }
+      }
+    });
+    socket.on("error", () => {});
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  try {
+    await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+
+    // 1 command byte + 0xffffff bytes of query text = 0x1000000 — one past
+    // the largest payload a single MySQL packet can frame.
+    const oversized = Buffer.alloc(0xffffff, "-").toString();
+    const first = await sql.unsafe(oversized).then(
+      () => "resolved",
+      e => e?.code ?? String(e),
+    );
+
+    // The same connection must still be usable: the rejected packet must not
+    // leave any bytes behind in the write buffer.
+    const second = await sql.unsafe("select 1").then(
+      () => "resolved",
+      e => e?.code ?? String(e),
+    );
+
+    expect({ first, second, queries, desynced }).toEqual({
+      first: "ERR_MYSQL_OVERFLOW",
+      second: "resolved",
+      queries: ["select 1"],
+      desynced: false,
+    });
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
 // --- 251-byte length-encoded values vs. the NULL marker ---------------------
 //
 // The text-protocol NULL marker is the single literal byte 0xfb. A column

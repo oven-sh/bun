@@ -1608,6 +1608,12 @@ impl WriterContext for Writer {
     fn offset(self) -> usize {
         self.write_buffer().len() as usize
     }
+
+    fn truncate(self, offset: usize) {
+        let buffer = self.write_buffer();
+        let head = buffer.head as usize;
+        buffer.byte_list.truncate(head + offset);
+    }
 }
 
 #[derive(Clone, Copy)]

@@ -14,6 +14,10 @@ pub trait WriterContext: Copy {
     fn offset(self) -> usize;
     fn write(self, bytes: &[u8]) -> Result<(), AnyMySQLError>;
     fn pwrite(self, bytes: &[u8], offset: usize) -> Result<(), AnyMySQLError>;
+    /// Discard everything written at or after `offset` (a value previously
+    /// returned by `offset()`). Used to roll a partially-serialized packet
+    /// back out of the write buffer when it cannot be framed.
+    fn truncate(self, offset: usize);
 }
 
 #[derive(Clone, Copy)]
@@ -36,8 +40,11 @@ impl<C: WriterContext> Packet<C> {
         // payload would make the server reparse the trailing bytes as
         // separate, attacker-controlled packets (protocol injection). We do
         // not implement multi-packet splitting on the write path, so reject
-        // payloads that cannot be framed as a single packet.
+        // payloads that cannot be framed as a single packet — and roll the
+        // partially-serialized packet back out of the write buffer so the
+        // next packet on this connection starts on a packet boundary.
         if length >= PacketHeader::MAX_PAYLOAD_LENGTH {
+            self.ctx.wrapped.truncate(self.offset);
             return Err(AnyMySQLError::Overflow);
         }
         self.header.length = u32::try_from(length).expect("int cast");

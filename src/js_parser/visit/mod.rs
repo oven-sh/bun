@@ -61,11 +61,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // p.temp_refs_to_declare.deinit(p.arena); + reset to empty
         self.temp_refs_to_declare = BumpVec::new_in(self.arena);
-        // Note: `temp_ref_count` is intentionally NOT reset here. When the
-        // renamer is unused the generated `__bun_temp_ref_{n}$` name is printed
-        // verbatim, so the counter must stay monotonic for the whole file;
-        // resetting it per body let refs generated after a nested function
-        // collide with earlier ones in the same scope.
 
         self.visit_stmts(stmts, opts.kind)?;
 

@@ -3986,10 +3986,6 @@ describe("export of a block-scoped function declaration", () => {
   });
 });
 
-// Fuzz regression: `using` declarations in switch cases were lowered per case body even
-// though every case shares the switch's block scope. The duplicated temp refs made the
-// printed output fail to reparse, resources were disposed before fall-through finished,
-// and the rewritten bindings were trapped inside the generated try block.
 describe("using declarations in switch statements", () => {
   const reparse = out => new Bun.Transpiler({ loader: "js" }).transformSync(out);
 
@@ -4042,8 +4038,6 @@ describe("using declarations in switch statements", () => {
     `;
     const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
     expect(() => reparse(out)).not.toThrow();
-    // The module-level wrap turns top-level `using` into `var`, but the bindings
-    // inside the switch cases can never be exported and must stay `const`.
     expect(out).toMatch(/const x\s*=\s*__using/);
     expect(out).toMatch(/const y\s*=\s*__using/);
     expect(out).not.toMatch(/var [xy]\b/);
@@ -4070,7 +4064,6 @@ describe("using declarations in switch statements", () => {
       console.log(JSON.stringify(order));
     `;
 
-    // Targeting node forces the lowering; the lowered output still runs in Bun via "bun:wrap".
     const lowered = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(source);
     expect(lowered).toContain("__using");
 

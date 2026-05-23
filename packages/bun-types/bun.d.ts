@@ -2536,26 +2536,6 @@ declare module "bun" {
   }
 
   /**
-   * Quickly transpile TypeScript, JSX, or JS to modern JavaScript.
-   *
-   * @example
-   * ```js
-   * const transpiler = new Bun.Transpiler();
-   * transpiler.transformSync(`
-   *   const App = () => <div>Hello World</div>;
-   * export default App;
-   * `);
-   * // This outputs:
-   * const output = `
-   * const App = () => jsx("div", {
-   *   children: "Hello World"
-   * }, undefined, false, undefined, this);
-   * export default App;
-   * `
-   * ```
-   */
-
-  /**
    * The shape returned by `Bun.Transpiler.transform` / `transformSync` when
    * the transpiler is configured with `sourcemap: "external"` or
    * `sourcemap: "linked"`. The `map` field holds a v3 source map as JSON
@@ -2582,6 +2562,25 @@ declare module "bun" {
     ? TranspilerTransformResult
     : string;
 
+  /**
+   * Quickly transpile TypeScript, JSX, or JS to modern JavaScript.
+   *
+   * @example
+   * ```js
+   * const transpiler = new Bun.Transpiler();
+   * transpiler.transformSync(`
+   *   const App = () => <div>Hello World</div>;
+   * export default App;
+   * `);
+   * // This outputs:
+   * const output = `
+   * const App = () => jsx("div", {
+   *   children: "Hello World"
+   * }, undefined, false, undefined, this);
+   * export default App;
+   * `
+   * ```
+   */
   class Transpiler<const SM extends TranspilerSourceMapOption = "none"> {
     constructor(options?: TranspilerOptions<SM>);
 

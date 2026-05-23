@@ -371,8 +371,8 @@ impl FileReader {
             // `file_local` drops — the shared `Store` is not updated. This
             // is intentional: writing back would require `data_mut()` on a
             // `StoreRef` that may be aliased by the originating JS `Blob`
-            // and other holders, reintroducing the exact soundness hole the
-            // PR closes. The cost is a repeat `open_as_nonblocking_tty` /
+            // and other holders, reintroducing the exact soundness hole
+            // #30800 closes. The cost is a repeat `open_as_nonblocking_tty` /
             // `isatty` probe on a *second* `.stream()` of `Bun.file(0|1|2)`;
             // the canonical `Bun.stdin`/`Bun.stdout`/`Bun.stderr` Stores are
             // constructed with `is_atty` already populated (see

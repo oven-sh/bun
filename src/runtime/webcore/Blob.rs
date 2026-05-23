@@ -6327,8 +6327,8 @@ fn resolve_file_stat(store: &StoreRef) {
     // aliasing is compiler-level only (writes to `max_size`/`mode`/
     // `seekable` happen once per `Store` lifetime and are benign on the
     // overlap window). Converting the whole `File` to interior-mutable
-    // fields would close the aliasing too, but is out of scope for the
-    // soundness-audit PR that introduced `unsafe fn data_mut`.
+    // fields would close the aliasing too, but is out of scope for
+    // #30800 (which introduced `unsafe fn data_mut`).
     let file = unsafe { store.data_mut() }.as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {

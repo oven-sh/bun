@@ -1158,11 +1158,21 @@ pub mod store {
     }
     impl Eq for StoreRef {}
 
-    // SAFETY: `Store`'s refcount is atomic, so moving the handle between
-    // threads (including `clone()` → send → drop on the other side) is sound;
-    // the `Data` payload is either immutable-after-init or mutated only by
-    // the thread that currently owns the handle. Matches Zig's cross-thread
-    // `*Store` usage: move, don't share.
+    // SAFETY: `Store`'s refcount is atomic, so crossing threads with the
+    // handle itself is sound; the `Data` payload is either immutable-after-init
+    // or mutated only by the thread that currently owns the handle. Matches
+    // Zig's cross-thread `*Store` usage: move, don't share.
+    //
+    // CAVEAT — `Data::S3`: the `Option<Rc<S3Credentials>>` field uses a
+    // non-atomic refcount that is typically shared with the JS-thread
+    // `S3Client` via `S3::init_with_referenced_credentials`. Dropping the
+    // last S3-backed `StoreRef` on a non-JS thread would race the JS-thread
+    // `Rc::drop` on that same `S3Credentials`. Callers that route a `Store`
+    // across threads (worker-pool `ReadFile`/`CopyFile`/`WriteFile`) only do
+    // so for `Data::File`/`Data::Bytes` variants; the S3 I/O paths run
+    // entirely on the JS thread (see `src/runtime/webcore/fetch/s3.rs`), so
+    // no such `Send` actually happens today. If an S3 store ever does need
+    // to cross threads, convert the credentials refcount to `Arc` first.
     unsafe impl Send for StoreRef {}
     // Intentionally NOT `Sync`: the only way to mutate `Store::data` through
     // an existing `StoreRef` is `unsafe fn data_mut`, whose precondition is

@@ -97,7 +97,7 @@ test("Bun.file(path).stat() returns stats", async () => {
 // `&mut` aliasing hazard away under `bun bd` (ASAN + Rust's UB rules).
 // Regression guard for oven-sh/bun#30800 — `StoreRef` soundness (dropped
 // `Sync`, `data_mut` is now `unsafe fn`, `last_modified` converted to
-// atomic to match the threading reality flagged in PR review).
+// atomic to match the threading reality).
 test("Bun.file().bytes() is safe under high concurrency", async () => {
   const dir = tempDirWithFiles(
     "bun-blob-concurrent",

@@ -2584,6 +2584,34 @@ describe("bundler", () => {
       expect(out).toContain("import.defer(name)");
     },
   });
+  // With code splitting, a deferred dynamic import of a CommonJS module needs
+  // the `__toESM` interop wrapper, whose `.then((m) => __toESM(m.default))`
+  // callback touches the namespace immediately. Emitting `import.defer()`
+  // there would be pointless (it would be defeated on the same line), so the
+  // defer phase is dropped and a regular dynamic import is emitted.
+  itBundled("edgecase/DynamicImportDeferSplittingCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const ns = await import.defer("./dep.cjs");
+        console.log("value:", ns.default.value);
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports = { value: 7 };
+      `,
+    },
+    splitting: true,
+    outdir: "/out",
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out/entry.js");
+      expect(out).toContain("__toESM(");
+      expect(out).not.toContain("import.defer(");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "value: 7",
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

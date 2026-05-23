@@ -364,6 +364,27 @@ impl FileReader {
             // `ReadableStream::from_blob_copy_ref`). The clone is cheap:
             // `PathLike` bumps its intrusive refcount, `last_modified` is
             // an `AtomicU64` snapshot, the rest is `Copy`.
+            //
+            // BEHAVIOR NOTE (vs Zig `FileReader.zig:58,109`): `open_file_blob`
+            // writes `file.is_atty = Some(true)` on the `&mut File`. Because
+            // we hand it the local clone, that cache value is discarded when
+            // `file_local` drops — the shared `Store` is not updated. This
+            // is intentional: writing back would require `data_mut()` on a
+            // `StoreRef` that may be aliased by the originating JS `Blob`
+            // and other holders, reintroducing the exact soundness hole the
+            // PR closes. The cost is a repeat `open_as_nonblocking_tty` /
+            // `isatty` probe on a *second* `.stream()` of `Bun.file(0|1|2)`;
+            // the canonical `Bun.stdin`/`Bun.stdout`/`Bun.stderr` Stores are
+            // constructed with `is_atty` already populated (see
+            // `__bun_stdio_blob_store_new`), so they're unaffected. The
+            // `destination_file_store.is_atty` reads in `copy_file.rs` copy
+            // from the `File` clone at `CopyFile::create` time, so a
+            // `Bun.write(Bun.file(0), ...)` after a `.stream()` on the same
+            // `Blob` will see `None` where previously it saw `Some(true)`
+            // — a benign fallback from the optimized copy strategy to the
+            // plain one. Acknowledged as an intentional loss here rather
+            // than re-opening the aliasing hazard to preserve a 1-syscall
+            // micro-optimization on a `Bun.file(0).stream()` re-entry path.
             match &store.data {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")

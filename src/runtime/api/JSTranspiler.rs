@@ -660,6 +660,13 @@ pub(crate) struct TransformTask<'a> {
     /// [`bun_jsc::ThreadSafe`] guard unprotects on drop.
     pub input_code: bun_jsc::ThreadSafe<StringOrBuffer>,
     pub output_code: BunString,
+    /// Populated when `source_map != None` — a v3 JSON map string. Empty
+    /// otherwise. For `.inline`, the map is embedded in `output_code`
+    /// already and this field stays empty.
+    pub output_map: BunString,
+    /// Copied from the owning `JSTranspiler.Config` at task-create time so
+    /// the background thread doesn't race with config mutation.
+    pub source_map: api::SourceMapMode,
     /// Bitwise copy of `js_instance.transpiler`.
     /// Heap-owned fields (`Box<Define>`, resolver caches, …) are *shared* with
     /// `js_instance`, which is kept alive by the `IntrusiveRc` below for the
@@ -713,6 +720,8 @@ impl<'a> TransformTask<'a> {
         let mut transform_task = Box::new(TransformTask {
             input_code,
             output_code: BunString::empty(),
+            output_map: BunString::empty(),
+            source_map: config.transform.source_map.unwrap_or(api::SourceMapMode::None),
             transpiler: transpiler_copy,
             global,
             macro_map: clone_macro_map(&config.macro_map),
@@ -820,11 +829,16 @@ impl<'a> TransformTask<'a> {
             return;
         };
 
-        if parse_result.empty {
+        let want_source_map = self.source_map != api::SourceMapMode::None;
+
+        // Fast path: empty parse with no source map requested. Matches
+        // the old behaviour for common empty / type-only TS inputs.
+        if parse_result.empty && !want_source_map {
             self.output_code = BunString::empty();
             return;
         }
 
+        let source_path = parse_result.source.path.text;
         let mut buffer_writer = JSPrinter::BufferWriter::init();
         buffer_writer
             .buffer
@@ -833,27 +847,72 @@ impl<'a> TransformTask<'a> {
         buffer_writer.reset();
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
-        // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
-        let printed = match self.transpiler.print(
-            &arena,
-            parse_result,
-            &mut printer,
-            Transpiler::transpiler::PrintFormat::EsmAscii,
-        ) {
-            Ok(n) => n,
-            Err(err) => {
+
+        let mut capture = SourceMapCapture::new(self.transpiler.options.target.is_bun());
+
+        if !parse_result.empty {
+            if want_source_map {
+                let handler = JSPrinter::SourceMapHandler::for_(&mut capture);
+                if let Err(err) = self.transpiler.print_with_source_map(
+                    &arena,
+                    parse_result,
+                    &mut printer,
+                    Transpiler::transpiler::PrintFormat::EsmAscii,
+                    handler,
+                    None,
+                ) {
+                    self.err = Some(err);
+                    return;
+                }
+            } else if let Err(err) = self.transpiler.print(
+                &arena,
+                parse_result,
+                &mut printer,
+                Transpiler::transpiler::PrintFormat::EsmAscii,
+            ) {
                 self.err = Some(err);
                 return;
             }
-        };
-
-        if printed > 0 {
-            buffer_writer = printer.ctx;
-            // `written()` reslices via `written_len`; copy out the printed
-            // bytes, then the local writer is dropped.
-            self.output_code = BunString::clone_utf8(buffer_writer.written());
         } else {
-            self.output_code = BunString::empty();
+            // `parse_result.empty == true` and we want a source map. No AST to
+            // print, but we still need a valid v3 JSON map to honour the
+            // `{ code, map }` contract for `.external` / `.linked`, and to
+            // build a well-formed inline footer for `.Inline`.
+            if let Err(err) = capture.write_empty(&parse_result.source) {
+                self.err = Some(err);
+                return;
+            }
+        }
+
+        // Pick up any mutations the printer made to its local copy of
+        // `buffer_writer`. After this, `buffer_writer.buffer.list` holds the
+        // printed bytes (or is empty if the printer was skipped for
+        // `parse_result.empty`).
+        buffer_writer = printer.ctx;
+
+        match self.source_map {
+            api::SourceMapMode::None => {
+                self.output_code = BunString::clone_utf8(buffer_writer.buffer.list.as_slice());
+            }
+            api::SourceMapMode::Inline => {
+                append_inline_source_map(&mut buffer_writer.buffer, capture.json.list.as_slice());
+                self.output_code = BunString::clone_utf8(buffer_writer.buffer.list.as_slice());
+            }
+            api::SourceMapMode::Linked => {
+                let mut map_name_buf = bun_paths::PathBuffer::uninit();
+                let map_name = source_map_url_for(source_path, &mut map_name_buf);
+                bun_core::handle_oom(
+                    buffer_writer.buffer.append(b"\n//# sourceMappingURL="),
+                );
+                bun_core::handle_oom(buffer_writer.buffer.append(map_name));
+                bun_core::handle_oom(buffer_writer.buffer.append_char(b'\n'));
+                self.output_code = BunString::clone_utf8(buffer_writer.buffer.list.as_slice());
+                self.output_map = BunString::clone_utf8(capture.json.list.as_slice());
+            }
+            api::SourceMapMode::External => {
+                self.output_code = BunString::clone_utf8(buffer_writer.buffer.list.as_slice());
+                self.output_map = BunString::clone_utf8(capture.json.list.as_slice());
+            }
         }
     }
 
@@ -892,10 +951,38 @@ impl<'a> TransformTask<'a> {
     }
 
     fn finish(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
-        match self.output_code.transfer_to_js(self.global) {
-            Ok(value) => promise.resolve(self.global, value),
-            Err(e) => promise.reject(self.global, Ok(self.global.take_exception(e))),
+        // Branch on the configured sourcemap mode, NOT on
+        // `output_map.is_empty()`. For `.external` / `.linked` the map
+        // is documented to be present in the returned object even when
+        // the code is empty (type-only TS inputs, empty inputs), so we
+        // must not fall back to the plain-string shape there.
+        let returns_object = matches!(
+            self.source_map,
+            api::SourceMapMode::External | api::SourceMapMode::Linked,
+        );
+        if !returns_object {
+            return match self.output_code.transfer_to_js(self.global) {
+                Ok(value) => promise.resolve(self.global, value),
+                Err(e) => promise.reject(self.global, Ok(self.global.take_exception(e))),
+            };
         }
+
+        let code_js = match self.output_code.transfer_to_js(self.global) {
+            Ok(v) => v,
+            Err(e) => return promise.reject(self.global, Ok(self.global.take_exception(e))),
+        };
+        let map_js = match self.output_map.transfer_to_js(self.global) {
+            Ok(v) => v,
+            Err(e) => return promise.reject(self.global, Ok(self.global.take_exception(e))),
+        };
+        let code_key = ZigString::static_(b"code");
+        let map_key = ZigString::static_(b"map");
+        let obj = match JSValue::create_object2(self.global, &code_key, &map_key, code_js, map_js)
+        {
+            Ok(v) => v,
+            Err(e) => return promise.reject(self.global, Ok(self.global.take_exception(e))),
+        };
+        promise.resolve(self.global, obj)
     }
 }
 
@@ -1250,7 +1337,12 @@ impl JSTranspiler {
         macro_js_ctx: MacroJSCtx,
     ) -> Option<ParseResult<'static>> {
         let config = self.config.get();
-        let name = config.default_loader.stdin_name();
+        // Use the per-call loader (when provided) for the virtual source
+        // name, matching `TransformTask::run()`'s use of the override.
+        // The name ends up in `source.path.text` and flows into the v3
+        // map's `sources` array and the `//# sourceMappingURL=<name>.map`
+        // footer, so sync and async must agree on it for the same input.
+        let name = loader.unwrap_or(config.default_loader).stdin_name();
 
         // In REPL mode, wrap potential object literals in parentheses
         // If code starts with { and doesn't end with ; it might be an object literal
@@ -1590,27 +1682,215 @@ impl JSTranspiler {
 
         buffer_writer.reset();
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
-        // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
-        // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
-        if let Err(err) = unsafe { self.transpiler_mut() }.print(
-            &arena,
-            parse_result,
-            &mut printer,
-            Transpiler::transpiler::PrintFormat::EsmAscii,
-        ) {
+
+        let source_map_mode = self
+            .config
+            .get()
+            .transform
+            .source_map
+            .unwrap_or(api::SourceMapMode::None);
+        let want_source_map = source_map_mode != api::SourceMapMode::None;
+        let is_bun_target = self.transpiler.get().options.target.is_bun();
+
+        let source_path = parse_result.source.path.text;
+
+        let mut capture = SourceMapCapture::new(is_bun_target);
+
+        // SAFETY: see `transpiler_mut` — `print`/`print_with_source_map` do
+        // not re-enter JS. Same per-call `arena` that `set_arena(&arena)` /
+        // `parse()` used.
+        let print_result = if want_source_map {
+            let handler = JSPrinter::SourceMapHandler::for_(&mut capture);
+            unsafe { self.transpiler_mut() }.print_with_source_map(
+                &arena,
+                parse_result,
+                &mut printer,
+                Transpiler::transpiler::PrintFormat::EsmAscii,
+                handler,
+                None,
+            )
+        } else {
+            unsafe { self.transpiler_mut() }.print(
+                &arena,
+                parse_result,
+                &mut printer,
+                Transpiler::transpiler::PrintFormat::EsmAscii,
+            )
+        };
+        if let Err(err) = print_result {
             self.buffer_writer.set(Some(printer.ctx));
             return Err(global.throw_error(err, "Failed to print code"));
         }
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let mut out = JscZigString::init(buffer_writer.written());
-        out.set_output_encoding();
 
-        let result = out.to_js(global);
+        let result =
+            build_transform_result(global, source_map_mode, &mut buffer_writer, &capture, source_path);
         self.buffer_writer.set(Some(buffer_writer));
-        Ok(result)
+        result
     }
+}
+
+/// Produces the JS value returned from `transformSync` / `transform`.
+///
+/// - `sourcemap` unset / `None`           → a `string` (current behaviour)
+/// - `sourcemap: "inline"` / `true`       → a `string` with a trailing
+///   `//# sourceMappingURL=data:application/json;base64,...` footer
+/// - `sourcemap: "external"` / `"linked"` → `{ code: string, map: string }`
+///   where `map` is the v3 JSON map text. For `"linked"`, `code` also has
+///   a `//# sourceMappingURL=<source>.map` footer so downstream writers
+///   can produce the sibling `.map` file.
+fn build_transform_result(
+    global: &JSGlobalObject,
+    source_map_mode: api::SourceMapMode,
+    buffer_writer: &mut JSPrinter::BufferWriter,
+    capture: &SourceMapCapture,
+    source_path: &[u8],
+) -> JsResult<JSValue> {
+    match source_map_mode {
+        api::SourceMapMode::None => {
+            let mut out = JscZigString::init(buffer_writer.buffer.list.as_slice());
+            out.set_output_encoding();
+            Ok(out.to_js(global))
+        }
+        api::SourceMapMode::Inline => {
+            // Append `//# sourceMappingURL=data:application/json;base64,<map>`
+            // to the printed code. We reuse the printer's buffer so the
+            // footer lives alongside the code for the final string copy.
+            append_inline_source_map(&mut buffer_writer.buffer, capture.json.list.as_slice());
+
+            let mut out = JscZigString::init(buffer_writer.buffer.list.as_slice());
+            out.set_output_encoding();
+            Ok(out.to_js(global))
+        }
+        api::SourceMapMode::Linked => {
+            // Append a `//# sourceMappingURL=<source>.map` comment so the
+            // emitted code references a sibling `.map` file the caller is
+            // expected to write.
+            let mut map_name_buf = bun_paths::PathBuffer::uninit();
+            let map_name = source_map_url_for(source_path, &mut map_name_buf);
+            bun_core::handle_oom(buffer_writer.buffer.append(b"\n//# sourceMappingURL="));
+            bun_core::handle_oom(buffer_writer.buffer.append(map_name));
+            bun_core::handle_oom(buffer_writer.buffer.append_char(b'\n'));
+
+            create_code_map_object(
+                global,
+                buffer_writer.buffer.list.as_slice(),
+                capture.json.list.as_slice(),
+            )
+        }
+        api::SourceMapMode::External => create_code_map_object(
+            global,
+            buffer_writer.buffer.list.as_slice(),
+            capture.json.list.as_slice(),
+        ),
+    }
+}
+
+/// Captures the printer's source map chunk so we can emit a v3 JSON map
+/// from the synchronous and asynchronous transform paths.
+pub struct SourceMapCapture {
+    /// v3 JSON map filled in by `on_source_map_chunk`.
+    pub json: bun_core::MutableString,
+    /// `true` when the transpiler is targeting `bun`, which flips the
+    /// printer's sourcemap builder into the packed `InternalSourceMap`
+    /// format (see `getSourceMapBuilder` in js_printer). In that case
+    /// we must re-encode the chunk buffer from internal → VLQ before
+    /// emitting the v3 JSON map.
+    pub is_internal_format: bool,
+}
+
+impl SourceMapCapture {
+    pub fn new(is_internal_format: bool) -> Self {
+        Self {
+            json: bun_core::MutableString::init_empty(),
+            is_internal_format,
+        }
+    }
+
+    /// Emit a valid but empty v3 map for `source` — used when there is
+    /// no AST to print (e.g. `parse_result.empty`) but the caller still
+    /// asked for a source map. Matches the JSON shape
+    /// `print_source_map_contents` produces for a zero-mapping chunk.
+    pub fn write_empty(&mut self, source: &bun_ast::Source) -> Result<(), bun_core::Error> {
+        let empty_chunk = bun_sourcemap::Chunk::init_empty();
+        // An empty chunk's buffer is zero-length in either format, so
+        // `print_source_map_contents` works regardless of `is_internal_format`.
+        empty_chunk.print_source_map_contents::<false>(source, &mut self.json, true)
+    }
+}
+
+impl JSPrinter::OnSourceMapChunk for SourceMapCapture {
+    fn on_source_map_chunk(
+        &mut self,
+        chunk: bun_sourcemap::Chunk,
+        source: &bun_ast::Source,
+    ) -> Result<(), bun_core::Error> {
+        if self.is_internal_format {
+            // `target: "bun"` routes through the printer's
+            // `is_bun_platform=true` path which stores mappings as Bun's
+            // packed binary format in `chunk.buffer` instead of VLQ.
+            // `print_source_map_contents_from_internal` re-encodes to
+            // VLQ before emitting JSON so the result is a valid v3 map.
+            chunk.print_source_map_contents_from_internal::<false>(source, &mut self.json, true)
+        } else {
+            chunk.print_source_map_contents::<false>(source, &mut self.json, true)
+        }
+    }
+}
+
+/// Derive a `<source>.map` filename for the `sourceMappingURL` comment.
+/// `source_path` is the virtual file name we gave the parser (e.g.
+/// `input.ts`); we just append `.map` — the caller knows what to do with
+/// it. Falls back to `input.map` if we're handed an empty path.
+fn source_map_url_for<'buf>(
+    source_path: &[u8],
+    buf: &'buf mut bun_paths::PathBuffer,
+) -> &'buf [u8] {
+    let base: &[u8] = if source_path.is_empty() {
+        b"input"
+    } else {
+        source_path
+    };
+    const SUFFIX: &[u8] = b".map";
+    let total = base.len() + SUFFIX.len();
+    let slot = buf.as_mut_slice();
+    debug_assert!(total <= slot.len());
+    slot[..base.len()].copy_from_slice(base);
+    slot[base.len()..total].copy_from_slice(SUFFIX);
+    &slot[..total]
+}
+
+/// Append `\n//# sourceMappingURL=data:application/json;base64,<base64>\n`
+/// to `buf`. Shared by the sync and async transform paths. The trailing
+/// newline matches both the `.linked` branch in this file and
+/// `Bun.build`'s inline emitter (src/bundler/linker_context/
+/// generateChunksInParallel), so two inline outputs can be safely
+/// concatenated without the second one being swallowed by the line
+/// comment.
+fn append_inline_source_map(buf: &mut bun_core::MutableString, map_json: &[u8]) {
+    const PREFIX: &[u8] = b"\n//# sourceMappingURL=data:application/json;base64,";
+    let encode_len = bun_core::base64::encode_len(map_json);
+    let dest = bun_core::handle_oom(buf.writable_n_bytes(PREFIX.len() + encode_len + 1));
+    dest[..PREFIX.len()].copy_from_slice(PREFIX);
+    bun_core::base64::encode(&mut dest[PREFIX.len()..PREFIX.len() + encode_len], map_json);
+    dest[PREFIX.len() + encode_len] = b'\n';
+}
+
+fn create_code_map_object(
+    global: &JSGlobalObject,
+    code_bytes: &[u8],
+    map_bytes: &[u8],
+) -> JsResult<JSValue> {
+    let mut code_zig = JscZigString::init(code_bytes);
+    code_zig.set_output_encoding();
+    let mut map_zig = JscZigString::init(map_bytes);
+    map_zig.set_output_encoding();
+
+    let code_key = ZigString::static_(b"code");
+    let map_key = ZigString::static_(b"map");
+    JSValue::create_object2(global, &code_key, &map_key, code_zig.to_js(global), map_zig.to_js(global))
 }
 
 fn named_exports_to_js(

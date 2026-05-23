@@ -632,11 +632,6 @@ impl CssColor {
                 return ColorFallbackKind::empty();
             }
             CssColor::Lab(lab) => 'brk: {
-                // The `should_compile_same` guard applies to both variants of each
-                // pair (`lab`/`lch`, `oklab`/`oklch`), matching lightningcss. If no
-                // targets require compilation, no fallbacks are possible; returning a
-                // bare OKLAB here would later reach `get_fallback`, which only
-                // accepts RGB, P3, and LAB.
                 if matches!(**lab, LABColor::Lab(_) | LABColor::Lch(_))
                     && targets.should_compile_same(Feature::LabColors)
                 {

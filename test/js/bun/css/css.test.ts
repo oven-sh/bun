@@ -7473,9 +7473,6 @@ describe("css tests", () => {
       );
     });
 
-    // oklab()/oklch() colors inside unparsed values (var() fallbacks, values that
-    // fail to parse as a color) used to panic in the color fallback logic when no
-    // browser targets require compiling them. They should be left untouched.
     describe("unparsed oklab color fallbacks", () => {
       minify_test(".foo { color: var(--x, oklab(40% 0.1 0.1)) }", ".foo{color:var(--x,oklab(40% .1 .1))}");
       minify_test(".foo { color: var(--x, oklch(40% 0.1 30)) }", ".foo{color:var(--x,oklch(40% .1 30))}");

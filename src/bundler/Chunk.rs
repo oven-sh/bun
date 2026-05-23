@@ -1330,6 +1330,7 @@ impl Drop for CssChunk {
     }
 }
 
+/// Zig: `const CssImportKind = enum { source_index, external_path, import_layers }` is the
 /// (private) tag enum for `CssImportOrder.kind: union(enum) { ... }`. In Rust the tagged
 /// union is `CssImportOrderKind`; callers that switch on `css_import.kind` reference it via
 /// the Zig-spelled name, so re-export it here.

@@ -475,6 +475,7 @@ fn registry() -> &'static Registry {
     &REG
 }
 
+/// Legacy runtime conversion. Kept for back-compat with out-of-tree callers;
 /// in-tree code goes through [`ConvertedTable::for_params`] /
 /// [`convert_params_array`].
 pub fn convert_params<Id>(params: &[Param<Id>]) -> (Vec<Param<usize>>, usize, usize, usize) {

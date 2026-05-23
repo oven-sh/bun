@@ -511,22 +511,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_codegen"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_core",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "phf 0.11.3",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_collections"
 version = "0.0.0"
 dependencies = [

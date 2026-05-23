@@ -43,6 +43,7 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
 /// that expands a fresh `OnceLock` per call site (per literal name). Not
 /// duplicated here to avoid path-export collisions on macOS.
 
+/// Runtime `getZone(name)` — looks up (or creates) the per-name zone. The
 /// `get_zone!` macro is the zero-cost form. This runtime path keys a
 /// process-global map for callers that pass a non-literal name (or for
 /// `allocator<T>()`/`get_zone_t<T>()`, which cannot expand a per-T static on

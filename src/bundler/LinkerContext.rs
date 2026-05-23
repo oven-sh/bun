@@ -1024,7 +1024,7 @@ impl<'a> LinkerContext<'a> {
     // `post_process_*` callees take `GenerateChunkCtx` by value and deref
     // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
     // raw-ptr writes (see `postProcessJSChunk.rs`).
-    pub fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the duration of this body. ctx.c points into BundleV2.linker;
         // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
@@ -1053,7 +1053,11 @@ impl<'a> LinkerContext<'a> {
     // `ctx.c.options` shared. `rename_symbols_in_chunk` takes `*mut
     // LinkerContext` raw and never materializes `&mut LinkerContext` while
     // peer renamer tasks are live (see its CONCURRENCY note).
-    pub fn generate_js_renamer(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+    pub(crate) fn generate_js_renamer(
+        ctx: &GenerateChunkCtx,
+        chunk: *mut Chunk,
+        chunk_index: usize,
+    ) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the body. container_of pattern — see `generate_chunk` above.
         let chunk: &mut Chunk = unsafe { &mut *chunk };

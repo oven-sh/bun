@@ -1454,6 +1454,11 @@ pub fn println(args: fmt::Arguments<'_>) {
 // Scoped debug logging
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Debug-only logs which should not appear in release mode.
+///
+/// To enable a specific log at runtime, set the environment variable
+///   `BUN_DEBUG_${TAG}` to 1.
+///
 /// For example, to enable the "foo" log, set the environment variable
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable

@@ -4323,6 +4323,15 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Transfer-Encoding") => {
+                    // RFC 9110 section 9.3.6: as with Content-Length above, a
+                    // client MUST ignore Transfer-Encoding in a successful
+                    // response to CONNECT.
+                    if self.flags.proxy_tunneling
+                        && self.proxy_tunnel.is_none()
+                        && response.status_code == 200
+                    {
+                        continue;
+                    }
                     if header.value() == b"gzip" {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Gzip;

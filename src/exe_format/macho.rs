@@ -93,6 +93,8 @@ impl MachoFile {
         let mut linkedit_seg_idx: Option<usize> = None;
 
         let mut found_bun = false;
+        let mut bun_writes: Vec<(usize, macho::segment_command_64, usize, macho::section_64)> =
+            Vec::new();
 
         // PORT NOTE: reshaped for borrowck — capture base ptr as usize before iterating so we can
         // compute byte offsets without holding a borrow of self.data across the mutable writes below.
@@ -105,28 +107,34 @@ impl MachoFile {
                 macho::LC::SEGMENT_64 => {
                     let command = entry
                         .cast::<macho::segment_command_64>()
-                        .expect("unreachable");
+                        .ok_or(MachoError::InvalidObject)?;
+                    let segment_command_size = size_of::<macho::segment_command_64>();
+                    let section_size = size_of::<macho::section_64>();
+                    let section_table_size = (command.nsects as usize)
+                        .checked_mul(section_size)
+                        .ok_or(MachoError::OffsetOverflow)?;
+                    let required_command_size = segment_command_size
+                        .checked_add(section_table_size)
+                        .ok_or(MachoError::OffsetOverflow)?;
+                    if required_command_size > entry.data.len()
+                        || required_command_size > command.cmdsize as usize
+                    {
+                        return Err(MachoError::InvalidObject);
+                    }
+
                     if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
                             let section_offset = entry.data.as_ptr() as usize - base_addr;
-                            let sections_base =
-                                section_offset + size_of::<macho::segment_command_64>();
-                            let sect_sz = size_of::<macho::section_64>();
-                            let nsects = command.nsects as usize;
-                            // `nsects` is untrusted; reject a section table that
-                            // overflows or doesn't fit inside this command's cmdsize
-                            // (`entry.data.len()`) before indexing `self.data`.
-                            let table_end = nsects
-                                .checked_mul(sect_sz)
-                                .and_then(|s| s.checked_add(size_of::<macho::segment_command_64>()))
-                                .ok_or(MachoError::InvalidObject)?;
-                            if table_end > entry.data.len() {
-                                return Err(MachoError::InvalidObject);
-                            }
-                            for i in 0..nsects {
-                                let sect_off = sections_base + i * sect_sz;
+                            let sections_base = section_offset + segment_command_size;
+                            // Iterate the section table by index, reading each
+                            // `section_64` by value via `read_struct` (the load-command
+                            // region lives at an arbitrary byte offset in `self.data`,
+                            // so constructing `&[section_64]` / `&mut [section_64]`
+                            // would be UB — audit witness EXP-095).
+                            for sect_idx in 0..command.nsects as usize {
+                                let sect_off = sections_base + sect_idx * section_size;
                                 let sect: macho::section_64 =
-                                    read_struct(&self.data[sect_off..][..sect_sz]);
+                                    read_struct(&self.data[sect_off..][..section_size]);
                                 if sect.sect_name() == b"__bun" {
                                     found_bun = true;
                                     original_fileoff = sect.offset as u64;
@@ -157,14 +165,19 @@ impl MachoFile {
                                         reserved2: 0,
                                         reserved3: 0,
                                     };
-                                    write_struct(
-                                        &mut self.data[section_offset..sections_base],
-                                        &self.segment,
-                                    );
-                                    write_struct(
-                                        &mut self.data[sect_off..][..sect_sz],
-                                        &self.section,
-                                    );
+                                    // Defer writes until after `iter` is dropped. The
+                                    // iterator stores raw pointers into `self.data`; keeping
+                                    // the loop read-only avoids invalidating those pointers
+                                    // before the next load-command read.
+                                    bun_writes
+                                        .try_reserve(1)
+                                        .map_err(|_| MachoError::OutOfMemory)?;
+                                    bun_writes.push((
+                                        section_offset,
+                                        self.segment,
+                                        sect_off,
+                                        self.section,
+                                    ));
                                 }
                             }
                         }
@@ -177,6 +190,17 @@ impl MachoFile {
                 }
                 _ => {}
             }
+        }
+
+        for (segment_offset, segment, section_offset, section) in bun_writes {
+            write_struct(
+                &mut self.data[segment_offset..][..size_of::<macho::segment_command_64>()],
+                &segment,
+            );
+            write_struct(
+                &mut self.data[section_offset..][..size_of::<macho::section_64>()],
+                &section,
+            );
         }
 
         if !found_bun {
@@ -206,9 +230,9 @@ impl MachoFile {
 
         let mut sig_size: usize = 0;
 
-        let prev_len = self.data.len();
         // SAFETY: we just reserved `size_diff` bytes; new_len <= capacity. The newly-exposed bytes
         // are written below before being read (memmove + memset cover the whole range).
+        let prev_len = self.data.len();
         unsafe {
             self.data
                 .set_len(prev_len + usize::try_from(size_diff).expect("int cast"));
@@ -341,8 +365,6 @@ impl MachoFile {
         let aligned_previous = align_size(previous_fileoff, PAGE_SIZE);
         let aligned_linkedit = align_size(new_linkedit_fileoff, PAGE_SIZE);
 
-        let mut iter = self.iterator();
-
         // Create shifter with validated parameters
         let shifter = Shifter {
             start: aligned_previous,
@@ -351,55 +373,70 @@ impl MachoFile {
             linkedit_filesize: new_linkedit_filesize,
         };
 
-        while let Some(entry) = iter.next() {
-            let cmd = entry.hdr;
-            let cmd_ptr: *mut u8 = entry.data.as_ptr().cast_mut();
+        let load_command_size = size_of::<macho::load_command>();
+        let command_region_start = size_of::<macho::mach_header_64>();
+        let command_region_size = self.header.sizeofcmds as usize;
+        let command_region_end = command_region_start
+            .checked_add(command_region_size)
+            .ok_or(MachoError::OffsetOverflow)?;
+        if command_region_end > self.data.len() {
+            return Err(MachoError::InvalidObject);
+        }
 
-            // `cmdsize` (= `entry.data.len()`) is untrusted; reject commands too
-            // small for the typed struct we're about to read/write so the
-            // unaligned access stays within this command's bytes.
-            let require = |sz: usize| -> Result<(), MachoError> {
-                if entry.data.len() < sz {
-                    return Err(MachoError::InvalidObject);
-                }
-                Ok(())
-            };
+        let mut cmd_offset = command_region_start;
+        for _ in 0..self.header.ncmds {
+            if cmd_offset
+                .checked_add(load_command_size)
+                .ok_or(MachoError::OffsetOverflow)?
+                > command_region_end
+            {
+                return Err(MachoError::InvalidObject);
+            }
 
+            let cmd: macho::load_command =
+                read_struct(&self.data[cmd_offset..][..load_command_size]);
+            let cmdsize = cmd.cmdsize as usize;
+            let next_cmd_offset = cmd_offset
+                .checked_add(cmdsize)
+                .ok_or(MachoError::OffsetOverflow)?;
+            if cmdsize < load_command_size || next_cmd_offset > command_region_end {
+                return Err(MachoError::InvalidObject);
+            }
+
+            // Each load-command body is read/modified/written via
+            // `read_struct` + `write_struct`. The load-command region lives
+            // at an arbitrary byte offset inside `self.data`, so
+            // constructing `&mut T` references would be UB on a misaligned
+            // address (audit witness EXP-095).
             match cmd.cmd {
                 macho::LC::SYMTAB => {
-                    require(size_of::<macho::symtab_command>())?;
-                    // SAFETY: cmd_ptr points into self.data's load-command region with at least
-                    // size_of::<symtab_command>() bytes (checked above); symtab_command is
-                    // #[repr(C)] POD. read/write_unaligned tolerate the Vec<u8>'s arbitrary
-                    // alignment.
-                    unsafe {
-                        let mut symtab: macho::symtab_command =
-                            core::ptr::read_unaligned(cmd_ptr.cast::<macho::symtab_command>());
-                        shift_fields!(shifter, symtab, symoff, stroff);
-                        core::ptr::write_unaligned(cmd_ptr.cast::<macho::symtab_command>(), symtab);
+                    let command_size = size_of::<macho::symtab_command>();
+                    if cmdsize < command_size {
+                        return Err(MachoError::InvalidObject);
                     }
+                    let mut symtab: macho::symtab_command =
+                        read_struct(&self.data[cmd_offset..][..command_size]);
+                    shift_fields!(shifter, symtab, symoff, stroff);
+                    write_struct(&mut self.data[cmd_offset..][..command_size], &symtab);
                 }
                 macho::LC::DYSYMTAB => {
-                    require(size_of::<macho::dysymtab_command>())?;
-                    // SAFETY: as above; dysymtab_command is #[repr(C)] POD.
-                    unsafe {
-                        let mut dysymtab: macho::dysymtab_command =
-                            core::ptr::read_unaligned(cmd_ptr.cast::<macho::dysymtab_command>());
-                        shift_fields!(
-                            shifter,
-                            dysymtab,
-                            tocoff,
-                            modtaboff,
-                            extrefsymoff,
-                            indirectsymoff,
-                            extreloff,
-                            locreloff
-                        );
-                        core::ptr::write_unaligned(
-                            cmd_ptr.cast::<macho::dysymtab_command>(),
-                            dysymtab,
-                        );
+                    let command_size = size_of::<macho::dysymtab_command>();
+                    if cmdsize < command_size {
+                        return Err(MachoError::InvalidObject);
                     }
+                    let mut dysymtab: macho::dysymtab_command =
+                        read_struct(&self.data[cmd_offset..][..command_size]);
+                    shift_fields!(
+                        shifter,
+                        dysymtab,
+                        tocoff,
+                        modtaboff,
+                        extrefsymoff,
+                        indirectsymoff,
+                        extreloff,
+                        locreloff
+                    );
+                    write_struct(&mut self.data[cmd_offset..][..command_size], &dysymtab);
                 }
                 macho::LC::DYLD_CHAINED_FIXUPS
                 | macho::LC::CODE_SIGNATURE
@@ -408,49 +445,43 @@ impl MachoFile {
                 | macho::LC::DYLIB_CODE_SIGN_DRS
                 | macho::LC::LINKER_OPTIMIZATION_HINT
                 | macho::LC::DYLD_EXPORTS_TRIE => {
-                    require(size_of::<macho::linkedit_data_command>())?;
-                    // SAFETY: as above; linkedit_data_command is #[repr(C)] POD.
-                    unsafe {
-                        let mut linkedit_cmd: macho::linkedit_data_command =
-                            core::ptr::read_unaligned(
-                                cmd_ptr.cast::<macho::linkedit_data_command>(),
-                            );
-                        shift_fields!(shifter, linkedit_cmd, dataoff);
-
-                        // Special handling for code signature
-                        if cmd.cmd == macho::LC::CODE_SIGNATURE {
-                            // Update the size of the code signature to the newer signature size
-                            linkedit_cmd.datasize = u32::try_from(sig_size).expect("int cast");
-                        }
-                        core::ptr::write_unaligned(
-                            cmd_ptr.cast::<macho::linkedit_data_command>(),
-                            linkedit_cmd,
-                        );
+                    let command_size = size_of::<macho::linkedit_data_command>();
+                    if cmdsize < command_size {
+                        return Err(MachoError::InvalidObject);
                     }
+                    let mut linkedit_cmd: macho::linkedit_data_command =
+                        read_struct(&self.data[cmd_offset..][..command_size]);
+                    shift_fields!(shifter, linkedit_cmd, dataoff);
+
+                    // Special handling for code signature
+                    if cmd.cmd == macho::LC::CODE_SIGNATURE {
+                        // Update the size of the code signature to the newer signature size
+                        linkedit_cmd.datasize = u32::try_from(sig_size).expect("int cast");
+                    }
+                    write_struct(&mut self.data[cmd_offset..][..command_size], &linkedit_cmd);
                 }
                 macho::LC::DYLD_INFO | macho::LC::DYLD_INFO_ONLY => {
-                    require(size_of::<macho::dyld_info_command>())?;
-                    // SAFETY: as above; dyld_info_command is #[repr(C)] POD.
-                    unsafe {
-                        let mut dyld_info: macho::dyld_info_command =
-                            core::ptr::read_unaligned(cmd_ptr.cast::<macho::dyld_info_command>());
-                        shift_fields!(
-                            shifter,
-                            dyld_info,
-                            rebase_off,
-                            bind_off,
-                            weak_bind_off,
-                            lazy_bind_off,
-                            export_off
-                        );
-                        core::ptr::write_unaligned(
-                            cmd_ptr.cast::<macho::dyld_info_command>(),
-                            dyld_info,
-                        );
+                    let command_size = size_of::<macho::dyld_info_command>();
+                    if cmdsize < command_size {
+                        return Err(MachoError::InvalidObject);
                     }
+                    let mut dyld_info: macho::dyld_info_command =
+                        read_struct(&self.data[cmd_offset..][..command_size]);
+                    shift_fields!(
+                        shifter,
+                        dyld_info,
+                        rebase_off,
+                        bind_off,
+                        weak_bind_off,
+                        lazy_bind_off,
+                        export_off
+                    );
+                    write_struct(&mut self.data[cmd_offset..][..command_size], &dyld_info);
                 }
                 _ => {}
             }
+
+            cmd_offset = next_cmd_offset;
         }
         Ok(())
     }
@@ -623,6 +654,7 @@ impl MachoSigner {
         data.extend_from_slice(obj);
 
         let _ = (sig_sz, cs_cmd_off);
+
         Ok(Box::new(MachoSigner {
             data,
             sig_off,
@@ -643,8 +675,10 @@ impl MachoSigner {
     /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
     /// inside __LINKEDIT.
     pub fn compute_signature_size(sig_off: u64) -> usize {
-        let total_pages: usize =
-            usize::try_from(sig_off.div_ceil(Self::SIGNATURE_PAGE_SIZE as u64)).unwrap();
+        let total_pages: usize = usize::try_from(
+            (sig_off + Self::SIGNATURE_PAGE_SIZE as u64 - 1) / Self::SIGNATURE_PAGE_SIZE as u64,
+        )
+        .unwrap();
         let super_blob_header_size = size_of::<SuperBlob>();
         let blob_index_size = size_of::<BlobIndex>();
         let code_dir_header_size = size_of::<CodeDirectory>();
@@ -660,7 +694,7 @@ impl MachoSigner {
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 
         // Calculate total binary pages before signature
-        let total_pages = self.sig_off.div_ceil(PAGE_SIZE);
+        let total_pages = (self.sig_off + PAGE_SIZE - 1) / PAGE_SIZE;
         let aligned_sig_off = total_pages * PAGE_SIZE;
 
         // Calculate base signature structure sizes
@@ -825,8 +859,11 @@ const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 /// `bun.sha.SHA256.hash(bytes, out, null)`.
 #[inline]
 fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
-    // SAFETY: engine is null (default).
-    unsafe { bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut()) };
+    // SAFETY: `out` points to a live 32-byte output buffer and the optional
+    // context pointer is null, matching the C API contract for one-shot hash.
+    unsafe {
+        bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut());
+    }
 }
 
 // ported from: src/exe_format/macho.zig

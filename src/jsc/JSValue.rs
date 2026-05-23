@@ -1854,7 +1854,7 @@ impl<T: FromAny> FromAny for Option<T> {
 /// (JSValue.zig:366). Zig used `@typeInfo` to route `ZigString`/`bun.String`/
 /// `[]const u8` to the matching FFI; Rust expresses that as a trait per
 /// PORTING.md §Comptime reflection.
-pub trait PutKey {
+pub(crate) trait PutKey {
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
 }
 impl PutKey for &bun_core::ZigString {
@@ -2186,7 +2186,7 @@ pub type ForEachCallback =
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`]
 /// (Zig: `*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.c) void`).
-pub type ForEachPropertyCallback = extern "C" fn(
+pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
     key: *mut bun_core::ZigString,

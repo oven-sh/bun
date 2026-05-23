@@ -278,7 +278,7 @@ pub use baby_vec::BabyVec;
 /// through `<&MimallocArena as Allocator>` (= `mi_heap_realloc_aligned` /
 /// `mi_free`); reclaimed on arena `reset`/`Drop`.
 pub type ArenaVec<'a, T> = BabyVec<'a, T>;
-pub use mimalloc_arena::{ArenaString, ArenaVecExt, live_arena_heaps};
+pub use mimalloc_arena::{ArenaString, ArenaVecExt};
 
 /// `bumpalo::collections::Vec::from_iter_in` parity for [`ArenaVec`].
 #[inline]

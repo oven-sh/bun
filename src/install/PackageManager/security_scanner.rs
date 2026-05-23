@@ -47,18 +47,18 @@ fn signal_name(raw: u8) -> &'static str {
     bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")
 }
 
-pub struct PackagePath {
+pub(crate) struct PackagePath {
     pkg_path: Box<[PackageID]>,
     dep_path: Box<[DependencyID]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum SecurityAdvisoryLevel {
+pub(crate) enum SecurityAdvisoryLevel {
     Fatal,
     Warn,
 }
 
-pub struct SecurityAdvisory {
+pub(crate) struct SecurityAdvisory {
     pub level: SecurityAdvisoryLevel,
     pub package: Box<[u8]>,
     pub url: Option<Box<[u8]>>,
@@ -93,7 +93,7 @@ impl SecurityScanResults {
     }
 }
 
-pub fn do_partial_install_of_security_scanner(
+pub(crate) fn do_partial_install_of_security_scanner(
     manager: &mut PackageManager,
     ctx: CommandContext,
     log_level: crate::package_manager::Options::LogLevel,
@@ -226,7 +226,7 @@ impl<'a> ScannerFinder<'a> {
     }
 }
 
-pub fn perform_security_scan_after_resolution(
+pub(crate) fn perform_security_scan_after_resolution(
     manager: &mut PackageManager,
     command_ctx: CommandContext,
     original_cwd: &[u8],
@@ -424,7 +424,7 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
     }
 }
 
-pub fn prompt_for_warnings() -> bool {
+pub(crate) fn prompt_for_warnings() -> bool {
     let can_prompt = Output::is_stdin_tty();
 
     if !can_prompt {
@@ -998,7 +998,7 @@ pub struct SecurityScanSubprocess<'a> {
 // The comptime type generator is the generic `subprocess::StaticPipeWriter<P>`;
 // monomorphize on `'static` because the writer stores `*mut P` (raw backref —
 // lifetime is erased anyway) and the type alias must name a concrete `P`.
-pub type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
+pub(crate) type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
 
 // Wire the writer's `on_close` callback back to this type. Raw `*mut Self`
 // because the call is re-entrant: it may fire synchronously inside

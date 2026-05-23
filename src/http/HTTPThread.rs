@@ -221,7 +221,7 @@ impl HeapRequestBodyBuffer {
     }
 }
 
-pub enum RequestBodyBuffer {
+pub(crate) enum RequestBodyBuffer {
     // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
     Heap(Option<Box<HeapRequestBodyBuffer>>),
     // PERF(port): was std.heap.StackFallbackAllocator(32KB) — inline stack buffer with heap fallback.
@@ -240,14 +240,14 @@ impl Drop for RequestBodyBuffer {
 }
 
 impl RequestBodyBuffer {
-    pub fn allocated_slice(&mut self) -> &mut [u8] {
+    pub(crate) fn allocated_slice(&mut self) -> &mut [u8] {
         match self {
             Self::Heap(heap) => &mut heap.as_mut().unwrap().buffer,
             Self::Stack(stack) => &mut stack[..],
         }
     }
 
-    pub fn to_array_list(&mut self) -> Vec<u8> {
+    pub(crate) fn to_array_list(&mut self) -> Vec<u8> {
         // TODO(port): Zig built an ArrayList over self.arena()/self.allocated_slice() with len=0.
         // Rust Vec cannot adopt a foreign allocator+buffer; expose a cursor type instead.
         // PERF(port): was FixedBufferAllocator/StackFallback (allocator() accessor
@@ -258,7 +258,7 @@ impl RequestBodyBuffer {
     }
 }
 
-pub struct WriteMessage {
+pub(crate) struct WriteMessage {
     pub async_http_id: u32,
     pub kind: WriteMessageType,
 }
@@ -270,15 +270,15 @@ pub enum WriteMessageType {
     End = 1,
 }
 
-pub struct DrainMessage {
+pub(crate) struct DrainMessage {
     pub async_http_id: u32,
 }
 
-pub struct ShutdownMessage {
+pub(crate) struct ShutdownMessage {
     pub async_http_id: u32,
 }
 
-pub struct LibdeflateState {
+pub(crate) struct LibdeflateState {
     pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
     pub shared_buffer: [u8; 512 * 1024],
 }
@@ -297,7 +297,9 @@ impl LibdeflateState {
     /// raw `&mut *deflater.decompressor` upgrade repeated at every
     /// `decompress` call site.
     #[inline]
-    pub fn decompressor_mut<'a>(&self) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor_mut<'a>(
+        &self,
+    ) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
         // SAFETY: see INVARIANT above.
         unsafe { &mut *self.decompressor }
     }
@@ -306,7 +308,7 @@ impl LibdeflateState {
 pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 
 // TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode the field offset.
-pub type Queue = UnboundedQueue<AsyncHttp<'static>>;
+pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
 // Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
 // caller-owned config (Zig `[]stringZ`), not heap we free. The `Vec` itself

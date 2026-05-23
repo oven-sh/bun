@@ -68,17 +68,17 @@ fn runner_arena() -> &'static bun_alloc::Arena {
 // the shell escaper cannot silently diverge.
 use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
-pub struct NpmArgs;
+pub(crate) struct NpmArgs;
 impl NpmArgs {
     // https://github.com/npm/rfcs/blob/main/implemented/0021-reduce-lifecycle-script-environment.md#detailed-explanation
-    pub const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
-    pub const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
+    pub(crate) const PACKAGE_NAME: &'static [u8] = b"npm_package_name";
+    pub(crate) const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
 }
 
 /// Runtime knobs `Command::start` passes through; mirrors the Zig
 /// `comptime`-tuple that selected the per-tag exec body.
 #[derive(Clone, Copy)]
-pub struct ExecCfg {
+pub(crate) struct ExecCfg {
     pub bin_dirs_only: bool,
     pub log_errors: bool,
     pub allow_fast_run_for_extensions: bool,
@@ -3121,7 +3121,7 @@ fn escape_for_js_string(input: &[u8]) -> Vec<u8> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ::core::marker::ConstParamTy)]
-pub enum Filter {
+pub(crate) enum Filter {
     Script,
     Bin,
     BunJs,
@@ -3935,7 +3935,6 @@ impl RunCommand {
 
 bun_core::declare_scope!(BUNX_FAST_PATH_LOG, visible);
 
-/// Uninhabited namespace holder; all members are associated items.
 pub enum BunXFastPath {}
 
 #[cfg(windows)]

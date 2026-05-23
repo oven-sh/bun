@@ -51,23 +51,23 @@ const HAS_CONFIG_VERSION_TAG: u64 = u64::from_ne_bytes(*b"cNfGvRsN");
 /// Collapsed into a single type so callers pass exactly one `&mut StreamType`.
 ///
 /// LIFETIMES.tsv: `bytes` is BORROW_PARAM → `&'a mut Vec<u8>`.
-pub struct StreamType<'a> {
+pub(crate) struct StreamType<'a> {
     pub bytes: &'a mut Vec<u8>,
 }
 
 impl<'a> StreamType<'a> {
     #[inline]
-    pub fn get_pos(&self) -> Result<usize, Error> {
+    pub(crate) fn get_pos(&self) -> Result<usize, Error> {
         Ok(self.bytes.len())
     }
 
-    pub fn pwrite(&mut self, data: &[u8], index: usize) -> usize {
+    pub(crate) fn pwrite(&mut self, data: &[u8], index: usize) -> usize {
         self.bytes[index..index + data.len()].copy_from_slice(data);
         data.len()
     }
 
     #[inline]
-    pub fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub(crate) fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
         self.bytes.extend_from_slice(data);
         Ok(())
     }
@@ -337,7 +337,7 @@ pub struct SerializerLoadResult {
     pub migrated_from_lockb_v2: bool,
 }
 
-pub fn load(
+pub(crate) fn load(
     lockfile: &mut Lockfile,
     stream: &mut Stream,
     log: &mut Log,

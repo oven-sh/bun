@@ -53,7 +53,7 @@ pub struct Task<'a> {
 /// the task is observed. Exposed as a module-level fn so call sites that import this
 /// module as `Task` can write `..Task::uninit()` in struct-update position.
 #[inline]
-pub fn uninit() -> Task<'static> {
+pub(crate) fn uninit() -> Task<'static> {
     Task {
         // Overwritten by every caller; zero/garbage matches Zig `undefined`.
         tag: Tag::PackageManifest,
@@ -649,7 +649,7 @@ pub enum Status {
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
 /// // TODO(port): Phase B — consider folding `Tag` + `Request` + `Data` into a
 /// single Rust `enum` (one discriminant instead of tag + 2 untagged unions).
-pub union Data {
+pub(crate) union Data {
     pub package_manifest: ManuallyDrop<npm::PackageManifest>,
     pub extract: ManuallyDrop<ExtractData>,
     pub git_clone: ManuallyDrop<Fd>,
@@ -657,7 +657,7 @@ pub union Data {
 }
 
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
-pub union Request<'a> {
+pub(crate) union Request<'a> {
     /// package name
     // todo: Registry URL
     pub package_manifest: ManuallyDrop<PackageManifestRequest<'a>>,
@@ -667,21 +667,21 @@ pub union Request<'a> {
     pub local_tarball: ManuallyDrop<LocalTarballRequest>,
 }
 
-pub struct PackageManifestRequest<'a> {
+pub(crate) struct PackageManifestRequest<'a> {
     pub name: StringOrTinyString,
     // BORROW_PARAM per LIFETIMES.tsv
     // TODO(port): lifetime — see note on `Task<'a>`; likely `*mut NetworkTask` in Phase B.
     pub network: &'a mut NetworkTask,
 }
 
-pub struct ExtractRequest<'a> {
+pub(crate) struct ExtractRequest<'a> {
     // BORROW_PARAM per LIFETIMES.tsv
     // TODO(port): lifetime — see note on `Task<'a>`; likely `*mut NetworkTask` in Phase B.
     pub network: &'a mut NetworkTask,
     pub tarball: ExtractTarball,
 }
 
-pub struct GitCloneRequest {
+pub(crate) struct GitCloneRequest {
     pub name: StringOrTinyString,
     pub url: StringOrTinyString,
     // PORT NOTE: Zig stores `DotEnv.Map` by value (handle copy of the global
@@ -692,7 +692,7 @@ pub struct GitCloneRequest {
     pub res: Resolution,
 }
 
-pub struct GitCheckoutRequest {
+pub(crate) struct GitCheckoutRequest {
     pub repo_dir: Fd,
     pub dependency_id: DependencyID,
     pub name: StringOrTinyString,
@@ -703,7 +703,7 @@ pub struct GitCheckoutRequest {
     pub env: &'static dot_env::Map,
 }
 
-pub struct LocalTarballRequest {
+pub(crate) struct LocalTarballRequest {
     pub tarball: ExtractTarball,
     /// Path to read the tarball from. May be the same as `tarball.url` (when
     /// `normalize` is true) or an absolute path joined with a workspace

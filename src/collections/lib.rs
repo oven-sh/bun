@@ -11,7 +11,7 @@
     allocator_api
 )]
 #![allow(incomplete_features, internal_features)]
-#![warn(unused_must_use, unreachable_pub)]
+#![warn(unused_must_use)]
 
 pub mod hive_array;
 pub mod multi_array_list;
@@ -176,7 +176,6 @@ pub use array_hash_map::{
 /// `.values()` / `.entry()` returns a distinct hashbrown type — re-exporting
 /// the crate is the smaller surface.)
 pub use hashbrown;
-/// Explicit-context alias; `ArrayHashMap<K, V>` already has `C = AutoContext`
 /// as a default, this just gives the three-param spelling a distinct name.
 pub type ArrayHashMapWithContext<K, V, C> = ArrayHashMap<K, V, C>;
 

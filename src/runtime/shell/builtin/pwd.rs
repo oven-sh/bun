@@ -4,7 +4,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Pwd {
+pub(crate) struct Pwd {
     state: State,
 }
 
@@ -26,7 +26,7 @@ enum WaitKind {
 }
 
 impl Pwd {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         if !Builtin::of(interp, cmd).args_slice().is_empty() {
             let msg: &[u8] = b"pwd: too many arguments\n";
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
@@ -61,7 +61,7 @@ impl Pwd {
         Builtin::done(interp, cmd, 0)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,

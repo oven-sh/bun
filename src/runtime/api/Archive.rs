@@ -26,14 +26,14 @@ const FILETYPE_REGULAR: u32 = 0o100000;
 
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
-pub enum Compression {
+pub(crate) enum Compression {
     #[default]
     None,
     Gzip(GzipOptions),
 }
 
 #[derive(Clone, Copy)]
-pub struct GzipOptions {
+pub(crate) struct GzipOptions {
     /// Compression level: 1 (fastest) to 12 (maximum compression). Default is 6.
     pub level: u8,
 }
@@ -656,7 +656,7 @@ impl PromiseResult {
 ///   - `run` — runs on thread pool, stores result in `self`
 ///   - `run_from_js` — returns value to resolve/reject
 ///   - `Drop` — cleanup
-pub trait TaskContext: Send {
+pub(crate) trait TaskContext: Send {
     /// Dispatch tag for this context's `AsyncTask<Self>` variant.
     const TAG: TaskTag;
     /// Runs on thread pool. Stores its result on `self`.

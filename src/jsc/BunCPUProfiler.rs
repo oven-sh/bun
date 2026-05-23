@@ -9,7 +9,7 @@ use bun_paths::PathBuffer;
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ProfilerError {
+pub(crate) enum ProfilerError {
     #[error("WriteFailed")]
     WriteFailed,
     #[error("FilenameTooLong")]
@@ -65,7 +65,7 @@ pub fn start_cpu_profiler(vm: &mut VM) {
     Bun__startCPUProfiler(vm);
 }
 
-pub fn stop_and_write_profile(
+pub(crate) fn stop_and_write_profile(
     vm: &mut VM,
     config: &CPUProfilerConfig,
 ) -> Result<(), ProfilerError> {

@@ -444,7 +444,7 @@ impl Buffers {
     }
 }
 
-pub fn load(
+pub(crate) fn load(
     stream: &mut Stream,
     log: &mut bun_ast::Log,
     pm_: Option<&mut PackageManager>,

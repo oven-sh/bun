@@ -142,7 +142,7 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
 /// anonymous-struct call shape `{ .onExtract = onPackageExtracted, .onResolve = {},
 /// .onPackageManifestError = {}, .onPackageDownloadError = onPackageDownloadError,
 /// .progress_bar = false, .manifests_only = false }` with `Ctx == *Store.Installer`.
-pub struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
+pub(crate) struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
 
 impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
     type Ctx = store::Installer<'a>;
@@ -222,7 +222,7 @@ impl<'a, 'b> Wait<'a, 'b> {
 }
 
 /// Runs on main thread
-pub fn install_isolated_packages(
+pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
     command_ctx: Command::Context,
     install_root_dependencies: bool,

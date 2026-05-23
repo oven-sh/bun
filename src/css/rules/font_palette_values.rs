@@ -8,7 +8,7 @@ use crate::{PrintErr, Printer};
 use super::ArrayList;
 
 /// A [@font-palette-values](https://drafts.csswg.org/css-fonts-4/#font-palette-values) rule.
-pub struct FontPaletteValuesRule {
+pub(crate) struct FontPaletteValuesRule {
     /// The name of the font palette.
     pub name: DashedIdent,
     /// Declarations in the `@font-palette-values` rule.
@@ -18,7 +18,7 @@ pub struct FontPaletteValuesRule {
 }
 
 impl FontPaletteValuesRule {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -42,7 +42,7 @@ impl FontPaletteValuesRule {
 }
 
 impl FontPaletteValuesRule {
-    pub fn parse(
+    pub(crate) fn parse(
         name: DashedIdent,
         input: &mut css::Parser,
         loc: Location,
@@ -68,7 +68,7 @@ impl FontPaletteValuesRule {
 /// A property within an `@font-palette-values` rule.
 ///
 /// See [FontPaletteValuesRule](FontPaletteValuesRule).
-pub enum FontPaletteValuesProperty {
+pub(crate) enum FontPaletteValuesProperty {
     /// The `font-family` property.
     FontFamily(crate::css_properties::font::FontFamily),
     /// The `base-palette` property.
@@ -80,7 +80,7 @@ pub enum FontPaletteValuesProperty {
 }
 
 impl FontPaletteValuesRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `FontPaletteValuesProperty`'s
         // variant-walk lands when its enum body un-gates (properties::{font,
         // custom}); the gated stub above panics with the blocker named.
@@ -93,7 +93,7 @@ impl FontPaletteValuesRule {
 }
 
 impl FontPaletteValuesProperty {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             FontPaletteValuesProperty::FontFamily(f) => {
                 dest.write_str("font-family")?;
@@ -118,7 +118,7 @@ impl FontPaletteValuesProperty {
         }
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` variant-walk.
         match self {
             Self::FontFamily(f) => Self::FontFamily(f.deep_clone(bump)),
@@ -133,7 +133,7 @@ impl FontPaletteValuesProperty {
 
 /// A value for the [override-colors](https://drafts.csswg.org/css-fonts-4/#override-color)
 /// property in an `@font-palette-values` rule.
-pub struct OverrideColors {
+pub(crate) struct OverrideColors {
     /// The index of the color within the palette to override.
     pub index: u16,
     /// The replacement color.
@@ -141,7 +141,7 @@ pub struct OverrideColors {
 }
 
 impl OverrideColors {
-    pub fn parse(input: &mut css::Parser) -> css::Result<OverrideColors> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<OverrideColors> {
         use crate::css_values::number::CSSIntegerFns;
         let index = CSSIntegerFns::parse(input)?;
         if index < 0 {
@@ -159,14 +159,14 @@ impl OverrideColors {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::number::CSSIntegerFns;
         CSSIntegerFns::to_css(i32::from(self.index), dest)?;
         dest.write_char(b' ')?;
         self.color.to_css(dest)
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             index: self.index,
             color: self.color.deep_clone(bump),
@@ -183,7 +183,7 @@ impl css::generics::ToCss for OverrideColors {
 
 /// A value for the [base-palette](https://drafts.csswg.org/css-fonts-4/#base-palette-desc)
 /// property in an `@font-palette-values` rule.
-pub enum BasePalette {
+pub(crate) enum BasePalette {
     /// A light color palette as defined within the font.
     Light,
     /// A dark color palette as defined within the font.
@@ -193,7 +193,7 @@ pub enum BasePalette {
 }
 
 impl BasePalette {
-    pub fn parse(input: &mut css::Parser) -> css::Result<BasePalette> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BasePalette> {
         use crate::css_values::number::CSSIntegerFns;
         if let Ok(i) = input.try_parse(CSSIntegerFns::parse) {
             if i < 0 {
@@ -211,7 +211,7 @@ impl BasePalette {
         }}
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::number::CSSIntegerFns;
         match self {
             BasePalette::Light => dest.write_str("light"),
@@ -220,7 +220,7 @@ impl BasePalette {
         }
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` — `Copy` payload (u16).
         match self {
             Self::Light => Self::Light,
@@ -230,7 +230,7 @@ impl BasePalette {
     }
 }
 
-pub struct FontPaletteValuesDeclarationParser {}
+pub(crate) struct FontPaletteValuesDeclarationParser {}
 
 // PORT NOTE: Zig models these as nested namespace structs (`DeclarationParser`,
 // `RuleBodyItemParser`, `AtRuleParser`, `QualifiedRuleParser`) duck-typed by

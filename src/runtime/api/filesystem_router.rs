@@ -1,12 +1,12 @@
 //! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
 
 pub mod kind_enum {
-    pub const EXACT: &[u8] = b"exact";
-    pub const CATCH_ALL: &[u8] = b"catch-all";
-    pub const OPTIONAL_CATCH_ALL: &[u8] = b"optional-catch-all";
-    pub const DYNAMIC: &[u8] = b"dynamic";
+    pub(crate) const EXACT: &[u8] = b"exact";
+    pub(crate) const CATCH_ALL: &[u8] = b"catch-all";
+    pub(crate) const OPTIONAL_CATCH_ALL: &[u8] = b"optional-catch-all";
+    pub(crate) const DYNAMIC: &[u8] = b"dynamic";
 
-    pub fn classify(name: &[u8]) -> &'static [u8] {
+    pub(crate) fn classify(name: &[u8]) -> &'static [u8] {
         if bun_core::contains(name, b"[[...") {
             OPTIONAL_CATCH_ALL
         } else if bun_core::contains(name, b"[...") {
@@ -52,7 +52,7 @@ use bun_bundler as Transpiler;
 // codegen-generated thunks resolve without a stub.
 pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
 
-pub const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
+pub(crate) const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
 // ── local shims ───────────────────────────────────────────────────────────
 // `to_js` lives on the `bun_jsc::ZigStringJsc` extension trait; `from_bytes`

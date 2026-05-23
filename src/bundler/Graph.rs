@@ -93,7 +93,7 @@ pub struct Graph<'a> {
 }
 
 #[derive(Default)]
-pub struct HtmlImports {
+pub(crate) struct HtmlImports {
     /// Source index of the server file doing the import
     pub server_source_indices: Vec<IndexInt>,
     /// Source index of the HTML file being imported
@@ -147,7 +147,7 @@ bun_collections::multi_array_columns! {
 
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
-    pub struct InputFileFlags: u8 {
+    pub(crate) struct InputFileFlags: u8 {
         const IS_PLUGIN_FILE = 1 << 0;
         /// Set when a barrel-eligible file has `export * from` this file.
         const IS_EXPORT_STAR_TARGET = 1 << 1;

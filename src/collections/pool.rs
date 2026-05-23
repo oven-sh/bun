@@ -284,7 +284,7 @@ pub trait PoolStorage<T>: 'static {
 /// Fallback storage that panics on first use. Lets `ObjectPool<T, ..>` name a
 /// concrete type before its storage is wired (matches the prior `data()`
 /// `unreachable!`).
-pub struct UnwiredStorage;
+pub(crate) struct UnwiredStorage;
 impl<T: 'static> PoolStorage<T> for UnwiredStorage {
     fn with<R>(_f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
         unreachable!(
@@ -369,7 +369,7 @@ where
     // generic `impl`; storage is supplied via the `S: PoolStorage<T>` type
     // parameter (see `object_pool!` for the usual declaration).
     #[inline]
-    pub fn data<R>(f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
+    pub(crate) fn data<R>(f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
         S::with(f)
     }
 
@@ -380,13 +380,6 @@ where
         Self::data(|cell| {
             let d = cell.borrow();
             d.loaded && d.count >= MAX_COUNT
-        })
-    }
-
-    pub fn has() -> bool {
-        Self::data(|cell| {
-            let d = cell.borrow();
-            d.loaded && !d.list.first.is_null()
         })
     }
 
@@ -622,7 +615,7 @@ macro_rules! __object_pool_storage {
     ($name:ident, $ty:ty, tls) => {
         #[allow(non_camel_case_types)]
         #[doc(hidden)]
-        pub struct __ObjectPoolStorage;
+        pub(crate) struct __ObjectPoolStorage;
         ::std::thread_local! {
             static __OBJECT_POOL_DATA: ::core::cell::RefCell<
                 $crate::pool::DataStruct<$ty>
@@ -639,7 +632,7 @@ macro_rules! __object_pool_storage {
     ($name:ident, $ty:ty, global) => {
         #[allow(non_camel_case_types)]
         #[doc(hidden)]
-        pub struct __ObjectPoolStorage;
+        pub(crate) struct __ObjectPoolStorage;
         impl $crate::pool::PoolStorage<$ty> for __ObjectPoolStorage {
             fn with<R>(
                 f: impl FnOnce(&::core::cell::RefCell<$crate::pool::DataStruct<$ty>>) -> R,

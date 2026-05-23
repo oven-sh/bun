@@ -219,7 +219,8 @@ pub mod bun_spawn {
     }
 
     #[derive(Clone, Copy)]
-    pub struct Attr {
+    #[allow(dead_code)]
+    pub(crate) struct Attr {
         pub detached: bool,
         pub new_process_group: bool,
         pub pty_slave_fd: i32,
@@ -245,15 +246,13 @@ pub mod bun_spawn {
     }
 
     impl Attr {
-        pub fn init() -> Result<Attr, Error> {
+        #[allow(dead_code)]
+        pub(crate) fn init() -> Result<Attr, Error> {
             Ok(Attr::default())
         }
 
-        pub fn get(self) -> Result<u16, Error> {
-            Ok(self.flags)
-        }
-
-        pub fn set(&mut self, flags: u16) -> Result<(), Error> {
+        #[allow(dead_code)]
+        pub(crate) fn set(&mut self, flags: u16) -> Result<(), Error> {
             self.flags = flags;
             // FreeBSD's <spawn.h> has no POSIX_SPAWN_SETSID; bun-spawn.cpp
             // calls setsid() in the child for `detached`, which process.zig
@@ -275,7 +274,8 @@ pub mod bun_spawn {
             Ok(())
         }
 
-        pub fn reset_signals(&mut self) -> Result<(), Error> {
+        #[allow(dead_code)]
+        pub(crate) fn reset_signals(&mut self) -> Result<(), Error> {
             self.reset_signals = true;
             Ok(())
         }
@@ -349,15 +349,6 @@ pub mod posix_spawn {
             })
         }
 
-        pub fn get(&self) -> Result<u16, Error> {
-            let mut flags: c_short = 0;
-            // SAFETY: self.attr is a live posix_spawnattr_t
-            spawn_errno(errno(unsafe {
-                system::posix_spawnattr_getflags(&self.attr, &mut flags)
-            }))?;
-            Ok(flags as u16) // Zig: `@as(u16, @bitCast(flags))`
-        }
-
         pub fn set(&mut self, flags: u16) -> Result<(), Error> {
             // Zig: `@as(c_short, @bitCast(flags))` — `as` between same-width
             // signed/unsigned is the bitcast.
@@ -392,13 +383,13 @@ pub mod posix_spawn {
     }
 
     #[cfg(target_os = "macos")]
-    pub struct PosixSpawnActions {
+    pub(crate) struct PosixSpawnActions {
         pub actions: system::posix_spawn_file_actions_t,
     }
 
     #[cfg(target_os = "macos")]
     impl PosixSpawnActions {
-        pub fn init() -> Result<PosixSpawnActions, Error> {
+        pub(crate) fn init() -> Result<PosixSpawnActions, Error> {
             let mut actions =
                 core::mem::MaybeUninit::<system::posix_spawn_file_actions_t>::uninit();
             // SAFETY: posix_spawn_file_actions_init writes into actions on SUCCESS
@@ -411,12 +402,7 @@ pub mod posix_spawn {
             })
         }
 
-        pub fn open(&mut self, fd: Fd, path: &[u8], flags: u32, mode: mode_t) -> Result<(), Error> {
-            let posix_path = to_posix_path(path)?;
-            self.open_z(fd, &posix_path, flags, mode)
-        }
-
-        pub fn open_z(
+        pub(crate) fn open_z(
             &mut self,
             fd: Fd,
             path: &CStr,
@@ -437,14 +423,14 @@ pub mod posix_spawn {
             }))
         }
 
-        pub fn close(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn close(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
             spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_addclose(&mut self.actions, fd.native())
             }))
         }
 
-        pub fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
+        pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
             if fd == newfd {
                 return self.inherit(fd);
             }
@@ -459,7 +445,7 @@ pub mod posix_spawn {
             }))
         }
 
-        pub fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
             spawn_errno(errno(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
@@ -469,7 +455,7 @@ pub mod posix_spawn {
             }))
         }
 
-        pub fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
+        pub(crate) fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
             let posix_path = to_posix_path(path)?;
             self.chdir_z(&posix_path)
         }
@@ -497,9 +483,9 @@ pub mod posix_spawn {
     // Use BunSpawn types on POSIX (both Linux and macOS) for PTY support via posix_spawn_bun.
     // Windows uses different spawn mechanisms.
     #[cfg(unix)]
-    pub type Actions = bun_spawn::Actions;
+    pub(crate) type Actions = bun_spawn::Actions;
     #[cfg(unix)]
-    pub type Attr = bun_spawn::Attr;
+    pub(crate) type Attr = bun_spawn::Attr;
     // TODO(port): not(unix) Actions/Attr aliased PosixSpawn* in the Zig
     // draft, but Windows goes through `process.rs::spawn_process_windows`
     // (libuv), never these. Leave undeclared on Windows for now.
@@ -567,7 +553,7 @@ pub mod posix_spawn {
     }
 
     #[cfg(unix)]
-    pub fn spawn_z(
+    pub(crate) fn spawn_z(
         path: &CStr,
         actions: Option<&Actions>,
         attr: Option<&Attr>,
@@ -815,38 +801,6 @@ pub mod posix_spawn {
                 path: path.to_bytes().into(),
                 ..Default::default()
             })
-        }
-    }
-
-    /// Use this version of the `waitpid` wrapper if you spawned your child process using `posix_spawn`
-    /// or `posix_spawnp` syscalls.
-    /// See also `std.posix.waitpid` for an alternative if your child process was spawned via `fork` and
-    /// `execve` method.
-    #[cfg(unix)]
-    pub fn waitpid(pid: pid_t, flags: u32) -> sys::Result<WaitPidResult> {
-        type PidStatus = c_int;
-        let mut status: PidStatus = 0;
-        loop {
-            // SAFETY: status is a valid out-pointer
-            let rc = unsafe {
-                system::waitpid(
-                    pid,
-                    &raw mut status,
-                    c_int::try_from(flags).expect("int cast"),
-                )
-            };
-            match errno(rc) {
-                Errno::SUCCESS => {
-                    return sys::Result::Ok(WaitPidResult {
-                        pid: pid_t::try_from(rc).expect("int cast"),
-                        status: status as u32,
-                    });
-                }
-                Errno::INTR => continue,
-                e => {
-                    return sys::Result::Err(sys::Error::from_code_int(e.0, SYSCALL_WAITPID));
-                }
-            }
         }
     }
 

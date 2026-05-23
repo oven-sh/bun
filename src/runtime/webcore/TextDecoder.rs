@@ -15,13 +15,13 @@ use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
 #[derive(Default, Clone, Copy)]
-pub struct Buffered {
+pub(crate) struct Buffered {
     pub buf: [u8; 3],
     pub len: u8, // Zig: u2
 }
 
 impl Buffered {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         &self.buf[0..self.len as usize]
     }
 }

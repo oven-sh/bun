@@ -78,7 +78,7 @@ impl PageSelector {
     }
 }
 
-pub struct PageMarginRule {
+pub(crate) struct PageMarginRule {
     /// The margin box identifier for this rule.
     pub margin_box: PageMarginBox,
     /// The declarations within the rule.
@@ -89,7 +89,7 @@ pub struct PageMarginRule {
 }
 
 impl PageMarginRule {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -100,7 +100,7 @@ impl PageMarginRule {
 }
 
 impl PageMarginRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `PageMarginBox` is `Copy`.
         Self {
             margin_box: self.margin_box,
@@ -111,7 +111,7 @@ impl PageMarginRule {
 }
 
 /// A [@page](https://www.w3.org/TR/css-page-3/#at-page-rule) rule.
-pub struct PageRule {
+pub(crate) struct PageRule {
     /// A list of page selectors.
     pub selectors: ArrayList<PageSelector>,
     /// The declarations within the `@page` rule.
@@ -124,7 +124,7 @@ pub struct PageRule {
 }
 
 impl PageRule {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_str("@page")?;
@@ -186,7 +186,7 @@ impl PageRule {
 }
 
 impl PageRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
@@ -199,7 +199,7 @@ impl PageRule {
 
 // ─── PageRule parse ───────────────────────────────────────────────────────
 impl PageRule {
-    pub fn parse(
+    pub(crate) fn parse(
         selectors: ArrayList<PageSelector>,
         input: &mut css::Parser,
         loc: Location,
@@ -242,7 +242,7 @@ impl PageRule {
 ///
 /// See [PageSelector](PageSelector).
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub enum PagePseudoClass {
+pub(crate) enum PagePseudoClass {
     /// The `:left` pseudo class.
     Left,
     /// The `:right` pseudo class.
@@ -257,7 +257,7 @@ pub enum PagePseudoClass {
 
 impl PagePseudoClass {
     #[inline]
-    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
         // `Copy` enum (generics.zig "simple copy types" → identity).
         self
     }
@@ -265,7 +265,7 @@ impl PagePseudoClass {
 
 /// A [page margin box](https://www.w3.org/TR/css-page-3/#margin-boxes).
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub enum PageMarginBox {
+pub(crate) enum PageMarginBox {
     /// A fixed-size box defined by the intersection of the top and left margins of the page box.
     TopLeftCorner,
     /// A variable-width box filling the top page margin between the top-left-corner and top-center page-margin boxes.
@@ -304,7 +304,7 @@ pub enum PageMarginBox {
     BottomRightCorner,
 }
 
-pub struct PageRuleParser<'a> {
+pub(crate) struct PageRuleParser<'a> {
     pub declarations: &'a mut DeclarationBlock<'static>,
     pub rules: &'a mut ArrayList<PageMarginRule>,
     pub options: &'a css::ParserOptions<'a>,

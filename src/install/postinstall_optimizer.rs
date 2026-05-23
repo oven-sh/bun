@@ -146,7 +146,7 @@ pub struct List {
 }
 
 #[derive(Clone, Copy)]
-pub struct PkgInfo<'a> {
+pub(crate) struct PkgInfo<'a> {
     pub name_hash: PackageNameHash,
     pub version: Option<semver::Version>,
     // Borrows the lockfile string buffer at call sites; only used to resolve

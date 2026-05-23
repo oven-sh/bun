@@ -243,15 +243,15 @@ impl Order {
     }
 }
 
-pub struct AllOrderResult {
+pub(crate) struct AllOrderResult {
     pub start: usize,
     pub end: usize,
 }
 
 impl AllOrderResult {
-    pub const EMPTY: AllOrderResult = AllOrderResult { start: 0, end: 0 };
+    pub(crate) const EMPTY: AllOrderResult = AllOrderResult { start: 0, end: 0 };
 
-    pub fn set_failure_skip_to(&self, this: &mut Order) {
+    pub(crate) fn set_failure_skip_to(&self, this: &mut Order) {
         if self.start == 0 && self.end == 0 {
             return;
         }

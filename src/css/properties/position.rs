@@ -4,7 +4,7 @@ use crate::{Parser, PrintErr, Printer, Token, VendorPrefix};
 
 /// A value for the [position](https://www.w3.org/TR/css-position-3/#position-property) property.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Position {
+pub(crate) enum Position {
     /// The box is laid in the document flow.
     Static,
     /// The box is laid out in the document flow and offset from the resulting position.
@@ -49,7 +49,7 @@ fn lookup_keyword(ident: &[u8]) -> Option<PositionKeyword> {
 }
 
 impl Position {
-    pub fn parse(input: &mut Parser) -> css::Result<Position> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Position> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
@@ -67,7 +67,7 @@ impl Position {
         })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Position::Static => dest.write_str("static"),
             Position::Relative => dest.write_str("relative"),
@@ -78,18 +78,6 @@ impl Position {
                 dest.write_str("sticky")
             }
         }
-    }
-
-    pub fn eql(self, rhs: Self) -> bool {
-        // Zig: css.implementEql(@This(), lhs, rhs) — comptime-reflection structural eq.
-        // Rust: covered by #[derive(PartialEq)].
-        self == rhs
-    }
-
-    pub fn deep_clone(self) -> Self {
-        // Zig: css.implementDeepClone(@This(), this, arena) — comptime-reflection deep copy.
-        // Rust: covered by #[derive(Clone)]; arena param dropped (global mimalloc).
-        self
     }
 }
 

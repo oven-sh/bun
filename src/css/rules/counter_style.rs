@@ -3,7 +3,7 @@ use crate::css_values::ident::CustomIdent;
 use crate::{DeclarationBlock, PrintErr, Printer};
 
 /// A [@counter-style](https://drafts.csswg.org/css-counter-styles/#the-counter-style-rule) rule.
-pub struct CounterStyleRule {
+pub(crate) struct CounterStyleRule {
     /// The name of the counter style to declare.
     pub name: CustomIdent,
     /// Declarations in the `@counter-style` rule.
@@ -15,7 +15,7 @@ pub struct CounterStyleRule {
 }
 
 impl CounterStyleRule {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -26,7 +26,7 @@ impl CounterStyleRule {
 }
 
 impl CounterStyleRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             name: self.name.deep_clone(bump),

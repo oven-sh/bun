@@ -28,11 +28,11 @@ use repl::Repl;
 use crate::Command;
 use crate::cli::Arguments;
 
-pub struct ReplCommand;
+pub(crate) struct ReplCommand;
 
 impl ReplCommand {
     #[cold]
-    pub fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
 
         // Initialize the REPL

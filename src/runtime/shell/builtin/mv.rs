@@ -11,14 +11,14 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Mv {
+pub(crate) struct Mv {
     pub opts: Opts,
     pub args: MvArgs,
     pub state: MvState,
 }
 
 #[derive(Default)]
-pub struct MvArgs {
+pub(crate) struct MvArgs {
     /// Index into argv where source paths start.
     pub sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
@@ -27,7 +27,7 @@ pub struct MvArgs {
 }
 
 #[derive(Default)]
-pub enum MvState {
+pub(crate) enum MvState {
     #[default]
     Idle,
     CheckTarget(Box<ShellMvCheckTargetTask>),
@@ -46,13 +46,13 @@ pub enum MvState {
 }
 
 /// Spec: mv.zig `Opts.ParseError` — mv uses its own simpler parser.
-pub enum MvParseError {
+pub(crate) enum MvParseError {
     IllegalOption(&'static [u8]),
     ShowUsage,
 }
 
 impl Mv {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
@@ -75,7 +75,7 @@ impl Mv {
     }
 
     /// Spec: mv.zig `next`.
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
         enum Tag {
             Idle,
@@ -280,7 +280,7 @@ impl Mv {
         }
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -300,7 +300,7 @@ impl Mv {
     }
 
     /// Spec: mv.zig `checkTargetTaskDone`.
-    pub fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
+    pub(crate) fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
         if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
             t.done = true;
         }
@@ -308,7 +308,7 @@ impl Mv {
     }
 
     /// Spec: mv.zig `batchedMoveTaskDone`.
-    pub fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
+    pub(crate) fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
         let (all_done, had_err) = {
             let MvState::Executing {
                 task_count,
@@ -425,7 +425,7 @@ enum MvFlag {
 
 /// Spec: mv.zig `ShellMvCheckTargetTask`. `openat(target, O_RDONLY|O_DIRECTORY)`
 /// on a worker thread to learn whether the destination is a directory.
-pub struct ShellMvCheckTargetTask {
+pub(crate) struct ShellMvCheckTargetTask {
     pub cmd: NodeId,
     pub cwd: bun_sys::Fd,
     pub target: ZBox,
@@ -438,7 +438,7 @@ pub struct ShellMvCheckTargetTask {
 
 impl ShellMvCheckTargetTask {
     /// Spec: mv.zig `ShellMvCheckTargetTask.runFromThreadPool`.
-    pub fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
+    pub(crate) fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
         this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
             Ok(fd) => Ok(Some(fd)),
@@ -450,7 +450,7 @@ impl ShellMvCheckTargetTask {
 }
 
 /// Spec: mv.zig `ShellMvBatchedTask`. renameat() each source into the target.
-pub struct ShellMvBatchedTask {
+pub(crate) struct ShellMvBatchedTask {
     pub cmd: NodeId,
     /// Index into `MvState::Executing::tasks` so the main-thread completion
     /// can route to `Mv::batched_move_task_done` (Zig used `*ShellMvBatchedTask`
@@ -471,10 +471,10 @@ pub struct ShellMvBatchedTask {
 }
 
 impl ShellMvBatchedTask {
-    pub const BATCH_SIZE: usize = 5;
+    pub(crate) const BATCH_SIZE: usize = 5;
 
     /// Spec: mv.zig `ShellMvBatchedTask.runFromThreadPool`.
-    pub fn run_from_thread_pool(this: &mut ShellMvBatchedTask) {
+    pub(crate) fn run_from_thread_pool(this: &mut ShellMvBatchedTask) {
         // Moving multiple entries into a directory.
         if this.sources.len() > 1 {
             return this.move_multiple_into_dir();
@@ -605,7 +605,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
 }
 
 #[derive(Clone, Copy)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// `-f` — do not prompt before overwriting (default).
     pub force_overwrite: bool,
     /// `-h` — if target is a symlink to a directory, do not follow it.

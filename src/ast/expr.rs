@@ -961,7 +961,7 @@ impl Expr {
 // (i.e. racy garbage under threads) so a debug-gated atomic is strictly more
 // faithful than the old unconditional one.
 #[cfg(debug_assertions)]
-pub static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+pub(crate) static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 // PORT NOTE: Zig `expr.zig` declares `true_bool`/`false_bool`/`bool_values`
 // statics but never references them — `E.Boolean` is stored by value in
@@ -3099,7 +3099,7 @@ impl Equality {
 // `adt_const_params` (enum const-generic) is nightly-only. Lower to a sealed
 // ZST trait, same pattern as `bun_paths::resolve_path::PlatformT`; callers use
 // `Data::eql::<P, LooseEql>(...)` / `<P, StrictEql>`.
-pub trait EqlKindT: Copy {
+pub(crate) trait EqlKindT: Copy {
     const STRICT: bool;
 }
 #[derive(Clone, Copy)]

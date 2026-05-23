@@ -214,7 +214,7 @@ impl ClientSession {
     /// `session` backref is not dereferenced while `&mut self` is already
     /// live on the stack — re-entering via the raw backref would form a
     /// second aliased `&mut ClientSession` (Stacked-Borrows UB).
-    pub(crate) fn rst_stream(&mut self, stream: &mut Stream, code: wire::ErrorCode) {
+    pub fn rst_stream(&mut self, stream: &mut Stream, code: wire::ErrorCode) {
         if stream.rst_done || stream.state == StreamState::Closed {
             return;
         }

@@ -15,13 +15,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Rm {
+pub(crate) struct Rm {
     pub opts: Opts,
     pub state: RmState,
 }
 
 #[derive(Default)]
-pub enum RmState {
+pub(crate) enum RmState {
     #[default]
     Idle,
     ParseOpts {
@@ -37,7 +37,7 @@ pub enum RmState {
     Err(ExitCode),
 }
 
-pub struct ExecState {
+pub(crate) struct ExecState {
     /// Index into argv where filepath args start.
     pub args_start: usize,
     pub total_tasks: usize,
@@ -57,7 +57,7 @@ impl ExecState {
 }
 
 #[derive(Clone, Copy)]
-pub struct Opts {
+pub(crate) struct Opts {
     /// `--no-preserve-root` / `--preserve-root` — if false, allow recursive
     /// removal of `/`.
     pub preserve_root: bool,
@@ -105,12 +105,12 @@ enum RmParseFlag {
 }
 
 impl Rm {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
     /// Spec: rm.zig `next`.
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
             // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
             enum Tag {
@@ -391,7 +391,7 @@ impl Rm {
     }
 
     /// Spec: rm.zig `onIOWriterChunk`.
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -625,7 +625,7 @@ impl Rm {
 /// separator the user is using and prefer that. If both are used, pick the
 /// first one.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum JoinStyle {
+pub(crate) enum JoinStyle {
     Posix,
     Windows,
 }

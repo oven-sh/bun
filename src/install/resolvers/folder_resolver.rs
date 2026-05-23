@@ -30,17 +30,13 @@ pub enum FolderResolution {
 // In Rust the enum discriminant serves as the tag; expose an alias for parity.
 pub type Tag = core::mem::Discriminant<FolderResolution>;
 
-pub struct PackageWorkspaceSearchPathFormatter<'a> {
+pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
     pub manager: &'a PackageManager,
     pub version: dependency::Version,
     pub quoted: bool,
 }
 
-impl<'a> PackageWorkspaceSearchPathFormatter<'a> {
-    /// Zig default only set `quoted = true`; `manager`/`version` have no
-    /// default, so a `Default` impl is not expressible. Construct explicitly.
-    pub const DEFAULT_QUOTED: bool = true;
-}
+impl<'a> PackageWorkspaceSearchPathFormatter<'a> {}
 
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -97,7 +93,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 // type params (backed by std HashMap); identity hashing is a TODO(perf).
 pub type Map = HashMap<u64, FolderResolution, IdentityContext<u64>>;
 
-pub fn normalize(path: &[u8]) -> &[u8] {
+pub(crate) fn normalize(path: &[u8]) -> &[u8] {
     FileSystem::instance().normalize(path)
 }
 
@@ -141,7 +137,7 @@ type Resolver<'a> = NewResolver<'a, { ResolutionTag::Folder }>;
 type SymlinkResolver<'a> = NewResolver<'a, { ResolutionTag::Symlink }>;
 type WorkspaceResolver<'a> = NewResolver<'a, { ResolutionTag::Workspace }>;
 
-pub struct CacheFolderResolver {
+pub(crate) struct CacheFolderResolver {
     pub version: semver::Version,
 }
 
@@ -170,7 +166,7 @@ impl ResolverContext for CacheFolderResolver {
 /// `read_package_json_from_disk` (Zig: `comptime ResolverType: type`). The
 /// associated const `IS_WORKSPACE` replaces the
 /// `if (comptime ResolverType == WorkspaceResolver)` check.
-pub trait FolderResolverImpl: ResolverContext {
+pub(crate) trait FolderResolverImpl: ResolverContext {
     const IS_WORKSPACE: bool;
 }
 impl<'a, const TAG: ResolutionTag> FolderResolverImpl for NewResolver<'a, TAG> {
@@ -382,7 +378,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 }
 
 #[derive(Copy, Clone)]
-pub enum GlobalOrRelative<'a> {
+pub(crate) enum GlobalOrRelative<'a> {
     Global(&'a [u8]),
     Relative(dependency::version::Tag),
     CacheFolder(&'a [u8]),

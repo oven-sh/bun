@@ -2244,11 +2244,6 @@ impl Feature {
 
 // Module-level re-exports so callers can `use css::prefixes::is_flex_2009`.
 #[inline]
-pub fn is_flex_2009(browsers: &Browsers) -> bool {
+pub(crate) fn is_flex_2009(browsers: &Browsers) -> bool {
     Feature::is_flex_2009(browsers)
-}
-
-#[inline]
-pub fn is_webkit_gradient(browsers: &Browsers) -> bool {
-    Feature::is_webkit_gradient(browsers)
 }

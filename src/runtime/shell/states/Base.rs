@@ -34,14 +34,6 @@ impl Base {
         }
     }
 
-    /// Kept for call-site parity with the Zig state machine; in Rust the
-    /// owned-vs-borrowed distinction is carried by `EnvStr` itself, so there
-    /// is no per-node allocation scope to borrow.
-    #[inline]
-    pub fn new_borrowed_scope(kind: StateKind, parent: NodeId, shell: *mut ShellExecEnv) -> Self {
-        Self::new(kind, parent, shell)
-    }
-
     /// No-op kept for call-site parity. Zig used this to flush the per-node
     /// debug allocation scope; Rust ownership (`EnvStr`, `Box`, `Vec`) makes
     /// that tracking redundant.
@@ -67,7 +59,7 @@ impl Base {
 
 /// `error{Sys}` — see `Interpreter::try_`.
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum TryError {
+pub(crate) enum TryError {
     #[error("Sys")]
     Sys,
 }

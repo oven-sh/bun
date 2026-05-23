@@ -334,7 +334,7 @@ impl SQLDataCell {
 /// Coercion helper mirroring Zig's implicit `*const Data` → `?*const Data`
 /// promotion at `raw()` call sites. Lets callers pass `&Data`, `&mut Data`,
 /// `Option<&Data>`, or `Option<&mut Data>` without wrapping.
-pub trait IntoOptionalData<'a> {
+pub(crate) trait IntoOptionalData<'a> {
     fn into_optional_data(self) -> Option<&'a Data>;
 }
 impl<'a> IntoOptionalData<'a> for &'a Data {
@@ -381,7 +381,7 @@ unsafe extern "C" {
     // site is the safe `construct_object_from_data_cell` wrapper above, which
     // already accepts the same raw-pointer shape from safe code, so the
     // memory-validity contract is identical → `safe fn`.
-    pub safe fn JSC__constructObjectFromDataCell(
+    pub(crate) safe fn JSC__constructObjectFromDataCell(
         global: &JSGlobalObject,
         encoded_array_value: JSValue,
         encoded_structure_value: JSValue,

@@ -43,7 +43,7 @@ pub struct Handler {
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
-    pub struct HandlerFlags: u8 {
+    pub(crate) struct HandlerFlags: u8 {
         const SSL             = 1 << 0;
         const PUBLISH_TO_SELF = 1 << 1;
         // remaining 6 bits: padding
@@ -270,7 +270,7 @@ fn lookup_zig_string(
 // TODO(port): bun_jsc::JSValue::{get, get_truthy, to_boolean, is_string,
 // get_zig_string, to_int64, is_any_int}.
 
-pub fn on_create(
+pub(crate) fn on_create(
     global_object: &JSGlobalObject,
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {

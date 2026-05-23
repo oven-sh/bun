@@ -8,7 +8,7 @@ use bun_jsc::{JSGlobalObject, JSValue};
 
 /// `this` is `&css::Err<T>` for any `T`; only `.kind` is accessed.
 // Zig `!JSValue` (inferred set) — only fallible call is `create_format` (OOM), so AllocError.
-pub fn to_error_instance<T>(
+pub(crate) fn to_error_instance<T>(
     this: &bun_css::Err<T>,
     global_this: &JSGlobalObject,
 ) -> Result<JSValue, AllocError>

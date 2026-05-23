@@ -5,8 +5,8 @@ use bun_sys::Fd;
 
 use crate::watcher_impl::{Op, WatchEvent, Watcher};
 
-pub type EventListIndex = u32;
-pub type Platform = KEventWatcher;
+pub(crate) type EventListIndex = u32;
+pub(crate) type Platform = KEventWatcher;
 
 pub struct KEventWatcher {
     // Everything being watched
@@ -44,7 +44,7 @@ impl KEventWatcher {
     }
 }
 
-pub fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
+pub(crate) fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     let mut op = Op::empty();
     if (kevent.fflags & libc::NOTE_DELETE) > 0 {
         op |= Op::DELETE;
@@ -66,7 +66,7 @@ pub fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     }
 }
 
-pub fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     use bun_sys::c;
     let fd: Fd = this
         .platform

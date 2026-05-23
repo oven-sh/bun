@@ -220,7 +220,7 @@ pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
 // comptime reflection over @tagName. The Rust derive emits `EnumProperty` +
 // `From<Self> for &'static str` + inherent `parse`/`to_css`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub enum CSSWideKeyword {
+pub(crate) enum CSSWideKeyword {
     /// The property's initial value.
     Initial,
     /// The property's computed value on the parent element.
@@ -405,7 +405,7 @@ mod generic_registrations {
     /// Indirection so the `generic::{Parse,ToCss}` impls above don't have to
     /// repeat `GenericBorder`'s `S`-bounds (which name the same protocol
     /// traits and would otherwise create a coherence cycle).
-    pub trait GenericBorderImpl: Sized {
+    pub(crate) trait GenericBorderImpl: Sized {
         fn parse(input: &mut crate::css_parser::Parser) -> crate::css_parser::CssResult<Self>;
         fn to_css(
             &self,

@@ -23,7 +23,7 @@ pub(crate) mod bun_schema {
 
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
-pub(crate) mod bun_json {
+pub mod bun_json {
     pub(crate) use bun_ast::{Expr, ExprData, G::Property, e as E};
     pub(crate) use bun_parsers::json::*;
 }
@@ -144,7 +144,7 @@ pub mod lockfile {
     /// `MultiArrayList<Package>.append` row type — the real `PackageList`
     /// (`package::List<u64>`) takes a `Package` value, so alias the row type
     /// for callers (e.g. `migration.rs`) that spell it `PackageListEntry`.
-    pub type PackageListEntry = crate::lockfile_real::Package;
+    pub(crate) type PackageListEntry = crate::lockfile_real::Package;
     pub mod package {
         pub use crate::lockfile_real::package::meta::{HasInstallScript, Meta};
         pub use crate::lockfile_real::package::*;
@@ -334,18 +334,9 @@ pub use package_manager_real::{
 // during the port now resolve to the real types. Once every call site is
 // migrated these aliases drop.
 // ──────────────────────────────────────────────────────────────────────────
-pub type PackageManagerOptionsStub = package_manager_real::Options;
 pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
-pub type PackageManagerEnableStub = package_manager_real::package_manager_options::Enable;
-pub type PublishConfigStub = package_manager_real::package_manager_options::PublishConfig;
-pub type AsyncNetworkTaskQueueStub = package_manager_real::AsyncNetworkTaskQueue;
-pub type PreallocatedResolveTasksStub =
-    bun_collections::HiveArrayFallback<package_manager_task::Task<'static>, 64>;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
 
-/// Port of the anonymous `comptime callbacks: anytype` struct passed to
-/// `PackageManager.runTasks` (src/install/PackageManager/runTasks.zig). Zig
-/// duck-types `@TypeOf(callbacks.onExtract) != void` etc.; the Rust shape is
 /// generic over each slot so call sites can pass `()` for unused hooks and a
 /// fn item for active ones. The trait-based dispatch lives in
 /// `package_manager_real::run_tasks::RunTasksCallbacks`; this value-level
@@ -392,7 +383,7 @@ pub struct PackageJSON {
 
 /// Port of `bun.PackageJSON.DependencyMap` (src/resolver/package_json.zig).
 #[derive(Default)]
-pub struct PackageJSONDependencyMap {
+pub(crate) struct PackageJSONDependencyMap {
     pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
     // TODO(port): lifetime — borrows the package.json source contents
     pub source_buf: &'static [u8],
@@ -404,7 +395,7 @@ pub struct PackageJSONDependencyMap {
 /// not reachable from this tier, so the shim returns the `CI` env var name
 /// when set (the same fallback `npm-registry-fetch` uses) and `None` otherwise.
 pub mod ci_info {
-    pub fn detect_ci_name() -> Option<&'static [u8]> {
+    pub(crate) fn detect_ci_name() -> Option<&'static [u8]> {
         // Port of the trailing fallback in `ci_info.zig:detectCiName` —
         // the per-vendor probes live in `bun_runtime` (T6) and are wired in
         // there; install only needs *some* answer for the user-agent string.
@@ -926,10 +917,10 @@ impl RunCommand {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub const BUN_HASH_TAG: &[u8] = b".bun-tag-";
+pub(crate) const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
-pub const MAX_HEX_HASH_LEN: usize = {
+pub(crate) const MAX_HEX_HASH_LEN: usize = {
     // Zig computed this with std.fmt.bufPrint at comptime; u64::MAX in hex is
     // always 16 nibbles.
     let mut n = u64::MAX;
@@ -942,10 +933,10 @@ pub const MAX_HEX_HASH_LEN: usize = {
 };
 const _: () = assert!(MAX_HEX_HASH_LEN == 16);
 
-pub const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
-pub type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
+pub(crate) const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
+pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
-pub fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
+pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &mut [u8] {
     buf[0..BUN_HASH_TAG.len()].copy_from_slice(BUN_HASH_TAG);
     // std.fmt.bufPrint(buf[bun_hash_tag.len..], "{x}", .{patch_hash})
     let mut tmp = [0u8; 16];
@@ -993,22 +984,22 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
     }
 }
 
-pub fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
+pub(crate) fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
     StorePathFormatter { str }
 }
 
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
-pub static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
+pub(crate) static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 
-pub fn initialize_store() {
+pub(crate) fn initialize_store() {
     bun_ast::initialize_store_or_reset();
 }
 
 /// The default store we use pre-allocates around 16 MB of memory per thread
 /// That adds up in multi-threaded scenarios.
 /// ASTMemoryAllocator uses a smaller fixed buffer allocator
-pub fn initialize_mini_store() {
+pub(crate) fn initialize_mini_store() {
     use bun_alloc::Arena;
 
     struct MiniStore {
@@ -1068,16 +1059,16 @@ pub use bun_install_types::{
     TruncatedPackageNameHash,
 };
 // Phase-A drafts use the Zig field-style lowercase names; alias both spellings.
-pub const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
-pub const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
+pub(crate) const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
+pub(crate) const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
 pub const bun_hash_tag: &[u8] = BUN_HASH_TAG;
 
-pub type PackageNameAndVersionHash = u64;
+pub(crate) type PackageNameAndVersionHash = u64;
 
-pub struct Aligner;
+pub(crate) struct Aligner;
 
 impl Aligner {
-    pub fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
+    pub(crate) fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
         let to_write = Self::skip_amount::<T>(pos as usize);
 
         let remainder: &[u8] = &ALIGNMENT_BYTES_TO_REPEAT_BUFFER
@@ -1090,7 +1081,7 @@ impl Aligner {
     /// Runtime-alignment variant of [`Aligner::write`] for call sites that
     /// compute `align_of::<T>()` at the caller (Zig passed `comptime Type`;
     /// Rust callers without a nameable `T` pass the alignment as a value).
-    pub fn write_with_align<W: bun_io::Write>(
+    pub(crate) fn write_with_align<W: bun_io::Write>(
         align: usize,
         writer: &mut W,
         pos: u64,
@@ -1105,12 +1096,12 @@ impl Aligner {
     }
 
     #[inline]
-    pub fn skip_amount<T>(pos: usize) -> usize {
+    pub(crate) fn skip_amount<T>(pos: usize) -> usize {
         Self::skip_amount_with_align(core::mem::align_of::<T>(), pos)
     }
 
     #[inline]
-    pub fn skip_amount_with_align(align: usize, pos: usize) -> usize {
+    pub(crate) fn skip_amount_with_align(align: usize, pos: usize) -> usize {
         // std.mem.alignForward(usize, pos, align) - pos
         pos.next_multiple_of(align) - pos
     }
@@ -1132,13 +1123,13 @@ pub enum Origin {
 pub use bun_install_types::resolver_hooks::{Features, PreinstallState};
 
 #[derive(Default)]
-pub struct ExtractDataJson {
+pub(crate) struct ExtractDataJson {
     pub path: Box<[u8]>,
     pub buf: Vec<u8>,
 }
 
 #[derive(Default)]
-pub struct ExtractData {
+pub(crate) struct ExtractData {
     pub url: Box<[u8]>,
     pub resolved: Box<[u8]>,
     pub json: Option<ExtractDataJson>,
@@ -1155,21 +1146,13 @@ pub struct ExtractData {
 /// push into this buffer; the raw-ptr version cannot grow and aliases caller
 /// memory with no lifetime. Own the buffer.
 #[derive(Clone, Default)]
-pub struct DependencyInstallContext {
+pub(crate) struct DependencyInstallContext {
     pub tree_id: lockfile::tree::Id,
     pub path: Vec<u8>,
     pub dependency_id: DependencyID,
 }
 
-impl DependencyInstallContext {
-    pub fn new(dependency_id: DependencyID) -> Self {
-        Self {
-            tree_id: 0,
-            path: Vec::new(),
-            dependency_id,
-        }
-    }
-}
+impl DependencyInstallContext {}
 
 #[derive(Clone)]
 pub enum TaskCallbackContext {
@@ -1186,7 +1169,7 @@ pub enum TaskCallbackContext {
 // 2.
 
 #[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub enum PackageManifestError {
+pub(crate) enum PackageManifestError {
     PackageManifestHTTP400,
     PackageManifestHTTP401,
     PackageManifestHTTP402,

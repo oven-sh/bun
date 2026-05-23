@@ -25,7 +25,7 @@ use crate::{JSGlobalObject, JSPromise, JSValue, JsError};
 // until the stub is removed and `js_global_object::JSGlobalObject` becomes
 // the sole re-export.
 // ──────────────────────────────────────────────────────────────────────────
-pub trait GlobalObjectRef {
+pub(crate) trait GlobalObjectRef {
     /// Raw `JSC::JSGlobalObject*` for FFI.
     fn as_global_ptr(&self) -> *mut c_void;
     /// `globalThis.vm().throwError(globalThis, value)`.
@@ -1513,9 +1513,9 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
 // `@export` authoritative and do not let C++ link against bogus Rust statics.
 
 #[unsafe(no_mangle)]
-pub static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
+pub(crate) static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
 
 #[unsafe(no_mangle)]
-pub static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
+pub(crate) static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
 
 // ported from: src/jsc/bindings/ErrorCode.ts

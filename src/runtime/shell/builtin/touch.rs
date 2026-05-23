@@ -8,13 +8,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Touch {
+pub(crate) struct Touch {
     pub opts: Opts,
     pub state: State,
 }
 
 #[derive(Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     Exec(ExecState),
@@ -22,7 +22,7 @@ pub enum State {
     Done,
 }
 
-pub struct ExecState {
+pub(crate) struct ExecState {
     pub started: bool,
     pub tasks_count: usize,
     pub tasks_done: usize,
@@ -38,7 +38,7 @@ pub struct ExecState {
 }
 
 impl Touch {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let args_start = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -74,7 +74,7 @@ impl Touch {
         Self::next(interp, cmd)
     }
 
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         enum Action {
             Done(ExitCode),
             Schedule(usize),
@@ -126,7 +126,7 @@ impl Touch {
         }
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         written: usize,
@@ -175,8 +175,6 @@ impl Touch {
         Self::next(interp, cmd).run(interp);
     }
 }
-
-pub type ShellTouchOutputTask = OutputTask<Touch>;
 
 impl OutputTaskVTable for Touch {
     fn write_err(

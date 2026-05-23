@@ -33,16 +33,16 @@ pub use crate::process_auto_killer as ProcessAutoKiller;
 // underlying scalar, so the `#[no_mangle]` symbol layout is unchanged for the
 // C++ side; Rust gets race-free reads.
 #[unsafe(no_mangle)]
-pub static has_bun_garbage_collector_flag_enabled: core::sync::atomic::AtomicBool =
+pub(crate) static has_bun_garbage_collector_flag_enabled: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub static isBunTest: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
-pub static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
+pub(crate) static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
     core::sync::atomic::AtomicI32::new(10);
 
 // TODO: evaluate if this has any measurable performance impact.
-pub static SYNTHETIC_ALLOCATION_LIMIT: core::sync::atomic::AtomicUsize =
+pub(crate) static SYNTHETIC_ALLOCATION_LIMIT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(u32::MAX as usize);
 #[inline]
 pub fn synthetic_allocation_limit() -> usize {
@@ -57,9 +57,8 @@ pub use bun_core::STRING_ALLOCATION_LIMIT;
 // Type aliases
 // ──────────────────────────────────────────────────────────────────────────
 
-pub type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
-pub type OnException = fn(&mut ZigException);
-pub type MacroMap = bun_collections::ArrayHashMap<i32, jsc::C::JSObjectRef>;
+pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, JSValue);
+pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, jsc::C::JSObjectRef>;
 /// Spec VirtualMachine.zig:144 `ExceptionList`. `api::JsException` lives in
 /// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
 /// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
@@ -374,10 +373,6 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
 }
 
-/// `hot_reload` is stored as `u8` (TODO(b2-cycle): widen to
-/// `bun_options_types::context::HotReload`). Mirror the Zig enum ordinals so
-/// the un-gated accessors below can compare without naming the type.
-pub const HOT_RELOAD_NONE: u8 = 0;
 pub const HOT_RELOAD_HOT: u8 = 1;
 pub const HOT_RELOAD_WATCH: u8 = 2;
 
@@ -410,12 +405,12 @@ impl UnhandledRejectionScope {
 
 /// Thread-local VM holder (`VMHolder` in VirtualMachine.zig). Wired to the
 /// crate-level `VirtualMachine::get()`/`set_current()` accessors.
-pub struct VMHolder;
+pub(crate) struct VMHolder;
 
 // PORT NOTE: Zig nests `pub var main_thread_vm` inside the struct namespace;
 // Rust forbids associated `static`s, so it lives at module scope and is
 // re-exported as `VMHolder::MAIN_THREAD_VM` via a const fn accessor.
-pub static MAIN_THREAD_VM: core::sync::atomic::AtomicPtr<VirtualMachine> =
+pub(crate) static MAIN_THREAD_VM: core::sync::atomic::AtomicPtr<VirtualMachine> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
 // `#[thread_local]` (bare `__thread` slot) instead of `thread_local!` macro:
@@ -434,26 +429,17 @@ static VM: Cell<Option<*mut VirtualMachine>> = Cell::new(None);
 static CACHED_GLOBAL_OBJECT: Cell<Option<*mut JSGlobalObject>> = Cell::new(None);
 
 impl VMHolder {
-    /// Reads the per-thread `*mut VirtualMachine` slot.
     #[inline(always)]
-    pub fn vm() -> Option<*mut VirtualMachine> {
-        VM.get()
-    }
-    #[inline(always)]
-    pub fn set_vm(vm: Option<*mut VirtualMachine>) {
+    pub(crate) fn set_vm(vm: Option<*mut VirtualMachine>) {
         VM.set(vm)
     }
     #[inline(always)]
-    pub fn cached_global_object() -> Option<*mut JSGlobalObject> {
-        CACHED_GLOBAL_OBJECT.get()
-    }
-    #[inline(always)]
-    pub fn set_cached_global_object(g: Option<*mut JSGlobalObject>) {
+    pub(crate) fn set_cached_global_object(g: Option<*mut JSGlobalObject>) {
         CACHED_GLOBAL_OBJECT.set(g)
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__setDefaultGlobalObject(global: *mut JSGlobalObject) {
+    pub(crate) extern "C" fn Bun__setDefaultGlobalObject(global: *mut JSGlobalObject) {
         if let Some(vm_instance) = VM.get() {
             // SAFETY: vm pointer set by init() on this thread
             let vm_instance = unsafe { &mut *vm_instance };
@@ -466,7 +452,7 @@ impl VMHolder {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__getDefaultGlobalObject() -> Option<NonNull<JSGlobalObject>> {
+    pub(crate) extern "C" fn Bun__getDefaultGlobalObject() -> Option<NonNull<JSGlobalObject>> {
         if let Some(g) = CACHED_GLOBAL_OBJECT.get() {
             return NonNull::new(g);
         }
@@ -479,7 +465,7 @@ impl VMHolder {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__thisThreadHasVM() -> bool {
+    pub(crate) extern "C" fn Bun__thisThreadHasVM() -> bool {
         VM.get().is_some()
     }
 }
@@ -489,11 +475,9 @@ pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
 #[thread_local]
 pub static IS_MAIN_THREAD_VM: Cell<bool> = Cell::new(false);
 
-pub static IS_SMOL_MODE: core::sync::atomic::AtomicBool =
+pub(crate) static IS_SMOL_MODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// Process-global "smol" flag (Zig: `bun.jsc.VirtualMachine.is_smol_mode`).
-/// Set once during VM init before workers spawn; thereafter read-only.
 #[inline]
 pub fn is_smol_mode() -> bool {
     IS_SMOL_MODE.load(core::sync::atomic::Ordering::Relaxed)
@@ -544,7 +528,7 @@ pub const MAIN_FILE_NAME: &[u8] = b"bun:main";
 
 /// Instead of storing timestamp as a i128, we store it as a u64.
 /// We subtract the timestamp from Jan 1, 2000 (Y2K)
-pub const ORIGIN_RELATIVE_EPOCH: i128 = 946_684_800 * 1_000_000_000;
+pub(crate) const ORIGIN_RELATIVE_EPOCH: i128 = 946_684_800 * 1_000_000_000;
 
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine impl — core surface (compiles at this tier)
@@ -2960,7 +2944,7 @@ impl crate::ipc::SendQueueOwner for IPCInstance {
 
 /// Spec VirtualMachine.zig:1708 `ResolveFunctionResult`.
 #[derive(Default)]
-pub struct ResolveFunctionResult {
+pub(crate) struct ResolveFunctionResult {
     pub result: Option<bun_resolver::Result>,
     pub path: &'static [u8], // TODO(port): lifetime — borrows resolver arena
     pub query_string: &'static [u8],
@@ -2968,7 +2952,7 @@ pub struct ResolveFunctionResult {
 
 /// Spec VirtualMachine.zig:1584 `source_code_printer`.
 #[thread_local]
-pub static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
+pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
     Cell::new(None);
 
 /// `true` when [`enable_macro_mode`](VirtualMachine::enable_macro_mode)
@@ -3100,7 +3084,7 @@ fn normalize_source(source: &[u8]) -> &[u8] {
 /// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is
 /// byte-equal to `s`, in which case bump `s`'s refcount instead.
 #[inline]
-pub fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
+pub(crate) fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
     if s.eql_utf8(other) {
         return s.dupe_ref();
     }

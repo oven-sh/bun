@@ -29,7 +29,7 @@ thread_local! {
     static U16_POOL: RefCell<Vec<Box<WPathBuffer>>> = const { RefCell::new(Vec::new()) };
 }
 
-pub trait PoolStorage: Sized + Default + 'static {
+pub(crate) trait PoolStorage: Sized + Default + 'static {
     fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R;
     /// Allocate a fresh boxed buffer. Implemented per concrete type so the
     /// `assume_init` SAFETY obligation is discharged monomorphically (the
@@ -81,7 +81,7 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
 
     /// Manual return path (kept for structure parity with Zig). Prefer dropping
     /// the `PoolGuard` instead.
-    pub fn put(buf: Box<T>) {
+    pub(crate) fn put(buf: Box<T>) {
         T::with_pool(|p| {
             let mut p = p.borrow_mut();
             if p.len() < POOL_CAP {
@@ -89,10 +89,6 @@ impl<T: PoolStorage> PathBufferPoolT<T> {
             }
             // else: drop — mimalloc frees it.
         });
-    }
-
-    pub fn delete_all() {
-        T::with_pool(|p| p.borrow_mut().clear());
     }
 }
 

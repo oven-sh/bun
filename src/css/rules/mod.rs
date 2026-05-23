@@ -868,13 +868,13 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
 /// the equality check in `StyleRuleKeyMap::remove_duplicate`, which receives
 /// the live `&[CssRule<R>]` slice explicitly at the call site.
 #[derive(Clone, Copy)]
-pub struct StyleRuleKey {
+pub(crate) struct StyleRuleKey {
     index: usize,
     hash: u64,
 }
 
 impl StyleRuleKey {
-    pub fn new<R>(list: &[CssRule<R>], index: usize) -> Self {
+    pub(crate) fn new<R>(list: &[CssRule<R>], index: usize) -> Self {
         let hash = match &list[index] {
             CssRule::Style(rule) => rule.hash_key(),
             _ => 0,
@@ -891,14 +891,14 @@ impl StyleRuleKey {
 /// against an explicitly-passed `&[CssRule<R>]` so we never smuggle a stale
 /// raw pointer across `&mut rules` writes (see PORT NOTE on `StyleRuleKey`).
 #[derive(Default)]
-pub struct StyleRuleKeyMap {
+pub(crate) struct StyleRuleKeyMap {
     buckets: bun_collections::HashMap<u64, Vec<usize>>,
 }
 
 impl StyleRuleKeyMap {
     /// Zig `style_rules.fetchSwapRemove(key)` — find and remove an earlier
     /// index whose rule `is_duplicate` of `rules[key.index]`.
-    pub fn remove_duplicate<R>(
+    pub(crate) fn remove_duplicate<R>(
         &mut self,
         rules: &[CssRule<R>],
         key: &StyleRuleKey,
@@ -919,11 +919,11 @@ impl StyleRuleKeyMap {
     }
 
     /// Zig `style_rules.put(ctx.arena, key, idx)`.
-    pub fn insert(&mut self, key: StyleRuleKey) {
+    pub(crate) fn insert(&mut self, key: StyleRuleKey) {
         self.buckets.entry(key.hash).or_default().push(key.index);
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.buckets.clear();
     }
 }
@@ -932,7 +932,7 @@ impl StyleRuleKeyMap {
 
 /// Merge `sty` into `last_style_rule` if their selectors/declarations allow.
 /// Returns `true` if merged (caller should drop `sty`).
-pub fn merge_style_rules<R>(
+pub(crate) fn merge_style_rules<R>(
     sty: &mut style::StyleRule<R>,
     last_style_rule: &mut style::StyleRule<R>,
     context: &mut MinifyContext<'_, '_>,

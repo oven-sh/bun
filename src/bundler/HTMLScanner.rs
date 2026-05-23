@@ -16,7 +16,7 @@ bun_core::declare_scope!(HTMLScanner, hidden);
 
 // TODO(port): lifetime — `log`/`source` are borrowed for the scanner's lifetime
 // (LIFETIMES.tsv had no row for this file; classified locally as BORROW_PARAM).
-pub struct HTMLScanner<'a> {
+pub(crate) struct HTMLScanner<'a> {
     // arena field dropped — global mimalloc (see PORTING.md §Allocators).
     pub import_records: Vec<ImportRecord>, // Zig: ImportRecord.List
     pub log: &'a mut Log,
@@ -24,7 +24,7 @@ pub struct HTMLScanner<'a> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    pub fn init(log: &'a mut Log, source: &'a Source) -> HTMLScanner<'a> {
+    pub(crate) fn init(log: &'a mut Log, source: &'a Source) -> HTMLScanner<'a> {
         HTMLScanner {
             import_records: Vec::new(),
             log,
@@ -88,11 +88,11 @@ impl<'a> HTMLScanner<'a> {
         Ok(())
     }
 
-    pub fn on_write_html(&mut self, bytes: &[u8]) {
+    pub(crate) fn on_write_html(&mut self, bytes: &[u8]) {
         let _ = bytes; // bytes are not written in scan phase
     }
 
-    pub fn on_html_parse_error(&mut self, message: &[u8]) {
+    pub(crate) fn on_html_parse_error(&mut self, message: &[u8]) {
         // bun.handleOom → Rust Vec/Box allocations abort on OOM; just call.
         // Zig `Log.addError` dupes via `log.msgs.allocator`; here `IntoText for
         // Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
@@ -101,7 +101,7 @@ impl<'a> HTMLScanner<'a> {
             .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 
-    pub fn on_tag(
+    pub(crate) fn on_tag(
         &mut self,
         _element: &mut lol::Element,
         path: &[u8],
@@ -112,7 +112,7 @@ impl<'a> HTMLScanner<'a> {
         let _ = self.create_import_record(path, kind);
     }
 
-    pub fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
+    pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
         Processor::run(self, input)
     }
 }
@@ -126,7 +126,7 @@ type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 
 /// Trait capturing the duck-typed methods Zig's `HTMLProcessor` calls on `T`.
 /// Zig used `anytype`-style structural calls; Rust needs an explicit bound.
-pub trait HTMLProcessorHandler {
+pub(crate) trait HTMLProcessorHandler {
     fn on_tag(
         &mut self,
         element: &mut lol::Element,
@@ -169,7 +169,7 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
     }
 }
 
-pub struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
+pub(crate) struct HTMLProcessor<T, const VISIT_DOCUMENT_TAGS: bool>(PhantomData<T>);
 
 #[derive(Clone, Copy)]
 pub struct TagHandler {
@@ -202,7 +202,7 @@ impl TagHandler {
     }
 }
 
-pub const TAG_HANDLERS: [TagHandler; 16] = [
+pub(crate) const TAG_HANDLERS: [TagHandler; 16] = [
     // Module scripts with src
     TagHandler::new(b"script[src]", false, b"src", ImportKind::Stmt),
     // CSS Stylesheets
@@ -376,7 +376,7 @@ fn lol_err(_: lol::Error) -> Error {
 impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
     HTMLProcessor<T, VISIT_DOCUMENT_TAGS>
 {
-    pub fn run(this: &mut T, input: &[u8]) -> Result<(), Error> {
+    pub(crate) fn run(this: &mut T, input: &[u8]) -> Result<(), Error> {
         let this_ptr: *mut T = this;
 
         let builder = lol::HTMLRewriterBuilder::init();

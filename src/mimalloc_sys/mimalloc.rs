@@ -110,12 +110,6 @@ bun_opaque::opaque_ffi! {
 
 impl Heap {
     #[inline]
-    pub fn new() -> *mut Heap {
-        // SAFETY: FFI call with no preconditions.
-        unsafe { mi_heap_new() }
-    }
-
-    #[inline]
     pub fn delete(&mut self) {
         // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
         unsafe { mi_heap_delete(self) }
@@ -291,7 +285,7 @@ bun_opaque::opaque_ffi! {
     /// the `mi_heap_t*` it belongs to is `Send`. Zig parity is plain
     /// `mi_heap_*`; see `MimallocArena.rs` PERF NOTE. The entry points below
     /// are `#[deprecated]` for this reason.
-    pub struct THeap;
+    pub(crate) struct THeap;
 }
 
 unsafe extern "C" {

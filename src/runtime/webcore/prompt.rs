@@ -170,7 +170,7 @@ pub mod prompt {
 
     /// Error set for the read-until-delimiter helpers below.
     #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-    pub enum ReadError {
+    pub(crate) enum ReadError {
         #[error("StreamTooLong")]
         StreamTooLong,
         #[error("Io")]
@@ -180,7 +180,7 @@ pub mod prompt {
     /// `reader: anytype` in the Zig — the only method called is `readByte()`.
     /// Bound on a small trait exposing `read_byte() -> Result<u8, _>`; the only
     /// concrete impl is the process-global `BufferedStdin`.
-    pub trait ReadByte {
+    pub(crate) trait ReadByte {
         type Error;
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
     }
@@ -237,7 +237,7 @@ pub mod prompt {
 
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     #[bun_jsc::host_fn(export = "WebCore__prompt")]
-    pub fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments_old::<3>();
         let arguments = arguments.slice();
         // PERF(port): was stack-fallback (2048 bytes) — profile if it shows up on a hot path.

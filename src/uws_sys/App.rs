@@ -507,37 +507,38 @@ pub type uws_app_t = uws_app_s;
 pub mod c {
     use super::*;
 
-    pub type uws_listen_handler = Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
-    pub type uws_method_handler = Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
-    pub type uws_filter_handler = Option<extern "C" fn(*mut uws_res, i32, *mut c_void)>;
-    pub type uws_missing_server_handler = Option<extern "C" fn(*const c_char, *mut c_void)>;
+    pub(crate) type uws_listen_handler = Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
+    pub(crate) type uws_method_handler =
+        Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
+    pub(crate) type uws_filter_handler = Option<extern "C" fn(*mut uws_res, i32, *mut c_void)>;
+    pub(crate) type uws_missing_server_handler = Option<extern "C" fn(*const c_char, *mut c_void)>;
 
     unsafe extern "C" {
-        pub safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
-        pub safe fn uws_app_close_idle(ssl: i32, app: &mut uws_app_s);
+        pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
+        pub(crate) safe fn uws_app_close_idle(ssl: i32, app: &mut uws_app_s);
         // safe: `&mut uws_app_s` is ABI-identical to a non-null `*mut`;
         // `handler`/`user_data` are stored opaquely (never dereferenced by the
         // C++ shim itself) — no preconditions on this call.
-        pub safe fn uws_app_set_on_clienterror(
+        pub(crate) safe fn uws_app_set_on_clienterror(
             ssl: c_int,
             app: &mut uws_app_s,
             handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
             user_data: *mut c_void,
         );
-        pub fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;
-        pub fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
-        pub safe fn uws_app_set_flags(
+        pub(crate) fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;
+        pub(crate) fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
+        pub(crate) safe fn uws_app_set_flags(
             ssl: i32,
             app: &mut uws_app_t,
             require_host_header: bool,
             use_strict_method_validation: bool,
         );
-        pub safe fn uws_app_set_max_http_header_size(
+        pub(crate) safe fn uws_app_set_max_http_header_size(
             ssl: i32,
             app: &mut uws_app_t,
             max_header_size: u64,
         );
-        pub fn uws_app_get(
+        pub(crate) fn uws_app_get(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -545,7 +546,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_post(
+        pub(crate) fn uws_app_post(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -553,7 +554,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_options(
+        pub(crate) fn uws_app_options(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -561,7 +562,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_delete(
+        pub(crate) fn uws_app_delete(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -569,7 +570,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_patch(
+        pub(crate) fn uws_app_patch(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -577,7 +578,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_put(
+        pub(crate) fn uws_app_put(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -585,7 +586,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_head(
+        pub(crate) fn uws_app_head(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -593,7 +594,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_connect(
+        pub(crate) fn uws_app_connect(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -601,7 +602,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_trace(
+        pub(crate) fn uws_app_trace(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -609,7 +610,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_any(
+        pub(crate) fn uws_app_any(
             ssl: i32,
             app: *mut uws_app_t,
             pattern: *const u8,
@@ -617,18 +618,18 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub safe fn uws_app_run(ssl: i32, app: &mut uws_app_t);
-        pub fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
+        pub(crate) safe fn uws_app_run(ssl: i32, app: &mut uws_app_t);
+        pub(crate) fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
         // safe: handle-only + value `port`; `handler`/`user_data` are stored
         // opaquely — no preconditions on this call.
-        pub safe fn uws_app_listen(
+        pub(crate) safe fn uws_app_listen(
             ssl: i32,
             app: &mut uws_app_t,
             port: i32,
             handler: uws_listen_handler,
             user_data: *mut c_void,
         );
-        pub fn uws_app_listen_with_config(
+        pub(crate) fn uws_app_listen_with_config(
             ssl: i32,
             app: *mut uws_app_t,
             host: *const c_char,
@@ -637,14 +638,14 @@ pub mod c {
             handler: uws_listen_handler,
             user_data: *mut c_void,
         );
-        pub safe fn uws_constructor_failed(ssl: i32, app: &mut uws_app_t) -> bool;
-        pub fn uws_num_subscribers(
+        pub(crate) safe fn uws_constructor_failed(ssl: i32, app: &mut uws_app_t) -> bool;
+        pub(crate) fn uws_num_subscribers(
             ssl: i32,
             app: *mut uws_app_t,
             topic: *const u8,
             topic_length: usize,
         ) -> c_uint;
-        pub fn uws_publish(
+        pub(crate) fn uws_publish(
             ssl: i32,
             app: *mut uws_app_t,
             topic: *const u8,
@@ -658,33 +659,37 @@ pub mod c {
         // `&mut uws_app_s` is ABI-identical to the C `uws_app_t*` (non-null,
         // no `noalias`/`readonly`). The C++ body only reads `app->getNativeHandle()`
         // — no preconditions beyond a live handle.
-        pub safe fn uws_get_native_handle(ssl: i32, app: &mut uws_app_s) -> *mut c_void;
-        pub fn uws_remove_server_name(
+        pub(crate) safe fn uws_get_native_handle(ssl: i32, app: &mut uws_app_s) -> *mut c_void;
+        pub(crate) fn uws_remove_server_name(
             ssl: i32,
             app: *mut uws_app_t,
             hostname_pattern: *const c_char,
         );
-        pub fn uws_add_server_name(ssl: i32, app: *mut uws_app_t, hostname_pattern: *const c_char);
-        pub fn uws_add_server_name_with_options(
+        pub(crate) fn uws_add_server_name(
+            ssl: i32,
+            app: *mut uws_app_t,
+            hostname_pattern: *const c_char,
+        );
+        pub(crate) fn uws_add_server_name_with_options(
             ssl: i32,
             app: *mut uws_app_t,
             hostname_pattern: *const c_char,
             options: BunSocketContextOptions,
         ) -> i32;
-        pub safe fn uws_missing_server_name(
+        pub(crate) safe fn uws_missing_server_name(
             ssl: i32,
             app: &mut uws_app_t,
             handler: uws_missing_server_handler,
             user_data: *mut c_void,
         );
-        pub safe fn uws_filter(
+        pub(crate) safe fn uws_filter(
             ssl: i32,
             app: &mut uws_app_t,
             handler: uws_filter_handler,
             user_data: *mut c_void,
         );
 
-        pub fn uws_app_listen_domain_with_options(
+        pub(crate) fn uws_app_listen_domain_with_options(
             ssl_flag: c_int,
             app: *mut uws_app_t,
             domain: *const c_char,
@@ -694,7 +699,7 @@ pub mod c {
             user_data: *mut c_void,
         );
 
-        pub safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
+        pub(crate) safe fn uws_app_clear_routes(ssl_flag: c_int, app: &mut uws_app_t);
     }
 
     #[repr(C)]

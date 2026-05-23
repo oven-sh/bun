@@ -12,7 +12,7 @@ use bun_crash_handler::handle_oom::handle_oom;
 // PORT NOTE: Zig file-level struct → Rust struct. `stmts` is a sub-slice of the
 // input `stmts` argument (in-place compacted), so it borrows from the caller.
 #[derive(Default)]
-pub struct ImportScanner<'a> {
+pub(crate) struct ImportScanner<'a> {
     pub stmts: &'a mut [Stmt],
     pub kept_import_equals: bool,
     pub removed_import_equals: bool,
@@ -31,7 +31,7 @@ impl<'a> ImportScanner<'a> {
     // TODO(port): the Zig also accepts `bun.bundle_v2.AstBuilder` as P (comptime
     //   `P != AstBuilder` check). Only the parser P is handled here; the AstBuilder
     //   path needs a `ParserLike` trait or a separate monomorphization.
-    pub fn scan<
+    pub(crate) fn scan<
         'p,
         const TYPESCRIPT: bool,
         const SCAN_ONLY: bool,

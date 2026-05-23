@@ -118,10 +118,14 @@ impl JSString {
     }
 }
 
-pub type JStringIteratorAppend8Callback = unsafe extern "C" fn(*mut Iterator, *const u8, u32);
-pub type JStringIteratorAppend16Callback = unsafe extern "C" fn(*mut Iterator, *const u16, u32);
-pub type JStringIteratorWrite8Callback = unsafe extern "C" fn(*mut Iterator, *const u8, u32, u32);
-pub type JStringIteratorWrite16Callback = unsafe extern "C" fn(*mut Iterator, *const u16, u32, u32);
+pub(crate) type JStringIteratorAppend8Callback =
+    unsafe extern "C" fn(*mut Iterator, *const u8, u32);
+pub(crate) type JStringIteratorAppend16Callback =
+    unsafe extern "C" fn(*mut Iterator, *const u16, u32);
+pub(crate) type JStringIteratorWrite8Callback =
+    unsafe extern "C" fn(*mut Iterator, *const u8, u32, u32);
+pub(crate) type JStringIteratorWrite16Callback =
+    unsafe extern "C" fn(*mut Iterator, *const u16, u32, u32);
 
 #[repr(C)]
 pub struct Iterator {

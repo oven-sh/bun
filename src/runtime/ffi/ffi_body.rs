@@ -1915,7 +1915,7 @@ pub(super) fn generate_symbols(
 
 // ─── Function ───────────────────────────────────────────────────────────────
 
-pub struct Function {
+pub(crate) struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
     pub base_name: Option<ZBox>,
     pub state: Option<NonNull<TCC::State>>,
@@ -1963,7 +1963,7 @@ impl Drop for Function {
 }
 
 impl Function {
-    pub fn needs_handle_scope(&self) -> bool {
+    pub(crate) fn needs_handle_scope(&self) -> bool {
         for arg in self.arg_types.iter() {
             if *arg == ABIType::NapiEnv || *arg == ABIType::NapiValue {
                 return true;
@@ -1982,7 +1982,7 @@ impl Function {
         }
     }
 
-    pub fn ffi_header() -> &'static [u8] {
+    pub(crate) fn ffi_header() -> &'static [u8] {
         // Port of `Function.ffiHeader` (ffi.zig:1517).
         bun_core::runtime_embed_file!(Src, "runtime/ffi/FFI.h").as_bytes()
     }
@@ -1992,7 +1992,7 @@ impl Function {
     /// must point to a live `Function`. `message` is a NUL-terminated C string.
     /// Signature matches `ConfigErr::handler` exactly so it can be passed
     /// without an ABI-coercing cast.
-    pub unsafe extern "C" fn handle_tcc_error(ctx: *mut Function, message: *const c_char) {
+    pub(crate) unsafe extern "C" fn handle_tcc_error(ctx: *mut Function, message: *const c_char) {
         debug_assert!(!ctx.is_null());
         // SAFETY: TinyCC threads our own `&mut Function` back as `ctx`.
         let this = unsafe { &mut *ctx };
@@ -2017,7 +2017,10 @@ impl Function {
         };
     }
 
-    pub fn compile(&mut self, napi_env: Option<&napi::NapiEnv>) -> Result<(), bun_core::Error> {
+    pub(crate) fn compile(
+        &mut self,
+        napi_env: Option<&napi::NapiEnv>,
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
@@ -2111,7 +2114,7 @@ impl Function {
         Ok(())
     }
 
-    pub fn compile_callback(
+    pub(crate) fn compile_callback(
         &mut self,
         js_context: &JSGlobalObject,
         js_function: JSValue,
@@ -2256,7 +2259,7 @@ impl Function {
         Ok(())
     }
 
-    pub fn print_source_code(
+    pub(crate) fn print_source_code(
         &self,
         writer: &mut impl std::io::Write,
     ) -> Result<(), bun_core::Error> {
@@ -2412,7 +2415,7 @@ impl Function {
         Ok(())
     }
 
-    pub fn print_callback_source_code(
+    pub(crate) fn print_callback_source_code(
         &self,
         global_object: Option<&JSGlobalObject>,
         context_ptr: Option<*mut c_void>,
@@ -2563,18 +2566,23 @@ unsafe extern "C" {
 
 // ─── Step ───────────────────────────────────────────────────────────────────
 
-pub enum Step {
+pub(crate) enum Step {
     Pending,
     Compiled(Compiled),
-    Failed { msg: Box<[u8]>, allocated: bool },
+    #[allow(dead_code)]
+    Failed {
+        msg: Box<[u8]>,
+        allocated: bool,
+    },
 }
 
-pub struct Compiled {
+pub(crate) struct Compiled {
     pub ptr: *mut c_void,
     // TODO(port): bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef.
     pub js_function: JSValue,
     // Zig: `?*anyopaque` — opaque storage, never dereferenced. NonNull avoids
     // a &T → *mut T cast at the assignment site in compile_callback().
+    #[allow(dead_code)]
     pub js_context: Option<NonNull<JSGlobalObject>>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
 }

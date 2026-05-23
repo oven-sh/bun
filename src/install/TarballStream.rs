@@ -68,7 +68,7 @@ enum Phase {
 // borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
 // `populate_result` materialises another `&mut Task` from a raw copy of it
 // would be aliased UB; raw pointers match the Zig aliasing contract.
-pub struct TarballStream {
+pub(crate) struct TarballStream {
     // ---------------------------------------------------------------------
     // Cross-thread producer state (HTTP → worker)
     // ---------------------------------------------------------------------
@@ -174,14 +174,14 @@ impl TarballStream {
     /// this the whole body is buffered as before; the resumable libarchive
     /// state machine is only worth its per-chunk overhead for tarballs that
     /// would otherwise consume a noticeable amount of memory.
-    pub fn min_size() -> usize {
+    pub(crate) fn min_size() -> usize {
         // env_var.get() returns Option<u64> in the Rust port even when a default
         // is configured (Zig collapses it at comptime); the var has a 2 MiB
         // default so unwrap is infallible here.
         usize::try_from(env_var::BUN_INSTALL_STREAMING_MIN_SIZE.get().unwrap()).expect("int cast")
     }
 
-    pub fn init(
+    pub(crate) fn init(
         extract_task: *mut Task,
         network_task: *mut NetworkTask,
         manager: *mut PackageManager,
@@ -269,7 +269,7 @@ impl TarballStream {
     /// HTTP thread concurrently with `drain()` on a worker, so this never
     /// materialises `&mut TarballStream` — all access is via raw-ptr field
     /// projection (Zig spec: freely-aliasing `*TarballStream`).
-    pub unsafe fn on_chunk(
+    pub(crate) unsafe fn on_chunk(
         this: *mut Self,
         chunk: &[u8],
         is_last: bool,
@@ -1153,7 +1153,7 @@ impl TarballStream {
 
     /// Prepare this stream for another HTTP attempt after a failed request
     /// that never scheduled a drain.
-    pub fn reset_for_retry(&mut self) {
+    pub(crate) fn reset_for_retry(&mut self) {
         self.mutex.lock();
         self.pending.clear();
         self.closed = false;

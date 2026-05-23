@@ -299,7 +299,7 @@ impl StringRefList {
 }
 
 #[derive(Default)]
-pub struct SplitBundlerOptions {
+pub(crate) struct SplitBundlerOptions {
     pub plugin: Option<NonNull<Plugin>>,
     pub client: BuildConfigSubset,
     pub server: BuildConfigSubset,
@@ -311,7 +311,7 @@ impl SplitBundlerOptions {
     // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
     // default. Callers updated to `SplitBundlerOptions::default()`.
 
-    pub fn parse_plugin_array(
+    pub(crate) fn parse_plugin_array(
         &mut self,
         plugin_array: JSValue,
         global: &JSGlobalObject,
@@ -1346,7 +1346,7 @@ impl Framework {
 }
 
 #[derive(Clone)]
-pub struct FileSystemRouterType {
+pub(crate) struct FileSystemRouterType {
     pub root: &'static [u8],
     pub prefix: &'static [u8],
     pub entry_server: &'static [u8],
@@ -1359,7 +1359,7 @@ pub struct FileSystemRouterType {
 }
 
 #[derive(Clone, Copy)]
-pub enum BuiltInModule {
+pub(crate) enum BuiltInModule {
     Import(&'static [u8]),
     Code(&'static [u8]),
 }

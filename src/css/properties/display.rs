@@ -4,7 +4,7 @@ use crate::{Parser, PrintErr, Printer, VendorPrefix};
 
 /// A value for the [display](https://drafts.csswg.org/css-display-3/#the-display-properties) property.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub enum Display {
+pub(crate) enum Display {
     /// A display keyword.
     Keyword(DisplayKeyword),
     /// The inside and outside display values.
@@ -14,29 +14,24 @@ pub enum Display {
 // PORT NOTE: Zig `DeriveParse`/`DeriveToCss` for a 2-payload union(enum) tries each
 // payload's `parse` in declaration order; `toCss` dispatches to the active payload.
 impl Display {
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Ok(kw) = input.try_parse(DisplayKeyword::parse) {
             return Ok(Display::Keyword(kw));
         }
         DisplayPair::parse(input).map(Display::Pair)
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Display::Keyword(kw) => kw.to_css(dest),
             Display::Pair(p) => p.to_css(dest),
         }
     }
-
-    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
-        // All payloads are Copy.
-        self
-    }
 }
 
 /// A value for the [visibility](https://drafts.csswg.org/css-display-3/#visibility) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub enum Visibility {
+pub(crate) enum Visibility {
     /// The element is visible.
     Visible,
     /// The element is hidden.
@@ -49,7 +44,7 @@ pub enum Visibility {
 ///
 /// See [Display](Display).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub enum DisplayKeyword {
+pub(crate) enum DisplayKeyword {
     None,
     Contents,
     TableRowGroup,
@@ -70,7 +65,7 @@ pub enum DisplayKeyword {
 ///
 /// See [Display](Display).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DisplayPair {
+pub(crate) struct DisplayPair {
     /// The outside display value.
     pub outside: DisplayOutside,
     /// The inside display value.
@@ -80,7 +75,7 @@ pub struct DisplayPair {
 }
 
 impl DisplayPair {
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut list_item = false;
         let mut outside: Option<DisplayOutside> = None;
         let mut inside: Option<DisplayInside> = None;
@@ -165,7 +160,7 @@ impl DisplayPair {
         })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         // PORT NOTE: reshaped Zig if-else chain into match for tagged-union payload extraction.
         match (self.outside, &self.inside, self.is_list_item) {
             (DisplayOutside::Inline, DisplayInside::FlowRoot, false) => {
@@ -225,7 +220,7 @@ impl DisplayPair {
 
 /// A [`<display-outside>`](https://drafts.csswg.org/css-display-3/#typedef-display-outside) value.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub enum DisplayOutside {
+pub(crate) enum DisplayOutside {
     Block,
     Inline,
     RunIn,
@@ -233,7 +228,7 @@ pub enum DisplayOutside {
 
 /// A [`<display-inside>`](https://drafts.csswg.org/css-display-3/#typedef-display-inside) value.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DisplayInside {
+pub(crate) enum DisplayInside {
     Flow,
     FlowRoot,
     Table,
@@ -244,7 +239,7 @@ pub enum DisplayInside {
 }
 
 impl DisplayInside {
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
@@ -276,7 +271,7 @@ impl DisplayInside {
         })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             DisplayInside::Flow => dest.write_str("flow"),
             DisplayInside::FlowRoot => dest.write_str("flow-root"),

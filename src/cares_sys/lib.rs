@@ -15,7 +15,7 @@ pub(crate) mod winsock {
     pub(crate) use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6};
     #[repr(C)]
     #[derive(Clone, Copy)]
-    pub struct timeval {
+    pub(crate) struct timeval {
         pub tv_sec: c_long,
         pub tv_usec: c_long,
     }
@@ -23,7 +23,7 @@ pub(crate) mod winsock {
     /// on Windows for the `asendv` socket-function callback — it does NOT use `WSABUF`.
     #[repr(C)]
     #[derive(Clone, Copy)]
-    pub struct iovec {
+    pub(crate) struct iovec {
         pub iov_base: *mut core::ffi::c_void,
         pub iov_len: usize,
     }

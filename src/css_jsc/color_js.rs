@@ -9,7 +9,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 use crate::JsResult;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum OutputColorFormat {
+pub(crate) enum OutputColorFormat {
     Ansi,
     Ansi16,
     Ansi16m,
@@ -47,7 +47,7 @@ impl bun_jsc::FromJsEnum for OutputColorFormat {
 }
 
 impl OutputColorFormat {
-    pub const MAP: phf::Map<&'static [u8], OutputColorFormat> = phf::phf_map! {
+    pub(crate) const MAP: phf::Map<&'static [u8], OutputColorFormat> = phf::phf_map! {
         b"[r,g,b,a]" => OutputColorFormat::RgbaArray,
         b"[rgb]" => OutputColorFormat::RgbArray,
         b"[rgba]" => OutputColorFormat::RgbaArray,
@@ -157,16 +157,16 @@ pub mod ansi256 {
         0, 0, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 15, 15, 15, 15, 15, 15,
     ];
 
-    pub fn get16(r: u32, g: u32, b: u32) -> u8 {
+    pub(crate) fn get16(r: u32, g: u32, b: u32) -> u8 {
         let val = get(r, g, b);
         TABLE_256[(val & 0xff) as usize]
     }
 
-    pub type Buffer = [u8; 24];
+    pub(crate) type Buffer = [u8; 24];
 
     /// Zig signature took `RGBA`; here we take the channels directly so the
     /// pure escape-sequence builder doesn't depend on `bun_css::values::color`.
-    pub fn from(red: u8, green: u8, blue: u8, buf: &mut Buffer) -> &[u8] {
+    pub(crate) fn from(red: u8, green: u8, blue: u8, buf: &mut Buffer) -> &[u8] {
         let val = get(red as u32, green as u32, blue as u32);
         // 0x1b is the escape character
         buf[0] = 0x1b;

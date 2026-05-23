@@ -29,7 +29,7 @@ pub use crate::ThreadPool;
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::parse_task::ParseTask;
 
-pub struct ServerComponentParseTask {
+pub(crate) struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,
     // BACKREF (LIFETIMES.tsv) — Zig `*BundleV2` is mutable; written through in `on_complete`.
@@ -42,7 +42,7 @@ pub struct ServerComponentParseTask {
 // `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
 // would leak. The size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-pub enum Data {
+pub(crate) enum Data {
     /// Generate server-side code for a "use client" module. Given the
     /// client ast, a "reference proxy" is created with identical exports.
     ClientReferenceProxy(ReferenceProxy),
@@ -50,12 +50,12 @@ pub enum Data {
     ClientEntryWrapper(ClientEntryWrapper),
 }
 
-pub struct ReferenceProxy {
+pub(crate) struct ReferenceProxy {
     pub other_source: Source,
     pub named_exports: NamedExports,
 }
 
-pub struct ClientEntryWrapper {
+pub(crate) struct ClientEntryWrapper {
     // TODO(port): lifetime — Zig `[]const u8` borrowed from caller; never freed in this file.
     pub path: Box<[u8]>,
 }
@@ -202,11 +202,7 @@ fn task_callback(
     })
 }
 
-impl ServerComponentParseTask {
-    /// Expose the thread-pool callback so callers can construct
-    /// `ThreadPoolLib::Task { callback: Self::TASK_CALLBACK }`.
-    pub const TASK_CALLBACK: fn(*mut ThreadPoolTask) = task_callback_wrap;
-}
+impl ServerComponentParseTask {}
 
 impl Default for ServerComponentParseTask {
     /// Mirrors Zig's `task: ThreadPoolLib.Task = .{ .callback = &taskCallbackWrap }`

@@ -38,7 +38,7 @@ impl strings::Appender for FilenameStoreAppender<'_> {
 /// Zig `*FileSystem.FilenameStore` callsites in `runTasks.zig` /
 /// `PackageManagerEnqueue.zig`.
 #[inline]
-pub fn filename_store_appender() -> FilenameStoreAppender<'static> {
+pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
     FilenameStoreAppender(FileSystem::instance().filename_store())
 }
 
@@ -130,14 +130,14 @@ pub enum Callback {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct DedupeMapEntry {
+pub(crate) struct DedupeMapEntry {
     pub is_required: bool,
 }
 // Zig: `std.HashMap(Task.Id, DedupeMapEntry, IdentityContext(Task.Id), 80)`
 // TODO(port): IdentityContext (hash = value bits) + 80% load factor — verify
 // `bun_collections::HashMap` exposes an identity hasher, or newtype `task::Id`
 // with a pass-through `Hash` impl.
-pub type DedupeMap = HashMap<crate::package_manager_task::Id, DedupeMapEntry>;
+pub(crate) type DedupeMap = HashMap<crate::package_manager_task::Id, DedupeMapEntry>;
 
 impl NetworkTask {
     /// Access the HTTP client after `for_manifest`/`for_tarball` (or `notify`'s
@@ -329,7 +329,7 @@ impl NetworkTask {
 }
 
 #[derive(Clone, Copy)]
-pub enum Authorization {
+pub(crate) enum Authorization {
     NoAuthorization,
     AllowAuthorization,
 }
@@ -376,7 +376,7 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ForManifestError {
+pub(crate) enum ForManifestError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("InvalidURL")]
@@ -660,7 +660,7 @@ impl NetworkTask {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ForTarballError {
+pub(crate) enum ForTarballError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("InvalidURL")]

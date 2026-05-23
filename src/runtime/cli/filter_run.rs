@@ -52,7 +52,7 @@ struct ProcessInfo {
 // PORT NOTE: `state` is a backref into the owning `State` (which holds `handles: []ProcessHandle`),
 // and `dependents` holds raw pointers into that same `handles` slice. This is self-referential in
 // Zig; kept as raw pointers per LIFETIMES.tsv (BACKREF).
-pub struct ProcessHandle<'a> {
+pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: bun_ptr::BackRef<State<'a>>,
 
@@ -201,7 +201,7 @@ impl<'a> ProcessHandle<'a> {
         Ok(())
     }
 
-    pub fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
@@ -210,9 +210,9 @@ impl<'a> ProcessHandle<'a> {
         true
     }
 
-    pub fn on_reader_done(&mut self) {}
+    pub(crate) fn on_reader_done(&mut self) {}
 
-    pub fn on_reader_error(&mut self, err: &sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, err: &sys::Error) {
         let _ = err;
     }
 }
@@ -225,7 +225,7 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl<'a> ProcessHandle<'a> {
-    pub fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
         self.process.as_mut().unwrap().status = status;
         self.end_time = Some(Instant::now());
         // We just leak the process because we're going to exit anyway after all processes are done
@@ -236,11 +236,7 @@ impl<'a> ProcessHandle<'a> {
         let _ = state.process_exit(self);
     }
 
-    pub fn event_loop(&self) -> *mut MiniEventLoop<'static> {
-        self.state.event_loop
-    }
-
-    pub fn loop_(&self) -> *mut bun_io::Loop {
+    pub(crate) fn loop_(&self) -> *mut bun_io::Loop {
         // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
         bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
     }
@@ -699,7 +695,7 @@ fn windows_is_terminal() -> bool {
     res == bun_sys::windows::FILE_TYPE_CHAR
 }
 
-pub fn run_scripts_with_filter(
+pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
 ) -> Result<core::convert::Infallible, bun_core::Error> {
     // TODO(port): Zig return type is `!noreturn`; using Result<Infallible, _> for `?` support.

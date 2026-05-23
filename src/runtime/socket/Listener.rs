@@ -120,23 +120,13 @@ impl Listener {
 }
 
 #[derive(Clone)]
-pub enum UnixOrHost {
+pub(crate) enum UnixOrHost {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
     Fd(Fd),
 }
 
 impl UnixOrHost {
-    pub fn clone_owned(&self) -> UnixOrHost {
-        match self {
-            UnixOrHost::Unix(u) => UnixOrHost::Unix(Box::<[u8]>::from(&**u)),
-            UnixOrHost::Host { host, port } => UnixOrHost::Host {
-                host: Box::<[u8]>::from(&**host),
-                port: *port,
-            },
-            UnixOrHost::Fd(f) => UnixOrHost::Fd(*f),
-        }
-    }
     // PORT NOTE: deinit() deleted — Box<[u8]> fields auto-drop.
 }
 
@@ -1547,7 +1537,7 @@ fn connect_finish<const IS_SSL: bool>(
 }
 
 #[bun_jsc::host_fn]
-pub fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
     let arguments = frame.arguments_old::<3>();
@@ -1596,7 +1586,7 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 }
 
 #[cfg(windows)]
-pub struct WindowsNamedPipeListeningContext {
+pub(crate) struct WindowsNamedPipeListeningContext {
     pub uv_pipe: uv::Pipe,
     /// BACKREF: the parent `Listener` heap-allocated this context in
     /// `listen_named_pipe` and outlives it (cleared to `None` in
@@ -1612,17 +1602,12 @@ pub struct WindowsNamedPipeListeningContext {
 }
 
 #[cfg(not(windows))]
-pub struct WindowsNamedPipeListeningContext {
+pub(crate) struct WindowsNamedPipeListeningContext {
     _priv: (),
 }
 
 #[cfg(not(windows))]
-impl WindowsNamedPipeListeningContext {
-    /// Unreachable on POSIX — `ListenerType::NamedPipe` is never constructed
-    /// here. Kept so the `match` arms in `stop`/`finalize` type-check on both
-    /// platforms without per-arm `#[cfg]`.
-    pub unsafe fn close_pipe_and_deinit(_this: *mut Self) {}
-}
+impl WindowsNamedPipeListeningContext {}
 
 #[cfg(windows)]
 impl WindowsNamedPipeListeningContext {
@@ -1693,7 +1678,7 @@ impl WindowsNamedPipeListeningContext {
     /// # Safety
     /// `this` must be the unique owner (the `ListenerType::NamedPipe` slot was
     /// already cleared by the caller).
-    pub unsafe fn close_pipe_and_deinit(this: *mut Self) {
+    pub(crate) unsafe fn close_pipe_and_deinit(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live heap allocation.
         unsafe {
             (*this).listener = None;
@@ -1702,7 +1687,7 @@ impl WindowsNamedPipeListeningContext {
         }
     }
 
-    pub fn listen(
+    pub(crate) fn listen(
         global_this: &JSGlobalObject,
         path: &[u8],
         backlog: i32,

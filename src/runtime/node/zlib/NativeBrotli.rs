@@ -9,7 +9,7 @@ type Op = c::BrotliEncoderOperation;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub union LastResult {
+pub(crate) union LastResult {
     pub e: c_int,
     pub d: c::BrotliDecoderResult,
 }

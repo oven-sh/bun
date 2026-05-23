@@ -10,32 +10,32 @@ use super::types::{Align, Container, OFF};
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
-pub struct SetextResult {
+pub(crate) struct SetextResult {
     pub is_setext: bool,
     pub level: u32,
 }
 
 #[derive(Copy, Clone)]
-pub struct AtxResult {
+pub(crate) struct AtxResult {
     pub is_atx: bool,
     pub level: u32,
     pub content_beg: OFF,
 }
 
 #[derive(Copy, Clone)]
-pub struct FenceResult {
+pub(crate) struct FenceResult {
     pub is_fence: bool,
     pub fence_data: u32,
 }
 
 #[derive(Copy, Clone)]
-pub struct TableUnderlineResult {
+pub(crate) struct TableUnderlineResult {
     pub is_underline: bool,
     pub col_count: u32,
 }
 
 #[derive(Clone)]
-pub struct ContainerMarkResult {
+pub(crate) struct ContainerMarkResult {
     pub is_container: bool,
     pub container: Container,
     pub off: OFF,

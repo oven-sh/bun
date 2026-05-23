@@ -1,4 +1,3 @@
-// PORT NOTE: phf_set! rejects duplicate keys at compile time; Zig's
 // ComptimeStringMap silently dedups. The v1 list repeats several v2.3 entries
 // verbatim — duplicates dropped here (commented inline) so the macro compiles
 // while keeping .zig↔.rs diffability.

@@ -83,7 +83,7 @@ macro_rules! arena_slice_newtype {
 /// In CSS modules, when the `dashed_idents` option is enabled, the identifier may be followed by the
 /// `from` keyword and an argument indicating where the referenced identifier is declared (e.g. a filename).
 #[derive(Debug, Clone, Copy)]
-pub struct DashedIdentReference {
+pub(crate) struct DashedIdentReference {
     /// The referenced identifier.
     pub ident: DashedIdent,
     /// CSS modules extension: the filename where the variable is defined.
@@ -92,7 +92,7 @@ pub struct DashedIdentReference {
 }
 
 impl DashedIdentReference {
-    pub fn eql(&self, rhs: &Self) -> bool {
+    pub(crate) fn eql(&self, rhs: &Self) -> bool {
         // PORT NOTE: Zig `css.implementEql` — field-wise. `from` is a CSS-modules
         // resolution hint, not part of value identity, so compare on `ident` only
         // (matches Zig `Specifier`-less comparison in the dashed-ident dedup path).
@@ -100,19 +100,19 @@ impl DashedIdentReference {
         self.ident.eql(&rhs.ident) && self.from.eql(&rhs.from)
     }
 
-    pub fn hash(&self, hasher: &mut Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         self.ident.hash(hasher);
         if let Some(from) = &self.from {
             from.hash(hasher);
         }
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // Both fields are `Copy` (arena-slice pointer + tagged enum of Copy payloads).
         *self
     }
 
-    pub fn parse_with_options(
+    pub(crate) fn parse_with_options(
         input: &mut Parser,
         options: &css::ParserOptions,
     ) -> CssResult<DashedIdentReference> {
@@ -136,7 +136,7 @@ impl DashedIdentReference {
         Ok(DashedIdentReference { ident, from })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let dashed_idents = match &dest.css_module {
             Some(m) => m.config.dashed_idents,
             None => false,
@@ -187,9 +187,6 @@ arena_slice_newtype! {
     DashedIdent
 }
 
-// TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
-// ArrayHashMapUnmanaged with a custom string-hash context. Inherent assoc
-// type aliases are unstable in Rust; expose as a free type alias instead.
 // bun_collections::ArrayHashMap is wyhash-keyed; verify the hasher matches
 // std.array_hash_map.hashString or supply a custom Hash impl.
 // blocked_on: bun_collections::ArrayHashMap surface
@@ -256,15 +253,15 @@ const PTRBITS_MASK: u128 = (1u128 << 63) - 1;
 const REF_BIT: u128 = 1u128 << 63;
 
 #[cfg(debug_assertions)]
-pub type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
+pub(crate) type DebugIdent<'a> = (&'a [u8], &'a bun_alloc::Arena);
 #[cfg(not(debug_assertions))]
-pub type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
+pub(crate) type DebugIdent<'a> = core::marker::PhantomData<&'a ()>;
 
 /// Construct a `DebugIdent` — call sites use this instead of an inline
 /// `#[cfg(debug_assertions)]` arg attribute (which removes the parameter
 /// entirely in release and breaks arity).
 #[inline(always)]
-pub fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_alloc::Arena) -> DebugIdent<'a> {
+pub(crate) fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_alloc::Arena) -> DebugIdent<'a> {
     #[cfg(debug_assertions)]
     {
         (_raw, _arena)
@@ -463,7 +460,7 @@ pub use CustomIdent as CustomIdentFns;
 /// reserved separately by css-values-4. `none` is *not* in this set —
 /// `<keyframes-name>` / `<single-animation-name>` callers check it themselves.
 #[inline]
-pub fn is_reserved_custom_ident(s: &[u8]) -> bool {
+pub(crate) fn is_reserved_custom_ident(s: &[u8]) -> bool {
     strings::eql_any_case_insensitive_ascii(
         s,
         &[

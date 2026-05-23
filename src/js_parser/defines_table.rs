@@ -269,7 +269,7 @@ mod identifiers {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PureGlobalIdentifierValue {
+pub(crate) enum PureGlobalIdentifierValue {
     NaN,
     Infinity,
     /// Zig: `@"strict undefined"`
@@ -278,7 +278,7 @@ pub enum PureGlobalIdentifierValue {
 }
 
 impl PureGlobalIdentifierValue {
-    pub fn value(self) -> &'static defines::IdentifierDefine {
+    pub(crate) fn value(self) -> &'static defines::IdentifierDefine {
         match self {
             PureGlobalIdentifierValue::NaN => identifiers::nan(),
             PureGlobalIdentifierValue::Infinity => identifiers::infinity(),

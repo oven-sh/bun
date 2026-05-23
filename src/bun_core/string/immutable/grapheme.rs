@@ -9,7 +9,7 @@ use super::grapheme_tables;
 /// which are assumed to be handled externally.
 #[repr(u8)] // Zig: enum(u5) — Rust has no u5 repr; values fit in 5 bits
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum GraphemeBreakNoControl {
+pub(crate) enum GraphemeBreakNoControl {
     Other,
     Prepend,
     RegionalIndicator,
@@ -58,7 +58,7 @@ impl GraphemeBreakNoControl {
 /// State maintained between sequential calls to grapheme_break.
 #[repr(u8)] // Zig: enum(u3) — Rust has no u3 repr; values fit in 3 bits
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum BreakState {
+pub(crate) enum BreakState {
     Default,
     RegionalIndicator,
     ExtendedPictographic,
@@ -68,7 +68,7 @@ pub enum BreakState {
 
 impl BreakState {
     #[inline]
-    pub const fn from_raw(n: u8) -> Self {
+    pub(crate) const fn from_raw(n: u8) -> Self {
         // #[repr(u8)] enum with variants 0..=4; caller guarantees range
         // (round-tripped through `state as u8`). Out-of-range traps —
         // matches Zig's safety-checked `@enumFromInt`.
@@ -87,7 +87,7 @@ impl BreakState {
 /// stage1 maps high byte → stage2 offset (u16)
 /// stage2 maps to stage3 index (u8, max 255 unique values)
 /// stage3 stores the actual element values
-pub struct Tables<Elem: 'static> {
+pub(crate) struct Tables<Elem: 'static> {
     pub stage1: &'static [u16],
     pub stage2: &'static [u8],
     pub stage3: &'static [Elem],
@@ -95,7 +95,7 @@ pub struct Tables<Elem: 'static> {
 
 impl<Elem: Copy + 'static> Tables<Elem> {
     #[inline]
-    pub fn get(&self, cp: u32) -> Elem {
+    pub(crate) fn get(&self, cp: u32) -> Elem {
         // Zig: cp is u21; Rust uses u32 (caller must pass valid codepoint <= 0x10FFFF).
         let high = cp >> 8;
         let low = cp & 0xFF;
@@ -111,7 +111,7 @@ pub use grapheme_tables::TABLE;
 ///
 /// This function does NOT handle control characters, line feeds, or
 /// carriage returns. Those must be filtered out before calling.
-pub fn grapheme_break(cp1: u32, cp2: u32, state: &mut BreakState) -> bool {
+pub(crate) fn grapheme_break(cp1: u32, cp2: u32, state: &mut BreakState) -> bool {
     let value = precompute::DATA[precompute::Key::new(
         grapheme_tables::TABLE.get(cp1),
         grapheme_tables::TABLE.get(cp2),

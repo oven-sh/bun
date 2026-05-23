@@ -32,7 +32,7 @@ type JsTerminated<T> = bun_jsc::JsResult<T>;
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
-pub struct ConnectionFlags {
+pub(crate) struct ConnectionFlags {
     // TODO(markovejnovic): I am not a huge fan of these flags. I would
     // consider refactoring them into an enumerated state machine, as that
     // feels significantly more natural compared to a bag of booleans.
@@ -90,11 +90,6 @@ impl Status {
         matches!(self, Status::Connected | Status::Connecting)
     }
 }
-// Free-fn spelling kept for parity with Zig's `valkey.isActive(&status)`.
-#[inline]
-pub fn is_active(this: Status) -> bool {
-    this.is_active()
-}
 
 pub use super::valkey_command_body as Command_;
 // PORT NOTE: Zig `pub const Command = @import("./ValkeyCommand.zig");` re-exports the module
@@ -136,7 +131,7 @@ impl Protocol {
 }
 
 #[derive(Default)]
-pub enum TLS {
+pub(crate) enum TLS {
     #[default]
     None,
     Enabled,
@@ -144,18 +139,10 @@ pub enum TLS {
 }
 
 impl TLS {
-    pub fn clone(&self) -> TLS {
-        match self {
-            TLS::Custom(ssl_config) => TLS::Custom(ssl_config.clone()),
-            TLS::None => TLS::None,
-            TLS::Enabled => TLS::Enabled,
-        }
-    }
-
     // PORT NOTE: Zig `deinit` only called `ssl_config.deinit()`. SSLConfig should impl Drop,
     // making this enum's Drop automatic. (No explicit Drop impl needed if SSLConfig: Drop.)
 
-    pub fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
+    pub(crate) fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
         match self {
             TLS::Custom(ssl_config) => ssl_config.reject_unauthorized != 0,
             TLS::Enabled => vm.get_tls_reject_unauthorized(),
@@ -201,7 +188,7 @@ impl Default for Options {
     }
 }
 
-pub enum Address {
+pub(crate) enum Address {
     // TODO(port): in Zig these slices borrow from `ValkeyClient.connection_strings`
     // (self-referential). Uses owned Box<[u8]> instead; revisit if it shows up as hot.
     Unix(Box<[u8]>),
@@ -209,7 +196,7 @@ pub enum Address {
 }
 
 impl Address {
-    pub fn hostname(&self) -> &[u8] {
+    pub(crate) fn hostname(&self) -> &[u8] {
         match self {
             Address::Unix(unix_addr) => unix_addr,
             Address::Host { host, .. } => host,
@@ -223,7 +210,7 @@ impl Address {
     /// `JSValkeyClient` parent in practice — that's what `SocketHandler<SSL>`
     /// pulls back out on event dispatch). Generic so the caller controls the
     /// stored type; this fn only forwards it opaquely to `connect_*_group`.
-    pub fn connect<Owner>(
+    pub(crate) fn connect<Owner>(
         &self,
         owner: *mut Owner,
         group: &mut SocketGroup,
@@ -327,7 +314,7 @@ enum SubscribeHandled {
     Fallthrough,
 }
 
-pub struct DeferredFailure {
+pub(crate) struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
     global_this: GlobalRef,
@@ -336,7 +323,7 @@ pub struct DeferredFailure {
 }
 
 impl DeferredFailure {
-    pub fn run(self) -> JsTerminated<()> {
+    pub(crate) fn run(self) -> JsTerminated<()> {
         // PORT NOTE: Zig `defer { free(message); destroy(this) }` — both handled by Box<Self> drop.
         debug!("running deferred failure");
         let mut this = self;
@@ -349,7 +336,7 @@ impl DeferredFailure {
         )
     }
 
-    pub fn enqueue(self: Box<Self>) {
+    pub(crate) fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
         // PORT NOTE: Zig `jsc.ManagedTask.New(DeferredFailure, run).init(this)` collapses to
         // `ManagedTask::new(ptr, cb)` per src/event_loop/ManagedTask.rs. The Box is leaked into

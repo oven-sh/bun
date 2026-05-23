@@ -23,7 +23,7 @@
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Orientation {
+pub(crate) enum Orientation {
     Normal = 1,
     Flop = 2, // mirror horizontal
     Rotate180 = 3,
@@ -34,7 +34,7 @@ pub enum Orientation {
     Rotate270 = 8,
 }
 
-pub struct Transform {
+pub(crate) struct Transform {
     pub flop: bool,
     pub flip: bool,
     pub rotate: u16,
@@ -42,7 +42,7 @@ pub struct Transform {
 
 impl Orientation {
     /// The (mirror?, cw-degrees) pair that turns the stored pixels upright.
-    pub fn transform(self) -> Transform {
+    pub(crate) fn transform(self) -> Transform {
         match self {
             Orientation::Normal => Transform {
                 flop: false,

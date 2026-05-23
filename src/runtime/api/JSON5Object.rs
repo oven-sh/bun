@@ -7,7 +7,7 @@ use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
 use bun_parsers::json5;
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global,
         &[
@@ -18,7 +18,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();

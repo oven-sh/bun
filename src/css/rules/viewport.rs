@@ -2,7 +2,7 @@ use crate::css_rules::Location;
 use crate::{DeclarationBlock, PrintErr, Printer, VendorPrefix};
 
 /// A [@viewport](https://drafts.csswg.org/css-device-adapt/#atviewport-rule) rule.
-pub struct ViewportRule {
+pub(crate) struct ViewportRule {
     /// The vendor prefix for this rule, e.g. `@-ms-viewport`.
     pub vendor_prefix: VendorPrefix,
     /// The declarations within the `@viewport` rule.
@@ -15,7 +15,7 @@ pub struct ViewportRule {
 }
 
 impl ViewportRule {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_char(b'@')?;
@@ -26,7 +26,7 @@ impl ViewportRule {
 }
 
 impl ViewportRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `VendorPrefix` is a
         // `Copy` bitflag (generics.zig "simple copy types" → identity).
         Self {

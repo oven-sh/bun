@@ -25,7 +25,7 @@ use crate::server::jsc::{AnyTask, EventLoopHandle, Task, VirtualMachine};
 bun_output::declare_scope!(FileResponseStream, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileResponseStream {
+pub(crate) struct FileResponseStream {
     ref_count: Cell<u32>,
     resp: AnyResponse,
     // LIFETIMES.tsv: `&'static VirtualMachine`. `BackRef` keeps the struct
@@ -92,7 +92,7 @@ bitflags::bitflags! {
     }
 }
 
-pub struct StartOptions {
+pub(crate) struct StartOptions {
     pub fd: Fd,
     pub auto_close: bool,
     pub resp: AnyResponse,
@@ -114,7 +114,7 @@ pub struct StartOptions {
 }
 
 impl FileResponseStream {
-    pub fn start(opts: &StartOptions) {
+    pub(crate) fn start(opts: &StartOptions) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
@@ -225,7 +225,7 @@ impl FileResponseStream {
 
     // ───────────────────────── reader backend ─────────────────────────
 
-    pub fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
         let this: *mut Self = self;
         // SAFETY: `this` is the live intrusive allocation owning `self`.
         let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
@@ -300,14 +300,14 @@ impl FileResponseStream {
         }
     }
 
-    pub fn on_reader_done(&mut self) {
+    pub(crate) fn on_reader_done(&mut self) {
         // Adopts the in-flight read ref taken before `reader.read()`.
         // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
         let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
         self.finish();
     }
 
-    pub fn on_reader_error(&mut self, err: sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, err: sys::Error) {
         // Adopts the in-flight read ref taken before `reader.read()`.
         // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
         let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
@@ -528,11 +528,11 @@ impl FileResponseStream {
         unsafe { Self::deref(self) };
     }
 
-    pub fn event_loop(&self) -> EventLoopHandle {
+    pub(crate) fn event_loop(&self) -> EventLoopHandle {
         EventLoopHandle::init(self.vm.event_loop().cast::<()>())
     }
 
-    pub fn r#loop(&self) -> *mut bun_io::Loop {
+    pub(crate) fn r#loop(&self) -> *mut bun_io::Loop {
         #[cfg(windows)]
         {
             // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`

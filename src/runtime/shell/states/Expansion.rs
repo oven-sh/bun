@@ -54,7 +54,7 @@ pub struct Expansion {
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum ExpansionState {
+pub(crate) enum ExpansionState {
     #[default]
     Idle,
     Walking,
@@ -68,7 +68,7 @@ pub enum ExpansionState {
 }
 
 #[derive(Default)]
-pub struct ExpansionOut {
+pub(crate) struct ExpansionOut {
     pub buf: Vec<u8>,
     /// Word boundaries within `buf` (for IFS splitting / glob results).
     pub bounds: Vec<u32>,

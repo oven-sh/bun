@@ -219,10 +219,11 @@ const FILE_GENERIC_READ: u32 = w::STANDARD_RIGHTS_READ
     | w::SYNCHRONIZE;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FailReason {
+pub(crate) enum FailReason {
     NoDirname,
     CouldNotOpenShim,
     CouldNotReadShim,
+    #[allow(dead_code)]
     InvalidShimDataSize,
     ShimNotFound,
     CreateProcessFailed,
@@ -238,7 +239,7 @@ pub enum FailReason {
 }
 
 impl FailReason {
-    pub const fn get_format_template(self) -> &'static str {
+    pub(crate) const fn get_format_template(self) -> &'static str {
         match self {
             FailReason::NoDirname => "could not find node_modules path",
 
@@ -269,7 +270,7 @@ impl FailReason {
     }
 
     #[inline]
-    pub fn write(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
+    pub(crate) fn write(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
         write!(writer, "{self}")
     }
 }
@@ -430,10 +431,10 @@ const NT_OBJECT_PREFIX: [u16; 4] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as
 
 // This is used for CreateProcessW's lpCommandLine
 // "The maximum length of this string is 32,767 characters, including the Unicode terminating null character."
-pub const BUF2_U16_LEN: usize = 32767 + 1;
+pub(crate) const BUF2_U16_LEN: usize = 32767 + 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, ConstParamTy)]
-pub enum LauncherMode {
+pub(crate) enum LauncherMode {
     Launch,
     ReadWithoutLaunch,
 }
@@ -1598,7 +1599,8 @@ impl FromBunRunContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
     #[inline]
-    pub fn base_path_slice(&self) -> &[u16] {
+    #[allow(dead_code)]
+    pub(crate) fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `try_startup_from_bun_js` (run_command.rs) sets
         // `base_path`/`base_path_len` from a live `[u16]` buffer it owns for
         // the duration of the call. Borrow tied to `&self`.
@@ -1651,6 +1653,7 @@ impl BunCtx for &FromBunRunContext {
 /// this returns void, to which the caller should still try invoking the exe directly. This
 /// is to handle version mismatches where bun.exe's decoder is too new than the .bunx file.
 #[cfg(not(feature = "shim_standalone"))]
+#[allow(dead_code)]
 pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
@@ -1661,7 +1664,7 @@ pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     }
 }
 
-pub struct FromBunShellContext {
+pub(crate) struct FromBunShellContext {
     /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
     pub base_path: *mut u16,
     pub base_path_len: usize,
@@ -1680,13 +1683,13 @@ pub struct FromBunShellContext {
     pub buf: *mut FromBunShellContextBuf,
 }
 
-pub type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
+pub(crate) type FromBunShellContextBuf = [u16; BUF2_U16_LEN];
 
 impl FromBunShellContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
     #[inline]
-    pub fn base_path_slice(&self) -> &[u16] {
+    pub(crate) fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `read_without_launch` sets `base_path`/`base_path_len`
         // from a live `[u16]` buffer it owns for the duration of the call.
         // Borrow tied to `&self`.
@@ -1724,9 +1727,11 @@ impl BunCtx for &FromBunShellContext {
 
 // PORT NOTE: Zig `union` (untagged). Rust enums are tagged; the discriminant overhead is
 // negligible here and gives us safe matching.
-pub enum ReadWithoutLaunchResult {
+pub(crate) enum ReadWithoutLaunchResult {
     /// enum which has a predefined custom formatter
+    #[allow(dead_code)]
     Err(FailReason),
+    #[allow(dead_code)]
     CommandLine(*const u16, usize),
 }
 
@@ -1751,7 +1756,7 @@ pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchRes
 /// Main function for `bun_shim_impl.exe`
 #[cfg(feature = "shim_standalone")]
 #[inline]
-pub fn main() -> ! {
+pub(crate) fn main() -> ! {
     const _: () = assert!(IS_STANDALONE);
     // TODO(port): `comptime assert(builtin.single_threaded)` / `!link_libc` / `!link_libcpp` —
     // these are build-config assertions; enforce in the standalone crate's Cargo.toml/build.rs.

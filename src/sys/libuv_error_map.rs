@@ -12,7 +12,7 @@ use crate::SystemErrno;
 //
 // Built at const-eval time so the whole `[&str; N]` payload lives in `.rodata` with no `Once`
 // guard or init code on the startup path (matches Zig `std.EnumArray` comptime init).
-pub static LIBUV_ERROR_MAP: EnumMap<SystemErrno, &'static str> = build_libuv_error_map();
+pub(crate) static LIBUV_ERROR_MAP: EnumMap<SystemErrno, &'static str> = build_libuv_error_map();
 
 const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     // std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error")

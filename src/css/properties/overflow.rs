@@ -3,7 +3,7 @@ use crate::{Parser, PrintErr, Printer};
 
 /// A value for the [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) shorthand property.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Overflow {
+pub(crate) struct Overflow {
     /// A value for the [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) shorthand property.
     pub x: OverflowKeyword,
     /// The overflow mode for the y direction.
@@ -11,13 +11,13 @@ pub struct Overflow {
 }
 
 impl Overflow {
-    pub fn parse(input: &mut Parser) -> css::Result<Overflow> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Overflow> {
         let x = OverflowKeyword::parse(input)?;
         let y = input.try_parse(OverflowKeyword::parse).unwrap_or(x);
         Ok(Overflow { x, y })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.x.to_css(dest)?;
         if self.y != self.x {
             dest.write_char(b' ')?;
@@ -32,7 +32,7 @@ impl Overflow {
 // PORT NOTE: css.DefineEnumProperty(@This()) — comptime mixin providing
 // eql/hash/parse/to_css/deep_clone from @tagName.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub enum OverflowKeyword {
+pub(crate) enum OverflowKeyword {
     /// Overflowing content is visible.
     Visible,
     /// Overflowing content is hidden. Programmatic scrolling is allowed.
@@ -47,7 +47,7 @@ pub enum OverflowKeyword {
 
 /// A value for the [text-overflow](https://www.w3.org/TR/css-overflow-3/#text-overflow) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub enum TextOverflow {
+pub(crate) enum TextOverflow {
     /// Overflowing text is clipped.
     Clip,
     /// Overflowing text is truncated with an ellipsis.

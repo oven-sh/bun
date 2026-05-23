@@ -4,7 +4,6 @@
 
 use core::cmp::Ordering;
 use core::fmt;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -29,7 +28,6 @@ use bun_sys::{self as sys, Fd, File};
 
 use crate::config_version::ConfigVersion;
 use crate::migration;
-use crate::package_install::Summary as PackageInstallSummary;
 use crate::package_manager::WorkspaceFilter;
 use crate::package_manager_real::{
     Options as PackageManagerOptions, options::LogLevel, populate_manifest_cache,
@@ -99,28 +97,30 @@ type SemverStringBuilder = bun_semver::semver_string::Builder;
 // Type aliases / collection types
 // ────────────────────────────────────────────────────────────────────────────
 
-pub type PackageIDSlice = ExternalSlice<PackageID>;
+pub(crate) type PackageIDSlice = ExternalSlice<PackageID>;
 pub type DependencySlice = ExternalSlice<Dependency>;
-pub type DependencyIDSlice = ExternalSlice<DependencyID>;
+pub(crate) type DependencyIDSlice = ExternalSlice<DependencyID>;
 
-pub type PackageIDList = Vec<PackageID>;
-pub type DependencyList = Vec<Dependency>;
-pub type DependencyIDList = Vec<DependencyID>;
+pub(crate) type PackageIDList = Vec<PackageID>;
+pub(crate) type DependencyList = Vec<Dependency>;
+pub(crate) type DependencyIDList = Vec<DependencyID>;
 
-pub type StringBuffer = Vec<u8>;
-pub type ExternalStringBuffer = Vec<ExternalString>;
+pub(crate) type StringBuffer = Vec<u8>;
+pub(crate) type ExternalStringBuffer = Vec<ExternalString>;
 
-pub type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContextU64>;
-pub type TrustedDependenciesSet = ArrayHashMap<TruncatedPackageNameHash, (), ArrayIdentityContext>;
-pub type VersionHashMap = ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContextU64>;
-pub type PatchedDependenciesMap =
+pub(crate) type NameHashMap = ArrayHashMap<PackageNameHash, SemverString, ArrayIdentityContextU64>;
+pub(crate) type TrustedDependenciesSet =
+    ArrayHashMap<TruncatedPackageNameHash, (), ArrayIdentityContext>;
+pub(crate) type VersionHashMap =
+    ArrayHashMap<PackageNameHash, Semver::Version, ArrayIdentityContextU64>;
+pub(crate) type PatchedDependenciesMap =
     ArrayHashMap<PackageNameAndVersionHash, PatchedDep, ArrayIdentityContextU64>;
 
-pub type StringPool = bun_semver::string::StringPool;
+pub(crate) type StringPool = bun_semver::string::StringPool;
 // Zig: `String.Builder.StringPool` — `bun_semver::semver_string::StringPool`.
 
-pub type MetaHash = [u8; 32]; // Sha512T256.digest_length
-pub const ZERO_HASH: MetaHash = [0u8; 32];
+pub(crate) type MetaHash = [u8; 32]; // Sha512T256.digest_length
+pub(crate) const ZERO_HASH: MetaHash = [0u8; 32];
 
 /// Result of `maybe_clone_filtering_root_packages`: either the input lockfile was
 /// returned unchanged (borrowed), or a freshly-allocated cleaned lockfile is returned
@@ -133,15 +133,7 @@ pub enum Cleaned<'a> {
     New(Box<Lockfile>),
 }
 
-impl<'a> Cleaned<'a> {
-    #[inline]
-    pub fn as_mut(&mut self) -> &mut Lockfile {
-        match self {
-            Cleaned::Same(l) => l,
-            Cleaned::New(l) => l,
-        }
-    }
-}
+impl<'a> Cleaned<'a> {}
 
 // TODO(port): std.io.FixedBufferStream([]u8) — replace with cursor over &mut [u8]
 pub type Stream = bun_io::FixedBufferStream<Vec<u8>>;
@@ -151,7 +143,7 @@ pub type Stream = bun_io::FixedBufferStream<Vec<u8>>;
 /// `anytype` (lockfile/Buffers.zig:142, bun.lockb.zig). Expressed as a trait so
 /// the Rust port can stay generic over the borrowck-reshaped `StreamType` in
 /// `bun.lockb.rs` (which collapses stream + writer into one `&mut`).
-pub trait PositionalStream {
+pub(crate) trait PositionalStream {
     /// Zig: `try stream.getPos()` — current write position.
     fn get_pos(&self) -> Result<usize, BunError>;
     /// Zig: `stream.pwrite(bytes, index)` — positional write, returns bytes
@@ -169,8 +161,6 @@ impl<'a> PositionalStream for Serializer::StreamType<'a> {
         Serializer::StreamType::pwrite(self, data, index)
     }
 }
-
-pub const DEFAULT_FILENAME: &str = "bun.lockb";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Lockfile struct
@@ -232,18 +222,18 @@ pub struct Lockfile {
 }
 
 /// Zig: `Lockfile.Package.List` — `MultiArrayList(Package)`.
-pub type PackageList = self::package::List<u64>;
+pub(crate) type PackageList = self::package::List<u64>;
 
 // ────────────────────────────────────────────────────────────────────────────
 // DepSorter
 // ────────────────────────────────────────────────────────────────────────────
 
-pub struct DepSorter<'a> {
+pub(crate) struct DepSorter<'a> {
     pub lockfile: &'a Lockfile,
 }
 
 impl<'a> DepSorter<'a> {
-    pub fn is_less_than(&self, l: DependencyID, r: DependencyID) -> bool {
+    pub(crate) fn is_less_than(&self, l: DependencyID, r: DependencyID) -> bool {
         let deps_buf = self.lockfile.buffers.dependencies.as_slice();
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
@@ -361,7 +351,7 @@ pub enum LoadStep {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum Migrated {
+pub(crate) enum Migrated {
     #[default]
     None,
     Npm,
@@ -485,12 +475,6 @@ impl<'a> LoadResult<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 // InstallResult
 // ────────────────────────────────────────────────────────────────────────────
-
-pub struct InstallResult {
-    pub lockfile: Option<NonNull<Lockfile>>,
-    // TODO(port): lifetime — no construction sites found in src/install/
-    pub summary: PackageInstallSummary,
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Lockfile impl — load / clone / hoist / etc.
@@ -1510,7 +1494,7 @@ pub struct PendingResolution {
     pub parent: PackageID,
 }
 
-pub type PendingResolutions = Vec<PendingResolution>;
+pub(crate) type PendingResolutions = Vec<PendingResolution>;
 
 // ────────────────────────────────────────────────────────────────────────────
 // fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration
@@ -2512,17 +2496,17 @@ impl Lockfile {
 // Scratch
 // ────────────────────────────────────────────────────────────────────────────
 
-pub struct Scratch {
+pub(crate) struct Scratch {
     pub duplicate_checker_map: DuplicateCheckerMap,
     pub dependency_list_queue: DependencyQueue,
 }
 
-pub type DuplicateCheckerMap =
+pub(crate) type DuplicateCheckerMap =
     BunHashMap<PackageNameHash, bun_ast::Loc, IdentityContext<PackageNameHash>>;
-pub type DependencyQueue = LinearFifo<DependencySlice, DynamicBuffer<DependencySlice>>;
+pub(crate) type DependencyQueue = LinearFifo<DependencySlice, DynamicBuffer<DependencySlice>>;
 
 impl Scratch {
-    pub fn init() -> Scratch {
+    pub(crate) fn init() -> Scratch {
         Scratch {
             dependency_list_queue: DependencyQueue::init(),
             duplicate_checker_map: DuplicateCheckerMap::default(),
@@ -2852,14 +2836,14 @@ impl FormatVersion {
 // EqlSorter
 // ────────────────────────────────────────────────────────────────────────────
 
-pub struct EqlSorter<'a> {
+pub(crate) struct EqlSorter<'a> {
     pub string_buf: &'a [u8],
     pub pkg_names: &'a [SemverString],
 }
 
 /// Basically placement id
 #[derive(Clone, Copy)]
-pub struct PathToId {
+pub(crate) struct PathToId {
     pub pkg_id: PackageID,
     /// Borrows a `Box<[u8]>` parked in `tree_paths` for the duration of
     /// `Lockfile::eql` — `RawSlice` carries the outlives-holder invariant.
@@ -2867,7 +2851,7 @@ pub struct PathToId {
 }
 
 impl<'a> EqlSorter<'a> {
-    pub fn order(&self, l: PathToId, r: PathToId) -> Ordering {
+    pub(crate) fn order(&self, l: PathToId, r: PathToId) -> Ordering {
         let l_path = l.tree_path.slice();
         let r_path = r.tree_path.slice();
         // they exist in the same tree, name can't be the same so string compare.
@@ -3290,7 +3274,7 @@ pub mod default_trusted_dependencies {
 
     const SLOTS: usize = static_slots(MAX_DEFAULT_TRUSTED_DEPENDENCIES);
 
-    pub struct TrustedDepHashCtx;
+    pub(crate) struct TrustedDepHashCtx;
     impl HashContext<&'static [u8]> for TrustedDepHashCtx {
         #[inline]
         fn ctx_hash(s: &&'static [u8]) -> u64 {
@@ -3323,13 +3307,13 @@ pub mod default_trusted_dependencies {
     });
 
     /// Iterate populated entries (Zig: `default_trusted_dependencies.entries`).
-    pub fn entries() -> impl Iterator<Item = &'static Entry<&'static [u8], ()>> {
+    pub(crate) fn entries() -> impl Iterator<Item = &'static Entry<&'static [u8], ()>> {
         MAP.entries.iter().filter(|e| !e.is_empty())
     }
 
     /// Zig: `default_trusted_dependencies.hasWithHash`.
     #[inline]
-    pub fn has_with_hash(hash: u64) -> bool {
+    pub(crate) fn has_with_hash(hash: u64) -> bool {
         MAP.has_with_hash(hash)
     }
 
@@ -3337,7 +3321,7 @@ pub mod default_trusted_dependencies {
     ///
     /// Open-coded `hasContext` so the lookup key can borrow with any lifetime,
     /// not just `'static`.
-    pub fn has(name: &[u8]) -> bool {
+    pub(crate) fn has(name: &[u8]) -> bool {
         let hash = (SemverStringBuilder::string_hash(name) as u32) as u64;
         for entry in &MAP.entries[(hash >> MAP.shift) as usize..] {
             if entry.hash >= hash {

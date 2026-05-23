@@ -435,7 +435,7 @@ pub mod api {
     /// schema.zig:2200 — `enum(u8)` (open). Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum ImportKind {
+    pub(crate) enum ImportKind {
         #[default]
         _none = 0,
         entry_point = 1,
@@ -554,17 +554,6 @@ pub mod api {
     pub struct FrameworkEntryPointMessage {
         pub path: Option<Box<[u8]>>,
         pub env: Option<EnvConfig>,
-    }
-
-    /// schema.zig:1489
-    #[derive(Clone, Debug, Default)]
-    pub struct LoadedFramework {
-        pub package: Box<[u8]>,
-        pub display_name: Box<[u8]>,
-        pub development: bool,
-        pub entry_points: FrameworkEntryPointMap,
-        pub client_css_in_js: CssInJsBehavior,
-        pub override_modules: StringMap,
     }
 
     /// schema.zig:1528

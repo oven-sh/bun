@@ -15,9 +15,9 @@ use core::f32::consts::PI;
 
 /// Maximum hash length: 5-byte header + (has_alpha ? 1 : 0) + ceil((L+P+Q+A
 /// AC counts)/2). Worst case (has_alpha, square) is 5+1+ceil((14+5+5+14)/2)=25.
-pub const MAX_LEN: usize = 25;
+pub(crate) const MAX_LEN: usize = 25;
 
-pub fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'a mut [u8] {
+pub(crate) fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'a mut [u8] {
     // PORT NOTE: Zig returns `out[0..n]`; mirrored here as a mut sub-slice borrow of `out`.
     debug_assert!(w > 0 && w <= 100 && h > 0 && h <= 100);
     debug_assert!(rgba.len() == (w as usize) * (h as usize) * 4);

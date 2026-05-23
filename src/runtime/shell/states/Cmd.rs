@@ -36,7 +36,7 @@ pub struct Cmd {
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum CmdState {
+pub(crate) enum CmdState {
     #[default]
     Idle,
     ExpandingAssigns,
@@ -52,7 +52,7 @@ pub enum CmdState {
 }
 
 #[derive(Default)]
-pub enum Exec {
+pub(crate) enum Exec {
     #[default]
     None,
     Builtin(Box<Builtin>),
@@ -72,7 +72,7 @@ impl Cmd {
 }
 
 /// Spec: Cmd.zig `Exec.subproc` anonymous struct.
-pub struct SubprocExec {
+pub(crate) struct SubprocExec {
     pub child: *mut ShellSubprocess,
     pub buffered_closed: BufferedIoClosed,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
@@ -92,14 +92,14 @@ pub struct SubprocExec {
 /// completion. `Some(state)` means it was piped and must reach `Closed` before
 /// [`Cmd::has_finished`] returns true.
 #[derive(Default)]
-pub struct BufferedIoClosed {
+pub(crate) struct BufferedIoClosed {
     pub stdin: Option<bool>,
     pub stdout: Option<BufferedIoState>,
     pub stderr: Option<BufferedIoState>,
 }
 
 #[derive(Default)]
-pub enum BufferedIoState {
+pub(crate) enum BufferedIoState {
     #[default]
     Open,
     Closed(Vec<u8>),
@@ -107,7 +107,7 @@ pub enum BufferedIoState {
 
 impl BufferedIoState {
     #[inline]
-    pub fn closed(&self) -> bool {
+    pub(crate) fn closed(&self) -> bool {
         matches!(self, BufferedIoState::Closed(_))
     }
 }
@@ -125,7 +125,7 @@ impl Drop for BufferedIoState {
 
 impl BufferedIoClosed {
     /// Spec: `BufferedIoClosed.fromStdio`.
-    pub fn from_stdio(io: &[Stdio; 3]) -> Self {
+    pub(crate) fn from_stdio(io: &[Stdio; 3]) -> Self {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
         const STDERR_NO: usize = 2;
@@ -149,7 +149,7 @@ impl BufferedIoClosed {
     }
 
     /// Spec: `BufferedIoClosed.allClosed`.
-    pub fn all_closed(&self) -> bool {
+    pub(crate) fn all_closed(&self) -> bool {
         let stdin_closed = self.stdin.unwrap_or(true);
         let stdout_closed = self.stdout.as_ref().is_none_or(BufferedIoState::closed);
         let stderr_closed = self.stderr.as_ref().is_none_or(BufferedIoState::closed);
@@ -165,7 +165,7 @@ impl BufferedIoClosed {
     }
 
     /// Spec: `BufferedIoClosed.close` `.stdin` arm.
-    pub fn close_stdin(&mut self) {
+    pub(crate) fn close_stdin(&mut self) {
         self.stdin = Some(true);
     }
 

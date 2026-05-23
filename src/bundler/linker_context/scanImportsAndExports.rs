@@ -33,7 +33,7 @@ type AstFlags = bundled_ast::Flags;
 type ImportRecordList<'a> = import_record::List<'a>;
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ScanImportsAndExportsError {
+pub(crate) enum ScanImportsAndExportsError {
     #[error("out of memory")]
     OutOfMemory,
     #[error("import resolution failed")]

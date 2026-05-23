@@ -2,7 +2,7 @@ use crate::css_rules::{CssRuleList, Location};
 use crate::{PrintErr, Printer};
 
 /// A [@starting-style](https://drafts.csswg.org/css-transitions-2/#defining-before-change-style-the-starting-style-rule) rule.
-pub struct StartingStyleRule<R> {
+pub(crate) struct StartingStyleRule<R> {
     /// Nested rules within the `@starting-style` rule.
     pub rules: CssRuleList<R>,
     /// The location of the rule in the source file.
@@ -10,7 +10,7 @@ pub struct StartingStyleRule<R> {
 }
 
 impl<R> StartingStyleRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -23,7 +23,7 @@ impl<R> StartingStyleRule<R> {
 }
 
 impl<R> StartingStyleRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

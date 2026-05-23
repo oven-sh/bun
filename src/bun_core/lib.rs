@@ -11,7 +11,7 @@
     clippy::disallowed_methods,
     clippy::disallowed_macros
 )]
-#![warn(unused_must_use, unreachable_pub)]
+#![warn(unused_must_use)]
 
 pub mod Global;
 pub mod atomic_cell;
@@ -263,7 +263,8 @@ pub mod os {
 /// (or null if empty). Windows-only; POSIX uses libc's `environ` symbol.
 #[cfg(windows)]
 #[inline]
-pub fn os_environ_ptr() -> *const *mut core::ffi::c_char {
+#[allow(dead_code)]
+pub(crate) fn os_environ_ptr() -> *const *mut core::ffi::c_char {
     // SAFETY: read of a process-global written once at startup.
     let e = unsafe { os::environ() };
     if e.is_empty() {
@@ -362,19 +363,11 @@ unsafe extern "C" {
     // safe: all args by-value; libm `powf` is defined for all f32 inputs.
     #[link_name = "powf"]
     safe fn libm_powf(x: f32, y: f32) -> f32;
-    // safe: all args by-value; libm `pow` is defined for all f64 inputs.
-    #[link_name = "pow"]
-    safe fn libm_pow(x: f64, y: f64) -> f64;
 }
 
 #[inline]
 pub fn powf(x: f32, y: f32) -> f32 {
     libm_powf(x, y)
-}
-
-#[inline]
-pub fn pow(x: f64, y: f64) -> f64 {
-    libm_pow(x, y)
 }
 
 /// Safe `Vec` growth helpers — consolidate the
@@ -457,7 +450,7 @@ pub mod vec {
     /// Caller must fully write the returned slice before any read of
     /// `v[prev_len..]` (the slots are uninitialized on entry).
     #[inline]
-    pub unsafe fn writable_slice<T>(v: &mut Vec<T>, additional: usize) -> &mut [T] {
+    pub(crate) unsafe fn writable_slice<T>(v: &mut Vec<T>, additional: usize) -> &mut [T] {
         v.reserve(additional);
         let prev = v.len();
         // SAFETY: caller contract — slice is fully written before any read.
@@ -473,7 +466,10 @@ pub mod vec {
     /// `v.len() + additional <= v.capacity()`, and the returned slice must be
     /// fully written before any read.
     #[inline]
-    pub unsafe fn writable_slice_assume_capacity<T>(v: &mut Vec<T>, additional: usize) -> &mut [T] {
+    pub(crate) unsafe fn writable_slice_assume_capacity<T>(
+        v: &mut Vec<T>,
+        additional: usize,
+    ) -> &mut [T] {
         debug_assert!(v.len() + additional <= v.capacity());
         let prev = v.len();
         // SAFETY: caller contract — capacity asserted; slice fully written before any read.
@@ -2404,7 +2400,7 @@ pub(crate) mod strings_impl {
 
     // ─── CodepointIterator (fmt.rs identifier formatter) ──────────────────
     #[derive(Default, Clone, Copy)]
-    pub struct CodepointIteratorCursor {
+    pub(crate) struct CodepointIteratorCursor {
         pub i: usize,
         pub c: i32,
         pub width: u8,
@@ -2620,7 +2616,7 @@ pub mod strings {
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 pub mod debug_allocator_data {
     #[inline]
-    pub fn deinit_ok() -> bool {
+    pub(crate) fn deinit_ok() -> bool {
         true
     }
 }
@@ -2711,17 +2707,6 @@ pub mod ffi {
         debug_assert!(!p.is_null(), "ffi::cstr: null pointer");
         // SAFETY: caller contract above — non-null, NUL-terminated, valid for 'a.
         unsafe { core::ffi::CStr::from_ptr(p) }
-    }
-
-    /// Convenience: `cstr(p).to_bytes()`. Dominant shape at call sites
-    /// (Zig `bun.span(p)` / `std.mem.span(p)` port).
-    ///
-    /// # Safety
-    /// Same contract as [`cstr`].
-    #[inline(always)]
-    pub unsafe fn cstr_bytes<'a>(p: *const core::ffi::c_char) -> &'a [u8] {
-        // SAFETY: forwarded to `cstr`.
-        unsafe { cstr(p) }.to_bytes()
     }
 
     #[cfg(unix)]
@@ -3114,8 +3099,6 @@ pub mod asan {
     //! mimalloc page is reported as a leak.
     use core::ffi::c_void;
 
-    pub const ENABLED: bool = cfg!(bun_asan);
-
     #[cfg(bun_asan)]
     unsafe extern "C" {
         // The ASAN/LSAN runtime never dereferences `ptr` — it indexes shadow
@@ -3193,7 +3176,7 @@ pub mod asan {
 // ────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
-pub extern "C" fn __wrap_gettid() -> libc::pid_t {
+pub(crate) extern "C" fn __wrap_gettid() -> libc::pid_t {
     // SAFETY: SYS_gettid takes no arguments and never fails.
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }

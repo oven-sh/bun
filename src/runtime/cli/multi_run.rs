@@ -94,7 +94,7 @@ struct ProcessSlot {
     status: Status,
 }
 
-pub struct ProcessHandle<'a> {
+pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: *const State<'a>,
     color_idx: usize,
@@ -759,7 +759,7 @@ fn add_script_configs(
 
 // TODO(port): `!noreturn` — Zig returns either an error or diverges. Using
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
-pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
+pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
     // Validate flags
     if ctx.parallel && ctx.sequential {
         Output::pretty_errorln(

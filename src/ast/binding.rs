@@ -41,7 +41,7 @@ pub enum Tag {
 // Zig: `pub var icount: usize = 0;` — mutable global counter, never read.
 // Debug-only so release doesn't pay a contended `lock xadd` per Binding.
 #[cfg(debug_assertions)]
-pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ──────────────────────────────────────────────────────────────────────────
 // `init` / `alloc` — Zig switched on `@TypeOf(t)` to pick the `B` variant.
@@ -50,7 +50,7 @@ pub static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 // per call-site like the Zig original.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait BindingInit {
+pub(crate) trait BindingInit {
     fn into_b(self) -> B;
 }
 impl BindingInit for StoreRef<crate::b::Identifier> {
@@ -193,7 +193,6 @@ impl ToExprWrapper {
     }
 }
 
-/// Zig: `Binding.ToExpr(expr_type, func_type)` returned a *type*; Rust callers
 /// that want the same per-(P, func) nominal type use this alias and construct
 /// via `ToExprWrapper::new`. Kept as a type alias (not a generic struct) so
 /// `P` can store two of these without threading its own generics through.

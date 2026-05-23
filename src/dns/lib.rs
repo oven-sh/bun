@@ -462,7 +462,7 @@ pub enum Order {
     Ipv6first = 6,
 }
 
-pub static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {
+pub(crate) static ORDER_MAP: phf::Map<&'static [u8], Order> = phf::phf_map! {
     b"verbatim"  => Order::Verbatim,
     b"ipv4first" => Order::Ipv4first,
     b"ipv6first" => Order::Ipv6first,

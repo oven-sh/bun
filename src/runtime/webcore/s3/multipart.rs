@@ -167,7 +167,7 @@ pub struct MultiPartUpload {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum State {
+pub(crate) enum State {
     WaitStreamCheck,
     NotStarted,
     MultipartStarted,
@@ -198,12 +198,9 @@ impl MultiPartUpload {
     }
 }
 
-/// Intrusive-refcount handle alias (Zig: `bun.ptr.RefCount(MultiPartUpload, ...)`).
-pub type MultiPartUploadRef = bun_ptr::IntrusiveRc<MultiPartUpload>;
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PartState {
+pub(crate) enum PartState {
     NotAssigned = 0,
     Pending = 1,
     Started = 2,
@@ -211,7 +208,7 @@ pub enum PartState {
     Canceled = 4,
 }
 
-pub struct UploadPart {
+pub(crate) struct UploadPart {
     /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
     /// Freed via `free_allocated_slice`. Default is a static empty slice.
     pub data: *const [u8],
@@ -223,7 +220,7 @@ pub struct UploadPart {
     pub index: u8,
 }
 
-pub struct UploadPartResult {
+pub(crate) struct UploadPartResult {
     pub number: u16,
     pub etag: Box<[u8]>,
 }
@@ -253,7 +250,10 @@ impl UploadPart {
         unsafe { &*self.data }
     }
 
-    pub fn on_part_response(result: S3PartResult, this: *mut c_void) -> JsTerminatedResult<()> {
+    pub(crate) fn on_part_response(
+        result: S3PartResult,
+        this: *mut c_void,
+    ) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
         let this = unsafe { &mut *this };
@@ -370,7 +370,7 @@ impl UploadPart {
         )
     }
 
-    pub fn start(&mut self) -> JsTerminatedResult<()> {
+    pub(crate) fn start(&mut self) -> JsTerminatedResult<()> {
         let ctx = self.ctx.get();
         if self.state != PartState::Pending || ctx.state != State::MultipartCompleted {
             return Ok(());
@@ -380,7 +380,7 @@ impl UploadPart {
         self.perform()
     }
 
-    pub fn cancel(&mut self) {
+    pub(crate) fn cancel(&mut self) {
         let state = self.state;
         self.state = PartState::Canceled;
 
@@ -1179,7 +1179,7 @@ impl MultiPartUpload {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum WriteEncoding {
+pub(crate) enum WriteEncoding {
     Bytes,
     Latin1,
     Utf16,

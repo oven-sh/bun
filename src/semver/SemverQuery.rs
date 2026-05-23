@@ -44,7 +44,7 @@ impl Drop for Query {
     }
 }
 
-pub struct QueryFormatter<'a> {
+pub(crate) struct QueryFormatter<'a> {
     query: &'a Query,
     buffer: &'a [u8],
 }
@@ -174,7 +174,7 @@ impl Clone for List {
     }
 }
 
-pub struct ListFormatter<'a> {
+pub(crate) struct ListFormatter<'a> {
     list: &'a List,
     buffer: &'a [u8],
 }
@@ -275,7 +275,7 @@ impl List {
     }
 }
 
-pub type FlagsBitSet = IntegerBitSet<3>;
+pub(crate) type FlagsBitSet = IntegerBitSet<3>;
 
 pub struct Flags;
 impl Flags {

@@ -207,7 +207,7 @@ pub enum SlotNamespace {
 
 // Zig: `pub const CountsArray = std.EnumArray(SlotNamespace, u32);` (nested decl).
 // Inherent associated types are nightly-only; expose as a free alias.
-pub type SlotNamespaceCountsArray = enum_map::EnumMap<SlotNamespace, u32>;
+pub(crate) type SlotNamespaceCountsArray = enum_map::EnumMap<SlotNamespace, u32>;
 
 impl Symbol {
     /// This is for generating cross-chunk imports and exports for code splitting.

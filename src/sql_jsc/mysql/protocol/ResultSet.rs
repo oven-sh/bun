@@ -22,7 +22,7 @@ pub use bun_sql::mysql::protocol::ResultSetHeader as Header;
 
 bun_core::declare_scope!(MySQLResultSet, visible);
 
-pub struct Row<'a> {
+pub(crate) struct Row<'a> {
     pub values: Box<[SQLDataCell]>,
     // `columns` is borrowed from the connection's column-definition buffer; see deinit note below.
     pub columns: &'a [ColumnDefinition41],
@@ -33,7 +33,7 @@ pub struct Row<'a> {
 }
 
 impl<'a> Row<'a> {
-    pub fn to_js(
+    pub(crate) fn to_js(
         &mut self,
         global_object: &JSGlobalObject,
         array: JSValue,
@@ -65,7 +65,7 @@ impl<'a> Row<'a> {
         )
     }
 
-    pub fn decode_internal<Context: ReaderContext>(
+    pub(crate) fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {
@@ -422,7 +422,7 @@ impl<'a> Row<'a> {
     }
 
     // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
-    pub fn decode<Context: ReaderContext>(
+    pub(crate) fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
     ) -> Result<(), AnyMySQLError> {

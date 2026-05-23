@@ -247,7 +247,7 @@ impl InlineStyle {
     }
 }
 
-pub struct OutputBuffer {
+pub(crate) struct OutputBuffer {
     pub list: Vec<u8>,
     pub oom: bool,
 }

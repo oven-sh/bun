@@ -32,19 +32,11 @@ pub use bun_collections::SmallList;
 // dispatch with a comptime-computed return type. In Rust this becomes a trait
 // with associated type for the return.
 
-pub trait GetFallbacks<const N: usize>: Sized {
-    type Output;
-    fn get_fallbacks(
-        this: &mut SmallList<Self, N>,
-        targets: &crate::targets::Targets,
-    ) -> Self::Output;
-}
-
 /// Duck-typed protocol from the Zig source (`@hasDecl(T, "getImage")`): any
 /// value type that carries an `Image` and can produce color/prefix fallbacks
 /// of itself. Implemented by `values::image::Image` and
 /// `properties::background::Background`.
-pub trait ImageFallback: Sized {
+pub(crate) trait ImageFallback: Sized {
     fn get_image(&self) -> &crate::values::image::Image;
     fn with_image(&self, arena: &bun_alloc::Arena, image: crate::values::image::Image) -> Self;
     fn get_fallback(
@@ -68,7 +60,7 @@ pub trait ImageFallback: Sized {
 /// crate now that `SmallList` is foreign. The lone caller threads `self`
 /// explicitly.
 #[inline]
-pub fn get_fallbacks<T: ImageFallback>(
+pub(crate) fn get_fallbacks<T: ImageFallback>(
     this: &mut SmallList<T, 1>,
     arena: &bun_alloc::Arena,
     targets: &crate::targets::Targets,

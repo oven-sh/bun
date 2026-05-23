@@ -963,7 +963,7 @@ pub fn hash_int<T: HashInt>(input: T) -> T {
     T::hash_int(input)
 }
 
-pub trait HashInt: Copy {
+pub(crate) trait HashInt: Copy {
     fn hash_int(self) -> Self;
 }
 

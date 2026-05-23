@@ -70,7 +70,7 @@ unsafe fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_io::EventLoopCtx {
 type Socket<const SSL: bool> = SocketHandler<SSL>;
 
 #[derive(Default, Clone, Copy)]
-pub struct DeflateNegotiationResult {
+pub(crate) struct DeflateNegotiationResult {
     pub enabled: bool,
     pub params: WebSocketDeflate::Params,
 }
@@ -2296,7 +2296,7 @@ export_http_client!(
 
 /// Aliases for `WebSocketProxyTunnel` (matches Zig `HTTPClient` / `HTTPSClient`).
 pub type NewHttpUpgradeClient<const SSL: bool> = HTTPClient<SSL>;
-pub type HttpUpgradeClient = HTTPClient<false>;
-pub type HttpsUpgradeClient = HTTPClient<true>;
+pub(crate) type HttpUpgradeClient = HTTPClient<false>;
+pub(crate) type HttpsUpgradeClient = HTTPClient<true>;
 
 // ported from: src/http_jsc/websocket_client/WebSocketUpgradeClient.zig

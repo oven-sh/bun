@@ -8,7 +8,7 @@ pub struct EnvMap {
 
 // PORT NOTE: Zig used `std.ArrayHashMap(K, V, Context, store_hash=true)`.
 // `bun_collections::ArrayHashMap` already takes a `C: ArrayHashContext<K>` param.
-pub type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
+pub(crate) type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 
 // PORT NOTE: Zig calls this `MapType`. Renamed to avoid rustc confusing it with the
 // unrelated mmap `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.

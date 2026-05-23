@@ -55,7 +55,7 @@ type Map<K, V> = HashMap<K, V>;
 /// (which Zig wrote as `comptime P: type`) can take any instantiation. Only the
 /// surface those helpers actually touch is exposed; widen this as the
 /// parse_* / visit_* sibling files un-gate.
-pub trait ParserLike<'a> {
+pub(crate) trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
     fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log>;
     fn bump(&self) -> &'a Bump;
@@ -112,34 +112,34 @@ pub type NewParser<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> =
 // Zig switched the field type at comptime. Rust const generics cannot select a type, so we
 // store both variants behind an enum and gate access in methods.
 // TODO(port): revisit with associated types / GATs.
-pub enum ImportRecordList<'a> {
+pub(crate) enum ImportRecordList<'a> {
     Owned(BumpVec<'a, ImportRecord>),
     Borrowed(&'a mut Vec<ImportRecord>),
 }
 impl<'a> ImportRecordList<'a> {
     #[inline]
-    pub fn items(&self) -> &[ImportRecord] {
+    pub(crate) fn items(&self) -> &[ImportRecord] {
         match self {
             Self::Owned(v) => v.as_slice(),
             Self::Borrowed(v) => v.as_slice(),
         }
     }
     #[inline]
-    pub fn items_mut(&mut self) -> &mut [ImportRecord] {
+    pub(crate) fn items_mut(&mut self) -> &mut [ImportRecord] {
         match self {
             Self::Owned(v) => v.as_mut_slice(),
             Self::Borrowed(v) => v.as_mut_slice(),
         }
     }
     #[inline]
-    pub fn push(&mut self, record: ImportRecord) {
+    pub(crate) fn push(&mut self, record: ImportRecord) {
         match self {
             Self::Owned(v) => v.push(record),
             Self::Borrowed(v) => v.push(record),
         }
     }
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Self::Owned(v) => v.len(),
             Self::Borrowed(v) => v.len(),
@@ -156,7 +156,7 @@ impl<'a> ImportRecordList<'a> {
     /// Drop then ran element destructors on records the returned `Ast` still
     /// pointed at. This adapter restores Zig's move-and-zero semantics for both
     /// the bump-backed and externally-borrowed variants.
-    pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
+    pub(crate) fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
             Self::Owned(v) => v,
             // SCAN_ONLY path never reaches `to_ast`, so `Borrowed` never hits
@@ -166,7 +166,7 @@ impl<'a> ImportRecordList<'a> {
     }
 }
 
-pub enum NamedImportsType<'a> {
+pub(crate) enum NamedImportsType<'a> {
     Owned(bun_ast::ast_result::NamedImports),
     Borrowed(&'a mut bun_ast::ast_result::NamedImports),
 }
@@ -189,17 +189,16 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
 }
 
 // In Zig: `if (only_scan_imports_and_do_not_visit) bool else void`.
-pub type NeedsJSXType = bool;
+pub(crate) type NeedsJSXType = bool;
 // In Zig: `if (track_symbol_usage_during_parse_pass) *Map else void`.
-pub type ParsePassSymbolUsageType<'a> = Option<&'a mut crate::ParsePassSymbolUsageMap>;
+pub(crate) type ParsePassSymbolUsageType<'a> = Option<&'a mut crate::ParsePassSymbolUsageMap>;
 // In Zig: `if (allow_macros) u32 else u0`.
-pub type MacroCallCountType = u32;
+pub(crate) type MacroCallCountType = u32;
 
 // ─── Re-exports of sibling-module impls (Zig: `pub const X = mod.X;`) ───
 // In Rust these are inherent methods on `P` defined in sibling files via separate
 // `impl<...> P<...>` blocks. Round-D/E: those files un-gate per-module; until
 // then their re-exports are gated so the *struct* + core helpers compile.
-pub use crate::parse::parse_skip_typescript::*;
 pub use crate::parse::*;
 pub use crate::visit::*;
 // Re-export the real visitor so `P::binary_expression_stack` is typed against
@@ -207,27 +206,21 @@ pub use crate::visit::*;
 // matching Zig's `p.binary_expression_stack`).
 pub use crate::visit::visit_binary::BinaryExpressionVisitor;
 
-pub struct RecentlyVisitedTSNamespace {
+pub(crate) struct RecentlyVisitedTSNamespace {
     pub expr: js_ast::ExprData,
     // ARENA back-pointer — `StoreRef` for safe `Deref` at the read sites.
     pub map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
 }
 
-// Unused in Zig (per LIFETIMES.tsv evidence).
-pub enum RecentlyVisitedTSNamespaceExpressionData {
-    Ref(Ref),
-    Ptr(*const E::Dot),
-}
-
 #[derive(Clone, Copy)]
-pub struct ReactRefreshImportClause<'a> {
+pub(crate) struct ReactRefreshImportClause<'a> {
     pub name: &'a [u8],
     pub enabled: bool,
     pub r#ref: Ref,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ReactRefreshExportKind {
+pub(crate) enum ReactRefreshExportKind {
     Named,
     Default,
 }
@@ -648,7 +641,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 // later `&mut self` retag (entering any visit method) invalidated it, so the
 // shim's `&mut *(stored as *mut P)` was UB. Call sites now invoke the inherent
 // `P::maybe_transpose_if_*` / `P::transpose_known_to_be_if_*` methods directly.
-pub struct ImportTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+pub(crate) struct ImportTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     core::marker::PhantomData<&'a ()>,
 );
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Clone
@@ -670,7 +663,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
     }
 }
 
-pub struct RequireTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+pub(crate) struct RequireTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     core::marker::PhantomData<&'a ()>,
 );
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Clone
@@ -692,7 +685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
     }
 }
 
-pub struct RequireResolveTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+pub(crate) struct RequireResolveTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     core::marker::PhantomData<&'a ()>,
 );
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Clone
@@ -720,8 +713,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
 // captured fn. The Rust port type-erases `*P` (which is generic over
 // `<'a, TYPESCRIPT, J, SCAN_ONLY>`) into `binding::ToExprWrapper` - same shim
 // pattern as `ImportTransposer` above. Wired in `prepare_for_visit_pass`.
-pub type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
-pub type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
+pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
+pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -9770,7 +9763,7 @@ impl LowerUsingDeclarationsContext {
 // ─── Helper trait for generate_import_stmt's `symbols: anytype` param ───
 // TODO(port): two call shapes exist (RuntimeImports and a string→Ref map). Impl
 // this for both and verify the alias_name() RuntimeImports special case.
-pub trait GenerateImportSymbols {
+pub(crate) trait GenerateImportSymbols {
     type Key;
     fn get(&self, key: &Self::Key) -> Option<Ref>;
     fn alias_name(&self, key: &Self::Key) -> &'static [u8];

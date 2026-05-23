@@ -28,7 +28,7 @@ pub type RequestedModuleValue = FetchParameters;
 /// Legacy name used by `linker_context::postProcessJSChunk` — the Zig side
 /// renamed `ImportAttributes` → `FetchParameters` but the bundler call site
 /// still spells `ImportAttributes::None`.
-pub type ImportAttributes = FetchParameters;
+pub(crate) type ImportAttributes = FetchParameters;
 
 // ──────────────────────────────────────────────────────────────────────────
 // RecordKind
@@ -140,7 +140,7 @@ impl Flags {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum ModuleInfoError {
+pub(crate) enum ModuleInfoError {
     #[error("BadModuleInfo")]
     BadModuleInfo,
 }
@@ -168,7 +168,7 @@ pub struct ModuleInfoDeserialized {
     pub owner: Owner,
 }
 
-pub enum Owner {
+pub(crate) enum Owner {
     /// `Box<ModuleInfo>` whose internal vectors back the raw slice fields.
     ModuleInfo(*mut ModuleInfo),
     AllocatedSlice {
@@ -453,7 +453,7 @@ fn bytes_as_slice<T: bytemuck::AnyBitPattern>(bytes: &[u8]) -> Result<&[T], Modu
 /// Extension constructor: `StringID::from_raw(u32)` — used by
 /// `linker_context::generateChunksInParallel` when rewriting cross-chunk
 /// specifier IDs.
-pub trait StringIDExt {
+pub(crate) trait StringIDExt {
     fn from_raw(raw: u32) -> StringID;
 }
 impl StringIDExt for StringID {
@@ -536,7 +536,7 @@ impl ModuleInfoExt for ModuleInfo {
 // (Zig `comptime { _ = @import }` force-reference dropped per porting guide.)
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
+pub(crate) extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
     // SAFETY: C++ caller passes a non-null pointer obtained from `ModuleInfo::create`.
     let info = unsafe { NonNull::new(info).unwrap_unchecked() };
     // SAFETY: `info` came from `bun_core::heap::into_raw` and ownership is transferred back here.
@@ -544,7 +544,7 @@ pub extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
+pub(crate) extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
     // SAFETY: C++ caller passes a non-null pointer obtained from `create` or
     // `ModuleInfoExt::into_deserialized`.
     let info = unsafe { NonNull::new(info).unwrap_unchecked() };
@@ -553,7 +553,7 @@ pub extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeser
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zig_log(msg: *const c_char) {
+pub(crate) extern "C" fn zig_log(msg: *const c_char) {
     // SAFETY: C++ caller passes a non-null, NUL-terminated C string.
     let msg = unsafe { NonNull::new(msg.cast_mut()).unwrap_unchecked() };
     // SAFETY: `msg` is non-null and points to a NUL-terminated C string per the contract above.

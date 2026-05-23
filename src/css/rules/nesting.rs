@@ -3,7 +3,7 @@ use crate::css_rules::style::StyleRule;
 use crate::{PrintErr, Printer};
 
 /// A [@nest](https://www.w3.org/TR/css-nesting-1/#at-nest) rule.
-pub struct NestingRule<R> {
+pub(crate) struct NestingRule<R> {
     /// The style rule that defines the selector and declarations for the `@nest` rule.
     pub style: StyleRule<R>,
     /// The location of the rule in the source file.
@@ -11,7 +11,7 @@ pub struct NestingRule<R> {
 }
 
 impl<R> NestingRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         if dest.context().is_none() {
@@ -24,7 +24,7 @@ impl<R> NestingRule<R> {
 }
 
 impl<R> NestingRule<R> {
-    pub fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {

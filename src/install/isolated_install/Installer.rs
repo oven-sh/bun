@@ -592,7 +592,7 @@ impl<'a> Installer<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CompleteState {
+pub(crate) enum CompleteState {
     Success,
     Skipped,
     Fail,
@@ -649,12 +649,12 @@ pub enum Result {
     Done,
 }
 
-pub struct DownloadError {
+pub(crate) struct DownloadError {
     pub err: bun_core::Error,
     pub url: Box<[u8]>,
 }
 
-pub enum TaskError {
+pub(crate) enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
     RunScripts(bun_core::Error),
@@ -664,7 +664,7 @@ pub enum TaskError {
 }
 
 impl TaskError {
-    pub fn clone(&self) -> TaskError {
+    pub(crate) fn clone(&self) -> TaskError {
         match self {
             TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
@@ -689,7 +689,7 @@ impl TaskError {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Step {
+pub(crate) enum Step {
     LinkPackage,
     SymlinkDependencies,
 
@@ -733,7 +733,7 @@ impl Step {
     /// only ever stored via `Step::* as u32` (this file) so the value is
     /// always a valid discriminant.
     #[inline]
-    pub const fn from_u32(raw: u32) -> Step {
+    pub(crate) const fn from_u32(raw: u32) -> Step {
         match raw {
             0 => Step::LinkPackage,
             1 => Step::SymlinkDependencies,
@@ -2774,7 +2774,7 @@ impl<'a> Installer<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Which {
+pub(crate) enum Which {
     /// The published location (`<cache>/links/<entry>`). Use for symlink
     /// *targets* that point at other entries, and for the warm-hit check.
     Final,

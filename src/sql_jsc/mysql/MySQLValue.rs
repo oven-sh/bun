@@ -15,7 +15,7 @@ use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
 
-pub fn field_type_from_js(
+pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,
     value: JSValue,
     unsigned: &mut bool,
@@ -151,7 +151,7 @@ pub enum Value {
 /// can't sweep the cell whose `RefPtr<ArrayBuffer>` keeps the storage
 /// alive — `params` is on the malloc heap and isn't scanned. `Drop`
 /// unpins.
-pub struct Bytes {
+pub(crate) struct Bytes {
     pub slice: ZigStringSlice,
     /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
     /// when the slice is owned (FastTypedArray dupe), borrowed from a

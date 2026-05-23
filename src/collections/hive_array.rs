@@ -790,9 +790,6 @@ pub struct HiveRef<T, const CAPACITY: usize> {
     pub value: T,
 }
 
-/// Convenience alias mirroring Zig's nested `const HiveAllocator`.
-pub type HiveAllocator<T, const CAPACITY: usize> = Fallback<HiveRef<T, CAPACITY>, CAPACITY>;
-
 impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
     /// Zig: `pub fn init(value, allocator) !*@This()`.
     ///

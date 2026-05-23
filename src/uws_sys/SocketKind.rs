@@ -127,14 +127,14 @@ impl SocketKind {
 /// side links against the Rust source of truth instead of mirroring literals
 /// that silently rot if this enum is reordered.
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_DYNAMIC: u8 = SocketKind::Dynamic as u8;
+pub(crate) static BUN_SOCKET_KIND_DYNAMIC: u8 = SocketKind::Dynamic as u8;
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_UWS_HTTP: u8 = SocketKind::UwsHttp as u8;
+pub(crate) static BUN_SOCKET_KIND_UWS_HTTP: u8 = SocketKind::UwsHttp as u8;
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
+pub(crate) static BUN_SOCKET_KIND_UWS_HTTP_TLS: u8 = SocketKind::UwsHttpTls as u8;
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
+pub(crate) static BUN_SOCKET_KIND_UWS_WS: u8 = SocketKind::UwsWs as u8;
 #[unsafe(no_mangle)]
-pub static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
+pub(crate) static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
 
 // ported from: src/uws_sys/SocketKind.zig

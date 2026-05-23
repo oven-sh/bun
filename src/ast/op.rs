@@ -274,7 +274,6 @@ impl Op {
     }
 }
 
-// Zig: `pub const TableType: std.EnumArray(Op.Code, Op) = undefined;`
 // This declared an `undefined` value (vestigial / used only for @TypeOf at callsites).
 // Ported as a type alias since Rust statics cannot be uninitialized.
 // TODO(port): verify no callsite reads TableType as a value.

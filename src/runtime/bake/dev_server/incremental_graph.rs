@@ -27,14 +27,14 @@ use crate::bake::{self, Side};
 /// Const-generic over `bake::Side` so that `IncrementalGraph(.server).FileIndex`
 /// and `IncrementalGraph(.client).FileIndex` are distinct types as in the Zig
 /// spec.
-pub struct SideMarker<const SIDE: bake::Side>;
-pub type FileIndex<const SIDE: bake::Side> = bun_core::GenericIndex<u32, SideMarker<SIDE>>;
+pub(crate) struct SideMarker<const SIDE: bake::Side>;
+pub(crate) type FileIndex<const SIDE: bake::Side> = bun_core::GenericIndex<u32, SideMarker<SIDE>>;
 /// Alias used by `DevServer.route_lookup` (Zig: `IncrementalGraph(.server).FileIndex`).
-pub type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
-pub type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
+pub(crate) type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
+pub(crate) type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
 
 /// Return shape for `IncrementalGraph::insert_empty`.
-pub struct InsertEmptyResult<const SIDE: bake::Side> {
+pub(crate) struct InsertEmptyResult<const SIDE: bake::Side> {
     pub index: FileIndex<SIDE>,
     /// Borrow of the interned key in `bundled_files`. The key `Box<[u8]>` lives
     /// until `disconnect_and_delete_file` frees it, and
@@ -45,8 +45,8 @@ pub struct InsertEmptyResult<const SIDE: bake::Side> {
 }
 
 /// `bun.GenericIndex(u32, Edge)`.
-pub enum EdgeMarker {}
-pub type EdgeIndex = bun_core::GenericIndex<u32, EdgeMarker>;
+pub(crate) enum EdgeMarker {}
+pub(crate) type EdgeIndex = bun_core::GenericIndex<u32, EdgeMarker>;
 
 /// One edge in the import graph. `File` objects act as nodes in a directional
 /// many-to-many graph, where edges represent the imports between modules. A
@@ -54,7 +54,7 @@ pub type EdgeIndex = bun_core::GenericIndex<u32, EdgeMarker>;
 /// is implemented using an array of `Edge` objects that act as linked-list
 /// nodes; each file stores the first import and dependency.
 #[derive(Copy, Clone)]
-pub struct Edge<const SIDE: bake::Side> {
+pub(crate) struct Edge<const SIDE: bake::Side> {
     /// The file with the import statement.
     pub dependency: FileIndex<SIDE>,
     /// The file the import statement references.
@@ -69,7 +69,7 @@ pub struct Edge<const SIDE: bake::Side> {
 }
 
 #[derive(Default)]
-pub enum Content {
+pub(crate) enum Content {
     #[default]
     Unknown,
     /// When stale, the code is "", otherwise it contains at least one
@@ -162,7 +162,7 @@ impl Default for File {
 
 /// `IncrementalGraph(.server).CurrentChunkSourceMapData`
 /// (IncrementalGraph.zig:305).
-pub struct CurrentChunkSourceMapData {
+pub(crate) struct CurrentChunkSourceMapData {
     pub file_index: ServerFileIndex,
     pub source_map: packed_map::Shared,
 }
@@ -172,13 +172,13 @@ pub struct CurrentChunkSourceMapData {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ProcessMode {
+pub(crate) enum ProcessMode {
     Normal,
     Css,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum TraceDependencyGoal {
+pub(crate) enum TraceDependencyGoal {
     StopAtBoundary,
     NoStop,
 }
@@ -202,19 +202,19 @@ enum FreeCssMode {
 }
 
 #[derive(Copy, Clone)]
-pub enum InsertFailureKey<'a> {
+pub(crate) enum InsertFailureKey<'a> {
     AbsPath(&'a [u8]),
     /// Raw file index into `bundled_files` (side is implied by the graph the
     /// caller is invoking `insert_failure` on).
     Index(u32),
 }
 
-pub struct ReceiveChunkSourceMap {
+pub(crate) struct ReceiveChunkSourceMap {
     pub chunk: bun_sourcemap::Chunk,
     pub escaped_source: Option<Box<[u8]>>,
 }
 
-pub enum ReceiveChunkContent {
+pub(crate) enum ReceiveChunkContent {
     Js {
         /// Allocated by `dev.arena()`; ownership transferred to the graph
         /// (client) or to `current_chunk_code` (server).
@@ -224,7 +224,7 @@ pub enum ReceiveChunkContent {
     Css(u64),
 }
 
-pub struct TakeJSBundleOptionsClient<'a> {
+pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub kind: ChunkKind,
     pub script_id: source_map_store::Key,
     pub initial_response_entry_point: &'a [u8],
@@ -290,7 +290,7 @@ pub struct IncrementalGraph<const SIDE: bake::Side> {
 
 /// `IncrementalGraph(side).MemoryCost` (IncrementalGraph.zig:414).
 #[derive(Default, Clone, Copy)]
-pub struct GraphMemoryCost {
+pub(crate) struct GraphMemoryCost {
     pub graph: usize,
     pub code: usize,
     pub source_maps: usize,
@@ -1924,7 +1924,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
     /// `IncrementalGraph(side).takeSourceMap` (spec :1843).
     /// Fills in all fields of `out` except `ref_count`.
-    pub fn take_source_map(
+    pub(crate) fn take_source_map(
         &mut self,
         out: &mut source_map_store::Entry,
     ) -> Result<(), bun_core::Error> {

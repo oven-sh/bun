@@ -83,8 +83,6 @@ pub enum ImportKind {
     Internal = 11,
 }
 
-pub type ImportKindLabel = enum_map::EnumMap<ImportKind, &'static [u8]>;
-
 // E0015: EnumMap indexing isn't const; Zig's `comptime brk: { ... }` initializer
 // is folded into match arms inside label()/error_label() below — same lookup
 // table, zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
@@ -525,7 +523,7 @@ impl<const N: usize> IntoStr for &[u8; N] {
 /// Owned/borrowed → `Cow<'static, [u8]>` for `Data.text`. Superset of the old
 /// `impl Into<Cow<'static, [u8]>>` bound on [`range_data`] that additionally
 /// admits `&'static str` (so `concat!()` literals work) and `&[u8; N]`.
-pub trait IntoText {
+pub(crate) trait IntoText {
     fn into_text(self) -> Cow<'static, [u8]>;
 }
 impl IntoText for Cow<'static, [u8]> {
@@ -574,7 +572,7 @@ impl IntoText for Box<[u8]> {
 /// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
 /// `fmt::Write` impl or the `*mut bun_core::io::Writer` returned by
 /// `Output::error_writer()` (the dominant call shape across the tree).
-pub trait IntoLogWrite {
+pub(crate) trait IntoLogWrite {
     type W: fmt::Write;
     fn into_log_write(self) -> Self::W;
 }
@@ -586,7 +584,7 @@ impl<'a, W: fmt::Write> IntoLogWrite for &'a mut W {
     }
 }
 /// `fmt::Write` view over a `*mut bun_core::io::Writer`.
-pub struct IoWriterAdapter(*mut bun_core::io::Writer);
+pub(crate) struct IoWriterAdapter(*mut bun_core::io::Writer);
 impl fmt::Write for IoWriterAdapter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         if self.0.is_null() {
@@ -2611,7 +2609,7 @@ impl Default for Source {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct ErrorPosition {
+pub(crate) struct ErrorPosition {
     pub line_start: usize,
     pub line_end: usize,
     pub column_count: usize,
@@ -2956,7 +2954,7 @@ pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source_at`. Zig source:
 /// `src/sys/File.zig:toSourceAt`.
-pub fn source_from_file_at(
+pub(crate) fn source_from_file_at(
     dir_fd: bun_sys::Fd,
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
@@ -2971,15 +2969,6 @@ pub fn source_from_file_at(
     // (same as every other `Source` constructor). `bytes` is owned by the
     // returned `Source` via `Cow::Owned` — no leaking.
     Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
-}
-
-/// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
-pub fn to_source_at(
-    dir_fd: bun_sys::Fd,
-    path: &bun_core::ZStr,
-    opts: ToSourceOptions,
-) -> bun_sys::Result<Source> {
-    source_from_file_at(dir_fd, path, opts)
 }
 
 /// `to_source_at` rooted at the process CWD.
@@ -3212,7 +3201,7 @@ pub mod store_ast_alloc_heap {
         core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get())
     }
 
-    pub fn enter() {
+    pub(crate) fn enter() {
         if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
             return;
         }
@@ -3241,7 +3230,7 @@ pub mod store_ast_alloc_heap {
         ast_alloc::reset_active_state();
     }
 
-    pub fn exit() {
+    pub(crate) fn exit() {
         if STATE_ID.get().is_null() {
             return;
         }
@@ -3272,11 +3261,11 @@ static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
     core::cell::Cell::new(core::ptr::null());
 
 #[inline]
-pub fn data_store_override() -> *const bun_alloc::Arena {
+pub(crate) fn data_store_override() -> *const bun_alloc::Arena {
     DATA_STORE_OVERRIDE.get()
 }
 #[inline]
-pub fn set_data_store_override(p: *const bun_alloc::Arena) {
+pub(crate) fn set_data_store_override(p: *const bun_alloc::Arena) {
     DATA_STORE_OVERRIDE.set(p);
 }
 

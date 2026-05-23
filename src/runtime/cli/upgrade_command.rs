@@ -45,7 +45,7 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
 // in `resolver/lib.rs`) does not yet expose `tmpdir()`; the full impl lives in
 // the un-exported `fs_full` module. Shim it locally — open
 // `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
-pub trait FileSystemTmpdirExt {
+pub(crate) trait FileSystemTmpdirExt {
     fn tmpdir(&mut self) -> Result<sys::Dir, bun_core::Error>;
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
@@ -160,7 +160,7 @@ impl Version {
 // (same pattern as `Bun__userAgent` in bun_core::Global) so the C++ side still sees a
 // single `const char*`-sized symbol.
 #[unsafe(no_mangle)]
-pub static Bun__githubURL: SyncCStr = SyncCStr(
+pub(crate) static Bun__githubURL: SyncCStr = SyncCStr(
     const_format::concatcp!(
         "https://github.com/oven-sh/bun/releases/download/bun-v",
         Global::package_json_version,
@@ -1428,7 +1428,7 @@ pub mod upgrade_js_bindings {
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
     #[bun_jsc::host_fn]
-    pub fn js_open_temp_dir_without_sharing_delete(
+    pub(crate) fn js_open_temp_dir_without_sharing_delete(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1509,7 +1509,7 @@ pub mod upgrade_js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub fn js_close_temp_dir_handle(
+    pub(crate) fn js_close_temp_dir_handle(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -1530,10 +1530,6 @@ pub mod upgrade_js_bindings {
             Ok(JSValue::UNDEFINED)
         }
     }
-}
-
-pub fn export() {
-    // force-reference — drop in Rust (linker keeps #[no_mangle])
 }
 
 // ported from: src/cli/upgrade_command.zig

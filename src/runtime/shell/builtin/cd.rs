@@ -8,7 +8,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Cd {
+pub(crate) struct Cd {
     state: State,
 }
 
@@ -21,7 +21,7 @@ enum State {
 }
 
 impl Cd {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let args = Builtin::of(interp, cmd).args_slice();
         if args.len() > 1 {
             return Self::write_stderr_non_blocking(
@@ -113,7 +113,7 @@ impl Cd {
         Builtin::done(interp, cmd, 1)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,

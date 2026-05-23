@@ -196,7 +196,7 @@ impl<'a> Context<'a> {
 }
 
 #[derive(Clone)]
-pub struct BundledDep {
+pub(crate) struct BundledDep {
     pub name: Box<[u8]>,
     pub was_packed: bool,
     pub from_root_package_json: bool,
@@ -437,7 +437,7 @@ struct PackListEntry {
 }
 type PackList = Vec<PackListEntry>;
 
-pub struct PackQueueItem {
+pub(crate) struct PackQueueItem {
     path: ZBox, // owned `[:0]const u8`; allocated via `entry_subpath`
     optional: bool,
 }
@@ -473,18 +473,18 @@ impl PartialEq for PackQueueItem {
 }
 
 #[derive(Default)]
-pub struct PackQueue {
+pub(crate) struct PackQueue {
     heap: std::collections::BinaryHeap<PackQueueItem>,
 }
 impl PackQueue {
-    pub fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
+    pub(crate) fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
         self.heap.push(item);
         Ok(())
     }
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.heap.len()
     }
-    pub fn remove_or_null(&mut self) -> Option<PackQueueItem> {
+    pub(crate) fn remove_or_null(&mut self) -> Option<PackQueueItem> {
         self.heap.pop()
     }
 }
@@ -1932,9 +1932,9 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // (`Publish.Context(true)` vs `void`). Rust const generics cannot vary return
 // type directly; using an associated-type-like Option for now. Could split
 // into `pack()` and `pack_for_publish()` or use a trait.
-pub type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
+pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
-pub fn pack<const FOR_PUBLISH: bool>(
+pub(crate) fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
 ) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
@@ -3126,7 +3126,7 @@ fn tarball_destination<'a>(
     }
 }
 
-pub fn fmt_tarball_filename<'a>(
+pub(crate) fn fmt_tarball_filename<'a>(
     package_name: &'a [u8],
     package_version: &'a [u8],
     style: TarballNameStyle,
@@ -3139,12 +3139,12 @@ pub fn fmt_tarball_filename<'a>(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TarballNameStyle {
+pub(crate) enum TarballNameStyle {
     Normalize,
     Raw,
 }
 
-pub struct TarballNameFormatter<'a> {
+pub(crate) struct TarballNameFormatter<'a> {
     package_name: &'a [u8],
     package_version: &'a [u8],
     style: TarballNameStyle,
@@ -3599,7 +3599,7 @@ pub struct Pattern {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct PatternFlags: u8 {
+    pub(crate) struct PatternFlags: u8 {
         /// beginning or middle slash (leading slash was trimmed)
         const REL_PATH = 1 << 0;
         /// can only match directories (had an ending slash, also trimmed)
@@ -3711,7 +3711,7 @@ impl Pattern {
 // IgnorePatterns
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct IgnorePatterns {
+pub(crate) struct IgnorePatterns {
     pub list: Box<[Pattern]>,
     pub kind: IgnorePatternsKind,
     pub depth: usize,
@@ -3723,7 +3723,7 @@ pub struct IgnorePatterns {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub enum IgnorePatternsKind {
+pub(crate) enum IgnorePatternsKind {
     #[strum(serialize = "default")]
     Default,
     #[strum(serialize = ".npmignore")]
@@ -3734,8 +3734,6 @@ pub enum IgnorePatternsKind {
     #[strum(serialize = "package.json")]
     PackageJson,
 }
-
-pub type IgnorePatternsList = Vec<IgnorePatterns>;
 
 #[derive(Clone, Copy, strum::IntoStaticStr)]
 enum IgnoreFileFailReason {
@@ -3779,7 +3777,7 @@ impl IgnorePatterns {
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    pub fn read_from_disk(
+    pub(crate) fn read_from_disk(
         dir: &Dir,
         dir_depth: usize,
     ) -> Result<Option<IgnorePatterns>, AllocError> {
@@ -4063,7 +4061,10 @@ pub mod bindings {
     };
 
     #[bun_jsc::host_fn]
-    pub fn js_read_tarball(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_read_tarball(
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = call_frame.arguments_old::<1>();
         let args = arguments.slice();
         if args.len() < 1 || !args[0].is_string() {

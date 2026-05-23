@@ -83,7 +83,7 @@ const ST_MAX_CONCURRENT_STREAMS: u16 = wire::SettingsType::SETTINGS_MAX_CONCURRE
 const ST_INITIAL_WINDOW_SIZE: u16 = wire::SettingsType::SETTINGS_INITIAL_WINDOW_SIZE.0;
 const ST_MAX_FRAME_SIZE: u16 = wire::SettingsType::SETTINGS_MAX_FRAME_SIZE.0;
 
-pub fn dispatch_frame(
+pub(crate) fn dispatch_frame(
     session: &mut ClientSession,
     frame_type: u8,
     flags: u8,
@@ -722,7 +722,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
     }
 }
 
-pub fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
+pub(crate) fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
     if payload.is_empty() {
         return None;
     }
@@ -736,7 +736,7 @@ pub fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
 /// RFC 9113 §8.2.1/§8.2.2 response-side validation: lowercase names, no
 /// hop-by-hop fields. Names from lshpack are already lowercase for table
 /// hits but a literal can carry anything.
-pub fn is_malformed_response_field(name: &[u8]) -> bool {
+pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
     for &c in name {
         if c >= b'A' && c <= b'Z' {
             return true;

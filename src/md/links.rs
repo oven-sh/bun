@@ -10,14 +10,14 @@ type SpanAttrs<'a> = SpanDetail<'a>;
 type Off = OFF;
 
 /// Result of `try_match_bracket_link` — Zig anonymous return struct.
-pub struct BracketLinkMatch {
+pub(crate) struct BracketLinkMatch {
     pub is_link: bool,
     pub label_end: usize,
     pub link_end: usize,
 }
 
 /// Result of `find_autolink` — Zig anonymous return struct.
-pub struct Autolink {
+pub(crate) struct Autolink {
     pub end_pos: usize,
     pub is_email: bool,
 }

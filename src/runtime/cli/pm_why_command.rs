@@ -2,11 +2,11 @@ use crate::cli::why_command::WhyCommand;
 use crate::command;
 use bun_install::PackageManager;
 
-pub struct PmWhyCommand;
+pub(crate) struct PmWhyCommand;
 
 impl PmWhyCommand {
     // TODO(port): narrow error set
-    pub fn exec(
+    pub(crate) fn exec(
         _ctx: &command::Context,
         pm: &mut PackageManager,
         positionals: &[&[u8]],

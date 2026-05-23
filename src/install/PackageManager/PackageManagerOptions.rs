@@ -161,7 +161,7 @@ impl Default for Options {
 }
 
 // PORT NOTE: was an anonymous `union(enum)` field type in Zig.
-pub enum PatchFeatures {
+pub(crate) enum PatchFeatures {
     Nothing,
     Patch,
     Commit { patches_dir: &'static [u8] },
@@ -278,7 +278,7 @@ pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
 #[derive(Default, Copy, Clone)]
-pub struct Update {
+pub(crate) struct Update {
     pub development: bool,
     pub optional: bool,
     pub peer: bool,
@@ -327,7 +327,7 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> Result<bun_sys::Fd, bun_co
     Err(bun_core::err!("No global directory found"))
 }
 
-pub fn open_global_bin_dir(
+pub(crate) fn open_global_bin_dir(
     opts_: Option<&Api::BunInstall>,
 ) -> Result<bun_sys::Fd, bun_core::Error> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};

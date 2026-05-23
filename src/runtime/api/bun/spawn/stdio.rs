@@ -20,9 +20,9 @@ use crate::api::bun_process::{self as process, Dup2 as ProcessDup2, StdioKind};
 // can't nest type decls, so process.rs exposes `PosixStdio` / `WindowsStdio`;
 // alias the active one as `SpawnOptionsStdio` so the body stays platform-neutral.
 #[cfg(not(windows))]
-pub type SpawnOptionsStdio = process::PosixStdio;
+pub(crate) type SpawnOptionsStdio = process::PosixStdio;
 #[cfg(windows)]
-pub type SpawnOptionsStdio = process::WindowsStdio;
+pub(crate) type SpawnOptionsStdio = process::WindowsStdio;
 
 // `bun.FD.Stdio` (the StdIn/StdOut/StdErr tag enum) is `bun_core::Stdio`,
 // re-exported through `bun_sys`. Alias so `FdStdio::StdIn` etc. read as the
@@ -34,7 +34,7 @@ bun_output::define_scoped_log!(log, SYS, visible);
 
 /// Anonymous payload of `Stdio::Capture` in Zig: `struct { buf: *bun.Vec<u8> }`.
 #[derive(Clone, Copy)]
-pub struct Capture {
+pub(crate) struct Capture {
     // TODO(port): lifetime — Zig holds a raw `*bun.Vec<u8>` backref owned
     // elsewhere (shell). LIFETIMES.tsv has no row; treating as BACKREF.
     pub buf: *mut Vec<u8>,
@@ -42,7 +42,7 @@ pub struct Capture {
 
 /// Anonymous payload of `Stdio::Dup2` in Zig.
 #[derive(Clone, Copy)]
-pub struct Dup2 {
+pub(crate) struct Dup2 {
     pub out: StdioKind,
     pub to: StdioKind,
 }
@@ -69,7 +69,7 @@ pub enum Stdio {
 // Rust enums cannot nest type decls, so they live at module scope and callers
 // reference them as `stdio::Result` etc.
 
-pub enum ResultT<T> {
+pub(crate) enum ResultT<T> {
     Result(T),
     Err(ToSpawnOptsError),
 }

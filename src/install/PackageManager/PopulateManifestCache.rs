@@ -20,7 +20,7 @@ use crate::package_manager_task as Task;
 use crate::resolution::Tag as ResolutionTag;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum StartManifestTaskError {
+pub(crate) enum StartManifestTaskError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("InvalidURL")]

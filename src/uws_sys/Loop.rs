@@ -575,9 +575,9 @@ pub type Loop = PosixLoop;
 
 // ───────────────────────────── extern "C" ─────────────────────────────
 
-pub type LoopCb = unsafe extern "C" fn(*mut Loop);
-pub type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
-pub type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
+pub(crate) type LoopCb = unsafe extern "C" fn(*mut Loop);
+pub(crate) type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
+pub(crate) type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
 
 #[allow(non_snake_case)]
 mod c {

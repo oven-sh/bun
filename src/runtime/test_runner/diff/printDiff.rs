@@ -17,7 +17,7 @@ enum Mode {
 }
 const MODE: Mode = Mode::BgDiffOnly;
 
-pub struct DiffConfig {
+pub(crate) struct DiffConfig {
     pub min_bytes_before_chunking: usize,
     pub chunk_context_lines: usize,
     pub enable_ansi_colors: bool,
@@ -26,7 +26,7 @@ pub struct DiffConfig {
 }
 
 impl DiffConfig {
-    pub fn default(is_agent: bool, enable_ansi_colors: bool) -> DiffConfig {
+    pub(crate) fn default(is_agent: bool, enable_ansi_colors: bool) -> DiffConfig {
         DiffConfig {
             min_bytes_before_chunking: if is_agent { 0 } else { 2 * 1024 }, // 2kb
             chunk_context_lines: if is_agent { 1 } else { 5 },
@@ -223,17 +223,6 @@ pub fn print_diff_main(
     print_diff(writer, &diff_segments, config)
 }
 
-pub struct Diff<'a> {
-    pub operation: DiffOperation,
-    pub text: &'a [u8],
-}
-
-pub enum DiffOperation {
-    Insert,
-    Delete,
-    Equal,
-}
-
 use bun_core::output::ansi as colors;
 
 mod prefix_styles {
@@ -299,7 +288,7 @@ mod styles {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DiffSegmentMode {
+pub(crate) enum DiffSegmentMode {
     Equal,
     Removed,
     Inserted,
@@ -309,7 +298,7 @@ pub enum DiffSegmentMode {
 // TODO(port): lifetime — `removed`/`inserted` borrow from caller input and diff_match_patch output;
 // in Zig these were arena-backed slices. Revisit ownership.
 #[derive(Copy, Clone)]
-pub struct DiffSegment<'a> {
+pub(crate) struct DiffSegment<'a> {
     pub removed: &'a [u8],
     pub inserted: &'a [u8],
     pub mode: DiffSegmentMode,
@@ -357,7 +346,7 @@ fn print_diff_footer(
 }
 
 #[derive(Clone, Copy)]
-pub struct PrefixStyle {
+pub(crate) struct PrefixStyle {
     pub msg: &'static str,
     pub color: &'static str,
 }

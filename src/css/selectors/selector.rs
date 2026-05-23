@@ -35,38 +35,18 @@ pub mod r#impl {
         pub mod selector_impl {
             use super::*;
 
-            pub type AttrValue = css::css_values::string::CssString;
-            pub type Identifier = css::css_values::ident::Ident;
-            /// An identifier which could be a local name for use in CSS modules
-            pub type LocalIdentifier = css::css_values::ident::IdentOrRef;
-            pub type LocalName = css::css_values::ident::Ident;
-            pub type NamespacePrefix = css::css_values::ident::Ident;
-            pub type NamespaceUrl = *const [u8]; // TODO(port): lifetime — Zig `[]const u8` type alias
-            pub type BorrowedNamespaceUrl = *const [u8]; // TODO(port): lifetime
-            pub type BorrowedLocalName = css::css_values::ident::Ident;
-
-            pub type NonTSPseudoClass = parser::PseudoClass;
             pub type PseudoElement = parser::PseudoElement;
             pub type VendorPrefix = css::VendorPrefix;
-            pub type ExtraMatchingData = ();
         }
 
-        pub mod local_identifier {
-            use super::*;
-
-            pub fn from_ident(
-                ident: css::css_values::ident::Ident,
-            ) -> selector_impl::LocalIdentifier {
-                css::css_values::ident::IdentOrRef::from_ident(ident)
-            }
-        }
+        pub mod local_identifier {}
     }
 }
 
 pub use super::parser;
 
 /// Returns whether two selector lists are equivalent, i.e. the same minus any vendor prefix differences.
-pub fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool {
+pub(crate) fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool {
     if selectors.len() != other.len() {
         return false;
     }
@@ -122,7 +102,7 @@ pub fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool {
 
 /// Downlevels the given selectors to be compatible with the given browser targets.
 /// Returns the necessary vendor prefixes.
-pub fn downlevel_selectors<'bump>(
+pub(crate) fn downlevel_selectors<'bump>(
     bump: &'bump Bump,
     selectors: &mut [Selector],
     targets: &Targets,
@@ -136,7 +116,7 @@ pub fn downlevel_selectors<'bump>(
     necessary_prefixes
 }
 
-pub fn downlevel_component<'bump>(
+pub(crate) fn downlevel_component<'bump>(
     bump: &'bump Bump,
     component: &mut Component,
     targets: &Targets,
@@ -270,7 +250,7 @@ fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) ->
 
 /// Returns the vendor prefix (if any) used in the given selector list.
 /// If multiple vendor prefixes are seen, this is invalid, and an empty result is returned.
-pub fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
+pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     let mut prefix = VendorPrefix::empty();
     for selector in selectors.v.slice() {
         for component in selector.components.iter() {
@@ -632,7 +612,7 @@ fn is_selector_unused(
 pub mod serialize {
     use super::*;
 
-    pub fn serialize_selector_list(
+    pub(crate) fn serialize_selector_list(
         list: &[parser::Selector],
         dest: &mut Printer,
         context: Option<&StyleContext>,
@@ -643,7 +623,7 @@ pub mod serialize {
         })
     }
 
-    pub fn serialize_selector(
+    pub(crate) fn serialize_selector(
         selector: &parser::Selector,
         dest: &mut Printer,
         context: Option<&StyleContext>,
@@ -860,7 +840,7 @@ pub mod serialize {
         Ok(())
     }
 
-    pub fn serialize_component(
+    pub(crate) fn serialize_component(
         component: &parser::Component,
         dest: &mut Printer,
         context: Option<&StyleContext>,
@@ -1014,7 +994,7 @@ pub mod serialize {
         Ok(())
     }
 
-    pub fn serialize_combinator(
+    pub(crate) fn serialize_combinator(
         combinator: parser::Combinator,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
@@ -1036,7 +1016,7 @@ pub mod serialize {
         Ok(())
     }
 
-    pub fn serialize_pseudo_class(
+    pub(crate) fn serialize_pseudo_class(
         pseudo_class: &parser::PseudoClass,
         dest: &mut Printer,
         context: Option<&StyleContext>,
@@ -1221,7 +1201,7 @@ pub mod serialize {
         Ok(())
     }
 
-    pub fn serialize_pseudo_element(
+    pub(crate) fn serialize_pseudo_element(
         pseudo_element: &parser::PseudoElement,
         dest: &mut Printer,
         context: Option<&StyleContext>,
@@ -1361,7 +1341,7 @@ pub mod serialize {
         Ok(())
     }
 
-    pub fn serialize_nesting(
+    pub(crate) fn serialize_nesting(
         dest: &mut Printer,
         context: Option<&StyleContext>,
         first: bool,
@@ -1398,7 +1378,7 @@ pub mod serialize {
 pub mod tocss_servo {
     use super::*;
 
-    pub fn to_css_selector_list(
+    pub(crate) fn to_css_selector_list(
         selectors: &[parser::Selector],
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
@@ -1417,7 +1397,7 @@ pub mod tocss_servo {
         Ok(())
     }
 
-    pub fn to_css_selector(
+    pub(crate) fn to_css_selector(
         selector: &parser::Selector,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
@@ -1546,7 +1526,7 @@ pub mod tocss_servo {
         Ok(())
     }
 
-    pub fn to_css_component(
+    pub(crate) fn to_css_component(
         component: &parser::Component,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
@@ -1705,7 +1685,7 @@ pub mod tocss_servo {
         Ok(())
     }
 
-    pub fn to_css_combinator(
+    pub(crate) fn to_css_combinator(
         combinator: parser::Combinator,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
@@ -1721,19 +1701,6 @@ pub mod tocss_servo {
             parser::Combinator::PseudoElement
             | parser::Combinator::Part
             | parser::Combinator::SlotAssignment => return Ok(()),
-        }
-        Ok(())
-    }
-
-    pub fn to_css_pseudo_element(
-        pseudo_element: &parser::PseudoElement,
-        dest: &mut Printer,
-    ) -> Result<(), PrintErr> {
-        match pseudo_element {
-            PseudoElement::Before => dest.write_str(b"::before")?,
-            PseudoElement::After => dest.write_str(b"::after")?,
-            // TODO(port): Zig switch was non-exhaustive over a multi-variant enum (compiler bug or intentional?).
-            _ => {}
         }
         Ok(())
     }
@@ -1797,7 +1764,7 @@ fn is_simple(selector: &parser::Selector) -> bool {
     !any_is_combinator
 }
 
-pub struct CombinatorIter<'a> {
+pub(crate) struct CombinatorIter<'a> {
     pub sel: &'a parser::Selector,
     pub i: usize,
 }
@@ -1810,7 +1777,7 @@ impl<'a> CombinatorIter<'a> {
     ///   .rev() // reverses the iterator
     ///   .filter_map(|x| x.as_combinator()) // returns only entries which are combinators
     /// ```
-    pub fn next(&mut self) -> Option<parser::Combinator> {
+    pub(crate) fn next(&mut self) -> Option<parser::Combinator> {
         while self.i < self.sel.components.len() {
             let idx = self.sel.components.len() - 1 - self.i;
             self.i += 1;
@@ -1823,7 +1790,7 @@ impl<'a> CombinatorIter<'a> {
     }
 }
 
-pub struct CompoundSelectorIter<'a> {
+pub(crate) struct CompoundSelectorIter<'a> {
     pub sel: &'a parser::Selector,
     pub i: usize,
 }
@@ -1861,7 +1828,7 @@ impl<'a> CompoundSelectorIter<'a> {
     ///  .rev() // reverse
     /// ```
     #[inline]
-    pub fn next(&mut self) -> Option<&'a [parser::Component]> {
+    pub(crate) fn next(&mut self) -> Option<&'a [parser::Component]> {
         // Since we iterating backwards, we convert all indices into "backwards form" by doing `self.sel.components.len() - 1 - i`
         let items = self.sel.components.as_slice();
         if self.i < items.len() {

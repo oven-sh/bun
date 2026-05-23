@@ -364,7 +364,7 @@ unsafe extern "C" {
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
-pub static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
+pub(crate) static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
 impl Debugger {
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
@@ -1093,7 +1093,7 @@ impl TestReporterAgent {
 // ─── LifecycleAgent ───────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct LifecycleAgent {
+pub(crate) struct LifecycleAgent {
     pub handle: *mut LifecycleHandle,
 }
 
@@ -1164,20 +1164,10 @@ impl LifecycleAgent {
         core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
     }
 
-    pub fn report_reload(&mut self) {
-        if let Some(h) = self.handle_mut() {
-            h.report_reload();
-        }
-    }
-
-    pub fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
         if let Some(h) = self.handle_mut() {
             h.report_error(exception);
         }
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        !self.handle.is_null()
     }
 }
 

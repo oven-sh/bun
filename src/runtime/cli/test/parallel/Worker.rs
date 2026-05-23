@@ -442,7 +442,7 @@ impl ChannelOwner for Worker {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum PipeRole {
+pub(crate) enum PipeRole {
     Stdout,
     Stderr,
 }
@@ -483,14 +483,6 @@ impl WorkerPipe {
     }
     pub fn on_reader_error(&mut self, _: bun_sys::Error) {
         self.done = true;
-    }
-    pub fn event_loop(&self) -> *mut jsc::event_loop::EventLoop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.event_loop() }
-    }
-    pub fn loop_(&self) -> *mut r#async::Loop {
-        // SAFETY: worker/coord backrefs valid for pipe lifetime.
-        unsafe { (*(*self.worker).coord).vm.uv_loop() }
     }
 }
 

@@ -29,7 +29,7 @@ pub type Loop = uv::Loop;
 
 pub type Flags = posix::Flags;
 pub type FlagsSet = posix::FlagsSet;
-pub type FlagsStruct = posix::FlagsStruct;
+pub(crate) type FlagsStruct = posix::FlagsStruct;
 pub type Owner = posix::Owner;
 
 pub struct FilePoll {

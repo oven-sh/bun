@@ -578,7 +578,7 @@ impl us_socket_stream_buffer_t {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
+pub(crate) extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
     // SAFETY: caller (C) passes a live us_socket_stream_buffer_t*
     unsafe { us_socket_stream_buffer_t::destroy(buffer) };
 }

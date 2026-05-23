@@ -29,7 +29,7 @@ impl TailwindAtRule {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub enum TailwindStyleName {
+pub(crate) enum TailwindStyleName {
     /// This injects Tailwind's base styles and any base styles registered by
     ///  plugins.
     Base,

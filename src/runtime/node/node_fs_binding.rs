@@ -11,7 +11,7 @@ use crate::node::fs::{
 };
 
 /// Signature of every generated NodeFS host function.
-pub type NodeFSFunction =
+pub(crate) type NodeFSFunction =
     fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
 // Zig: `const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);`
@@ -415,7 +415,7 @@ impl Binding {
     // pub const statfsSync = callSync(.statfs);
 }
 
-pub fn create_binding(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     let module = Binding::new(Binding::default());
 
     let vm = global.bun_vm_ptr();
@@ -429,7 +429,10 @@ pub fn create_binding(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn create_memfd_for_testing(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn create_memfd_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>();
 
     if arguments.len < 1 {

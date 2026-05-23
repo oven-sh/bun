@@ -79,7 +79,7 @@ macro_rules! c_thunks_for_zone {
             p
         }
 
-        pub extern "C" fn calloc_items(
+        pub(crate) extern "C" fn calloc_items(
             _: *mut ::core::ffi::c_void,
             items: ::core::ffi::c_uint,
             len: ::core::ffi::c_uint,

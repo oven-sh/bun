@@ -34,7 +34,7 @@ bun_core::declare_scope!(ThreadPool, visible);
 
 /// `std.Thread.Id` — `bun_threading::current_thread_id()` returns `u64` on
 /// every platform (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`).
-pub type ThreadId = u64;
+pub(crate) type ThreadId = u64;
 
 pub struct ThreadPool {
     /// macOS holds an IORWLock on every file open.

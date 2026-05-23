@@ -36,8 +36,6 @@ pub mod shared;
 pub type Owned<T> = Box<T>;
 pub type OwnedIn<T> = Box<T>;
 pub type DynamicOwned<T> = Box<T>;
-pub type Shared<T> = std::rc::Rc<T>;
-pub type AtomicShared<T> = std::sync::Arc<T>;
 
 // FFI-crossing externally-ref-counted pointer (e.g., WTFStringImpl). Canonical
 // impl moved down to `bun_core::external_shared` (cycle-break for the

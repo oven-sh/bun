@@ -137,7 +137,7 @@ impl HTMLBundle {
 }
 
 /// Deprecated: use Route instead.
-pub type HTMLBundleRoute = Route;
+pub(crate) type HTMLBundleRoute = Route;
 
 /// An HTMLBundle can be used across multiple server instances, an
 /// HTMLBundle.Route can only be used on one server, but is also
@@ -181,7 +181,7 @@ pub enum RouteMethod {
     Method(bun_http_types::Method::Set),
 }
 
-pub enum State {
+pub(crate) enum State {
     Pending,
     Building(Option<*mut JSBundleCompletionTask>),
     Err(Log),
@@ -197,7 +197,7 @@ pub enum State {
 // completion task (whose matching deref is the caller's `defer this.deref()` in
 // `JSBundleCompletionTask.onComplete`). So `deinit` stays an explicit method.
 impl State {
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         match mem::replace(self, State::Pending) {
             State::Err(_log) => {
                 // Log drops itself
@@ -222,7 +222,7 @@ impl State {
 }
 
 impl State {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         match self {
             State::Pending => 0,
             State::Building(_) => 0,
@@ -798,7 +798,7 @@ impl Drop for Route {
 }
 
 /// Represents an in-flight response before the bundle has finished building.
-pub struct PendingResponse {
+pub(crate) struct PendingResponse {
     method: Method,
     resp: AnyResponse,
     is_response_pending: bool,

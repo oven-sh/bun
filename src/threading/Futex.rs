@@ -468,7 +468,11 @@ mod freebsd_impl {
 mod wasm_impl {
     use super::*;
 
-    pub fn wait(ptr: &AtomicU32, expect: u32, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    pub(crate) fn wait(
+        ptr: &AtomicU32,
+        expect: u32,
+        timeout: Option<u64>,
+    ) -> Result<(), TimeoutError> {
         #[cfg(not(target_feature = "atomics"))]
         compile_error!("WASI target missing cpu feature 'atomics'");
 
@@ -508,7 +512,7 @@ mod wasm_impl {
 ///
 /// Deadline instead converts the relative timeout to an absolute one so that multiple calls
 /// to Futex timedWait() can block for and report more accurate error.Timeouts.
-pub struct Deadline {
+pub(crate) struct Deadline {
     timeout: Option<u64>,
     started: std::time::Instant,
 }
@@ -516,7 +520,7 @@ pub struct Deadline {
 impl Deadline {
     /// Create the deadline to expire after the given amount of time in nanoseconds passes.
     /// Pass in `null` to have the deadline call `Futex.wait()` and never expire.
-    pub fn init(expires_in_ns: Option<u64>) -> Deadline {
+    pub(crate) fn init(expires_in_ns: Option<u64>) -> Deadline {
         // std.time.Timer is required to be supported for somewhat accurate reportings of error.Timeout.
         // PORT NOTE: Zig only initialized `started` when timeout != null; Instant::now() is
         // infallible and cheap, so we always initialize it to avoid MaybeUninit gymnastics.
@@ -532,7 +536,7 @@ impl Deadline {
     /// - A spurious wake occurs.
     /// - The deadline expires; In which case `error.Timeout` is returned.
     #[cold]
-    pub fn wait(&mut self, ptr: &AtomicU32, expect: u32) -> Result<(), TimeoutError> {
+    pub(crate) fn wait(&mut self, ptr: &AtomicU32, expect: u32) -> Result<(), TimeoutError> {
         // Check if we actually have a timeout to wait until.
         // If not just wait "forever".
         let Some(timeout_ns) = self.timeout else {

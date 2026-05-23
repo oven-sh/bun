@@ -328,16 +328,6 @@ impl Function {
         false
     }
 
-    pub(super) fn fail(&mut self, msg: &'static [u8]) {
-        if !matches!(self.step, Step::Failed { .. }) {
-            // PORT NOTE: @branchHint(.likely) — Rust has no statement-level hint; left as-is
-            self.step = Step::Failed {
-                msg: Box::<[u8]>::from(msg),
-                allocated: false,
-            };
-        }
-    }
-
     pub fn ffi_header() -> &'static [u8] {
         // TODO(port): runtimeEmbedFile fallback when codegen_embed is off
         include_bytes!("./FFI.h")

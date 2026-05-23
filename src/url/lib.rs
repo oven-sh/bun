@@ -271,8 +271,8 @@ impl OwnedURL {
     }
     /// Construct from an already-normalized href buffer (the tail of
     /// `URL::from_string` after `to_owned_slice`). Exposed so out-of-crate
-    /// producers (e.g. `bun_url_jsc::url_from_js`) can build an `OwnedURL`
-    /// without the `href` field being public.
+    /// producers can build an `OwnedURL` without the `href` field being
+    /// public.
     #[inline]
     pub fn from_href(href: Box<[u8]>) -> Self {
         Self { href }
@@ -359,9 +359,6 @@ impl<'a> URL<'a> {
     pub fn is_blob(&self) -> bool {
         self.href.len() == Self::BLOB_SPECIFIER_LEN && self.href.starts_with(b"blob:")
     }
-
-    // PORT NOTE: `fromJS` alias to url_jsc deleted per PORTING.md — JSC interop lives
-    // in bun_url_jsc as an extension trait.
 
     // PORT NOTE: ownership — Zig returns a `URL` borrowing from a freshly-allocated
     // owned slice (`href.toOwnedSlice`); caller frees `url.href` later. Per
@@ -911,7 +908,7 @@ pub struct Param {
 // (no derive macro yet). Using Vec<Param> (AoS) for now — semantically identical;
 // revisit once `` lands.
 // TODO(port): bun_collections::MultiArrayList derive
-pub type ParamList = Vec<Param>;
+pub(crate) type ParamList = Vec<Param>;
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
 pub struct QueryStringMap {
@@ -1496,7 +1493,7 @@ impl PercentEncoding {
 // ══════════════════════════════════════════════════════════════════════════
 
 #[derive(Clone, Copy)]
-pub struct ScannerResult {
+pub(crate) struct ScannerResult {
     pub name_needs_decoding: bool,
     pub value_needs_decoding: bool,
     pub name: api::StringPointer,
@@ -1505,7 +1502,7 @@ pub struct ScannerResult {
 
 impl ScannerResult {
     #[inline]
-    pub fn raw_name<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn raw_name<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
         if self.name.length > 0 {
             &query_string[self.name.offset as usize..][..self.name.length as usize]
         } else {
@@ -1514,7 +1511,7 @@ impl ScannerResult {
     }
 
     #[inline]
-    pub fn raw_value<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn raw_value<'a>(&self, query_string: &'a [u8]) -> &'a [u8] {
         if self.value.length > 0 {
             &query_string[self.value.offset as usize..][..self.value.length as usize]
         } else {

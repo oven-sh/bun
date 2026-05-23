@@ -8,7 +8,7 @@ pub const IMPORT_PATH: &[u8] = b"/bun-vfs$$/node_modules/";
 // because 24 bytes == 8 * 3 --> read and compare three u64s
 const _: () = assert!(IMPORT_PATH.len().is_multiple_of(8));
 
-pub struct FallbackModule {
+pub(crate) struct FallbackModule {
     pub path: fs::Path<'static>,
     // PORT NOTE: Zig stored `*const PackageJSON` to a comptime literal (rvalue static
     // promotion). PackageJSON has heap-backed fields (`Box<[u8]>`, hash maps) that cannot
@@ -137,7 +137,7 @@ fn init_modules() {
 }
 
 #[inline]
-pub fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
+pub(crate) fn map() -> &'static bun_collections::StringHashMap<FallbackModule> {
     INIT.call_once(init_modules);
     // SAFETY: `INIT` guarantees `MAP` is `Some` and never written again.
     unsafe { (*MAP.get()).as_ref().unwrap() }

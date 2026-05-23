@@ -576,7 +576,7 @@ impl CacheConfig {
 /// Trait standing in for Zig's `(comptime cares_type: type, comptime type_name: []const u8)` pair.
 /// Each c-ares reply struct implements this with its record-type tag.
 // TODO(port): proc-macro — Zig instantiated this per (type, "name") pair via comptime.
-pub trait CAresRecordType: Sized {
+pub(crate) trait CAresRecordType: Sized {
     const TYPE_NAME: &'static str;
     /// `"query" ++ ucfirst(TYPE_NAME)` — Zig built this at comptime; each impl
     /// carries the precomputed literal so error paths report the right syscall.
@@ -600,9 +600,10 @@ pub trait CAresRecordType: Sized {
     unsafe fn destroy(this: *mut Self);
 }
 
-pub struct ResolveInfoRequest<T: CAresRecordType> {
+pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
     // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
     pub resolver_for_caching: Option<*mut Resolver>,
+    #[allow(dead_code)]
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: CAresLookup<T>,
@@ -612,14 +613,14 @@ pub struct ResolveInfoRequest<T: CAresRecordType> {
 pub mod resolve_info_request {
     use super::*;
 
-    pub struct PendingCacheKey<T: CAresRecordType> {
+    pub(crate) struct PendingCacheKey<T: CAresRecordType> {
         pub hash: u64,
         pub len: u16,
         pub lookup: *mut ResolveInfoRequest<T>,
     }
 
     impl<T: CAresRecordType> PendingCacheKey<T> {
-        pub fn append(&mut self, cares_lookup: *mut CAresLookup<T>) {
+        pub(crate) fn append(&mut self, cares_lookup: *mut CAresLookup<T>) {
             // SAFETY: lookup/tail are valid while request is in the pending cache
             unsafe {
                 let tail = (*self.lookup).tail;
@@ -628,7 +629,7 @@ pub mod resolve_info_request {
             }
         }
 
-        pub fn init(name: &[u8]) -> Self {
+        pub(crate) fn init(name: &[u8]) -> Self {
             let hash = wyhash(name);
             Self {
                 hash,
@@ -636,21 +637,11 @@ pub mod resolve_info_request {
                 lookup: ptr::null_mut(),
             }
         }
-
-        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
-        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
-        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
-        /// callbacks then `heap::take`s it — a live `&`/`&mut` across either
-        /// would be UB. Callers must keep using raw derefs.
-        #[inline]
-        pub fn lookup_ptr(&self) -> *mut ResolveInfoRequest<T> {
-            self.lookup
-        }
     }
 }
 
 impl<T: CAresRecordType> ResolveInfoRequest<T> {
-    pub fn init(
+    pub(crate) fn init(
         cache: LookupCacheHit<Self>,
         resolver: Option<*mut Resolver>,
         name: &[u8],
@@ -695,7 +686,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         request
     }
 
-    pub fn on_cares_complete(
+    pub(crate) fn on_cares_complete(
         this: *mut Self,
         err_: Option<c_ares::Error>,
         timeout: i32,
@@ -749,9 +740,10 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 // GetHostByAddrInfoRequest
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct GetHostByAddrInfoRequest {
+pub(crate) struct GetHostByAddrInfoRequest {
     // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
+    #[allow(dead_code)]
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: CAresReverse,
@@ -761,14 +753,14 @@ pub struct GetHostByAddrInfoRequest {
 pub mod get_host_by_addr_info_request {
     use super::*;
 
-    pub struct PendingCacheKey {
+    pub(crate) struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
         pub lookup: *mut GetHostByAddrInfoRequest,
     }
 
     impl PendingCacheKey {
-        pub fn append(&mut self, cares_lookup: *mut CAresReverse) {
+        pub(crate) fn append(&mut self, cares_lookup: *mut CAresReverse) {
             // SAFETY: lookup/tail are valid while request is in the pending cache
             unsafe {
                 let tail = (*self.lookup).tail;
@@ -777,7 +769,7 @@ pub mod get_host_by_addr_info_request {
             }
         }
 
-        pub fn init(name: &[u8]) -> Self {
+        pub(crate) fn init(name: &[u8]) -> Self {
             let hash = wyhash(name);
             Self {
                 hash,
@@ -785,21 +777,11 @@ pub mod get_host_by_addr_info_request {
                 lookup: ptr::null_mut(),
             }
         }
-
-        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
-        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
-        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
-        /// callbacks then `heap::take`s it — a live `&`/`&mut` across either
-        /// would be UB. Callers must keep using raw derefs.
-        #[inline]
-        pub fn lookup_ptr(&self) -> *mut GetHostByAddrInfoRequest {
-            self.lookup
-        }
     }
 }
 
 impl GetHostByAddrInfoRequest {
-    pub fn init(
+    pub(crate) fn init(
         cache: LookupCacheHit<Self>,
         resolver: Option<*mut Resolver>,
         name: &[u8],
@@ -845,7 +827,7 @@ impl GetHostByAddrInfoRequest {
         request
     }
 
-    pub fn on_cares_complete(
+    pub(crate) fn on_cares_complete(
         this: *mut Self,
         err_: Option<c_ares::Error>,
         timeout: i32,
@@ -894,7 +876,7 @@ impl c_ares::HostentHandler for GetHostByAddrInfoRequest {
 // CAresNameInfo
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct CAresNameInfo {
+pub(crate) struct CAresNameInfo {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -909,11 +891,11 @@ impl CAresNameInfo {
     /// live `&JSGlobalObject`; never null, and the JSGlobalObject outlives every
     /// in-flight DNS request (Zig spec: `*jsc.JSGlobalObject`, non-optional).
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
     }
 
-    pub fn init(global_this: &JSGlobalObject, name: Box<[u8]>) -> *mut Self {
+    pub(crate) fn init(global_this: &JSGlobalObject, name: Box<[u8]>) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
@@ -929,7 +911,7 @@ impl CAresNameInfo {
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
-    pub unsafe fn process_resolve(
+    pub(crate) unsafe fn process_resolve(
         this: *mut Self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
@@ -972,7 +954,7 @@ impl CAresNameInfo {
     }
 
     /// SAFETY: see `process_resolve`.
-    pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
+    pub(crate) unsafe fn on_complete(this: *mut Self, result: JSValue) {
         // SAFETY: see fn contract — `this` is a live node.
         let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
         // SAFETY: see fn contract — `this` is a live node.
@@ -987,7 +969,7 @@ impl CAresNameInfo {
     /// are dropped exactly once by their owner; this is a no-op for them.
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
     /// exact pointer returned by `heap::alloc` in `init()`.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: see fn contract — `this` is a live node; if `allocated`, it is
         // the exact pointer returned by `heap::alloc` in `init()`.
         unsafe {
@@ -1009,9 +991,10 @@ impl Drop for CAresNameInfo {
 // GetNameInfoRequest
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct GetNameInfoRequest {
+pub(crate) struct GetNameInfoRequest {
     // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
+    #[allow(dead_code)]
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: CAresNameInfo,
@@ -1021,14 +1004,14 @@ pub struct GetNameInfoRequest {
 pub mod get_name_info_request {
     use super::*;
 
-    pub struct PendingCacheKey {
+    pub(crate) struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
         pub lookup: *mut GetNameInfoRequest,
     }
 
     impl PendingCacheKey {
-        pub fn append(&mut self, cares_lookup: *mut CAresNameInfo) {
+        pub(crate) fn append(&mut self, cares_lookup: *mut CAresNameInfo) {
             // SAFETY: lookup/tail are valid while request is in the pending cache
             unsafe {
                 let tail = (*self.lookup).tail;
@@ -1037,7 +1020,7 @@ pub mod get_name_info_request {
             }
         }
 
-        pub fn init(name: &[u8]) -> Self {
+        pub(crate) fn init(name: &[u8]) -> Self {
             let hash = wyhash(name);
             Self {
                 hash,
@@ -1045,21 +1028,11 @@ pub mod get_name_info_request {
                 lookup: ptr::null_mut(),
             }
         }
-
-        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
-        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
-        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
-        /// callbacks then `heap::take`s it — a live `&`/`&mut` across either
-        /// would be UB. Callers must keep using raw derefs.
-        #[inline]
-        pub fn lookup_ptr(&self) -> *mut GetNameInfoRequest {
-            self.lookup
-        }
     }
 }
 
 impl GetNameInfoRequest {
-    pub fn init(
+    pub(crate) fn init(
         cache: LookupCacheHit<Self>,
         resolver: Option<*mut Resolver>,
         name: Box<[u8]>,
@@ -1103,7 +1076,7 @@ impl GetNameInfoRequest {
         request
     }
 
-    pub fn on_cares_complete(
+    pub(crate) fn on_cares_complete(
         this: *mut Self,
         err_: Option<c_ares::Error>,
         timeout: i32,
@@ -1176,14 +1149,14 @@ pub mod get_addr_info_request {
     /// on the work pool, then re-enters the JS thread via `then`.
     pub type Task = jsc::work_task::WorkTask<super::GetAddrInfoRequest>;
 
-    pub struct PendingCacheKey {
+    pub(crate) struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
         pub lookup: *mut GetAddrInfoRequest,
     }
 
     impl PendingCacheKey {
-        pub fn append(&mut self, dns_lookup: *mut DNSLookup) {
+        pub(crate) fn append(&mut self, dns_lookup: *mut DNSLookup) {
             // SAFETY: `lookup`/`tail` are valid while the request sits in the pending cache.
             unsafe {
                 let tail = (*self.lookup).tail;
@@ -1192,30 +1165,21 @@ pub mod get_addr_info_request {
             }
         }
 
-        pub fn init(query: &GetAddrInfo) -> Self {
+        pub(crate) fn init(query: &GetAddrInfo) -> Self {
             Self {
                 hash: query.hash(),
                 len: query.name.len() as u16,
                 lookup: ptr::null_mut(),
             }
         }
-
-        /// Raw pointer to the owning request. NO `&`/`&mut` accessor is offered:
-        /// `(*lookup).tail` may alias `(*lookup).head` (intrusive list), and the
-        /// drain path hands `addr_of_mut!((*lookup).head)` into JS-re-entrant
-        /// callbacks then `heap::take`s it — a live `&`/`&mut` across either
-        /// would be UB. Callers must keep using raw derefs.
-        #[inline]
-        pub fn lookup_ptr(&self) -> *mut GetAddrInfoRequest {
-            self.lookup
-        }
     }
 
     #[derive(Default)]
-    pub struct BackendLibInfo {
+    pub(crate) struct BackendLibInfo {
         /// OWNED hive slot from `FilePoll::init` (returned via `FilePoll::deinit`,
         /// not `Box`/global-alloc — Zig: `?*bun.Async.FilePoll`).
         pub file_poll: Option<NonNull<FilePoll>>,
+        #[allow(dead_code)]
         pub machport: mach_port,
     }
 
@@ -1229,7 +1193,8 @@ pub mod get_addr_info_request {
     }
 
     impl BackendLibInfo {
-        pub fn on_machport_change(this: *mut GetAddrInfoRequest) {
+        #[allow(dead_code)]
+        pub(crate) fn on_machport_change(this: *mut GetAddrInfoRequest) {
             #[cfg(not(target_os = "macos"))]
             {
                 let _ = this;
@@ -1258,7 +1223,7 @@ pub mod get_addr_info_request {
 
     /// Non-Windows libc backend (worker-thread blocking getaddrinfo).
     #[cfg(not(windows))]
-    pub enum LibcBackend {
+    pub(crate) enum LibcBackend {
         Success(GetAddrInfoResultList),
         Err(i32),
         Query(GetAddrInfo),
@@ -1266,7 +1231,7 @@ pub mod get_addr_info_request {
 
     #[cfg(not(windows))]
     impl LibcBackend {
-        pub fn run(&mut self) {
+        pub(crate) fn run(&mut self) {
             let LibcBackend::Query(query) = self else {
                 unreachable!()
             };
@@ -1334,41 +1299,44 @@ pub mod get_addr_info_request {
 
     /// Windows libc backend wraps a uv_getaddrinfo_t.
     #[cfg(windows)]
-    pub struct LibcBackend {
+    pub(crate) struct LibcBackend {
         pub uv: libuv::uv_getaddrinfo_t,
     }
     #[cfg(windows)]
     impl LibcBackend {
-        pub fn uv_uninit() -> Self {
+        pub(crate) fn uv_uninit() -> Self {
             Self {
                 uv: bun_core::ffi::zeroed(),
             }
         }
-        pub fn run(&mut self) {
+        pub(crate) fn run(&mut self) {
             unreachable!("This path should never be reached on Windows");
         }
     }
-    pub enum Backend {
+    pub(crate) enum Backend {
         CAres,
+        #[allow(dead_code)]
         Libinfo(BackendLibInfo),
         Libc(LibcBackend),
     }
 
     impl Backend {
-        pub fn as_libinfo(&self) -> &BackendLibInfo {
+        #[allow(dead_code)]
+        pub(crate) fn as_libinfo(&self) -> &BackendLibInfo {
             match self {
                 Backend::Libinfo(l) => l,
                 _ => unreachable!(),
             }
         }
-        pub fn as_libinfo_mut(&mut self) -> &mut BackendLibInfo {
+        #[allow(dead_code)]
+        pub(crate) fn as_libinfo_mut(&mut self) -> &mut BackendLibInfo {
             match self {
                 Backend::Libinfo(l) => l,
                 _ => unreachable!(),
             }
         }
         #[cfg(windows)]
-        pub fn as_libc_uv_mut(&mut self) -> &mut libuv::uv_getaddrinfo_t {
+        pub(crate) fn as_libc_uv_mut(&mut self) -> &mut libuv::uv_getaddrinfo_t {
             match self {
                 Backend::Libc(l) => &mut l.uv,
                 _ => unreachable!(),
@@ -1458,9 +1426,6 @@ impl GetAddrInfoRequest {
         }
         request
     }
-
-    pub const ON_MACHPORT_CHANGE: fn(*mut Self) =
-        get_addr_info_request::BackendLibInfo::on_machport_change;
 
     /// # Safety
     /// `arg` must be the `*mut GetAddrInfoRequest` registered with
@@ -1705,7 +1670,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
 // CAresReverse
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct CAresReverse {
+pub(crate) struct CAresReverse {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
@@ -1724,11 +1689,11 @@ impl CAresReverse {
     /// `*jsc.JSGlobalObject`, non-optional), so the pointer is always non-null
     /// and valid for the lifetime of `self`.
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
     }
 
-    pub fn init(
+    pub(crate) fn init(
         resolver: Option<*mut Resolver>,
         global_this: &JSGlobalObject,
         name: &[u8],
@@ -1750,7 +1715,7 @@ impl CAresReverse {
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
-    pub unsafe fn process_resolve(
+    pub(crate) unsafe fn process_resolve(
         this: *mut Self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
@@ -1789,7 +1754,7 @@ impl CAresReverse {
     }
 
     /// SAFETY: see `process_resolve`.
-    pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
+    pub(crate) unsafe fn on_complete(this: *mut Self, result: JSValue) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
@@ -1806,7 +1771,7 @@ impl CAresReverse {
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
     /// exact pointer returned by `heap::alloc` in `init()`. Head nodes (`!allocated`)
     /// are dropped by their owner; this is a no-op for them.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: see fn contract — `this` is live; if `allocated`, it is the
         // exact pointer returned by `heap::alloc` in `init()`.
         unsafe {
@@ -1834,7 +1799,7 @@ impl Drop for CAresReverse {
 // CAresLookup<T>
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct CAresLookup<T: CAresRecordType> {
+pub(crate) struct CAresLookup<T: CAresRecordType> {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
@@ -1846,12 +1811,12 @@ pub struct CAresLookup<T: CAresRecordType> {
 }
 
 impl<T: CAresRecordType> CAresLookup<T> {
-    pub fn new(data: Self) -> *mut Self {
+    pub(crate) fn new(data: Self) -> *mut Self {
         debug_assert!(data.allocated); // deinit will not free this otherwise
         bun_core::heap::into_raw(Box::new(data))
     }
 
-    pub fn init(
+    pub(crate) fn init(
         resolver: Option<*mut Resolver>,
         global_this: &JSGlobalObject,
         name: &[u8],
@@ -1878,14 +1843,14 @@ impl<T: CAresRecordType> CAresLookup<T> {
     /// live `&JSGlobalObject`; never null, and the JSGlobalObject outlives every
     /// in-flight DNS request (Zig spec: `*jsc.JSGlobalObject`, non-optional).
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
     }
 
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
-    pub unsafe fn process_resolve(
+    pub(crate) unsafe fn process_resolve(
         this: *mut Self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
@@ -1939,7 +1904,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
     }
 
     /// SAFETY: see `process_resolve`.
-    pub unsafe fn on_complete(this: *mut Self, result: JSValue) {
+    pub(crate) unsafe fn on_complete(this: *mut Self, result: JSValue) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let mut promise = core::mem::take(&mut (*this).promise);
@@ -1956,7 +1921,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
     /// exact pointer returned by `heap::alloc` in `new()`. Head nodes (`!allocated`)
     /// are dropped by their owner; this is a no-op for them.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: see fn contract — `this` is live; if `allocated`, it is the
         // exact pointer returned by `heap::alloc` in `init()`.
         unsafe {
@@ -1984,7 +1949,7 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
 // DNSLookup
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct DNSLookup {
+pub(crate) struct DNSLookup {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
@@ -2003,11 +1968,11 @@ impl DNSLookup {
     /// returned `&` remains valid even after `self` is dropped (drain loops
     /// rely on this when caching the ref across `heap::take`).
     #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
+    pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
     }
 
-    pub fn init(resolver: *mut Resolver, global_this: &JSGlobalObject) -> *mut Self {
+    pub(crate) fn init(resolver: *mut Resolver, global_this: &JSGlobalObject) -> *mut Self {
         bun_output::scoped_log!(DNSLookup, "init");
 
         let mut poll_ref = KeepAlive::init();
@@ -2027,7 +1992,7 @@ impl DNSLookup {
     /// SAFETY: `this` must be a live node — either the inline head of a `*Request`
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
-    pub unsafe fn on_complete_native(this: *mut Self, result: &GetAddrInfoResultAny) {
+    pub(crate) unsafe fn on_complete_native(this: *mut Self, result: &GetAddrInfoResultAny) {
         bun_output::scoped_log!(DNSLookup, "onCompleteNative");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
@@ -2040,7 +2005,7 @@ impl DNSLookup {
     }
 
     /// SAFETY: see `on_complete_native`.
-    pub unsafe fn process_get_addr_info_native(
+    pub(crate) unsafe fn process_get_addr_info_native(
         this: *mut Self,
         status: i32,
         result: *mut AddrInfo,
@@ -2059,7 +2024,7 @@ impl DNSLookup {
     }
 
     /// SAFETY: see `on_complete_native`.
-    pub unsafe fn process_get_addr_info(
+    pub(crate) unsafe fn process_get_addr_info(
         this: *mut Self,
         err_: Option<c_ares::Error>,
         _timeout: i32,
@@ -2103,7 +2068,7 @@ impl DNSLookup {
     }
 
     /// SAFETY: see `on_complete_native`.
-    pub unsafe fn on_complete(this: *mut Self, result: *mut c_ares::AddrInfo) {
+    pub(crate) unsafe fn on_complete(this: *mut Self, result: *mut c_ares::AddrInfo) {
         bun_output::scoped_log!(DNSLookup, "onComplete");
         // SAFETY: caller contract — `this` is live; result is a live c-ares AddrInfo
         // owned by the caller's scopeguard; JSGlobalObject outlives the request.
@@ -2116,7 +2081,7 @@ impl DNSLookup {
     }
 
     /// SAFETY: see `on_complete_native`.
-    pub unsafe fn on_complete_with_array(this: *mut Self, result: JSValue) {
+    pub(crate) unsafe fn on_complete_with_array(this: *mut Self, result: JSValue) {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
@@ -2134,7 +2099,7 @@ impl DNSLookup {
     /// SAFETY: `this` must point at a live node; if `(*this).allocated`, it must be the
     /// exact pointer returned by `heap::alloc` in `init()`. Head nodes (`!allocated`)
     /// are dropped by their owner; this is a no-op for them.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; if `allocated`, it is the exact
         // pointer from `heap::alloc` in `init()`.
         unsafe {
@@ -2202,7 +2167,7 @@ pub mod internal {
     // that's exactly an `OnceLock<u32>` (idempotent init, safe concurrent read).
     static MAX_DNS_TIME_TO_LIVE_SECONDS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 
-    pub fn get_max_dns_time_to_live_seconds() -> u32 {
+    pub(crate) fn get_max_dns_time_to_live_seconds() -> u32 {
         *MAX_DNS_TIME_TO_LIVE_SECONDS.get_or_init(|| {
             let value = env_var::BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS.get();
             // Zig default for BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS is 30.
@@ -2281,7 +2246,8 @@ pub mod internal {
     // this field.
 
     #[derive(Default)]
-    pub struct MacAsyncDNS {
+    #[allow(dead_code)]
+    pub(crate) struct MacAsyncDNS {
         pub file_poll: Option<NonNull<FilePoll>>, // OWNED hive slot (FilePoll::init)
         pub machport: mach_port,
     }
@@ -2297,7 +2263,7 @@ pub mod internal {
 
     impl MacAsyncDNS {
         #[cfg(target_os = "macos")]
-        pub fn on_machport_change(this: *mut Request) {
+        pub(crate) fn on_machport_change(this: *mut Request) {
             // SAFETY: `this` is the heap-allocated Request the FilePoll was registered with.
             unsafe {
                 if !getaddrinfo_send_reply(
@@ -2313,7 +2279,8 @@ pub mod internal {
             }
         }
         #[cfg(not(target_os = "macos"))]
-        pub fn on_machport_change(_this: *mut Request) {
+        #[allow(dead_code)]
+        pub(crate) fn on_machport_change(_this: *mut Request) {
             // libinfo machport DNS is macOS-only.
         }
     }
@@ -2406,7 +2373,7 @@ pub mod internal {
 
     /// The cache data guarded by `GLOBAL_CACHE`. The Zig code stored a `bun.Mutex`
     /// adjacent to `cache`/`len`; in Rust the lock owns the data (PORTING.md §Concurrency).
-    pub struct GlobalCache {
+    pub(crate) struct GlobalCache {
         pub cache: [*mut Request; MAX_ENTRIES],
         pub len: usize,
     }
@@ -2415,14 +2382,8 @@ pub mod internal {
     // threads only while `GLOBAL_CACHE` is locked; no thread-affine data hangs off it.
     unsafe impl Send for GlobalCache {}
 
-    pub enum CacheResult<'a> {
-        Inflight(&'a mut Request),
-        Resolved(&'a mut Request),
-        None,
-    }
-
     impl GlobalCache {
-        pub const fn new() -> Self {
+        pub(crate) const fn new() -> Self {
             Self {
                 cache: [ptr::null_mut(); MAX_ENTRIES],
                 len: 0,
@@ -2457,7 +2418,7 @@ pub mod internal {
         // To preserve memory, we use a 32 bit timestamp
         // However, we're almost out of time to use 32 bit timestamps for anything
         // So we set the epoch to January 1st, 2024 instead.
-        pub fn get_cache_timestamp() -> u32 {
+        pub(crate) fn get_cache_timestamp() -> u32 {
             (bun::Timespec::now(bun::TimespecMockMode::AllowMockedTime).ms_unsigned() / 1000) as u32
         }
 
@@ -2527,6 +2488,7 @@ pub mod internal {
     #[cfg(not(unix))]
     const DEFAULT_HINTS_ADDRCONFIG: bool = false;
 
+    #[allow(dead_code)]
     fn default_hints() -> AddrInfo {
         let mut h: AddrInfo = bun_core::ffi::zeroed();
         h.ai_family = netc::AF_UNSPEC;
@@ -2545,7 +2507,8 @@ pub mod internal {
         h
     }
 
-    pub fn get_hints() -> AddrInfo {
+    #[allow(dead_code)]
+    pub(crate) fn get_hints() -> AddrInfo {
         let mut hints_copy = default_hints();
         if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG
             .get()
@@ -2622,16 +2585,6 @@ pub mod internal {
                 },
             }
         }
-
-        pub fn loop_(&self) -> *mut Loop {
-            match self {
-                DNSRequestOwner::Prefetch(l) => *l,
-                // SAFETY: `s` is the live usockets handle stored when the request was registered.
-                DNSRequestOwner::Socket(s) => unsafe { (**s).r#loop() },
-                // SAFETY: `pc` is the live PendingConnect borrowed for the lifetime of the request.
-                DNSRequestOwner::Quic(pc) => unsafe { (**pc).r#loop() },
-            }
-        }
     }
 
     /// Register `pc` to be notified when `request` resolves. Mirrors
@@ -2647,7 +2600,7 @@ pub mod internal {
     // (see fn doc); forming `&mut *request` at entry would be unsound across
     // that hand-off, so the param must stay `*mut`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
+    pub(crate) fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
         let guard = global_cache().lock();
         let owner = DNSRequestOwner::Quic(pc);
         // SAFETY: `request` is a live cache entry; `result`/`notify` are only
@@ -2664,7 +2617,7 @@ pub mod internal {
     }
 
     #[repr(C)]
-    pub struct ResultEntry {
+    pub(crate) struct ResultEntry {
         pub info: AddrInfo,
         pub addr: SockaddrStorage,
     }
@@ -2848,7 +2801,7 @@ pub mod internal {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn lookup_libinfo(req: *mut Request, loop_: jsc::EventLoopHandle) -> bool {
+    pub(crate) fn lookup_libinfo(req: *mut Request, loop_: jsc::EventLoopHandle) -> bool {
         let Some(getaddrinfo_async_start_) = lib_info::getaddrinfo_async_start() else {
             return false;
         };
@@ -3006,7 +2959,7 @@ pub mod internal {
     static GETADDRINFO_CALLS: AtomicUsize = AtomicUsize::new(0);
 
     #[host_fn]
-    pub fn get_dns_cache_stats(
+    pub(crate) fn get_dns_cache_stats(
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -3044,7 +2997,7 @@ pub mod internal {
         Ok(object)
     }
 
-    pub fn getaddrinfo(
+    pub(crate) fn getaddrinfo(
         loop_: *mut Loop,
         host: Option<&ZStr>,
         port: u16,
@@ -3150,7 +3103,7 @@ pub mod internal {
     }
 
     #[host_fn]
-    pub fn prefetch_from_js(
+    pub(crate) fn prefetch_from_js(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -3210,7 +3163,12 @@ pub mod internal {
     // documented above and on the `bun_dns` extern decl.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[unsafe(no_mangle)]
-    pub fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
+    pub(crate) fn __bun_dns_prefetch(
+        loop_: *mut c_void,
+        hostname: *const u8,
+        len: usize,
+        port: u16,
+    ) {
         let host = if hostname.is_null() || len == 0 {
             None
         } else {
@@ -3311,18 +3269,21 @@ pub mod internal {
 
     // FFI exports — Zig used `@export` in a `comptime { }` block.
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__addrinfo_set(request: *mut Request, socket: *mut ConnectingSocket) {
+    pub(crate) extern "C" fn Bun__addrinfo_set(
+        request: *mut Request,
+        socket: *mut ConnectingSocket,
+    ) {
         us_getaddrinfo_set(request, socket)
     }
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__addrinfo_cancel(
+    pub(crate) extern "C" fn Bun__addrinfo_cancel(
         request: *mut Request,
         socket: *mut ConnectingSocket,
     ) -> c_int {
         us_getaddrinfo_cancel(request, socket)
     }
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__addrinfo_get(
+    pub(crate) extern "C" fn Bun__addrinfo_get(
         loop_: *mut Loop,
         host: *const c_char,
         port: u16,
@@ -3331,11 +3292,13 @@ pub mod internal {
         us_getaddrinfo(loop_, host, port, socket)
     }
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__addrinfo_freeRequest(req: *mut Request, err: c_int) {
+    pub(crate) extern "C" fn Bun__addrinfo_freeRequest(req: *mut Request, err: c_int) {
         freeaddrinfo(req, err)
     }
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__addrinfo_getRequestResult(req: *mut Request) -> *mut RequestResult {
+    pub(crate) extern "C" fn Bun__addrinfo_getRequestResult(
+        req: *mut Request,
+    ) -> *mut RequestResult {
         get_request_result(req)
     }
     /// QUIC analogue of `Bun__addrinfo_set` — link-time export so `bun_http`
@@ -3345,7 +3308,7 @@ pub mod internal {
     /// # Safety
     /// See [`register_quic`].
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn Bun__addrinfo_registerQuic(
+    pub(crate) unsafe extern "C" fn Bun__addrinfo_registerQuic(
         request: *mut Request,
         pc: *mut bun_http::H3::PendingConnect,
     ) {
@@ -3750,7 +3713,7 @@ impl bun_ptr::RefCounted for Resolver {
 }
 
 #[cfg(windows)]
-pub struct UvDnsPoll {
+pub(crate) struct UvDnsPoll {
     // BACKREF — Zig: `parent: *Resolver` (mutable). Stored mut because the poll
     // callback hands it to `Resolver::deref`, which may write/free `*this`.
     pub parent: *mut Resolver,
@@ -3760,7 +3723,7 @@ pub struct UvDnsPoll {
 
 #[cfg(windows)]
 impl UvDnsPoll {
-    pub fn new(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> *mut Self {
+    pub(crate) fn new(parent: *mut Resolver, socket: c_ares::ares_socket_t) -> *mut Self {
         bun_core::heap::into_raw(Box::new(Self {
             parent,
             socket,
@@ -3768,11 +3731,11 @@ impl UvDnsPoll {
         }))
     }
 
-    pub fn destroy(this: *mut Self) {
+    pub(crate) fn destroy(this: *mut Self) {
         unsafe { drop(bun_core::heap::take(this)) };
     }
 
-    pub fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
+    pub(crate) fn from_poll(poll: *mut libuv::uv_poll_t) -> *mut Self {
         // SAFETY: poll points to UvDnsPoll.poll
         unsafe { bun_core::from_field_ptr!(UvDnsPoll, poll, poll) }
     }
@@ -3785,7 +3748,7 @@ pub enum CacheHit {
     Disabled,
 }
 
-pub enum LookupCacheHit<R: HasPendingCacheKey> {
+pub(crate) enum LookupCacheHit<R: HasPendingCacheKey> {
     // PORT NOTE: Zig's `LookupCacheHit(request_type)` referenced `request_type.PendingCacheKey`.
     // We thread the request type via `R` and resolve `PendingCacheKey` through `HasPendingCacheKey`.
     Inflight(*mut R::PendingCacheKey), // BORROW_FIELD
@@ -3803,7 +3766,7 @@ impl<R: HasPendingCacheKey> Copy for LookupCacheHit<R> {}
 /// Associates a request type with its `PendingCacheKey` and the matching `HiveArray`
 /// field on `Resolver`. Stands in for Zig's `request_type.PendingCacheKey` projection
 /// and `@field(resolver, comptime cache_name)` reflection.
-pub trait HasPendingCacheKey {
+pub(crate) trait HasPendingCacheKey {
     type PendingCacheKey;
 
     /// Return `&mut @field(resolver, cache_name)` — the per-request-type pending HiveArray.
@@ -3920,7 +3883,7 @@ impl HasPendingCacheKey for GetNameInfoRequest {
     }
 }
 
-pub enum ChannelResult<'a> {
+pub(crate) enum ChannelResult<'a> {
     Err(c_ares::Error),
     Result(&'a mut c_ares::Channel), // BORROW_FIELD — returns this.channel.?
 }

@@ -346,7 +346,7 @@ impl bun_core::output::ErrName for SystemErrno {
 /// `None` for `0` (SUCCESS), out-of-range, or (POSIX) non-positive input —
 /// the contract bun_core's `Error::from_errno` / `coreutils_error_map` rely on.
 #[inline]
-pub fn system_errno_name(errno: i32) -> Option<&'static str> {
+pub(crate) fn system_errno_name(errno: i32) -> Option<&'static str> {
     #[cfg(not(windows))]
     {
         if errno <= 0 {
@@ -375,7 +375,7 @@ pub fn system_errno_name(errno: i32) -> Option<&'static str> {
 /// before the sparse UV_* range). Exposed so bun_core can pre-seed its
 /// interned `ERRNO_MAP` without a second hand-written per-OS length table.
 #[inline]
-pub const fn system_errno_max_dense() -> u32 {
+pub(crate) const fn system_errno_max_dense() -> u32 {
     SystemErrno::MAX as u32
 }
 

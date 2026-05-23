@@ -267,12 +267,12 @@ extern "C" fn on_data(
     this_value.ensure_still_alive();
 }
 
-pub struct ConnectConfig {
+pub(crate) struct ConnectConfig {
     pub port: u16,
     pub address: BunString,
 }
 
-pub struct UDPSocketConfig {
+pub(crate) struct UDPSocketConfig {
     pub hostname: BunString,
     pub connect: Option<ConnectConfig>,
     pub port: u16,
@@ -293,7 +293,7 @@ impl Default for UDPSocketConfig {
 }
 
 impl UDPSocketConfig {
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         options: JSValue,
         this_value: JSValue,

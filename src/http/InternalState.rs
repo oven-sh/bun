@@ -55,7 +55,7 @@ pub struct InternalState<'a> {
 // HTTPClient state machine in lib.rs can use field syntax (`flags.allow_keepalive
 // = true`) directly; restore packing if size ever matters.
 #[derive(Clone, Copy)]
-pub struct InternalStateFlags {
+pub(crate) struct InternalStateFlags {
     pub allow_keepalive: bool,
     pub received_last_chunk: bool,
     pub did_set_content_encoding: bool,
@@ -66,7 +66,7 @@ pub struct InternalStateFlags {
 
 impl InternalStateFlags {
     /// Zig's field defaults: `allow_keepalive = true`, rest false.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             allow_keepalive: true,
             received_last_chunk: false,
@@ -442,7 +442,7 @@ impl<'a> InternalState<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum HTTPStage {
+pub(crate) enum HTTPStage {
     Pending,
 
     /// The `onOpen` callback has been called for the first time.
@@ -469,7 +469,7 @@ pub enum Stage {
 
 // Aliases used by the HTTPClient state machine: the Zig side has separate
 // `request_stage` / `response_stage` fields but they share one HTTPStage enum.
-pub type RequestStage = HTTPStage;
-pub type ResponseStage = HTTPStage;
+pub(crate) type RequestStage = HTTPStage;
+pub(crate) type ResponseStage = HTTPStage;
 
 // ported from: src/http/InternalState.zig

@@ -4,8 +4,8 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // type (`#[repr(transparent)]` over an encoded i64), and the C++ codegen'd
 // getters/setters they point to only read/write a JS field — so the fn-pointer
 // type is safe-to-call (Zig spec: plain `fn (JSValue) callconv(.c) JSValue`).
-pub type CallbackGetterFn = extern "C" fn(JSValue) -> JSValue;
-pub type CallbackSetterFn = extern "C" fn(JSValue, JSValue);
+pub(crate) type CallbackGetterFn = extern "C" fn(JSValue) -> JSValue;
+pub(crate) type CallbackSetterFn = extern "C" fn(JSValue, JSValue);
 
 // Zig: `fn CallbackWrapper(comptime Getter, comptime Setter) type { return struct { ... } }`
 // Rust const generics cannot carry function pointers, so the getter/setter are stored as

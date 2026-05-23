@@ -14,7 +14,7 @@ fn create_uninitialized_uint8_array(global: &JSGlobalObject, len: usize) -> JsRe
 /// # Safety
 /// `ptr` must be valid for reading `len` bytes of Latin-1 data.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn TextEncoder__encode8(
+pub(crate) unsafe extern "C" fn TextEncoder__encode8(
     global_this: &JSGlobalObject,
     ptr: *const u8,
     len: usize,
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn TextEncoder__encode8(
 /// # Safety
 /// `ptr` must be valid for reading `len` UTF-16 code units.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn TextEncoder__encode16(
+pub(crate) unsafe extern "C" fn TextEncoder__encode16(
     global_this: &JSGlobalObject,
     ptr: *const u16,
     len: usize,
@@ -114,7 +114,11 @@ pub unsafe extern "C" fn TextEncoder__encode16(
 /// # Safety
 /// `ptr` must be valid for reading `len` UTF-16 code units.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn c(global_this: &JSGlobalObject, ptr: *const u16, len: usize) -> JSValue {
+pub(crate) unsafe extern "C" fn c(
+    global_this: &JSGlobalObject,
+    ptr: *const u16,
+    len: usize,
+) -> JSValue {
     // as much as possible, rely on jsc to own the memory
     // their code is more battle-tested than bun's code
     // so we do a stack allocation here
@@ -261,7 +265,7 @@ impl<'a> RopeStringEncoder<'a> {
 // It's not suitable for UTF-16 strings, because getting the byteLength is unpredictable
 // It also isn't usable for latin1 strings which contain non-ascii characters
 #[unsafe(no_mangle)]
-pub extern "C" fn TextEncoder__encodeRopeString(
+pub(crate) extern "C" fn TextEncoder__encodeRopeString(
     global_this: &JSGlobalObject,
     rope_str: &JSString,
 ) -> JSValue {
@@ -317,7 +321,7 @@ pub extern "C" fn TextEncoder__encodeRopeString(
 /// `input_ptr` must be valid for reading `input_len` UTF-16 code units and
 /// `buf_ptr` must be valid for writing `buf_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn TextEncoder__encodeInto16(
+pub(crate) unsafe extern "C" fn TextEncoder__encodeInto16(
     input_ptr: *const u16,
     input_len: usize,
     buf_ptr: *mut u8,
@@ -346,7 +350,7 @@ pub unsafe extern "C" fn TextEncoder__encodeInto16(
 /// `input_ptr` must be valid for reading `input_len` bytes of Latin-1 data and
 /// `buf_ptr` must be valid for writing `buf_len` bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn TextEncoder__encodeInto8(
+pub(crate) unsafe extern "C" fn TextEncoder__encodeInto8(
     input_ptr: *const u8,
     input_len: usize,
     buf_ptr: *mut u8,

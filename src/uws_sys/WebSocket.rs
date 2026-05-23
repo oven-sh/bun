@@ -444,12 +444,12 @@ impl AnyWebSocket {
 // WebSocketBehavior
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub type uws_websocket_handler = Option<unsafe extern "C" fn(*mut RawWebSocket)>;
-pub type uws_websocket_message_handler =
+pub(crate) type uws_websocket_handler = Option<unsafe extern "C" fn(*mut RawWebSocket)>;
+pub(crate) type uws_websocket_message_handler =
     Option<unsafe extern "C" fn(*mut RawWebSocket, *const u8, usize, Opcode)>;
-pub type uws_websocket_close_handler =
+pub(crate) type uws_websocket_close_handler =
     Option<unsafe extern "C" fn(*mut RawWebSocket, i32, *const u8, usize)>;
-pub type uws_websocket_upgrade_handler = Option<
+pub(crate) type uws_websocket_upgrade_handler = Option<
     unsafe extern "C" fn(
         *mut c_void,
         *mut uws_res,
@@ -458,7 +458,7 @@ pub type uws_websocket_upgrade_handler = Option<
         usize,
     ),
 >;
-pub type uws_websocket_ping_pong_handler =
+pub(crate) type uws_websocket_ping_pong_handler =
     Option<unsafe extern "C" fn(*mut RawWebSocket, *const u8, usize)>;
 
 #[repr(C)]
@@ -588,7 +588,7 @@ where
     // `WebSocketBehavior`; a safe `extern "C" fn` item coerces to the
     // `Option<unsafe extern "C" fn(..)>` field type. Each body already scopes
     // its own proof block around the `T::on_*` dispatch / `thunk::c_slice`.
-    pub extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
+    pub(crate) extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
         // `*mut T` (not `&mut T`) — no `noalias` borrow held across the
         // re-entrant handler. User data was set to *mut T at upgrade time.
@@ -601,7 +601,7 @@ where
         unsafe { T::on_open(this, ws) };
     }
 
-    pub extern "C" fn on_message(
+    pub(crate) extern "C" fn on_message(
         raw_ws: *mut RawWebSocket,
         message: *const u8,
         length: usize,
@@ -616,7 +616,7 @@ where
         unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
     }
 
-    pub extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
+    pub(crate) extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if this.is_null() {
@@ -626,7 +626,7 @@ where
         unsafe { T::on_drain(this, ws) };
     }
 
-    pub extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
+    pub(crate) extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if this.is_null() {
@@ -636,7 +636,7 @@ where
         unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
     }
 
-    pub extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
+    pub(crate) extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if this.is_null() {
@@ -646,7 +646,7 @@ where
         unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) };
     }
 
-    pub extern "C" fn on_close(
+    pub(crate) extern "C" fn on_close(
         raw_ws: *mut RawWebSocket,
         code: i32,
         message: *const u8,
@@ -661,7 +661,7 @@ where
         unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 
-    pub extern "C" fn on_upgrade(
+    pub(crate) extern "C" fn on_upgrade(
         ptr: *mut c_void,
         res: *mut uws_res,
         req: *mut Request,
@@ -732,7 +732,7 @@ where
 pub mod c {
     use super::*;
 
-    pub type uws_compress_options_t = i32;
+    pub(crate) type uws_compress_options_t = i32;
 
     // `RawWebSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` —
     // `&RawWebSocket`/`&mut RawWebSocket` are ABI-identical to a non-null
@@ -740,8 +740,8 @@ pub mod c {
     // is the socket itself (plus value types) are `safe fn`; (ptr,len) shims
     // and out-param shims stay unsafe.
     unsafe extern "C" {
-        pub safe fn uws_ws_memory_cost(ssl: i32, ws: &mut RawWebSocket) -> usize;
-        pub fn uws_ws(
+        pub(crate) safe fn uws_ws_memory_cost(ssl: i32, ws: &mut RawWebSocket) -> usize;
+        pub(crate) fn uws_ws(
             ssl: i32,
             app: *mut uws_app_t,
             ctx: *mut c_void,
@@ -750,16 +750,16 @@ pub mod c {
             id: usize,
             behavior: *const WebSocketBehavior,
         );
-        pub safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
-        pub safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);
-        pub fn uws_ws_send(
+        pub(crate) safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
+        pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) fn uws_ws_send(
             ssl: i32,
             ws: *mut RawWebSocket,
             message: *const u8,
             length: usize,
             opcode: Opcode,
         ) -> SendStatus;
-        pub fn uws_ws_send_with_options(
+        pub(crate) fn uws_ws_send_with_options(
             ssl: i32,
             ws: *mut RawWebSocket,
             message: *const u8,
@@ -790,14 +790,14 @@ pub mod c {
             opcode: Opcode,
             compress: bool,
         ) -> SendStatus;
-        pub fn uws_ws_send_last_fragment(
+        pub(crate) fn uws_ws_send_last_fragment(
             ssl: i32,
             ws: *mut RawWebSocket,
             message: *const u8,
             length: usize,
             compress: bool,
         ) -> SendStatus;
-        pub fn uws_ws_end(
+        pub(crate) fn uws_ws_end(
             ssl: i32,
             ws: *mut RawWebSocket,
             code: i32,
@@ -808,25 +808,25 @@ pub mod c {
         // `handler` without being dereferenced by the C++ shim itself, so the
         // call has no preconditions beyond the live opaque handle. Mirrors
         // `uws_res_cork`.
-        pub safe fn uws_ws_cork(
+        pub(crate) safe fn uws_ws_cork(
             ssl: i32,
             ws: &mut RawWebSocket,
             handler: Option<unsafe extern "C" fn(*mut c_void)>,
             user_data: *mut c_void,
         );
-        pub fn uws_ws_subscribe(
+        pub(crate) fn uws_ws_subscribe(
             ssl: i32,
             ws: *mut RawWebSocket,
             topic: *const u8,
             length: usize,
         ) -> bool;
-        pub fn uws_ws_unsubscribe(
+        pub(crate) fn uws_ws_unsubscribe(
             ssl: i32,
             ws: *mut RawWebSocket,
             topic: *const u8,
             length: usize,
         ) -> bool;
-        pub fn uws_ws_is_subscribed(
+        pub(crate) fn uws_ws_is_subscribed(
             ssl: i32,
             ws: *mut RawWebSocket,
             topic: *const u8,
@@ -839,7 +839,7 @@ pub mod c {
             user_data: *mut c_void,
         );
         // uws_ws_get_topics_as_js_array: see src/runtime/socket/uws_jsc.rs
-        pub fn uws_ws_publish(
+        pub(crate) fn uws_ws_publish(
             ssl: i32,
             ws: *mut RawWebSocket,
             topic: *const u8,
@@ -847,7 +847,7 @@ pub mod c {
             message: *const u8,
             message_length: usize,
         ) -> bool;
-        pub fn uws_ws_publish_with_options(
+        pub(crate) fn uws_ws_publish_with_options(
             ssl: i32,
             ws: *mut RawWebSocket,
             topic: *const u8,
@@ -857,11 +857,11 @@ pub mod c {
             opcode: Opcode,
             compress: bool,
         ) -> bool;
-        pub safe fn uws_ws_get_buffered_amount(ssl: i32, ws: &mut RawWebSocket) -> usize;
+        pub(crate) safe fn uws_ws_get_buffered_amount(ssl: i32, ws: &mut RawWebSocket) -> usize;
         // Out-param `dest` is `&mut *mut u8` (non-null, valid for write); the C
         // shim only stores a pointer into socket-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.
-        pub safe fn uws_ws_get_remote_address(
+        pub(crate) safe fn uws_ws_get_remote_address(
             ssl: i32,
             ws: &mut RawWebSocket,
             dest: &mut *mut u8,

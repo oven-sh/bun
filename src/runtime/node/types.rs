@@ -28,7 +28,7 @@ pub use bun_sys_jsc::FdJsc;
 /// `bun_runtime`-tier required-argument helper layered on `FdJsc`. Collapses
 /// the `next_eat → from_js_validated → ok_or_else(throw_invalid_fd_error)`
 /// boilerplate repeated 12× across `node_fs.rs::args::*::from_js`.
-pub trait FdArgExt: FdJsc {
+pub(crate) trait FdArgExt: FdJsc {
     #[inline]
     fn from_js_required(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
         let fd_value = arguments.next_eat().unwrap_or(JSValue::UNDEFINED);
@@ -1022,7 +1022,7 @@ pub trait PathLikeExt {
 }
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathOrFileDescriptor`.
-pub trait PathOrFdExt {
+pub(crate) trait PathOrFdExt {
     fn from_js(
         ctx: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
@@ -1556,7 +1556,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 pub struct FileSystemFlags(pub c_int);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FileSystemFlagsKind {
+pub(crate) enum FileSystemFlagsKind {
     Access,
     CopyFile,
 }

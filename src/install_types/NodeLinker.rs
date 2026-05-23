@@ -98,11 +98,11 @@ unsafe extern "Rust" {
 // FORWARD_DECL(b0): bun_jsc::RegularExpression — stored as raw NonNull<()>
 // (NOT Box<ZST>: a zero-sized opaque Box is a dangling sentinel that would
 // leak the real JSC allocation and skip its destructor).
-pub struct RegularExpression(NonNull<()>);
+pub(crate) struct RegularExpression(NonNull<()>);
 
 impl RegularExpression {
     #[inline]
-    pub fn matches(&self, input: &BunString) -> bool {
+    pub(crate) fn matches(&self, input: &BunString) -> bool {
         // SAFETY: self.0 was produced by `__bun_regex_compile`.
         unsafe { __bun_regex_matches(self.0, input) }
     }
@@ -120,7 +120,7 @@ impl Drop for RegularExpression {
 /// duplicating the `__bun_regex_*` extern block (one declarer per upward call,
 /// per PORTING.md §extern-Rust-ban).
 #[inline]
-pub fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
+pub(crate) fn compile_regex(pattern: BunString) -> Option<RegularExpression> {
     // SAFETY: link-time extern; pattern ownership transfers.
     unsafe { __bun_regex_compile(pattern) }.map(RegularExpression)
 }

@@ -103,7 +103,7 @@ impl Default for ServerConfig {
     }
 }
 
-pub enum Address {
+pub(crate) enum Address {
     Tcp {
         port: u16,
         hostname: Option<ZBox>,
@@ -125,18 +125,18 @@ impl Default for Address {
 // In Rust, ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DevelopmentOption {
+pub(crate) enum DevelopmentOption {
     Development,
     Production,
     DevelopmentWithoutHmr,
 }
 
 impl DevelopmentOption {
-    pub fn is_hmr_enabled(self) -> bool {
+    pub(crate) fn is_hmr_enabled(self) -> bool {
         self == DevelopmentOption::Development
     }
 
-    pub fn is_development(self) -> bool {
+    pub(crate) fn is_development(self) -> bool {
         self == DevelopmentOption::Development || self == DevelopmentOption::DevelopmentWithoutHmr
     }
 }
@@ -172,12 +172,12 @@ impl ServerConfig {
 }
 
 // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
-pub struct RouteDeclaration {
+pub(crate) struct RouteDeclaration {
     pub path: ZBox,
     pub method: RouteMethod,
 }
 
-pub enum RouteMethod {
+pub(crate) enum RouteMethod {
     Any,
     Specific(Method),
 }
@@ -194,23 +194,15 @@ impl Default for RouteDeclaration {
 // PORT NOTE: Zig `RouteDeclaration.deinit` only freed `path`; ZBox drops automatically.
 
 // TODO: rename to StaticRoute.Entry
-pub struct StaticRouteEntry {
+pub(crate) struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub route: AnyRoute,
     pub method: MethodOptional,
 }
 
 impl StaticRouteEntry {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         self.path.len() + self.route.memory_cost()
-    }
-
-    /// Zig `isLessThan` — strict-weak ordering for `std.mem.sort`
-    /// (descending by path). Kept for API parity with the spec; the Rust
-    /// `sort_by` callsite uses `strings::order` directly so it can return
-    /// `Ordering::Equal` (Rust 1.81+ panics on a comparator that never does).
-    pub fn is_less_than(_: (), this: &StaticRouteEntry, other: &StaticRouteEntry) -> bool {
-        strings::cmp_strings_desc((), &this.path, &other.path)
     }
 }
 
@@ -349,7 +341,7 @@ impl ServerConfig {
 // dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
 // opaque-token forwarding.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn apply_static_route<const SSL: bool, T>(
+pub(crate) fn apply_static_route<const SSL: bool, T>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
     entry: *mut T,
@@ -428,7 +420,7 @@ pub fn apply_static_route<const SSL: bool, T>(
 // dereferencing it here; not_unsafe_ptr_arg_deref is a false positive on
 // opaque-token forwarding.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn apply_static_route_h3<T>(
+pub(crate) fn apply_static_route_h3<T>(
     server: AnyServer,
     app: &mut uws::h3::App,
     entry: *mut T,
@@ -486,7 +478,7 @@ pub fn apply_static_route_h3<T>(
 /// Receivers are raw `*mut Self` because the route is registered as the uWS
 /// userdata pointer and the inherent impls (`StaticRoute::on_request` etc.) need
 /// `*mut` to mutate state and stash `self` into onAborted callbacks.
-pub trait StaticRouteLike<const SSL: bool>: 'static {
+pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
     /// SAFETY: `this` is a live route pointer for the lifetime of the app.
     unsafe fn set_server(this: *mut Self, server: AnyServer);
     /// SAFETY: `this` is a live route pointer; `req`/`resp` carry FFI handles
@@ -1618,7 +1610,7 @@ impl ServerConfig {
 }
 
 #[derive(Clone, Copy)]
-pub struct FromJSOptions {
+pub(crate) struct FromJSOptions {
     pub allow_bake_config: bool,
     pub is_fetch_required: bool,
     pub has_user_routes: bool,
@@ -1634,7 +1626,7 @@ impl Default for FromJSOptions {
     }
 }
 
-pub struct UserRouteBuilder {
+pub(crate) struct UserRouteBuilder {
     pub route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
 }

@@ -115,7 +115,7 @@ pub struct InternalSourceMap {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct SyncEntry {
+pub(crate) struct SyncEntry {
     pub generated_line: i32,
     pub generated_column: i32,
     pub byte_offset: u32,
@@ -573,7 +573,7 @@ impl WindowReader {
 
 /// One decoded-window prefix. See `FindCache` for the multi-slot wrapper that
 /// callers actually hold.
-pub struct FindCacheSlot {
+pub(crate) struct FindCacheSlot {
     data: *const u8,
     sync_idx: u32,
     decoded_count: u8,

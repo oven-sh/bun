@@ -19,7 +19,7 @@ unsafe extern "C" {
 // `extern "C"`; the C++ caller guarantees a live pointer, so the reference
 // param discharges the non-null obligation at the type level.
 #[unsafe(export_name = "Bun__Process__createArgv0")]
-pub extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
     let argv0 = bun_core::argv()
         .get(0)
         .map(|z| z.as_bytes())
@@ -28,7 +28,7 @@ pub extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
-pub extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
     let Ok(out) = bun_core::self_exe_path() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
@@ -38,11 +38,11 @@ pub extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
-pub extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
     Bun__Process__getArgv(global)
 }
 
-pub extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
     Bun__Process__getExecArgv(global)
 }
 
@@ -66,12 +66,12 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 // ───────────────────────────── misc exports ─────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
+pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     feature_flag::NODE_NO_WARNINGS.get().unwrap_or(false)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
+pub(crate) extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
     if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
         .get()
         .unwrap_or(false)
@@ -85,19 +85,19 @@ pub extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
 // `#[repr(transparent)]` newtype so the C++ side still sees a single
 // `const char*`-sized symbol.
 #[repr(transparent)]
-pub struct CStrPtr(*const c_char);
+pub(crate) struct CStrPtr(*const c_char);
 // SAFETY: the wrapped pointer always targets a `'static` NUL-terminated
 // rodata literal produced by `concatcp!`; it is never written through.
 unsafe impl Sync for CStrPtr {}
 
 #[unsafe(no_mangle)]
-pub static Bun__version: CStrPtr = CStrPtr(
+pub(crate) static Bun__version: CStrPtr = CStrPtr(
     const_format::concatcp!("v", Global::package_json_version, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
 #[unsafe(no_mangle)]
-pub static Bun__version_with_sha: CStrPtr = CStrPtr(
+pub(crate) static Bun__version_with_sha: CStrPtr = CStrPtr(
     const_format::concatcp!("v", Global::package_json_version_with_sha, "\0")
         .as_ptr()
         .cast::<c_char>(),
@@ -105,19 +105,19 @@ pub static Bun__version_with_sha: CStrPtr = CStrPtr(
 // Version exports removed - now handled by build-generated header (bun_dependency_versions.h)
 // The C++ code in BunProcess.cpp uses the generated header directly
 #[unsafe(no_mangle)]
-pub static Bun__versions_uws: CStrPtr = CStrPtr(
+pub(crate) static Bun__versions_uws: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
 #[unsafe(no_mangle)]
-pub static Bun__versions_usockets: CStrPtr = CStrPtr(
+pub(crate) static Bun__versions_usockets: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),
 );
 #[unsafe(no_mangle)]
-pub static Bun__version_sha: CStrPtr = CStrPtr(
+pub(crate) static Bun__version_sha: CStrPtr = CStrPtr(
     const_format::concatcp!(Environment::GIT_SHA, "\0")
         .as_ptr()
         .cast::<c_char>(),

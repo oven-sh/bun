@@ -15,8 +15,8 @@ use bun_core::pretty_fmt;
 // its moved-out buffer) alive while the returned slices are in use.
 pub use bun_core::StringBuilder;
 
-// TODO(port): bun_picohttp_sys crate missing — local FFI stub surface.
-// Real bindings would come from bindgen over vendor/picohttpparser.
+// FFI surface over vendor/picohttpparser. Hand-written (three functions, two
+// structs) rather than bindgen-generated.
 #[allow(non_camel_case_types)]
 mod c {
     use core::ffi::{c_char, c_int};
@@ -219,7 +219,7 @@ impl fmt::Display for Header {
 const _: () = assert!(core::mem::size_of::<Header>() == core::mem::size_of::<c::phr_header>());
 const _: () = assert!(core::mem::align_of::<Header>() == core::mem::align_of::<c::phr_header>());
 
-pub struct HeaderCurlFormatter<'a> {
+pub(crate) struct HeaderCurlFormatter<'a> {
     header: &'a Header,
 }
 
@@ -289,7 +289,7 @@ impl<'a> HeaderList<'a> {
 
 // TODO(port): thiserror not in workspace deps — manual Display/Error impl.
 #[derive(Debug, strum::IntoStaticStr)]
-pub enum ParseRequestError {
+pub(crate) enum ParseRequestError {
     BadRequest,
     ShortRead,
 }
@@ -690,7 +690,7 @@ impl fmt::Display for Response<'_> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, strum::IntoStaticStr)]
-pub enum ParseHeadersError {
+pub(crate) enum ParseHeadersError {
     BadHeaders,
     ShortRead,
 }

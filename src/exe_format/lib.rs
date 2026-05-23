@@ -20,7 +20,7 @@ pub mod pe;
 /// pass `&buf[off..][..size_of::<T>()]` so release builds get a bounds check
 /// at the slice site rather than UB on a short buffer.
 #[inline]
-pub(crate) fn read_struct<T: Copy>(bytes: &[u8]) -> T {
+pub fn read_struct<T: Copy>(bytes: &[u8]) -> T {
     debug_assert!(bytes.len() >= core::mem::size_of::<T>());
     // SAFETY: T is a #[repr(C)] POD header struct; all bit patterns are valid;
     // bytes.len() >= size_of::<T>() asserted above. read_unaligned tolerates
@@ -31,7 +31,7 @@ pub(crate) fn read_struct<T: Copy>(bytes: &[u8]) -> T {
 /// Write a `#[repr(C)]` POD struct `T` to the start of `bytes`. See
 /// [`read_struct`] for the contract on `T` and slice length.
 #[inline]
-pub(crate) fn write_struct<T: Copy>(bytes: &mut [u8], value: &T) {
+pub fn write_struct<T: Copy>(bytes: &mut [u8], value: &T) {
     debug_assert!(bytes.len() >= core::mem::size_of::<T>());
     // SAFETY: T is #[repr(C)] POD; bytes.len() >= size_of::<T>() asserted
     // above; write_unaligned tolerates arbitrary alignment of dest.

@@ -64,7 +64,7 @@ type int = i64; // must be large enough to hold all valid values of `uint` w/o o
 /// for slice types) and to detect "is this a pointer/slice" inside
 /// `backtrack`. Rust expresses both via this trait — implement it for any new
 /// line type instead of extending the type-switch.
-pub trait Line: Copy {
+pub(crate) trait Line: Copy {
     /// `@typeInfo(Line) == .pointer` in the Zig.
     const IS_POINTER: bool;
     /// Equality with optional trailing-comma tolerance.
@@ -150,11 +150,8 @@ impl<'a> Line for &'a [u16] {
 /// based on `Line` and delegates to `DifferWithEql`. In Rust the `eql` dispatch
 /// is the `Line` trait, so the two collapse into one type. To supply a custom
 /// equality function (Zig's `DifferWithEql`), implement `Line` for your type.
-pub struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
+pub(crate) struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
 
-/// Like `Differ`, but allows the user to provide a custom equality function.
-/// PORT NOTE: in Rust, "custom eql" = "impl `Line` for your type". This alias
-/// exists only to keep the Zig API surface; both names resolve to the same
 /// struct.
 pub type DifferWithEql<L, const CHECK_COMMA_DISPARITY: bool = false> =
     Differ<L, CHECK_COMMA_DISPARITY>;
@@ -164,7 +161,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
     // PORT NOTE: `graph_initial_size` (Zig) only fed `stackFallback`; dropped.
 
     #[inline]
-    pub fn eql(a: L, b: L) -> bool {
+    pub(crate) fn eql(a: L, b: L) -> bool {
         L::line_eq::<CHECK_COMMA_DISPARITY>(a, b)
     }
 
@@ -180,7 +177,7 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
     /// ## References
     /// - [Node- `myers_diff.js`](https://github.com/nodejs/node/blob/main/lib/internal/assert/myers_diff.js)
     /// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
-    pub fn diff(actual: &[L], expected: &[L]) -> Result<DiffList<L>, Error> {
+    pub(crate) fn diff(actual: &[L], expected: &[L]) -> Result<DiffList<L>, Error> {
         // Edit graph's allocator
         // PERF(port): was stack-fallback (graph_initial_size bytes) — profile if it shows up on a hot path
         // Match point trace's allocator

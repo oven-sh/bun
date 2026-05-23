@@ -71,14 +71,14 @@ impl Default for Mapping {
 
 /// Optimization: if we don't care about the "names" column, then don't store the names.
 #[derive(Clone, Copy, Default)]
-pub struct MappingWithoutName {
+pub(crate) struct MappingWithoutName {
     pub generated: LineColumnOffset,
     pub original: LineColumnOffset,
     pub source_index: i32,
 }
 
 impl MappingWithoutName {
-    pub fn to_named(&self) -> Mapping {
+    pub(crate) fn to_named(&self) -> Mapping {
         Mapping {
             generated: self.generated,
             original: self.original,
@@ -88,7 +88,7 @@ impl MappingWithoutName {
     }
 }
 
-pub enum ListValue {
+pub(crate) enum ListValue {
     WithoutNames(MultiArrayList<MappingWithoutName>),
     WithNames(MultiArrayList<Mapping>),
 }
@@ -116,11 +116,14 @@ macro_rules! both_lists {
 }
 
 impl ListValue {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         both_lists!(self, |list| list.memory_cost())
     }
 
-    pub fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn ensure_total_capacity(
+        &mut self,
+        count: usize,
+    ) -> Result<(), bun_alloc::AllocError> {
         both_lists!(self, |list| list.ensure_total_capacity(count))
     }
 }

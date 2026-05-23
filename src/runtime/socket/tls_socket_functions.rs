@@ -24,11 +24,11 @@ pub(super) mod ffi {
 
     // Opaque handles missing from boringssl_sys.
     bun_opaque::opaque_ffi! {
-        pub struct SSL_SESSION;
-        pub struct SSL_CIPHER;
-        pub struct EVP_PKEY;
-        pub struct EC_KEY;
-        pub struct EC_GROUP;
+        pub(crate) struct SSL_SESSION;
+        pub(crate) struct SSL_CIPHER;
+        pub(crate) struct EVP_PKEY;
+        pub(crate) struct EC_KEY;
+        pub(crate) struct EC_GROUP;
     }
 
     pub(crate) type ssl_renegotiate_mode_t = c_int;

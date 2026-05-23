@@ -42,7 +42,7 @@ mod group_log {
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]
-pub enum Mode {
+pub(crate) enum Mode {
     #[strum(serialize = "describe")]
     Describe,
     #[strum(serialize = "test")]
@@ -155,7 +155,7 @@ impl ScopeFunctions {
 }
 
 #[bun_jsc::host_fn]
-pub fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
     let Some(this_ptr) = ScopeFunctions::from_js(frame.this()) else {
@@ -523,7 +523,7 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-pub struct ParseArgumentsResult {
+pub(crate) struct ParseArgumentsResult {
     pub description: Option<Vec<u8>>,
     pub callback: Option<JSValue>,
     pub options: ParseArgumentsOptions,
@@ -531,26 +531,26 @@ pub struct ParseArgumentsResult {
 // PORT NOTE: Zig `deinit` only freed `description`; `Vec<u8>` drops automatically.
 
 #[derive(Default, Clone, Copy)]
-pub struct ParseArgumentsOptions {
+pub(crate) struct ParseArgumentsOptions {
     pub timeout: u32,
     pub retry: Option<u32>,
     pub repeats: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum CallbackMode {
+pub(crate) enum CallbackMode {
     Require,
     Allow,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FunctionKind {
+pub(crate) enum FunctionKind {
     TestOrDescribe,
     Hook,
 }
 
 #[derive(Copy, Clone)]
-pub struct ParseArgumentsCfg {
+pub(crate) struct ParseArgumentsCfg {
     pub callback: CallbackMode,
     pub kind: FunctionKind,
 }
@@ -798,7 +798,7 @@ impl ScopeFunctions {
     }
 }
 
-pub fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
+pub(crate) fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
     let _g = group_log::begin();
 
     // `JsClass::to_js` boxes `self` and hands the raw pointer to the C++
@@ -814,7 +814,7 @@ pub fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: B
     value
 }
 
-pub fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JSValue> {
+pub(crate) fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JSValue> {
     // `#[bun_jsc::host_fn]` on `call_as_function` emits the C-ABI thunk
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.
@@ -835,7 +835,7 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
     bun_jsc::cpp::Bun__JSValue__setPrototypeDirect(value, prototype, global)
 }
 
-pub fn create_bound(
+pub(crate) fn create_bound(
     global: &JSGlobalObject,
     mode: Mode,
     each: JSValue,

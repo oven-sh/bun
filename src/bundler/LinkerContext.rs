@@ -93,7 +93,7 @@ bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
 /// Helper for call-sites that previously wrote `Action::BundleGenerateChunk(.{...})`.
 #[cfg(feature = "show_crash_trace")]
 #[inline]
-pub fn bundle_generate_chunk_action(
+pub(crate) fn bundle_generate_chunk_action(
     ctx: &LinkerContext,
     chunk: &Chunk,
     part_range: &PartRange,
@@ -109,15 +109,6 @@ pub fn bundle_generate_chunk_action(
         chunk: core::ptr::from_ref::<Chunk>(chunk).cast::<()>(),
         part_range: core::ptr::from_ref::<PartRange>(part_range).cast::<()>(),
     })
-}
-#[cfg(not(feature = "show_crash_trace"))]
-#[inline]
-pub fn bundle_generate_chunk_action(
-    _ctx: &LinkerContext,
-    _chunk: &Chunk,
-    _part_range: &PartRange,
-) -> bun_crash_handler::Action {
-    bun_crash_handler::Action::BundleGenerateChunk(())
 }
 
 // Scoped-log wrappers (LinkerContext.zig:2, :2705); re-exported so `linker_context/*` submodules import directly.
@@ -1033,7 +1024,7 @@ impl<'a> LinkerContext<'a> {
     // `post_process_*` callees take `GenerateChunkCtx` by value and deref
     // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
     // raw-ptr writes (see `postProcessJSChunk.rs`).
-    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
+    pub fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the duration of this body. ctx.c points into BundleV2.linker;
         // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
@@ -1062,11 +1053,7 @@ impl<'a> LinkerContext<'a> {
     // `ctx.c.options` shared. `rename_symbols_in_chunk` takes `*mut
     // LinkerContext` raw and never materializes `&mut LinkerContext` while
     // peer renamer tasks are live (see its CONCURRENCY note).
-    pub(crate) fn generate_js_renamer(
-        ctx: &GenerateChunkCtx,
-        chunk: *mut Chunk,
-        chunk_index: usize,
-    ) {
+    pub fn generate_js_renamer(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
         // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
         // the body. container_of pattern — see `generate_chunk` above.
         let chunk: &mut Chunk = unsafe { &mut *chunk };
@@ -1292,13 +1279,13 @@ impl<'a> LinkerContext<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ScanCssImportsResult {
+pub(crate) enum ScanCssImportsResult {
     Ok,
     Errors,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum LinkError {
+pub(crate) enum LinkError {
     #[error("out of memory")]
     OutOfMemory,
     #[error("build failed")]
@@ -1371,7 +1358,7 @@ impl Default for LinkerOptions {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum LinkerOptionsMode {
+pub(crate) enum LinkerOptionsMode {
     Passthrough,
     Bundle,
 }
@@ -1385,7 +1372,7 @@ pub struct SourceMapData {
     pub quoted_contents_tasks: Box<[SourceMapDataTask]>,
 }
 
-pub struct SourceMapDataTask {
+pub(crate) struct SourceMapDataTask {
     /// `None` only in `Default` (the per-index slot is overwritten before
     /// scheduling).
     pub ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>>,
@@ -1615,7 +1602,7 @@ impl SourceMapData {
 // Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
 // other fields are POD.
 #[derive(Clone, Default)]
-pub struct MatchImport {
+pub(crate) struct MatchImport {
     alias: bun_ast::StoreStr, // Zig string borrowed from AST arena
     kind: MatchImportKind,
     namespace_ref: Ref,
@@ -1627,7 +1614,7 @@ pub struct MatchImport {
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
-pub enum MatchImportKind {
+pub(crate) enum MatchImportKind {
     /// The import is either external or undefined
     #[default]
     Ignore,
@@ -1651,7 +1638,7 @@ pub struct ChunkMeta {
     pub dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
 }
 
-pub type ChunkMetaMap = ArrayHashMap<Ref, ()>;
+pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
 /// PORT NOTE: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
 /// `Ctx: Sync + Copy` and the same context is observed from every worker
@@ -2652,7 +2639,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // integer-arg registers and spills to the stack on every recursive step.
 // Packing the slices into a borrowed context struct keeps each call at 3-4
 // register-sized arguments.
-pub struct TreeShakeCtx<'a, 'r> {
+pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub side_effects: &'r [SideEffects],
     pub parts: &'r [bun_ast::PartList<'a>],
     pub parts_live: &'r mut [bun_collections::AutoBitSet],
@@ -2661,7 +2648,7 @@ pub struct TreeShakeCtx<'a, 'r> {
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
 }
 
-pub struct CodeSplitCtx<'a, 'r> {
+pub(crate) struct CodeSplitCtx<'a, 'r> {
     pub distances: &'r mut [u32],
     // Spec (LinkerContext.zig:1579) passes `parts: []Vec(Part)` and only
     // reads it.
@@ -4290,7 +4277,7 @@ impl PartialEq for MatchImport {
 // StmtList
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct StmtList {
+pub(crate) struct StmtList {
     // TODO(port): arena field dropped — Vec uses global mimalloc; bundler is AST crate but
     // these are temporary scratch buffers, not arena-backed in the original (uses generic arena param)
     pub inside_wrapper_prefix: InsideWrapperPrefix,
@@ -4299,7 +4286,7 @@ pub struct StmtList {
     pub all_stmts: Vec<Stmt>,
 }
 
-pub struct InsideWrapperPrefix {
+pub(crate) struct InsideWrapperPrefix {
     pub stmts: Vec<Stmt>,
     pub sync_dependencies_end: usize,
     // if true it will exist at `sync_dependencies_end`
@@ -4307,7 +4294,7 @@ pub struct InsideWrapperPrefix {
 }
 
 impl InsideWrapperPrefix {
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             stmts: Vec::new(),
             sync_dependencies_end: 0,
@@ -4317,7 +4304,7 @@ impl InsideWrapperPrefix {
 
     // deinit → Drop (Vec frees automatically); reset is explicit
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.stmts.clear();
         self.sync_dependencies_end = 0;
         self.has_async_dependency = false;
@@ -4328,17 +4315,17 @@ impl InsideWrapperPrefix {
 // — bun_js_parser AST builder surface not yet stable.
 
 impl InsideWrapperPrefix {
-    pub fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
+    pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())
     }
 
-    pub fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
+    pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
         self.stmts.extend_from_slice(stmts);
         Ok(())
     }
 
-    pub fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
+    pub(crate) fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
         self.stmts.insert(
             self.sync_dependencies_end,
             Stmt::alloc(
@@ -4353,7 +4340,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    pub fn append_async_dependency(
+    pub(crate) fn append_async_dependency(
         &mut self,
         call_expr: Expr,
         promise_all_ref: Ref,
@@ -4459,7 +4446,7 @@ impl InsideWrapperPrefix {
 }
 
 impl StmtList {
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.inside_wrapper_prefix.reset();
         self.outside_wrapper_prefix.clear();
         self.inside_wrapper_suffix.clear();
@@ -4468,7 +4455,7 @@ impl StmtList {
 
     // deinit → Drop (Vec fields free automatically)
 
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             inside_wrapper_prefix: InsideWrapperPrefix::init(),
             outside_wrapper_prefix: Vec::new(),
@@ -4477,7 +4464,7 @@ impl StmtList {
         }
     }
 
-    pub fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt]) {
+    pub(crate) fn append_slice(&mut self, list: StmtListWhich, stmts: &[Stmt]) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => {
                 self.outside_wrapper_prefix.extend_from_slice(stmts)
@@ -4489,7 +4476,7 @@ impl StmtList {
         }
     }
 
-    pub fn append(&mut self, list: StmtListWhich, stmt: Stmt) {
+    pub(crate) fn append(&mut self, list: StmtListWhich, stmt: Stmt) {
         match list {
             StmtListWhich::OutsideWrapperPrefix => self.outside_wrapper_prefix.push(stmt),
             StmtListWhich::InsideWrapperSuffix => self.inside_wrapper_suffix.push(stmt),

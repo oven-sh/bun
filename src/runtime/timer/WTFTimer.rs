@@ -25,7 +25,7 @@ const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
 bun_opaque::opaque_ffi! {
     /// This is `WTF::RunLoop::TimerBase` from WebKit — opaque FFI handle.
-    pub struct RunLoopTimer;
+    pub(crate) struct RunLoopTimer;
 }
 
 impl RunLoopTimer {
@@ -33,7 +33,7 @@ impl RunLoopTimer {
     /// don't need an `unsafe { as_ref() }` just to forward it — `NonNull<T>`
     /// is ABI-identical to `*mut T` and the extern is `safe fn`.
     #[inline]
-    pub fn fire(this: NonNull<RunLoopTimer>) {
+    pub(crate) fn fire(this: NonNull<RunLoopTimer>) {
         WTFTimer__fire(this)
     }
 }
@@ -60,7 +60,7 @@ bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
 /// # Safety
 /// `vm` must be the live `VirtualMachine` for the current thread.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
+pub(crate) unsafe extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine) {
     // SAFETY: per fn contract.
     let el = unsafe { (*vm).event_loop() };
     // SAFETY: `event_loop()` returns the VM's owned EventLoop pointer.
@@ -271,7 +271,7 @@ impl WTFTimer {
 /// `run_loop_timer` must be a non-null, live `WTF::RunLoop::TimerBase` owned
 /// by the caller for the lifetime of the returned `WTFTimer`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
+pub(crate) unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
     if IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.get() {
         return ptr::null_mut();
     }
@@ -313,7 +313,7 @@ pub unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> 
 /// # Safety
 /// `this` must point at a live `WTFTimer` produced by [`WTFTimer__create`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, repeat: bool) {
+pub(crate) unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, repeat: bool) {
     // SAFETY: per fn contract.
     unsafe { WTFTimer::update(this, seconds, repeat) };
 }
@@ -322,7 +322,7 @@ pub unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, rep
 /// `this` must be the unique owner of a `WTFTimer` produced by
 /// [`WTFTimer__create`]; it is freed by this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
+pub(crate) unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
     // SAFETY: per fn contract.
     unsafe { WTFTimer::deinit(this) };
 }
@@ -330,7 +330,7 @@ pub unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
 /// # Safety
 /// `this` must point at a live `WTFTimer` produced by [`WTFTimer__create`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
+pub(crate) unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
     // SAFETY: per fn contract.
     unsafe { WTFTimer::cancel(this) };
 }

@@ -30,29 +30,6 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
     ))
 }
 
-pub fn libc_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use bun_install::npm;
-    let args = frame.arguments_old::<1>();
-    let mut libc = npm::Libc::NONE.negatable();
-    // PORT NOTE: Zig source omits `try` on arrayIterator/next/toSlice here (unlike the
-    // sibling fns above/below). Added `?` for type consistency.
-    // TODO(port): confirm Zig source intent for missing `try` in libcIsMatch
-    let mut iter = args.ptr[0].array_iterator(global)?;
-    while let Some(item) = iter.next()? {
-        let slice = item.to_slice(global)?;
-        libc.apply(slice.slice());
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-    }
-    if global.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
-    Ok(JSValue::js_boolean(
-        libc.combine().is_match(npm::Libc::CURRENT),
-    ))
-}
-
 pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
     let args = frame.arguments_old::<1>();
@@ -108,7 +85,7 @@ impl ManifestBindings {
 // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
 // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
 #[bun_jsc::host_fn]
-pub fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bstr::BStr;
     use bun_core::{String as BunString, strings};
     use bun_install::npm;

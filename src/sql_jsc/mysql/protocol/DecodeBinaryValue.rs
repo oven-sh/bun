@@ -11,7 +11,7 @@ bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 /// MySQL's "binary" pseudo-charset ID. Columns with this character_set value
 /// are true binary types (BINARY, VARBINARY, BLOB), as opposed to string columns
 /// with binary collations (e.g., utf8mb4_bin) which have different character_set values.
-pub const BINARY_CHARSET: u16 = 63;
+pub(crate) const BINARY_CHARSET: u16 = 63;
 
 // TODO(port): narrow error set
 pub fn decode_binary_value<Context: ReaderContext>(

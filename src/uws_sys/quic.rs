@@ -29,7 +29,7 @@ pub use self::header::Qpack;
 
 unsafe extern "C" {
     // safe: no args; idempotent C-side initialization with no preconditions.
-    pub safe fn us_quic_global_init();
+    pub(crate) safe fn us_quic_global_init();
 }
 
 #[inline]

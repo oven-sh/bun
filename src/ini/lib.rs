@@ -70,13 +70,13 @@ pub(crate) fn next_dot(key: &[u8]) -> Option<usize> {
 // IniOption — tri-state used by iterators (None != end-of-iteration)
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum IniOption<T> {
+pub(crate) enum IniOption<T> {
     Some(T),
     None,
 }
 
 impl<T> IniOption<T> {
-    pub fn get(self) -> Option<T> {
+    pub(crate) fn get(self) -> Option<T> {
         match self {
             IniOption::Some(v) => Some(v),
             IniOption::None => None,

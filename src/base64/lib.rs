@@ -78,7 +78,7 @@ pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
     destination
 }
 
-pub fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
+pub(crate) fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
     simdutf::base64::encode_len(source_len, true)
 }
 
@@ -88,7 +88,7 @@ pub fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
 /// * `-` and `_` are used instead of `+` and `/`
 ///
 /// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
-pub fn simdutf_encode_url_safe(destination: &mut [u8], source: &[u8]) -> usize {
+pub(crate) fn simdutf_encode_url_safe(destination: &mut [u8], source: &[u8]) -> usize {
     simdutf::base64::encode(source, destination, true)
 }
 
@@ -134,7 +134,7 @@ pub const fn encode_len_from_size(source: usize) -> usize {
 }
 
 #[inline]
-pub const fn url_safe_encode_len_from_size(n: usize) -> usize {
+pub(crate) const fn url_safe_encode_len_from_size(n: usize) -> usize {
     // Equivalent to WebKit's `ceil(n * 4 / 3)`, but split so the intermediate
     // product can't overflow before the divide for large `n`.
     let full_chunks = n / 3;
@@ -194,7 +194,7 @@ pub mod vlq {
         }
     }
 
-    pub const VLQ_MAX_IN_BYTES: usize = 7;
+    pub(crate) const VLQ_MAX_IN_BYTES: usize = 7;
 
     impl VLQ {
         #[inline]
@@ -382,7 +382,7 @@ pub mod zig_base64 {
     }
     bun_core::named_error_set!(Error);
 
-    pub type DecoderWithIgnoreProto = fn(ignore: &[u8]) -> Base64DecoderWithIgnore;
+    pub(crate) type DecoderWithIgnoreProto = fn(ignore: &[u8]) -> Base64DecoderWithIgnore;
 
     /// Base64 codecs
     pub struct Codecs {
@@ -396,7 +396,9 @@ pub mod zig_base64 {
     pub const STANDARD_ALPHABET_CHARS: [u8; 64] =
         *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-    pub const fn standard_base64_decoder_with_ignore(ignore: &[u8]) -> Base64DecoderWithIgnore {
+    pub(crate) const fn standard_base64_decoder_with_ignore(
+        ignore: &[u8],
+    ) -> Base64DecoderWithIgnore {
         Base64DecoderWithIgnore::init(STANDARD_ALPHABET_CHARS, Some(b'='), ignore)
     }
 
@@ -419,37 +421,8 @@ pub mod zig_base64 {
         decoder: Base64Decoder::init(STANDARD_ALPHABET_CHARS, None),
     };
 
-    pub const URL_SAFE_ALPHABET_CHARS: [u8; 64] =
+    pub(crate) const URL_SAFE_ALPHABET_CHARS: [u8; 64] =
         *b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-    /// Shared by both [`URL_SAFE`] and [`URL_SAFE_NO_PAD`] (mirrors the `.zig`
-    /// sibling). It always builds a *padded* decoder, so for `URL_SAFE_NO_PAD`
-    /// it does NOT match the codec's `pad_char` — feed it padded input.
-    pub const fn url_safe_base64_decoder_with_ignore(ignore: &[u8]) -> Base64DecoderWithIgnore {
-        Base64DecoderWithIgnore::init(URL_SAFE_ALPHABET_CHARS, Some(b'='), ignore)
-    }
-
-    /// URL-safe Base64 codecs, with padding
-    pub static URL_SAFE: Codecs = Codecs {
-        alphabet_chars: URL_SAFE_ALPHABET_CHARS,
-        pad_char: Some(b'='),
-        decoder_with_ignore: url_safe_base64_decoder_with_ignore,
-        encoder: Base64Encoder::init(URL_SAFE_ALPHABET_CHARS, Some(b'=')),
-        decoder: Base64Decoder::init(URL_SAFE_ALPHABET_CHARS, Some(b'=')),
-    };
-
-    /// URL-safe Base64 codecs, without padding.
-    ///
-    /// Note: `decoder_with_ignore` here is the *padded* decoder (see comment on
-    /// [`url_safe_base64_decoder_with_ignore`]) — it does not match this codec's
-    /// `pad_char`. Use `decoder` for unpadded input.
-    pub static URL_SAFE_NO_PAD: Codecs = Codecs {
-        alphabet_chars: URL_SAFE_ALPHABET_CHARS,
-        pad_char: None,
-        decoder_with_ignore: url_safe_base64_decoder_with_ignore,
-        encoder: Base64Encoder::init(URL_SAFE_ALPHABET_CHARS, None),
-        decoder: Base64Decoder::init(URL_SAFE_ALPHABET_CHARS, None),
-    };
 
     // PORT NOTE: dropped `standard_pad_char`/`standard_encoder`/`standard_decoder`
     // @compileError deprecation stubs — no Rust equivalent for use-site compile errors.
@@ -660,13 +633,13 @@ pub mod zig_base64 {
     }
 
     #[derive(Clone)]
-    pub struct Base64DecoderWithIgnore {
+    pub(crate) struct Base64DecoderWithIgnore {
         pub decoder: Base64Decoder,
         pub char_is_ignored: [bool; 256],
     }
 
     impl Base64DecoderWithIgnore {
-        pub const fn init(
+        pub(crate) const fn init(
             alphabet_chars: [u8; 64],
             pad_char: Option<u8>,
             ignore_chars: &[u8],
@@ -692,22 +665,11 @@ pub mod zig_base64 {
             result
         }
 
-        /// Return the maximum possible decoded size for a given input length - The actual length may be less if the input includes padding
-        /// `InvalidPadding` is returned if the input length is not valid.
-        pub fn calc_size_upper_bound(&self, source_len: usize) -> usize {
-            let mut result = source_len / 4 * 3;
-            if self.decoder.pad_char.is_none() {
-                let leftover = source_len % 4;
-                result += leftover * 3 / 4;
-            }
-            result
-        }
-
         /// Invalid characters that are not ignored result in Error::InvalidCharacter.
         /// Invalid padding results in Error::InvalidPadding.
         /// Decoding more data than can fit in dest results in Error::NoSpaceLeft. See also ::calc_size_upper_bound.
         /// Returns the number of bytes written to dest.
-        pub fn decode(
+        pub(crate) fn decode(
             &self,
             dest: &mut [u8],
             source: &[u8],

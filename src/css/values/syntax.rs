@@ -25,7 +25,7 @@ const SPACE_CHARACTERS: &[u8] = &[0x20, 0x09];
 // `*const [u8]` placeholders for arena-borrowed slices (matching `Token` /
 // `ident.rs`). TODO(refactor): thread `'bump` and restore the lifetime.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SyntaxString {
+pub(crate) enum SyntaxString {
     /// A list of syntax components.
     // PERF(port): was arena ArrayList — `Vec` until `'bump` is threaded into BumpVec.
     Components(Vec<SyntaxComponent>),
@@ -34,13 +34,13 @@ pub enum SyntaxString {
 }
 
 impl SyntaxString {
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // TODO(port): css.implementDeepClone is comptime field reflection — replace with
         // a `DeepClone` trait/derive. For now defer to Clone.
         self.clone()
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_char(b'"')?;
         match self {
             SyntaxString::Universal => dest.write_char(b'*')?,
@@ -56,7 +56,7 @@ impl SyntaxString {
         dest.write_char(b'"')
     }
 
-    pub fn parse(input: &mut css::Parser) -> CssResult<SyntaxString> {
+    pub(crate) fn parse(input: &mut css::Parser) -> CssResult<SyntaxString> {
         let string = input.expect_string()?;
         match SyntaxString::parse_string(string) {
             Ok(result) => Ok(result),
@@ -65,7 +65,7 @@ impl SyntaxString {
     }
 
     /// Parses a syntax string.
-    pub fn parse_string(input: &[u8]) -> Result<SyntaxString, ()> {
+    pub(crate) fn parse_string(input: &[u8]) -> Result<SyntaxString, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#parsing-syntax
         let mut trimmed_input = strings::trim_left(input, SPACE_CHARACTERS);
         if trimmed_input.is_empty() {
@@ -100,7 +100,7 @@ impl SyntaxString {
     }
 
     /// Parses a value according to the syntax grammar.
-    pub fn parse_value(&self, input: &mut css::Parser) -> CssResult<ParsedComponent> {
+    pub(crate) fn parse_value(&self, input: &mut css::Parser) -> CssResult<ParsedComponent> {
         match self {
             SyntaxString::Universal => Ok(ParsedComponent::TokenList(TokenList::parse(
                 input,
@@ -222,13 +222,13 @@ impl SyntaxString {
 /// A syntax component consists of a component kind an a multiplier, which indicates how the component
 /// may repeat during parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SyntaxComponent {
+pub(crate) struct SyntaxComponent {
     pub kind: SyntaxComponentKind,
     pub multiplier: Multiplier,
 }
 
 impl SyntaxComponent {
-    pub fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponent, ()> {
+    pub(crate) fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponent, ()> {
         let kind = SyntaxComponentKind::parse_string(input)?;
 
         // Pre-multiplied types cannot have multipliers.
@@ -251,7 +251,7 @@ impl SyntaxComponent {
         Ok(SyntaxComponent { kind, multiplier })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.kind.to_css(dest)?;
         match self.multiplier {
             Multiplier::None => Ok(()),
@@ -259,16 +259,11 @@ impl SyntaxComponent {
             Multiplier::Space => dest.write_char(b'+'),
         }
     }
-
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone — replace with DeepClone trait/derive
-        self.clone()
-    }
 }
 
 /// A [syntax component component name](https://drafts.css-houdini.org/css-properties-values-api/#supported-names).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SyntaxComponentKind {
+pub(crate) enum SyntaxComponentKind {
     /// A `<length>` component.
     Length,
     /// A `<number>` component.
@@ -307,7 +302,7 @@ pub enum SyntaxComponentKind {
 }
 
 impl SyntaxComponentKind {
-    pub fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponentKind, ()> {
+    pub(crate) fn parse_string(input: &mut &[u8]) -> Result<SyntaxComponentKind, ()> {
         // https://drafts.css-houdini.org/css-properties-values-api/#consume-syntax-component
         *input = strings::trim_left(*input, SPACE_CHARACTERS);
         if strings::starts_with_char(*input, b'<') {
@@ -356,7 +351,7 @@ impl SyntaxComponentKind {
         }
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             SyntaxComponentKind::Length => dest.write_str("<length>"),
             SyntaxComponentKind::Number => dest.write_str("<number>"),
@@ -374,11 +369,6 @@ impl SyntaxComponentKind {
             SyntaxComponentKind::CustomIdent => dest.write_str("<custom-ident>"),
             SyntaxComponentKind::Literal(l) => dest.write_str(&l[..]),
         }
-    }
-
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // TODO(port): css.implementDeepClone — replace with DeepClone trait/derive
-        self.clone()
     }
 }
 
@@ -398,7 +388,7 @@ fn is_name_code_point(c: u8) -> bool {
 // PORT NOTE: no `#[derive]` — payload types lack a common Debug/Clone/PartialEq
 // surface (Image: none; TokenList: Default-only; Ident/CustomIdent: no Eq;
 // Transform: no Debug). Zig has only `deepClone` + `toCss`, mirrored below.
-pub enum ParsedComponent {
+pub(crate) enum ParsedComponent {
     /// A `<length>` value.
     Length(Length),
     /// A `<number>` value.
@@ -439,7 +429,7 @@ pub enum ParsedComponent {
 }
 
 /// A repeated component value.
-pub struct Repeated {
+pub(crate) struct Repeated {
     /// The components to repeat.
     // PERF(port): was arena ArrayList — `Vec` until `'bump` is threaded into BumpVec.
     pub components: Vec<ParsedComponent>,
@@ -448,7 +438,7 @@ pub struct Repeated {
 }
 
 impl Repeated {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: hand-expanded `css.implementDeepClone` (field-wise reflection):
         // ArrayList → Vec deep-cloned per element; `Multiplier` is `Copy`.
         Repeated {
@@ -459,7 +449,7 @@ impl Repeated {
 }
 
 impl ParsedComponent {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             ParsedComponent::Length(v) => v.to_css(dest),
             ParsedComponent::Number(v) => CSSNumberFns::to_css(*v, dest),
@@ -489,7 +479,7 @@ impl ParsedComponent {
         }
     }
 
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: hand-expanded `css.implementDeepClone` (variant-wise reflection).
         // Payload signatures aren't yet uniform across the crate (some `deep_clone()`
         // take no arena, some take `&Arena`, some are `Copy`), so the `#[derive(DeepClone)]`
@@ -527,7 +517,7 @@ impl ParsedComponent {
 /// A [multiplier](https://drafts.css-houdini.org/css-properties-values-api/#multipliers) for a
 /// [SyntaxComponent](SyntaxComponent). Indicates whether and how the component may be repeated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Multiplier {
+pub(crate) enum Multiplier {
     /// The component may not be repeated.
     None,
     /// The component may repeat one or more times, separated by spaces.

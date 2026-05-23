@@ -21,7 +21,7 @@ pub type IndexInt = u32;
 /// Zig `anytype` → `@truncate` adaptor for [`Index::source`]/[`Index::part`].
 /// Callers pass both `u32` and `usize`; this truncates wider inputs the way
 /// Zig's `@as(Int, @truncate(num))` does.
-pub trait IntoIndexInt {
+pub(crate) trait IntoIndexInt {
     fn into_index_int(self) -> IndexInt;
 }
 impl IntoIndexInt for u32 {
@@ -148,7 +148,7 @@ const _: () = assert!(Ref::NONE.is_empty());
 // Different parts of the bundler use different formats of the symbol table.
 // In the parser you only have one array, and .sourceIndex() is ignored.
 // In the bundler, you have a 2D array where both parts of the ref are used.
-pub trait SymbolTable {
+pub(crate) trait SymbolTable {
     fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol;
 }
 
@@ -184,7 +184,7 @@ impl Ref {
 }
 
 // Zig: `DumpImplData` + `dumpImpl` — formatter wrapper returned by `Ref.dump`.
-pub struct RefDump<'a> {
+pub(crate) struct RefDump<'a> {
     ref_: Ref,
     symbol: &'a symbol::Symbol,
 }

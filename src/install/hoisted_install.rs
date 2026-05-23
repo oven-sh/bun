@@ -29,7 +29,7 @@ use crate::package_manager_task as Task;
 /// `RunTasksCallbacks` impl for the hoisted-install loop. Mirrors the Zig
 /// anonymous-struct call shape `{ .onExtract = installEnqueuedPackagesAfterExtraction,
 /// .onResolve = {}, ... }` with `Ctx == *PackageInstaller`.
-pub struct HoistedRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
+pub(crate) struct HoistedRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
 
 impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     type Ctx = PackageInstaller<'a>;
@@ -57,7 +57,7 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
 }
 
 // TODO(port): narrow error set
-pub fn install_hoisted_packages(
+pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
     ctx: Command::Context,
     workspace_filters: &[WorkspaceFilter],

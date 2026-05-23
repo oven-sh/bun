@@ -1126,7 +1126,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 }
 
 #[derive(strum::IntoStaticStr, Debug)]
-pub enum OnResultRowError {
+pub(crate) enum OnResultRowError {
     ShortRead,
     JSError,
 }

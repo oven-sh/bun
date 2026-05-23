@@ -171,7 +171,7 @@ pub fn s3_error_to_js(
 /// Like `to_js` but populates the error's stack trace with async frames from
 /// the given promise's await chain. Use when rejecting from an HTTP
 /// callback at the top of the event loop.
-pub fn s3_error_to_js_with_async_stack(
+pub(crate) fn s3_error_to_js_with_async_stack(
     err: &S3Error,
     global_object: &JSGlobalObject,
     path: Option<&[u8]>,

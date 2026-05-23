@@ -43,7 +43,7 @@ pub struct FileRoute {
     has_content_range_header: bool,
 }
 
-pub struct InitOptions<'a> {
+pub(crate) struct InitOptions<'a> {
     pub server: Option<AnyServer>,
     pub status_code: u16, // default 200
     pub headers: Option<&'a FetchHeaders>,

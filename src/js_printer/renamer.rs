@@ -9,7 +9,7 @@ use bun_ast::lexer_tables::{
     self as js_lexer, KEYWORDS as Keywords, STRICT_MODE_RESERVED_WORDS as StrictModeReservedWords,
 };
 use bun_ast::symbol;
-use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace};
+use bun_ast::symbol::SlotNamespace;
 use bun_ast::{Ref, Symbol};
 use bun_collections::hive_array::Fallback as HiveArrayFallback;
 use bun_collections::{HashMap, StringHashMap, VecExt};
@@ -57,7 +57,7 @@ const SLOT_NAMESPACES: [SlotNamespace; 4] = [
 /// allocation on insert and no free on the per-scope drop in the renamer's
 /// pool walkback. Same shape as Zig's `StringHashMapUnmanaged([]const u8, u32)`.
 #[derive(Clone, Copy)]
-pub struct NameKey(NameStr);
+pub(crate) struct NameKey(NameStr);
 
 impl NameKey {
     #[inline]
@@ -93,9 +93,10 @@ impl core::borrow::Borrow<[u8]> for NameKey {
 /// `bun_wyhash::BuildHasher` matches `StringHashMap` so the renamer keeps its
 /// existing hash quality; `NameKey` is a `Copy` lifetime-erased slice so insert
 /// never heap-allocates a key copy and drop never frees one.
-pub type NameCountMap = bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
+pub(crate) type NameCountMap =
+    bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
 
-pub struct NoOpRenamer<'a> {
+pub(crate) struct NoOpRenamer<'a> {
     // PORT NOTE: Zig `Symbol.Map` is a non-owning `BabyList(BabyList(Symbol))`
     // slice header passed by value (renamer.zig:2,126,452 — no `deinit` ever
     // frees it). In the Rust port `symbol::Map` is `Vec<Vec<Symbol>>` (owning).
@@ -113,16 +114,16 @@ pub struct NoOpRenamer<'a> {
 }
 
 impl<'a> NoOpRenamer<'a> {
-    pub fn init(symbols: symbol::Map, source: &'a bun_ast::Source) -> NoOpRenamer<'a> {
+    pub(crate) fn init(symbols: symbol::Map, source: &'a bun_ast::Source) -> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 
     #[inline]
-    pub fn original_name(&self, ref_: Ref) -> &[u8] {
+    pub(crate) fn original_name(&self, ref_: Ref) -> &[u8] {
         self.name_for_symbol(ref_)
     }
 
-    pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
+    pub(crate) fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         if ref_.is_source_contents_slice() {
             return &self.source.contents[ref_.source_index() as usize
                 ..(ref_.source_index() + ref_.inner_index()) as usize];
@@ -140,7 +141,7 @@ impl<'a> NoOpRenamer<'a> {
         }
     }
 
-    pub fn to_renamer(&mut self) -> Renamer<'_, 'a> {
+    pub(crate) fn to_renamer(&mut self) -> Renamer<'_, 'a> {
         Renamer::NoOpRenamer(self)
     }
 }
@@ -186,7 +187,7 @@ impl<'r, 'src> Renamer<'r, 'src> {
 // storage). No explicit deinit needed.
 
 #[derive(Clone, Copy)]
-pub struct SymbolSlot {
+pub(crate) struct SymbolSlot {
     // Most minified names are under 15 bytes
     // Instead of allocating a string for every symbol slot
     // We can store the string inline!
@@ -207,16 +208,16 @@ impl Default for SymbolSlot {
     }
 }
 
-pub type SymbolSlotList = EnumMap<symbol::SlotNamespace, Vec<SymbolSlot>>;
+pub(crate) type SymbolSlotList = EnumMap<symbol::SlotNamespace, Vec<SymbolSlot>>;
 
 #[derive(Clone, Copy, Default)]
-pub struct InlineString {
+pub(crate) struct InlineString {
     pub bytes: [u8; 15],
     pub len: u8,
 }
 
 impl InlineString {
-    pub fn init(str_: &[u8]) -> InlineString {
+    pub(crate) fn init(str_: &[u8]) -> InlineString {
         let mut this = InlineString {
             len: u8::try_from(str_.len().min(15)).expect("int cast"),
             ..Default::default()
@@ -233,20 +234,20 @@ impl InlineString {
     // do not make this *const or you will run into memory bugs.
     // we cannot let the compiler decide to copy this struct because
     // that would cause this to become a pointer to stack memory.
-    pub fn slice(&mut self) -> &[u8] {
+    pub(crate) fn slice(&mut self) -> &[u8] {
         &self.bytes[0..self.len as usize]
     }
 }
 
 #[derive(Clone, Copy)]
-pub enum TinyString {
+pub(crate) enum TinyString {
     InlineString(InlineString),
     // Arena-owned slice when len > 15 (allocated from `MinifyRenamer.arena`).
     String(NameStr),
 }
 
 impl TinyString {
-    pub fn init(input: &[u8], arena: &Bump) -> Result<TinyString, bun_alloc::AllocError> {
+    pub(crate) fn init(input: &[u8], arena: &Bump) -> Result<TinyString, bun_alloc::AllocError> {
         if input.len() <= 15 {
             Ok(TinyString::InlineString(InlineString::init(input)))
         } else {
@@ -259,7 +260,7 @@ impl TinyString {
     // do not make this *const or you will run into memory bugs.
     // we cannot let the compiler decide to copy this struct because
     // that would cause this to become a pointer to stack memory.
-    pub fn slice(&mut self) -> &[u8] {
+    pub(crate) fn slice(&mut self) -> &[u8] {
         match self {
             TinyString::InlineString(s) => s.slice(),
             // `StoreStr::slice` centralises the arena-backed deref; the payload
@@ -290,7 +291,7 @@ impl Drop for MinifyRenamer {
 
 // TODO(port): Zig used `std.HashMapUnmanaged(Ref, usize, RefCtx, 80)` —
 // bun_collections::HashMap should be parameterized with RefCtx hasher.
-pub type TopLevelSymbolSlotMap = HashMap<Ref, usize>;
+pub(crate) type TopLevelSymbolSlotMap = HashMap<Ref, usize>;
 
 impl MinifyRenamer {
     pub fn init(
@@ -501,109 +502,6 @@ impl MinifyRenamer {
     }
 }
 
-pub fn assign_nested_scope_slots(
-    module_scope: &js_ast::Scope,
-    symbols: &mut [Symbol],
-) -> js_ast::SlotCounts {
-    let mut slot_counts = js_ast::SlotCounts::default();
-    let mut sorted_members: Vec<u32> = Vec::new();
-
-    // Temporarily set the nested scope slots of top-level symbols to valid so
-    // they aren't renamed in nested scopes. This prevents us from accidentally
-    // assigning nested scope slots to variables declared using "var" in a nested
-    // scope that are actually hoisted up to the module scope to become a top-
-    // level symbol.
-    let valid_slot: u32 = 0;
-    for member in module_scope.members.values() {
-        symbols[member.ref_.inner_index() as usize].nested_scope_slot = valid_slot;
-    }
-    for ref_ in module_scope.generated.slice() {
-        symbols[ref_.inner_index() as usize].nested_scope_slot = valid_slot;
-    }
-
-    for child in module_scope.children.slice() {
-        // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
-        slot_counts.union_max(assign_nested_scope_slots_helper(
-            &mut sorted_members,
-            child,
-            symbols,
-            js_ast::SlotCounts::default(),
-        ));
-    }
-
-    // Then set the nested scope slots of top-level symbols back to zero. Top-
-    // level symbols are not supposed to have nested scope slots.
-    for member in module_scope.members.values() {
-        symbols[member.ref_.inner_index() as usize].nested_scope_slot = INVALID_NESTED_SCOPE_SLOT;
-    }
-    for ref_ in module_scope.generated.slice() {
-        symbols[ref_.inner_index() as usize].nested_scope_slot = INVALID_NESTED_SCOPE_SLOT;
-    }
-
-    slot_counts
-}
-
-pub fn assign_nested_scope_slots_helper(
-    sorted_members: &mut Vec<u32>,
-    scope: &js_ast::Scope,
-    symbols: &mut [Symbol],
-    slot_to_copy: js_ast::SlotCounts,
-) -> js_ast::SlotCounts {
-    let mut slot = slot_to_copy;
-
-    // Sort member map keys for determinism
-    {
-        sorted_members.clear();
-        sorted_members.extend(scope.members.values().map(|m| m.ref_.inner_index()));
-        let sorted_members_buf = sorted_members.as_mut_slice();
-        sorted_members_buf.sort_unstable();
-
-        // Assign slots for this scope's symbols. Only do this if the slot is
-        // not already assigned. Nested scopes have copies of symbols from parent
-        // scopes and we want to use the slot from the parent scope, not child scopes.
-        for &inner_index in sorted_members_buf.iter() {
-            let symbol = &mut symbols[inner_index as usize];
-            let ns = symbol.slot_namespace();
-            if ns != symbol::SlotNamespace::MustNotBeRenamed && symbol.nested_scope_slot().is_none()
-            {
-                symbol.nested_scope_slot = slot.slots[ns];
-                slot.slots[ns] += 1;
-            }
-        }
-    }
-
-    for ref_ in scope.generated.slice() {
-        let symbol = &mut symbols[ref_.inner_index() as usize];
-        let ns = symbol.slot_namespace();
-        if ns != symbol::SlotNamespace::MustNotBeRenamed && symbol.nested_scope_slot().is_none() {
-            symbol.nested_scope_slot = slot.slots[ns];
-            slot.slots[ns] += 1;
-        }
-    }
-
-    // Labels are always declared in a nested scope, so we don't need to check.
-    if let Some(ref_) = scope.label_ref {
-        let symbol = &mut symbols[ref_.inner_index() as usize];
-        let ns = symbol::SlotNamespace::Label;
-        symbol.nested_scope_slot = slot.slots[ns];
-        slot.slots[ns] += 1;
-    }
-
-    // Assign slots for the symbols of child scopes
-    let mut slot_counts = slot;
-    for child in scope.children.slice() {
-        // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
-        slot_counts.union_max(assign_nested_scope_slots_helper(
-            sorted_members,
-            child,
-            symbols,
-            slot,
-        ));
-    }
-
-    slot_counts
-}
-
 #[derive(Clone, Copy)]
 pub struct StableSymbolCount {
     pub stable_source_index: u32,
@@ -611,7 +509,7 @@ pub struct StableSymbolCount {
     pub count: u32,
 }
 
-pub type StableSymbolCountArray = Vec<StableSymbolCount>;
+pub(crate) type StableSymbolCountArray = Vec<StableSymbolCount>;
 
 impl StableSymbolCount {
     pub fn less_than(i: &StableSymbolCount, j: &StableSymbolCount) -> Ordering {
@@ -938,14 +836,14 @@ pub struct NumberScope {
     pub name_counts: NameCountMap,
 }
 
-pub enum NameUse {
+pub(crate) enum NameUse {
     Unused,
     SameScope(u32),
     Used,
 }
 
 impl NameUse {
-    pub fn find(this: &NumberScope, name: &[u8]) -> NameUse {
+    pub(crate) fn find(this: &NumberScope, name: &[u8]) -> NameUse {
         // This version doesn't allocate
         #[cfg(debug_assertions)]
         debug_assert!(js_lexer::is_identifier(name));
@@ -987,7 +885,7 @@ impl NameUse {
     }
 }
 
-pub enum UnusedName {
+pub(crate) enum UnusedName {
     NoCollision,
     Renamed(NameStr),
 }

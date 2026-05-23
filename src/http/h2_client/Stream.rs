@@ -100,7 +100,7 @@ impl Stream {
 /// half-closes one side; both, or any RST_STREAM, transitions to `.closed`.
 #[repr(u8)] // PORT NOTE: was enum(u2)
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum State {
+pub(crate) enum State {
     Open,
     /// We have written END_STREAM; no more DATA may be queued.
     HalfClosedLocal,

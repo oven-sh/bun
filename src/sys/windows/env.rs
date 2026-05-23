@@ -5,12 +5,13 @@ use bun_alloc::AllocError;
 /// After running `convert_env_to_wtf8`, the pointers in `std.os.environ` will point into this buffer.
 // PORTING.md §Global mutable state: written exactly once at program startup
 // before any threads are spawned. RacyCell — startup-only.
-pub static WTF8_ENV_BUF: bun_core::RacyCell<Option<&'static [u8]>> = bun_core::RacyCell::new(None);
+pub(crate) static WTF8_ENV_BUF: bun_core::RacyCell<Option<&'static [u8]>> =
+    bun_core::RacyCell::new(None);
 /// `convert_env_to_wtf8` will set this to the original value of `std.os.environ`.
 // SAFETY: written exactly once at program startup before any threads are
 // spawned. Stored as a raw (ptr, len) pair (no `&mut` aliasing assertion);
 // `None` means "unset".
-pub static ORIG_ENVIRON: bun_core::RacyCell<Option<(*mut *mut c_char, usize)>> =
+pub(crate) static ORIG_ENVIRON: bun_core::RacyCell<Option<(*mut *mut c_char, usize)>> =
     bun_core::RacyCell::new(None);
 
 static ENV_CONVERTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

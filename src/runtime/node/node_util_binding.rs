@@ -8,7 +8,7 @@ use crate::node::util::validators;
 use bun_dotenv::env_loader as envloader;
 
 #[bun_jsc::host_fn]
-pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
     if arguments.is_empty() {
@@ -24,12 +24,18 @@ pub fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 #[bun_jsc::host_fn]
-pub fn etimedout_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn etimedout_error_code(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     Ok(JSValue::js_number_from_int32(-UV_E::TIMEDOUT))
 }
 
 #[bun_jsc::host_fn]
-pub fn enobufs_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn enobufs_error_code(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     Ok(JSValue::js_number_from_int32(-UV_E::NOBUFS))
 }
 
@@ -42,7 +48,7 @@ pub fn enobufs_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsRes
 /// extractedSplitNewLines = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
 /// ```
 #[bun_jsc::host_fn]
-pub fn extracted_split_new_lines_fast_path_strings_only(
+pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -122,14 +128,14 @@ fn split(
     bun_string_jsc::to_js_array(global, OwnedString::as_raw_slice(&lines))
 }
 
-pub struct SplitNewlineIterator<'a, T> {
+pub(crate) struct SplitNewlineIterator<'a, T> {
     buffer: &'a [T],
     index: Option<usize>,
 }
 
 impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     /// Returns a slice of the next field, or null if splitting is complete.
-    pub fn next(&mut self) -> Option<&'a [T]> {
+    pub(crate) fn next(&mut self) -> Option<&'a [T]> {
         let start = self.index?;
 
         if let Some(delim_start) = self.buffer[start..]
@@ -149,7 +155,7 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
 }
 
 #[bun_jsc::host_fn]
-pub fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let input = frame.argument(0);
     // `defer str.deref()` — `from_js` returns +1; OwnedString releases on Drop.
     let str = OwnedString::new(BunString::from_js(input, global)?);

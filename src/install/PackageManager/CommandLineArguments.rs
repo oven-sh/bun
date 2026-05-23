@@ -558,7 +558,7 @@ impl AuditLevel {
 }
 
 #[derive(Copy, Clone, Default)]
-pub enum PatchOpts {
+pub(crate) enum PatchOpts {
     #[default]
     Nothing,
     Patch,
@@ -568,7 +568,7 @@ pub enum PatchOpts {
 }
 
 #[derive(Default, Copy, Clone)]
-pub struct Omit {
+pub(crate) struct Omit {
     pub dev: bool,
     pub optional: bool,
     pub peer: bool,

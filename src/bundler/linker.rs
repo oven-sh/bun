@@ -33,9 +33,6 @@ pub enum CSSResolveError {
 }
 bun_core::named_error_set!(CSSResolveError);
 
-pub type OnImportCallback =
-    fn(resolve_result: &resolver::Result, import_record: &mut ImportRecord, origin: &URL<'_>);
-
 type HashedFileNameMap = HashMap<u64, &'static [u8]>;
 
 // PORT NOTE: `_transpiler.Transpiler.isCacheEnabled` is gated in the draft body
@@ -68,7 +65,7 @@ pub struct Linker {
     pub plugin_runner: Option<*mut dyn PluginResolver>,
 }
 
-pub const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
+pub(crate) const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
 
 #[derive(Default)]
 pub struct TaggedResolution {
@@ -91,7 +88,7 @@ pub struct TaggedResolution {
 // fallback under a `LazyLock` instead — same lifetime semantics
 // (process-static, never freed), just not BSS-backed. Swap to the macro once
 // the crate-level feature flag lands.
-pub type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
+pub(crate) type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
 
 /// `Send + Sync` newtype around the leaked `BSSStringList` heap allocation so
 /// it can sit inside a `LazyLock`. The underlying list serializes its own

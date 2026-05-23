@@ -17,7 +17,7 @@ const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 // const-generic-dependent type alias in stable Rust, so `to_time_ms` is split
 // into `to_time_ms_i64` / `to_time_ms_f64` and called from the appropriate
 // branch in `stat_to_js`. Diff readers should expect this reshape.
-pub struct StatType<const BIG: bool> {
+pub(crate) struct StatType<const BIG: bool> {
     pub value: PosixStat,
 }
 
@@ -29,7 +29,7 @@ impl<const BIG: bool> StatType<BIG> {
     // via the global allocator), so no explicit `new`/`deinit` methods are needed.
 
     #[inline]
-    pub fn init(stat_: &PosixStat) -> Self {
+    pub(crate) fn init(stat_: &PosixStat) -> Self {
         Self { value: *stat_ }
     }
 
@@ -89,11 +89,11 @@ impl<const BIG: bool> StatType<BIG> {
         stat_.birthtim
     }
 
-    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Self::stat_to_js(&self.value, global)
     }
 
-    pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_constructor(global: &JSGlobalObject) -> JSValue {
         if BIG {
             Bun__JSBigIntStatsObjectConstructor(global)
         } else {
@@ -215,7 +215,10 @@ pub type StatsBig = StatType<true>;
 /// statToJS path, so regression tests can exercise high-inode values without
 /// a filesystem that hands them out.
 #[bun_jsc::host_fn]
-pub fn create_stats_for_ino(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn create_stats_for_ino(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let [ino_arg, big_arg] = frame.arguments_as_array::<2>();
     // SAFETY: all-zero is a valid PosixStat (repr(C) POD with no NonNull/NonZero fields).
     let mut stat_: PosixStat = bun_core::ffi::zeroed();

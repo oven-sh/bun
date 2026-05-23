@@ -6,7 +6,7 @@ use bun_alloc::ArenaVecExt as _;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
 #[derive(Default)]
-pub struct FallbackHandler {
+pub(crate) struct FallbackHandler {
     pub color: Option<usize>,
     pub text_shadow: Option<usize>,
     // TODO: add these back plz
@@ -19,7 +19,7 @@ pub struct FallbackHandler {
 }
 
 impl FallbackHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut css::DeclarationList,
@@ -156,7 +156,7 @@ impl FallbackHandler {
         false
     }
 
-    pub fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         _dest: &mut css::DeclarationList,
         _context: &mut css::PropertyHandlerContext,

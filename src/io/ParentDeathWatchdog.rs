@@ -381,7 +381,7 @@ extern "C" fn on_process_exit() {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
-pub fn kill_descendants() {
+pub(crate) fn kill_descendants() {
     #[cfg(unix)]
     {
         let self_pid = getpid();
@@ -434,10 +434,6 @@ pub fn kill_descendants() {
     }
 }
 
-/// Linux-only: enumerate our direct children into `out`. Used by `spawnPosix`
-/// to snapshot pre-existing siblings before arming subreaper, so the post-wait
-/// `kill_subreaper_adoptees` can tell adopted orphans apart from `Bun.spawn`
-/// siblings (both have ppid==us). Returns the slice written; empty on
 /// non-Linux or enumeration failure.
 pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -452,14 +448,6 @@ pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
     }
 }
 
-/// Linux-only: SIGKILL every direct child of ours that isn't in `siblings`,
-/// plus its entire subtree. Called from `spawnPosix`'s defer *before*
-/// disarming subreaper, so subreaper-adopted setsid daemons (ppid==us) are
-/// killed while we can still find them — closing the window where the
-/// daemon's intermediate parent exits between disarm and `on_process_exit` →
-/// `kill_descendants()` and the daemon escapes to init.
-///
-/// `siblings` is the pre-arm `snapshot_children()` set; anything not in it was
 /// either the script (already reaped) or adopted via subreaper during this
 /// spawnSync. A `Bun.spawn` from a Worker thread *during* spawnSync would
 /// also land here and be killed — `--no-orphans` is opt-in aggressive cleanup

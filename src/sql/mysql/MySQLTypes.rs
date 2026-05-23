@@ -360,14 +360,8 @@ impl FieldType {
 // Deleted per PORTING.md — `*_jsc` re-export alias; callers in Rust import
 // `bun_sql_jsc::mysql::mysql_value::Value` directly.
 
-pub type MySQLInt8 = Int1;
-pub type MySQLInt16 = Int2;
-pub type MySQLInt24 = Int3;
-pub type MySQLInt32 = Int4;
-pub type MySQLInt64 = Int8;
-pub type Int1 = u8;
-pub type Int2 = u16;
-// TODO(port): Zig `u24` — Rust has no native u24. Aliased to u32 here; wire-protocol
+pub(crate) type MySQLInt32 = Int4;
+pub(crate) type MySQLInt64 = Int8;
 // encode/decode sites must mask/read exactly 3 bytes. Verify all Int3 users do so.
 pub type Int3 = u32;
 pub type Int4 = u32;

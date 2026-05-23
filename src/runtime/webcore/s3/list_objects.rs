@@ -45,7 +45,7 @@ struct ObjectOwner<'a> {
     display_name: Option<&'a [u8]>,
 }
 
-pub struct S3ListObjectsContents<'a> {
+pub(crate) struct S3ListObjectsContents<'a> {
     key: &'a [u8],
     // Zig: ?bun.ptr.OwnedIn([]const u8, MaybeOwned(DefaultAllocator)) —
     // i.e. a maybe-owned slice. Cow<'a, [u8]> is the direct equivalent.
@@ -60,7 +60,7 @@ pub struct S3ListObjectsContents<'a> {
 
 // Zig deinit only freed `etag` when owned; Cow handles that in Drop.
 
-pub struct S3ListObjectsV2Result<'a> {
+pub(crate) struct S3ListObjectsV2Result<'a> {
     pub name: Option<&'a [u8]>,
     pub prefix: Option<&'a [u8]>,
     pub key_count: Option<i64>,
@@ -79,7 +79,7 @@ pub struct S3ListObjectsV2Result<'a> {
 // by Drop on Vec / Cow; no explicit Drop impl needed.
 
 impl<'a> S3ListObjectsV2Result<'a> {
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let js_result = JSValue::create_empty_object(global_object, 0);
 
         js_result.put_optional_utf8(global_object, b"name", self.name)?;

@@ -57,7 +57,7 @@ use crate::server::html_bundle;
 // existing port discrepancy, not addressed by the dedup.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit, debug_name = "JSBundleCompletionTask")]
-pub struct JSBundleCompletionTask {
+pub(crate) struct JSBundleCompletionTask {
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
     // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
@@ -108,7 +108,7 @@ unsafe impl Send for JSBundleCompletionTask {}
 
 /// `BundleV2.createAndScheduleCompletionTask` — construct, take a process-keepalive
 /// ref, and hand the task to the bundle-thread singleton.
-pub fn create_and_schedule_completion_task(
+pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,

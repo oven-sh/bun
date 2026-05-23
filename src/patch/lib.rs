@@ -32,7 +32,7 @@ const PAGE_SIZE: usize = 16384;
 // original patch file text. The port generally avoids struct lifetimes, but
 // this parser's whole output is borrowed; raw `*const [u8]` everywhere would
 // be worse.
-pub enum PatchFilePart<'a> {
+pub(crate) enum PatchFilePart<'a> {
     FilePatch(Box<FilePatch<'a>>),
     FileDeletion(Box<FileDeletion<'a>>),
     FileCreation(Box<FileCreation<'a>>),
@@ -543,7 +543,7 @@ impl<'a> FileDeets<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct PatchMutationPart<'a> {
+pub(crate) struct PatchMutationPart<'a> {
     pub ty: PartType,
     pub lines: Vec<&'a [u8]>,
     /// This technically can only be on the last part of a hunk
@@ -553,7 +553,7 @@ pub struct PatchMutationPart<'a> {
 /// Ensure context, insertion, deletion values are in sync with HunkLineType enum
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default, strum::IntoStaticStr)]
-pub enum PartType {
+pub(crate) enum PartType {
     #[default]
     Context = 0,
     Insertion,
@@ -563,13 +563,13 @@ pub enum PartType {
 // Zig `PatchMutationPart.deinit` only freed `lines` → Drop is automatic.
 
 #[derive(Default)]
-pub struct Hunk<'a> {
+pub(crate) struct Hunk<'a> {
     pub header: Header,
     pub parts: Vec<PatchMutationPart<'a>>,
 }
 
 #[derive(Copy, Clone)]
-pub struct HeaderRange {
+pub(crate) struct HeaderRange {
     pub start: u32,
     pub len: u32,
 }
@@ -596,7 +596,7 @@ impl Header {
 // Zig `Hunk.deinit` only freed owned fields → Drop is automatic.
 
 impl<'a> Hunk<'a> {
-    pub fn verify_integrity(&self) -> bool {
+    pub(crate) fn verify_integrity(&self) -> bool {
         let mut original_length: usize = 0;
         let mut patched_length: usize = 0;
 
@@ -626,17 +626,17 @@ impl<'a> Hunk<'a> {
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FileMode {
+pub(crate) enum FileMode {
     NonExecutable = 0o644,
     Executable = 0o755,
 }
 
 impl FileMode {
-    pub fn to_bun_mode(self) -> sys::Mode {
+    pub(crate) fn to_bun_mode(self) -> sys::Mode {
         sys::Mode::try_from(self as u32).expect("int cast")
     }
 
-    pub fn from_u32(mode: u32) -> Option<FileMode> {
+    pub(crate) fn from_u32(mode: u32) -> Option<FileMode> {
         match mode {
             0o644 => Some(FileMode::NonExecutable),
             0o755 => Some(FileMode::Executable),
@@ -649,20 +649,20 @@ impl FileMode {
 // FileRename / FileModeChange / FilePatch / FileDeletion / FileCreation
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct FileRename<'a> {
+pub(crate) struct FileRename<'a> {
     pub from_path: &'a [u8],
     pub to_path: &'a [u8],
 }
 // Does not allocate — no Drop needed.
 
-pub struct FileModeChange<'a> {
+pub(crate) struct FileModeChange<'a> {
     pub path: &'a [u8],
     pub old_mode: FileMode,
     pub new_mode: FileMode,
 }
 // Does not allocate — no Drop needed.
 
-pub struct FilePatch<'a> {
+pub(crate) struct FilePatch<'a> {
     pub path: &'a [u8],
     pub hunks: Vec<Hunk<'a>>,
     pub before_hash: Option<&'a [u8]>,
@@ -670,7 +670,7 @@ pub struct FilePatch<'a> {
 }
 // Zig `deinit` freed hunks + bun.destroy(this) → Drop on Box<FilePatch> handles both.
 
-pub struct FileDeletion<'a> {
+pub(crate) struct FileDeletion<'a> {
     pub path: &'a [u8],
     pub mode: FileMode,
     pub hunk: Option<Box<Hunk<'a>>>,
@@ -678,7 +678,7 @@ pub struct FileDeletion<'a> {
 }
 // Zig `deinit` freed hunk + bun.destroy(this) → Drop on Box<FileDeletion> handles both.
 
-pub struct FileCreation<'a> {
+pub(crate) struct FileCreation<'a> {
     pub path: &'a [u8],
     pub mode: FileMode,
     pub hunk: Option<Box<Hunk<'a>>>,
@@ -687,7 +687,7 @@ pub struct FileCreation<'a> {
 // Zig `deinit` freed hunk + bun.destroy(this) → Drop on Box<FileCreation> handles both.
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PatchFilePartKind {
+pub(crate) enum PatchFilePartKind {
     FilePatch,
     FileDeletion,
     FileCreation,

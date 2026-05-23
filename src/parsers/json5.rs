@@ -128,7 +128,7 @@ pub enum Error {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, Debug)]
-pub enum AddToLogError {
+pub(crate) enum AddToLogError {
     OutOfMemory,
     StackOverflow,
 }

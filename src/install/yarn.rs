@@ -36,7 +36,7 @@ use bun_sys::Fd;
 // `'a` here is the BORROW_PARAM classification applied to slice fields. Verify the few
 // owned slices (specs inner strings, file, git_repo_name) don't need `Box<[u8]>` instead.
 
-pub struct YarnLock<'a> {
+pub(crate) struct YarnLock<'a> {
     pub entries: Vec<Entry<'a>>,
 }
 
@@ -328,13 +328,13 @@ impl<'a> Entry<'a> {
 }
 
 impl<'a> YarnLock<'a> {
-    pub fn init() -> YarnLock<'a> {
+    pub(crate) fn init() -> YarnLock<'a> {
         YarnLock {
             entries: Vec::new(),
         }
     }
 
-    pub fn parse(&mut self, content: &'a [u8]) -> Result<(), Error> {
+    pub(crate) fn parse(&mut self, content: &'a [u8]) -> Result<(), Error> {
         // TODO(port): narrow error set
         let mut lines = strings::split(content, b"\n");
         let mut current_entry: Option<Entry<'a>> = None;
@@ -679,7 +679,7 @@ struct VersionInfo {
     yarn_idx: usize,
 }
 
-pub fn migrate_yarn_lockfile<'a>(
+pub(crate) fn migrate_yarn_lockfile<'a>(
     this: &'a mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,

@@ -2,7 +2,7 @@ use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 
 use bun_sql::mysql::protocol::error_packet::{ErrorPacket, MySQLErrorOptions};
 
-pub fn create_mysql_error(
+pub(crate) fn create_mysql_error(
     global: &JSGlobalObject,
     message: &[u8],
     options: &MySQLErrorOptions,
@@ -29,7 +29,7 @@ pub fn create_mysql_error(
     Ok(opts_obj)
 }
 
-pub trait ErrorPacketJsc {
+pub(crate) trait ErrorPacketJsc {
     fn to_js(&self, global: &JSGlobalObject) -> JSValue;
 }
 

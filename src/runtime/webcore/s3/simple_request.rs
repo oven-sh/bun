@@ -29,7 +29,7 @@ use crate::webcore::s3::list_objects;
 // reshaping proves cleaner.
 
 #[derive(Default)]
-pub struct S3StatSuccess<'a> {
+pub(crate) struct S3StatSuccess<'a> {
     pub size: usize,
     /// etag is not owned and need to be copied if used after this callback
     pub etag: &'a [u8],
@@ -96,14 +96,14 @@ pub enum S3ListObjectsResult<'a> {
 }
 
 // commit result also fails if status 200 but with body containing an Error
-pub enum S3CommitResult<'a> {
+pub(crate) enum S3CommitResult<'a> {
     Success,
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
 }
 
 // commit result also fails if status 200 but with body containing an Error
-pub enum S3PartResult<'a> {
+pub(crate) enum S3PartResult<'a> {
     Etag(&'a [u8]),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -171,7 +171,7 @@ impl Default for S3HttpSimpleTask {
 // Re-export the canonical alias so sibling modules that imported it from here keep compiling.
 pub use bun_jsc::JsTerminatedResult;
 
-pub enum Callback {
+pub(crate) enum Callback {
     Stat(fn(S3StatResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
     Download(fn(S3DownloadResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
     Upload(fn(S3UploadResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
@@ -182,7 +182,7 @@ pub enum Callback {
 }
 
 impl Callback {
-    pub fn fail(
+    pub(crate) fn fail(
         &self,
         code: &[u8],
         message: &[u8],
@@ -203,7 +203,7 @@ impl Callback {
         Ok(())
     }
 
-    pub fn not_found(
+    pub(crate) fn not_found(
         &self,
         code: &[u8],
         message: &[u8],
@@ -525,10 +525,10 @@ impl Drop for S3HttpSimpleTask {
 // names for the request-options struct (`Options`, `S3RequestOptions`, `S3SimpleRequestOptions`)
 // and two for the callback enum. Alias them here so the call sites compile without churn.
 pub type Options<'a> = S3SimpleRequestOptions<'a>;
-pub type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
-pub type S3Callback = Callback;
+pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
+pub(crate) type S3Callback = Callback;
 
-pub struct S3SimpleRequestOptions<'a> {
+pub(crate) struct S3SimpleRequestOptions<'a> {
     // signing options
     pub path: &'a [u8],
     pub method: Method,
@@ -566,7 +566,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
     }
 }
 
-pub fn execute_simple_s3_request(
+pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     options: S3SimpleRequestOptions<'_>,
     callback: Callback,

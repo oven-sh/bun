@@ -33,7 +33,7 @@ mod production_body;
 pub use bake_body::{PatternBuffer, UserOptions, print_warning};
 
 /// All bake JSC references go through this re-export of `bun_jsc`.
-pub(crate) mod jsc {
+pub mod jsc {
     /// `jsc.API.JSBundler.Plugin` — the C++ `BunPlugin` FFI handle. The
     /// canonical opaque struct lives in `bun_bundler::bundle_v2::api::JSBundler`
     /// (T5) and is re-exported through `crate::api::js_bundler` so the
@@ -44,7 +44,6 @@ pub(crate) mod jsc {
     pub(crate) use bun_jsc::debugger::DebuggerId;
 }
 
-/// export default { app: ... };
 pub const API_NAME: &str = "app";
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -118,7 +117,7 @@ impl Default for ReactFastRefresh {
 // body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`). Spec
 // `Style` has a `deinit()` (FrameworkRouter.zig), so it was never trivially
 // copyable.
-pub struct FileSystemRouterType {
+pub(crate) struct FileSystemRouterType {
     pub root: Cow<'static, [u8]>,
     pub prefix: Cow<'static, [u8]>,
     pub entry_client: Option<Cow<'static, [u8]>>,
@@ -493,7 +492,7 @@ impl Framework {
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]
-pub struct SplitBundlerOptions {
+pub(crate) struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
     pub plugin: Option<NonNull<jsc::Plugin>>,
@@ -627,7 +626,7 @@ pub struct BuildConfigSubset {
 /// Canonical definition; `bake_body::HmrRuntime` re-exports this
 /// (`pub use super::HmrRuntime;`) so `bake_body::get_hmr_runtime` returns the
 /// same nominal type IncrementalGraph names via `crate::bake::HmrRuntime`.
-pub struct HmrRuntime {
+pub(crate) struct HmrRuntime {
     /// Spec bake.zig:841 is `[:0]const u8` — NUL-terminated; the sentinel is
     /// load-bearing where this buffer is handed to JSC/C++ as a C string.
     pub code: &'static bun_core::ZStr,
@@ -673,12 +672,12 @@ pub mod framework_router {
     /// generated trampolines. The Rust port maps that to a trait object
     /// (`&mut dyn InsertionHandler`); this is the `wrap` shim only, kept so
     /// callsites read `InsertionContext::wrap(&mut ctx)` like the spec.
-    pub enum InsertionContext {}
+    pub(crate) enum InsertionContext {}
     impl InsertionContext {
         /// Zig: `InsertionContext.wrap(T, ptr)` — comptime vtable generation.
         /// Port: thin shim over the trait-object form (`&mut dyn InsertionHandler`).
         #[inline]
-        pub fn wrap<T: InsertionHandler>(ctx: &mut T) -> &mut dyn InsertionHandler {
+        pub(crate) fn wrap<T: InsertionHandler>(ctx: &mut T) -> &mut dyn InsertionHandler {
             ctx
         }
     }

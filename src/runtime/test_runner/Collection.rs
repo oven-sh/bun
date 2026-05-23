@@ -30,7 +30,7 @@ pub struct Collection {
     pub filter_buffer: Vec<u8>,
 }
 
-pub struct QueuedDescribe {
+pub(crate) struct QueuedDescribe {
     callback: DeprecatedStrong, // jsc.Strong.Deprecated
     /// Raw cursor into `Collection.root_scope`'s tree. Stored as `NonNull` (not `&DescribeScope`)
     /// because `Collection::active_scope_mut()` hands out `&mut` to the same node while these

@@ -57,13 +57,7 @@ pub mod impl_ {
         type VendorPrefix = VendorPrefix;
     }
 
-    pub mod local_identifier {
-        use super::*;
-        #[inline]
-        pub fn from_ident(ident: Ident) -> IdentOrRef {
-            IdentOrRef::from_ident(ident)
-        }
-    }
+    pub mod local_identifier {}
 }
 
 // ported from: src/css/selectors/

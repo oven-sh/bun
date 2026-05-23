@@ -4,7 +4,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Echo {
+pub(crate) struct Echo {
     /// The fully-rendered output (joined argv + optional trailing newline).
     /// Kept on the state so the async IOWriter path can borrow it across
     /// yields.
@@ -21,7 +21,7 @@ enum State {
 }
 
 impl Echo {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let output = {
             let bltn = Builtin::of(interp, cmd);
             let argc = bltn.args_slice().len();
@@ -103,7 +103,7 @@ impl Echo {
         Builtin::done(interp, cmd, 0)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,

@@ -269,7 +269,7 @@ impl Comparator {
     }
 }
 
-pub struct ComparatorFormatter<'a> {
+pub(crate) struct ComparatorFormatter<'a> {
     pub buffer: &'a [u8],
     pub comparator: &'a Comparator,
 }

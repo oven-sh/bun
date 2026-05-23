@@ -74,6 +74,19 @@ test("pretty-printed output has no dangling separators around skipped passes", (
   );
 });
 
+test("pretty-printed output has no dangling separators when the rule has declarations", () => {
+  // The non-final pass prints the rule's own declaration block but defers its
+  // prefixed nested rule to the final pass, so the separator between the
+  // declarations and the nested rules must not be emitted for that pass.
+  const output = prefixTest(":fullscreen { color: green; :fullscreen { color: red } }", "", safari8);
+  expect(output).toBe(
+    ":-webkit-full-screen {\n  color: green;\n}\n\n" +
+      ":fullscreen {\n  color: green;\n}\n\n" +
+      ":-webkit-full-screen :-webkit-full-screen {\n  color: red;\n}\n\n" +
+      ":fullscreen :fullscreen {\n  color: red;\n}\n",
+  );
+});
+
 test("bun build --target=browser does not blow up on deeply nested prefixed selectors", async () => {
   // Mirrors the fuzzer input: deeply nested `:fullscreen` blocks. The default
   // browser targets (safari 14) require the `-webkit-` prefix for

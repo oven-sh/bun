@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_rules::{CssRuleList, Location, MinifyContext};
+use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
 use crate::declaration::DeclarationBlock;
 use crate::error::MinifyErr;
 use crate::selectors::selector;
@@ -230,8 +230,6 @@ impl<R> StyleRule<R> {
             self.rules.to_css(dest)?;
             helpers_end(dest, has_declarations)?;
         } else {
-            helpers_end(dest, has_declarations)?;
-            helpers_newline(self, dest, supports_nesting, len)?;
             // This rule is serialized once per vendor prefix, and each pass
             // re-serializes the nested rules. Nested style rules that carry
             // their own vendor prefixes override `dest.vendor_prefix`, so they
@@ -240,7 +238,20 @@ impl<R> StyleRule<R> {
             // they would be duplicated once per ancestor prefix, which grows
             // exponentially with nesting depth.
             let saved_skip = dest.skip_prefixed_nested_rules;
-            dest.skip_prefixed_nested_rules = saved_skip || !is_final_prefix_pass;
+            let skip_prefixed_nested = saved_skip || !is_final_prefix_pass;
+            // Whether any nested rule is emitted in this pass; if not, don't
+            // write the separator between the declarations and the nested
+            // rules (nothing would follow it).
+            let has_nested_output = !skip_prefixed_nested
+                || self.rules.v.iter().any(|rule| {
+                    !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
+                });
+
+            helpers_end(dest, has_declarations)?;
+            if has_nested_output {
+                helpers_newline(self, dest, supports_nesting, len)?;
+            }
+            dest.skip_prefixed_nested_rules = skip_prefixed_nested;
             // Zig: dest.withContext(&this.selectors, this, struct { fn toCss(...) }.toCss)
             // Rust `with_context` keeps the (closure-data, fn) split so the
             // `Printer` reborrow lives only inside `func`.

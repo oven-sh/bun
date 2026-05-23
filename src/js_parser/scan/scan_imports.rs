@@ -339,15 +339,22 @@ impl<'a> ImportScanner<'a> {
                             .chain(star_binding)
                             .chain(item_bindings)
                         {
+                            // Only report source-level re-declarations: `ReplaceWithNew`
+                            // links the import to the symbol that took over the scope
+                            // member, while generated symbols (e.g. JSX runtime imports)
+                            // link the other way.
+                            let symbol = &p.symbols[name_ref.inner_index() as usize];
+                            let link = symbol.link.get();
+                            if !link.is_valid() {
+                                continue;
+                            }
                             // SAFETY: arena-owned slice valid for 'p.
-                            let name = p.symbols[name_ref.inner_index() as usize]
-                                .original_name
-                                .slice();
+                            let name = symbol.original_name.slice();
                             let member = p
                                 .module_scope()
                                 .get_member_with_hash(name, js_ast::Scope::get_member_hash(name));
                             if let Some(member) = member {
-                                if !member.ref_.eql(name_ref) {
+                                if member.ref_.eql(link) {
                                     p.log().add_symbol_already_declared_error(
                                         p.source, name, member.loc, import_loc,
                                     );

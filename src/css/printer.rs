@@ -144,6 +144,13 @@ pub struct Printer<'a> {
     // TODO(port): lifetime — ctx is set to a stack-local during with_context() and restored
     // after; `&'a StyleContext<'a>` will not borrow-check there. May need raw `*const StyleContext`.
     pub ctx: Option<&'a css::StyleContext<'a>>,
+    /// Number of parent-selector substitutions performed for `&` while
+    /// serializing the current rule prelude with compiled nesting (targets
+    /// without CSS nesting support). Reset per prelude in
+    /// `StyleRule::to_css_base` and bounded in `serialize::serialize_nesting`
+    /// so deeply nested rules with multiple `&` references per level cannot
+    /// expand exponentially.
+    pub nesting_expansions: u32,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,
     pub import_info: Option<ImportInfo<'a>>,
@@ -310,6 +317,7 @@ impl<'a> Printer<'a> {
             in_calc: false,
             css_module: None,
             ctx: None,
+            nesting_expansions: 0,
             error_kind: None,
         }
     }

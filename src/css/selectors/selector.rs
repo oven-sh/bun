@@ -1361,12 +1361,33 @@ pub mod serialize {
         Ok(())
     }
 
+    /// Maximum number of parent-selector substitutions allowed while
+    /// serializing a single rule prelude with compiled nesting.
+    ///
+    /// When the targets don't support CSS nesting, every `&` is replaced with
+    /// the parent selector, which may itself contain `&` referring to the
+    /// grandparent, and so on. A selector with multiple `&` references per
+    /// nesting level therefore expands to (references per level)^depth copies
+    /// of its ancestors, so a few KB of deeply nested input can print
+    /// gigabytes of output. Real-world nesting needs at most a handful of
+    /// substitutions per rule; anything past this limit is a runaway
+    /// expansion, so bail out with an error instead of allocating without
+    /// bound.
+    const MAX_NESTING_EXPANSIONS: u32 = 65_536;
+
     pub fn serialize_nesting(
         dest: &mut Printer,
         context: Option<&StyleContext>,
         first: bool,
     ) -> Result<(), PrintErr> {
         if let Some(ctx) = context {
+            dest.nesting_expansions += 1;
+            if dest.nesting_expansions > MAX_NESTING_EXPANSIONS {
+                return dest.new_error(
+                    crate::error::PrinterErrorKind::maximum_nesting_expansion,
+                    None,
+                );
+            }
             // If there's only one simple selector, just serialize it directly.
             // Otherwise, use an :is() pseudo class.
             // Type selectors are only allowed at the start of a compound selector,

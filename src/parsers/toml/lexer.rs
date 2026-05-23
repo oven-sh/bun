@@ -834,10 +834,24 @@ impl<'a> Lexer<'a> {
                         self.step();
                     }
                     self.identifier = self.raw();
-                    self.token = KEYWORDS
-                        .get(self.identifier)
-                        .copied()
-                        .unwrap_or(T::t_identifier);
+                    // TOML 1.0.0 float values: `inf` and `nan` become numeric
+                    // literals (they need `self.number` set, which the static
+                    // KEYWORDS map can't express). The signed forms `+inf` /
+                    // `-inf` / `+nan` / `-nan` are handled by the existing
+                    // `t_plus` / `t_minus` arms in the parser, which consume a
+                    // following `t_numeric_literal`.
+                    self.token = if self.identifier == b"inf" {
+                        self.number = f64::INFINITY;
+                        T::t_numeric_literal
+                    } else if self.identifier == b"nan" {
+                        self.number = f64::NAN;
+                        T::t_numeric_literal
+                    } else {
+                        KEYWORDS
+                            .get(self.identifier)
+                            .copied()
+                            .unwrap_or(T::t_identifier)
+                    };
                 }
 
                 _ => self.unexpected()?,

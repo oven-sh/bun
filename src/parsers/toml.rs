@@ -342,7 +342,9 @@ impl<'a> TOML<'a> {
             T::t_identifier => {
                 // Per TOML 1.0.0, values must be quoted strings, booleans,
                 // numbers, dates/times, or inf/nan. Bare identifiers are not
-                // values — `true`/`false` have their own token kinds above.
+                // values — `true`/`false`/`inf`/`nan` have their own token
+                // kinds above (the lexer rewrites `inf` / `nan` into
+                // `t_numeric_literal` with `f64::INFINITY` / `f64::NAN`).
                 self.lexer.expected_string(b"value")?;
                 Err(bun_core::err!("SyntaxError"))
             }

@@ -125,6 +125,19 @@ test("Bun.TOML.parse still accepts true/false as bare values (#31250)", () => {
   expect(Bun.TOML.parse("a = true\nb = false")).toEqual({ a: true, b: false });
 });
 
+test("Bun.TOML.parse still accepts inf/nan as bare values (#31250)", () => {
+  // TOML 1.0.0 float values: `inf`, `+inf`, `-inf`, `nan`, `+nan`, `-nan`.
+  // These share the identifier tokenizer but the lexer emits them as numeric
+  // literals, so the parser's `t_identifier` rejection doesn't swallow them.
+  const out = Bun.TOML.parse("a = inf\nb = -inf\nc = +inf\nd = nan\ne = -nan\nf = +nan");
+  expect(out.a).toBe(Infinity);
+  expect(out.b).toBe(-Infinity);
+  expect(out.c).toBe(Infinity);
+  expect(out.d).toBeNaN();
+  expect(out.e).toBeNaN();
+  expect(out.f).toBeNaN();
+});
+
 test("Bun.TOML.parse still accepts quoted @-keys (#31250)", () => {
   // Fixture-style keys like `"@mybigcompany"` must still work — only bare
   // (unquoted) `@` is being rejected.

@@ -4332,8 +4332,9 @@ describe("Bun.Transpiler minify/DCE options", () => {
     it("minify: true + minifyWhitespace: false keeps whitespace", () => {
       const t = new Bun.Transpiler({ minify: true, minifyWhitespace: false });
       const result = t.transformSync("const x = 1;\nconst y = 2;");
-      // Whitespace preserved — expect at least one space or newline
-      expect(result).toMatch(/const\s+\S+\s*=/);
+      // Whitespace minification collapses ` = ` to `=`; with the override it
+      // must stay.
+      expect(result).toContain(" = ");
     });
   });
 });

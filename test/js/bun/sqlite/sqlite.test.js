@@ -1624,6 +1624,7 @@ it("binds blob parameters by copy and rejects statements finalized while binding
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe(
     JSON.stringify({
       blobLength: 256,

@@ -4174,6 +4174,12 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
     // Released once the write completes.
     buf.buffer.transfer();
     expect(buf.buffer.detached).toBe(true);
+
+    // A rejected call must not leave the buffers held either.
+    const other = new Uint8Array(new ArrayBuffer(8));
+    expect(() => fs.writev(fd, [other], "not a position" as any, () => {})).toThrow();
+    other.buffer.transfer();
+    expect(other.buffer.detached).toBe(true);
   } finally {
     closeSync(fd);
   }

@@ -1494,6 +1494,7 @@ impl VectorArrayBuffer {
             views: Vec::new(),
             pinned: false,
         };
+        bun_jsc::validation_scope!(scope, global_object);
         // SAFETY: `out` outlives the call; the callback only dereferences the
         // ctx pointer it is handed.
         let status = unsafe {
@@ -1505,6 +1506,7 @@ impl VectorArrayBuffer {
                 append_buffer_span,
             )
         };
+        scope.assert_exception_presence_matches(status == -1);
         if pin {
             // The C++ side already pinned each backing store; root the views
             // themselves so a getter-returned element that is not reachable

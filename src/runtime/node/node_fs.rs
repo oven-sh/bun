@@ -2897,7 +2897,7 @@ pub mod args {
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let buffers = VectorArrayBuffer::from_js(
+            let mut buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| {
                     ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]"))
@@ -2912,6 +2912,9 @@ pub mod args {
                     if pos_value.is_number() {
                         position = Some(pos_value.to_int64() as u64);
                     } else {
+                        // `buffers` never reaches the Unprotect hook on this
+                        // path; drop its element roots and pins here.
+                        buffers.release();
                         return Err(
                             ctx.throw_invalid_arguments(format_args!("position must be a number"))
                         );

@@ -2288,6 +2288,7 @@ server.listen(0, "127.0.0.1", () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
   // "/second" arrived in the same TCP segment as the POST body, after the handler had
   // already torn the connection down. It must never reach the request listener.
   expect(stdout.trim()).toBe('{"seen":["/first","/after"],"after":200}');

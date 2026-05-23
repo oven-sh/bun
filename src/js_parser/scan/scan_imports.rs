@@ -322,8 +322,7 @@ impl<'a> ImportScanner<'a> {
                         st.star_name_loc = None;
                     }
 
-                    // Report import bindings that were re-declared but not elided.
-                    if is_typescript_enabled && !p.redeclared_import_bindings.is_empty() {
+                    if is_typescript_enabled {
                         let default_binding = st
                             .default_name
                             .map(|name| (name.ref_.expect("infallible: ref bound"), name.loc));
@@ -340,20 +339,22 @@ impl<'a> ImportScanner<'a> {
                             .chain(star_binding)
                             .chain(item_bindings)
                         {
-                            // `remove` so a second scan pass doesn't report it again.
-                            if let Some(redeclared_loc) =
-                                p.redeclared_import_bindings.remove(&name_ref)
-                            {
-                                // SAFETY: arena-owned slice valid for 'p.
-                                let name = p.symbols[name_ref.inner_index() as usize]
-                                    .original_name
-                                    .slice();
-                                p.log().add_symbol_already_declared_error(
-                                    p.source,
-                                    name,
-                                    redeclared_loc,
-                                    import_loc,
-                                );
+                            // SAFETY: arena-owned slice valid for 'p.
+                            let name = p.symbols[name_ref.inner_index() as usize]
+                                .original_name
+                                .slice();
+                            let member = p
+                                .module_scope()
+                                .get_member_with_hash(name, js_ast::Scope::get_member_hash(name));
+                            if let Some(member) = member {
+                                if !member.ref_.eql(name_ref) {
+                                    p.log().add_symbol_already_declared_error(
+                                        p.source,
+                                        name,
+                                        member.loc,
+                                        import_loc,
+                                    );
+                                }
                             }
                         }
                     }

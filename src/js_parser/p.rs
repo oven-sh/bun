@@ -432,9 +432,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub enclosing_class_keyword: bun_ast::Range,
     pub import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub is_import_item: RefMap,
-    /// Import bindings replaced by a later declaration (allowed in TS since the
-    /// import may be type-only), mapped to the replacing declaration's location.
-    pub redeclared_import_bindings: HashMap<Ref, bun_ast::Loc>,
     pub named_imports: NamedImportsType<'a>,
     pub named_exports: bun_ast::ast_result::NamedExports,
     pub import_namespace_cc_map: Map<ImportNamespaceCallOrConstruct, bool>,
@@ -4992,12 +4989,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
                             self.symbols[symbol_idx].remove_overwritten_function_declaration = true;
                         }
-
-                        if TYPESCRIPT
-                            && self.symbols[symbol_idx].kind == js_ast::symbol::Kind::Import
-                        {
-                            self.redeclared_import_bindings.insert(existing.ref_, loc);
-                        }
                     }
                     MR::BecomePrivateGetSetPair => {
                         ref_ = existing.ref_;
@@ -9310,7 +9301,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
-            redeclared_import_bindings: Default::default(),
             import_namespace_cc_map: Default::default(),
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),

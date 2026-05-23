@@ -4109,6 +4109,7 @@ it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual({
     bytesRead: 65536,
     viewByteLength: 65536,

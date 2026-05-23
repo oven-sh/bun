@@ -418,6 +418,7 @@ test("Blob constructor copies typed array parts before later parts run user code
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK 68");
   expect(exitCode).toBe(0);
 });

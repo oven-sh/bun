@@ -106,6 +106,11 @@ impl<'a> PatchFile<'a> {
                     }
                 }
                 PatchFilePart::FileRename(file_rename) => {
+                    if !is_safe_patch_path(file_rename.from_path)
+                        || !is_safe_patch_path(file_rename.to_path)
+                    {
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::rename));
+                    }
                     let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
                     let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
 
@@ -210,12 +215,18 @@ impl<'a> PatchFile<'a> {
                     }
                 }
                 PatchFilePart::FilePatch(file_patch) => {
+                    if !is_safe_patch_path(file_patch.path) {
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+                    }
                     // TODO: should we compute the hash of the original file and check it against the on in the patch?
                     if let sys::Result::Err(e) = apply_patch(file_patch, patch_dir, &mut state) {
                         return Some(e.without_path());
                     }
                 }
                 PatchFilePart::FileModeChange(file_mode_change) => {
+                    if !is_safe_patch_path(file_mode_change.path) {
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fchmodat));
+                    }
                     let newmode = file_mode_change.new_mode;
                     let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());
                     #[cfg(unix)]
@@ -1272,11 +1283,18 @@ impl<'a> PatchLinesParser<'a> {
                         self.current_file_patch.before_hash = Some(hashes.0);
                         self.current_file_patch.after_hash = Some(hashes.1);
                     } else if line.starts_with(b"--- ") {
-                        self.current_file_patch.from_path =
-                            Some(strings::trim(&line[b"--- a/".len()..], WHITESPACE));
+                        // The line may be shorter than "--- a/" (e.g. a bare "--- ");
+                        // treat the missing path as empty like the JS implementation's
+                        // `line.slice("--- a/".length)`.
+                        self.current_file_patch.from_path = Some(strings::trim(
+                            line.get(b"--- a/".len()..).unwrap_or_default(),
+                            WHITESPACE,
+                        ));
                     } else if line.starts_with(b"+++ ") {
-                        self.current_file_patch.to_path =
-                            Some(strings::trim(&line[b"+++ b/".len()..], WHITESPACE));
+                        self.current_file_patch.to_path = Some(strings::trim(
+                            line.get(b"+++ b/".len()..).unwrap_or_default(),
+                            WHITESPACE,
+                        ));
                     }
                 }
                 ParserState::ParsingHunks => {

@@ -740,14 +740,60 @@ pub type Context = PriorityQueueContext;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 pub fn normalized_bin_name(name: &[u8]) -> &[u8] {
-    if let Some(i) = name
+    let name = match name
         .iter()
         .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
     {
-        return &name[i + 1..];
+        Some(i) => &name[i + 1..],
+        None => name,
+    };
+
+    // npm's `join('/', key).slice(1)` collapses `.`/`..` to empty; do the same
+    // so the `.bin/<name>` destination cannot resolve outside `.bin/`.
+    if name == b"." || name == b".." {
+        return b"";
     }
 
     name
+}
+
+/// True when a `bin` entry's target value would resolve outside the package
+/// directory (absolute path or `..` traversal). The bin *value* is taken
+/// verbatim from package.json, so without this check a malicious package could
+/// point a bin link at (and chmod) an arbitrary file on disk (the bug class
+/// npm fixed as CVE-2019-16775).
+pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
+    if path::is_absolute(target) {
+        return true;
+    }
+    // Windows drive-relative paths (`C:foo`, `C:..\evil`) are not "absolute"
+    // (no separator after the colon) and their `C:..` component is not a bare
+    // `..`, so they would slip past the depth walk below while still resolving
+    // outside the package directory. A colon in the *first* component can only
+    // be a drive prefix (or an NTFS alternate-data-stream on the leading
+    // segment) — reject it. Colons in later components are left alone so Unix
+    // filenames containing `:` keep working.
+    if target
+        .split(|&b| b == b'/' || b == b'\\')
+        .next()
+        .is_some_and(|first| first.contains(&b':'))
+    {
+        return true;
+    }
+    let mut depth: isize = 0;
+    for component in target.split(|&b| b == b'/' || b == b'\\') {
+        match component {
+            b"" | b"." => {}
+            b".." => {
+                depth -= 1;
+                if depth < 0 {
+                    return true;
+                }
+            }
+            _ => depth += 1,
+        }
+    }
+    false
 }
 
 pub struct Linker<'a> {
@@ -1429,7 +1475,7 @@ impl<'a> Linker<'a> {
                 Tag::File => {
                     let file = self.bin.value.file;
                     let target = file.slice(self.string_buf);
-                    if target.is_empty() {
+                    if target.is_empty() || bin_target_escapes_package_dir(target) {
                         return;
                     }
 
@@ -1474,7 +1520,10 @@ impl<'a> Linker<'a> {
                     let name = named[0].slice(self.string_buf);
                     let normalized_name = normalized_bin_name(name);
                     let target = named[1].slice(self.string_buf);
-                    if normalized_name.is_empty() || target.is_empty() {
+                    if normalized_name.is_empty()
+                        || target.is_empty()
+                        || bin_target_escapes_package_dir(target)
+                    {
                         return;
                     }
                     if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
@@ -1517,7 +1566,10 @@ impl<'a> Linker<'a> {
                         let normalized_bin_dest = normalized_bin_name(bin_dest);
                         let bin_target =
                             self.extern_string_buf[(i + 1) as usize].slice(self.string_buf);
-                        if bin_target.is_empty() || normalized_bin_dest.is_empty() {
+                        if bin_target.is_empty()
+                            || normalized_bin_dest.is_empty()
+                            || bin_target_escapes_package_dir(bin_target)
+                        {
                             i += 2;
                             continue;
                         }
@@ -1557,7 +1609,7 @@ impl<'a> Linker<'a> {
                 Tag::Dir => {
                     let dir = self.bin.value.dir;
                     let target = dir.slice(self.string_buf);
-                    if target.is_empty() {
+                    if target.is_empty() || bin_target_escapes_package_dir(target) {
                         return;
                     }
 

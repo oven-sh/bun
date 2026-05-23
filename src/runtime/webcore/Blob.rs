@@ -78,6 +78,15 @@ pub extern "C" fn blob_store_array_buffer_deallocator(_bytes: *mut c_void, ctx: 
     }
 }
 
+/// WHATWG File API §3.1: a Blob/File `type` is only used when every character
+/// is in the range U+0020 to U+007E; otherwise it is treated as the empty
+/// string. Stricter than `is_all_ascii`: also rejects control characters such
+/// as CR/LF, which would otherwise be stored in `content_type` and written
+/// verbatim into outgoing HTTP headers.
+fn is_valid_blob_type(slice: &[u8]) -> bool {
+    slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub enum ReadBytesResult {
     /// global-allocator-owned by the callback.
@@ -1336,7 +1345,7 @@ impl BlobExt for Blob {
                     }
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
-                    if strings::is_all_ascii(slice) {
+                    if is_valid_blob_type(slice) {
                         self.free_content_type();
                         self.content_type_was_set.set(true);
 
@@ -1775,7 +1784,7 @@ impl BlobExt for Blob {
                     }
                     let content_type_str = content_type.to_slice(global_this)?;
                     let slice = content_type_str.slice();
-                    if strings::is_all_ascii(slice) {
+                    if is_valid_blob_type(slice) {
                         self.free_content_type();
                         self.content_type_was_set.set(true);
                         // SAFETY: see other `mime_type` call sites.
@@ -2107,7 +2116,7 @@ impl BlobExt for Blob {
                     let zig_str = content_type_.get_zig_string(global_this)?;
                     let slicer = zig_str.to_slice();
                     let slice = slicer.slice();
-                    if !strings::is_all_ascii(slice) {
+                    if !is_valid_blob_type(slice) {
                         break 'inner;
                     }
 
@@ -2463,7 +2472,7 @@ impl BlobExt for Blob {
                                 if content_type.is_string() {
                                     let content_type_str = content_type.to_slice(global_this)?;
                                     let slice = content_type_str.slice();
-                                    if !strings::is_all_ascii(slice) {
+                                    if !is_valid_blob_type(slice) {
                                         break 'inner;
                                     }
                                     blob.content_type_was_set.set(true);
@@ -2709,9 +2718,15 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
-            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
-            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`; bytemuck checks align + even-len.
+            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
+            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
+            //
+            // ZIG PARITY: this branch intentionally does NOT `self.detach()` for
+            // `Lifetime::Transfer` — `Blob.zig` `toStringWithBytes` (UTF-16LE arm)
+            // returns without detaching, unlike `toJSONWithBytes`. Any change to
+            // that asymmetry belongs upstream in the Zig source, not here.
+            let buf = &buf[..buf.len() & !1];
             let out =
                 OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
             return out.to_js(global);
@@ -2928,9 +2943,10 @@ impl BlobExt for Blob {
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
-            // BOM::Utf16Le ⇒ buf is UTF-16LE bytes; len is even after BOM strip.
-            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`; bytemuck checks align + even-len.
+            // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
+            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
+            let buf = &buf[..buf.len() & !1];
             let mut out =
                 OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
@@ -3875,6 +3891,25 @@ struct FormDataContext<'a> {
     global_this: &'a JSGlobalObject,
 }
 
+/// WHATWG HTML "multipart/form-data encoding algorithm": percent-encode `"`,
+/// CR and LF in field names and filenames so they cannot terminate the
+/// quoted-string or inject part headers.
+fn escape_form_data_name(bytes: Vec<u8>) -> Box<[u8]> {
+    if !bytes.iter().any(|&b| matches!(b, b'"' | b'\r' | b'\n')) {
+        return bytes.into_boxed_slice();
+    }
+    let mut out = Vec::with_capacity(bytes.len() + 6);
+    for &b in &bytes {
+        match b {
+            b'"' => out.extend_from_slice(b"%22"),
+            b'\r' => out.extend_from_slice(b"%0D"),
+            b'\n' => out.extend_from_slice(b"%0A"),
+            _ => out.push(b),
+        }
+    }
+    out.into_boxed_slice()
+}
+
 impl FormDataContext<'_> {
     pub fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
@@ -3895,7 +3930,7 @@ impl FormDataContext<'_> {
         // the optional allocator. `StringJoiner::push_owned` is the Rust
         // equivalent; `ZigStringSlice::into_vec` moves out the buffer if owned
         // or copies if borrowed (matching Zig's `null`-allocator borrow case).
-        joiner.push_owned(name.to_slice().into_vec().into_boxed_slice());
+        joiner.push_owned(escape_form_data_name(name.to_slice().into_vec()));
 
         match entry {
             FormDataEntry::String(value) => {
@@ -3904,11 +3939,14 @@ impl FormDataContext<'_> {
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                joiner.push_owned(filename.to_slice().into_vec().into_boxed_slice());
+                joiner.push_owned(escape_form_data_name(filename.to_slice().into_vec()));
                 joiner.push_static(b"\"\r\n");
 
-                let content_type: &[u8] = if !blob.content_type_slice().is_empty() {
-                    blob.content_type_slice()
+                let blob_ct = blob.content_type_slice();
+                let content_type: &[u8] = if !blob_ct.is_empty()
+                    && !blob_ct.iter().any(|&b| matches!(b, b'\r' | b'\n'))
+                {
+                    blob_ct
                 } else {
                     b"application/octet-stream"
                 };
@@ -5555,7 +5593,7 @@ pub fn jsdom_file_construct_(
                     if content_type.is_string() {
                         let content_type_str = content_type.to_slice(global_this)?;
                         let slice = content_type_str.slice();
-                        if !strings::is_all_ascii(slice) {
+                        if !is_valid_blob_type(slice) {
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
@@ -5655,7 +5693,7 @@ pub fn construct_bun_file(
                     if file_type.is_string() {
                         let str = file_type.to_slice(global_object)?;
                         let slice = str.slice();
-                        if !strings::is_all_ascii(slice) {
+                        if !is_valid_blob_type(slice) {
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);

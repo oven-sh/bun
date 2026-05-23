@@ -2596,10 +2596,23 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
         };
 
         match field {
-            PlaceholderField::Dir => PathTemplate::write_replacing_slashes_on_windows(
-                writer,
-                if !dir.is_empty() { dir } else { b"." },
-            )?,
+            PlaceholderField::Dir => {
+                if dir.is_empty() {
+                    writer.write_all(b".")?;
+                } else {
+                    // Sanitize leading `..` segments so `[dir]` cannot place output
+                    // above outdir when a source resolves outside `root`.
+                    let mut d: &[u8] = dir;
+                    while matches!(d, [b'.', b'.', b'/' | b'\\', ..]) {
+                        PathTemplate::write_replacing_slashes_on_windows(writer, b"_.._/")?;
+                        d = &d[3..];
+                    }
+                    PathTemplate::write_replacing_slashes_on_windows(
+                        writer,
+                        if d == b".." { b"_.._" } else { d },
+                    )?;
+                }
+            }
             PlaceholderField::Name => {
                 PathTemplate::write_replacing_slashes_on_windows(writer, name)?
             }

@@ -523,6 +523,30 @@ impl Cmd {
                 format_args!("bun: command not found: {}\n", bstr::BStr::new(&first_arg)),
             );
         };
+        // CreateProcessW runs `.bat`/`.cmd` files through `cmd.exe`, which
+        // re-tokenizes the command line with shell metacharacter rules
+        // (BatBadBut). libuv's MSVCRT-style quoting cannot make that safe, so
+        // reject arguments that cmd.exe would reinterpret.
+        if cfg!(windows) && bun_which::is_batch_file(&resolved) {
+            let unsafe_arg: Option<Vec<u8>> = interp
+                .as_cmd(this)
+                .args
+                .iter()
+                .skip(1)
+                .find(|a| bun_which::batch_arg_has_cmd_metachars(&a[..a.len() - 1]))
+                .map(|a| a[..a.len() - 1].to_vec());
+            if let Some(arg) = unsafe_arg {
+                drop(spawn_args);
+                return Builtin::cmd_write_failing_error(
+                    interp,
+                    this,
+                    format_args!(
+                        "bun: refusing to pass argument with cmd.exe special characters to a batch file: {}\n",
+                        bstr::BStr::new(&arg)
+                    ),
+                );
+            }
+        }
         // Replace argv[0] with the resolved absolute path (NUL-terminated for
         // `execve`).
         resolved.push(0);

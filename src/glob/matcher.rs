@@ -37,6 +37,12 @@ struct Brace {
 }
 type BraceStack = BoundedArray<Brace, 10>;
 
+/// Upper bound on brace-branch alternatives explored per `match` call. Sequential
+/// brace groups multiply (`{a,b}{c,d}` = 4 alternatives), so without a cap an
+/// adversarial pattern of ten sequential 10-way groups would explore 10^10
+/// alternatives. Patterns that exceed this budget fail to match.
+const BRACE_BRANCH_BUDGET: u32 = 10_000;
+
 // PORT NOTE: made `pub` — Zig leaks this private type through `pub fn match`; Rust forbids private-in-public.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum MatchResult {
@@ -141,7 +147,15 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
     // PORT NOTE: `BraceStack.init(0) catch unreachable` — zero-length init cannot fail.
     let mut brace_stack = BraceStack::default();
-    let matched = glob_match_impl(&mut state, glob, 0, path, &mut brace_stack);
+    let mut brace_budget = BRACE_BRANCH_BUDGET;
+    let matched = glob_match_impl(
+        &mut state,
+        glob,
+        0,
+        path,
+        &mut brace_stack,
+        &mut brace_budget,
+    );
 
     // TODO: consider just returning a bool
     // return matched != negated;
@@ -170,6 +184,7 @@ fn glob_match_impl(
     glob_start: u32,
     path: &[u8],
     brace_stack: &mut BraceStack,
+    brace_budget: &mut u32,
 ) -> bool {
     'main_loop: while (state.glob_index as usize) < glob.len()
         || (state.path_index as usize) < path.len()
@@ -348,7 +363,7 @@ fn glob_match_impl(
                                     continue 'main_loop;
                                 }
                             }
-                            return match_brace(state, glob, path, brace_stack);
+                            return match_brace(state, glob, path, brace_stack, brace_budget);
                         }
                         b',' => {
                             if state.brace_depth > 0 {
@@ -412,7 +427,13 @@ fn glob_match_impl(
     true
 }
 
-fn match_brace(state: &mut State, glob: &[u8], path: &[u8], brace_stack: &mut BraceStack) -> bool {
+fn match_brace(
+    state: &mut State,
+    glob: &[u8],
+    path: &[u8],
+    brace_stack: &mut BraceStack,
+    brace_budget: &mut u32,
+) -> bool {
     let mut brace_depth: i16 = 0;
     let mut in_brackets = false;
 
@@ -441,6 +462,7 @@ fn match_brace(state: &mut State, glob: &[u8], path: &[u8], brace_stack: &mut Br
                             open_brace_index,
                             branch_index,
                             brace_stack,
+                            brace_budget,
                         ) {
                             return true;
                         }
@@ -449,7 +471,10 @@ fn match_brace(state: &mut State, glob: &[u8], path: &[u8], brace_stack: &mut Br
                 }
             }
             b',' => {
-                if brace_depth == 1 {
+                // A comma inside a `[...]` character class is a class member,
+                // not a branch separator — same `!in_brackets` guard as the
+                // `{`/`}` arms above.
+                if brace_depth == 1 && !in_brackets {
                     if match_brace_branch(
                         state,
                         glob,
@@ -457,6 +482,7 @@ fn match_brace(state: &mut State, glob: &[u8], path: &[u8], brace_stack: &mut Br
                         open_brace_index,
                         branch_index,
                         brace_stack,
+                        brace_budget,
                     ) {
                         return true;
                     }
@@ -485,7 +511,13 @@ fn match_brace_branch(
     open_brace_index: u32,
     branch_index: u32,
     brace_stack: &mut BraceStack,
+    brace_budget: &mut u32,
 ) -> bool {
+    if *brace_budget == 0 {
+        return false;
+    }
+    *brace_budget -= 1;
+
     // exceeded brace depth
     let Ok(()) = brace_stack.push(Brace {
         open_brace_idx: open_brace_index,
@@ -499,7 +531,14 @@ fn match_brace_branch(
     branch_state.glob_index = branch_index;
     branch_state.brace_depth = u8::try_from(brace_stack.len()).expect("int cast");
 
-    let matched = glob_match_impl(&mut branch_state, glob, branch_index, path, brace_stack);
+    let matched = glob_match_impl(
+        &mut branch_state,
+        glob,
+        branch_index,
+        path,
+        brace_stack,
+        brace_budget,
+    );
 
     let _ = brace_stack.pop();
 

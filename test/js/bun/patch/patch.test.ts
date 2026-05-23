@@ -750,6 +750,51 @@ describe("parse", () => {
       },
     });
   });
+
+  // A `---`/`+++` header line can be shorter than "--- a/"/"+++ b/" (no path after the marker).
+  // This used to crash the parser with an out-of-bounds slice.
+  test("does not crash on truncated ---/+++ header lines", () => {
+    for (const truncated of ["+++ ", "--- ", "--- a", "+++ b"]) {
+      expect(removeCapacity(JSON.parse(parse(truncated)))).toEqual({ "parts": { "items": [] } });
+    }
+
+    // a truncated header line falls back to the paths from the `diff --git` line
+    const truncatedHeaderPatch = `diff --git a/banana.ts b/banana.ts\n--- \n+++ \n@@ -1,1 +1,1 @@\n-a\n+b\n`;
+    expect(removeCapacity(JSON.parse(parse(truncatedHeaderPatch)))).toEqual({
+      "parts": {
+        "items": [
+          {
+            "file_patch": {
+              "path": "banana.ts",
+              "hunks": {
+                "items": [
+                  {
+                    "header": { "original": { "start": 1, "len": 1 }, "patched": { "start": 1, "len": 1 } },
+                    "parts": {
+                      "items": [
+                        {
+                          "type": "deletion",
+                          "lines": { "items": ["a"] },
+                          "no_newline_at_end_of_file": false,
+                        },
+                        {
+                          "type": "insertion",
+                          "lines": { "items": ["b"] },
+                          "no_newline_at_end_of_file": false,
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+              "before_hash": null,
+              "after_hash": null,
+            },
+          },
+        ],
+      },
+    });
+  });
 });
 
 const patch = `diff --git a/banana.ts b/banana.ts\nindex 2de83dd..842652c 100644\n--- a/banana.ts\n+++ b/banana.ts\n@@ -1,5 +1,5 @@\n this\n is\n \n-a\n+\n file\n`;

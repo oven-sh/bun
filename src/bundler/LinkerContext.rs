@@ -1550,7 +1550,7 @@ impl SourceMapData {
         let _ = alloc;
         // SAFETY: sole writer to this slot (disjoint by source_index).
         // `Worker::get` (the caller) brackets this in `ast_memory_store.push()/
-        // pop()`, so `AST_HEAP` points at this worker's `MimallocArena` and the
+        // pop()`, so the active `AstAlloc` state is this worker's and the
         // `AstAlloc` route lands the SoA slab + every `columns_for_non_ascii`
         // payload there for bulk-free on `pool.deinit()`.
         unsafe {
@@ -1593,8 +1593,8 @@ impl SourceMapData {
         }
 
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
-        // Allocate from the worker's AST heap (`Worker::get` has set
-        // `AST_HEAP`); ~12.5% escape-expansion slack matches `quote_for_json`'s
+        // Allocate from the worker's AST allocation state (installed by
+        // `Worker::get`); ~12.5% escape-expansion slack matches `quote_for_json`'s
         // heuristic so the writer rarely reallocs. The slack is dropped with
         // the arena at bundle end, and `StringJoiner` only borrows a `&[u8]`
         // view downstream.

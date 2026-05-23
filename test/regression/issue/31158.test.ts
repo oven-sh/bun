@@ -9,10 +9,16 @@
 // check failed every time, `Thread::suspend()` retried forever, and the
 // event loop stopped advancing on the next WASM compile/install.
 //
+// Fixed upstream (oven-sh/WebKit#235) by reading the interrupted thread's
+// SP from the ucontext instead of the handler's own SP — that SP is stable
+// whether the handler runs on the normal stack or the alt stack, so
+// `SA_ONSTACK` no longer matters.
+//
 // Triggers the exact shape of the bug without needing Go installed in CI:
-// force `SA_ONSTACK` onto SIGPWR via `bun:ffi`, then call `dlopen` once
-// more so the repair fires, then compile+call a WASM function (which
-// triggers `resetInstructionCacheOnAllThreads`). Without the fix,
+// force `SA_ONSTACK` onto SIGPWR via `bun:ffi` (same thing Go's cgo
+// `initsig` does to every handler at load time), then compile+call a WASM
+// function (which triggers `resetInstructionCacheOnAllThreads`, the code
+// path that actually suspends the JS thread). Without the fix,
 // `setTimeout` after the WASM call never fires and the child hangs.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isGlibc } from "harness";
@@ -49,12 +55,11 @@ test.skipIf(!isGlibc)(
       view.setInt32(FLAGS_OFFSET, view.getInt32(FLAGS_OFFSET, true) | SA_ONSTACK, true);
       libc.symbols.sigaction(SIGPWR, ptr(buf), null);
 
-      // 2. Trigger a fresh dlopen — the fix clears SA_ONSTACK here.
-      dlopen("libc.so.6", { getpid: { args: [], returns: FFIType.i32 } });
-
-      // 3. Exercise the WASM path that calls resetInstructionCacheOnAllThreads.
+      // 2. Exercise the WASM path that calls resetInstructionCacheOnAllThreads.
       //    The bytes below are a minimal WASM module with one exported function
       //    that loops 10_000 times and returns — enough to trigger compilation.
+      //    SA_ONSTACK is still set at this point; the WTF fix makes the
+      //    handler tolerate it instead of spinning.
       const bytes = new Uint8Array([
         0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 127, 3, 2, 1, 0, 7, 5,
         1, 1, 102, 0, 0, 10, 34, 1, 32, 1, 1, 127, 65, 0, 33, 0, 2, 64, 3, 64,
@@ -64,7 +69,7 @@ test.skipIf(!isGlibc)(
       const inst = new WebAssembly.Instance(new WebAssembly.Module(bytes));
       (inst.exports.f as () => number)();
 
-      // 4. A setTimeout that must fire — the bug makes this hang forever.
+      // 3. A setTimeout that must fire — the bug makes this hang forever.
       await new Promise(r => setTimeout(r, 10));
       console.log("EVENT_LOOP_ALIVE");
     `;

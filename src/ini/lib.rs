@@ -257,6 +257,13 @@ mod draft {
 
     type OOM<T> = Result<T, AllocError>;
 
+    /// Hard cap on dot-separated segments in a section-header rope. The rope is
+    /// consumed by `E::Object::get_or_put_object`, which recurses once per
+    /// `rope.next` link, so an unbounded header overflows the stack. Past the
+    /// cap the remainder of the header (dots included) becomes the final
+    /// segment. Mirrors `MAX_DOTTED_KEY_SEGMENTS` in the TOML parser.
+    const MAX_SECTION_ROPE_SEGMENTS: usize = 512;
+
     // ──────────────────────────────────────────────────────────────────────────
     // Parser
     // ──────────────────────────────────────────────────────────────────────────
@@ -692,6 +699,7 @@ mod draft {
                 // RopeT is *Rope when usage==Section, else unit. In Rust we just
                 // keep an Option<&mut Rope> and ignore it for non-section usages.
                 let mut rope: Option<&'a mut Rope> = None;
+                let mut rope_parts: usize = 0;
 
                 let mut i: usize = 0;
                 'walk: while i < val.len() {
@@ -779,8 +787,10 @@ mod draft {
                                 did_any_escape = true;
                             }
                             b'.' => {
-                                if usage == Usage::Section {
+                                if usage == Usage::Section && rope_parts < MAX_SECTION_ROPE_SEGMENTS
+                                {
                                     self.commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
+                                    rope_parts += 1;
                                 } else {
                                     unesc.push(b'.');
                                 }
@@ -1069,10 +1079,11 @@ mod draft {
                 next: ptr::null_mut(),
             });
 
+            let mut segments: usize = 1;
             while dot_idx + 1 < key.len() {
                 let next_dot_idx = match next_dot(&key[dot_idx + 1..]) {
-                    Some(n) => dot_idx + 1 + n,
-                    None => {
+                    Some(n) if segments < MAX_SECTION_ROPE_SEGMENTS => dot_idx + 1 + n,
+                    _ => {
                         let rest = &key[dot_idx + 1..];
                         let _ = rope_head
                             .append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc)?;
@@ -1082,6 +1093,7 @@ mod draft {
                 let part = &key[dot_idx + 1..next_dot_idx];
                 let _ =
                     rope_head.append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
+                segments += 1;
                 dot_idx = next_dot_idx;
             }
 

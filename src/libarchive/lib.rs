@@ -1309,9 +1309,9 @@ impl Drop for BufferReadStream {
 /// Returns true if the symlink is safe (target stays within extraction dir),
 /// false if it would escape (e.g., via ../ traversal or absolute path).
 ///
-/// The check works by resolving the symlink target relative to the symlink's
-/// directory location using a fake root, then checking if the result stays
-/// within that fake root.
+/// The check works by normalizing `symlink_dir/link_target` as a relative
+/// path with leading `..` preserved; the target is unsafe if the result
+/// climbs above the extraction root.
 #[cfg(unix)]
 fn is_symlink_target_safe(
     symlink_path: &[u8],
@@ -1327,20 +1327,35 @@ fn is_symlink_target_safe(
     // Get the directory containing the symlink
     let symlink_dir = bun_paths::dirname_simple(symlink_path);
 
-    // Use a fake root to resolve the path and check if it escapes
-    let fake_root: &[u8] = b"/packages/";
-
     let join_buf: &mut PathBuffer =
         symlink_join_buf.get_or_insert_with(bun_paths::path_buffer_pool::get);
 
-    let resolved = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Posix>(
-        fake_root,
-        &mut join_buf[..],
-        &[symlink_dir, link_target_bytes],
+    // Normalize symlink_dir/link_target as a relative path. An absolute fake
+    // root cannot be used here: POSIX normalization clamps excess `..` at `/`,
+    // so a target like `../../../packages/x` would normalize back under any
+    // fake root that happens to match a real ancestor directory name.
+    if symlink_dir.len() + 1 + link_target_bytes.len() >= join_buf.len() {
+        return false;
+    }
+    let mut written = 0usize;
+    if !symlink_dir.is_empty() {
+        join_buf[..symlink_dir.len()].copy_from_slice(symlink_dir);
+        written = symlink_dir.len();
+        join_buf[written] = b'/';
+        written += 1;
+    }
+    join_buf[written..written + link_target_bytes.len()].copy_from_slice(link_target_bytes);
+    written += link_target_bytes.len();
+
+    let mut norm_buf = bun_paths::path_buffer_pool::get();
+    let resolved = bun_paths::resolve_path::normalize_string_generic_t::<u8, true, false>(
+        &join_buf[..written],
+        &mut norm_buf[..],
+        b'/',
+        |c| c == b'/',
     );
 
-    // If the resolved path doesn't start with our fake root, it escaped
-    resolved.starts_with(fake_root)
+    !(strings::eql(resolved, b"..") || strings::has_prefix_comptime(resolved, b"../"))
 }
 
 /// Returns true if any leading component of `path` (including the full path)
@@ -1349,7 +1364,7 @@ fn is_symlink_target_safe(
 /// during later `mkdirat`/`openat`/`symlinkat` calls — such entries must be
 /// rejected rather than resolved.
 #[cfg(unix)]
-fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
+pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> bool {
     if created_symlinks.is_empty() {
         return false;
     }
@@ -1358,7 +1373,14 @@ fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>]) -> 
     while end <= path.len() {
         if end == path.len() || path[end] == sep {
             let prefix = &path[..end];
-            if !prefix.is_empty() && created_symlinks.iter().any(|s| s.as_slice() == prefix) {
+            // Compare case-insensitively: on case-insensitive filesystems (APFS
+            // default on macOS) an entry `LINK/x` traverses a symlink stored as
+            // `link`, but a byte-exact compare would miss it.
+            if !prefix.is_empty()
+                && created_symlinks
+                    .iter()
+                    .any(|s| strings::eql_case_insensitive_ascii_check_length(s, prefix))
+            {
                 return true;
             }
         }
@@ -1971,10 +1993,27 @@ impl Archiver {
                             #[cfg(not(windows))]
                             let mode: bun_sys::Mode = bun_sys::Mode::try_from(
                                 // SAFETY: entry valid
-                                lib::Entry::opaque_ref(entry).perm() | 0o666,
+                                (lib::Entry::opaque_ref(entry).perm() & 0o777) | 0o666,
                             )
                             .unwrap();
 
+                            // `path_traverses_created_symlink` is a lexical check: on
+                            // filesystems that alias differently-encoded names (Unicode
+                            // NFC/NFD normalization on APFS/HFS+), a path component can
+                            // reach a created symlink without byte-matching its recorded
+                            // path. Once this extraction has created any symlink, ask the
+                            // kernel to refuse to follow symlinks while opening file
+                            // entries. `NOFOLLOW_ANY` is 0 on non-Darwin targets.
+                            #[cfg(unix)]
+                            let flags = {
+                                let mut flags =
+                                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                                if !created_symlinks.is_empty() {
+                                    flags |= bun_sys::O::NOFOLLOW_ANY;
+                                }
+                                flags
+                            };
+                            #[cfg(not(unix))]
                             let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
 
                             #[cfg(windows)]

@@ -2360,10 +2360,11 @@ impl Data {
     /// Deep-clone this subtree into `bump`.
     ///
     /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…)
-    /// allocate via `AstAlloc`, which reads `thread_heap()`. If a per-parse
-    /// `ASTMemoryAllocator` scope is active that heap is `reset()` while the
-    /// cloned tree (e.g. `WorkspacePackageJSONCache`) still references the
-    /// buffers — UAF. This entry point installs a [`DetachAstHeap`] guard so
+    /// allocate via `AstAlloc`, which reads the thread's active allocation
+    /// state. If a per-parse `ASTMemoryAllocator` scope is active that state
+    /// is bulk-freed while the cloned tree (e.g. `WorkspacePackageJSONCache`)
+    /// still references the buffers — UAF. This entry point installs a
+    /// [`DetachAstHeap`] guard so
     /// those vecs land on global mimalloc. The guard is installed once here
     /// and at [`Expr::deep_clone`]; the recursive body goes through
     /// `*_no_detach` so we don't pay 3 TLS ops per node.

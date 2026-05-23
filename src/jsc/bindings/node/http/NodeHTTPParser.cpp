@@ -392,7 +392,10 @@ int HTTPParser::onHeaderField(const char* at, size_t length)
         if (m_numFields == kMaxHeaderFieldsCount) {
             // ran out of space - flush to javascript land
             flush();
-            RETURN_IF_EXCEPTION(scope, 0);
+            if (scope.exception()) [[unlikely]] {
+                llhttp_set_error_reason(&m_parserData, "HPE_USER:JS Exception");
+                return HPE_USER;
+            }
             m_numFields = 1;
             m_numValues = 0;
         }

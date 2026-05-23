@@ -1993,7 +1993,7 @@ where
             }
         }
 
-        if sec_websocket_key_str.len == 0 {
+        if sec_websocket_key_str.len != 24 {
             return Ok(JSValue::FALSE);
         }
         if sec_websocket_protocol.len > 0 {
@@ -3402,7 +3402,15 @@ where
         }
 
         let authorized = 'brk: {
-            if self.dev_server.is_none() {
+            let Some(dev_server) = self.dev_server.as_deref() else {
+                break 'brk false;
+            };
+
+            // The loopback source-IP check below is not enough on its own: a
+            // DNS-rebound origin connects from 127.0.0.1 but presents the
+            // attacker's hostname in `Host`. Apply the same Host allowlist as
+            // the `/_bun/*` routes before disclosing the project root path.
+            if !bake::is_allowed_dev_host(dev_server, req) {
                 break 'brk false;
             }
 

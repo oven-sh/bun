@@ -259,6 +259,9 @@ pub struct CurrentBundle {
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
     /// boxed allocation's stable address; same erasure as `bv2` above).
     pub heap: Box<bun_alloc::MimallocArena>,
+    /// Backs the small `AstVec`s built during bundle setup
+    /// (`start_async_bundle`'s AST scope); dropped with the bundle.
+    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -1412,6 +1415,126 @@ pub enum DevHandlerId {
     MemoryVisualizer,
 }
 
+/// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
+/// DevTools `/.well-known/...` route. A rebound origin
+/// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
+/// non-loopback / non-IP / non-configured hostnames prevents the attacker's
+/// page from reading bundled source via same-origin fetch.
+pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
+    let Some(host) = req.header(b"host") else {
+        return false;
+    };
+    let host = host_without_port(host);
+    if strings::eql_case_insensitive_ascii(host, b"localhost", true) {
+        return true;
+    }
+    const DOT_LOCALHOST: &[u8] = b".localhost";
+    if host.len() > DOT_LOCALHOST.len()
+        && strings::eql_case_insensitive_ascii(
+            &host[host.len() - DOT_LOCALHOST.len()..],
+            DOT_LOCALHOST,
+            true,
+        )
+    {
+        return true;
+    }
+    let ip = if host.first() == Some(&b'[') && host.last() == Some(&b']') {
+        &host[1..host.len() - 1]
+    } else {
+        host
+    };
+    if strings::is_ip_address(ip) {
+        return true;
+    }
+    if let Some(server) = dev.server.as_ref() {
+        if let crate::server::server_config::Address::Tcp {
+            hostname: Some(h), ..
+        } = &server.config().address
+        {
+            return strings::eql_case_insensitive_ascii(host, h.as_bytes(), true);
+        }
+    }
+    false
+}
+
+/// `host[":" port]` / `"[" v6 "]" [":" port]` → host (brackets retained for IPv6).
+/// Malformed authorities (missing `]`, empty or non-numeric port, trailing
+/// garbage) yield an empty slice so callers fail closed.
+fn host_without_port(host: &[u8]) -> &[u8] {
+    let (host, rest) = if host.first() == Some(&b'[') {
+        match strings::index_of_scalar(host, b']') {
+            Some(end) => (&host[..=end], &host[end + 1..]),
+            None => return b"",
+        }
+    } else {
+        match strings::last_index_of_char(host, b':') {
+            Some(colon) => (&host[..colon], &host[colon..]),
+            None => (host, &host[host.len()..]),
+        }
+    };
+    match rest {
+        [] => host,
+        [b':', port @ ..] if !port.is_empty() && port.iter().all(u8::is_ascii_digit) => host,
+        _ => b"",
+    }
+}
+
+/// Cross-origin guard for the HMR WebSocket. WebSocket handshakes are exempt
+/// from the same-origin policy, so any page the developer visits could open
+/// `ws://localhost:<port>/_bun/hmr` and subscribe to hot-update payloads (the
+/// bundled source) — the browser still sends `Host: localhost`, so
+/// `is_allowed_dev_host` alone does not stop it. Browsers always include an
+/// `Origin` header on WebSocket handshakes; require its host to be the
+/// request's own host or a localhost name. Requests without an `Origin`
+/// header (non-browser clients) are allowed.
+fn is_allowed_dev_origin(req: &Request) -> bool {
+    let Some(origin) = req.header(b"origin") else {
+        return true;
+    };
+    // An origin is `scheme "://" host [":" port]`; opaque origins serialize
+    // to `null` and are rejected here.
+    let Some(scheme_end) = strings::index_of(origin, b"://") else {
+        return false;
+    };
+    let origin_host = host_without_port(&origin[scheme_end + 3..]);
+    if strings::eql_case_insensitive_ascii(origin_host, b"localhost", true) {
+        return true;
+    }
+    const DOT_LOCALHOST: &[u8] = b".localhost";
+    if origin_host.len() > DOT_LOCALHOST.len()
+        && strings::eql_case_insensitive_ascii(
+            &origin_host[origin_host.len() - DOT_LOCALHOST.len()..],
+            DOT_LOCALHOST,
+            true,
+        )
+    {
+        return true;
+    }
+    match req.header(b"host") {
+        Some(host) => {
+            strings::eql_case_insensitive_ascii(origin_host, host_without_port(host), true)
+        }
+        None => false,
+    }
+}
+
+fn host_forbidden(resp: AnyResponse) {
+    resp.corked(move || {
+        resp.write_status(b"403 Forbidden");
+        resp.end(b"Blocked: Host header does not match the dev server", false);
+    });
+}
+
+fn origin_forbidden(resp: AnyResponse) {
+    resp.corked(move || {
+        resp.write_status(b"403 Forbidden");
+        resp.end(
+            b"Blocked: Origin header does not match the dev server",
+            false,
+        );
+    });
+}
+
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
 extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
@@ -1429,6 +1552,9 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
+    if !matches!(ID, DevHandlerId::Request) && !is_allowed_dev_host(dev, req) {
+        return host_forbidden(resp);
+    }
     match ID {
         DevHandlerId::JsRequest => on_js_request(dev, req, resp),
         DevHandlerId::AssetRequest => on_asset_request(dev, req, resp),
@@ -1533,6 +1659,12 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // SAFETY: uWS guarantees `res` is non-null and live for the upgrade
         // callback; `Response<SSL>` is an opaque handle.
         let res = unsafe { &mut *res };
+        if !is_allowed_dev_host(this, req) {
+            return host_forbidden(res.as_any_response());
+        }
+        if !is_allowed_dev_origin(req) {
+            return origin_forbidden(res.as_any_response());
+        }
         let dw = bun_core::heap::into_raw(HmrSocket::new(this, res));
         let _ = this.active_websocket_connections.insert(dw, ());
         let _ = res.upgrade(
@@ -3143,13 +3275,26 @@ impl DevServer {
         // borrows it (self-ref via `CurrentBundle`, see PORT NOTE on
         // `CurrentBundle.bv2`).
         let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
-        // TODO(port): ASTMemoryAllocator scope — bake is an AST crate; arena threading required
+        // Borrows `heap` (Zig parity), so AST nodes built during bundle setup
+        // live exactly as long as the bundle. The arena-allocated allocator
+        // never runs `Drop`; the `AstAllocState` is taken into `CurrentBundle`
+        // on success and recycled by the guard below on error paths.
         let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
-            heap.alloc(bun_ast::ASTMemoryAllocator::default());
+            heap.alloc(bun_ast::ASTMemoryAllocator::borrowing(&heap));
+        struct ReleaseAstState(*mut bun_ast::ASTMemoryAllocator);
+        impl Drop for ReleaseAstState {
+            fn drop(&mut self) {
+                // SAFETY: points at the arena-allocated allocator in `heap`,
+                // which outlives this guard; the `Scope` has already exited.
+                unsafe { (*self.0).release_ast_state() };
+            }
+        }
+        let _release_ast_state = ReleaseAstState(ast_memory_store);
         // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
         // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
-        // and `_ast_scope` is dropped before `bv2` at end of this fn.
-        let _ast_scope = unsafe { &mut *ast_memory_store }.enter();
+        // and `ast_scope` is dropped before `bv2` is moved into
+        // `current_bundle` below.
+        let ast_scope = unsafe { &mut *ast_memory_store }.enter();
 
         // Zig: `.{ .js = dev.vm.eventLoop() }` constructed an `AnyEventLoop`
         // by value; the Rust bundler instead stores
@@ -3227,9 +3372,16 @@ impl DevServer {
             bt
         })?;
         drop(entry_points);
+        // End the AST scope and move its state into the bundle so the small
+        // `AstVec`s built during setup stay alive until the bundle completes.
+        drop(ast_scope);
+        // SAFETY: `ast_memory_store` lives in `heap`; the scope above has
+        // exited, so no `&mut` to the allocator is live.
+        let ast_alloc_state = unsafe { (*ast_memory_store).take_ast_state() };
         self.current_bundle = Some(CurrentBundle {
             bv2,
             heap,
+            ast_alloc_state,
             timer,
             start_data,
             had_reload_event,
@@ -5772,31 +5924,6 @@ impl DevServer {
         emit_edges!(&self.client_graph);
         emit_edges!(&self.server_graph);
         Ok(())
-    }
-
-    pub fn on_web_socket_upgrade<R>(
-        &mut self,
-        res: &mut R,
-        req: &mut Request,
-        upgrade_ctx: &mut WebSocketUpgradeContext,
-        id: usize,
-    ) where
-        R: ResponseLike, // TODO(port): bun_uws::ResponseLike once upstream lands
-    {
-        debug_assert!(id == 0);
-
-        let dw: Box<HmrSocket> = HmrSocket::new(self, res);
-        let dw_ptr: *mut HmrSocket = bun_core::heap::into_raw(dw);
-        self.active_websocket_connections
-            .put_no_clobber(dw_ptr, ())
-            .expect("oom");
-        res.upgrade::<*mut HmrSocket>(
-            dw_ptr,
-            req.header(b"sec-websocket-key").unwrap_or(b""),
-            req.header(b"sec-websocket-protocol").unwrap_or(b""),
-            req.header(b"sec-websocket-extension").unwrap_or(b""),
-            upgrade_ctx,
-        );
     }
 }
 

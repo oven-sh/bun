@@ -52,6 +52,11 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
+/// Maximum buffered inbound message size (128 MB). A server that declares a
+/// larger frame, or whose continuation fragments accumulate past this, fails
+/// the connection with close code 1009 instead of growing `receive_buffer`
+/// without bound.
+const MAX_RECEIVE_MESSAGE_LENGTH: usize = 128 * 1024 * 1024;
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct WebSocket<const SSL: bool> {
@@ -946,6 +951,16 @@ impl<const SSL: bool> WebSocket<SSL> {
                     }
                 }
                 ReceiveState::NeedBody => {
+                    if self
+                        .receive_buffer
+                        .readable_length()
+                        .saturating_add(receive_body_remain)
+                        > MAX_RECEIVE_MESSAGE_LENGTH
+                    {
+                        self.terminate(ErrorCode::MessageTooBig);
+                        terminated = true;
+                        break;
+                    }
                     let to_consume = receive_body_remain.min(data.len());
 
                     let consumed = self.consume(

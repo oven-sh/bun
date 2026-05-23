@@ -87,6 +87,7 @@ pub struct MySQLConnection {
     tls_config: SSLConfig,
     tls_status: TLSStatus,
     ssl_mode: SSLMode,
+    allow_public_key_retrieval: bool,
     flags: ConnectionFlags,
 }
 
@@ -118,6 +119,7 @@ impl Default for MySQLConnection {
             tls_config: SSLConfig::default(),
             tls_status: TLSStatus::None,
             ssl_mode: SSLMode::Disable,
+            allow_public_key_retrieval: false,
             flags: ConnectionFlags::default(),
         }
     }
@@ -138,6 +140,7 @@ impl MySQLConnection {
         tls_config: SSLConfig,
         secure: Option<*mut SslCtx>,
         ssl_mode: SSLMode,
+        allow_public_key_retrieval: bool,
     ) -> Self {
         Self {
             database,
@@ -151,6 +154,7 @@ impl MySQLConnection {
             tls_config,
             secure,
             ssl_mode,
+            allow_public_key_retrieval,
             tls_status: if ssl_mode != SSLMode::Disable {
                 TLSStatus::Pending
             } else {
@@ -702,13 +706,14 @@ impl MySQLConnection {
             self.tls_status = TLSStatus::SslNotAvailable;
 
             match self.ssl_mode {
-                SSLMode::VerifyCa | SSLMode::VerifyFull => {
+                // The server did not advertise CLIENT_SSL. `require` and
+                // stricter must fail rather than silently continue in
+                // plaintext (matches the Postgres driver's TLSNotAvailable
+                // handling).
+                SSLMode::Require | SSLMode::VerifyCa | SSLMode::VerifyFull => {
                     return Err(AnyMySQLError::AuthenticationFailed);
                 }
-                // require behaves like prefer for postgres.js compatibility,
-                // allowing graceful fallback to non-SSL when the server
-                // doesn't support it.
-                SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
+                SSLMode::Prefer | SSLMode::Disable => {}
             }
         }
         // Send auth response
@@ -819,6 +824,15 @@ impl MySQLConnection {
                                     bun_core::scoped_log!(MySQLConnection, "continue auth");
 
                                     if self.tls_status != TLSStatus::SslOk {
+                                        // Over plain TCP, an on-path attacker can answer the
+                                        // public-key request with their own key and recover the
+                                        // password. Match mysql2 / Connector/J: refuse unless the
+                                        // user explicitly opted in.
+                                        if !self.allow_public_key_retrieval {
+                                            return Err(
+                                                AnyMySQLError::PublicKeyRetrievalNotAllowed,
+                                            );
+                                        }
                                         // we are in plain TCP so we need to request the public key
                                         self.set_status(ConnectionState::AuthenticationAwaitingPk);
                                         bun_core::scoped_log!(
@@ -1400,6 +1414,14 @@ impl MySQLConnection {
                     header.decode_internal(reader)?;
                     if header.field_count == 0 {
                         // Can't be 0
+                        return Err(AnyMySQLError::UnexpectedPacket);
+                    }
+                    // field_count is a server-controlled lenenc int (up to 2^64-1) and is
+                    // used below to size a Vec<ColumnDefinition41> (~256 bytes each). MySQL
+                    // hard-caps a result set at 4096 columns (MAX_FIELDS), so anything
+                    // larger is a malformed/hostile packet trying to make us commit
+                    // gigabytes from a ~13-byte response.
+                    if header.field_count > 4096 {
                         return Err(AnyMySQLError::UnexpectedPacket);
                     }
                     if statement.columns.len() as u64 != header.field_count {

@@ -436,14 +436,12 @@ impl<'a> Transpiler<'a> {
         // evaluation pins the store via `DisableStoreReset`, and
         // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
         // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
-        // and `AST_HEAP` belongs to that scope's arena, NOT the side-arena).
-        // If we ran `store_ast_alloc_heap::reset()` there it would (a)
-        // `mi_heap_destroy` whatever side-arena buffers earlier main-thread
-        // transpiles left and (b) clobber `AST_HEAP` to the side-arena's new
-        // heap, so subsequent `AstVec` allocations land in the side-arena
-        // instead of the active `ASTMemoryAllocator` arena and survive its
-        // `enter()` reset → cross-reset UAF (hot.test.ts "Unexpected NUL" /
-        // transpiled `:1:12` coords on aarch64).
+        // and the active `AstAlloc` state belongs to that scope, NOT the
+        // side module). If we ran `store_ast_alloc_heap::reset()` there it
+        // would bulk-free whatever side-state buffers earlier main-thread
+        // transpiles left while `--define`/install still hold `StoreRef`s
+        // into them (and the side module's debug assert that *its* state is
+        // the installed one would fire).
         if !bun_ast::stmt::data::Store::disable_reset()
             && bun_ast::stmt::data::Store::memory_allocator().is_null()
         {

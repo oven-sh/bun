@@ -113,6 +113,7 @@ pub fn mysql_error_to_js(
         "MissingAuthData" => b"ERR_MYSQL_MISSING_AUTH_DATA",
         "FailedToEncryptPassword" => b"ERR_MYSQL_FAILED_TO_ENCRYPT_PASSWORD",
         "InvalidPublicKey" => b"ERR_MYSQL_INVALID_PUBLIC_KEY",
+        "PublicKeyRetrievalNotAllowed" => b"ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED",
         "InvalidState" => b"ERR_MYSQL_INVALID_STATE",
         "JSError" => {
             return global_object.take_exception(JsError::Thrown);

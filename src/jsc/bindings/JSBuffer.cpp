@@ -2385,12 +2385,17 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     }
     if (lengthValue.isUndefined() && offsetValue.isString()) {
         encodingValue = offsetValue;
-        offset = 0;
-        length = castedThis->byteLength();
 
         auto* str = stringValue.toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
         RETURN_IF_EXCEPTION(scope, {});
+        if (castedThis->isDetached()) [[unlikely]] {
+            throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
+            return {};
+        }
+        offset = 0;
+        length = castedThis->byteLength();
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
     } else {
         length = castedThis->byteLength();
@@ -2422,6 +2427,16 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
 
     auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
     RETURN_IF_EXCEPTION(scope, {});
+
+    if (castedThis->isDetached()) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
+        return {};
+    }
+    uint32_t currentByteLength = castedThis->byteLength();
+    if (offset >= currentByteLength)
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(0)));
+    uint32_t currentRemaining = currentByteLength - offset;
+    if (length > currentRemaining) length = currentRemaining;
 
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }

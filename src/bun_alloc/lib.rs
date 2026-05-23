@@ -8,7 +8,7 @@
 // `#[thread_local]` (vs the `thread_local!` macro) compiles to a bare
 // `__thread` slot — single `mov reg, fs:[OFFSET]` access, no `LocalKey`
 // `__getit()` wrapper, no lazy-init flag check, no dtor-registration probe.
-// Used for the per-allocation hot-path TLS in `ast_alloc::AST_ARENA`; matches
+// Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`; matches
 // Zig's `threadlocal var` semantics exactly.
 #![feature(thread_local)]
 

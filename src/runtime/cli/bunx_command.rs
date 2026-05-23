@@ -279,6 +279,21 @@ impl BunxCommand {
     #[cfg(windows)]
     const NANOSECONDS_CACHE_VALID: i128 = (Self::SECONDS_CACHE_VALID as i128) * 1_000_000_000;
 
+    /// `bin` keys (and the `name` fallback) in package.json are command
+    /// names, not paths. The bunx cache lives in a world-writable temp dir,
+    /// so a crafted package.json there could yield a key like
+    /// `../../../../tmp/x` or `/tmp/x`; `bun_which::which` resolves
+    /// slash-containing names against the cwd, escaping `node_modules/.bin`
+    /// and skipping the cache-ownership check before execution. Reject
+    /// anything that isn't a plain file name.
+    fn is_safe_bin_name(name: &[u8]) -> bool {
+        !name.is_empty()
+            && name != b"."
+            && name != b".."
+            && strings::index_of_char(name, b'/').is_none()
+            && strings::index_of_char(name, b'\\').is_none()
+    }
+
     fn get_bin_name_from_subpath(
         transpiler: &mut Transpiler,
         dir_fd: Fd,
@@ -308,7 +323,7 @@ impl BunxCommand {
                     for prop in object.properties.slice() {
                         if let Some(key) = &prop.key {
                             if let Some(bin_name) = key.as_string(&bump) {
-                                if bin_name.is_empty() {
+                                if !Self::is_safe_bin_name(bin_name) {
                                     continue;
                                 }
                                 return Ok(Box::<[u8]>::from(bin_name));
@@ -319,7 +334,16 @@ impl BunxCommand {
                 ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
                         if let Some(name) = name_expr.as_string(&bump) {
-                            return Ok(Box::<[u8]>::from(name));
+                            // A scoped `name` (`@scope/pkg`) is legitimate here;
+                            // the command name is its unscoped portion.
+                            let bin_name = if name.is_empty() {
+                                name
+                            } else {
+                                bun_install::dependency::unscoped_package_name(name)
+                            };
+                            if Self::is_safe_bin_name(bin_name) {
+                                return Ok(Box::<[u8]>::from(bin_name));
+                            }
                         }
                     }
                 }

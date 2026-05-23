@@ -456,14 +456,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
-  // `&'static core::panic::Location` (file/line/col), and the file path is a
-  // separate `&'static str` — together ~180 KB of `.data.rel.ro` across the
-  // crate graph (plus the per-call-site `lea` to load it). Release ships
-  // `panic = "abort"` and the crash handler resolves backtraces from frame
-  // pointers, so the textual location is never printed anyway. Kept for
-  // debug and `release-assertions` where panic messages are read by humans.
-  // Nightly-only flag; the pinned toolchain in `rust-toolchain.toml` is
-  // nightly.
+  // `&'static core::panic::Location` (file/line/col) plus the file-path string
+  // and a per-call-site `lea` to load it — ~320 KB across the crate graph
+  // (measured macOS arm64). Release ships `panic = "abort"` and the crash
+  // handler captures a frame-pointer backtrace that bun.report symbolizes to
+  // file:line server-side, so the panic call site is recoverable from the trace
+  // without embedding the location in the binary — same as the Zig build, which
+  // had ~0 embedded source paths. Kept off for debug and `release-assertions`
+  // where panic messages are read locally. Nightly-only; the pinned toolchain
+  // is nightly.
   if (cfg.release && !cfg.assertions) {
     rustflags.push("-Zlocation-detail=none");
   }

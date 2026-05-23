@@ -1666,9 +1666,6 @@ impl PackageJSON {
                     let js_ast::ExprData::EObject(obj) = &prop.expr.data else {
                         return None;
                     };
-                    if obj.properties.len_u32() == 0 {
-                        return None;
-                    }
                     let mut map = StringArrayHashMap::<&'static [u8]>::default();
                     map.ensure_total_capacity(obj.properties.len_u32() as usize)
                         .ok()?;
@@ -1681,13 +1678,26 @@ impl PackageJSON {
                         else {
                             continue;
                         };
-                        if key.is_empty() {
+                        // Zig `asPropertyStringMap` drops entries where the key
+                        // OR the value is empty (expr.zig: `key.len > 0 and
+                        // value.len > 0`). An empty-valued script
+                        // (`{"scripts":{"build":""}}`) must NOT become a real
+                        // (empty) script — Zig reports "Script not found".
+                        // (npm actually runs empty scripts and exits 0; we
+                        // intentionally diverge here to match released Bun.)
+                        if key.is_empty() || value.is_empty() {
                             continue;
                         }
                         // SAFETY: `key`/`value` borrow `contents_static`; see SAFETY note
                         // on `contents_static` above (owned by the returned PackageJSON).
                         let value: &'static [u8] = unsafe { bun_ptr::detach_lifetime(value) };
                         map.put_assume_capacity(key, value);
+                    }
+                    // Zig returns null when the FILTERED map is empty
+                    // (expr.zig: `if (count == 0) return null;`), not just when
+                    // the raw object had no properties.
+                    if map.is_empty() {
+                        return None;
                     }
                     Some(Box::new(map))
                 };
@@ -3108,28 +3118,50 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
             path = b"";
         }
 
-        match segment.len() {
-            1 => {
-                if segment == b"." {
-                    return Some(segment);
-                }
-            }
-            2 => {
-                if segment == b".." {
-                    return Some(segment);
-                }
-            }
-            12 => {
-                // "node_modules".len
-                if segment == b"node_modules" {
-                    return Some(segment);
-                }
-            }
-            _ => {}
+        if is_invalid_segment(segment) {
+            return Some(segment);
         }
     }
 
     None
+}
+
+// Node's PACKAGE_TARGET_RESOLVE rejects ".", "..", and "node_modules" segments
+// case-insensitively and including percent-encoded variants. Decode the segment
+// before comparing so spellings like "%2e%2e" or ".%2E" cannot survive the check
+// only to be decoded into ".." by `finalize`.
+fn is_invalid_segment(segment: &[u8]) -> bool {
+    let mut decoded = [0u8; 12];
+    let mut len = 0usize;
+    let mut i = 0usize;
+    while i < segment.len() {
+        let b = segment[i];
+        let c = if b == b'%' && i + 2 < segment.len() {
+            match (
+                bun_core::fmt::hex_digit_value(segment[i + 1]),
+                bun_core::fmt::hex_digit_value(segment[i + 2]),
+            ) {
+                (Some(hi), Some(lo)) => {
+                    i += 3;
+                    (hi << 4) | lo
+                }
+                _ => {
+                    i += 1;
+                    b
+                }
+            }
+        } else {
+            i += 1;
+            b
+        };
+        if len == decoded.len() {
+            return false;
+        }
+        decoded[len] = c.to_ascii_lowercase();
+        len += 1;
+    }
+    let d = &decoded[..len];
+    d == b"." || d == b".." || d == b"node_modules"
 }
 
 // ported from: src/resolver/package_json.zig

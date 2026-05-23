@@ -435,7 +435,8 @@ pub mod bcrypt {
         let computed = vendor::bcrypt(u32::from(rounds_log), salt, &buf[..used]);
 
         // Zig: `if (!mem.eql(u8, &hash, expected_hash)) return PasswordVerificationFailed`.
-        if computed[..DK_LENGTH] == expected {
+        // Compare in constant time like the `$2b$` path (BoringSSL `CRYPTO_memcmp`).
+        if bun_boringssl_sys::constant_time_eq(&computed[..DK_LENGTH], &expected) {
             Ok(())
         } else {
             Err(bun_core::err!("PasswordVerificationFailed"))

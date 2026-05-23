@@ -2029,6 +2029,7 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
   expect(stdout).toContain("CODE:ERR_INVALID_HTTP_TOKEN");
   expect(stdout).toContain("NAME:TypeError");
   expect(stdout).not.toContain("NO_ERROR");

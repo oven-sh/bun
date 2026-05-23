@@ -994,6 +994,7 @@ test("node:vm native Module prototype methods reject non-module receivers", asyn
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "getStatus: TypeError
     getStatusCode: TypeError

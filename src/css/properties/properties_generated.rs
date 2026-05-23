@@ -7393,7 +7393,10 @@ impl Property {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::ColorScheme(a), Property::ColorScheme(b)) => css::generic::eql(a, b),
-            (Property::All(_), Property::All(_)) => true,
+            // PORT NOTE: the Zig spec compares only the tag here (`.all => true`),
+            // but `eql` must be value equality — `all: unset` and `all: revert`
+            // are different declarations. Compare the CSS-wide keyword payload.
+            (Property::All(a), Property::All(b)) => a == b,
             (Property::Unparsed(a), Property::Unparsed(b)) => a.eql(b),
             (Property::Custom(a), Property::Custom(b)) => a.eql(b),
             _ => false,

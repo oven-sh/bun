@@ -7470,6 +7470,10 @@ describe("css tests", () => {
       ".foo{unknown-prop:b;unknown-prop:a}",
     );
     minify_test(".foo { unknown-prop: a; } .foo { unknown-prop: b; }", ".foo{unknown-prop:a;unknown-prop:b}");
+    // Different `all:` CSS-wide keywords are not duplicates of each other — the
+    // earlier declaration is a fallback for browsers without `revert` support.
+    minify_test(".foo { all: unset; } .foo { all: revert; }", ".foo{all:unset;all:revert}");
+    minify_test(".foo { all: unset; } .foo { all: unset; }", ".foo{all:unset}");
 
     test("minifying thousands of identical rules stays fast", () => {
       // Same shape as the fuzzer input that hit the hang detector: one rule

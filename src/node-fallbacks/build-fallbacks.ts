@@ -24,9 +24,7 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     externals.splice(i, 1);
   }
 
-  // Build all files at once with specific options. Interpolating the array
-  // makes the shell escape each flag as its own word, so no raw splice is
-  // needed (and `${{ raw: ... }}` is no longer accepted).
+  // Build all files at once with specific options
   const externalModules = builtins
     .concat(moduleFiles.filter(f => f !== name))
     .flatMap(b => [`--external:node:${b}`, `--external:${b}`]);

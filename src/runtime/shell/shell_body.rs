@@ -895,10 +895,8 @@ pub fn handle_template_value(
         }
 
         if template_value.is_object() {
-            // Raw (unescaped) interpolation is gated on a private-symbol brand
-            // that only `Bun.$.raw()` (shell.ts) can set. A string-keyed `raw`
-            // property is forgeable by attacker-shaped data (JSON bodies,
-            // qs-parsed query strings), so it must not opt out of escaping.
+            // Raw (unescaped) interpolation is gated on a private-symbol brand that
+            // only `Bun.$.raw()` can set; a string-keyed `raw` property is forgeable.
             if let Some(raw_str) = template_value.fast_get(global, jsc::BuiltinName::shellRaw)? {
                 let bunstr = OwnedString::new(raw_str.to_bun_string(global)?);
 
@@ -920,9 +918,6 @@ pub fn handle_template_value(
                 return Ok(());
             }
 
-            // Legacy `{ raw: ... }` plain objects used to be spliced in
-            // unescaped. Throw an actionable error instead of either silently
-            // injecting or silently changing the semantics to escaped.
             if template_value.get_own_truthy(global, "raw")?.is_some() {
                 return Err(global
                     .err(

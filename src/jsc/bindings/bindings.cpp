@@ -5204,9 +5204,7 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
         return clientData->builtinNames().cmdPublicName();
     }
     case BuiltinNamesMap::shellRaw: {
-        // Deliberately the *private* name: the brand is stored via
-        // @putByIdDirectPrivate in shell.ts and must not be forgeable from
-        // user JS through an ordinary string-keyed property.
+        // Deliberately the private name: the $.raw() brand must not be forgeable from user JS.
         return clientData->builtinNames().shellRawPrivateName();
     }
     default: {

@@ -342,10 +342,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
   /**
    * Returns an object that interpolates into a shell template literal as raw,
-   * unescaped shell syntax. The string is also stored under a private symbol
-   * that user code cannot read, copy, or forge -- the native side only honors
-   * that private brand, so attacker-shaped plain objects (e.g. JSON bodies or
-   * parsed query strings containing a `raw` key) cannot opt out of escaping.
+   * unescaped shell syntax. The native side only honors the private-symbol
+   * brand set here, so a plain `{ raw }` object cannot opt out of escaping.
    */
   function shellRaw(str) {
     if (typeof str !== "string") {

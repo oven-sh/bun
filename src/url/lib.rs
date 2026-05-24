@@ -116,11 +116,16 @@ pub mod whatwg {
         // to hand C++ only the leading ASCII prefix (latin1-safe).
         let first_non_ascii = strings::first_non_ascii(slice).map_or(slice.len(), |i| i as usize);
         // SAFETY: ptr/len derived from a valid slice prefix; C++ only reads.
-        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
-        if len == 0 {
+        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) } as usize;
+        // `URL__originLength` returns `WTF::URL::pathStart()` — an offset into the
+        // *normalized* URL string, which can be longer than the input before the
+        // path starts (e.g. "http:h" serializes to "http://h/"). Reject offsets
+        // that fall outside the prefix we actually parsed instead of indexing out
+        // of bounds.
+        if len == 0 || len > first_non_ascii {
             return None;
         }
-        Some(&slice[..len as usize])
+        Some(&slice[..len])
     }
 
     impl URL {

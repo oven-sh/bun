@@ -3382,13 +3382,21 @@ impl H2FrameParser {
                 return Ok(self.streams.get().get(&stream_id).copied());
             }
 
-            // RFC 9113 §8.2.1: a request or response carrying a field name or
-            // value with forbidden octets is malformed. Keep decoding the rest
-            // of the block so the HPACK dynamic table stays in sync, but do
-            // not deliver any of its headers to JS; reset the stream instead.
+            // RFC 9113 §8.2.1/§8.3: a request or response carrying a field
+            // name or value with forbidden octets, or an undefined
+            // pseudo-header for its direction, is malformed. Keep decoding the
+            // rest of the block so the HPACK dynamic table stays in sync, but
+            // do not deliver any of its headers to JS; reset the stream
+            // instead.
             if malformed
                 || is_malformed_field_name(header.name)
                 || is_malformed_field_value(header.value)
+                || (header.name.first() == Some(&b':')
+                    && !if self.is_server.get() {
+                        is_valid_request_pseudo_header(header.name)
+                    } else {
+                        is_valid_response_pseudo_header(header.name)
+                    })
             {
                 malformed = true;
             } else if let Some(js_header_name) =

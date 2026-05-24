@@ -248,8 +248,16 @@ fn search_bin_in_path<'a>(
         path
     };
     // `segment` + SEP + `bin` + NUL plus the 4-unit `.exe`/`.cmd`/`.bat`
-    // probe in `search_bin` must all fit in the fixed-size `buf`.
-    if segment.len() + 1 + bin.len() + 5 > buf.len() {
+    // probe in `search_bin` must all fit in the fixed-size `buf`. The UTF-8
+    // byte length is an upper bound on the UTF-16 length, so only compute the
+    // exact UTF-16 length when the cheap byte-length check would reject.
+    if segment.len() + 1 + bin.len() + 5 > buf.len()
+        && bun_core::strings::element_length_utf8_into_utf16(segment)
+            + 1
+            + bun_core::strings::element_length_utf8_into_utf16(bin)
+            + 5
+            > buf.len()
+    {
         return None;
     }
     let segment_utf16 = bun_core::strings::convert_utf8_to_utf16_in_buffer(

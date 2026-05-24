@@ -1819,6 +1819,21 @@ impl Archiver {
                     // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
                     let pathname: &[OSPathChar] = remaining;
 
+                    // PAX / GNU-longname tar entries can carry arbitrarily long
+                    // pathnames. Skip anything that cannot fit in `normalized_buf`
+                    // (plus the trailing NUL) before normalizing — the OS would
+                    // reject the path with ENAMETOOLONG anyway, and
+                    // `normalize_buf_t` would index past the end of the buffer.
+                    if pathname.len() >= normalized_buf.len() {
+                        if options.log {
+                            Output::warn(format_args!(
+                                "Skipping entry with a path longer than the maximum path length: {}\n",
+                                bun_core::fmt::fmt_os_path(pathname, Default::default()),
+                            ));
+                        }
+                        continue;
+                    }
+
                     let normalized = bun_paths::resolve_path::normalize_buf_t::<
                         OSPathChar,
                         bun_paths::platform::Auto,

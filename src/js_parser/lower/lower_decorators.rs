@@ -1184,8 +1184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // one evaluation).
             if prop.flags.contains(Flags::Property::IsComputed)
                 && prop.key.is_some()
-                && (prop.ts_decorators.len_u32() > 0
-                    || prop.kind == PropertyKind::AutoAccessor)
+                && (prop.ts_decorators.len_u32() > 0 || prop.kind == PropertyKind::AutoAccessor)
             {
                 computed_key_counter += 1;
                 let key_name: &'a [u8] = if computed_key_counter == 1 {

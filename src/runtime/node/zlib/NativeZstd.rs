@@ -140,9 +140,7 @@ mod _impl {
 
             // Re-creating the ZSTD_CCtx/DCtx while the worker thread is inside
             // ZSTD_compressStream2/ZSTD_decompressStream would be a data race
-            // on the native state. Bun's own JS only calls init() before any
-            // write (zlib.ts), so this is only reachable by scripts poking at
-            // `_handle` directly.
+            // on the native state.
             if self.write_in_progress.get() {
                 return Err(global
                     .err(

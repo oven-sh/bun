@@ -445,9 +445,8 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             s.set_flush(i32::try_from(flush).expect("int cast"));
         });
 
-        // Apply a params() request that arrived while the previous write was
-        // still on the threadpool. Must be a separate statement (not nested in
-        // the `with_mut` above) and must run before the task is scheduled.
+        // Must be a separate statement (not nested in the `with_mut` above)
+        // and must run before the task is scheduled.
         this.apply_pending_params();
 
         // Only create the strong handle when we have a pending write
@@ -717,8 +716,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         });
         let this_value = callframe.this();
 
-        // Apply a params() request that arrived while a previous async write
-        // was still on the threadpool (legacy `_processChunk` sync path).
         this.apply_pending_params();
 
         this.stream().with_mut(|s| s.do_work());
@@ -1052,8 +1049,6 @@ macro_rules! __impl_compression_stream {
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
             #[inline] fn pending_reset(&self) -> &::core::cell::Cell<bool> { &self.pending_reset }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
-            // Inherent impls win path resolution over the trait method (same
-            // pattern as `Self::do_work(self)` on the Context above).
             #[inline] fn apply_pending_params(&self) { Self::apply_pending_params(self) }
 
             #[inline]

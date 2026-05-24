@@ -186,9 +186,7 @@ mod _impl {
 
             // Re-creating the Brotli encoder/decoder while the worker thread is
             // inside BrotliEncoderCompressStream/BrotliDecoderDecompressStream
-            // would be a data race on the native state. Bun's own JS only calls
-            // init() before any write (zlib.ts), so this is only reachable by
-            // scripts poking at `_handle` directly.
+            // would be a data race on the native state.
             if self.write_in_progress.get() {
                 return Err(global_this
                     .err(

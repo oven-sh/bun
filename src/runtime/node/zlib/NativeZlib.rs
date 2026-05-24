@@ -140,8 +140,6 @@ mod _impl {
 
             // Re-initializing the z_stream while the worker thread is inside
             // deflate()/inflate() would be a data race on the native state.
-            // Bun's own JS only calls init() before any write (zlib.ts), so
-            // this is only reachable by scripts poking at `_handle` directly.
             if self.write_in_progress.get() {
                 return Err(global
                     .err(
@@ -236,15 +234,12 @@ mod _impl {
             let strategy =
                 validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
 
-            // The JS layer legitimately reaches this method while a write is in
-            // flight: writable's `clearBuffer` starts the next buffered write
-            // before `afterWrite` invokes the params flush callback
-            // (writable.ts `clearBuffer` vs `afterWrite`), so the
-            // `paramsAfterFlushCallback` in zlib.ts can land here with
-            // `write_in_progress == true`. Calling `deflateParams` now would
-            // mutate the same z_stream the worker thread is traversing inside
-            // `deflate()`, so defer the request and apply it on the JS thread
-            // at the start of the next write (see `apply_pending_params`).
+            // `paramsAfterFlushCallback` in zlib.ts can legitimately land here
+            // while a write is in flight (writable's `clearBuffer` starts the
+            // next buffered write before `afterWrite` runs the flush callback).
+            // Calling `deflateParams` now would race the worker thread inside
+            // `deflate()`, so defer it to the start of the next write
+            // (see `apply_pending_params`).
             if self.write_in_progress.get() {
                 self.pending_params.set(Some((level, strategy)));
                 return Ok(JSValue::UNDEFINED);
@@ -266,21 +261,12 @@ mod _impl {
         }
 
         /// Apply a `params()` request that was deferred because a write was in
-        /// flight when it arrived.
-        ///
-        /// Only called from `CompressionStream::write`/`write_sync` on the JS
-        /// thread, after the `write_in_progress` guard has passed and
-        /// `set_buffers` has bound the new output buffer — so no other
-        /// `&mut Context` exists, and any block flushed by `deflateParams`'s
-        /// internal `deflate(Z_BLOCK)` lands in (and is accounted against) the
-        /// new write's `avail_out`.
-        ///
-        /// The result is discarded rather than `emit_error`'d: `Z_BUF_ERROR`
+        /// flight when it arrived. Runs after `set_buffers` so the block
+        /// flushed by `deflateParams`'s internal `deflate(Z_BLOCK)` lands in
+        /// the new write's `avail_out`. The result is discarded: `Z_BUF_ERROR`
         /// already means "params silently not applied" on the immediate path,
-        /// `Z_STREAM_ERROR` is only reachable when a caller writes after the
-        /// stream finished (the write itself reports that), and `do_work()`
-        /// overwrites `Context.err` before `check_error` reads it, so a
-        /// discarded failure cannot leak into the write's error reporting.
+        /// and `do_work()` overwrites `Context.err` before `check_error` reads
+        /// it.
         pub(crate) fn apply_pending_params(&self) {
             let Some((level, strategy)) = self.pending_params.take() else {
                 return;

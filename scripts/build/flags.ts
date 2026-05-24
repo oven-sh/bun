@@ -17,6 +17,16 @@ import { slash } from "./shell.ts";
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
 
+/**
+ * Main-thread stack size for darwin executables (18 MB — JSC's interpreter
+ * and the bundler's visitor recursion both go deep). Passed to the linker as
+ * `-Wl,-stack_size` on native darwin links; ld64.lld parses but doesn't
+ * implement that option, so cross links additionally patch LC_MAIN.stacksize
+ * post-link with the same value (shims/macho-postlink.c). Keep in sync with
+ * the Windows `/STACK:` reserve and the Linux `-z stack-size` below.
+ */
+export const DARWIN_STACK_SIZE = "0x1200000";
+
 export interface Flag {
   /** Flag(s) to emit. Can be a function for flags that interpolate config values. */
   flag: FlagValue;
@@ -851,9 +861,19 @@ export const linkerFlags: Flag[] = [
 
   // ─── macOS ───
   {
-    flag: ["-Wl,-no_compact_unwind", "-Wl,-stack_size,0x1200000", "-fno-keep-static-consts"],
+    flag: ["-Wl,-no_compact_unwind", `-Wl,-stack_size,${DARWIN_STACK_SIZE}`, "-fno-keep-static-consts"],
     when: c => c.darwin,
     desc: "18MB stack, skip compact unwind",
+  },
+  {
+    // Force the linker to reserve + emit LC_CODE_SIGNATURE on every darwin
+    // cross link. ld64.lld only ad-hoc-signs arm64 by default; the post-link
+    // fixup (shims/macho-postlink.c) replaces an *existing* signature — it
+    // never grows the load-command area to add one — so the slot must always
+    // be there, on x64 too.
+    flag: "-Wl,-adhoc_codesign",
+    when: c => c.darwin && c.crossTarget !== undefined,
+    desc: "macOS cross-link: always emit an ad-hoc LC_CODE_SIGNATURE for macho-postlink to replace",
   },
   {
     // -ld_new selects Apple's new linker — only meaningful (and only

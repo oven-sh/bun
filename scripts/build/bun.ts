@@ -34,10 +34,10 @@ import { lolhtml } from "./deps/lolhtml.ts";
 import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
-import type { Ninja } from "./ninja.ts";
+import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, linkerMapPath, rustLibPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
-import { emitShims } from "./shims.ts";
+import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
@@ -718,18 +718,25 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
       description: "copy $out (windows: no strip)",
     });
   } else {
+    // Darwin cross: llvm-strip regenerates a bare linker-style ad-hoc
+    // signature on its output, dropping the entitlements the link step
+    // embedded — so the stripped `bun` needs its own postlink pass.
+    // (machoPostlinkCommand is "" everywhere else.)
     n.rule("strip", {
-      command: `${quote(cfg.strip, false)} $stripflags $in -o $out`,
+      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}`,
       description: "strip $out",
     });
   }
 
-  n.build({
+  const node: BuildNode = {
     outputs: [out],
     rule: "strip",
     inputs: [inputExe],
     vars: cfg.windows ? {} : { stripflags: stripflags.join(" ") },
-  });
+  };
+  const postlinkInputs = machoPostlinkImplicitInputs(cfg);
+  if (postlinkInputs.length > 0) node.implicitInputs = postlinkInputs;
+  n.build(node);
 
   return out;
 }

@@ -29,6 +29,7 @@
  *     ambiguous case.
  */
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
@@ -151,6 +152,35 @@ export const workarounds: Workaround[] = [
     cleanup:
       `Delete scripts/build/shims/cpu_model/, needsDarwinCpuModelShim() and its blocks in ` +
       `scripts/build/shims.ts, and this entry.`,
+  },
+  {
+    id: "darwin-cross-stack-size",
+    issue:
+      "https://github.com/llvm/llvm-project/blob/main/lld/MachO/Driver.cpp (OPT_stack_size in unimplemented warnings)",
+    description:
+      "ld64.lld parses `-stack_size` but doesn't implement it (\"is not yet implemented. Stay " +
+      'tuned..."), so darwin cross links keep the 8 MB default main-thread stack instead of the ' +
+      "18 MB JSC needs. shims/macho-postlink.c patches LC_MAIN.stacksize after the link instead.",
+    applies: cfg => cfg.darwin && cfg.crossTarget !== undefined && cfg.ld !== "",
+    expectedToBeFixed: cfg => {
+      // Probe the actual linker rather than guessing an LLVM version: drive
+      // a doomed link with -stack_size and look for the "not yet
+      // implemented" warning. One ~10ms spawn, only on darwin cross
+      // configures. If the warning is gone, lld honors the flag we already
+      // pass (-Wl,-stack_size) and the post-link patch is redundant.
+      const arch = cfg.arm64 ? "arm64" : "x86_64";
+      const probe = spawnSync(
+        cfg.ld,
+        ["-arch", arch, "-platform_version", "macos", "13.0", "13.0", "-stack_size", "0x1000", "-o", "/dev/null"],
+        { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      if (probe.error) return false; // can't run the linker — leave the workaround in place
+      return !`${probe.stdout ?? ""}${probe.stderr ?? ""}`.includes("-stack_size' is not yet implemented");
+    },
+    cleanup:
+      `Drop the --stack-size argument from machoPostlinkCommand() in scripts/build/shims.ts and ` +
+      `this entry. Keep macho-postlink.c itself — it still owns the entitlements embedding and ` +
+      `the post-edit re-sign.`,
   },
   {
     id: "rust-lld-musl-crt-zlib",

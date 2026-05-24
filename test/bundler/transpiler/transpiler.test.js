@@ -1684,10 +1684,6 @@ console.log(<div {...obj} key="after" />);`),
   });
 
   it("JSX bare key prop followed by key with a value does not crash", async () => {
-    // A bare `key` (no value) is skipped with a warning, but it used to still advance the
-    // prop index, so a later `key=...` recorded an out-of-bounds `key_prop_index` and the
-    // automatic-runtime key extraction removed past the end of the props list. Run in a
-    // subprocess so a crash surfaces as a test failure instead of taking down the test runner.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

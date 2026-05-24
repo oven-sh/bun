@@ -48,8 +48,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             'parse_attributes: loop {
                 match p.lexer.token {
                     T::TIdentifier => {
-                        // PORT NOTE: `defer i += 1` inlined at each exit point of this arm
-                        // that appends to `props`.
+                        // PORT NOTE: `defer i += 1` inlined at each exit point of this arm.
                         // Parse the prop name
                         let key_range = p.lexer.range();
                         let prop_name_literal = p.lexer.identifier;
@@ -66,11 +65,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     key_range.loc,
                                     b"\"key\" prop ignored. Must be a string, number or symbol.",
                                 );
-                                // This prop is not appended to `props`, so `i` must not
-                                // advance: it tracks the index each appended prop gets in
-                                // `props`, and a later `key=...` records it as
-                                // `key_prop_i`, which is used to remove the key prop by
-                                // index during the JSX transform.
                                 continue;
                             }
 

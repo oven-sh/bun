@@ -7732,7 +7732,18 @@ impl NodeFS {
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
             let fs = FileSystem::get();
             let parts = [fs.top_level_dir, path_slice];
-            let path_len = fs.abs_buf(&parts, &mut inbuf[..]).len();
+            // The joined cwd + user path can exceed the fixed PathBuffer. Bail out
+            // with ENAMETOOLONG instead of writing past the end of the buffer.
+            let inbuf_len = inbuf.len();
+            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+                return Err(sys::Error {
+                    errno: E::ENAMETOOLONG as _,
+                    syscall: sys::Tag::realpath,
+                    path: args.path.slice().into(),
+                    ..Default::default()
+                });
+            };
+            let path_len = joined.len();
             inbuf[path_len] = 0;
             let path = ZStr::from_buf(&inbuf[..], path_len);
 

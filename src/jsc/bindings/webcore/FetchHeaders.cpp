@@ -97,53 +97,58 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     // or merge with an existing header.
     String trimStorage;
     const String& normalizedValue = trimHTTPSpaceIfNeeded(value, trimStorage);
-    String combinedTemp;
-    const String* valueToSet = &normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
-        auto index = headers.indexOf(headerName);
-
-        if (headerName != HTTPHeaderName::SetCookie) {
-            if (index.isValid()) {
-                auto existing = headers.getIndex(index);
-                if (headerName == HTTPHeaderName::Cookie) {
-                    combinedTemp = makeString(existing, "; "_s, normalizedValue);
-                } else {
-                    combinedTemp = makeString(existing, ", "_s, normalizedValue);
-                }
-                valueToSet = &combinedTemp;
-            }
-        }
-
-        auto canWriteResult = canWriteHeader(headerName, normalizedValue, *valueToSet, guard);
+        auto canWriteResult = canWriteHeader(headerName, normalizedValue, normalizedValue, guard);
 
         if (canWriteResult.hasException())
             return canWriteResult.releaseException();
         if (!canWriteResult.releaseReturnValue())
             return {};
 
-        if (headerName != HTTPHeaderName::SetCookie) {
-            if (!headers.setIndex(index, *valueToSet))
-                headers.set(headerName, *valueToSet);
-        } else {
+        if (headerName == HTTPHeaderName::SetCookie) {
+            // `Set-Cookie` has a dedicated multi-value vector — preserves each
+            // value as a separate entry for the wire.
             headers.add(headerName, normalizedValue);
+            return {};
         }
+
+        if (headerName == HTTPHeaderName::Cookie) {
+            // RFC 6265 §5.4 requires all cookies in a single `Cookie` request
+            // header combined with `"; "`, not `", "` — keep the existing
+            // combined-value behavior for this one name.
+            auto index = headers.indexOf(headerName);
+            if (index.isValid()) {
+                auto combined = makeString(headers.getIndex(index), "; "_s, normalizedValue);
+                headers.setIndex(index, combined);
+            } else {
+                headers.set(headerName, normalizedValue);
+            }
+            return {};
+        }
+
+        // Any other known header: keep duplicates as separate entries so they
+        // survive to the wire as separate header lines (RFC 7230 §3.2.2).
+        // `headers.get()` still joins them with `", "` for WHATWG
+        // `Headers.get()` / Node `getHeader()` callers.
+        if (headers.contains(headerName))
+            headers.appendExtra(headerName, normalizedValue);
+        else
+            headers.set(headerName, normalizedValue);
 
         return {};
     }
-    auto index = headers.indexOf(name);
-    if (index.isValid()) {
-        combinedTemp = makeString(headers.getIndex(index), ", "_s, normalizedValue);
-        valueToSet = &combinedTemp;
-    }
-    auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
+
+    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    if (!headers.setIndex(index, *valueToSet))
-        headers.set(name, *valueToSet);
+    if (headers.contains(StringView(name)))
+        headers.appendExtra(name, normalizedValue);
+    else
+        headers.set(name, normalizedValue);
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);
@@ -217,6 +222,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
         headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
         headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
         headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
+        headers.extraHeaders().appendVector(otherHeaders.m_headers.extraHeaders());
         setInternalHeaders(WTF::move(headers));
         m_updateCounter++;
         return {};
@@ -224,6 +230,13 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 
     for (auto& header : otherHeaders.m_headers) {
         auto result = appendToHeaderMap(header, m_headers, m_guard);
+        if (result.hasException())
+            return result.releaseException();
+    }
+    // The iterator above yields one entry per primary vector slot; carry the
+    // remaining multi-value duplicates across so they survive the copy.
+    for (auto& extra : otherHeaders.m_headers.extraHeaders()) {
+        auto result = appendToHeaderMap(extra.key, extra.value, m_headers, m_guard);
         if (result.hasException())
             return result.releaseException();
     }

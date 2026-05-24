@@ -597,11 +597,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeaders_getRawKeys, (JSC::JSGlobalObject * lexic
     }
 
     FetchHeaders& headers = thisObject->wrapped();
-    JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.size());
+    auto& internal = headers.internalHeaders();
+    // `getRawHeaderNames` returns a list of UNIQUE header names (Node docs).
+    // The iterator yields one entry per primary common/uncommon slot, so
+    // `sizeAfterJoiningSetCookieHeader()` is exactly the slot count we need —
+    // extras never introduce a new name.
+    JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.sizeAfterJoiningSetCookieHeader());
 
-    for (unsigned int i = 0; const auto& header : headers.internalHeaders()) {
+    unsigned int i = 0;
+    for (const auto& header : internal)
         outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, header.name()));
-    }
+
+    if (!internal.getSetCookieHeaders().isEmpty())
+        outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie)));
 
     RELEASE_AND_RETURN(scope, JSValue::encode(outArray));
 }
@@ -667,7 +675,10 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& vec = internal.commonHeaders();
         for (const auto& it : vec) {
             const auto& name = it.key;
-            const auto& value = it.value;
+            // `internal.get(name)` joins any extra duplicate values for this
+            // header with `", "` so the object form reflects every occurrence
+            // rather than only the first-stored value.
+            String value = internal.get(name);
             obj->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(name)), jsString(vm, value), 0);
         }
     }
@@ -695,7 +706,9 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& vec = internal.uncommonHeaders();
         for (const auto& it : vec) {
             const auto& name = it.key;
-            const auto& value = it.value;
+            // See the `commonHeaders` branch above for why we route through
+            // `get(name)` rather than using `it.value` directly.
+            String value = internal.get(StringView(name));
             obj->putDirectMayBeIndex(lexicalGlobalObject, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value));
         }
     }

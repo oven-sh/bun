@@ -599,6 +599,128 @@ remainder_check:
     return nullptr; // Not found
 }
 
+// Count of "visible" Latin-1 bytes for Bun.stringWidth (stringWidth.cpp):
+// everything except C0 controls (0x00-0x1F), DEL + C1 controls (0x7F-0x9F)
+// and soft hyphen (0xAD) occupies one terminal column.
+size_t VisibleLatin1WidthImpl(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x20 = hn::Set(d, uint8_t { 0x20 });
+    const auto vec_0x5E = hn::Set(d, uint8_t { 0x5E });
+    const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
+    const auto vec_soft_hyphen = hn::Set(d, uint8_t { 0xAD });
+
+    size_t count = 0;
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+
+        // ASCII fast path: a single range compare per chunk. If every byte is
+        // plain printable ASCII ([0x20, 0x7E]), the whole chunk is visible.
+        const auto not_plain_ascii = hn::Gt(hn::Sub(chunk, vec_0x20), vec_0x5E);
+        if (hn::AllFalse(d, not_plain_ascii)) {
+            count += N;
+            continue;
+        }
+
+        // Mixed chunk: visible = (c >= 0x20) && !(0x7F <= c <= 0x9F) && (c != 0xAD)
+        const auto ge_0x20 = hn::Ge(chunk, vec_0x20);
+        const auto in_c1_range = hn::Le(hn::Sub(chunk, vec_0x7F), vec_0x20); // 0x7F..0x9F
+        const auto is_soft_hyphen = hn::Eq(chunk, vec_soft_hyphen);
+        const auto visible = hn::AndNot(hn::Or(in_c1_range, is_soft_hyphen), ge_0x20);
+        count += hn::CountTrue(d, visible);
+    }
+
+    for (; i < len; ++i) {
+        const uint8_t c = input[i];
+        count += (c >= 0x20 && !(c >= 0x7F && c <= 0x9F) && c != 0xAD) ? 1 : 0;
+    }
+    return count;
+}
+
+// Count of UTF-16 code units in [0x20, 0x7E] (printable ASCII). Bulk-ASCII
+// helper for Bun.stringWidth's UTF-16 path (stringWidth.cpp).
+size_t CountPrintableAscii16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x20 = hn::Set(d, uint16_t { 0x20 });
+    const auto vec_0x5E = hn::Set(d, uint16_t { 0x5E });
+
+    size_t count = 0;
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto printable = hn::Le(hn::Sub(chunk, vec_0x20), vec_0x5E);
+        count += hn::CountTrue(d, printable);
+    }
+
+    for (; i < len; ++i) {
+        const uint16_t c = input[i];
+        count += (c >= 0x20 && c < 0x7F) ? 1 : 0;
+    }
+    return count;
+}
+
+// Index of the first UTF-16 code unit greater than 0x7F, or len if none.
+size_t FirstNonAscii16Impl(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    const hn::ScalableTag<uint16_t> d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x7F = hn::Set(d, uint16_t { 0x7F });
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+        const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < len; ++i) {
+        if (input[i] > 0x7F) {
+            return i;
+        }
+    }
+    return len;
+}
+
+// Index of the first byte greater than 0x7F, or len if none.
+size_t FirstNonAscii8Impl(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+
+    const auto vec_0x7F = hn::Set(d, uint8_t { 0x7F });
+
+    size_t i = 0;
+    const size_t simd_len = len - (len % N);
+    for (; i < simd_len; i += N) {
+        const auto chunk = hn::LoadU(d, input + i);
+        const auto non_ascii = hn::Gt(chunk, vec_0x7F);
+        const intptr_t pos = hn::FindFirstTrue(d, non_ascii);
+        if (pos >= 0) {
+            return i + pos;
+        }
+    }
+
+    for (; i < len; ++i) {
+        if (input[i] > 0x7F) {
+            return i;
+        }
+    }
+    return len;
+}
+
 // Implementation for WebSocket mask application
 void FillWithSkipMaskImpl(const uint8_t* HWY_RESTRICT mask, size_t mask_len, uint8_t* HWY_RESTRICT output, const uint8_t* HWY_RESTRICT input, size_t length, bool skip_mask)
 {
@@ -657,7 +779,10 @@ namespace bun {
 // the *Impl function names defined within the HWY_NAMESPACE block above.
 HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
 HWY_EXPORT(CopyU16ToU8Impl);
+HWY_EXPORT(CountPrintableAscii16Impl);
 HWY_EXPORT(FillWithSkipMaskImpl);
+HWY_EXPORT(FirstNonAscii16Impl);
+HWY_EXPORT(FirstNonAscii8Impl);
 HWY_EXPORT(IndexOfAnyCharImpl);
 HWY_EXPORT(IndexOfCharImpl);
 HWY_EXPORT(IndexOfInterestingCharacterInStringLiteralImpl);
@@ -668,6 +793,7 @@ HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
 HWY_EXPORT(MemMemImpl);
 HWY_EXPORT(ScanCharFrequencyImpl);
+HWY_EXPORT(VisibleLatin1WidthImpl);
 // Define the C-callable wrappers that use HWY_DYNAMIC_DISPATCH.
 // These need to be defined *after* the HWY_EXPORT block and INSIDE namespace bun
 // so that HWY_DYNAMIC_DISPATCH(FuncImpl) correctly resolves to bun::N_*::FuncImpl.
@@ -776,6 +902,26 @@ void highway_fill_with_skip_mask(
     bool skip_mask) // Whether to skip masking
 {
     HWY_DYNAMIC_DISPATCH(FillWithSkipMaskImpl)(mask, mask_len, output, input, length, skip_mask);
+}
+
+size_t highway_visible_latin1_width(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(VisibleLatin1WidthImpl)(input, len);
+}
+
+size_t highway_count_printable_ascii16(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(CountPrintableAscii16Impl)(input, len);
+}
+
+size_t highway_first_non_ascii16(const uint16_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(FirstNonAscii16Impl)(input, len);
+}
+
+size_t highway_first_non_ascii8(const uint8_t* HWY_RESTRICT input, size_t len)
+{
+    return HWY_DYNAMIC_DISPATCH(FirstNonAscii8Impl)(input, len);
 }
 
 } // extern "C"

@@ -872,3 +872,114 @@ describe("stringWidth extended", () => {
     });
   });
 });
+
+// ============================================================================
+// Coverage for the SIMD fast paths (Latin-1 / UTF-16 ASCII bulk counting) and
+// the string encodings JSC can hand to the native implementation.
+// ============================================================================
+
+describe("stringWidth SIMD fast paths", () => {
+  const repeat = (fill: string, count: number) => Buffer.alloc(count, fill).toString();
+
+  describe("ASCII fast path", () => {
+    // Cross the SIMD chunk boundaries (16/32/64-byte vectors plus scalar tail).
+    const lengths = [0, 1, 2, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 100, 127, 128, 129, 255, 256, 257, 1000, 4096];
+    test("plain ASCII of every chunk-boundary length", () => {
+      for (const n of lengths) {
+        const text = repeat("x", n);
+        expect(Bun.stringWidth(text)).toBe(n);
+        expect(Bun.stringWidth(text, { countAnsiEscapeCodes: true })).toBe(n);
+      }
+    });
+
+    test("control characters are zero-width at any position", () => {
+      for (const n of [15, 16, 17, 64, 65]) {
+        const body = repeat("x", n);
+        expect(Bun.stringWidth("\t" + body)).toBe(n);
+        expect(Bun.stringWidth(body + "\x07")).toBe(n);
+        expect(Bun.stringWidth(body + "\x7f" + body)).toBe(2 * n);
+      }
+      expect(Bun.stringWidth("a\tb\nc\rd")).toBe(4);
+    });
+
+    test("Latin-1 (8-bit, non-ASCII) strings", () => {
+      expect(Bun.stringWidth("café")).toBe(4);
+      expect(Bun.stringWidth("naïve façade")).toBe(12);
+      expect(Bun.stringWidth("§¶±")).toBe(3);
+      // soft hyphen is zero-width
+      expect(Bun.stringWidth("co\u00ADoperate")).toBe(9);
+      expect(Bun.stringWidth("é".repeat(100))).toBe(100);
+    });
+
+    test("ASCII stored in a 16-bit string", () => {
+      // Slicing off the emoji keeps the UTF-16 backing store, so the pure-ASCII
+      // remainder exercises the UTF-16 bulk-count path.
+      const ascii16 = ("😀" + "hello world").slice(2);
+      expect(ascii16).toBe("hello world");
+      expect(Bun.stringWidth(ascii16)).toBe(11);
+      expect(Bun.stringWidth(ascii16, { countAnsiEscapeCodes: true })).toBe(11);
+
+      const long16 = ("😀" + repeat("y", 257)).slice(2);
+      expect(Bun.stringWidth(long16)).toBe(257);
+    });
+  });
+
+  describe("ANSI sequences mid-string", () => {
+    test("SGR in the middle of Latin-1 text", () => {
+      expect(Bun.stringWidth("hello \x1b[31mred\x1b[39m world")).toBe(15);
+      expect(Bun.stringWidth("hello \x1b[31mred\x1b[39m world", { countAnsiEscapeCodes: true })).toBe(23);
+      expect(Bun.stringWidth("\x1b[38;2;255;100;0mX\x1b[39m")).toBe(1);
+      expect(Bun.stringWidth(repeat("a", 30) + "\x1b[31m" + repeat("b", 30) + "\x1b[39m")).toBe(60);
+    });
+
+    test("SGR in the middle of UTF-16 text", () => {
+      expect(Bun.stringWidth("安\x1b[31m康\x1b[39m!")).toBe(5);
+      expect(Bun.stringWidth("安\x1b[31m康", { countAnsiEscapeCodes: true })).toBe(8);
+      expect(Bun.stringWidth("😀\x1b[1mok\x1b[22m😀")).toBe(6);
+    });
+
+    test("OSC-8 hyperlinks mid-string", () => {
+      // BEL-terminated
+      expect(Bun.stringWidth("see \x1b]8;;https://bun.com\x07Bun\x1b]8;;\x07 docs")).toBe(12);
+      // ST (ESC \)-terminated
+      expect(Bun.stringWidth("see \x1b]8;;https://bun.com\x1b\\Bun\x1b]8;;\x1b\\ docs")).toBe(12);
+      // UTF-16 string with a hyperlink around CJK text
+      expect(Bun.stringWidth("\x1b]8;;https://bun.com\x07文档\x1b]8;;\x07")).toBe(4);
+    });
+  });
+
+  describe("emoji and ZWJ sequences", () => {
+    test("emoji widths", () => {
+      expect(Bun.stringWidth("😀")).toBe(2);
+      expect(Bun.stringWidth("👩‍👩‍👧‍👦")).toBe(2); // family ZWJ sequence
+      expect(Bun.stringWidth("🏳️‍🌈")).toBe(2); // flag + VS16 + ZWJ
+      expect(Bun.stringWidth("🇺🇸")).toBe(2); // regional indicator pair
+      expect(Bun.stringWidth("👍🏽")).toBe(2); // skin tone modifier
+      expect(Bun.stringWidth("1️⃣")).toBe(2); // keycap
+    });
+
+    test("emoji embedded in long ASCII runs", () => {
+      expect(Bun.stringWidth(repeat("a", 40) + "😀" + repeat("b", 40))).toBe(82);
+      expect(Bun.stringWidth("👩‍👩‍👧‍👦".repeat(10))).toBe(20);
+      expect(Bun.stringWidth("ok 👍🏽 done, 🇺🇸 flag")).toBe(19);
+    });
+  });
+
+  describe("East Asian wide characters", () => {
+    test("wide and fullwidth", () => {
+      expect(Bun.stringWidth("中文")).toBe(4);
+      expect(Bun.stringWidth("こんにちは")).toBe(10);
+      expect(Bun.stringWidth("안녕하세요")).toBe(10);
+      expect(Bun.stringWidth("Ａ")).toBe(2); // fullwidth latin
+      expect(Bun.stringWidth("ｱｲｳ")).toBe(3); // halfwidth katakana
+      expect(Bun.stringWidth("ノード.js")).toBe(9);
+      expect(Bun.stringWidth("中" + repeat("a", 64) + "文")).toBe(68);
+    });
+
+    test("ambiguous-width characters", () => {
+      expect(Bun.stringWidth("★☆")).toBe(2);
+      expect(Bun.stringWidth("★☆", { ambiguousIsNarrow: false })).toBe(4);
+      expect(Bun.stringWidth("±", { ambiguousIsNarrow: true })).toBe(1);
+    });
+  });
+});

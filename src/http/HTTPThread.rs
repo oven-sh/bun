@@ -283,9 +283,7 @@ pub struct ShutdownMessage {
 }
 
 /// The JS thread's `checkServerIdentity` callback approved the peer
-/// certificate for this request; un-park the connection so the request is
-/// finally written. Looked up through the abort tracker — a missing entry
-/// means the connection already closed/failed and the resume is a no-op.
+/// certificate; un-park the connection so the request is written.
 pub struct CertCheckResumeMessage {
     pub async_http_id: u32,
 }
@@ -795,8 +793,6 @@ impl HttpThread {
                 core::mem::take(&mut self.queued_cert_check_resumes)
             };
             for resume in &queued_cert_check_resumes {
-                // A missing tracker entry means the connection already
-                // closed, failed, or completed — the resume is a no-op.
                 // Both arms are required: an HTTPS target behind a plaintext
                 // proxy parks behind a SocketTcp tracker entry.
                 if let Some(socket_ptr) = abort_tracker().get(&resume.async_http_id) {

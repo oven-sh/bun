@@ -1467,15 +1467,10 @@ impl<'a> HTTPClient<'a> {
                     // check if we need to report the error (probably to `checkServerIdentity` was informed from JS side)
                     // this is the slow path
                     //
-                    // The JS callback only ever applies to the *target's*
-                    // certificate (Node semantics: `checkServerIdentity` is a
-                    // property of the destination TLS socket). When this is
-                    // the outer handshake of an HTTPS proxy, `hostname` above
-                    // is the proxy's hostname — fall through to the native
-                    // SAN check against the proxy hostname instead of
-                    // invoking the user callback with the proxy's certificate
-                    // (a pinning callback written for the target would reject
-                    // it and fail the whole fetch).
+                    // The JS callback only applies to the *target's* certificate
+                    // (Node semantics). For the HTTPS proxy's own handshake, use
+                    // the native SAN check — a pinning callback written for the
+                    // target would reject the proxy's certificate.
                     let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
                     if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
                         // clone the relevant data
@@ -1498,23 +1493,10 @@ impl<'a> HTTPClient<'a> {
 
                         // Park the connection until the JS-side
                         // `checkServerIdentity` callback approves this
-                        // certificate. The flag gates `on_writable` (so the
-                        // request line / headers / body are never written to
-                        // an unverified peer) and `on_data` (so a server that
-                        // speaks before being spoken to is rejected). The JS
-                        // thread resumes the connection via
-                        // `HTTPThread::schedule_cert_check_resume` on
-                        // success, or schedules a shutdown on failure.
-                        //
-                        // Requests carrying a JS callback are pinned to
-                        // HTTP/1.1: `can_offer_h2`, `can_try_h3_alt_svc`, and
-                        // the `force_http3` branch of `start_` all bail out
-                        // when the CertErrors signal is set, because the h2/h3
-                        // session objects transmit without consulting this
-                        // park gate. Pooled keep-alive sockets skip the
-                        // handshake, so they never re-park; their certificate
-                        // was validated (native SAN or JS callback) by
-                        // whichever request first established the connection.
+                        // certificate (gates `on_writable`/`on_data`; see the
+                        // flag's doc comment). The JS thread resumes via
+                        // `HTTPThread::schedule_cert_check_resume` on success,
+                        // or schedules a shutdown on failure.
                         self.state.flags.is_waiting_for_cert_check = true;
 
                         // we inform the user that the cert is invalid
@@ -1665,13 +1647,9 @@ impl<'a> HTTPClient<'a> {
     /// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var, or
     /// `protocol: "http2"` on the fetch options.
     pub fn can_offer_h2(&self) -> bool {
-        // A JS `checkServerIdentity` callback must run before any request
-        // bytes reach the wire. The h2 session transmits the preface and
-        // request frames from `attach()` without consulting the
-        // `is_waiting_for_cert_check` park gate, so keep such requests on
-        // HTTP/1.1 where the gate is enforced. This also blocks adopting or
-        // coalescing onto an existing h2 session, since both paths are gated
-        // on `can_offer_h2`.
+        // The h2 session transmits from `attach()` without consulting the
+        // `is_waiting_for_cert_check` park gate, so requests with a JS
+        // `checkServerIdentity` callback stay on HTTP/1.1.
         if self.signals.get(signals::Field::CertErrors) {
             return false;
         }
@@ -1716,10 +1694,8 @@ impl<'a> HTTPClient<'a> {
     /// specific protocol). When true, `start_()` consults `H3.AltSvc.lookup`
     /// before opening TCP.
     pub fn can_try_h3_alt_svc(&self) -> bool {
-        // The h3 client performs its own QUIC handshake and never routes
-        // through `check_server_identity`, so a JS `checkServerIdentity`
-        // callback could never run before the request is transmitted. Stay on
-        // TCP for such requests.
+        // The h3 client never routes through `check_server_identity`, so a JS
+        // `checkServerIdentity` callback could never run; stay on TCP.
         if self.signals.get(signals::Field::CertErrors) {
             return false;
         }
@@ -2501,13 +2477,9 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        // `protocol: "http2"` combined with a JS `checkServerIdentity`
-        // callback can never succeed: `can_offer_h2` refuses to advertise h2
-        // when the CertErrors signal is set (the h2 session transmits without
-        // consulting the cert-check park gate), so the connection would
-        // complete a full TCP+TLS handshake, invoke the callback, and then
-        // fail in `first_call` anyway. Fail up front instead, mirroring the
-        // `force_http3` guard below.
+        // `can_offer_h2` refuses to advertise h2 when a JS `checkServerIdentity`
+        // callback is set, so `protocol: "http2"` + callback would handshake and
+        // then fail in `first_call` anyway. Fail up front instead.
         if self.flags.force_http2 && self.signals.get(signals::Field::CertErrors) {
             self.fail(err!(HTTP2Unsupported));
             self.complete_connecting_process();
@@ -2515,11 +2487,8 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.flags.force_http3 {
-            // The h3 client performs its own QUIC handshake and never routes
-            // through `check_server_identity`, so a JS `checkServerIdentity`
-            // callback could never run before the request is transmitted.
-            // Refuse the combination instead of silently skipping the
-            // callback.
+            // h3 never routes through `check_server_identity`; refuse the
+            // combination instead of silently skipping the JS callback.
             if self.signals.get(signals::Field::CertErrors) {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
@@ -2851,12 +2820,9 @@ impl<'a> HTTPClient<'a> {
             proxy.on_writable::<IS_SSL>(socket);
         }
 
-        // The TLS handshake completed but the JS `checkServerIdentity`
-        // callback has not approved the peer certificate yet. Do not write any
-        // HTTP application data (request line, headers, body) until
-        // `resume_after_cert_check` clears the flag. The tunnel flush above
-        // still runs so already-encrypted TLS-layer bytes (the handshake's
-        // final flight) reach the wire while parked.
+        // Parked until the JS `checkServerIdentity` callback approves the peer
+        // certificate: write no HTTP data. Kept below the tunnel flush so the
+        // handshake's final flight still reaches the wire while parked.
         if self.state.flags.is_waiting_for_cert_check {
             return;
         }
@@ -3103,14 +3069,9 @@ impl<'a> HTTPClient<'a> {
     /// The JS-side `checkServerIdentity` callback approved the peer
     /// certificate: clear the park flag and write the request that
     /// `on_writable` has been holding back since the handshake completed.
-    /// `on_writable`'s first statement is the Aborted check, and its
-    /// `request_stage` match handles both the direct (Pending/Opened) and
-    /// tunneled (ProxyHeaders) park points. ALPN/h2 resolution already ran in
-    /// `first_call` at handshake time, so it is not repeated here.
     pub fn resume_after_cert_check<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if !self.state.flags.is_waiting_for_cert_check {
-            // Never parked (or already resumed / reset by a redirect or
-            // failure). Nothing to do.
+            // Never parked, or already resumed/reset by a redirect or failure.
             return;
         }
         bun_core::scoped_log!(fetch, "resumeAfterCertCheck");
@@ -3393,13 +3354,10 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        // Defense in depth: while parked waiting for the JS
-        // `checkServerIdentity` verdict, no request has been written, so a
-        // direct server has nothing legitimate to say. (This gate must stay
-        // BELOW the proxy_tunnel dispatch above — for a tunneled target the
-        // outer socket carries raw inner-TLS records that must keep reaching
-        // the SSLWrapper while parked; the tunnel's own decrypted-data
-        // callback has the equivalent gate.)
+        // While parked waiting for the JS `checkServerIdentity` verdict, no
+        // request has been written, so any data is unexpected. Must stay below
+        // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
+        // records must keep reaching the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
             self.state.pending_response = None;
             self.close_and_fail::<IS_SSL>(err!(UnexpectedData), socket);

@@ -1210,10 +1210,8 @@ impl FetchTasklet {
                 }
             }
         }
-        // Defensive fallthrough (empty or unparseable certificate bytes):
-        // release the parked HTTP-thread socket like the sibling
-        // false-return paths above so the caller's "shutdown already
-        // scheduled" assumption holds on every false return.
+        // Empty or unparseable certificate bytes: every false return must have
+        // scheduled the parked socket's shutdown, like the paths above.
         if let Some(http_) = self.http.as_mut() {
             http::http_thread().schedule_shutdown(http_);
         }

@@ -3336,16 +3336,21 @@ pub mod default_trusted_dependencies {
 impl Lockfile {
     pub fn has_trusted_dependency(
         &self,
-        alias: &[u8],
+        _alias: &[u8],
         pkg_name: &[u8],
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let hash = SemverStringBuilder::string_hash(alias) as u32;
+            // Match the resolved package's real name, never the dependency
+            // alias: a dependent package anywhere in the tree controls the
+            // aliases of its own dependencies, so `"esbuild": "npm:evil@1"`
+            // must not inherit trust from a `trustedDependencies: ["esbuild"]`
+            // entry.
+            let hash = SemverStringBuilder::string_hash(pkg_name) as u32;
             // Empty value = legacy bun.lockb sentinel (no name stored);
             // match by hash alone.
             return match trusted_dependencies.get(&hash) {
-                Some(name) => name.is_empty() || **name == *alias,
+                Some(name) => name.is_empty() || **name == *pkg_name,
                 None => false,
             };
         }

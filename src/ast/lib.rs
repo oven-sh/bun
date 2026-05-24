@@ -3183,7 +3183,7 @@ pub(crate) fn source_from_file_at(
     Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
 }
 
-/// `to_source_at` rooted at the process CWD.
+/// `source_from_file_at` rooted at the process CWD.
 pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
     source_from_file(path, opts)
 }

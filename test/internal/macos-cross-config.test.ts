@@ -8,9 +8,9 @@
  * where the same inputs intentionally resolve to the native toolchain instead.
  */
 import { describe, expect, test } from "bun:test";
+import { isMacOS, tempDir } from "harness";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isMacOS, tempDir } from "harness";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";

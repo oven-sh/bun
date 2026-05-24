@@ -366,8 +366,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// every backtracked constraint gets re-parsed as the `extends` clause of a
     /// conditional type, which re-runs the attempts nested inside it — exponential
     /// for deeply nested `infer X extends` constraints inside template literal types
-    /// (found by fuzzing).
-    pub ts_infer_constraint_backtracks: HashMap<u64, ()>,
+    /// (found by fuzzing). Kept sorted for binary search; stays empty (no allocation)
+    /// until a constraint attempt actually backtracks, which is rare in real code.
+    pub ts_infer_constraint_backtracks: Vec<u32>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
@@ -9252,7 +9253,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stack_check: bun_core::StackCheck::init(),
             parse_stmt_depth: 0,
             reported_stack_overflow: core::cell::Cell::new(false),
-            ts_infer_constraint_backtracks: Default::default(),
+            ts_infer_constraint_backtracks: Vec::new(),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

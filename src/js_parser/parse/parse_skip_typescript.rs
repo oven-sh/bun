@@ -1555,9 +1555,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // which repeats the attempts nested inside it; without the memo that's
         // exponential for deeply nested `infer X extends` constraints inside
         // template literal types (found by fuzzing).
-        let memo_key = ((self.lexer.start as u64) << 1)
-            | flags.contains(SkipTypeOptions::DisallowConditionalTypes) as u64;
-        if self.ts_infer_constraint_backtracks.contains(&memo_key) {
+        //
+        // Token offsets fit in 31 bits (`Loc` is an `i32`), so the offset and the
+        // flag bit pack into a `u32`.
+        debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
+        let memo_key = ((self.lexer.start as u32) << 1)
+            | flags.contains(SkipTypeOptions::DisallowConditionalTypes) as u32;
+        if self
+            .ts_infer_constraint_backtracks
+            .binary_search(&memo_key)
+            .is_ok()
+        {
             return false;
         }
 
@@ -1565,7 +1573,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.skip_type_script_constraint_of_infer_type_with_backtracking(flags)
         });
         if !skipped {
-            self.ts_infer_constraint_backtracks.insert(memo_key, ());
+            // Re-search for the insertion point: attempts nested inside the one that
+            // just failed may have added entries of their own.
+            if let Err(insert_at) = self.ts_infer_constraint_backtracks.binary_search(&memo_key) {
+                self.ts_infer_constraint_backtracks.insert(insert_at, memo_key);
+            }
         }
         skipped
     }

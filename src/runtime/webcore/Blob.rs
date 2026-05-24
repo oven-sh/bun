@@ -5230,9 +5230,9 @@ pub fn write_file_internal(
                                 global_this: bun_ptr::BackRef::new(global_this),
                                 // Zig moves `destination_blob` by value into the task
                                 // (single store ref transfers; outer local is dead after the
-                                // early return). `dupe()` here would leak one StoreRef since
-                                // Blob has no Drop. Take the value and leave an empty blob
-                                // behind so the residual local owns no store.
+                                // early return). Take the value and leave an empty blob
+                                // behind so the residual local owns no store and no extra
+                                // +1 is taken.
                                 file_blob: core::mem::replace(
                                     &mut destination_blob,
                                     Blob::init_empty(global_this),

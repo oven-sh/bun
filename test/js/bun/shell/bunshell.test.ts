@@ -8,7 +8,7 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -136,6 +136,26 @@ describe("bunshell", () => {
     escapeTest("lmao=✔", '"lmao=✔"');
     escapeTest("元気かい、兄弟", "元気かい、兄弟");
     escapeTest("d元気かい、兄弟", "d元気かい、兄弟");
+
+    test("escaped values containing interpolation marker bytes stay literal data", async () => {
+      // Interpolated values that need escaping are stored out-of-band and
+      // referenced from the script source via an internal `\x08__bunstr_N`
+      // marker. A value passed through $.escape() and embedded with `{raw:}`
+      // must never be re-interpreted as one of those references, otherwise it
+      // would be replaced with a *different* interpolation's value.
+      const secret = "name=top-secret-value";
+      const hostile = "\x08__bunstr_0";
+      const escaped = $.escape(hostile);
+      // The escaped form must not contain the bare marker prefix the lexer resolves.
+      expect(escaped).not.toContain("\x08__bunstr_");
+
+      const { stdout } = await $`echo ${{ raw: escaped }} ${secret}`;
+      expect(stdout.toString()).toEqual(`${hostile} ${secret}\n`);
+
+      // A normal value still round-trips through $.escape() + {raw:}.
+      const { stdout: ok } = await $`echo ${{ raw: $.escape("hello world") }}`;
+      expect(ok.toString()).toEqual("hello world\n");
+    });
 
     describe("wrapped in quotes", async () => {
       const url = "http://www.example.com?candy_name=M&M";
@@ -2756,4 +2776,35 @@ describe("interpolated values in assignment position", () => {
   TestBuilder.command`echo ${"a=b"}`
     .stdout("a=b\n")
     .runAsTest("interpolated equals in argument position passes through");
+});
+
+test("redirect target buffer stays attached while a builtin command is running", async () => {
+  // A builtin with `> ${buf}` caches the buffer's raw pointer and length for
+  // the whole (asynchronous) lifetime of the command. The backing store must
+  // stay alive and attached until the command finishes so the output lands in
+  // memory the caller can still see.
+  //
+  // `ls` is used (rather than `cat`) because `cat` is in the
+  // DISABLED_ON_POSIX list and delegates to the system binary on Linux/macOS,
+  // which never takes the builtin ArrayBuffer redirect path. `ls` is a real
+  // builtin on every platform and always suspends on a thread-pool task, so
+  // the command is guaranteed to still be in flight when the detach is
+  // attempted below.
+  using dir = tempDir("shell-redirect-pin", { "pin.txt": "x" });
+  const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+  const promise = $`ls ${String(dir)} > ${buffer}`.env(bunEnv).nothrow();
+  // Calling .then() starts the interpreter synchronously, so the redirect slot
+  // now holds the buffer while the directory-listing task is still pending.
+  const running = promise.then(o => o);
+
+  // Attempting to detach the redirect target while the command is in flight
+  // must leave the buffer attached (refusing the detach by throwing is also
+  // acceptable).
+  try {
+    buffer.buffer.transfer();
+  } catch {}
+  expect(buffer.buffer.detached).toBe(false);
+
+  await running;
+  expect(stringifyBuffer(buffer)).toEqual("pin.txt\n");
 });

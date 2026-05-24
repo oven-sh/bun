@@ -4366,3 +4366,46 @@ describe("minifyWhitespace keeps the space before keyword operators", () => {
     expect(minifier.transformSync("1 in y")).toBe("1 in y;");
   });
 });
+
+it("transform() result is unaffected by detaching the input ArrayBuffer while the task is in flight", async () => {
+  // The async transform parses the input on a work-pool thread. The input bytes
+  // must be copied before the thread hop so that detaching the ArrayBuffer from
+  // the JS thread mid-parse cannot change or free the memory being read.
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const size = 1 << 20;
+    const source = "export const original = 12345;";
+    const bytes = new Uint8Array(size).fill(0x20);
+    new TextEncoder().encodeInto(source, bytes);
+    const expected = transpiler.transformSync(new TextDecoder().decode(bytes), "js");
+
+    const promise = transpiler.transform(bytes, "js");
+    // Detach the backing store while the worker thread may still be parsing it.
+    bytes.buffer.transfer(0);
+    // Recycle similarly-sized allocations holding different valid JS so a stale
+    // read of the old backing store would produce observably different output.
+    const decoys = [];
+    for (let i = 0; i < 8; i++) {
+      const decoy = new Uint8Array(size).fill(0x20);
+      new TextEncoder().encodeInto("export const replaced" + i + " = " + i + ";", decoy);
+      decoys.push(decoy);
+    }
+    const out = await promise;
+    if (out === expected && !out.includes("replaced")) {
+      console.log("OK");
+    } else {
+      console.log("MISMATCH " + JSON.stringify(out.slice(0, 200)));
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});

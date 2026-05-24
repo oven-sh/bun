@@ -4186,3 +4186,62 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
   }
   expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
 });
+
+it("fs.write keeps the source buffer attached while the write is in flight", async () => {
+  using dir = tempDir("fs-write-pin", {});
+  const file = join(String(dir), "out.bin");
+  const fd = openSync(file, "w");
+  const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
+  const { promise, resolve, reject } = Promise.withResolvers();
+  try {
+    fs.write(fd, buf, 0, buf.byteLength, 0, (err, written) => (err ? reject(err) : resolve(written)));
+
+    // The native write runs on the thread pool and reads the source bytes
+    // through a raw pointer; the backing store must not be detachable out
+    // from under it while the write is pending.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(false);
+
+    expect(await promise).toBe(8);
+
+    // Released once the write completes.
+    buf.buffer.transfer();
+    expect(buf.buffer.detached).toBe(true);
+  } finally {
+    closeSync(fd);
+  }
+  expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
+});
+
+it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
+  using dir = tempDir("fs-realpath-too-long", {});
+
+  // The relative path argument is within the per-argument limit, but joining
+  // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
+  // Both realpath variants must surface this as a clean ENAMETOOLONG error
+  // instead of aborting the process.
+  const script = `
+    const fs = require("node:fs");
+    const longPath = "a".repeat(4090);
+    for (const impl of [fs.realpathSync, fs.realpathSync.native]) {
+      try {
+        impl(longPath);
+        console.log("resolved");
+      } catch (err) {
+        console.log(err.code);
+      }
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual(["ENAMETOOLONG", "ENAMETOOLONG"]);
+  expect(exitCode).toBe(0);
+});

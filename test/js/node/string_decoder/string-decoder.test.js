@@ -313,3 +313,43 @@ it(
   },
   isDebug || isASAN ? 60_000 : undefined,
 );
+
+// StringDecoder.prototype.text(buf, offset) takes the offset as an int32 and
+// previously validated it with `offset > byteLength` where byteLength is
+// unsigned. The comparison promoted the signed offset to unsigned, so for
+// buffers of 2 GiB or more a negative offset slipped past the check and was
+// used directly in pointer arithmetic, decoding memory located before the
+// buffer. A negative offset must yield an empty string without touching the
+// buffer.
+it(
+  "text() with a negative offset on a 2 GiB buffer returns an empty string",
+  async () => {
+    const src = `
+      const { StringDecoder } = require("string_decoder");
+      // Legitimate case: an in-range positive offset still decodes the tail.
+      {
+        const decoder = new StringDecoder("utf8");
+        console.log(JSON.stringify(decoder.text(Buffer.from("hello world"), 6)));
+      }
+      // byteLength must be >= 2**31 for INT32_MIN to pass the old unsigned
+      // comparison (INT32_MIN reinterpreted as uint32 is 2**31). allocUnsafe
+      // is lazily committed, and a rejected offset never reads the buffer, so
+      // this stays cheap.
+      const buf = Buffer.allocUnsafe(2 ** 31 + 16);
+      const decoder = new StringDecoder("utf8");
+      const out = decoder.text(buf, -2147483648);
+      console.log("length:", out.length);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe('"world"\nlength: 0\n');
+    expect(exitCode).toBe(0);
+  },
+  // Allocating a 2 GiB buffer under debug/ASAN is slow even when lazily committed.
+  isDebug || isASAN ? 60_000 : undefined,
+);

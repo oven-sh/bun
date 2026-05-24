@@ -1007,3 +1007,53 @@ test("node:vm native Module prototype methods reject non-module receivers", asyn
   `);
   expect(exitCode).toBe(0);
 });
+
+test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNatives array", async () => {
+  // The native link(specifiers, moduleNatives, scriptFetcher) entry point validates
+  // that the two arguments are arrays but must also validate every element of
+  // moduleNatives. A plain object whose inline property storage holds caller-chosen
+  // doubles must produce a clean TypeError instead of being reinterpreted as a
+  // native Module and having those doubles read back as internal pointers.
+  const fixture = `
+    const vm = require("node:vm");
+
+    const mod = new vm.SourceTextModule('import "x";');
+    const kNative = Object.getOwnPropertySymbols(mod).find(s => s.description === "kNative");
+    const native = mod[kNative];
+    native.createModuleRecord();
+
+    const results = [];
+    try {
+      native.link(["x"], [{ a: 1.1, b: 2.2, c: 3.3, d: 4.4 }], 0);
+      results.push("link(plain object): returned");
+    } catch (e) {
+      results.push("link(plain object): " + (e instanceof TypeError ? "TypeError" : "unexpected " + e));
+    }
+    results.push("status after rejected link: " + native.getStatus());
+
+    // A real native module in the same slot still links.
+    const dep = new vm.SourceTextModule("export const x = 1;");
+    const depNative = dep[kNative];
+    depNative.createModuleRecord();
+    native.link(["x"], [depNative], 0);
+    results.push("status after valid link: " + native.getStatus());
+    console.log(results.join("\\n"));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "link(plain object): TypeError
+    status after rejected link: unlinked
+    status after valid link: linked"
+  `);
+  expect(exitCode).toBe(0);
+});

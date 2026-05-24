@@ -3844,7 +3844,9 @@ impl H2FrameParser {
                 if stream.state == StreamState::HALF_CLOSED_LOCAL {
                     self.close_stream(stream);
                     stream.free_resources::<false>(self);
-                } else {
+                } else if stream.state != StreamState::CLOSED {
+                    // An `abort()` from the 'data' handler dispatched above may
+                    // have already closed the stream; don't resurrect it.
                     stream.state = StreamState::HALF_CLOSED_REMOTE;
                 }
                 self.dispatch_with_extra(
@@ -4503,7 +4505,9 @@ impl H2FrameParser {
                 identifier.ensure_still_alive();
 
                 if stream.is_waiting_more_headers {
-                    stream.state = StreamState::HALF_CLOSED_REMOTE;
+                    if stream.state != StreamState::CLOSED {
+                        stream.state = StreamState::HALF_CLOSED_REMOTE;
+                    }
                 } else {
                     // no more continuation headers we can call it closed
                     if stream.state == StreamState::HALF_CLOSED_LOCAL {

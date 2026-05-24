@@ -1107,7 +1107,17 @@ impl ShellRmTask {
                 });
             }
             let flags = bun_sys::O::DIRECTORY | bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
-            let fd = shell_openat(self.cwd, (*parent).path.as_zstr(), flags, 0)?;
+            let fd = match shell_openat(self.cwd, (*parent).path.as_zstr(), flags, 0) {
+                Ok(fd) => fd,
+                // The path no longer leads to a directory we can verify:
+                // O_NOFOLLOW|O_DIRECTORY on a final component swapped for a
+                // symlink yields ENOTDIR (Linux) or ELOOP/EMLINK (macOS/BSD).
+                // Same condition as the dev/ino mismatch below.
+                Err(e) if matches!(e.get_errno(), E::ELOOP | E::EMLINK | E::ENOTDIR) => {
+                    return Err(bun_sys::Error::from_code(E::ENOENT, bun_sys::Tag::open));
+                }
+                Err(e) => return Err(e),
+            };
             let guard = VerifiedParentFd { fd, owned: true };
             let actual = FileId::from_stat(&bun_sys::fstat(fd)?);
             if (*parent).dir_id != Some(actual) {
@@ -1493,7 +1503,7 @@ impl ShellRmTask {
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
-                _ => Err(e),
+                _ => Err(self.error_with_path(&e, path.as_bytes())),
             },
         }
     }

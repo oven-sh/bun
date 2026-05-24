@@ -277,7 +277,12 @@ test.skipIf(process.platform === "win32")(
       } catch {
         // The walker already deleted the whole subtree; nothing to race.
       }
-      await running;
+      const result = await running;
+
+      // A swapped-out component means the entry is already gone from the
+      // tree being removed; under -f that is not an error.
+      expect(result.stderr.toString()).toBe("");
+      expect(result.exitCode).toBe(0);
 
       // Every victim file shares its basename with a file the walker was
       // told to delete; none of them may be reachable through the swapped
@@ -329,7 +334,12 @@ test.skipIf(process.platform === "win32")(
       } catch {
         // The walker already deleted the whole subtree; nothing to race.
       }
-      await running;
+      const result = await running;
+
+      // A swapped-out component means the entry is already gone from the
+      // tree being removed; under -f that is not an error.
+      expect(result.stderr.toString()).toBe("");
+      expect(result.exitCode).toBe(0);
 
       // Every victim leaf directory shares its name with one the walker was
       // told to remove; none of them may be reachable through the swapped

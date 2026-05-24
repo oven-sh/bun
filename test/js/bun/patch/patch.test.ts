@@ -202,9 +202,6 @@ describe("apply", () => {
       ).toBe("okay!\n");
     });
 
-    // A hostile patchfile can specify a `rename to` destination whose parent
-    // directory is longer than the fixed-size path buffers; apply() must
-    // surface that as a catchable error instead of aborting the process.
     test("to a destination dir longer than the path buffer throws instead of crashing", async () => {
       const tempdir = tempDirWithFiles("patch-test", { "from.txt": "hello!" });
 

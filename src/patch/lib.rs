@@ -50,8 +50,6 @@ pub struct PatchFile<'a> {
 
 // Zig `deinit` only freed owned fields → Drop is automatic.
 
-// The cached absolute patch-dir path is only consumed by the Windows branches
-// below (POSIX works dirfd-relative throughout), so it is dead code on unix.
 #[cfg_attr(unix, allow(dead_code))]
 struct ApplyState {
     pathbuf: PathBuffer,
@@ -120,11 +118,6 @@ impl<'a> PatchFile<'a> {
 
                     let todir = paths::dirname_simple(to_path.as_bytes());
                     if !todir.is_empty() {
-                        // Create the destination's parent directory relative to `patch_dir`,
-                        // like the FileCreation branch below. Joining the patch dir's absolute
-                        // path with the patch-supplied dirname can exceed the fixed-size
-                        // path-join buffer (and panic); the dirfd-relative mkdir surfaces
-                        // over-long paths as a regular error instead.
                         if let sys::Result::Err(e) =
                             sys::mkdir_recursive_at_mode(patch_dir, todir, 0o755)
                         {

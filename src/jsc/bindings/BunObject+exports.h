@@ -95,12 +95,13 @@ namespace Bun {
 // Lazy property callbacks are reified with putDirect() and have no way to report
 // failure, so this clears any pending exception (except termination) and falls
 // back to undefined instead of caching an empty JSValue.
-JSC::JSValue handleLazyPropertyCallbackException(JSC::VM&, JSC::JSValue result);
+using BunObjectLazyPropCb = SYSV_ABI JSC::EncodedJSValue (*)(JSC::JSGlobalObject*, JSC::JSObject*);
+JSC::JSValue handleLazyPropertyCallbackException(JSC::VM&, JSC::JSObject*, BunObjectLazyPropCb);
 }
 
 // definition of the C++ wrapper to call the Rust function
 #define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_lazyPropCb_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
-    return Bun::handleLazyPropertyCallbackException(vm, JSC::JSValue::decode(BunObject_lazyPropCb_##name(object->globalObject(), object))); \
+    return Bun::handleLazyPropertyCallbackException(vm, object, BunObject_lazyPropCb_##name); \
 } \
 
 FOR_EACH_GETTER(DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER);

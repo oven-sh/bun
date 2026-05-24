@@ -79,15 +79,6 @@ impl BrotliDecoder {
         BrotliDecoderSetParameter(state, param as c_uint, value) > 0
     }
 
-    pub fn attach_dictionary(
-        state: &mut BrotliDecoder,
-        type_: BrotliSharedDictionaryType,
-        data: &[u8],
-    ) -> c_int {
-        // SAFETY: state is a valid &mut BrotliDecoder; data.ptr/len are a valid slice
-        unsafe { BrotliDecoderAttachDictionary(state, type_, data.len(), data.as_ptr()) }
-    }
-
     /// # Safety
     /// `opaque` is forwarded to brotli's allocator hooks; it must be valid for
     /// every `alloc_func`/`free_func` invocation for the lifetime of the
@@ -419,10 +410,6 @@ impl BrotliEncoder {
     pub fn destroy_instance(state: &mut BrotliEncoder) {
         // SAFETY: state is a valid &mut BrotliEncoder allocated by create_instance
         unsafe { BrotliEncoderDestroyInstance(state) }
-    }
-
-    pub fn has_more_output(state: &mut BrotliEncoder) -> bool {
-        BrotliEncoderHasMoreOutput(state) > 0
     }
 
     pub fn take_output(state: &mut BrotliEncoder) -> &[u8] {

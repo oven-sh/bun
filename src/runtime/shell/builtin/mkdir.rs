@@ -46,7 +46,7 @@ pub struct Exec {
 }
 
 impl Mkdir {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let (args_start, mut opts) = {
             let mut opts = Opts::default();
             let args = Builtin::of(interp, cmd).args_slice();
@@ -86,7 +86,7 @@ impl Mkdir {
         Builtin::write_failing_error(interp, cmd, Kind::Mkdir.usage_string(), 1)
     }
 
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // PORT NOTE: reshaped for borrowck — read scalars, drop the borrow,
         // then act.
         let action = match &mut Self::state_mut(interp, cmd).state {
@@ -137,7 +137,7 @@ impl Mkdir {
         }
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         written: usize,
@@ -186,8 +186,6 @@ enum NextAction {
     Done(ExitCode),
     Schedule(usize),
 }
-
-pub type ShellMkdirOutputTask = OutputTask<Mkdir>;
 
 impl OutputTaskVTable for Mkdir {
     fn write_err(
@@ -266,7 +264,7 @@ impl OutputTaskVTable for Mkdir {
 
 /// Spec: mkdir.zig `ShellMkdirTask`. Runs `mkdir`/`mkdir -p` on a worker
 /// thread, then bounces back to the main thread.
-pub struct ShellMkdirTask {
+pub(crate) struct ShellMkdirTask {
     /// Owning Cmd node (the mkdir builtin's id).
     pub cmd: NodeId,
     pub opts: Opts,
@@ -280,7 +278,7 @@ pub struct ShellMkdirTask {
 }
 
 impl ShellMkdirTask {
-    pub fn create(
+    pub(crate) fn create(
         cmd: NodeId,
         opts: Opts,
         filepath: Vec<u8>,
@@ -302,7 +300,7 @@ impl ShellMkdirTask {
     }
 
     /// Spec: mkdir.zig `runFromThreadPool`.
-    pub fn run_from_thread_pool(this: &mut ShellMkdirTask) {
+    pub(crate) fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.

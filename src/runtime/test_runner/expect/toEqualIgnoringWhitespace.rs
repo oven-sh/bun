@@ -9,7 +9,7 @@ fn is_zig_whitespace(b: u8) -> bool {
 }
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_equal_ignoring_whitespace(
+pub(crate) fn to_equal_ignoring_whitespace(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,

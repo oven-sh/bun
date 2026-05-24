@@ -53,7 +53,7 @@ pub struct Task<'a> {
 /// the task is observed. Exposed as a module-level fn so call sites that import this
 /// module as `Task` can write `..Task::uninit()` in struct-update position.
 #[inline]
-pub fn uninit() -> Task<'static> {
+pub(crate) fn uninit() -> Task<'static> {
     Task {
         // Overwritten by every caller; zero/garbage matches Zig `undefined`.
         tag: Tag::PackageManifest,

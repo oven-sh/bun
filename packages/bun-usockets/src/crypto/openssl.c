@@ -21,6 +21,7 @@
 #include "libusockets.h"
 #include <string.h>
 #include <stdatomic.h>
+#include <time.h>
 
 /* These are in sni_tree.cpp */
 void *sni_new();
@@ -799,7 +800,36 @@ static inline int ssl_gone(struct us_socket_t *s) {
 }
 
 static int ssl_renegotiate(struct us_socket_t *s) {
+  /* Server-forced renegotiation (HelloRequest -> SSL_ERROR_WANT_RENEGOTIATE).
+   * Enforce the per-context policy (default 3 per 600s, Node's
+   * CLIENT_RENEG_LIMIT/CLIENT_RENEG_WINDOW) before re-entering a full
+   * handshake — otherwise a malicious server can pin a core with
+   * back-to-back renegotiations. limit == 0 disables renegotiation; window
+   * == 0 means the per-connection counter never resets. Returning 0 makes
+   * the caller treat this as SSL_ERROR_SSL and close the connection. */
+  uint32_t limit, window;
+  us_reneg_policy(s_ssl(s), &limit, &window);
+  struct us_ssl_reneg_state_t *st = us_reneg_state(s_ssl(s));
   s->ssl_handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
+  if (!st) {
+    ssl_trigger_handshake(s, 0);
+    return 0;
+  }
+  /* Wall-clock time can step backwards (NTP, manual adjustment); the
+   * unsigned subtraction below would underflow and reset the window every
+   * time. Only treat the window as elapsed when time has moved forward. */
+  uint64_t now_ms = (uint64_t)time(NULL) * 1000;
+  if (st->count == 0 ||
+      (window && now_ms >= st->window_start_ms &&
+       now_ms - st->window_start_ms >= (uint64_t)window * 1000)) {
+    st->window_start_ms = now_ms;
+    st->count = 0;
+  }
+  if (st->count >= limit) {
+    ssl_trigger_handshake(s, 0);
+    return 0;
+  }
+  st->count++;
   if (!SSL_renegotiate(s_ssl(s))) {
     ssl_trigger_handshake(s, 0);
     return 0;

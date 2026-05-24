@@ -110,27 +110,27 @@ mod c {
     use core::ffi::c_ushort;
 
     unsafe extern "C" {
-        pub safe fn uws_req_is_ancient(res: &Request) -> bool;
-        pub safe fn uws_req_get_yield(res: &Request) -> bool;
-        pub safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
+        pub(super) safe fn uws_req_is_ancient(res: &Request) -> bool;
+        pub(super) safe fn uws_req_get_yield(res: &Request) -> bool;
+        pub(super) safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
         // Out-param `dest` is a `&mut *const u8` (non-null, valid for write); the C
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through-ptr precondition, so `safe fn`.
-        pub safe fn uws_req_get_url(res: &Request, dest: &mut *const u8) -> usize;
-        pub safe fn uws_req_get_method(res: &Request, dest: &mut *const u8) -> usize;
-        pub fn uws_req_get_header(
+        pub(super) safe fn uws_req_get_url(res: &Request, dest: &mut *const u8) -> usize;
+        pub(super) safe fn uws_req_get_method(res: &Request, dest: &mut *const u8) -> usize;
+        pub(super) fn uws_req_get_header(
             res: *const Request,
             lower_case_header: *const u8,
             lower_case_header_length: usize,
             dest: *mut *const u8,
         ) -> usize;
-        pub fn uws_req_get_query(
+        pub(super) fn uws_req_get_query(
             res: *const Request,
             key: *const u8,
             key_length: usize,
             dest: *mut *const u8,
         ) -> usize;
-        pub safe fn uws_req_get_parameter(
+        pub(super) safe fn uws_req_get_parameter(
             res: &Request,
             index: c_ushort,
             dest: &mut *const u8,

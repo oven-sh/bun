@@ -58,6 +58,16 @@ impl URLPath {
 
         out
     }
+
+    /// Take ownership of the percent-decode buffer, if `parse()` had to
+    /// allocate one. The slice fields of `self` keep pointing into the
+    /// returned allocation — the caller must keep it alive for as long as any
+    /// of those slices (or sub-slices of them) are read; dropping it while
+    /// they are still in use leaves them dangling.
+    #[must_use = "dropping the returned storage dangles the slice fields of this URLPath"]
+    pub fn take_decoded_storage(&mut self) -> Option<Box<[u8]>> {
+        self._decoded_storage.take()
+    }
 }
 
 // PORT NOTE: Zig uses two threadlocal fixed `[1024]u8`/`[16384]u8` buffers and

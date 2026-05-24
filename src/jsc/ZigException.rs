@@ -14,7 +14,7 @@ use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, 
 // opaque `UnsafeCell`-backed handle (`&` is ABI-identical to non-null `*mut`);
 // `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place.
 unsafe extern "C" {
-    pub safe fn ZigException__collectSourceLines(
+    pub(crate) safe fn ZigException__collectSourceLines(
         js_value: JSValue,
         global: &JSGlobalObject,
         exception: &mut ZigException,

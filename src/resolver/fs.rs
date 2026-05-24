@@ -626,25 +626,18 @@ pub mod dir_entry {
     use super::{Entry, EntryStoreBacking};
 
     /// Port of `DirEntry.EntryMap` (`bun.StringHashMap(*Entry)`).
-    pub type EntryMap = bun_collections::StringHashMap<*mut Entry>;
+    pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
 
     /// Port of `DirEntry.EntryStore` (`allocators.BSSList<Entry, files>`).
     /// ZST handle resolving to the `entry_store_backing()` singleton.
-    pub struct EntryStore(());
+    pub(crate) struct EntryStore(());
 
     impl EntryStore {
         #[inline]
-        pub fn instance() -> *mut EntryStoreBacking {
+        pub(crate) fn instance() -> *mut EntryStoreBacking {
             // PORT NOTE: returns the raw `*mut` singleton (Zig `*Self`). Do NOT
             // materialize a `&'static mut` here — concurrent callers would alias.
             super::entry_store_backing()
-        }
-        #[inline]
-        pub fn append(value: Entry) -> core::result::Result<*mut Entry, bun_alloc::AllocError> {
-            // SAFETY: `instance()` is the live `'static` `bss_list!` singleton.
-            // `BSSList::append` takes `*mut Self` and serializes on its own inner
-            // mutex (matching Zig `EntryStore.instance.append`); no outer lock.
-            unsafe { EntryStoreBacking::append(Self::instance(), value) }
         }
         /// Reserve an `Entry` slot in the store and return its uninitialized
         /// storage. The caller MUST fully initialize every field before any
@@ -658,7 +651,7 @@ pub mod dir_entry {
         /// writes lower straight into the destination (matching Zig's
         /// result-location semantics).
         #[inline(always)]
-        pub fn append_uninit()
+        pub(crate) fn append_uninit()
         -> core::result::Result<*mut core::mem::MaybeUninit<Entry>, bun_alloc::AllocError> {
             // SAFETY: `instance()` is the live `'static` `bss_list!` singleton;
             // `BSSList::append_uninit` takes `*mut Self` and serializes on its
@@ -1073,7 +1066,7 @@ impl EntriesMap {
 /// borrowed — callers may freely re-borrow `self` for `readdir`/`open_dir`/
 /// `read_directory_error` while the guard is live (matching the prior
 /// `let _g = self.entries_mutex.lock_guard()` pattern).
-pub struct EntriesGuard {
+pub(crate) struct EntriesGuard {
     _lock: bun_threading::MutexGuard,
 }
 impl EntriesGuard {
@@ -1093,18 +1086,17 @@ impl EntriesGuard {
         unsafe { &mut *entries_option_map() }
     }
 
-    pub fn get(&self, key: &[u8]) -> Option<*mut EntriesOption> {
-        let r = self.map_mut().get(key)?;
-        Some(std::ptr::from_mut::<EntriesOption>(r))
-    }
-    pub fn get_or_put(&self, key: &[u8]) -> core::result::Result<allocators::Result, AllocError> {
+    pub(crate) fn get_or_put(
+        &self,
+        key: &[u8],
+    ) -> core::result::Result<allocators::Result, AllocError> {
         self.map_mut().get_or_put(key)
     }
-    pub fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
+    pub(crate) fn at_index(&self, index: allocators::IndexType) -> Option<*mut EntriesOption> {
         let r = self.map_mut().at_index(index)?;
         Some(std::ptr::from_mut::<EntriesOption>(r))
     }
-    pub fn put(
+    pub(crate) fn put(
         &self,
         result: &mut allocators::Result,
         value: EntriesOption,
@@ -1112,10 +1104,10 @@ impl EntriesGuard {
         let r = self.map_mut().put(result, value)?;
         Ok(std::ptr::from_mut::<EntriesOption>(r))
     }
-    pub fn mark_not_found(&self, result: allocators::Result) {
+    pub(crate) fn mark_not_found(&self, result: allocators::Result) {
         self.map_mut().mark_not_found(result)
     }
-    pub fn remove(&self, key: &[u8]) -> bool {
+    pub(crate) fn remove(&self, key: &[u8]) -> bool {
         self.map_mut().remove(key)
     }
 }

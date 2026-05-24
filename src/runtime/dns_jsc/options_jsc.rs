@@ -21,7 +21,10 @@ fn js<T>(r: JsResult<T>) -> Result<T, FromJSError> {
     r.map_err(|_: JsError| FromJSError::JSError)
 }
 
-pub fn options_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Options, FromJSError> {
+pub(crate) fn options_from_js(
+    value: JSValue,
+    global: &JSGlobalObject,
+) -> Result<Options, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Options::default());
     }
@@ -74,7 +77,10 @@ pub fn options_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Option
     Err(FromJSError::InvalidOptions)
 }
 
-pub fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family, FromJSError> {
+pub(crate) fn family_from_js(
+    value: JSValue,
+    global: &JSGlobalObject,
+) -> Result<Family, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Family::Unspecified);
     }
@@ -106,7 +112,7 @@ pub fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family,
     Err(FromJSError::InvalidFamily)
 }
 
-pub fn socket_type_from_js(
+pub(crate) fn socket_type_from_js(
     value: JSValue,
     global: &JSGlobalObject,
 ) -> Result<SocketType, FromJSError> {
@@ -139,7 +145,10 @@ pub fn socket_type_from_js(
     Err(FromJSError::InvalidSocketType)
 }
 
-pub fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Protocol, FromJSError> {
+pub(crate) fn protocol_from_js(
+    value: JSValue,
+    global: &JSGlobalObject,
+) -> Result<Protocol, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Protocol::Unspecified);
     }
@@ -169,7 +178,10 @@ pub fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Proto
     Err(FromJSError::InvalidProtocol)
 }
 
-pub fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backend, FromJSError> {
+pub(crate) fn backend_from_js(
+    value: JSValue,
+    global: &JSGlobalObject,
+) -> Result<Backend, FromJSError> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Backend::default());
     }
@@ -189,7 +201,10 @@ pub fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backen
     Err(FromJSError::InvalidBackend)
 }
 
-pub fn result_any_to_js(this: &ResultAny, global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
+pub(crate) fn result_any_to_js(
+    this: &ResultAny,
+    global: &JSGlobalObject,
+) -> JsResult<Option<JSValue>> {
     Ok(match this {
         ResultAny::Addrinfo(addrinfo) => {
             // LIFETIMES.tsv: GetAddrInfo.Result.Any.addrinfo is FFI → *mut libc::addrinfo
@@ -213,7 +228,7 @@ pub fn result_any_to_js(this: &ResultAny, global: &JSGlobalObject) -> JsResult<O
     })
 }
 
-pub fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global, 3);
     obj.put(global, b"address", address_to_js(&this.address, global)?);
     obj.put(
@@ -232,7 +247,7 @@ pub fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSVal
     Ok(obj)
 }
 
-pub fn address_to_js(
+pub(crate) fn address_to_js(
     // PORT NOTE: `*const std.net.Address` — `bun_dns::Address` is the
     // `bun_sys::net::Address` sockaddr wrapper.
     address: &bun_dns::Address,
@@ -245,7 +260,7 @@ pub fn address_to_js(
     str.transfer_to_js(global)
 }
 
-pub fn addr_info_to_js_array(
+pub(crate) fn addr_info_to_js_array(
     addr_info: &super::netc::addrinfo,
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {

@@ -675,7 +675,7 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
     }
 
     impl EscapeVal {
-        pub fn escaped(self) -> Option<&'static [u8]> {
+        pub(crate) fn escaped(self) -> Option<&'static [u8]> {
             match self {
                 EscapeVal::Slash => Some(b"%2F"),
                 EscapeVal::Backslash => Some(b"%5c"),
@@ -1454,7 +1454,7 @@ enum PatchArgKind {
 }
 
 impl PatchArgKind {
-    pub fn from_arg(argument: &[u8]) -> PatchArgKind {
+    pub(crate) fn from_arg(argument: &[u8]) -> PatchArgKind {
         if strings::contains(argument, b"node_modules/") {
             return PatchArgKind::Path;
         }

@@ -26,15 +26,9 @@ impl Generic {
 }
 
 pub type Private = c_void;
-pub type struct_OpaqueJSContextGroup = Generic;
-pub type JSContextGroupRef = *const struct_OpaqueJSContextGroup;
-pub type struct_OpaqueJSContext = Generic;
-pub type JSGlobalContextRef = *mut JSGlobalObject;
 
-pub type struct_OpaqueJSPropertyNameAccumulator = Generic;
-pub type JSPropertyNameAccumulatorRef = *mut struct_OpaqueJSPropertyNameAccumulator;
 pub type JSTypedArrayBytesDeallocator = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
-pub type OpaqueJSValue = Generic;
+pub(crate) type OpaqueJSValue = Generic;
 pub type JSValueRef = *mut OpaqueJSValue;
 pub type JSObjectRef = *mut OpaqueJSValue;
 
@@ -55,14 +49,6 @@ pub enum JSType {
     kJSTypeSymbol,
     kJSTypeBigInt,
 }
-pub const kJSTypeUndefined: c_uint = JSType::kJSTypeUndefined as c_uint;
-pub const kJSTypeNull: c_uint = JSType::kJSTypeNull as c_uint;
-pub const kJSTypeBoolean: c_uint = JSType::kJSTypeBoolean as c_uint;
-pub const kJSTypeNumber: c_uint = JSType::kJSTypeNumber as c_uint;
-pub const kJSTypeString: c_uint = JSType::kJSTypeString as c_uint;
-pub const kJSTypeObject: c_uint = JSType::kJSTypeObject as c_uint;
-pub const kJSTypeSymbol: c_uint = JSType::kJSTypeSymbol as c_uint;
-pub const kJSTypeBigInt: c_uint = JSType::kJSTypeBigInt as c_uint;
 
 /// From JSValueRef.h:81
 // TODO(port): Zig enum is non-exhaustive (`_`); only ever passed *to* C in this file so a
@@ -84,27 +70,6 @@ pub enum JSTypedArrayType {
     kJSTypedArrayTypeBigInt64Array,
     kJSTypedArrayTypeBigUint64Array,
 }
-pub const kJSTypedArrayTypeInt8Array: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeInt8Array as c_uint;
-pub const kJSTypedArrayTypeInt16Array: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeInt16Array as c_uint;
-pub const kJSTypedArrayTypeInt32Array: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeInt32Array as c_uint;
-pub const kJSTypedArrayTypeUint8Array: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeUint8Array as c_uint;
-pub const kJSTypedArrayTypeUint8ClampedArray: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeUint8ClampedArray as c_uint;
-pub const kJSTypedArrayTypeUint16Array: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeUint16Array as c_uint;
-pub const kJSTypedArrayTypeUint32Array: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeUint32Array as c_uint;
-pub const kJSTypedArrayTypeFloat32Array: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeFloat32Array as c_uint;
-pub const kJSTypedArrayTypeFloat64Array: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeFloat64Array as c_uint;
-pub const kJSTypedArrayTypeArrayBuffer: c_uint =
-    JSTypedArrayType::kJSTypedArrayTypeArrayBuffer as c_uint;
-pub const kJSTypedArrayTypeNone: c_uint = JSTypedArrayType::kJSTypedArrayTypeNone as c_uint;
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
@@ -122,7 +87,6 @@ unsafe extern "C" {
     ) -> JSObjectRef;
 }
 
-// TODO(port): Zig enum is non-exhaustive (`_`); never crosses FFI in this file.
 #[repr(u32)] // c_uint
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum JSPropertyAttributes {
@@ -131,16 +95,7 @@ pub enum JSPropertyAttributes {
     kJSPropertyAttributeDontEnum = 4,
     kJSPropertyAttributeDontDelete = 8,
 }
-pub const kJSPropertyAttributeNone: c_uint =
-    JSPropertyAttributes::kJSPropertyAttributeNone as c_uint;
-pub const kJSPropertyAttributeReadOnly: c_uint =
-    JSPropertyAttributes::kJSPropertyAttributeReadOnly as c_uint;
-pub const kJSPropertyAttributeDontEnum: c_uint =
-    JSPropertyAttributes::kJSPropertyAttributeDontEnum as c_uint;
-pub const kJSPropertyAttributeDontDelete: c_uint =
-    JSPropertyAttributes::kJSPropertyAttributeDontDelete as c_uint;
 
-// TODO(port): Zig enum is non-exhaustive (`_`); never crosses FFI in this file.
 #[repr(u32)] // c_uint
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum JSClassAttributes {
@@ -148,34 +103,7 @@ pub enum JSClassAttributes {
     kJSClassAttributeNoAutomaticPrototype = 2,
 }
 
-pub const kJSClassAttributeNone: c_uint = JSClassAttributes::kJSClassAttributeNone as c_uint;
-pub const kJSClassAttributeNoAutomaticPrototype: c_uint =
-    JSClassAttributes::kJSClassAttributeNoAutomaticPrototype as c_uint;
-
-pub type JSObjectInitializeCallback = unsafe extern "C" fn(*mut JSGlobalObject, JSObjectRef);
-pub type JSObjectFinalizeCallback = unsafe extern "C" fn(JSObjectRef);
-pub type JSObjectGetPropertyNamesCallback =
-    unsafe extern "C" fn(*mut JSGlobalObject, JSObjectRef, JSPropertyNameAccumulatorRef);
 pub type ExceptionRef = *mut JSValueRef;
-pub type JSObjectCallAsFunctionCallback = unsafe extern "C" fn(
-    ctx: *mut JSGlobalObject,
-    function: JSObjectRef,
-    this_object: JSObjectRef,
-    argument_count: usize,
-    arguments: *const JSValueRef,
-    exception: ExceptionRef,
-) -> JSValueRef;
-pub type JSObjectCallAsConstructorCallback = unsafe extern "C" fn(
-    *mut JSGlobalObject,
-    JSObjectRef,
-    usize,
-    *const JSValueRef,
-    ExceptionRef,
-) -> JSObjectRef;
-pub type JSObjectHasInstanceCallback =
-    unsafe extern "C" fn(*mut JSGlobalObject, JSObjectRef, JSValueRef, ExceptionRef) -> bool;
-pub type JSObjectConvertToTypeCallback =
-    unsafe extern "C" fn(*mut JSGlobalObject, JSObjectRef, JSType, ExceptionRef) -> JSValueRef;
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
@@ -217,8 +145,6 @@ unsafe extern "C" {
     ) -> JSObjectRef;
 }
 
-pub type JSChar = u16;
-
 // TODO(port): move to jsc_sys
 unsafe extern "C" {
     pub fn JSObjectMakeTypedArray(
@@ -227,7 +153,7 @@ unsafe extern "C" {
         length: usize,
         exception: ExceptionRef,
     ) -> JSObjectRef;
-    pub fn JSObjectMakeTypedArrayWithArrayBuffer(
+    pub(crate) fn JSObjectMakeTypedArrayWithArrayBuffer(
         ctx: *mut JSGlobalObject,
         array_type: JSTypedArrayType,
         buffer: JSObjectRef,
@@ -277,10 +203,6 @@ unsafe extern "C" {
         exception: ExceptionRef,
     ) -> usize;
 }
-
-pub type OpaqueJSContextGroup = struct_OpaqueJSContextGroup;
-pub type OpaqueJSContext = struct_OpaqueJSContext;
-pub type OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulator;
 
 // TODO(port): move to jsc_sys
 unsafe extern "C" {

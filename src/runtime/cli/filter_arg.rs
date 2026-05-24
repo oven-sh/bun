@@ -42,7 +42,7 @@ type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
 // lifetime erasure. TODO(refactor): Pin<Box<Self>> or fold walker+iter into one type.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
-pub fn get_candidate_package_patterns<'a>(
+pub(crate) fn get_candidate_package_patterns<'a>(
     log: &mut Log,
     out_patterns: &mut Vec<Box<[u8]>>,
     workdir_: &[u8],
@@ -149,7 +149,7 @@ pub fn get_candidate_package_patterns<'a>(
     Ok(&root_buf[0..root_dir.len()])
 }
 
-pub struct FilterSet {
+pub(crate) struct FilterSet {
     // `std.mem.Allocator param` — deleted (non-AST crate; global mimalloc).
 
     // TODO: Pattern should be
@@ -176,7 +176,7 @@ pub struct Pattern {
 }
 
 impl FilterSet {
-    pub fn matches(&self, path: &[u8], name: &[u8]) -> bool {
+    pub(crate) fn matches(&self, path: &[u8], name: &[u8]) -> bool {
         if self.match_all {
             // allow empty name if there are any filters which are a relative path
             // --filter="*" --filter="./bar" script
@@ -192,7 +192,10 @@ impl FilterSet {
         self.matches_path(path)
     }
 
-    pub fn init<F: AsRef<[u8]>>(filters: &[F], cwd_: &[u8]) -> Result<FilterSet, bun_core::Error> {
+    pub(crate) fn init<F: AsRef<[u8]>>(
+        filters: &[F],
+        cwd_: &[u8],
+    ) -> Result<FilterSet, bun_core::Error> {
         // TODO(port): narrow error set
         let cwd = cwd_;
 
@@ -239,7 +242,7 @@ impl FilterSet {
     // `pub fn deinit` — deleted: `Vec<Pattern>` drops each `Box<[u8]>` automatically.
     // The Zig conditionally freed only `.path`-kind patterns; see PERF note on `Pattern.pattern`.
 
-    pub fn matches_path(&self, path: &[u8]) -> bool {
+    pub(crate) fn matches_path(&self, path: &[u8]) -> bool {
         for filter in &self.filters {
             if glob::r#match(&filter.pattern, path).matches() {
                 return true;
@@ -248,7 +251,7 @@ impl FilterSet {
         false
     }
 
-    pub fn matches_path_name(&self, path: &[u8], name: &[u8]) -> bool {
+    pub(crate) fn matches_path_name(&self, path: &[u8], name: &[u8]) -> bool {
         for filter in &self.filters {
             let target = match filter.kind {
                 PatternKind::Name => name,
@@ -262,7 +265,7 @@ impl FilterSet {
     }
 }
 
-pub struct PackageFilterIterator {
+pub(crate) struct PackageFilterIterator {
     // `patterns` and `root_dir` borrow from the caller (Zig: `[]const u8`).
     // Callers keep them alive for the iterator's lifetime — `RawSlice`
     // invariant. TODO(refactor): thread a `<'a>` lifetime on the struct instead.
@@ -277,7 +280,7 @@ pub struct PackageFilterIterator {
 }
 
 impl PackageFilterIterator {
-    pub fn init(
+    pub(crate) fn init(
         patterns: &[Box<[u8]>],
         root_dir: &[u8],
     ) -> Result<PackageFilterIterator, bun_core::Error> {
@@ -350,7 +353,7 @@ impl PackageFilterIterator {
         }
     }
 
-    pub fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
+    pub(crate) fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
         // TODO(port): narrow error set
         loop {
             if !self.valid {

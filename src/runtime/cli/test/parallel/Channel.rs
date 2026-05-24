@@ -101,6 +101,7 @@ pub type Socket = uws::NewSocketHandler<false>;
 #[cfg(windows)]
 pub type Socket = ();
 
+#[allow(dead_code)]
 pub struct PosixBackend {
     pub socket: Socket,
 }
@@ -547,19 +548,19 @@ impl<Owner> Drop for Channel<Owner> {
 /// owner (`WorkerCommands<'a>`) carries a lifetime. The trampolines below are
 /// the exact shape `vtable::make` would have produced.
 #[cfg(not(windows))]
-pub struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
+pub(crate) struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
 
 /// Ext slot type for the usockets vtable: the slot holds a `*mut Channel<Owner>`.
 // PORT NOTE: was an inherent `type Ext` on the impl in the Zig-shaped draft;
 // inherent associated types are unstable in Rust, so it lives as a free alias.
 #[cfg(not(windows))]
-pub type PosixExt<Owner> = *mut Channel<Owner>;
+pub(crate) type PosixExt<Owner> = *mut Channel<Owner>;
 
 #[cfg(not(windows))]
 impl<Owner: ChannelOwner> PosixHandlers<Owner> {
     /// Per-Owner static vtable. `&Self::VTABLE` const-promotes to
     /// `&'static SocketGroupVTable` (all fields are `Option<fn>`; no Drop).
-    pub const VTABLE: uws::SocketGroupVTable = uws::SocketGroupVTable {
+    pub(crate) const VTABLE: uws::SocketGroupVTable = uws::SocketGroupVTable {
         on_open: None,
         on_data: Some(Self::raw_on_data),
         on_fd: None,
@@ -624,18 +625,19 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
 }
 
 #[cfg(windows)]
-pub struct WindowsHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
+pub(crate) struct WindowsHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
 
 #[cfg(windows)]
 impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
-    pub fn on_alloc(self_: &mut Channel<Owner>, suggested: usize) -> &mut [u8] {
+    pub(crate) fn on_alloc(self_: &mut Channel<Owner>, suggested: usize) -> &mut [u8] {
         let _ = suggested;
         &mut self_.backend.read_chunk[..]
     }
-    pub fn on_read(self_: &mut Channel<Owner>, data: &[u8]) {
+    #[allow(dead_code)]
+    pub(crate) fn on_read(self_: &mut Channel<Owner>, data: &[u8]) {
         self_.ingest(data);
     }
-    pub fn on_error(self_: &mut Channel<Owner>, _err: bun_sys::E) {
+    pub(crate) fn on_error(self_: &mut Channel<Owner>, _err: bun_sys::E) {
         // Mirror the POSIX on_close path: detach the transport before
         // signalling done so the owner can tell EOF apart from a protocol
         // error (where the pipe is still attached).
@@ -645,7 +647,7 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         }
         self_.mark_done();
     }
-    pub fn on_write(self_: &mut Channel<Owner>, status: uv::ReturnCode) {
+    pub(crate) fn on_write(self_: &mut Channel<Owner>, status: uv::ReturnCode) {
         self_.backend.inflight.clear();
         if self_.done {
             return;

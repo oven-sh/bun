@@ -29,7 +29,7 @@ pub enum CondExprState {
 }
 
 impl CondExpr {
-    pub fn init(
+    pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
         node: &ast::CondExpr,
@@ -45,11 +45,11 @@ impl CondExpr {
         }))
     }
 
-    pub fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         // Spec: CondExpr.zig `next()` — expand each arg via Expansion, then
         // evaluate the operator.
         loop {
@@ -191,7 +191,7 @@ impl CondExpr {
     }
 
     /// Spec: CondExpr.zig `onIOWriterChunk` (lines 267-279).
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
@@ -218,7 +218,7 @@ impl CondExpr {
 
     /// Spec: CondExpr.zig `onStatTaskComplete`. Main-thread re-entry for the
     /// off-thread `stat`/`lstat` posted by a unary file-test operator.
-    pub fn on_stat_task_done(
+    pub(crate) fn on_stat_task_done(
         interp: &Interpreter,
         this: NodeId,
         stat: &bun_sys::Result<bun_sys::Stat>,
@@ -251,7 +251,7 @@ impl CondExpr {
         interp.child_done(parent, this, exit).run(interp);
     }
 
-    pub fn child_done(
+    pub(crate) fn child_done(
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
@@ -278,7 +278,7 @@ impl CondExpr {
         Yield::Next(this)
     }
 
-    pub fn deinit(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("CondExpr {} deinit", this);
         let me = interp.as_condexpr_mut(this);
         me.args.clear();

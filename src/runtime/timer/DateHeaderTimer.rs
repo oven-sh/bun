@@ -19,7 +19,7 @@ use bun_uws::Loop;
 use crate::jsc_hooks::timer_all;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop) {
+pub(super) extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop) {
     if let Some(vm_ptr) = VirtualMachine::get_or_null() {
         // SAFETY: loop_ is a valid uws Loop pointer passed from C++ and lives
         // for the call duration.

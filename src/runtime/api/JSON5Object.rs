@@ -7,7 +7,7 @@ use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
 use bun_parsers::json5;
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global,
         &[
@@ -18,7 +18,7 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();
@@ -113,7 +113,7 @@ enum Space {
 }
 
 impl Space {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
@@ -140,7 +140,7 @@ impl Space {
 // PORT NOTE: `Space::deinit` deleted — `BunString` field derefs via `Drop`.
 
 impl Stringifier {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
@@ -153,7 +153,7 @@ impl Stringifier {
     // PORT NOTE: `deinit` deleted — all fields (`builder`, `space`, `visiting`)
     // free via `Drop`.
 
-    pub fn stringify_value(
+    pub(crate) fn stringify_value(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,

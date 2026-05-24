@@ -107,7 +107,7 @@ unsafe extern "C" {
 /// `void (*)(void*, void*, size_t)` — the third arg is `size_t`, **not**
 /// `unsigned`. A `u32` here would truncate on 64-bit and (worse) shift the
 /// stack/register layout for the callee on Win64 where `size_t` ≠ `unsigned`.
-pub type ExternalStringImplFreeFunction<Ctx> =
+pub(crate) type ExternalStringImplFreeFunction<Ctx> =
     extern "C" fn(ctx: Ctx, buffer: *mut core::ffi::c_void, len: usize);
 
 impl String {
@@ -2472,7 +2472,6 @@ pub mod printer {
     pub const FIRST_ASCII: u32 = 0x20;
     pub const LAST_ASCII: u32 = 0x7E;
     pub const FIRST_HIGH_SURROGATE: u32 = 0xD800;
-    pub const FIRST_LOW_SURROGATE: u32 = 0xDC00;
     pub const LAST_LOW_SURROGATE: u32 = 0xDFFF;
 
     /// Encode a BMP code unit (`c <= 0xFFFF`, including lone surrogates) as the
@@ -2501,7 +2500,7 @@ pub mod printer {
     pub use crate::io::Write as PrinterWriter;
 
     #[inline]
-    pub fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
+    pub(crate) fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
         if c <= LAST_ASCII as i32 {
             c >= FIRST_ASCII as i32
                 && c != b'\\' as i32

@@ -30,7 +30,7 @@ pub struct Yes {
 }
 
 impl Yes {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Build one copy of the output line.
         let argc = Builtin::of(interp, cmd).args_slice().len();
         let mut one = Vec::new();
@@ -152,7 +152,7 @@ impl Yes {
         stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
     }
 
-    pub fn write_failing_error(
+    pub(crate) fn write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,
         buf: &[u8],
@@ -162,7 +162,7 @@ impl Yes {
         Builtin::write_failing_error(interp, cmd, buf, exit_code)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -220,7 +220,7 @@ impl YesTask {
     /// `this` must point to a live `YesTask` whose storage is stable until the
     /// enqueued task fires (it lives inside `Box<Yes>` in the interpreter
     /// arena).
-    pub unsafe fn enqueue(this: *mut Self) {
+    pub(crate) unsafe fn enqueue(this: *mut Self) {
         // SAFETY: caller contract — `this` is live and stable; `evtloop` /
         // `concurrent_task` were initialised together by `Yes::start` so the
         // Js/Mini discriminants agree. `owner`/`mini` are live event-loop
@@ -256,7 +256,7 @@ impl YesTask {
     /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
     /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
     /// in [`enqueue`](Self::enqueue).
-    pub fn run_from_main_thread(this: &Self) {
+    pub(crate) fn run_from_main_thread(this: &Self) {
         // SAFETY: `interp` was set in `Yes::start` and outlives the task.
         let (interp, cmd) = unsafe { (&*this.interp, this.cmd) };
         Yes::write_no_io_loop(interp, cmd).run(interp);

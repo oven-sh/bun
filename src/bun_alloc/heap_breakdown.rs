@@ -11,61 +11,6 @@ type vm_size_t = usize;
 // TODO(port): `enable_asan` mapped to a cargo feature; verify the build wires this the same way.
 pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
-/// Zig: `fn heapLabel(comptime T: type) [:0]const u8`
-///
-/// Uses `@hasDecl(T, "heap_label")` to optionally pick a custom label, else
-/// `bun.meta.typeBaseName(@typeName(T))`. In Rust this is a trait with a
-/// blanket default; types override by implementing `HEAP_LABEL` explicitly.
-pub trait HeapLabel {
-    const HEAP_LABEL: &'static str;
-}
-
-// TODO(port): blanket impl wants `bun.meta.typeBaseName(@typeName(T))` at compile
-// time. `core::any::type_name::<T>()` is not `const fn` and includes the full
-// module path. Either a proc-macro derive, or require every `T` used
-// with heap_breakdown to impl `HeapLabel` explicitly.
-fn heap_label<T: HeapLabel>() -> &'static str {
-    T::HEAP_LABEL
-}
-
-/// Zig: `pub fn allocator(comptime T: type) std.mem.Allocator`
-pub fn allocator<T: HeapLabel>() -> &'static dyn crate::Allocator {
-    named_allocator(heap_label::<T>())
-}
-
-/// Zig: `pub fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator`
-///
-/// In Zig the `"Bun__" ++ name` concatenation and the per-name `static` happen
-/// at comptime via monomorphization. Rust cannot monomorphize on a `&'static str`
-/// const generic on stable, so the per-name `OnceLock` must be minted at the
-/// call site — see the `get_zone!` macro below. This function is a thin wrapper
-/// that defers to that macro at call sites; here we expose the runtime half.
-pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
-    // TODO(port): callers should prefer `named_allocator!("Name")` / `get_zone!` directly
-    // so the OnceLock is per-name. This runtime path falls back to a process-global
-    // map and is not zero-cost like the Zig comptime version.
-    // PERF(port): was comptime monomorphization — profile if hot.
-    //
-    // Zig: `getZone("Bun__" ++ name)` — the "Bun__" prefix is applied HERE, not in
-    // `getZone`/`get_zone_runtime`. PORTING.md §Forbidden: no `Box::leak` for
-    // 'static — `get_zone_runtime` owns the prefixed string in its OnceLock map,
-    // so pass a borrowed `&str` and let the map intern it.
-    let mut prefixed = String::with_capacity(5 + name.len());
-    prefixed.push_str("Bun__");
-    prefixed.push_str(name);
-    get_zone(prefixed.as_bytes()).allocator()
-}
-
-// Comptime-literal form of `named_allocator` lives at crate root as `get_zone!`
-// (see lib.rs). A local `macro_rules! named_allocator` re-export would collide
-// with the `pub fn named_allocator` above in the value namespace on macOS where
-// this module is actually compiled, so it is omitted here.
-
-/// Zig: `pub fn getZoneT(comptime T: type) *Zone`
-pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
-    get_zone(heap_label::<T>().as_bytes())
-}
-
 /// Zig: `pub fn getZone(comptime name: [:0]const u8) *Zone`
 ///
 /// Each comptime instantiation in Zig gets its own `static var zone` + `std.once`.
@@ -73,13 +18,9 @@ pub fn get_zone_t<T: HeapLabel>() -> &'static Zone {
 /// that expands a fresh `OnceLock` per call site (per literal name). Not
 /// duplicated here to avoid path-export collisions on macOS.
 
-/// Runtime `getZone(name)` — looks up (or creates) the per-name zone.
-///
-/// Zig used a comptime-monomorphized `static` per literal; the crate-root
+/// Runtime `getZone(name)` — looks up (or creates) the per-name zone. The
 /// `get_zone!` macro is the zero-cost form. This runtime path keys a
-/// process-global map for callers that pass a non-literal name (or for
-/// `allocator<T>()`/`get_zone_t<T>()`, which cannot expand a per-T static on
-/// stable Rust without a proc-macro).
+/// process-global map for callers that pass a non-literal name.
 // TODO(port): could be replaced with a `#[heap_label]` derive that expands
 // `get_zone!` directly.
 #[allow(clippy::assertions_on_constants)]
@@ -283,20 +224,28 @@ unsafe extern "C" {
     /// No preconditions; returns the process default malloc zone.
     pub safe fn malloc_default_zone() -> *mut Zone;
     /// No preconditions; allocates a new zone (process-lifetime).
-    pub safe fn malloc_create_zone(start_size: vm_size_t, flags: c_uint) -> *mut Zone;
+    pub(crate) safe fn malloc_create_zone(start_size: vm_size_t, flags: c_uint) -> *mut Zone;
     pub fn malloc_destroy_zone(zone: *mut Zone);
     // `&Zone` is ABI-identical to libmalloc's `malloc_zone_t *` (thin non-null
     // pointer to an `opaque_ffi!` `!Freeze` struct — interior mutation by C is
     // sound). The reference type encodes the only pointer-validity precondition,
     // so `safe fn` discharges the link-time proof for the pure-allocation entry
     // points (alloc/calloc/valloc/memalign return null on failure).
-    pub safe fn malloc_zone_malloc(zone: &Zone, size: usize) -> *mut c_void;
-    pub safe fn malloc_zone_calloc(zone: &Zone, num_items: usize, size: usize) -> *mut c_void;
+    pub(crate) safe fn malloc_zone_malloc(zone: &Zone, size: usize) -> *mut c_void;
+    pub(crate) safe fn malloc_zone_calloc(
+        zone: &Zone,
+        num_items: usize,
+        size: usize,
+    ) -> *mut c_void;
     pub safe fn malloc_zone_valloc(zone: &Zone, size: usize) -> *mut c_void;
     pub fn malloc_zone_free(zone: *mut Zone, ptr: *mut c_void);
     pub fn malloc_zone_realloc(zone: *mut Zone, ptr: *mut c_void, size: usize) -> *mut c_void;
     pub fn malloc_zone_from_ptr(ptr: *const c_void) -> *mut Zone;
-    pub safe fn malloc_zone_memalign(zone: &Zone, alignment: usize, size: usize) -> *mut c_void;
+    pub(crate) safe fn malloc_zone_memalign(
+        zone: &Zone,
+        alignment: usize,
+        size: usize,
+    ) -> *mut c_void;
     pub fn malloc_zone_batch_malloc(
         zone: *mut Zone,
         size: usize,
@@ -310,7 +259,7 @@ unsafe extern "C" {
     pub fn malloc_make_nonpurgeable(ptr: *mut c_void) -> c_int;
     pub fn malloc_zone_register(zone: *mut Zone);
     pub fn malloc_zone_unregister(zone: *mut Zone);
-    pub fn malloc_set_zone_name(zone: *mut Zone, name: *const c_char);
+    pub(crate) fn malloc_set_zone_name(zone: *mut Zone, name: *const c_char);
     pub fn malloc_get_zone_name(zone: *mut Zone) -> *const c_char;
     pub fn malloc_zone_pressure_relief(zone: *mut Zone, goal: usize) -> usize;
 }
@@ -330,7 +279,7 @@ mod stubs {
     pub unsafe fn malloc_zone_free(_: *mut Zone, _: *mut c_void) {
         unreachable!()
     }
-    pub fn malloc_zone_memalign(_: &Zone, _: usize, _: usize) -> *mut c_void {
+    pub(crate) fn malloc_zone_memalign(_: &Zone, _: usize, _: usize) -> *mut c_void {
         unreachable!()
     }
 }

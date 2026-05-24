@@ -51,23 +51,23 @@ const HAS_CONFIG_VERSION_TAG: u64 = u64::from_ne_bytes(*b"cNfGvRsN");
 /// Collapsed into a single type so callers pass exactly one `&mut StreamType`.
 ///
 /// LIFETIMES.tsv: `bytes` is BORROW_PARAM → `&'a mut Vec<u8>`.
-pub struct StreamType<'a> {
+pub(crate) struct StreamType<'a> {
     pub bytes: &'a mut Vec<u8>,
 }
 
 impl<'a> StreamType<'a> {
     #[inline]
-    pub fn get_pos(&self) -> Result<usize, Error> {
+    pub(crate) fn get_pos(&self) -> Result<usize, Error> {
         Ok(self.bytes.len())
     }
 
-    pub fn pwrite(&mut self, data: &[u8], index: usize) -> usize {
+    pub(crate) fn pwrite(&mut self, data: &[u8], index: usize) -> usize {
         self.bytes[index..index + data.len()].copy_from_slice(data);
         data.len()
     }
 
     #[inline]
-    pub fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
+    pub(crate) fn write_all(&mut self, data: &[u8]) -> Result<(), Error> {
         self.bytes.extend_from_slice(data);
         Ok(())
     }
@@ -115,6 +115,39 @@ const _: () = {
     assert!(size_of::<SemverString>() == 8 && align_of::<SemverString>() == 1);
     assert!(size_of::<PatchedDep>() == 24 && align_of::<PatchedDep>() == 8);
 };
+
+/// On-disk layout of `PatchedDep` with the `bool` flag widened to `u8`.
+///
+/// `read_array` reinterprets untrusted lockfile bytes as `T`, and
+/// `PatchedDep::patchfile_hash_is_null` is a `bool` whose only valid byte
+/// values are 0 and 1 — reinterpreting any other byte is immediate UB. Read
+/// this invariant-free form instead and validate the flag before constructing
+/// the real `PatchedDep`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct PatchedDepExternal {
+    path: SemverString,
+    _padding: [u8; 7],
+    patchfile_hash_is_null: u8,
+    patchfile_hash: u64,
+}
+
+const _: () = {
+    assert!(size_of::<PatchedDepExternal>() == size_of::<PatchedDep>());
+    assert!(align_of::<PatchedDepExternal>() == align_of::<PatchedDep>());
+};
+
+impl PatchedDepExternal {
+    fn to_patched_dep(self) -> Result<PatchedDep, Error> {
+        let mut dep = PatchedDep::with_path(self.path);
+        dep.set_patchfile_hash(match self.patchfile_hash_is_null {
+            0 => Some(self.patchfile_hash),
+            1 => None,
+            _ => return Err(bun_core::err!("InvalidLockfile")),
+        });
+        Ok(dep)
+    }
+}
 
 /// Bridges `bun_semver::string::ArrayHashContext` (inherent `hash`/`eql`) to
 /// `bun_collections::ArrayHashAdapter` so `get_or_put_adapted` can use it.
@@ -337,7 +370,7 @@ pub struct SerializerLoadResult {
     pub migrated_from_lockb_v2: bool,
 }
 
-pub fn load(
+pub(crate) fn load(
     lockfile: &mut Lockfile,
     stream: &mut Stream,
     log: &mut Log,
@@ -521,15 +554,12 @@ pub fn load(
                 lockfile.trusted_dependencies = Some(Default::default());
                 let td = lockfile.trusted_dependencies.as_mut().unwrap();
                 td.ensure_total_capacity(trusted_dependencies_hashes.len())?;
-
-                // SAFETY: capacity reserved above; keys are fully overwritten
-                // by `copy_from_slice` before `re_index` reads them; value type
-                // is `()` so its column needs no init.
-                unsafe {
-                    td.set_entries_len(trusted_dependencies_hashes.len());
+                // The binary lockfile only stores the truncated hashes, not the
+                // names they were computed from. The empty value is the
+                // "name unknown, hash-only match" sentinel.
+                for &hash in &trusted_dependencies_hashes {
+                    td.put_assume_capacity(hash, Box::<[u8]>::default());
                 }
-                td.keys_mut().copy_from_slice(&trusted_dependencies_hashes);
-                td.re_index()?;
             } else if next_num == HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG {
                 // trusted dependencies exists in package.json but is an empty array.
                 lockfile.trusted_dependencies = Some(Default::default());
@@ -601,7 +631,8 @@ pub fn load(
                 let map = &mut lockfile.patched_dependencies;
 
                 map.ensure_total_capacity(patched_dependencies_name_and_version_hashes.len())?;
-                let patched_dependencies_paths: Vec<PatchedDep> = buffers::read_array(stream)?;
+                let patched_dependencies_paths: Vec<PatchedDepExternal> =
+                    buffers::read_array(stream)?;
 
                 debug_assert_eq!(
                     patched_dependencies_name_and_version_hashes.len(),
@@ -612,7 +643,7 @@ pub fn load(
                     .zip(patched_dependencies_paths.iter())
                 {
                     // PERF(port): was assume_capacity
-                    map.put_assume_capacity(*name_hash, *patch_path);
+                    map.put_assume_capacity(*name_hash, patch_path.to_patched_dep()?);
                 }
             } else {
                 stream.pos -= 8;

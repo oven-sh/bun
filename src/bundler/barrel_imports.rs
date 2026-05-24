@@ -36,7 +36,7 @@ impl RequestedExports {
     /// `get_or_put`-shaped entry on the dense `Vec<Option<Self>>` storage.
     /// Returns `(found_existing, &mut value)`; inserts `Default` when absent.
     #[inline]
-    pub fn entry(map: &mut Vec<Option<Self>>, idx: u32) -> (bool, &mut Self) {
+    pub(crate) fn entry(map: &mut Vec<Option<Self>>, idx: u32) -> (bool, &mut Self) {
         let i = idx as usize;
         if i >= map.len() {
             map.resize_with(i + 1, || None);
@@ -47,7 +47,7 @@ impl RequestedExports {
     }
 
     #[inline]
-    pub fn lookup(map: &[Option<Self>], idx: u32) -> Option<&Self> {
+    pub(crate) fn lookup(map: &[Option<Self>], idx: u32) -> Option<&Self> {
         map.get(idx as usize).and_then(Option::as_ref)
     }
 }
@@ -92,7 +92,10 @@ fn resolve_barrel_export(
 /// 3. It is not an export star target of another barrel.
 ///
 /// Export * records are never deferred (always resolved) to avoid circular races.
-pub fn apply_barrel_optimization(this: &mut BundleV2, parse_result: &mut parse_task::Result) {
+pub(crate) fn apply_barrel_optimization(
+    this: &mut BundleV2,
+    parse_result: &mut parse_task::Result,
+) {
     // bun.handleOom: Rust aborts on OOM via the global arena; unwrap is for
     // bun_collections ops that still surface AllocError.
     apply_barrel_optimization_impl(this, parse_result).expect("OOM");
@@ -362,7 +365,7 @@ fn resolve_barrel_records(
 /// to un-defer needed records. Un-deferred records are re-resolved through
 /// resolveImportRecords (same path as initial resolution).
 /// Returns the number of newly scheduled parse tasks.
-pub fn schedule_barrel_deferred_imports(
+pub(crate) fn schedule_barrel_deferred_imports(
     this: &mut BundleV2,
     result_source_index: u32,
     result_ast_target: bun_ast::Target,

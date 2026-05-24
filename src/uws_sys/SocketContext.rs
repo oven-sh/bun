@@ -300,7 +300,7 @@ impl Sha256 {
 pub mod c {
     use super::*;
     unsafe extern "C" {
-        pub fn us_ssl_ctx_from_options(
+        pub(crate) fn us_ssl_ctx_from_options(
             options: BunSocketContextOptions,
             err: *mut create_bun_socket_error_t,
         ) -> *mut SSL_CTX;

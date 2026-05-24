@@ -29,7 +29,7 @@ impl<const BIG: bool> StatType<BIG> {
     // via the global allocator), so no explicit `new`/`deinit` methods are needed.
 
     #[inline]
-    pub fn init(stat_: &PosixStat) -> Self {
+    pub(crate) fn init(stat_: &PosixStat) -> Self {
         Self { value: *stat_ }
     }
 
@@ -89,11 +89,11 @@ impl<const BIG: bool> StatType<BIG> {
         stat_.birthtim
     }
 
-    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Self::stat_to_js(&self.value, global)
     }
 
-    pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_constructor(global: &JSGlobalObject) -> JSValue {
         if BIG {
             Bun__JSBigIntStatsObjectConstructor(global)
         } else {
@@ -215,7 +215,10 @@ pub type StatsBig = StatType<true>;
 /// statToJS path, so regression tests can exercise high-inode values without
 /// a filesystem that hands them out.
 #[bun_jsc::host_fn]
-pub fn create_stats_for_ino(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn create_stats_for_ino(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let [ino_arg, big_arg] = frame.arguments_as_array::<2>();
     // SAFETY: all-zero is a valid PosixStat (repr(C) POD with no NonNull/NonZero fields).
     let mut stat_: PosixStat = bun_core::ffi::zeroed();

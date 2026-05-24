@@ -10,14 +10,14 @@ use crate::JsResult;
 // `adt_const_params` is unstable, so the enum is passed as a runtime value
 // (the bodies branch on it anyway; no codegen difference for this fn).
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum TestKind {
+pub(crate) enum TestKind {
     Normal,
     Minify,
     Prefix,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum TestCategory {
+pub(crate) enum TestCategory {
     /// arg is browsers
     Normal,
     /// arg is parser options
@@ -85,7 +85,7 @@ fn eat_string_arg(
     Ok(OwnedString::new(arg.to_bun_string(global)?))
 }
 
-pub fn testing_impl(
+pub(crate) fn testing_impl(
     global: &JSGlobalObject,
     frame: &CallFrame,
     test_kind: TestKind,

@@ -84,8 +84,6 @@ pub use socket_body::{
 
 #[cfg(windows)]
 pub use windows_named_pipe_context::WindowsNamedPipeContext;
-#[cfg(not(windows))]
-pub type WindowsNamedPipeContext = ();
 
 /// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
 /// `udp_socket_draft` above (legacy name retained for existing callers); the

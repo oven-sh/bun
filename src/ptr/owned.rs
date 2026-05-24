@@ -38,12 +38,6 @@ pub type Owned<T> = Box<T>;
 // alias cannot cover all four. Audit call sites; they should already be `Box<T>` /
 // `Box<[T]>` / `Option<Box<_>>` per PORTING.md §Pointers and LIFETIMES.tsv.
 
-/// An owned pointer or slice allocated using any `std.mem.Allocator`.
-///
-/// This type is an alias of `OwnedIn(Pointer, std.mem.Allocator)`, and thus stores the
-/// `std.mem.Allocator` at runtime.
-///
-/// PORT NOTE: Rust's global `#[global_allocator]` is mimalloc; per PORTING.md §Allocators the
 /// `std.mem.Allocator` param/field is deleted entirely outside AST crates. `Dynamic` collapses
 /// to `Box<T>`.
 pub type Dynamic<T> = Box<T>;
@@ -235,14 +229,6 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // fn Unmanaged(comptime Pointer: type, comptime Allocator: type) type
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
-/// An unmanaged version of `OwnedIn(Pointer, Allocator)` that doesn't store the allocator.
-///
-/// If `Allocator` is a zero-sized type, there is no benefit to using this type. Just use a
-/// normal owned pointer, which has no overhead in this case.
-///
-/// This type is accessible as `OwnedIn(Pointer, Allocator).Unmanaged`.
-///
-/// PORT NOTE: managed/unmanaged collapses; both are `Box<T>`.
 pub type Unmanaged<T /*, Allocator */> = Box<T>;
 
 // #pointer: Pointer,  → the Box itself
@@ -266,7 +252,6 @@ pub type Unmanaged<T /*, Allocator */> = Box<T>;
 // callers use the std forms inline.
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
-/// `Owned([]T).alloc(count, elem)` → `vec![elem; count].into_boxed_slice()`
 #[inline]
 pub fn alloc_slice<T: Clone>(count: usize, elem: T) -> Box<[T]> {
     // PERF(port): Zig used allocator.alloc + @memset (no per-elem clone for Copy types).

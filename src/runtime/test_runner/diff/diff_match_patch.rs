@@ -71,7 +71,7 @@ impl Default for Config {
 /// Marker trait for the element type a diff operates over (`u8` or `usize`).
 /// `Pod` lets the `Unit == u8` fast paths reinterpret `&[Unit]` as `&[u8]`
 /// via `bytemuck::cast_slice` instead of raw `from_raw_parts`.
-pub trait DiffUnit: Copy + Eq + bytemuck::Pod + 'static {}
+pub(crate) trait DiffUnit: Copy + Eq + bytemuck::Pod + 'static {}
 impl DiffUnit for u8 {}
 impl DiffUnit for usize {}
 
@@ -83,15 +83,9 @@ pub enum Operation {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct Diff<Unit: DiffUnit> {
+pub(crate) struct Diff<Unit: DiffUnit> {
     pub operation: Operation,
     pub text: Box<[Unit]>,
-}
-
-impl<Unit: DiffUnit> Diff<Unit> {
-    pub fn eql(&self, b: &Diff<Unit>) -> bool {
-        self.operation == b.operation && self.text[..] == b.text[..]
-    }
 }
 
 impl fmt::Display for Diff<u8> {
@@ -108,18 +102,18 @@ impl fmt::Display for Diff<u8> {
 
 /// Zig: `pub fn DMP(comptime Unit: type) type { return struct { ... } }`
 #[derive(Clone, Copy)]
-pub struct DiffMatchPatch<Unit: DiffUnit> {
+pub(crate) struct DiffMatchPatch<Unit: DiffUnit> {
     pub config: Config,
     _unit: core::marker::PhantomData<Unit>,
 }
 
-pub type DiffList<Unit> = Vec<Diff<Unit>>;
+pub(crate) type DiffList<Unit> = Vec<Diff<Unit>>;
 
 /// Zig: `pub const DiffError = error{OutOfMemory};`
-pub type DiffError = AllocError;
+pub(crate) type DiffError = AllocError;
 
 /// Zig: `const DMPUsize = DMP(usize);`
-pub type DmpUsize = DiffMatchPatch<usize>;
+pub(crate) type DmpUsize = DiffMatchPatch<usize>;
 
 impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
     fn default() -> Self {
@@ -131,29 +125,6 @@ impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
 }
 
 impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
-    /// DMP with default configuration options
-    pub const DEFAULT: Self = Self {
-        // TODO(port): `Config::default()` is not const; consider adding a `Config::DEFAULT`.
-        config: Config {
-            diff_timeout: 1000,
-            diff_edit_cost: 4,
-            diff_check_lines_over: 100,
-            match_threshold: 0.5,
-            match_distance: 1000,
-            match_max_bits: 32,
-            patch_delete_threshold: 0.5,
-            patch_margin: 4,
-        },
-        _unit: core::marker::PhantomData,
-    };
-
-    pub fn new(config: Config) -> Self {
-        Self {
-            config,
-            _unit: core::marker::PhantomData,
-        }
-    }
-
     /// Find the differences between two texts.
     /// @param before Old string to be diffed.
     /// @param after New string to be diffed.
@@ -161,7 +132,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
     ///     line-level diff first to identify the changed areas.
     ///     If true, then run a faster slightly less optimal diff.
     /// @return List of Diff objects.
-    pub fn diff(
+    pub(crate) fn diff(
         &self,
         before: &[Unit],
         after: &[Unit],
@@ -756,108 +727,9 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
         Ok(diffs)
     }
-
-    /// Reduce the number of edits by eliminating operationally trivial
-    /// equalities.
-    pub fn diff_cleanup_efficiency(&self, diffs: &mut DiffList<Unit>) -> Result<(), DiffError> {
-        let mut changes = false;
-        // Stack of indices where equalities are found.
-        let mut equalities: Vec<usize> = Vec::new();
-        // Always equal to equalities[equalitiesLength-1][1]
-        // PORT NOTE: reshaped for borrowck — owned copy of last_equality
-        let mut last_equality: Box<[Unit]> = Box::default();
-        let mut ipointer: isize = 0; // Index of current position.
-        // Is there an insertion operation before the last equality.
-        let mut pre_ins = false;
-        // Is there a deletion operation before the last equality.
-        let mut pre_del = false;
-        // Is there an insertion operation after the last equality.
-        let mut post_ins = false;
-        // Is there a deletion operation after the last equality.
-        let mut post_del = false;
-        while usize::try_from(ipointer).unwrap() < diffs.len() {
-            let pointer: usize = usize::try_from(ipointer).unwrap();
-            if diffs[pointer].operation == Operation::Equal {
-                // Equality found.
-                if diffs[pointer].text.len() < usize::from(self.config.diff_edit_cost)
-                    && (post_ins || post_del)
-                {
-                    // Candidate found.
-                    equalities.push(pointer);
-                    pre_ins = post_ins;
-                    pre_del = post_del;
-                    last_equality = dupe(&diffs[pointer].text);
-                } else {
-                    // Not a candidate, and can never become one.
-                    equalities.clear();
-                    last_equality = Box::default();
-                }
-                post_ins = false;
-                post_del = false;
-            } else {
-                // An insertion or deletion.
-                if diffs[pointer].operation == Operation::Delete {
-                    post_del = true;
-                } else {
-                    post_ins = true;
-                }
-                // Five types to be split:
-                // <ins>A</ins><del>B</del>XY<ins>C</ins><del>D</del>
-                // <ins>A</ins>X<ins>C</ins><del>D</del>
-                // <ins>A</ins><del>B</del>X<ins>C</ins>
-                // <ins>A</del>X<ins>C</ins><del>D</del>
-                // <ins>A</ins><del>B</del>X<del>C</del>
-                if !last_equality.is_empty()
-                    && ((pre_ins && pre_del && post_ins && post_del)
-                        || (last_equality.len() < usize::from(self.config.diff_edit_cost / 2)
-                            && (pre_ins as u8 + pre_del as u8 + post_ins as u8 + post_del as u8
-                                == 3)))
-                {
-                    // Duplicate record.
-                    let eq_idx = equalities[equalities.len() - 1];
-                    // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
-                    diffs.insert(
-                        eq_idx,
-                        Diff {
-                            operation: Operation::Delete,
-                            text: dupe(&last_equality),
-                        },
-                    );
-                    // Change second copy to insert.
-                    diffs[eq_idx + 1].operation = Operation::Insert;
-                    equalities.pop(); // Throw away the equality we just deleted.
-                    last_equality = Box::default();
-                    if pre_ins && pre_del {
-                        // No changes made which could affect previous entry, keep going.
-                        post_ins = true;
-                        post_del = true;
-                        equalities.clear();
-                    } else {
-                        if !equalities.is_empty() {
-                            equalities.pop();
-                        }
-                        ipointer = if !equalities.is_empty() {
-                            isize::try_from(equalities[equalities.len() - 1]).unwrap()
-                        } else {
-                            -1
-                        };
-                        post_ins = false;
-                        post_del = false;
-                    }
-                    changes = true;
-                }
-            }
-            ipointer += 1;
-        }
-
-        if changes {
-            diff_cleanup_merge(diffs)?;
-        }
-        Ok(())
-    }
 }
 
-pub struct HalfMatchResult<Unit: DiffUnit> {
+pub(crate) struct HalfMatchResult<Unit: DiffUnit> {
     pub prefix_before: Box<[Unit]>,
     pub suffix_before: Box<[Unit]>,
     pub prefix_after: Box<[Unit]>,
@@ -866,7 +738,7 @@ pub struct HalfMatchResult<Unit: DiffUnit> {
 }
 // `deinit` → Drop handles `Box<[Unit]>` fields automatically.
 
-pub struct LinesToCharsResult<Unit: DiffUnit> {
+pub(crate) struct LinesToCharsResult<Unit: DiffUnit> {
     pub chars_1: Box<[usize]>,
     pub chars_2: Box<[usize]>,
     // TODO(port): lifetime — borrows slices from the input texts; raw ptr here
@@ -882,7 +754,7 @@ pub struct LinesToCharsResult<Unit: DiffUnit> {
 /// @return Three element Object array, containing the encoded text1, the
 ///     encoded text2 and the List of unique strings.  The zeroth element
 ///     of the List of unique strings is intentionally blank.
-pub fn diff_lines_to_chars<Unit: DiffUnit>(
+pub(crate) fn diff_lines_to_chars<Unit: DiffUnit>(
     text1: &[Unit],
     text2: &[Unit],
 ) -> Result<LinesToCharsResult<Unit>, DiffError> {
@@ -966,7 +838,7 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
 /// of text.
 /// @param diffs List of Diff objects.
 /// @param lineArray List of unique strings.
-pub fn diff_chars_to_lines<Unit: DiffUnit>(
+pub(crate) fn diff_chars_to_lines<Unit: DiffUnit>(
     char_diffs: &DiffList<usize>,
     line_array: &[*const [Unit]],
 ) -> Result<DiffList<Unit>, DiffError> {
@@ -992,7 +864,9 @@ pub fn diff_chars_to_lines<Unit: DiffUnit>(
 /// Reorder and merge like edit sections.  Merge equalities.
 /// Any edit section can move as long as it doesn't cross an equality.
 /// @param diffs List of Diff objects.
-pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<(), DiffError> {
+pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
+    diffs: &mut DiffList<Unit>,
+) -> Result<(), DiffError> {
     // Add a dummy entry at the end.
     diffs.push(Diff {
         operation: Operation::Equal,
@@ -1162,7 +1036,9 @@ pub fn diff_cleanup_merge<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<
 /// Reduce the number of edits by eliminating semantically trivial
 /// equalities.
 /// @param diffs List of Diff objects.
-pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Result<(), DiffError> {
+pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
+    diffs: &mut DiffList<Unit>,
+) -> Result<(), DiffError> {
     let mut changes = false;
     // Stack of indices where equalities are found.
     let mut equalities: Vec<isize> = Vec::new();
@@ -1313,7 +1189,7 @@ pub fn diff_cleanup_semantic<Unit: DiffUnit>(diffs: &mut DiffList<Unit>) -> Resu
 /// Look for single edits surrounded on both sides by equalities
 /// which can be shifted sideways to align the edit to a word boundary.
 /// e.g: The c<ins>at c</ins>ame. -> The <ins>cat </ins>came.
-pub fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
+pub(crate) fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
     diffs: &mut DiffList<Unit>,
 ) -> Result<(), DiffError> {
     let mut pointer: usize = 1;

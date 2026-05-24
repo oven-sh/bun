@@ -83,7 +83,7 @@ impl ExtractTarball {
     }
 }
 
-pub fn build_url(
+pub(crate) fn build_url(
     registry_: &[u8],
     full_name_: &StringOrTinyString,
     version: Version,
@@ -103,7 +103,7 @@ pub fn build_url(
 /// Generic URL builder. The Zig version threads `comptime PrinterContext`,
 /// `comptime ReturnType`, `comptime ErrorType` and a comptime `print` fn; in
 /// Rust the closure carries its own context and the generics collapse to `R, E`.
-pub fn build_url_with_printer<R, E>(
+pub(crate) fn build_url_with_printer<R, E>(
     registry_: &[u8],
     full_name_: &StringOrTinyString,
     version: Version,
@@ -182,7 +182,7 @@ thread_local! {
     }));
 }
 
-pub fn uses_streaming_extraction() -> bool {
+pub(crate) fn uses_streaming_extraction() -> bool {
     !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL
         .get()
         .unwrap_or(false)

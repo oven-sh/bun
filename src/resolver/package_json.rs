@@ -2707,6 +2707,33 @@ impl<'a> ESModule<'a> {
                     }
                 }
 
+                // If the wildcard match (or trailing-slash remainder) taken from
+                // the import specifier contains any ".", ".." or "node_modules"
+                // segments, throw an Invalid Module Specifier error. Node's
+                // PACKAGE_TARGET_RESOLVE applies the same validation to
+                // patternMatch; without it the specifier can substitute "../"
+                // segments into the target and escape the package directory.
+                if !subpath.is_empty() {
+                    if let Some(invalid) = find_invalid_subpath_segment(subpath) {
+                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                            log.add_note_fmt(format_args!(
+                                "The path \"{}\" is invalid because it contains an invalid segment \"{}\"",
+                                bstr::BStr::new(subpath),
+                                bstr::BStr::new(invalid)
+                            ));
+                        }
+                        dedent!();
+                        return Resolution {
+                            path: Box::<[u8]>::from(subpath),
+                            status: Status::InvalidModuleSpecifier,
+                            debug: ResolutionDebug {
+                                token: target.first_token,
+                                ..Default::default()
+                            },
+                        };
+                    }
+                }
+
                 // If target does not start with "./", then...
                 if !strings::starts_with(str, b"./") {
                     if let Some(log) = self.debug_logs.as_deref_mut() {
@@ -3109,6 +3136,29 @@ fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
     };
     let mut path = &path_[slash + 1..];
 
+    while !path.is_empty() {
+        let mut segment = path;
+        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+            segment = &path[0..new_slash];
+            path = &path[new_slash + 1..];
+        } else {
+            path = b"";
+        }
+
+        if is_invalid_segment(segment) {
+            return Some(segment);
+        }
+    }
+
+    None
+}
+
+// Like `find_invalid_segment`, but for the wildcard match (`patternMatch`)
+// extracted from the import specifier rather than for a target string from
+// package.json: every segment is validated, including the first, and a
+// separator-less single-segment path is allowed.
+fn find_invalid_subpath_segment(path_: &[u8]) -> Option<&[u8]> {
+    let mut path = path_;
     while !path.is_empty() {
         let mut segment = path;
         if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {

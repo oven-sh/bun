@@ -56,11 +56,11 @@ enum ParseFlag {
 }
 
 impl Ls {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // PORT NOTE: reshaped for borrowck — match on a tag, drop the
         // borrow, then act.
         enum Tag {
@@ -185,7 +185,7 @@ impl Ls {
         }
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         written: usize,
@@ -212,7 +212,11 @@ impl Ls {
     /// # Safety
     /// `task` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed here.
-    pub fn on_shell_ls_task_done(interp: &Interpreter, cmd: NodeId, task: NonNull<ShellLsTask>) {
+    pub(crate) fn on_shell_ls_task_done(
+        interp: &Interpreter,
+        cmd: NodeId,
+        task: NonNull<ShellLsTask>,
+    ) {
         // SAFETY: precondition.
         let mut task = unsafe { bun_core::heap::take(task.as_ptr()) };
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -290,8 +294,6 @@ impl Ls {
     }
 }
 
-pub type ShellLsOutputTask = OutputTask<Ls>;
-
 impl OutputTaskVTable for Ls {
     fn write_err(
         interp: &Interpreter,
@@ -368,7 +370,7 @@ pub enum ResultKind {
 
 /// Spec: ls.zig `ShellLsTask`. Opens the path, iterates its entries (or
 /// prints the path itself for files / `-d`), accumulating into `output`.
-pub struct ShellLsTask {
+pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
     pub print_directory: bool,
@@ -392,7 +394,7 @@ pub struct ShellLsTask {
 }
 
 impl ShellLsTask {
-    pub fn create(
+    pub(crate) fn create(
         cmd: NodeId,
         opts: Opts,
         task_count: *const AtomicUsize,
@@ -470,7 +472,7 @@ impl ShellLsTask {
     }
 
     /// Spec: ls.zig `ShellLsTask.run`.
-    pub fn run_from_thread_pool(this: &mut ShellLsTask) {
+    pub(crate) fn run_from_thread_pool(this: &mut ShellLsTask) {
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
@@ -639,7 +641,7 @@ impl ShellLsTask {
     /// `this` must be a live heap allocation produced by
     /// [`ShellLsTask::create`]; ownership is reclaimed via
     /// [`Ls::on_shell_ls_task_done`].
-    pub fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
+    pub(crate) fn run_from_main_thread(this: NonNull<ShellLsTask>, interp: &Interpreter) {
         // SAFETY: precondition.
         let cmd = unsafe { this.as_ref() }.cmd;
         Ls::on_shell_ls_task_done(interp, cmd, this);

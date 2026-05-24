@@ -2,7 +2,7 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use std::collections::HashSet;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PureGlobalIdentifierValue {
+pub(crate) enum PureGlobalIdentifierValue {
     NaN,
     Infinity,
     StrictUndefined,
@@ -14,7 +14,7 @@ include!(concat!(
     "/../../build/debug/codegen/defines_table_generated.rs"
 ));
 
-pub static PURE_GLOBAL_IDENTIFIER_MAP: phf::Map<&'static [u8], PureGlobalIdentifierValue> = phf::phf_map! {
+pub(crate) static PURE_GLOBAL_IDENTIFIER_MAP: phf::Map<&'static [u8], PureGlobalIdentifierValue> = phf::phf_map! {
     b"NaN" => PureGlobalIdentifierValue::NaN,
     b"Infinity" => PureGlobalIdentifierValue::Infinity,
     b"undefined" => PureGlobalIdentifierValue::StrictUndefined,

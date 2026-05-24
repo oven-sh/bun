@@ -167,7 +167,7 @@ impl H2GlobalErrExt for JSGlobalObject {
     }
 }
 
-pub fn get_http2_common_string(
+pub(crate) fn get_http2_common_string(
     global_object: &JSGlobalObject,
     hpack_index: u32,
 ) -> Option<JSValue> {
@@ -346,7 +346,7 @@ unsafe impl bytemuck::Zeroable for StreamPriority {}
 unsafe impl bytemuck::Pod for StreamPriority {}
 const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
 impl StreamPriority {
-    pub const BYTE_SIZE: usize = 5;
+    pub(crate) const BYTE_SIZE: usize = 5;
     #[inline]
     fn write(self, writer: &mut impl WireWriter) -> bool {
         let mut swap = self;
@@ -448,7 +448,7 @@ impl SettingsPayloadUnit {
 // TODO(port): #[repr(C, packed)] for wire layout; verify byteSwapAllFields equivalence in Phase B
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
-pub struct FullSettingsPayload {
+pub(crate) struct FullSettingsPayload {
     _header_table_size_type: u16,
     header_table_size: u32,
     _enable_push_type: u16,
@@ -492,9 +492,9 @@ impl Default for FullSettingsPayload {
     }
 }
 impl FullSettingsPayload {
-    pub const BYTE_SIZE: usize = 42;
+    pub(crate) const BYTE_SIZE: usize = 42;
 
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         let result = JSValue::create_empty_object(global_object, 8);
         // Packed-field reads are by-value (Copy) → no unaligned-ref hazard.
         let header_table_size = self.header_table_size;
@@ -543,7 +543,7 @@ impl FullSettingsPayload {
         result
     }
 
-    pub fn update_with(&mut self, option: SettingsPayloadUnit) {
+    pub(crate) fn update_with(&mut self, option: SettingsPayloadUnit) {
         match SettingsType(option.type_) {
             SettingsType::SETTINGS_HEADER_TABLE_SIZE => self.header_table_size = option.value,
             SettingsType::SETTINGS_ENABLE_PUSH => self.enable_push = option.value,
@@ -560,7 +560,7 @@ impl FullSettingsPayload {
         }
     }
 
-    pub fn write(&self, writer: &mut impl WireWriter) -> bool {
+    pub(crate) fn write(&self, writer: &mut impl WireWriter) -> bool {
         let mut swap = *self;
         // TODO(port): byteSwapAllFields — swap each field manually
         swap._header_table_size_type = swap._header_table_size_type.swap_bytes();
@@ -1058,7 +1058,7 @@ impl Handlers {
         self.global_object
     }
 
-    pub fn call_event_handler(
+    pub(crate) fn call_event_handler(
         &self,
         event: JSH2FrameParser::Gc,
         this_value: JSValue,
@@ -1074,7 +1074,7 @@ impl Handlers {
         true
     }
 
-    pub fn call_write_callback(&self, callback: JSValue, data: &[JSValue]) -> bool {
+    pub(crate) fn call_write_callback(&self, callback: JSValue, data: &[JSValue]) -> bool {
         if !callback.is_callable() {
             return false;
         }
@@ -1084,7 +1084,7 @@ impl Handlers {
         true
     }
 
-    pub fn call_event_handler_with_result(
+    pub(crate) fn call_event_handler_with_result(
         &self,
         event: JSH2FrameParser::Gc,
         this_value: JSValue,
@@ -1101,7 +1101,7 @@ impl Handlers {
         )
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         opts: JSValue,
         this_value: JSValue,
@@ -1321,7 +1321,7 @@ impl H2FrameParser {
         std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
         // is sound for that single field access.
@@ -1330,7 +1330,7 @@ impl H2FrameParser {
     // R-2: `&self` — `RefCount` is `Cell`-backed and every other field is
     // `Cell`/`JsCell`, so `destructor()` (→ `deinit()`) writes only through
     // `UnsafeCell`-derived pointers; the `*mut` cast is signature-only.
-    pub fn deref(&self) {
+    pub(crate) fn deref(&self) {
         // SAFETY: `self` is live; `deref` decrements the intrusive count and,
         // on zero, calls `destructor(this)` which frees via `heap::take`.
         // The caller must not touch `self` after this returns when count was 1.
@@ -1348,7 +1348,7 @@ impl H2FrameParser {
 /// each one on demand: streams removed mid-loop are skipped, streams added
 /// mid-loop are not visited, and nothing is yielded twice. That's the
 /// guarantee the call sites actually rely on (flush / emit-to-all / detach).
-pub struct StreamResumableIterator {
+pub(crate) struct StreamResumableIterator {
     // PORT NOTE: Zig's `parser: *H2FrameParser` freely aliases. R-2: `streams`
     // is now `JsCell`-backed, so a shared backref suffices and the in-loop
     // body can keep its own `&H2FrameParser` without provenance gymnastics.
@@ -1360,7 +1360,7 @@ pub struct StreamResumableIterator {
     index: usize,
 }
 impl StreamResumableIterator {
-    pub fn init(parser: &H2FrameParser) -> Self {
+    pub(crate) fn init(parser: &H2FrameParser) -> Self {
         let ids = parser.streams.get().keys().copied().collect();
         Self {
             parser: bun_ptr::ParentRef::new(parser),
@@ -1368,7 +1368,7 @@ impl StreamResumableIterator {
             index: 0,
         }
     }
-    pub fn next(&mut self) -> Option<*mut Stream> {
+    pub(crate) fn next(&mut self) -> Option<*mut Stream> {
         // R-2: `streams` is `JsCell`-backed (UnsafeCell), so the shared backref
         // read here coexists soundly with the loop body's own `&self` accesses.
         let streams = self.parser.streams.get();
@@ -1428,7 +1428,7 @@ pub struct Stream {
     data_frame_queue: PendingQueue,
 }
 
-pub struct SignalRef {
+pub(crate) struct SignalRef {
     // LIFETIMES.tsv: SHARED — AbortSignal is intrusively refcounted across FFI/codegen.
     // `AbortSignal` is an opaque C++ type whose ref/unref go through
     // `WebCore__AbortSignal__ref/unref`; it does not (and cannot) implement
@@ -1451,12 +1451,12 @@ pub struct SignalRef {
 }
 
 impl SignalRef {
-    pub fn is_aborted(&self) -> bool {
+    pub(crate) fn is_aborted(&self) -> bool {
         // BackRef invariant: signal kept alive via .ref_() in attach_signal.
         self.signal.aborted()
     }
 
-    pub fn abort_listener(this: &mut SignalRef, reason: JSValue) {
+    pub(crate) fn abort_listener(this: &mut SignalRef, reason: JSValue) {
         bun_output::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
         // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
@@ -1497,13 +1497,13 @@ struct PendingQueue {
 }
 
 impl PendingQueue {
-    pub fn enqueue(&mut self, value: PendingFrame) {
+    pub(crate) fn enqueue(&mut self, value: PendingFrame) {
         self.data.push(value);
         self.len += 1;
         bun_output::scoped_log!(H2FrameParser, "PendingQueue.enqueue {}", self.len);
     }
 
-    pub fn peek_last(&mut self) -> Option<&mut PendingFrame> {
+    pub(crate) fn peek_last(&mut self) -> Option<&mut PendingFrame> {
         if self.len == 0 {
             return None;
         }
@@ -1511,14 +1511,14 @@ impl PendingQueue {
         Some(&mut self.data[last])
     }
 
-    pub fn peek_front(&mut self) -> Option<&mut PendingFrame> {
+    pub(crate) fn peek_front(&mut self) -> Option<&mut PendingFrame> {
         if self.len == 0 {
             return None;
         }
         Some(&mut self.data[self.front])
     }
 
-    pub fn dequeue(&mut self) -> Option<PendingFrame> {
+    pub(crate) fn dequeue(&mut self) -> Option<PendingFrame> {
         if self.len == 0 {
             bun_output::scoped_log!(H2FrameParser, "PendingQueue.dequeue null");
             return None;
@@ -1535,7 +1535,7 @@ impl PendingQueue {
         Some(value)
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len == 0
     }
 }
@@ -1552,7 +1552,7 @@ struct PendingFrame {
 }
 
 impl PendingFrame {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         &self.buffer[self.offset as usize..self.len as usize]
     }
 }
@@ -2143,7 +2143,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
+    pub(crate) fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
                 return hpack
@@ -2154,7 +2154,7 @@ impl H2FrameParser {
         })
     }
 
-    pub fn encode(
+    pub(crate) fn encode(
         &self,
         dst_buffer: &mut [u8],
         dst_offset: usize,
@@ -2264,7 +2264,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn set_settings(&self, settings: FullSettingsPayload) -> bool {
+    pub(crate) fn set_settings(&self, settings: FullSettingsPayload) -> bool {
         bun_output::scoped_log!(H2FrameParser, "HTTP_FRAME_SETTINGS ack false");
 
         if self.outstanding_settings.get() >= self.max_outstanding_settings.get() {
@@ -2297,7 +2297,7 @@ impl H2FrameParser {
         true
     }
 
-    pub fn abort_stream(&self, stream: &mut Stream, abort_reason: JSValue) {
+    pub(crate) fn abort_stream(&self, stream: &mut Stream, abort_reason: JSValue) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_RST_STREAM id: {} code: CANCEL",
@@ -2333,7 +2333,7 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
+    pub(crate) fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_RST_STREAM id: {} code: {}",
@@ -2379,7 +2379,7 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn send_go_away(
+    pub(crate) fn send_go_away(
         &self,
         stream_identifier: u32,
         rst_code: ErrorCode,
@@ -2444,7 +2444,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn send_alt_svc(&self, stream_identifier: u32, origin_str: &[u8], alt: &[u8]) {
+    pub(crate) fn send_alt_svc(&self, stream_identifier: u32, origin_str: &[u8], alt: &[u8]) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_ALTSVC stream {} origin {} alt {}",
@@ -2477,7 +2477,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn send_ping(&self, ack: bool, payload: &[u8]) {
+    pub(crate) fn send_ping(&self, ack: bool, payload: &[u8]) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_PING ack {} payload {}",
@@ -2502,7 +2502,7 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn send_preface_and_settings(&self) {
+    pub(crate) fn send_preface_and_settings(&self) {
         bun_output::scoped_log!(H2FrameParser, "sendPrefaceAndSettings");
         // PREFACE + Settings Frame
         let mut preface_buffer =
@@ -2522,7 +2522,7 @@ impl H2FrameParser {
         let _ = self.write(&preface_buffer);
     }
 
-    pub fn send_settings_ack(&self) {
+    pub(crate) fn send_settings_ack(&self) {
         bun_output::scoped_log!(H2FrameParser, "send HTTP_FRAME_SETTINGS ack true");
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
         let mut stream = FixedBufferStream::new(&mut buffer);
@@ -2536,7 +2536,11 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn send_window_update(&self, stream_identifier: u32, window_size: UInt31WithReserved) {
+    pub(crate) fn send_window_update(
+        &self,
+        stream_identifier: u32,
+        window_size: UInt31WithReserved,
+    ) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_WINDOW_UPDATE stream {} size {}",
@@ -2556,7 +2560,7 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn dispatch(&self, event: JSH2FrameParser::Gc, value: JSValue) {
+    pub(crate) fn dispatch(&self, event: JSH2FrameParser::Gc, value: JSValue) {
         value.ensure_still_alive();
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
@@ -2572,7 +2576,7 @@ impl H2FrameParser {
         );
     }
 
-    pub fn call(&self, event: JSH2FrameParser::Gc, value: JSValue) -> JSValue {
+    pub(crate) fn call(&self, event: JSH2FrameParser::Gc, value: JSValue) -> JSValue {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return JSValue::ZERO;
         };
@@ -2585,11 +2589,16 @@ impl H2FrameParser {
             .call_event_handler_with_result(event, this_value, &[ctx_value, value])
     }
 
-    pub fn dispatch_write_callback(&self, callback: JSValue) {
+    pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
         let _ = self.handlers.get().call_write_callback(callback, &[]);
     }
 
-    pub fn dispatch_with_extra(&self, event: JSH2FrameParser::Gc, value: JSValue, extra: JSValue) {
+    pub(crate) fn dispatch_with_extra(
+        &self,
+        event: JSH2FrameParser::Gc,
+        value: JSValue,
+        extra: JSValue,
+    ) {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
@@ -2606,7 +2615,7 @@ impl H2FrameParser {
         );
     }
 
-    pub fn dispatch_with_2_extra(
+    pub(crate) fn dispatch_with_2_extra(
         &self,
         event: JSH2FrameParser::Gc,
         value: JSValue,
@@ -2630,7 +2639,7 @@ impl H2FrameParser {
         );
     }
 
-    pub fn dispatch_with_3_extra(
+    pub(crate) fn dispatch_with_3_extra(
         &self,
         event: JSH2FrameParser::Gc,
         value: JSValue,
@@ -2674,7 +2683,7 @@ impl H2FrameParser {
         CORK_OFFSET.with(|c| c.set(0));
     }
 
-    pub fn _generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
+    pub(crate) fn _generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
         let buffer_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
         if buffer_len > 0 {
             let result: i32 = socket.write_maybe_corked(
@@ -2709,7 +2718,7 @@ impl H2FrameParser {
         buffer_len
     }
 
-    pub fn _generic_write<S: NativeSocketWrite>(&self, mut socket: S, bytes: &[u8]) -> bool {
+    pub(crate) fn _generic_write<S: NativeSocketWrite>(&self, mut socket: S, bytes: &[u8]) -> bool {
         bun_output::scoped_log!(H2FrameParser, "_genericWrite {}", bytes.len());
 
         let global = self.global();
@@ -2819,7 +2828,7 @@ impl H2FrameParser {
         written
     }
 
-    pub fn flush(&self) -> usize {
+    pub(crate) fn flush(&self) -> usize {
         bun_output::scoped_log!(H2FrameParser, "flush");
         // Zig: `this.ref(); defer this.deref();` — keep `self` alive across the
         // re-entrant JS calls below. ScopedRef stores a raw pointer so it does
@@ -2876,7 +2885,7 @@ impl H2FrameParser {
         written
     }
 
-    pub fn _write(&self, bytes: &[u8]) -> bool {
+    pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
         self.ref_();
         let result = match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
@@ -2995,7 +3004,7 @@ impl H2FrameParser {
         self.deref();
     }
 
-    pub fn on_auto_flush(&self) -> bool {
+    pub(crate) fn on_auto_flush(&self) -> bool {
         self.ref_();
         let _ = self.flush();
         self.deref();
@@ -3003,7 +3012,7 @@ impl H2FrameParser {
         true
     }
 
-    pub fn write(&self, bytes: &[u8]) -> bool {
+    pub(crate) fn write(&self, bytes: &[u8]) -> bool {
         bun_output::scoped_log!(H2FrameParser, "write {}", bytes.len());
         if ENABLE_AUTO_CORK {
             self.cork();
@@ -3036,7 +3045,7 @@ impl H2FrameParser {
 // `unsafe { &mut *self_ptr }` reborrow, which under Stacked Borrows invalidates the slice the
 // moment the caller touches `self` again. Carrying a raw pointer keeps the Zig aliasing intent
 // without materialising overlapping `&mut` borrows.
-pub struct Payload {
+pub(crate) struct Payload {
     data_ptr: *const u8,
     data_len: usize,
     end: usize,
@@ -3067,7 +3076,7 @@ impl Payload {
 }
 
 /// Trait to abstract over TLSSocket / TCPSocket for `_generic_flush`/`_generic_write`.
-pub trait NativeSocketWrite {
+pub(crate) trait NativeSocketWrite {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32;
 }
 impl NativeSocketWrite for &TLSSocket {
@@ -3109,7 +3118,11 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 impl H2FrameParser {
     // Default handling for payload is buffering it
     // for data frames we use another strategy
-    pub fn handle_incomming_payload(&self, data: &[u8], stream_identifier: u32) -> Option<Payload> {
+    pub(crate) fn handle_incomming_payload(
+        &self,
+        data: &[u8],
+        stream_identifier: u32,
+    ) -> Option<Payload> {
         let end: usize = (self.remaining_length.get() as usize).min(data.len());
         let payload = &data[0..end];
         self.remaining_length
@@ -3167,7 +3180,7 @@ impl H2FrameParser {
         })
     }
 
-    pub fn handle_window_update_frame(
+    pub(crate) fn handle_window_update_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3216,7 +3229,7 @@ impl H2FrameParser {
         data.len()
     }
 
-    pub fn decode_header_block(
+    pub(crate) fn decode_header_block(
         &self,
         payload: &[u8],
         stream: &mut Stream,
@@ -3353,7 +3366,7 @@ impl H2FrameParser {
         Ok(self.streams.get().get(&stream_id).copied())
     }
 
-    pub fn handle_data_frame(
+    pub(crate) fn handle_data_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3541,7 +3554,7 @@ impl H2FrameParser {
         end
     }
 
-    pub fn handle_go_away_frame(
+    pub(crate) fn handle_go_away_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3606,7 +3619,7 @@ impl H2FrameParser {
         bun_jsc::bun_string_jsc::create_utf8_for_js(&global, payload)
     }
 
-    pub fn handle_origin_frame(
+    pub(crate) fn handle_origin_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3694,7 +3707,7 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_altsvc_frame(
+    pub(crate) fn handle_altsvc_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3756,7 +3769,7 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_rst_stream_frame(
+    pub(crate) fn handle_rst_stream_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3826,7 +3839,7 @@ impl H2FrameParser {
         data.len()
     }
 
-    pub fn handle_ping_frame(
+    pub(crate) fn handle_ping_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3899,7 +3912,7 @@ impl H2FrameParser {
         data.len()
     }
 
-    pub fn handle_priority_frame(
+    pub(crate) fn handle_priority_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3966,7 +3979,7 @@ impl H2FrameParser {
     }
 
     /// RFC 7540 Section 6.10: Handle CONTINUATION frame (type=0x9).
-    pub fn handle_continuation_frame(
+    pub(crate) fn handle_continuation_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -4026,7 +4039,7 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_headers_frame(
+    pub(crate) fn handle_headers_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -4161,7 +4174,7 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_settings_frame(&self, frame: FrameHeader, data: &[u8]) -> usize {
+    pub(crate) fn handle_settings_frame(&self, frame: FrameHeader, data: &[u8]) -> usize {
         let is_ack = frame.flags & SettingsFlags::ACK as u8 != 0;
 
         bun_output::scoped_log!(
@@ -4679,30 +4692,7 @@ impl bun_io::Write for DirectWriterStruct {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-    #[bun_jsc::host_fn(method)]
-    pub fn set_encoding(
-        this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
-            return Err(global_object.throw(format_args!("Expected encoding argument")));
-        }
-        let bt = match BinaryType::from_js_value(global_object, args_list.ptr[0])? {
-            Some(bt) => bt,
-            None => {
-                let err = global_object.to_invalid_arguments(format_args!(
-                    "Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'"
-                ));
-                return Err(global_object.throw_value(err));
-            }
-        };
-        this.handlers.with_mut(|h| h.binary_type = bt);
-        Ok(JSValue::UNDEFINED)
-    }
-
-    pub fn load_settings_from_js_value(
+    pub(crate) fn load_settings_from_js_value(
         &self,
         global_object: &JSGlobalObject,
         options: JSValue,
@@ -4884,7 +4874,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn update_settings(
+    pub(crate) fn update_settings(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -4902,7 +4892,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_local_window_size(
+    pub(crate) fn set_local_window_size(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -4947,7 +4937,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_current_state(
+    pub(crate) fn get_current_state(
         this: &Self,
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -5007,7 +4997,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn goaway(
+    pub(crate) fn goaway(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5064,7 +5054,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ping(
+    pub(crate) fn ping(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5092,7 +5082,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn origin(
+    pub(crate) fn origin(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5190,7 +5180,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn altsvc(
+    pub(crate) fn altsvc(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5247,7 +5237,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_end_after_headers(
+    pub(crate) fn get_end_after_headers(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5276,7 +5266,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn is_stream_aborted(
+    pub(crate) fn is_stream_aborted(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5312,7 +5302,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_stream_state(
+    pub(crate) fn get_stream_state(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5375,7 +5365,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_stream_priority(
+    pub(crate) fn set_stream_priority(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5487,7 +5477,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn rst_stream(
+    pub(crate) fn rst_stream(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5554,7 +5544,7 @@ impl H2FrameParser {
 
     // get memory in bytes
     #[bun_jsc::host_fn(method)]
-    pub fn get_buffer_size(
+    pub(crate) fn get_buffer_size(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -5732,7 +5722,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn no_trailers(
+    pub(crate) fn no_trailers(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5829,7 +5819,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn send_trailers(
+    pub(crate) fn send_trailers(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5918,20 +5908,19 @@ impl H2FrameParser {
                 );
                 return Err(global_object.throw_value(exception));
             }
-            let validated_name =
-                match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
-                    Ok(n) => n,
-                    Err(_) => {
-                        let exception = global_object.to_type_error(
-                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
-                            format_args!(
-                                "The arguments Header name is invalid. Received {}",
-                                BStr::new(name)
-                            ),
-                        );
-                        return Err(global_object.throw_value(exception));
-                    }
-                };
+            let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                Ok(n) => n,
+                Err(_) => {
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                        format_args!(
+                            "The arguments Header name is invalid. Received {}",
+                            BStr::new(name)
+                        ),
+                    );
+                    return Err(global_object.throw_value(exception));
+                }
+            };
 
             // closure for encode error handling
             let mut handle_encode =
@@ -6164,7 +6153,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn write_stream(
+    pub(crate) fn write_stream(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6253,7 +6242,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_next_stream_id(
+    pub(crate) fn set_next_stream_id(
         this: &Self,
         _global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6283,7 +6272,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn has_native_read(
+    pub(crate) fn has_native_read(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -6295,7 +6284,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_next_stream(
+    pub(crate) fn get_next_stream(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -6311,7 +6300,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_stream_context(
+    pub(crate) fn get_stream_context(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6335,7 +6324,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_stream_context(
+    pub(crate) fn set_stream_context(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6365,7 +6354,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn for_each_stream(
+    pub(crate) fn for_each_stream(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6399,7 +6388,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn emit_abort_to_all_streams(
+    pub(crate) fn emit_abort_to_all_streams(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -6438,7 +6427,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn emit_error_to_all_streams(
+    pub(crate) fn emit_error_to_all_streams(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6472,7 +6461,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn flush_from_js(
+    pub(crate) fn flush_from_js(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -6481,7 +6470,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn request(
+    pub(crate) fn request(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6550,20 +6539,19 @@ impl H2FrameParser {
                 let name_slice = header_name.to_utf8();
                 let name = name_slice.slice();
 
-                let validated_name =
-                    match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
-                        Ok(n) => n,
-                        Err(_) => {
-                            let exception = global_object.to_type_error(
-                                bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
-                                format_args!(
-                                    "The arguments Header name is invalid. Received \"{}\"",
-                                    BStr::new(name)
-                                ),
-                            );
-                            return Err(global_object.throw_value(exception));
-                        }
-                    };
+                let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                            format_args!(
+                                "The arguments Header name is invalid. Received \"{}\"",
+                                BStr::new(name)
+                            ),
+                        );
+                        return Err(global_object.throw_value(exception));
+                    }
+                };
 
                 if name.first() == Some(&b':') {
                     if ignore_pseudo_headers == 1 {
@@ -7017,10 +7005,15 @@ impl H2FrameParser {
             0
         };
         let available_payload = actual_max_frame_size - priority_overhead;
-        let padding: u8 = if encoded_size > available_payload {
+        // Reserve one byte for the pad-length field so `encoded_size +
+        // padding_overhead` never exceeds `available_payload`; otherwise the
+        // CONTINUATION branch below would slice past the end of the encoded
+        // header block. CONTINUATION frames cannot carry padding, so it is
+        // disabled whenever the block does not fit in a single HEADERS frame.
+        let padding: u8 = if encoded_size >= available_payload {
             0
         } else {
-            stream.get_padding(encoded_size, available_payload)
+            stream.get_padding(encoded_size, available_payload - 1)
         };
         let padding_overhead: usize = if padding != 0 {
             padding as usize + 1
@@ -7169,7 +7162,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn read(
+    pub(crate) fn read(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -7202,7 +7195,7 @@ impl H2FrameParser {
         result
     }
 
-    pub fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
+    pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
         self.ref_();
         let mut bytes = data;
@@ -7218,17 +7211,17 @@ impl H2FrameParser {
         result
     }
 
-    pub fn on_native_writable(&self) {
+    pub(crate) fn on_native_writable(&self) {
         let _ = self.flush();
     }
 
-    pub fn on_native_close(&self) {
+    pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
         self.detach_native_socket();
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_native_socket_from_js(
+    pub(crate) fn set_native_socket_from_js(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -7299,7 +7292,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn detach_native_socket(&self) {
+    pub(crate) fn detach_native_socket(&self) {
         let native_socket = self.native_socket.replace(BunSocket::None);
 
         match native_socket {
@@ -7314,7 +7307,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn constructor(
+    pub(crate) fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
         this_value: JSValue,
@@ -7516,7 +7509,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn detach_from_js(
+    pub(crate) fn detach_from_js(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -7540,7 +7533,7 @@ impl H2FrameParser {
 
     /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
     /// this function can be called multiple times, it will erase stream info
-    pub fn detach(&self) {
+    pub(crate) fn detach(&self) {
         self.uncork();
         self.unregister_auto_flush();
         self.detach_native_socket();
@@ -7603,7 +7596,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         bun_ptr::finalize_js_box(self, |this| {

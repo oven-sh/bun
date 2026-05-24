@@ -14,10 +14,10 @@ use bun_options_types::schema::api;
 // the closed Rust `api::Loader` set; transmuting an unknown tag would be UB.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub struct ApiLoader(pub u8);
+pub(crate) struct ApiLoader(pub u8);
 impl ApiLoader {
     /// schema.zig:326 — `_none = 254`.
-    pub const NONE: Self = Self(api::Loader::_none as u8);
+    pub(crate) const NONE: Self = Self(api::Loader::_none as u8);
 
     /// Reconstruct the closed schema enum. Only valid when `self != NONE` is
     /// already established and the C++ caller honoured the `BunLoaderType`
@@ -36,7 +36,7 @@ impl ApiLoader {
 // `jsFunctionFindPath`) does the CallFrame → (BunString, JSArray*) extraction itself and
 // invokes this with the coerced args directly — there is no CallFrame here.
 #[unsafe(no_mangle)]
-pub extern "C" fn NodeModuleModule__findPath(
+pub(crate) extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
     request_bun_str: BunString,
     paths_maybe: *mut JSArray,
@@ -256,7 +256,7 @@ pub fn find_longest_registered_extension<'a>(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
+pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,
     str: &BunString,
     loader: ApiLoader,
@@ -270,7 +270,7 @@ pub extern "C" fn NodeModuleModule__onRequireExtensionModify(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
+pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
     str: &BunString,
 ) {

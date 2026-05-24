@@ -2881,16 +2881,16 @@ use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create}
 /// `codegen_cached_accessors!` emits `route_list_{get,set}_cached` wrapping
 /// `${T}Prototype__routeList{Get,Set}CachedValue` (generate-classes.ts).
 mod route_list_cached {
-    pub mod http {
+    pub(super) mod http {
         bun_jsc::codegen_cached_accessors!("HTTPServer"; routeList);
     }
-    pub mod https {
+    pub(super) mod https {
         bun_jsc::codegen_cached_accessors!("HTTPSServer"; routeList);
     }
-    pub mod debug_http {
+    pub(super) mod debug_http {
         bun_jsc::codegen_cached_accessors!("DebugHTTPServer"; routeList);
     }
-    pub mod debug_https {
+    pub(super) mod debug_https {
         bun_jsc::codegen_cached_accessors!("DebugHTTPSServer"; routeList);
     }
 }
@@ -2903,7 +2903,7 @@ mod trampoline {
     use super::*;
     use bun_uws_sys::{ListenSocket as UwsListenSocket, Request as UwsRequest, uws_res};
 
-    pub extern "C" fn on_listen<const SSL: bool, const DEBUG: bool>(
+    pub(super) extern "C" fn on_listen<const SSL: bool, const DEBUG: bool>(
         socket: *mut UwsListenSocket,
         user_data: *mut c_void,
     ) {
@@ -2917,7 +2917,7 @@ mod trampoline {
         server.on_listen(socket);
     }
 
-    pub extern "C" fn on_listen_unix<const SSL: bool, const DEBUG: bool>(
+    pub(super) extern "C" fn on_listen_unix<const SSL: bool, const DEBUG: bool>(
         socket: *mut UwsListenSocket,
         _domain: *const c_char,
         _flags: i32,
@@ -2926,7 +2926,7 @@ mod trampoline {
         on_listen::<SSL, DEBUG>(socket, user_data);
     }
 
-    pub extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
+    pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         _req: *mut UwsRequest,
         _user_data: *mut c_void,
@@ -2937,7 +2937,7 @@ mod trampoline {
         resp.end(b"", false);
     }
 
-    pub extern "C" fn on_request<const SSL: bool, const DEBUG: bool>(
+    pub(super) extern "C" fn on_request<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         req: *mut UwsRequest,
         user_data: *mut c_void,
@@ -2951,7 +2951,7 @@ mod trampoline {
         );
     }
 
-    pub extern "C" fn on_user_route_request<const SSL: bool, const DEBUG: bool>(
+    pub(super) extern "C" fn on_user_route_request<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         req: *mut UwsRequest,
         user_data: *mut c_void,
@@ -2965,7 +2965,7 @@ mod trampoline {
         );
     }
 
-    pub extern "C" fn on_node_http_request<const SSL: bool, const DEBUG: bool>(
+    pub(super) extern "C" fn on_node_http_request<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         req: *mut UwsRequest,
         user_data: *mut c_void,
@@ -2979,7 +2979,7 @@ mod trampoline {
         );
     }
 
-    pub extern "C" fn on_bun_info_request<const SSL: bool, const DEBUG: bool>(
+    pub(super) extern "C" fn on_bun_info_request<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         req: *mut UwsRequest,
         user_data: *mut c_void,
@@ -2994,7 +2994,7 @@ mod trampoline {
         };
     }
 
-    pub extern "C" fn on_chrome_devtools_json_request<const SSL: bool, const DEBUG: bool>(
+    pub(super) extern "C" fn on_chrome_devtools_json_request<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
         req: *mut UwsRequest,
         user_data: *mut c_void,
@@ -3080,8 +3080,12 @@ mod ffi {
     unsafe extern "C" {
         // `app` is the opaque `uws::App<SSL>*`; C++ only flips a flag / assigns a
         // handler. Callers pass the live `self.app` handle, so no precondition.
-        pub safe fn NodeHTTP_setUsingCustomExpectHandler(ssl: bool, app: *mut c_void, value: bool);
-        pub safe fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
+        pub(super) safe fn NodeHTTP_setUsingCustomExpectHandler(
+            ssl: bool,
+            app: *mut c_void,
+            value: bool,
+        );
+        pub(super) safe fn NodeHTTP_assignOnNodeJSCompat(ssl: bool, app: *mut c_void);
 
         /// `src/jsc/bindings/NodeHTTP.cpp` — constructs the JS
         /// `IncomingMessage`/`ServerResponse` pair, allocates a
@@ -3092,7 +3096,7 @@ mod ffi {
         /// `&JSGlobalObject` / `&mut *mut _` discharge the deref'd-param
         /// preconditions; `request`/`response`/`upgrade_ctx` are opaque uws
         /// handles (module-private — sole caller passes live pointers).
-        pub safe fn NodeHTTPServer__onRequest_http(
+        pub(super) safe fn NodeHTTPServer__onRequest_http(
             any_server: usize,
             global: &jsc::JSGlobalObject,
             this_value: jsc::JSValue,
@@ -3104,7 +3108,7 @@ mod ffi {
             node_response_ptr: &mut *mut NodeHTTPResponse,
         ) -> jsc::JSValue;
 
-        pub safe fn NodeHTTPServer__onRequest_https(
+        pub(super) safe fn NodeHTTPServer__onRequest_https(
             any_server: usize,
             global: &jsc::JSGlobalObject,
             this_value: jsc::JSValue,

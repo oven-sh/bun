@@ -81,7 +81,10 @@ pub use bun_http_jsc::headers_jsc::http_h1_backpressure_counts as http_http_test
 /// because the flag it reads — `cli::Arguments::Bun__Node__UseSystemCA` — is
 /// owned by `bun_runtime`; placing the body in a lower crate would invert the
 /// dependency edge.
-pub fn bun_get_use_system_ca(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn bun_get_use_system_ca(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     let v =
         crate::cli::Arguments::Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed);
     Ok(JSValue::js_boolean(v))

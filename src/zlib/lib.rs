@@ -1,6 +1,5 @@
 // @link "deps/zlib/libz.a"
 
-#![warn(unreachable_pub)]
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::size_of;
 

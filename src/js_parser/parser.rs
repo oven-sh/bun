@@ -17,10 +17,6 @@ use bun_wyhash::Wyhash;
 pub mod ConvertESMExportsForHmr {
     pub type Ctx = ();
 }
-#[allow(non_snake_case)]
-pub mod ImportScanner {
-    pub type State = ();
-}
 pub use bun_paths::fs;
 
 /// `bun_options_types` is missing several items P.rs/Parser.rs reference
@@ -91,7 +87,7 @@ pub mod options {
     /// `|pattern, shape| bun_glob::r#match(pattern, shape).matches()` when
     /// constructing `Patterns`. Function pointer (not closure) since no state
     /// is captured.
-    pub type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
+    pub(crate) type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
 
     #[derive(Debug, Clone, Default)]
     pub enum AllowUnresolved {
@@ -191,7 +187,6 @@ pub mod options {
             }
         }
     }
-    pub type MacroRemap = bun_collections::StringHashMap<bun_collections::StringHashMap<Box<[u8]>>>;
 }
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
 pub use crate::renamer;
@@ -456,12 +451,8 @@ pub mod Runtime {
     // here so `parser::Runtime::{Imports, ReplaceableExport, ...}` and
     // `bun_ast::runtime::{...}` are the same nominal types.
     pub(crate) use bun_ast::runtime::{
-        Imports, Names, ReplaceableExport, ReplaceableExportMap, ServerComponentsMode,
+        Imports, ReplaceableExport, ReplaceableExportMap, ServerComponentsMode,
     };
-
-    pub fn is_runtime_module(_: &[u8]) -> bool {
-        false
-    }
 
     // ───────────────────────────── Runtime / Fallback ─────────────────────
 
@@ -589,7 +580,7 @@ pub mod Runtime {
     }
 
     /// Zig: `Fallback.Base64FallbackMessage`
-    pub struct Base64FallbackMessage<'a> {
+    pub(crate) struct Base64FallbackMessage<'a> {
         pub msg: &'a api::FallbackMessageContainer,
     }
 
@@ -608,8 +599,7 @@ pub mod Runtime {
     }
 }
 pub type RuntimeFeatures = Runtime::Features;
-pub type RuntimeImports = Runtime::Imports;
-pub type RuntimeNames = Runtime::Names;
+pub(crate) type RuntimeImports = Runtime::Imports;
 
 pub use crate::p::{NewParser, P};
 
@@ -640,7 +630,7 @@ pub struct ExprListLoc {
     pub loc: bun_ast::Loc,
 }
 
-pub const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
+pub(crate) const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
 
 pub struct DeferredImportNamespace {
     pub namespace: LocRef,
@@ -683,7 +673,7 @@ pub enum JSXImport {
 impl JSXImport {
     /// Zig: `@tagName(field)` — the import-clause name as it appears in source.
     #[inline]
-    pub fn tag_name(self) -> &'static [u8] {
+    pub(crate) fn tag_name(self) -> &'static [u8] {
         let s: &'static str = self.into();
         s.as_bytes()
     }
@@ -699,7 +689,7 @@ pub struct JSXImportSymbols {
 }
 
 impl JSXImportSymbols {
-    pub fn get(&self, name: &[u8]) -> Option<Ref> {
+    pub(crate) fn get(&self, name: &[u8]) -> Option<Ref> {
         if name == b"jsx" {
             return self.jsx.map(|jsx| jsx.ref_.expect("infallible: ref bound"));
         }
@@ -726,7 +716,7 @@ impl JSXImportSymbols {
         None
     }
 
-    pub fn get_with_tag(&self, tag: JSXImport) -> Option<Ref> {
+    pub(crate) fn get_with_tag(&self, tag: JSXImport) -> Option<Ref> {
         match tag {
             JSXImport::Jsx => self.jsx.map(|jsx| jsx.ref_.expect("infallible: ref bound")),
             JSXImport::JsxDEV => self
@@ -744,7 +734,7 @@ impl JSXImportSymbols {
         }
     }
 
-    pub fn set(&mut self, tag: JSXImport, loc_ref: LocRef) {
+    pub(crate) fn set(&mut self, tag: JSXImport, loc_ref: LocRef) {
         match tag {
             JSXImport::Jsx => self.jsx = Some(loc_ref),
             JSXImport::JsxDEV => self.jsx_dev = Some(loc_ref),
@@ -754,7 +744,10 @@ impl JSXImportSymbols {
         }
     }
 
-    pub fn runtime_import_names<'b>(&self, buf: &'b mut [&'static [u8]; 3]) -> &'b [&'static [u8]] {
+    pub(crate) fn runtime_import_names<'b>(
+        &self,
+        buf: &'b mut [&'static [u8]; 3],
+    ) -> &'b [&'static [u8]] {
         let mut i: usize = 0;
         if self.jsx_dev.is_some() {
             debug_assert!(self.jsx.is_none()); // we should never end up with this in the same file
@@ -781,7 +774,7 @@ impl JSXImportSymbols {
         &buf[0..i]
     }
 
-    pub fn source_import_names(&self) -> &'static [&'static [u8]] {
+    pub(crate) fn source_import_names(&self) -> &'static [&'static [u8]] {
         if self.create_element.is_some() {
             &[b"createElement"]
         } else {
@@ -828,7 +821,7 @@ impl crate::p::GenerateImportSymbols for JSXImportSymbols {
     }
 }
 
-pub const ARGUMENTS_STR: &[u8] = b"arguments";
+pub(crate) const ARGUMENTS_STR: &[u8] = b"arguments";
 
 // Dear reader,
 // There are some things you should know about this file to make it easier for humans to read
@@ -844,10 +837,10 @@ pub const ARGUMENTS_STR: &[u8] = b"arguments";
 // While the names for Expr, Binding, and Stmt are directly copied from esbuild, those were likely inspired by Go's parser.
 // which is another example of a very fast parser.
 
-pub type ScopeOrderList<'bump> = bun_alloc::ArenaVec<'bump, Option<ScopeOrder<'bump>>>;
+pub(crate) type ScopeOrderList<'bump> = bun_alloc::ArenaVec<'bump, Option<ScopeOrder<'bump>>>;
 
 // kept as a static reference
-pub const EXPORTS_STRING_NAME: &[u8] = b"exports";
+pub(crate) const EXPORTS_STRING_NAME: &[u8] = b"exports";
 
 #[derive(Clone, Copy)]
 pub struct MacroRefData<'a> {
@@ -976,12 +969,6 @@ impl Default for TransposeState {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum JSXTagType {
-    Fragment,
-    Tag,
-}
-
 pub enum JSXTagData {
     Fragment(u8),
     Tag(Expr),
@@ -996,7 +983,7 @@ impl JSXTagData {
     }
 }
 
-pub struct JSXTag<'a> {
+pub(crate) struct JSXTag<'a> {
     pub data: JSXTagData,
     pub range: bun_ast::Range,
     /// Empty string for fragments.
@@ -1004,7 +991,7 @@ pub struct JSXTag<'a> {
 }
 
 impl<'a> JSXTag<'a> {
-    pub fn parse<P>(p: &mut P) -> Result<JSXTag<'a>, bun_core::Error>
+    pub(crate) fn parse<P>(p: &mut P) -> Result<JSXTag<'a>, bun_core::Error>
     where
         P: crate::p::ParserLike<'a>,
     {
@@ -1120,11 +1107,6 @@ impl<'a> JSXTag<'a> {
 // working).
 #[doc(hidden)]
 pub mod __generated_symbol_hash {
-    /// `std.hash.Wyhash.hash(0, input)`.
-    #[inline]
-    pub const fn wyhash0(input: &[u8]) -> u64 {
-        bun_wyhash::hash_const(0, input)
-    }
 
     /// `bun.fmt.truncatedHash32` — 8-byte base32-ish suffix (native-endian, matches Zig).
     pub use bun_core::fmt::truncated_hash32_bytes as truncated_hash32;
@@ -1166,8 +1148,8 @@ pub struct ExprOrLetStmt {
     // PORT NOTE: Zig writes `.decls = decls.slice()` borrowing the heap buffer
     // that was just moved into `S::Local`. The buffer pointer is stable across
     // the move, but borrowck can't see that — store as `RawSlice` to record the
-    // outlives-holder invariant without a per-site unsafe cast. (Neither caller
-    // currently reads this field, matching parseStmt.zig:829-836.)
+    // outlives-holder invariant without a per-site unsafe cast. Read by the
+    // for-loop parser so for-in/for-of heads can validate "let"/"using" decls.
     pub decls: bun_collections::RawSlice<G::Decl>,
 }
 
@@ -1188,7 +1170,7 @@ pub enum FunctionKind {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum AsyncPrefixExpression {
+pub(crate) enum AsyncPrefixExpression {
     None = 0,
     IsYield = 1,
     IsAsync = 2,
@@ -1207,7 +1189,7 @@ impl AsyncPrefixExpression {
     /// branch with no hashing — same shape as Zig's `ComptimeStringMap`
     /// length-bucket prefilter.
     #[inline]
-    pub fn find(ident: &[u8]) -> AsyncPrefixExpression {
+    pub(crate) fn find(ident: &[u8]) -> AsyncPrefixExpression {
         if ident.len() != 5 {
             return AsyncPrefixExpression::None;
         }
@@ -1237,7 +1219,7 @@ impl IdentifierOpts {
     const IS_CALL_TARGET: u8 = 1 << 4;
 
     #[inline]
-    pub const fn assign_target(self) -> js_ast::AssignTarget {
+    pub(crate) const fn assign_target(self) -> js_ast::AssignTarget {
         // AssignTarget is #[repr(u8)] with discriminants 0/1/2 only; the 2-bit
         // mask admits `3`, which would be UB to transmute. Exhaustive match
         // keeps the packed-u8 layout without the hazard. bits 0-1 are always
@@ -1251,64 +1233,48 @@ impl IdentifierOpts {
         }
     }
     #[inline]
-    pub fn set_assign_target(&mut self, v: js_ast::AssignTarget) {
-        self.0 = (self.0 & !Self::ASSIGN_TARGET_MASK) | (v as u8 & Self::ASSIGN_TARGET_MASK);
-    }
-    #[inline]
-    pub const fn is_delete_target(self) -> bool {
+    pub(crate) const fn is_delete_target(self) -> bool {
         self.0 & Self::IS_DELETE_TARGET != 0
     }
     #[inline]
-    pub fn set_is_delete_target(&mut self, v: bool) {
-        self.0 = (self.0 & !Self::IS_DELETE_TARGET) | ((v as u8) << 2);
-    }
-    #[inline]
-    pub const fn was_originally_identifier(self) -> bool {
+    pub(crate) const fn was_originally_identifier(self) -> bool {
         self.0 & Self::WAS_ORIGINALLY_IDENTIFIER != 0
     }
     #[inline]
-    pub fn set_was_originally_identifier(&mut self, v: bool) {
-        self.0 = (self.0 & !Self::WAS_ORIGINALLY_IDENTIFIER) | ((v as u8) << 3);
-    }
-    #[inline]
-    pub const fn is_call_target(self) -> bool {
+    pub(crate) const fn is_call_target(self) -> bool {
         self.0 & Self::IS_CALL_TARGET != 0
-    }
-    #[inline]
-    pub fn set_is_call_target(&mut self, v: bool) {
-        self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
     }
 
     // Builder-style helpers so call sites can mirror Zig's `.{ .field = ... }`
     // initialization without paying for a named-field struct (this stays a
     // packed u8 to match the Zig ABI).
     #[inline]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self(0)
     }
     #[inline]
-    pub const fn with_assign_target(mut self, v: js_ast::AssignTarget) -> Self {
+    pub(crate) const fn with_assign_target(mut self, v: js_ast::AssignTarget) -> Self {
         self.0 = (self.0 & !Self::ASSIGN_TARGET_MASK) | (v as u8 & Self::ASSIGN_TARGET_MASK);
         self
     }
     #[inline]
-    pub const fn with_is_delete_target(mut self, v: bool) -> Self {
+    pub(crate) const fn with_is_delete_target(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::IS_DELETE_TARGET) | ((v as u8) << 2);
         self
     }
     #[inline]
-    pub const fn with_was_originally_identifier(mut self, v: bool) -> Self {
+    pub(crate) const fn with_was_originally_identifier(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::WAS_ORIGINALLY_IDENTIFIER) | ((v as u8) << 3);
         self
     }
     #[inline]
-    pub const fn with_is_call_target(mut self, v: bool) -> Self {
+    pub(crate) const fn with_is_call_target(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
         self
     }
 }
 
-pub fn statement_cares_about_scope(stmt: &Stmt) -> bool {
+pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     use js_ast::StmtData::*;
     match stmt.data {
         SBlock(_) | SEmpty(_) | SDebugger(_) | SExpr(_) | SIf(_) | SFor(_) | SForIn(_)
@@ -1391,7 +1357,7 @@ pub struct ExprIn {
 /// This function exists to tie all of these checks together in one place
 /// This can sometimes show up on benchmarks as a small thing.
 #[inline]
-pub fn is_eval_or_arguments(name: &[u8]) -> bool {
+pub(crate) fn is_eval_or_arguments(name: &[u8]) -> bool {
     name == b"eval" || name == b"arguments"
 }
 
@@ -1484,7 +1450,7 @@ pub enum InvalidLocTag {
 
 impl InvalidLoc {
     #[cold]
-    pub fn add_error(self, log: &mut bun_ast::Log, source: &bun_ast::Source) {
+    pub(crate) fn add_error(self, log: &mut bun_ast::Log, source: &bun_ast::Source) {
         let text: &'static [u8] = match self.kind {
             InvalidLocTag::Spread => b"Unexpected trailing comma after rest element",
             InvalidLocTag::Parentheses => b"Unexpected parentheses in binding pattern",
@@ -1497,7 +1463,7 @@ impl InvalidLoc {
     }
 }
 
-pub type LocList<'bump> = bun_alloc::ArenaVec<'bump, InvalidLoc>;
+pub(crate) type LocList<'bump> = bun_alloc::ArenaVec<'bump, InvalidLoc>;
 pub type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt>;
 
 /// This hash table is used every time we parse function args
@@ -1508,14 +1474,10 @@ pub struct StringVoidMap {
 
 impl StringVoidMap {
     /// Returns true if the map already contained the given key.
-    pub fn get_or_put_contains(&mut self, key: &[u8]) -> bool {
+    pub(crate) fn get_or_put_contains(&mut self, key: &[u8]) -> bool {
         // TODO(port): StringHashMap key ownership — Zig stored borrowed source slices.
         let entry = self.map.get_or_put(key).expect("unreachable");
         entry.found_existing
-    }
-
-    pub fn contains(&self, key: &[u8]) -> bool {
-        self.map.contains_key(key)
     }
 
     fn init() -> Result<StringVoidMap, bun_core::Error> {
@@ -1524,7 +1486,7 @@ impl StringVoidMap {
         })
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         // We must reset or the hash table will contain invalid pointers
         self.map.clear();
     }
@@ -1532,7 +1494,7 @@ impl StringVoidMap {
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
     /// returned to the pool on `Drop` (replaces Zig's `get` + `defer release`).
     #[inline]
-    pub fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
+    pub(crate) fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
         StringVoidMapPool::get()
     }
 }
@@ -1549,9 +1511,9 @@ impl bun_collections::pool::ObjectPoolType for StringVoidMap {
 // `32` is the preheated capacity.
 bun_collections::object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 32);
 
-pub type StringBoolMap = StringHashMap<bool>;
-pub type RefMap = HashMap<Ref, ()>; // TODO(port): RefCtx hasher + 80% load factor
-pub type RefRefMap = HashMap<Ref, Ref>; // TODO(port): RefCtx hasher + 80% load factor
+pub(crate) type StringBoolMap = StringHashMap<bool>;
+pub(crate) type RefMap = HashMap<Ref, ()>; // TODO(port): RefCtx hasher + 80% load factor
+pub(crate) type RefRefMap = HashMap<Ref, Ref>; // TODO(port): RefCtx hasher + 80% load factor
 
 // PORT NOTE: `scope` is `*mut` (not `&'arena`) because the visit pass writes
 // through it (push_scope_for_visit_pass assigns it to `current_scope: *mut`)
@@ -1766,13 +1728,7 @@ pub struct DeferredErrors {
 }
 
 impl DeferredErrors {
-    pub fn is_empty(&self) -> bool {
-        self.invalid_expr_default_value.is_none()
-            && self.invalid_expr_after_question.is_none()
-            && self.array_spread_feature.is_none()
-    }
-
-    pub fn merge_into(&self, to: &mut DeferredErrors) {
+    pub(crate) fn merge_into(&self, to: &mut DeferredErrors) {
         to.invalid_expr_default_value = self
             .invalid_expr_default_value
             .or(to.invalid_expr_default_value);
@@ -1781,12 +1737,6 @@ impl DeferredErrors {
             .or(to.invalid_expr_after_question);
         to.array_spread_feature = self.array_spread_feature.or(to.array_spread_feature);
     }
-
-    pub const NONE: DeferredErrors = DeferredErrors {
-        invalid_expr_default_value: None,
-        invalid_expr_after_question: None,
-        array_spread_feature: None,
-    };
 }
 
 pub struct ImportClause<'a> {
@@ -1854,7 +1804,7 @@ pub struct NamespaceCounter {
     pub import_record_index: u32,
 }
 
-pub type ParsePassSymbolUsageMap = StringArrayHashMap<ParsePassSymbolUse>;
+pub(crate) type ParsePassSymbolUsageMap = StringArrayHashMap<ParsePassSymbolUse>;
 
 impl ScanPassResult {
     pub fn init() -> ScanPassResult {
@@ -1940,7 +1890,7 @@ pub struct ParseStatementOptions<'a> {
 }
 
 impl<'a> ParseStatementOptions<'a> {
-    pub fn has_decorators(&self) -> bool {
+    pub(crate) fn has_decorators(&self) -> bool {
         let Some(decs) = &self.ts_decorators else {
             return false;
         };
@@ -1966,36 +1916,18 @@ pub mod prefill {
     }
 
     pub mod string_literal {
-        pub const KEY: [u8; 3] = *b"key";
-        pub const CHILDREN: [u8; 8] = *b"children";
-        pub const FILENAME: [u8; 8] = *b"fileName";
-        pub const LINE_NUMBER: [u8; 10] = *b"lineNumber";
-        pub const COLUMN_NUMBER: [u8; 12] = *b"columnNumber";
+        pub(crate) const CHILDREN: [u8; 8] = *b"children";
     }
 
     pub mod value {
         use super::*;
         pub const E_THIS: E::This = E::This {};
-        pub const ZERO: E::Number = E::Number { value: 0.0 };
+        pub(crate) const ZERO: E::Number = E::Number { value: 0.0 };
     }
 
     pub mod string {
         use super::*;
-        // Zig: `pub var` E.String holding &'static [u8]. Nothing mutates them, so
-        // `pub const` (each use copies the small struct) — avoids the !Sync from
-        // EString's StoreRef rope fields.
-        pub const KEY: E::String = E::String::from_static(&string_literal::KEY);
-        pub const CHILDREN: E::String = E::String::from_static(&string_literal::CHILDREN);
-        pub const FILENAME: E::String = E::String::from_static(&string_literal::FILENAME);
-        pub const LINE_NUMBER: E::String = E::String::from_static(&string_literal::LINE_NUMBER);
-        pub const COLUMN_NUMBER: E::String = E::String::from_static(&string_literal::COLUMN_NUMBER);
-
-        pub const TYPEOF_SYMBOL: E::String = E::String::from_static(b"$$typeof");
-        pub const TYPE_: E::String = E::String::from_static(b"type");
-        pub const REF: E::String = E::String::from_static(b"ref");
-        pub const PROPS: E::String = E::String::from_static(b"props");
-        pub const OWNER: E::String = E::String::from_static(b"_owner");
-        pub const REACT_ELEMENT_TYPE: E::String = E::String::from_static(b"react.element");
+        pub(crate) const CHILDREN: E::String = E::String::from_static(&string_literal::CHILDREN);
     }
 
     pub mod data {
@@ -2008,12 +1940,8 @@ pub mod prefill {
         // pub static FILENAME: ExprData = ExprData::EString(&string::FILENAME);
         // ... etc.
         pub const THIS: js_ast::ExprData = js_ast::ExprData::EThis(E::This {});
-        pub const ZERO: js_ast::ExprData = js_ast::ExprData::ENumber(value::ZERO);
+        pub(crate) const ZERO: js_ast::ExprData = js_ast::ExprData::ENumber(value::ZERO);
     }
-}
-
-pub struct ImportOrRequireScanResults {
-    pub import_records: Vec<ImportRecord>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -2029,7 +1957,7 @@ impl JSXTransformType {
     /// JSX (it only affects a handful of expr arms — see the `bun .` startup
     /// note in `p.rs`), so this is now a plain runtime predicate.
     #[inline]
-    pub const fn is_enabled(self) -> bool {
+    pub(crate) const fn is_enabled(self) -> bool {
         matches!(self, JSXTransformType::React)
     }
 
@@ -2037,7 +1965,7 @@ impl JSXTransformType {
     /// `NewParser(.{ .jsx = ... })` instantiation did (`if (jsx.parse) .react
     /// else .none`).
     #[inline]
-    pub const fn from_parse_flag(parse: bool) -> JSXTransformType {
+    pub(crate) const fn from_parse_flag(parse: bool) -> JSXTransformType {
         if parse {
             JSXTransformType::React
         } else {
@@ -2092,7 +2020,7 @@ impl Jest {
     /// fn-ptr projects the corresponding `Ref` out of the struct. Order matches
     /// the Zig field declaration order so the emitted import-clause / binding
     /// property order is identical.
-    pub const FIELDS: &'static [(&'static str, fn(&Jest) -> Ref)] = &[
+    pub(crate) const FIELDS: &'static [(&'static str, fn(&Jest) -> Ref)] = &[
         ("test", |j| j.test),
         ("it", |j| j.it),
         ("describe", |j| j.describe),
@@ -2396,7 +2324,7 @@ impl ReactRefresh<'_> {
     /// once (same uniqueness contract as `P::log()`).
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext>> {
+    pub(crate) fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext>> {
         // SAFETY: `hook_ctx_storage` is `Some` only while a `visit_*` frame
         // higher on the stack has installed `&mut react_hook_data` (a stack
         // local) and will restore the previous value before returning, so the
@@ -2407,7 +2335,7 @@ impl ReactRefresh<'_> {
     }
 
     /// https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L42
-    pub fn is_componentish_name(id: &[u8]) -> bool {
+    pub(crate) fn is_componentish_name(id: &[u8]) -> bool {
         if id.is_empty() {
             return false;
         }
@@ -2415,14 +2343,14 @@ impl ReactRefresh<'_> {
     }
 
     /// https://github.com/facebook/react/blob/d1afcb43fd506297109c32ff462f6f659f9110ae/packages/react-refresh/src/ReactFreshBabelPlugin.js#L408
-    pub fn is_hook_name(id: &[u8]) -> bool {
+    pub(crate) fn is_hook_name(id: &[u8]) -> bool {
         id.len() >= 4 && id.starts_with(b"use") && id[3].is_ascii_uppercase()
     }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
 #[allow(non_camel_case_types)]
-pub enum BuiltInHook {
+pub(crate) enum BuiltInHook {
     useState,
     useReducer,
     useEffect,
@@ -2453,7 +2381,7 @@ impl BuiltInHook {
     /// (len 10 → 2 keys, len 13 → 4 keys) disambiguate on `id[3]` — the first
     /// byte after the shared prefix — before the confirming slice compare.
     #[inline]
-    pub fn from_bytes(id: &[u8]) -> Option<Self> {
+    pub(crate) fn from_bytes(id: &[u8]) -> Option<Self> {
         match id.len() {
             5 if id == b"useId" => Some(Self::useId),
             6 if id == b"useRef" => Some(Self::useRef),
@@ -2486,7 +2414,7 @@ impl BuiltInHook {
 }
 
 /// Equivalent of esbuild's js_ast_helpers.ToInt32
-pub fn float_to_int32(f: f64) -> i32 {
+pub(crate) fn float_to_int32(f: f64) -> i32 {
     // Special-case non-finite numbers
     if !f.is_finite() {
         return 0;

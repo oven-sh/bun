@@ -1,7 +1,7 @@
-pub const CHAR_FREQ_COUNT: usize = 64;
+pub(crate) const CHAR_FREQ_COUNT: usize = 64;
 
 #[derive(Copy, Clone, Default)]
-pub struct CharAndCount {
+pub(crate) struct CharAndCount {
     pub char: u8,
     pub count: i32,
     pub index: usize,
@@ -9,21 +9,7 @@ pub struct CharAndCount {
 
 // PORT NOTE: Zig `CharAndCount.Array` was an associated type alias; inherent
 // associated types are unstable in Rust, so it's a free alias here.
-pub type CharAndCountArray = [CharAndCount; CHAR_FREQ_COUNT];
-
-impl CharAndCount {
-    pub fn less_than(a: &CharAndCount, b: &CharAndCount) -> bool {
-        if a.count != b.count {
-            return a.count > b.count;
-        }
-
-        if a.index != b.index {
-            return a.index < b.index;
-        }
-
-        a.char < b.char
-    }
-}
+pub(crate) type CharAndCountArray = [CharAndCount; CHAR_FREQ_COUNT];
 
 // PERF(port): Zig used `@Vector(CHAR_FREQ_COUNT, i32)` for SIMD adds — profile
 type Buffer = [i32; CHAR_FREQ_COUNT];

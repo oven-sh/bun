@@ -453,11 +453,11 @@ pub mod stdin_tty {
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
     #[inline]
-    pub fn value() -> *mut uv::uv_tty_t {
+    pub(crate) fn value() -> *mut uv::uv_tty_t {
         DATA.get().cast::<uv::uv_tty_t>()
     }
 
-    pub fn is_stdin_tty(tty: *const Tty) -> bool {
+    pub(crate) fn is_stdin_tty(tty: *const Tty) -> bool {
         core::ptr::eq(tty, value())
     }
 
@@ -489,7 +489,7 @@ pub mod stdin_tty {
 /// the uv loop is taken as a parameter instead; the C++ caller
 /// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
+pub(crate) extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
     let mut tty = match Source::open_tty(uv_loop, Fd::stdin()) {
         bun_sys::Result::Ok(tty) => tty,
         bun_sys::Result::Err(e) => return e.errno as c_int,

@@ -231,12 +231,12 @@ pub struct Argon2Params {
 impl Argon2Params {
     // TODO(port): pwhash.argon2.Params.interactive_2id.{m,t} — hard-code Zig stdlib's
     // values here once the pwhash shim is settled.
-    pub const DEFAULT: Argon2Params = Argon2Params {
+    pub(crate) const DEFAULT: Argon2Params = Argon2Params {
         memory_cost: pwhash::argon2::Params::INTERACTIVE_2ID_M,
         time_cost: pwhash::argon2::Params::INTERACTIVE_2ID_T,
     };
 
-    pub fn to_params(self) -> pwhash::argon2::Params {
+    pub(crate) fn to_params(self) -> pwhash::argon2::Params {
         pwhash::argon2::Params {
             t: self.time_cost,
             m: self.memory_cost,
@@ -295,7 +295,7 @@ impl Algorithm {
 /// Zig: `pub const HashError = pwhash.Error || error{UnsupportedAlgorithm};`
 /// Collapsed into bun_core::Error (NonZeroU16 tag). The pwhash shim
 /// must `impl From<pwhash::Error> for bun_core::Error`.
-pub type HashError = bun_core::Error;
+pub(crate) type HashError = bun_core::Error;
 
 impl PasswordObject {
     // This is purposely simple because nobody asked to make it more complicated
@@ -452,7 +452,7 @@ impl fmt::Display for PascalToUpperUnderscoreCaseFormatter<'_> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn JSPasswordObject__create(global_object: &JSGlobalObject) -> JSValue {
     let object = JSValue::create_empty_object(global_object, 4);
     // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named
     // `__jsc_host_<fn>`; pass that (not the safe Rust fn) to JSFunction.
@@ -746,7 +746,7 @@ impl JSPasswordObject {
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub fn js_password_object_hash(
+pub(crate) fn js_password_object_hash(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -786,7 +786,7 @@ pub fn js_password_object_hash(
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub fn js_password_object_hash_sync(
+pub(crate) fn js_password_object_hash_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -832,7 +832,7 @@ pub fn js_password_object_hash_sync(
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub fn js_password_object_verify(
+pub(crate) fn js_password_object_verify(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -913,7 +913,7 @@ pub fn js_password_object_verify(
 
 // Once we have bindings generator, this should be replaced with a generated function
 #[bun_jsc::host_fn]
-pub fn js_password_object_verify_sync(
+pub(crate) fn js_password_object_verify_sync(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {

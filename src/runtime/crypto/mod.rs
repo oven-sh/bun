@@ -21,7 +21,7 @@ pub mod pbkdf2;
 #[path = "boringssl_jsc.rs"]
 pub mod boringssl_jsc;
 
-pub fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -> JSValue {
+pub(crate) fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -> JSValue {
     boringssl_jsc::err_to_js(global_this, err_code)
 }
 

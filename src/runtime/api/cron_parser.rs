@@ -29,7 +29,7 @@ pub struct CronExpression {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CronError {
+pub(crate) enum CronError {
     #[error("InvalidField")]
     InvalidField,
     #[error("InvalidStep")]
@@ -47,7 +47,7 @@ pub enum CronError {
 bun_core::named_error_set!(CronError);
 
 impl CronExpression {
-    pub fn error_message(e: CronError) -> &'static [u8] {
+    pub(crate) fn error_message(e: CronError) -> &'static [u8] {
         match e {
             CronError::TooFewFields => b"Invalid cron expression: expected 5 space-separated fields (minute hour day month weekday)",
             CronError::TooManyFields => b"Invalid cron expression: too many fields. Bun.cron uses 5 fields (minute hour day month weekday) \xe2\x80\x94 seconds are not supported",
@@ -59,7 +59,7 @@ impl CronExpression {
     }
 
     /// Parse a 5-field cron expression or predefined nickname into a CronExpression.
-    pub fn parse(input: &[u8]) -> Result<CronExpression, CronError> {
+    pub(crate) fn parse(input: &[u8]) -> Result<CronExpression, CronError> {
         let expr = strings::trim(input, b" \t");
 
         // Check for predefined nicknames
@@ -94,14 +94,9 @@ impl CronExpression {
         })
     }
 
-    /// Validate a cron expression string without allocating.
-    pub fn validate(expr: &[u8]) -> bool {
-        Self::parse(expr).is_ok()
-    }
-
     /// Format the expression as a normalized numeric "M H D Mo W" string
     /// suitable for crontab. Returns the written slice of `buf`.
-    pub fn format_numeric<'a>(&self, buf: &'a mut [u8; 512]) -> &'a [u8] {
+    pub(crate) fn format_numeric<'a>(&self, buf: &'a mut [u8; 512]) -> &'a [u8] {
         use std::io::Write;
         let written = {
             let mut w: &mut [u8] = &mut buf[..];
@@ -123,7 +118,11 @@ impl CronExpression {
     /// Compute the next UTC time (in ms since epoch) that matches this
     /// expression, strictly after `from_ms`. Returns None if no match found
     /// within 8 years.
-    pub fn next(&self, global_object: &JSGlobalObject, from_ms: f64) -> JsResult<Option<f64>> {
+    pub(crate) fn next(
+        &self,
+        global_object: &JSGlobalObject,
+        from_ms: f64,
+    ) -> JsResult<Option<f64>> {
         let mut dt = global_object.ms_to_gregorian_date_time_utc(from_ms);
         let start_year = dt.year;
         dt.minute += 1;
@@ -182,9 +181,9 @@ impl CronExpression {
 // ============================================================================
 
 const ALL_HOURS: u32 = (1 << 24) - 1;
-pub const ALL_DAYS: u32 = ((1u64 << 32) - 1) as u32 & !1u32;
-pub const ALL_MONTHS: u16 = ((1u32 << 13) - 1) as u16 & !1u16;
-pub const ALL_WEEKDAYS: u8 = (1 << 7) - 1;
+pub(crate) const ALL_DAYS: u32 = ((1u64 << 32) - 1) as u32 & !1u32;
+pub(crate) const ALL_MONTHS: u16 = ((1u32 << 13) - 1) as u16 & !1u16;
+pub(crate) const ALL_WEEKDAYS: u8 = (1 << 7) - 1;
 
 fn parse_nickname(expr: &[u8]) -> Option<CronExpression> {
     use bun_core::strings::eql_case_insensitive_asciii_check_length as eql;

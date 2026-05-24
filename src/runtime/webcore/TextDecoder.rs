@@ -21,7 +21,7 @@ pub struct Buffered {
 }
 
 impl Buffered {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         &self.buf[0..self.len as usize]
     }
 }

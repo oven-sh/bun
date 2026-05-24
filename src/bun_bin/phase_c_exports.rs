@@ -13,8 +13,8 @@
 //! unimplemented anywhere (no Zig `export fn`, no C++ body) — those are
 //! `unreachable!` so a stray call is loud rather than silent garbage.
 //!
-//! `__wrap_gettid` and `Bun__captureStackTrace` are NOT here — they live in
-//! `bun_core` (their proper, already-linked home).
+//! `__wrap_gettid` is NOT here — it lives in `bun_core` (its proper,
+//! already-linked home).
 //!
 //! Calling convention: `jsc.conv` is plain `"C"` on every non-Windows-x64
 //! target, so `extern "C"` is correct on Linux/macOS. The Windows path is not
@@ -64,7 +64,7 @@ type VirtualMachine = c_void;
 // PHASE-C: C++ callback — Zig: `pub export fn Bun__panic(msg, len) noreturn`
 // REAL: src/main.rs (binary-level export; defined here directly)
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
+pub(crate) extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
     let bytes = if msg.is_null() {
         &b""[..]
     } else {
@@ -132,7 +132,7 @@ pub extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
 // Bun__VM__allowRejectionHandledWarning
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachine) -> i32 {
+pub(crate) extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachine) -> i32 {
     // jsc.ScriptExecutionStatus.running = 0
     0
 }
@@ -257,7 +257,7 @@ pub extern "C" fn Bun__VM__scriptExecutionStatus(_vm: *const VirtualMachine) -> 
 
 // Declared `CPP_DECL` in headers.h:279 but bindings.cpp never defines it.
 #[unsafe(no_mangle)]
-pub extern "C" fn JSC__JSValue__parseJSON(
+pub(crate) extern "C" fn JSC__JSValue__parseJSON(
     _string: *const c_void,
     _global: *const JSGlobalObject,
 ) -> JSValue {
@@ -268,7 +268,7 @@ pub extern "C" fn JSC__JSValue__parseJSON(
 
 // Imported by bun_jsc/bun_sys_jsc as extern but no provider in C++ or Zig.
 #[unsafe(no_mangle)]
-pub extern "C" fn BunString__toErrorInstance(
+pub(crate) extern "C" fn BunString__toErrorInstance(
     _this: *const c_void,
     _global: *mut JSGlobalObject,
 ) -> JSValue {
@@ -280,15 +280,15 @@ pub extern "C" fn BunString__toErrorInstance(
 // preventExit/stopPreventingExit protocol commands are no-ops in the inspector
 // build today.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__LifecycleAgentPreventExit(_agent: *mut c_void) {}
+pub(crate) extern "C" fn Bun__LifecycleAgentPreventExit(_agent: *mut c_void) {}
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__LifecycleAgentStopPreventingExit(_agent: *mut c_void) {}
+pub(crate) extern "C" fn Bun__LifecycleAgentStopPreventingExit(_agent: *mut c_void) {}
 
 // `generated_classes.rs` emits `<Class>__getConstructor` externs unconditionally,
 // but `ZigGeneratedClasses.cpp` only defines them for classes whose `.classes.ts`
 // declares a `construct` hook. `DNSResolver` has none — the extern is dead.
 #[unsafe(no_mangle)]
-pub extern "C" fn DNSResolver__getConstructor(_global: *mut JSGlobalObject) -> JSValue {
+pub(crate) extern "C" fn DNSResolver__getConstructor(_global: *mut JSGlobalObject) -> JSValue {
     unreachable!("DNSResolver has no JS-visible constructor (no `construct` in .classes.ts)")
 }
 

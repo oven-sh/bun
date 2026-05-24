@@ -623,7 +623,7 @@ impl From<ParserError> for bun_core::Error {
     }
 }
 
-pub type ExpandError = ParserError;
+pub(crate) type ExpandError = ParserError;
 
 /// `out` is preallocated by using the result from `calculateExpandedAmount`
 pub fn expand(
@@ -1150,7 +1150,7 @@ pub struct LexerOutput {
     pub contains_nested: bool,
 }
 
-pub type BraceLexerError = AllocError;
+pub(crate) type BraceLexerError = AllocError;
 
 pub struct NewLexer<const ENCODING: Encoding> {
     chars: Chars<ENCODING>,

@@ -269,7 +269,7 @@ pub struct PendingValue {
 }
 
 impl PendingValue {
-    pub fn new(global: &JSGlobalObject) -> Self {
+    pub(crate) fn new(global: &JSGlobalObject) -> Self {
         Self {
             global: std::ptr::from_ref(global),
             ..Default::default()
@@ -302,7 +302,7 @@ impl Default for PendingValue {
 impl PendingValue {
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global` back-pointer.
     #[inline]
-    pub fn global(&self) -> &JSGlobalObject {
+    pub(crate) fn global(&self) -> &JSGlobalObject {
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST handle, so the
         // `*const → &` deref is safe via `bun_opaque::opaque_deref`
         // (const-asserted ZST/align-1; panics on the impossible null —
@@ -328,14 +328,14 @@ impl PendingValue {
     // TODO(port): ReadableStream::to_any_blob (gated on ByteBlobLoader/
     // ByteStream un-stubbing in ReadableStream.rs).
 
-    pub fn to_any_blob(&mut self) -> Option<AnyBlob> {
+    pub(crate) fn to_any_blob(&mut self) -> Option<AnyBlob> {
         if self.promise.is_some() {
             return None;
         }
         self.to_any_blob_allow_promise()
     }
 
-    pub fn is_disturbed<T: BodyOwnerJs>(
+    pub(crate) fn is_disturbed<T: BodyOwnerJs>(
         &self,
         global_object: &JSGlobalObject,
         this_value: JSValue,
@@ -358,7 +358,7 @@ impl PendingValue {
         false
     }
 
-    pub fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
+    pub(crate) fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
         if self.promise.is_some() {
             return true;
         }
@@ -370,16 +370,9 @@ impl PendingValue {
         false
     }
 
-    pub fn is_streaming_or_buffering(&mut self) -> bool {
-        self.readable.has()
-            || self
-                .promise
-                .is_some_and(|p| !p.is_empty_or_undefined_or_null())
-    }
-
     // TODO(port): ReadableStream::to_any_blob (see above).
 
-    pub fn to_any_blob_allow_promise(&mut self) -> Option<AnyBlob> {
+    pub(crate) fn to_any_blob_allow_promise(&mut self) -> Option<AnyBlob> {
         let global = self.global();
         let mut stream = self.readable.get(global)?;
 
@@ -394,7 +387,7 @@ impl PendingValue {
     // TODO(port): JSGlobalObject::readable_stream_to_{json,array_buffer,
     // bytes,text,blob,form_data} + bun_core::FormDataEncoding (gated payload).
 
-    pub fn set_promise(
+    pub(crate) fn set_promise(
         &mut self,
         global_this: &JSGlobalObject,
         action: Action,
@@ -469,7 +462,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub fn is_none(&self) -> bool {
+    pub(crate) fn is_none(&self) -> bool {
         matches!(self, Action::None)
     }
 }
@@ -488,7 +481,7 @@ impl PartialEq for Action {
 ///
 /// Replaces Zig's `T.js.bodyGetCached` / `T.js.gc.stream.{get,set,clear}` /
 /// `this.#js_ref.tryGet()` comptime duck-typing.
-pub trait BodyOwnerJs {
+pub(crate) trait BodyOwnerJs {
     /// `self.js_ref.get().try_get()` — the live JS wrapper, if any.
     fn js_ref(&self) -> Option<JSValue>;
 
@@ -563,13 +556,13 @@ const POOL_SIZE: usize = if bun_alloc::heap_breakdown::ENABLED {
 } else {
     256
 };
-pub type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
-pub type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
-pub type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE>;
+pub(crate) type HiveRef = bun_collections::HiveRef<Value, POOL_SIZE>;
+pub(crate) type HiveAllocator = bun_collections::hive_array::Fallback<HiveRef, POOL_SIZE>;
+pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE>;
 
 /// Spec `VirtualMachine.zig:255 initRequestBodyValue` — moves `value` into a
 /// pooled `HiveRef` slot and returns an owning handle (ref_count = 1).
-pub fn hive_alloc(value: Value) -> BodyHiveHandle {
+pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
     let state = crate::jsc_hooks::runtime_state();
     debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
     // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a
@@ -578,8 +571,6 @@ pub fn hive_alloc(value: Value) -> BodyHiveHandle {
     // SAFETY: `pool` outlives every handle (process lifetime).
     unsafe { BodyHiveHandle::new(value, pool) }
 }
-
-pub const HEAP_BREAKDOWN_LABEL: &str = "BodyValue";
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Tag {
@@ -1745,7 +1736,7 @@ impl Value {
 type ArrayBufferJSSink = sink::JSSink<ArrayBufferSink>;
 
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
-pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
+pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
     let body_value = Value::from_js(global_this, value)?;
     if let Value::Blob(b) = &body_value {
         debug_assert!(!b.is_heap_allocated()); // owned by Body
@@ -1764,7 +1755,7 @@ pub fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
 /// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The
 /// codegen shim still emits `this: &mut T` — `&mut T`
 /// auto-derefs to `&T` so the impls below compile against either.
-pub trait BodyMixin: BodyOwnerJs + Sized {
+pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// R-2 interior-mutability boundary: implementors project `&mut Value`
     /// from `&self` via `JsCell` (Response) or a raw `NonNull` deref (Request);
     /// see [`Body::value_mut`]. Single-JS-thread invariant — keep the borrow
@@ -2298,7 +2289,7 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 // ValueBufferer
 // ────────────────────────────────────────────────────────────────────────────
 
-pub type ValueBuffererCallback =
+pub(crate) type ValueBuffererCallback =
     fn(ctx: *mut c_void, bytes: &[u8], err: Option<ValueError>, is_async: bool);
 
 pub struct ValueBufferer<'a> {
@@ -2338,7 +2329,7 @@ impl<'a> Drop for ValueBufferer<'a> {
 }
 
 impl<'a> ValueBufferer<'a> {
-    pub fn init(
+    pub(crate) fn init(
         ctx: *mut c_void,
         on_finish: ValueBuffererCallback,
         global: &'a JSGlobalObject,
@@ -2354,7 +2345,7 @@ impl<'a> ValueBufferer<'a> {
         }
     }
 
-    pub fn run(
+    pub(crate) fn run(
         &mut self,
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
@@ -2491,7 +2482,10 @@ impl<'a> ValueBufferer<'a> {
         crate::api::NativePromiseContext::take::<Self>(cell).map(|mut p| unsafe { p.as_mut() })
     }
 
-    pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_resolve_stream(
+        _global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         let Some(sink) = Self::take_ctx(args.ptr[args.len - 1]) else {
             return Ok(JSValue::UNDEFINED);
@@ -2500,7 +2494,10 @@ impl<'a> ValueBufferer<'a> {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn on_reject_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_reject_stream(
+        _global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         let Some(sink) = Self::take_ctx(args.ptr[args.len - 1]) else {
             return Ok(JSValue::UNDEFINED);
@@ -2680,7 +2677,7 @@ impl<'a> crate::webcore::PipeHandler for ValueBufferer<'a> {
 // these no_mangle re-exports point at those shims under the C names the C++ side expects.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn Bun__BodyValueBufferer__onResolveStream(
+    pub(crate) unsafe fn Bun__BodyValueBufferer__onResolveStream(
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {
@@ -2693,7 +2690,7 @@ bun_jsc::jsc_host_abi! {
 }
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn Bun__BodyValueBufferer__onRejectStream(
+    pub(crate) unsafe fn Bun__BodyValueBufferer__onRejectStream(
         global: *mut JSGlobalObject,
         callframe: *mut CallFrame,
     ) -> JSValue {

@@ -1,5 +1,6 @@
 use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
 use crate::helpers;
+use crate::links::BracketMatches;
 use crate::parser::{self, Parser};
 use crate::types::{OFF, SpanType, TextType, VerbatimLine};
 
@@ -41,6 +42,70 @@ impl Default for EmphDelim {
             close_sizes: [0; MAX_EMPH_MATCHES],
             close_num: 0,
             active: true,
+        }
+    }
+}
+
+/// Closing-delimiter kinds tracked by `HtmlScanMemo`.
+#[derive(Clone, Copy)]
+pub enum HtmlScanKind {
+    /// `<!--` … `-->`
+    Comment = 0,
+    /// `<?` … `?>`
+    ProcessingInstruction = 1,
+    /// `<!` + uppercase letter … `>`
+    Declaration = 2,
+    /// `<![CDATA[` … `]]>`
+    Cdata = 3,
+}
+
+pub const HTML_SCAN_KIND_COUNT: usize = 4;
+
+/// Memo of failed closing-delimiter searches in `find_html_tag`.
+///
+/// A `<!--` / `<?` / `<!DECL` / `<![CDATA[` candidate scans forward for a
+/// terminator that may not exist, reaching the end of the inline slice. Once
+/// one such scan has failed from some position, any later scan of the same
+/// kind starting at or beyond that position must fail too, so it can return
+/// immediately instead of rescanning to the end — that rescan is quadratic on
+/// inputs with many unterminated openers in one paragraph (found by fuzzing).
+///
+/// The memo describes one slice at a time, keyed by address + length. Because
+/// `find_html_tag` is also called on link-label sub-slices of that slice (with
+/// their own coordinates), a recorded fact serves any sub-slice query by
+/// translating positions with the sub-slice's offset: "no terminator at or
+/// after position P of the paragraph" covers every later position of every
+/// label inside it. Sub-slice scans never overwrite the enclosing slice's
+/// entry (they prove nothing beyond their own extent), and
+/// `process_inline_content` starts each slice from an empty memo and restores
+/// the caller's on return, so recycled merged-line buffers and transient
+/// table-cell buffers can never alias a previous slice's entry.
+#[derive(Clone, Copy)]
+pub struct HtmlScanMemo {
+    slice_addr: usize,
+    slice_len: usize,
+    no_terminator_from: [usize; HTML_SCAN_KIND_COUNT],
+}
+
+impl HtmlScanMemo {
+    pub const EMPTY: HtmlScanMemo = HtmlScanMemo {
+        slice_addr: 0,
+        slice_len: 0,
+        no_terminator_from: [usize::MAX; HTML_SCAN_KIND_COUNT],
+    };
+
+    fn applies_to(&self, content: &[u8]) -> bool {
+        self.slice_addr == content.as_ptr() as usize && self.slice_len == content.len()
+    }
+
+    /// If `content` lies within the memoized slice, returns its offset from
+    /// that slice's start (0 for the memoized slice itself).
+    fn offset_within(&self, content: &[u8]) -> Option<usize> {
+        let addr = content.as_ptr() as usize;
+        if self.slice_addr <= addr && addr + content.len() <= self.slice_addr + self.slice_len {
+            Some(addr - self.slice_addr)
+        } else {
+            None
         }
     }
 }
@@ -100,8 +165,22 @@ impl Parser<'_> {
             return Err(parser::Error::StackOverflow);
         }
 
+        // Failed HTML terminator searches recorded for another slice must not
+        // leak into this one (the merged-line buffer is recycled across blocks,
+        // so a stale entry could alias a new slice of the same length). The
+        // caller's memo is restored on return so a recursive call for a link
+        // label does not throw away what the enclosing slice already learned.
+        let outer_html_scan_memo = self.html_scan_memo.replace(HtmlScanMemo::EMPTY);
+
+        // Bracket-pair map for this slice: link processing looks up the ']'
+        // matching a '[' here instead of rescanning the rest of the slice for
+        // every opener. The backing storage is recycled via self.bracket_pairs
+        // (recursive calls for link labels simply build their own small map).
+        let bracket_storage = core::mem::take(&mut self.bracket_pairs);
+        let brackets = self.compute_bracket_matches(content, bracket_storage);
+
         // Phase 1: Collect and resolve emphasis delimiters
-        self.collect_emphasis_delimiters(content);
+        self.collect_emphasis_delimiters(content, &brackets);
         self.resolve_emphasis_delimiters();
 
         // Copy resolved delimiters locally (recursive calls may modify emph_delims)
@@ -298,7 +377,7 @@ impl Parser<'_> {
                 if i > text_start {
                     self.emit_text(TextType::Normal, &content[text_start..i])?;
                 }
-                if let Some(end_pos) = self.process_link(content, i, base_off, false)? {
+                if let Some(end_pos) = self.process_link(content, i, base_off, false, &brackets)? {
                     i = end_pos;
                 } else {
                     self.emit_text(TextType::Normal, b"[")?;
@@ -313,7 +392,9 @@ impl Parser<'_> {
                 if i > text_start {
                     self.emit_text(TextType::Normal, &content[text_start..i])?;
                 }
-                if let Some(end_pos) = self.process_link(content, i + 1, base_off, true)? {
+                if let Some(end_pos) =
+                    self.process_link(content, i + 1, base_off, true, &brackets)?
+                {
                     i = end_pos;
                 } else {
                     self.emit_text(TextType::Normal, b"!")?;
@@ -408,6 +489,11 @@ impl Parser<'_> {
         if text_start < content.len() {
             self.emit_text(TextType::Normal, &content[text_start..])?;
         }
+        // Hand the bracket-map storage back for reuse by the next block.
+        self.bracket_pairs = brackets.into_storage();
+        // Restore the enclosing slice's memo (the entries built for this slice
+        // are meaningless to the caller).
+        self.html_scan_memo.set(outer_html_scan_memo);
         Ok(())
     }
 
@@ -489,7 +575,7 @@ impl Parser<'_> {
     }
 
     /// Collect emphasis delimiter runs from content, skipping code spans and HTML tags.
-    pub fn collect_emphasis_delimiters(&mut self, content: &[u8]) {
+    pub fn collect_emphasis_delimiters(&mut self, content: &[u8], brackets: &BracketMatches) {
         self.emph_delims.clear();
         let mut i: usize = 0;
         while i < content.len() {
@@ -527,13 +613,13 @@ impl Parser<'_> {
             if c == b'[' || (c == b'!' && i + 1 < content.len() && content[i + 1] == b'[') {
                 let is_img = c == b'!';
                 let bracket_start = if is_img { i + 1 } else { i };
-                let link_result = self.try_match_bracket_link(content, bracket_start);
+                let link_result = self.try_match_bracket_link(content, bracket_start, brackets, 0);
                 if link_result.is_link {
                     // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
                     // Images CAN contain links in alt text, so only check for non-images
                     if !is_img {
                         let label = &content[bracket_start + 1..link_result.label_end];
-                        if self.label_contains_link(label) {
+                        if self.label_contains_link(label, brackets, bracket_start + 1) {
                             // Label contains inner links — this can't form a link
                             i += 1;
                             continue;
@@ -717,6 +803,43 @@ impl Parser<'_> {
         helpers::find_entity(content, start)
     }
 
+    /// True if a previous scan already proved there is no `kind` terminator at
+    /// or after `scan_start` of `content` — either recorded for `content`
+    /// itself or for an enclosing slice that contains it.
+    fn html_scan_known_unterminated(
+        &self,
+        content: &[u8],
+        kind: HtmlScanKind,
+        scan_start: usize,
+    ) -> bool {
+        let memo = self.html_scan_memo.get();
+        let Some(offset) = memo.offset_within(content) else {
+            return false;
+        };
+        offset + scan_start >= memo.no_terminator_from[kind as usize]
+    }
+
+    /// Record that the search for `kind`'s terminator starting at `scan_start`
+    /// reached the end of `content` without a match.
+    fn note_unterminated_html_scan(&self, content: &[u8], kind: HtmlScanKind, scan_start: usize) {
+        let mut memo = self.html_scan_memo.get();
+        if !memo.applies_to(content) {
+            if memo.offset_within(content).is_some() {
+                // A sub-slice scan stops at the sub-slice's end, so it proves
+                // nothing about the rest of the enclosing slice; keep the
+                // enclosing entry (it already answers the sub-slice's later
+                // queries via offset_within).
+                return;
+            }
+            memo = HtmlScanMemo::EMPTY;
+            memo.slice_addr = content.as_ptr() as usize;
+            memo.slice_len = content.len();
+        }
+        let slot = &mut memo.no_terminator_from[kind as usize];
+        *slot = (*slot).min(scan_start);
+        self.html_scan_memo.set(memo);
+    }
+
     pub fn find_html_tag(&self, content: &[u8], start: usize) -> Option<usize> {
         if start + 1 >= content.len() {
             return None;
@@ -762,12 +885,17 @@ impl Parser<'_> {
             if pos + 1 < content.len() && content[pos] == b'-' && content[pos + 1] == b'>' {
                 return Some(pos + 2);
             }
+            if self.html_scan_known_unterminated(content, HtmlScanKind::Comment, pos) {
+                return None;
+            }
+            let scan_start = pos;
             while pos + 2 < content.len() {
                 if content[pos] == b'-' && content[pos + 1] == b'-' && content[pos + 2] == b'>' {
                     return Some(pos + 3);
                 }
                 pos += 1;
             }
+            self.note_unterminated_html_scan(content, HtmlScanKind::Comment, scan_start);
             return None;
         }
 
@@ -778,12 +906,17 @@ impl Parser<'_> {
             && content[pos + 1] <= b'Z'
         {
             pos += 2;
+            if self.html_scan_known_unterminated(content, HtmlScanKind::Declaration, pos) {
+                return None;
+            }
+            let scan_start = pos;
             while pos < content.len() && content[pos] != b'>' {
                 pos += 1;
             }
             if pos < content.len() {
                 return Some(pos + 1);
             }
+            self.note_unterminated_html_scan(content, HtmlScanKind::Declaration, scan_start);
             return None;
         }
 
@@ -799,24 +932,39 @@ impl Parser<'_> {
             && content[pos + 7] == b'['
         {
             pos += 8;
+            if self.html_scan_known_unterminated(content, HtmlScanKind::Cdata, pos) {
+                return None;
+            }
+            let scan_start = pos;
             while pos + 2 < content.len() {
                 if content[pos] == b']' && content[pos + 1] == b']' && content[pos + 2] == b'>' {
                     return Some(pos + 3);
                 }
                 pos += 1;
             }
+            self.note_unterminated_html_scan(content, HtmlScanKind::Cdata, scan_start);
             return None;
         }
 
         // Processing instruction: <? ... ?>
         if c == b'?' {
             pos += 1;
+            if self.html_scan_known_unterminated(content, HtmlScanKind::ProcessingInstruction, pos)
+            {
+                return None;
+            }
+            let scan_start = pos;
             while pos + 1 < content.len() {
                 if content[pos] == b'?' && content[pos + 1] == b'>' {
                     return Some(pos + 2);
                 }
                 pos += 1;
             }
+            self.note_unterminated_html_scan(
+                content,
+                HtmlScanKind::ProcessingInstruction,
+                scan_start,
+            );
             return None;
         }
 

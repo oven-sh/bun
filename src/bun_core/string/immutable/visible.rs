@@ -1376,11 +1376,11 @@ pub mod visible {
     }
 
     pub mod width {
-        pub fn latin1(input: &[u8]) -> usize {
+        pub(crate) fn latin1(input: &[u8]) -> usize {
             super::visible_latin1_width(input)
         }
 
-        pub fn utf8(input: &[u8]) -> usize {
+        pub(crate) fn utf8(input: &[u8]) -> usize {
             super::visible_utf8_width_fn(input, super::visible_latin1_width)
         }
 
@@ -1389,7 +1389,7 @@ pub mod visible {
         }
 
         pub mod exclude_ansi_colors {
-            pub fn latin1(input: &[u8]) -> usize {
+            pub(crate) fn latin1(input: &[u8]) -> usize {
                 super::super::visible_latin1_width_exclude_ansi_colors(input)
             }
 

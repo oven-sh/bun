@@ -379,8 +379,5 @@ pub mod defaults {
     pub const FRAGMENT: &[&[u8]] = &[b"React", b"Fragment"];
     pub const IMPORT_SOURCE_DEV: &[u8] = b"react/jsx-dev-runtime";
     pub const IMPORT_SOURCE: &[u8] = b"react/jsx-runtime";
-    pub const JSX_FUNCTION: &[u8] = b"jsx";
-    pub const JSX_STATIC_FUNCTION: &[u8] = b"jsxs";
-    pub const JSX_FUNCTION_DEV: &[u8] = b"jsxDEV";
 }
 pub use defaults as Defaults;

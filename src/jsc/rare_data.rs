@@ -169,7 +169,7 @@ impl EntropyCache {
 // supplied alongside `func`; the caller (`execute`) never dereferences it, only
 // forwards it. Each implementor (e.g. N-API's `run_as_cleanup_hook`) owns the
 // cast/deref locally, so invoking the pointer carries no caller-side precondition.
-pub type CleanupHookFunction = extern "C" fn(*mut c_void);
+pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
 
 #[derive(Clone, Copy)]
 pub struct CleanupHook {
@@ -181,17 +181,7 @@ pub struct CleanupHook {
 }
 
 impl CleanupHook {
-    pub fn eql(self, other: CleanupHook) -> bool {
-        self.ctx == other.ctx
-            && (self.func as usize) == (other.func as usize)
-            && core::ptr::eq(self.global_this, other.global_this)
-    }
-
-    pub fn execute(self) {
-        (self.func)(self.ctx);
-    }
-
-    pub fn from(
+    pub(crate) fn from(
         global_this: &JSGlobalObject,
         ctx: *mut c_void,
         func: CleanupHookFunction,
@@ -330,7 +320,7 @@ pub struct RareData {
 }
 
 // Type aliases matching Zig's local imports
-pub type FilePollStore = Async::file_poll::Store;
+pub(crate) type FilePollStore = Async::file_poll::Store;
 
 impl Default for RareData {
     fn default() -> Self {
@@ -1083,14 +1073,14 @@ impl RareData {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(i32)]
-pub enum StdinFdType {
+pub(crate) enum StdinFdType {
     File = 0,
     Pipe = 1,
     Socket = 2,
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
+pub(crate) extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
     let rare = vm.as_mut().rare_data();
     // PORT NOTE: Zig read `store.data.file.mode`; the store is erased here, so
     // `stderr/stdout/stdin()` cache `mode` alongside the pointer.

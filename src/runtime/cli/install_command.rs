@@ -9,10 +9,10 @@ use crate::Cli;
 use crate::build_command::BuildCommand;
 use crate::command::ContextData;
 
-pub struct InstallCommand;
+pub(crate) struct InstallCommand;
 
 impl InstallCommand {
-    pub fn exec(ctx: &mut ContextData) -> Result<(), Error> {
+    pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), Error> {
         match install(ctx) {
             Ok(()) => Ok(()),
             Err(e) => Self::handle_error(e),

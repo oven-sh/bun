@@ -11,7 +11,7 @@
     clippy::disallowed_methods,
     clippy::disallowed_macros
 )]
-#![warn(unused_must_use, unreachable_pub)]
+#![warn(unused_must_use)]
 
 pub mod Global;
 pub mod atomic_cell;
@@ -37,6 +37,7 @@ pub mod compress {
 }
 pub mod heap;
 
+pub mod debug;
 pub mod env;
 #[cfg(windows)]
 pub mod windows_sys;
@@ -262,7 +263,8 @@ pub mod os {
 /// (or null if empty). Windows-only; POSIX uses libc's `environ` symbol.
 #[cfg(windows)]
 #[inline]
-pub fn os_environ_ptr() -> *const *mut core::ffi::c_char {
+#[allow(dead_code)]
+pub(crate) fn os_environ_ptr() -> *const *mut core::ffi::c_char {
     // SAFETY: read of a process-global written once at startup.
     let e = unsafe { os::environ() };
     if e.is_empty() {
@@ -361,19 +363,11 @@ unsafe extern "C" {
     // safe: all args by-value; libm `powf` is defined for all f32 inputs.
     #[link_name = "powf"]
     safe fn libm_powf(x: f32, y: f32) -> f32;
-    // safe: all args by-value; libm `pow` is defined for all f64 inputs.
-    #[link_name = "pow"]
-    safe fn libm_pow(x: f64, y: f64) -> f64;
 }
 
 #[inline]
 pub fn powf(x: f32, y: f32) -> f32 {
     libm_powf(x, y)
-}
-
-#[inline]
-pub fn pow(x: f64, y: f64) -> f64 {
-    libm_pow(x, y)
 }
 
 /// Safe `Vec` growth helpers — consolidate the
@@ -456,7 +450,7 @@ pub mod vec {
     /// Caller must fully write the returned slice before any read of
     /// `v[prev_len..]` (the slots are uninitialized on entry).
     #[inline]
-    pub unsafe fn writable_slice<T>(v: &mut Vec<T>, additional: usize) -> &mut [T] {
+    pub(crate) unsafe fn writable_slice<T>(v: &mut Vec<T>, additional: usize) -> &mut [T] {
         v.reserve(additional);
         let prev = v.len();
         // SAFETY: caller contract — slice is fully written before any read.
@@ -472,7 +466,10 @@ pub mod vec {
     /// `v.len() + additional <= v.capacity()`, and the returned slice must be
     /// fully written before any read.
     #[inline]
-    pub unsafe fn writable_slice_assume_capacity<T>(v: &mut Vec<T>, additional: usize) -> &mut [T] {
+    pub(crate) unsafe fn writable_slice_assume_capacity<T>(
+        v: &mut Vec<T>,
+        additional: usize,
+    ) -> &mut [T] {
         debug_assert!(v.len() + additional <= v.capacity());
         let prev = v.len();
         // SAFETY: caller contract — capacity asserted; slice fully written before any read.
@@ -1439,9 +1436,9 @@ pub(crate) mod strings_impl {
     }
     /// Zig: `strings.eqlCaseInsensitiveASCII` (src/string/immutable.zig).
     /// Spec-faithful port: defers to libc `strncasecmp`/`_strnicmp` for the
-    /// hot path (CSS parser, HTTP header matching). When `check_len` is false
-    /// the caller guarantees `a.len() <= b.len()` and both are non-empty
-    /// (matches Zig's `bun.unsafeAssert`).
+    /// hot path (CSS parser, HTTP header matching). Unlike Zig's NUL-terminated
+    /// literals, Rust slices have no terminator, so a `b` shorter than `a` is
+    /// rejected instead of read past.
     #[inline]
     pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
         if check_len {
@@ -1451,12 +1448,14 @@ pub(crate) mod strings_impl {
             if a.is_empty() {
                 return true;
             }
+        } else if b.len() < a.len() {
+            return false;
         }
 
         debug_assert!(!b.is_empty());
         debug_assert!(!a.is_empty());
 
-        // SAFETY: a and b are non-empty; strncasecmp reads up to a.len() bytes from each.
+        // SAFETY: a.len() <= b.len() here; strncasecmp reads at most a.len() bytes from each.
         #[cfg(not(windows))]
         unsafe {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0
@@ -2618,8 +2617,10 @@ pub mod strings {
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 pub mod debug_allocator_data {
+    /// Only referenced from `debug_assert!` — dead in release builds.
+    #[allow(dead_code)]
     #[inline]
-    pub fn deinit_ok() -> bool {
+    pub(crate) fn deinit_ok() -> bool {
         true
     }
 }
@@ -2710,17 +2711,6 @@ pub mod ffi {
         debug_assert!(!p.is_null(), "ffi::cstr: null pointer");
         // SAFETY: caller contract above — non-null, NUL-terminated, valid for 'a.
         unsafe { core::ffi::CStr::from_ptr(p) }
-    }
-
-    /// Convenience: `cstr(p).to_bytes()`. Dominant shape at call sites
-    /// (Zig `bun.span(p)` / `std.mem.span(p)` port).
-    ///
-    /// # Safety
-    /// Same contract as [`cstr`].
-    #[inline(always)]
-    pub unsafe fn cstr_bytes<'a>(p: *const core::ffi::c_char) -> &'a [u8] {
-        // SAFETY: forwarded to `cstr`.
-        unsafe { cstr(p) }.to_bytes()
     }
 
     #[cfg(unix)]
@@ -2968,10 +2958,13 @@ pub mod ffi {
         target_os = "openbsd",
         target_os = "netbsd"
     ))]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     unsafe impl Zeroable for libc::kevent {}
     #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     unsafe impl Zeroable for libc::kevent64_s {}
     #[cfg(target_os = "freebsd")]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     unsafe impl Zeroable for libc::_umtx_time {}
 
     // Windows POD — `bun_windows_sys` `#[repr(C)]` out-param structs that are
@@ -3113,8 +3106,6 @@ pub mod asan {
     //! mimalloc page is reported as a leak.
     use core::ffi::c_void;
 
-    pub const ENABLED: bool = cfg!(bun_asan);
-
     #[cfg(bun_asan)]
     unsafe extern "C" {
         // The ASAN/LSAN runtime never dereferences `ptr` — it indexes shadow
@@ -3192,7 +3183,7 @@ pub mod asan {
 // ────────────────────────────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
-pub extern "C" fn __wrap_gettid() -> libc::pid_t {
+pub(crate) extern "C" fn __wrap_gettid() -> libc::pid_t {
     // SAFETY: SYS_gettid takes no arguments and never fails.
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
 }
@@ -3210,174 +3201,32 @@ pub fn get_total_memory_size() -> usize {
     Bun__ramSize()
 }
 
-/// Stack capture for `Global::StoredTrace` / `bun_crash_handler`.
-/// Zig used `std.debug.captureStackTrace`; route through libc `backtrace()`.
-///
-/// Only platforms whose libc actually exports `backtrace()` go through it:
-/// glibc, macOS, the BSDs. musl and Android's bionic don't have `<execinfo.h>`
-/// (the `libc` crate doesn't expose `backtrace` for them at all), so those
-/// targets — and Windows — fall back to reporting an empty trace. The crash
-/// handler already tolerates a 0-frame capture (it prints what it has), and
-/// the symbolizer path is glibc/macOS-only anyway.
-#[cfg(any(
-    all(target_os = "linux", target_env = "gnu"),
-    target_os = "macos",
-    target_os = "freebsd",
-    target_os = "dragonfly",
-    target_os = "netbsd",
-    target_os = "openbsd",
-))]
-/// # Safety
-/// `out` must be writable for `cap` `usize` slots (or null/`cap == 0`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__captureStackTrace(
-    begin: usize,
-    out: *mut usize,
-    cap: usize,
-) -> usize {
-    if out.is_null() || cap == 0 {
-        return 0;
-    }
-    // SAFETY: `out` is non-null (checked above) and the C++ caller passes a
-    // writable buffer of `cap` `usize` slots; `libc::backtrace` writes at most
-    // `cap` frame pointers into it.
-    unsafe {
-        // FreeBSD's libexecinfo backtrace() takes/returns size_t; glibc/macOS use int.
-        #[cfg(any(
-            target_os = "freebsd",
-            target_os = "dragonfly",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        ))]
-        let n = libc::backtrace(out.cast::<*mut core::ffi::c_void>(), cap) as usize;
-        #[cfg(not(any(
-            target_os = "freebsd",
-            target_os = "dragonfly",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        )))]
-        let n = libc::backtrace(
-            out.cast::<*mut core::ffi::c_void>(),
-            cap as core::ffi::c_int,
-        );
-        #[cfg(not(any(
-            target_os = "freebsd",
-            target_os = "dragonfly",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        )))]
-        let n = if n < 0 { 0 } else { n as usize };
-        if begin > 0 && begin < n {
-            core::ptr::copy(out.add(begin), out, n - begin);
-            return n - begin;
-        }
-        n
-    }
-}
-
-/// Windows: `RtlCaptureStackBackTrace` (kernel32/ntdll). Zig's
-/// `std.debug.captureStackTrace` uses this on Windows. No DbgHelp dependency
-/// for capture; symbolization happens later in `dump_stack_trace`.
-#[cfg(windows)]
-/// # Safety
-/// `out` must be writable for `cap` `usize` slots (or null/`cap == 0`).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__captureStackTrace(
-    begin: usize,
-    out: *mut usize,
-    cap: usize,
-) -> usize {
-    if out.is_null() || cap == 0 {
-        return 0;
-    }
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn RtlCaptureStackBackTrace(
-            FramesToSkip: u32,
-            FramesToCapture: u32,
-            BackTrace: *mut *mut core::ffi::c_void,
-            BackTraceHash: *mut u32,
-        ) -> u16;
-    }
-    // `FramesToCapture` is bounded at `u16::MAX` by the API; clamp.
-    let cap_u32 = cap.min(u16::MAX as usize) as u32;
-    // SAFETY: FFI; `out` is valid for `cap` writes, hash ptr may be null.
-    let n = unsafe {
-        RtlCaptureStackBackTrace(
-            0,
-            cap_u32,
-            out as *mut *mut core::ffi::c_void,
-            core::ptr::null_mut(),
-        )
-    } as usize;
-    // Match the unix arm's `begin` semantics: treat `begin` as a small skip
-    // count when in `[1, n)`, otherwise ignore (callers also pass an address
-    // here, which is always > n and so a no-op).
-    if begin > 0 && begin < n {
-        // SAFETY: `begin < n ≤ cap`; copying `n - begin` words within `out[..n]`.
-        unsafe {
-            core::ptr::copy(out.add(begin), out, n - begin);
-        }
-        return n - begin;
-    }
-    n
-}
-
-/// Fallback for targets without `libc::backtrace` (musl, Android, …).
-/// Returns 0 frames so callers degrade to a frame-less crash report instead of
-/// failing to compile.
-#[cfg(not(any(
-    all(target_os = "linux", target_env = "gnu"),
-    target_os = "macos",
-    target_os = "freebsd",
-    target_os = "dragonfly",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    windows,
-)))]
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__captureStackTrace(begin: usize, out: *mut usize, cap: usize) -> usize {
-    let _ = (begin, out, cap);
-    0
-}
-
-/// Safe wrapper over the cfg-gated `Bun__captureStackTrace` definitions above.
-/// Single canonical entry point — `StoredTrace::capture` and
-/// `bun_crash_handler::debug::capture_stack_trace` both route through this so
-/// no caller re-declares the `extern "C"` import.
+/// Capture the current thread's call stack into `addrs`. `begin` is a
+/// `first_address` trim point (a return address); `0` means "no trim".
 #[inline]
 pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
-    // SAFETY: `addrs.as_mut_ptr()` is writable for `addrs.len()` slots; the
-    // impl writes at most `addrs.len()` words.
-    unsafe { Bun__captureStackTrace(begin, addrs.as_mut_ptr(), addrs.len()) }
+    let first = if begin == 0 { None } else { Some(begin) };
+    debug::capture_current(first, addrs)
 }
 
-/// Zig `@returnAddress()` placeholder. Rust has no stable equivalent; `0` tells
-/// `capture_stack_trace` "start from here". Lives in bun_core so the canonical
-/// `StoredTrace::capture` can call it; once wired to a real intrinsic, every
-/// caller (incl. `bun_crash_handler::debug::return_address`) picks it up.
+/// Zig `@returnAddress()`: a PC inside the caller's caller. `#[inline(always)]`
+/// so this has no frame of its own — `frame_address()` reads the caller's fp,
+/// and `[fp + PC_OFFSET]` is the caller's saved return address. Used as the
+/// `first_address` trim point for `capture_current` (which falls back to the
+/// full trace if it doesn't match).
 #[inline(always)]
 pub fn return_address() -> usize {
-    0
-}
-
-/// Ports of `std.debug.{SourceLocation,SymbolInfo}` — pure data structs shared by
-/// crash_handler's stub `debug` mod and btjs's `zig_std_debug`. Neither of those
-/// crates can depend on the other, so the canonical home is here (alongside
-/// `capture_stack_trace`/`return_address`) pending a dedicated `bun_debug` crate.
-pub mod debug {
-    /// Zig: `std.debug.SourceLocation`.
-    #[derive(Clone)]
-    pub struct SourceLocation {
-        pub file_name: Box<[u8]>,
-        pub line: u32,
-        pub column: u32,
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        let fp = debug::frame_address();
+        // SAFETY: `fp` is this function's own valid frame pointer; the
+        // return-address slot at `[fp + PC_OFFSET]` is always mapped.
+        unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
     }
-
-    /// Zig: `std.debug.SymbolInfo`.
-    pub struct SymbolInfo {
-        pub name: Box<[u8]>,
-        pub compile_unit_name: Box<[u8]>,
-        pub source_location: Option<SourceLocation>,
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        // No frame-pointer asm! mapping for this arch; capture_current treats 0
+        // as "no trim".
+        0
     }
 }

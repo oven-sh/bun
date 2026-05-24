@@ -2,16 +2,12 @@
 // Error message constants
 // ──────────────────────────────────────────────────────────────────────────
 
-pub const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
-pub const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
-pub const FETCH_ERROR_UNEXPECTED_BODY: &str =
+pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
+pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
+pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
     "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
-pub const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
+pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
-// TODO(port): Zig used `std.EnumMap(jsc.c.JSType, []const u8)` for the
-// type-name → message tables. `bun_jsc::c` (the deprecated JSC C-API module)
-// does not expose `JSType` (it's an opaque-value enum), and `EnumMap` requires
-// `#[derive(enum_map::Enum)]` on the key. Surface as plain `[&str; 8]` indexed
 // by the C `kJSType*` ordinal until a typed key is available.
 pub const FETCH_TYPE_ERROR_NAMES: [&str; 8] = [
     /* kJSTypeUndefined */ "Undefined",
@@ -24,7 +20,7 @@ pub const FETCH_TYPE_ERROR_NAMES: [&str; 8] = [
     /* kJSTypeBigInt    */ "BigInt",
 ];
 
-pub const FETCH_TYPE_ERROR_STRING_VALUES: [&str; 8] = [
+pub(crate) const FETCH_TYPE_ERROR_STRING_VALUES: [&str; 8] = [
     concat!("fetch() expects a string, but received ", "Undefined"),
     concat!("fetch() expects a string, but received ", "Null"),
     concat!("fetch() expects a string, but received ", "Boolean"),
@@ -35,7 +31,7 @@ pub const FETCH_TYPE_ERROR_STRING_VALUES: [&str; 8] = [
     concat!("fetch() expects a string, but received ", "BigInt"),
 ];
 
-pub const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
+pub(crate) const FETCH_TYPE_ERROR_STRINGS: [&str; 8] = FETCH_TYPE_ERROR_STRING_VALUES;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export: FetchTasklet lives in ./fetch/FetchTasklet.zig
@@ -244,7 +240,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
 // ──────────────────────────────────────────────────────────────────────────
 
 #[bun_jsc::host_fn(export = "Bun__fetchPreconnect")]
-pub fn bun_fetch_preconnect(
+pub(crate) fn bun_fetch_preconnect(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -337,7 +333,10 @@ pub fn bun_fetch_preconnect(
 struct StringOrURL;
 
 impl StringOrURL {
-    pub fn from_js(value: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<BunString>> {
+    pub(crate) fn from_js(
+        value: JSValue,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Option<BunString>> {
         if value.is_string() {
             return Ok(Some(BunString::from_js(value, global_this)?));
         }
@@ -356,13 +355,13 @@ impl StringOrURL {
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
 #[bun_jsc::host_fn(export = "Bun__fetch")]
-pub fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     fetch_impl::<false>(ctx, callframe)
 }
 
 /// Internal entry point for Node.js HTTP client - allows body on GET/HEAD/OPTIONS
 #[bun_jsc::host_fn]
-pub fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn node_http_client(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     fetch_impl::<true>(ctx, callframe)
 }
 
@@ -1999,7 +1998,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    pub fn resolve(
+    pub(crate) fn resolve(
         result: s3::S3UploadResult,
         self_: *mut Self,
     ) -> Result<(), bun_jsc::JsTerminated> {

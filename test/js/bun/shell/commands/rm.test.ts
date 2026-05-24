@@ -280,9 +280,17 @@ test.skipIf(process.platform === "win32")(
       const result = await running;
 
       // A swapped-out component means the entry is already gone from the
-      // tree being removed; under -f that is not an error.
-      expect(result.stderr.toString()).toBe("");
-      expect(result.exitCode).toBe(0);
+      // tree being removed; under -f that is not an error. One benign
+      // exception: if the symlink lands only after the walker has already
+      // emptied "target", the re-created "sub" entry correctly fails the
+      // final rmdir of the root operand with ENOTEMPTY.
+      const stderrText = result.stderr.toString();
+      if (stderrText === `rm: ${target}: Directory not empty\n`) {
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(stderrText).toBe("");
+        expect(result.exitCode).toBe(0);
+      }
 
       // Every victim file shares its basename with a file the walker was
       // told to delete; none of them may be reachable through the swapped
@@ -337,9 +345,17 @@ test.skipIf(process.platform === "win32")(
       const result = await running;
 
       // A swapped-out component means the entry is already gone from the
-      // tree being removed; under -f that is not an error.
-      expect(result.stderr.toString()).toBe("");
-      expect(result.exitCode).toBe(0);
+      // tree being removed; under -f that is not an error. One benign
+      // exception: if the symlink lands only after the walker has already
+      // emptied "target", the re-created "sub" entry correctly fails the
+      // final rmdir of the root operand with ENOTEMPTY.
+      const stderrText = result.stderr.toString();
+      if (stderrText === `rm: ${target}: Directory not empty\n`) {
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(stderrText).toBe("");
+        expect(result.exitCode).toBe(0);
+      }
 
       // Every victim leaf directory shares its name with one the walker was
       // told to remove; none of them may be reachable through the swapped

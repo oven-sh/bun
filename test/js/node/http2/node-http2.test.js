@@ -2086,12 +2086,12 @@ it("http2 client survives a late response for a stream it already reset and stil
   // closing stream 1 when the late HEADERS arrive.
   const { promise, resolve, reject } = Promise.withResolvers();
 
-  // RFC 7541 C.6.1 — :status: 302, cache-control: private, date: ...,
+  // RFC 7541 C.5.1 — :status: 302, cache-control: private, date: ...,
   // location: ... — all encoded with incremental indexing (4 dynamic-table
   // inserts). Provided by helpers.js as kFakeResponseHeaders.
   const firstResponseBlock = http2utils.kFakeResponseHeaders;
-  // RFC 7541 C.6.2 — :status: 307 (incremental indexing) + three indexed
-  // references into the entries inserted by C.6.1.
+  // RFC 7541 C.5.2 — :status: 307 (incremental indexing) + three indexed
+  // references into the entries inserted by C.5.1.
   const secondResponseBlock = Buffer.from("48033330" + "37c1c0bf", "hex");
 
   const server = net.createServer(socket => {

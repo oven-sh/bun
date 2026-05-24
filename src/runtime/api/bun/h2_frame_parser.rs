@@ -2220,13 +2220,19 @@ impl H2FrameParser {
         let _keepalive = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
 
         // Collect first: `std::collections::HashMap` cannot be mutated while
-        // iterating.
+        // iterating. Evict at most `RECENTLY_EVICTED_LEN` streams per sweep so
+        // every evicted id stays in the `recently_evicted` ring for at least
+        // one full sweep; the rest stay CLOSED in the map until the next one.
         let mut evicted: Vec<(u32, *mut Stream)> = Vec::new();
         for (&id, &ptr) in self.streams.get().iter() {
             // SAFETY: ptr is a *mut Stream from self.streams (heap::alloc);
             // valid while the map entry exists.
             let stream = unsafe { &mut *ptr };
             if stream.state == StreamState::CLOSED {
+                if evicted.len() == RECENTLY_EVICTED_LEN {
+                    self.has_closed_streams.set(true);
+                    break;
+                }
                 if stream.data_frame_queue.is_empty() {
                     evicted.push((id, ptr));
                 } else {
@@ -4767,9 +4773,13 @@ impl H2FrameParser {
         // closed and evicted must not be re-allocated by a late inbound frame
         // (the peer's frame crossed our RST_STREAM / END_STREAM on the wire) —
         // the frame handlers discard frames on such ids instead. Uses the
-        // precise bounded record rather than the `last_stream_id` watermark so
-        // a genuinely new lower-numbered stream id (which a peer may produce
-        // by writing HEADERS frames out of id order) still opens a stream.
+        // precise bounded record rather than the `last_stream_id` watermark
+        // because a genuinely new lower-numbered stream id is reachable: a
+        // client that opens more streams from inside a `request()` options
+        // getter writes those HEADERS frames before the outer request's, so
+        // the outer (lower) id arrives after the inner (higher) ones.
+        // `evict_closed_streams` never evicts more ids per sweep than the
+        // ring can hold, so an evicted id cannot be lost within one sweep.
         if self.was_recently_evicted(stream_identifier) {
             return None;
         }
@@ -5664,9 +5674,14 @@ impl H2FrameParser {
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
             if this.is_evicted_stream_id(stream_id) {
                 // The stream already completed and was evicted; synthesize the
-                // closed-state object a stale CLOSED entry would have produced.
+                // closed-state object a stale CLOSED entry would have produced
+                // (the Stream::init defaults for weight and the local window).
                 let state = JSValue::create_empty_object(global_object, 6);
-                state.put(global_object, b"localWindowSize", JSValue::js_number(0.0));
+                state.put(
+                    global_object,
+                    b"localWindowSize",
+                    JSValue::js_number(this.local_settings.get().initial_window_size as f64),
+                );
                 state.put(
                     global_object,
                     b"state",
@@ -5679,7 +5694,7 @@ impl H2FrameParser {
                     b"sumDependencyWeight",
                     JSValue::js_number(0.0),
                 );
-                state.put(global_object, b"weight", JSValue::js_number(0.0));
+                state.put(global_object, b"weight", JSValue::js_number(36.0));
                 return Ok(state);
             }
             return Err(global_object.throw(format_args!("Invalid stream id")));

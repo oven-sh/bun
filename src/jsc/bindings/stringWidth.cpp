@@ -1230,8 +1230,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStringWidth, (JSC::JSGlobalObject * global
     const bool ambiguousAsWide = !ambiguousIsNarrow;
     size_t width;
     if (view->is8Bit()) {
-        // 8-bit JSC strings are Latin-1; all of Latin-1 is unambiguously
-        // narrow, so ambiguousIsNarrow does not apply.
+        // 8-bit JSC strings are Latin-1. The Latin-1 path has never honored
+        // ambiguousIsNarrow (parity with the previous implementation), even
+        // though some Latin-1 codepoints are East-Asian-Ambiguous (§, ×, ÷, ...).
         const auto span = view->span8();
         const std::span<const uint8_t> bytes { reinterpret_cast<const uint8_t*>(span.data()), span.size() };
         width = countAnsiEscapeCodes

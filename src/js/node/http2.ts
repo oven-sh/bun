@@ -3914,6 +3914,16 @@ class ClientHttp2Session extends Http2Session {
         headers = { ...headers };
       }
 
+      // Evaluate user-supplied option getters now, before any header block is
+      // encoded (Node does the same). A getter that re-entrantly calls
+      // request() would otherwise run between the native parser encoding this
+      // request's header block and writing it to the socket, emitting header
+      // blocks on the wire in a different order than they were encoded and
+      // desynchronizing the peer's HPACK dynamic table.
+      if ($isObject(options)) {
+        options = { ...options };
+      }
+
       const sensitives = headers[sensitiveHeaders];
       delete headers[sensitiveHeaders];
       const sensitiveNames = {};

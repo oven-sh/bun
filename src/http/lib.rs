@@ -3608,8 +3608,9 @@ impl<'a> HTTPClient<'a> {
     /// HTTP-thread wake-up from `schedule_response_body_consumed`: the JS
     /// reader drained `bytes` from the ByteStream. For HTTP/1.1 this may
     /// resume a socket read that `maybe_pause_receive` paused. HTTP/2 and
-    /// HTTP/3 have dedicated handlers that reach here via their session
-    /// dispatch.
+    /// HTTP/3 never reach this function — the HTTPThread consume drain
+    /// routes them to their dedicated session-level handlers
+    /// (`consume_response_body_by_http_id`) instead.
     pub fn consume_response_body<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,

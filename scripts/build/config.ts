@@ -684,8 +684,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // LTO: default on only for CI release linux non-asan non-assertions
-  const ltoDefault = release && linux && ci && !assertions && !asan;
+  // LTO: default on for CI release non-asan non-assertions builds on Linux
+  // and on darwin cross-compiles. The -lto WebKit prebuilt for macOS only
+  // exists for the cross toolchain (Apple's ld on the native lanes was never
+  // set up to consume bitcode archives), so the native darwin lanes stay
+  // non-LTO.
+  const ltoDefault = release && (linux || darwinCross) && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
   // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
@@ -701,7 +705,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Also gated off for darwin cross-compiles: the Mach-O link runs through
   // clang's ld64.lld, which can't read the newer-LLVM bitcode rustc emits
   // (same skew the rust-lld swap solves for ELF — there's no equivalent swap
-  // wired up for ld64.lld, and LTO isn't used for darwin CI builds anyway).
+  // wired up for ld64.lld). bun's C++ and WebKit still LTO together; only
+  // the Rust↔C++ inlining is lost.
   const crossLangLto = lto && !(arm64 && abi === "musl") && !darwinCross;
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes

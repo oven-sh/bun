@@ -58,6 +58,10 @@ static std::optional<Vector<uint8_t>> cryptEncrypt(const Vector<uint8_t>& key, c
     EvpCipherCtxPtr ctx;
     int len = 0;
 
+    // EVP_EncryptUpdate() takes an int length; reject inputs that would overflow it.
+    if (plainText.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return std::nullopt;
+
     Vector<uint8_t> cipherText(plainText.size() + tagLength);
     size_t tagOffset = plainText.size();
 
@@ -115,6 +119,11 @@ static std::optional<Vector<uint8_t>> cryptDecrypt(const Vector<uint8_t>& key, c
     EvpCipherCtxPtr ctx;
     int len;
     int plainTextLen;
+
+    // EVP_DecryptUpdate() takes an int length; reject inputs that would overflow it.
+    if (cipherText.size() > static_cast<size_t>(std::numeric_limits<int>::max()))
+        return std::nullopt;
+
     int cipherTextLen = cipherText.size() - tagLength;
 
     Vector<uint8_t> plainText(cipherText.size());

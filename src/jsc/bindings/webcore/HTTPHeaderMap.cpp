@@ -416,6 +416,14 @@ void HTTPHeaderMap::appendExtra(HTTPHeaderName name, const String& value)
 
 void HTTPHeaderMap::appendExtra(const String& name, const String& value)
 {
+    // Route known names through the enum overload so `Set-Cookie` and other
+    // built-in headers land in the right bucket even if a caller reaches this
+    // overload with a string form.
+    HTTPHeaderName headerName;
+    if (findHTTPHeaderName(name, headerName)) {
+        appendExtra(headerName, value);
+        return;
+    }
     m_extraUncommonHeaders.append(UncommonHeader { name, value });
 }
 

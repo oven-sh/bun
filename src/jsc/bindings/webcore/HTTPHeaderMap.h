@@ -268,17 +268,18 @@ public:
 
     friend bool operator==(const HTTPHeaderMap &a, const HTTPHeaderMap &b)
     {
+        // Compare on the primary (which holds the `", "`-joined value for
+        // multi-value headers) and on `m_setCookieHeaders` only. Whether the
+        // same joined value was produced by a single `set` or by repeated
+        // `append` (populating the side channel) isn't visible through
+        // `get()` and shouldn't change equality.
         if (a.m_commonHeaders.size() != b.m_commonHeaders.size()
             || a.m_uncommonHeaders.size() != b.m_uncommonHeaders.size()
-            || a.m_setCookieHeaders.size() != b.m_setCookieHeaders.size()
-            || a.m_extraCommonHeaders.size() != b.m_extraCommonHeaders.size()
-            || a.m_extraUncommonHeaders.size() != b.m_extraUncommonHeaders.size())
+            || a.m_setCookieHeaders.size() != b.m_setCookieHeaders.size())
             return false;
 
-        // Use joined-value comparison so equivalent maps compare equal regardless of
-        // which vector (primary vs. extras) holds a given duplicate.
         for (auto &commonHeader : a.m_commonHeaders) {
-            if (b.get(commonHeader.key) != a.get(commonHeader.key))
+            if (b.get(commonHeader.key) != commonHeader.value)
                 return false;
         }
 
@@ -288,7 +289,7 @@ public:
         }
 
         for (auto &uncommonHeader : a.m_uncommonHeaders) {
-            if (b.get(StringView(uncommonHeader.key)) != a.get(StringView(uncommonHeader.key)))
+            if (b.getUncommonHeader(uncommonHeader.key) != uncommonHeader.value)
                 return false;
         }
 
@@ -360,6 +361,7 @@ void HTTPHeaderMap::encode(Encoder &encoder) const
 {
     encoder << m_commonHeaders;
     encoder << m_uncommonHeaders;
+    encoder << m_setCookieHeaders;
     encoder << m_extraCommonHeaders;
     encoder << m_extraUncommonHeaders;
 }
@@ -371,6 +373,9 @@ bool HTTPHeaderMap::decode(Decoder &decoder, HTTPHeaderMap &headerMap)
         return false;
 
     if (!decoder.decode(headerMap.m_uncommonHeaders))
+        return false;
+
+    if (!decoder.decode(headerMap.m_setCookieHeaders))
         return false;
 
     if (!decoder.decode(headerMap.m_extraCommonHeaders))

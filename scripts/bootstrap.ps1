@@ -674,6 +674,14 @@ function Disable-Power-Management {
 # Main
 # ============================================================================
 
+# Rebuild $env:Path from the Machine/User registry values before installing
+# anything. In Windows containers the image config's PATH replaces the
+# registry PATH for every process (e.g. the bun-development-docker-image
+# build sets ENV PATH without the Windows system directories), which breaks
+# the Scoop installer's robocopy prerequisite check and lookups of system
+# tools like tar, reg, and powercfg.
+Refresh-Path
+
 if ($Optimize) {
   Optimize-System
 }

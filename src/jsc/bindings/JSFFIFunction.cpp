@@ -36,25 +36,40 @@
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
+#include "ScriptExecutionContext.h"
 
-class FFICallbackFunctionWrapper {
+class FFICallbackFunctionWrapper final : public WTF::ThreadSafeRefCounted<FFICallbackFunctionWrapper> {
 
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FFICallbackFunctionWrapper);
 
 public:
+    static Ref<FFICallbackFunctionWrapper> create(JSC::JSFunction* function, Zig::GlobalObject* globalObject)
+    {
+        return adoptRef(*new FFICallbackFunctionWrapper(function, globalObject));
+    }
+
     JSC::Strong<JSC::JSFunction> m_function;
     JSC::Strong<Zig::GlobalObject> globalObject;
-    ~FFICallbackFunctionWrapper() = default;
+
+    WebCore::ScriptExecutionContextIdentifier contextIdentifier() const { return m_contextIdentifier; }
 
     FFICallbackFunctionWrapper(JSC::JSFunction* function, Zig::GlobalObject* globalObject)
         : m_function(globalObject->vm(), function)
         , globalObject(globalObject->vm(), globalObject)
+        , m_contextIdentifier(globalObject->scriptExecutionContext()->identifier())
     {
     }
+
+private:
+    friend class WTF::ThreadSafeRefCounted<FFICallbackFunctionWrapper>;
+
+    ~FFICallbackFunctionWrapper() = default;
+
+    const WebCore::ScriptExecutionContextIdentifier m_contextIdentifier;
 };
 extern "C" void FFICallbackFunctionWrapper_destroy(FFICallbackFunctionWrapper* wrapper)
 {
-    delete wrapper;
+    wrapper->deref();
 }
 
 extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
@@ -66,9 +81,7 @@ extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
 
     auto* callbackFunction = uncheckedDowncast<JSC::JSFunction>(JSC::JSValue::decode(callbackFn));
 
-    auto* wrapper = new FFICallbackFunctionWrapper(callbackFunction, globalObject);
-
-    return wrapper;
+    return &FFICallbackFunctionWrapper::create(callbackFunction, globalObject).leakRef();
 }
 
 extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunctionWithData(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
@@ -206,17 +219,19 @@ FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::Enc
 extern "C" void
 FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-
-    auto* globalObject = wrapper.globalObject.get();
+    // This can run on an arbitrary native thread. Keep JSC::Strong access on the
+    // posted JS task; touching it here can race with GC's handle visitation.
+    Ref protectedWrapper { wrapper };
+    auto contextIdentifier = protectedWrapper->contextIdentifier();
     WTF::Vector<JSC::EncodedJSValue, 8> argsVec;
     for (size_t i = 0; i < argCount; ++i)
         argsVec.append(args[i]);
 
-    WebCore::ScriptExecutionContext::postTaskTo(globalObject->scriptExecutionContext()->identifier(), [argsVec = WTF::move(argsVec), wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
+    WebCore::ScriptExecutionContext::postTaskTo(contextIdentifier, [argsVec = WTF::move(argsVec), protectedWrapper = WTF::move(protectedWrapper)](WebCore::ScriptExecutionContext& ctx) mutable {
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
         auto& vm = JSC::getVM(globalObject);
         JSC::MarkedArgumentBuffer arguments;
-        auto* function = wrapper.m_function.get();
+        auto* function = protectedWrapper->m_function.get();
         for (size_t i = 0; i < argsVec.size(); ++i)
             arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(argsVec[i]));
         WTF::NakedPtr<JSC::Exception> exception;

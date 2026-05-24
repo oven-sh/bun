@@ -1,4 +1,4 @@
-import { cc, CString, ptr, type FFIFunction, type Library } from "bun:ffi";
+import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
 import { bunEnv, bunExe, isArm64, isASAN, isWindows, tempDirWithFiles } from "harness";
@@ -95,6 +95,116 @@ describe.skipIf(isASAN || isFFIUnavailable)("given an add(a, b) function", () =>
     }).toThrow(/"subtract" is missing/);
   });
 }); // </given add(a, b) function>
+
+describe.skipIf(isWindows || isASAN || isFFIUnavailable)("threadsafe JSCallback", () => {
+  const source = /* c */ `
+    typedef void (*callback_t)(int);
+
+    #ifdef __APPLE__
+    typedef struct _opaque_pthread_t* pthread_t;
+    #else
+    typedef unsigned long pthread_t;
+    #endif
+
+    extern int pthread_create(pthread_t*, const void*, void* (*)(void*), void*);
+    extern int pthread_detach(pthread_t);
+
+    static callback_t active_callback;
+    static int active_count;
+    static _Atomic int callbacks_finished;
+
+    static void* run_callbacks(void* unused) {
+      (void)unused;
+      for (int i = 0; i < active_count; i++) {
+        active_callback(i);
+      }
+      callbacks_finished = 1;
+      return (void*)0;
+    }
+
+    int start_threadsafe_callbacks(callback_t callback, int count) {
+      pthread_t thread;
+      active_callback = callback;
+      active_count = count;
+      callbacks_finished = 0;
+      if (pthread_create(&thread, (void*)0, run_callbacks, (void*)0) != 0) {
+        return -1;
+      }
+      pthread_detach(thread);
+      return count;
+    }
+
+    int threadsafe_callbacks_finished(void) {
+      return callbacks_finished;
+    }
+  `;
+
+  let dir: string;
+  let library: Library<{
+    start_threadsafe_callbacks: { args: ["ptr", "int"]; returns: "int" };
+    threadsafe_callbacks_finished: { args: []; returns: "int" };
+  }>;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-threadsafe-callback-test", {
+      "callback.c": source,
+    });
+    library = cc({
+      source: path.join(dir, "callback.c"),
+      library: "pthread",
+      symbols: {
+        start_threadsafe_callbacks: {
+          returns: "int",
+          args: ["ptr", "int"],
+        },
+        threadsafe_callbacks_finished: {
+          returns: "int",
+          args: [],
+        },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    library?.close();
+    if (dir) {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("can be called repeatedly from a native thread while the JS thread runs GC", async () => {
+    const count = 4096;
+    const values: number[] = [];
+    const callback = new JSCallback(
+      value => {
+        values.push(value);
+      },
+      {
+        args: ["int"],
+        returns: "void",
+        threadsafe: true,
+      },
+    );
+
+    try {
+      expect(library.symbols.start_threadsafe_callbacks(callback.ptr, count)).toBe(count);
+
+      for (let i = 0; i < 4096 && values.length < count; i++) {
+        Bun.gc(true);
+        await Bun.sleep(0);
+        if (library.symbols.threadsafe_callbacks_finished() && values.length === count) {
+          break;
+        }
+      }
+
+      expect(library.symbols.threadsafe_callbacks_finished()).toBe(1);
+      expect(values).toHaveLength(count);
+      expect(values).toEqual(Array.from({ length: count }, (_, i) => i));
+    } finally {
+      callback.close();
+    }
+  });
+});
 
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `

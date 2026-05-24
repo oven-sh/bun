@@ -4044,6 +4044,51 @@ it("deeply nested expressions error instead of crashing the process", () => {
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 }, 60_000);
 
+it("deeply nested TypeScript types error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      // TSX generic arrow function whose "extends" constraint is a deeply nested tuple type
+      { loader: "tsx", code: n => "<T extends " + repeat("[", n) + "0" + repeat("]", n) + ">(x: T) => x" },
+      // same shape nested inside array literals (matches the fuzzer-found input)
+      {
+        loader: "tsx",
+        code: n =>
+          repeat("[", 1000) + "<T extends " + repeat("[", n) + "0" + repeat("]", n) + ">(x: T) => x" + repeat("]", 1000),
+      },
+      // deeply nested tuple type in a type alias
+      { loader: "ts", code: n => "type A = " + repeat("[", n) + "0" + repeat("]", n) + ";" },
+      // deeply nested destructuring pattern in a function type's arguments
+      { loader: "ts", code: n => "type A = (" + repeat("[", n) + "a" + repeat("]", n) + ": any) => void;" },
+    ];
+    for (const { loader, code } of shapes) {
+      for (const n of [4000, 20000, 100000]) {
+        const transpiler = new Bun.Transpiler({
+          loader,
+          target: "bun",
+          minifyWhitespace: true,
+          deadCodeElimination: true,
+        });
+        try {
+          transpiler.transformSync(code(n));
+        } catch (e) {
+          if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+        }
+      }
+    }
+    console.log("type-depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("type-depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+}, 60_000);
+
 it("running a file with deeply nested unary operators does not crash the process", () => {
   const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";
   const { exitCode, signalCode } = Bun.spawnSync({

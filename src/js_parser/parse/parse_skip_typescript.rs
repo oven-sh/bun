@@ -1548,9 +1548,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         flags: SkipTypeOptionsBitset,
     ) -> bool {
-        self.lexer_backtracker_bool(|p| {
+        // The outcome of this attempt depends only on the position of the `extends`
+        // token and on whether conditional types are allowed, so an attempt that
+        // already backtracked here can be skipped. Each backtracked constraint gets
+        // re-parsed by the caller as the `extends` clause of a conditional type,
+        // which repeats the attempts nested inside it; without the memo that's
+        // exponential for deeply nested `infer X extends` constraints inside
+        // template literal types (found by fuzzing).
+        let memo_key = ((self.lexer.start as u64) << 1)
+            | flags.contains(SkipTypeOptions::DisallowConditionalTypes) as u64;
+        if self.ts_infer_constraint_backtracks.contains(&memo_key) {
+            return false;
+        }
+
+        let skipped = self.lexer_backtracker_bool(|p| {
             p.skip_type_script_constraint_of_infer_type_with_backtracking(flags)
-        })
+        });
+        if !skipped {
+            self.ts_infer_constraint_backtracks.insert(memo_key, ());
+        }
+        skipped
     }
 }
 

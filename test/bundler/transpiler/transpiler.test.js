@@ -288,6 +288,49 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("var foo: Foo extends string & infer Foo extends string ? Foo : never", "var foo");
     });
 
+    it("deeply nested infer constraints in template literal types do not hang the parser", async () => {
+      // Every `infer X extends` constraint attempt that backtracks gets re-parsed as
+      // the `extends` clause of a conditional type. Without memoizing backtracked
+      // attempts, that re-parse repeats the attempts nested inside it, so inputs that
+      // nest the pattern inside template literal types take O(2^depth) time (found by
+      // fuzzing Bun.build with a ~140-level input).
+      const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+      const depth = 128;
+      // Shape found by fuzzing: every constraint attempt fails near EOF (hard error).
+      const malformed =
+        "type LengthDown<\r\n  ? unknown extends " + fill(depth, "`${infer own extends ") + "`${infer $Rest}`\r";
+      // Valid variant: every constraint parses but is followed by "?", so every level
+      // backtracks and re-parses the constraint as part of a conditional type.
+      const valid =
+        "type X = " + fill(depth, "`${infer o extends ") + "number" + fill(depth, " ? 0 : 1}`") + ";\nexport {};\n";
+
+      using dir = tempDir("ts-infer-constraint-hang", {
+        "malformed.ts": malformed,
+        "valid.ts": valid,
+        "check.ts": `
+          const malformed = await Bun.build({ entrypoints: ["./malformed.ts"], target: "browser", throw: false });
+          if (malformed.success) throw new Error("malformed input should fail to parse");
+          const valid = await Bun.build({ entrypoints: ["./valid.ts"], target: "browser", throw: false });
+          if (!valid.success) throw new Error("valid input should build: " + valid.logs.join("\\n"));
+          console.log("DONE");
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "check.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 30_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("DONE");
+      expect(exitCode).toBe(0);
+    }, 90_000);
+
     it.todo("instantiation expressions", async () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -569,6 +612,9 @@ function foo() {}
       exp("type Foo = {} extends (infer T extends {}) ? A<T> : never", "");
       exp("let x: A extends B<infer C extends D> ? D : never", "let x;\n");
       exp("let x: A extends B<infer C extends D ? infer C : never> ? D : never", "let x;\n");
+      exp("type Foo = `${infer T extends `${infer U extends `${infer V}`}`}`", "");
+      exp("type Foo = `${infer T extends `${infer U extends string ? 1 : 2}` ? 3 : 4}`", "");
+      exp("let x: T extends infer U extends `${infer V extends W ? 1 : 2}` ? U : never", "let x;\n");
       exp("let x: ([e1, e2, ...es]: any) => any", "let x;\n");
       exp("let x: (...[e1, e2, es]: any) => any", "let x;\n");
       exp("let x: (...[e1, e2, ...es]: any) => any", "let x;\n");

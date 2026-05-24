@@ -358,6 +358,17 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub reported_stack_overflow: core::cell::Cell<bool>,
 
+    /// Attempts to skip the constraint of an `infer` type that already backtracked,
+    /// keyed by the byte offset of the `extends` token shifted left by one, with the
+    /// low bit set when conditional types were disallowed. The outcome of such an
+    /// attempt is fully determined by that key, so a repeated attempt can return
+    /// `false` immediately instead of re-parsing the constraint. Without this memo,
+    /// every backtracked constraint gets re-parsed as the `extends` clause of a
+    /// conditional type, which re-runs the attempts nested inside it — exponential
+    /// for deeply nested `infer X extends` constraints inside template literal types
+    /// (found by fuzzing).
+    pub ts_infer_constraint_backtracks: HashMap<u64, ()>,
+
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
     /// enabled inside each enum body block since TypeScript requires numeric
@@ -9241,6 +9252,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stack_check: bun_core::StackCheck::init(),
             parse_stmt_depth: 0,
             reported_stack_overflow: core::cell::Cell::new(false),
+            ts_infer_constraint_backtracks: Default::default(),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

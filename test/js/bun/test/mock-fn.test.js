@@ -794,6 +794,22 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  test("constructing a mock returns an object even when the implementation returns a primitive", () => {
+    const fn = jest.fn();
+    expect(typeof new fn()).toBe("object");
+    expect(typeof Reflect.construct(fn, [])).toBe("object");
+
+    const returnsPrimitive = jest.fn().mockReturnValue(42);
+    expect(typeof new returnsPrimitive()).toBe("object");
+    expect(typeof Reflect.construct(returnsPrimitive, [])).toBe("object");
+    expect(returnsPrimitive).toHaveBeenCalledTimes(2);
+
+    const instance = { a: 1 };
+    const returnsObject = jest.fn(() => instance);
+    expect(new returnsObject()).toBe(instance);
+    expect(Reflect.construct(returnsObject, [])).toBe(instance);
+  });
 });
 
 describe("spyOn", () => {
@@ -1010,6 +1026,14 @@ describe("spyOn", () => {
       expect(arr[14]).toBe(original);
       expect(arr[14]()).toBe(456);
       expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("constructing a spy on a missing property does not crash", () => {
+      const target = {};
+      const spy = spyOn(target, "doesNotExist");
+      expect(typeof Reflect.construct(spy, [])).toBe("object");
+      expect(spy).toHaveBeenCalledTimes(1);
+      spy.mockRestore();
     });
   }
 

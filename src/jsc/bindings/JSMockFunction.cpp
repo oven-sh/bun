@@ -86,6 +86,7 @@ inline To tryJSDynamicCast(JSC::WriteBarrier<WriteBarrierT>& from)
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionCall);
+JSC_DECLARE_HOST_FUNCTION(jsMockFunctionConstruct);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_mock);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionGetter_mockGetLastCall);
@@ -462,7 +463,7 @@ public:
     }
 
     JSMockFunction(JSC::VM& vm, JSC::Structure* structure, CallbackKind wrapKind)
-        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionCall)
+        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionConstruct)
     {
         initMock();
     }
@@ -979,6 +980,34 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
     setReturnValue(createMockResult(vm, globalObject, "return"_s, jsUndefined()));
     return JSValue::encode(jsUndefined());
+}
+
+// A native constructor must return an object, but a mock implementation can produce any value.
+// Follow ordinary [[Construct]] semantics: if the implementation does not return an object,
+// return a fresh object created from newTarget's prototype instead.
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue returnValue = JSValue::decode(jsMockFunctionCall(globalObject, callframe));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (returnValue && returnValue.isObject()) {
+        return JSValue::encode(returnValue);
+    }
+
+    JSValue newTarget = callframe->newTarget();
+    JSValue prototype = jsUndefined();
+    if (newTarget && newTarget.isObject()) {
+        prototype = asObject(newTarget)->get(globalObject, vm.propertyNames->prototype);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    JSObject* thisObject = prototype.isObject()
+        ? JSC::constructEmptyObject(globalObject, asObject(prototype))
+        : JSC::constructEmptyObject(globalObject);
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
 
 void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

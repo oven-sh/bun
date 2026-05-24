@@ -202,6 +202,41 @@ describe("apply", () => {
       ).toBe("okay!\n");
     });
 
+    // A hostile patchfile can specify a `rename to` destination whose parent
+    // directory is longer than the fixed-size path buffers; apply() must
+    // surface that as a catchable error instead of aborting the process.
+    test("to a destination dir longer than the path buffer throws instead of crashing", async () => {
+      const tempdir = tempDirWithFiles("patch-test", { "from.txt": "hello!" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const hugeDir = Buffer.alloc(8000, "a").toString();
+           const patchfile = "rename from from.txt\\nrename to " + hugeDir + "/to.txt\\n";
+           try {
+             patchInternals.apply(patchfile, ${JSON.stringify(tempdir)});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      if (process.platform !== "win32") {
+        expect(stdout.trim()).toBe("caught: ENAMETOOLONG");
+      } else {
+        expect(stdout.trim()).toStartWith("caught:");
+      }
+      expect(exitCode).toBe(0);
+    });
+
     test("folders", async () => {
       const files = {
         "a/foo/hey.txt": "hello!",

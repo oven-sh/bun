@@ -3823,6 +3823,8 @@ pub mod __gated_printer {
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
 
+                    // The index target is not directly followed by `of`.
+                    flags.remove(ExprFlag::IsFollowedByOf);
                     self.print_expr(e.target, Level::Postfix, flags);
 
                     let is_optional_chain_start =

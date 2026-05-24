@@ -2065,6 +2065,7 @@ console.log(<div {...obj} key="after" />);`),
 
       // The same identifier needs no parentheses when it is not directly followed by `of`
       expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
+      expectPrinted_("for (\\u0061sync[0] of [7]);", "for (async[0] of [7])\n  ;\n");
       expectPrinted_("for (x[\\u0061sync] of [7]);", "for (x[async] of [7])\n  ;\n");
       expectPrinted_("for (\\u0061sync in x);", "for (async in x)\n  ;\n");
 

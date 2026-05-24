@@ -564,18 +564,13 @@ impl CssColor {
         if matches!(self, CssColor::Rgba(_)) {
             return self.clone();
         }
-        match kind.bits() {
-            x if x == ColorFallbackKind::RGB.bits() => self
-                .to_rgb()
-                .expect("infallible: fallback implies convertible"),
-            x if x == ColorFallbackKind::P3.bits() => self
-                .to_p3()
-                .expect("infallible: fallback implies convertible"),
-            x if x == ColorFallbackKind::LAB.bits() => self
-                .to_lab()
-                .expect("infallible: fallback implies convertible"),
+        let converted = match kind.bits() {
+            x if x == ColorFallbackKind::RGB.bits() => self.to_rgb(),
+            x if x == ColorFallbackKind::P3.bits() => self.to_p3(),
+            x if x == ColorFallbackKind::LAB.bits() => self.to_lab(),
             _ => unreachable!("Expected RGBA, P3, LAB fallback. This is a bug in Bun."),
-        }
+        };
+        converted.unwrap_or_else(|| self.clone())
     }
 
     pub fn get_fallbacks(
@@ -589,24 +584,22 @@ impl CssColor {
 
         if fallbacks.contains(ColorFallbackKind::RGB) {
             // PERF(port): was assume_capacity
-            res.append(
-                self.to_rgb()
-                    .expect("infallible: fallback implies convertible"),
-            );
+            if let Some(rgb) = self.to_rgb() {
+                res.append(rgb);
+            }
         }
 
         if fallbacks.contains(ColorFallbackKind::P3) {
             // PERF(port): was assume_capacity
-            res.append(
-                self.to_p3()
-                    .expect("infallible: fallback implies convertible"),
-            );
+            if let Some(p3) = self.to_p3() {
+                res.append(p3);
+            }
         }
 
         if fallbacks.contains(ColorFallbackKind::LAB) {
-            *self = self
-                .to_lab()
-                .expect("infallible: fallback implies convertible");
+            if let Some(lab) = self.to_lab() {
+                *self = lab;
+            }
         }
 
         res

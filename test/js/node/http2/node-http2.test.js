@@ -1606,7 +1606,7 @@ it("http2 client receives 'goaway' when the server rejects a stream", async () =
     // The header block exceeds the server's maxHeaderListSize, so the server
     // rejects the stream; with maxSessionRejectedStreams: 0 it answers with a
     // GOAWAY carrying NGHTTP2_ENHANCE_YOUR_CALM.
-    const req = client.request({ ":path": "/", "x-filler": "a".repeat(256) });
+    const req = client.request({ ":path": "/", "x-filler": Buffer.alloc(256, "a").toString() });
     req.on("error", () => {});
     req.end();
 

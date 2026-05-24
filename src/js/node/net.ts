@@ -414,9 +414,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self.servername = socket.getServername();
     const server = self.server!;
     self.alpnProtocol = socket.alpnProtocol;
-    // Only consult the peer-certificate verification result when a client certificate was
-    // requested; the native verifier reports a non-OK code whenever no peer certificate
-    // exists, which is the normal case for plain TLS servers.
+    // The native verifier reports a non-OK code when there is no peer certificate,
+    // which is the normal case for plain TLS servers.
     if (self._requestCert) {
       if (verifyError) {
         self.authorized = false;
@@ -425,9 +424,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         if (self._rejectUnauthorized) {
           // if we reject we still need to emit secure
           self.emit("secure", self);
-          // No error argument: this socket has no 'error' listener yet, so destroy(err)
-          // would surface as an uncaught exception. The failure is already reported via
-          // 'tlsClientError' and socket.authorizationError.
+          // No error argument: the socket has no 'error' listener yet, so destroy(err)
+          // would surface as an uncaught exception.
           self.destroy();
           return;
         }

@@ -181,6 +181,7 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
+        is_from_untrusted_bytes: bool,
     ) -> JsResult<JSValue>
     where
         Self: Sized;
@@ -815,6 +816,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
+        is_from_untrusted_bytes: bool,
     ) -> JsResult<JSValue> {
         // SAFETY: codegen passes a live `*mut *mut u8` cursor (C++:
         // `(uint8_t**)&ptr`) and a one-past-the-end `*const u8`; both are
@@ -827,8 +829,17 @@ impl BlobExt for Blob {
         let mut buffer_stream =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
 
-        let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
+        let result = match _on_structured_clone_deserialize(
+            global_this,
+            &mut buffer_stream,
+            is_from_untrusted_bytes,
+        ) {
             Ok(v) => v,
+            Err(e) if e == bun_core::err!("UntrustedFileBlob") => {
+                return Err(global_this.throw(format_args!(
+                    "Cannot deserialize a file-backed Blob from serialized bytes; file references can only be cloned in-process via structuredClone or postMessage"
+                )));
+            }
             Err(e)
                 if e == bun_core::err!("EndOfStream")
                     || e == bun_core::err!("TooSmall")
@@ -4201,6 +4212,7 @@ fn read_slice<B: AsRef<[u8]>>(
 fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
+    is_from_untrusted_bytes: bool,
 ) -> Result<JSValue, bun_core::Error> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
@@ -4257,6 +4269,17 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
+
+            // A path- or fd-backed Blob materialized from raw wire bytes would
+            // hand the supplier of those bytes a handle to an arbitrary file
+            // path, an arbitrary open descriptor, or an `s3://` credential
+            // scope. Only bytes produced by an in-process serialize (postMessage,
+            // structuredClone, BroadcastChannel) may reconstruct one; reject the
+            // whole arm for buffers that arrived from JS or the wire.
+            if is_from_untrusted_bytes {
+                return Err(bun_core::err!("UntrustedFileBlob"));
+            }
+
             let pathlike_tag =
                 PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
                     .ok_or_else(|| bun_core::err!("InvalidValue"))?;

@@ -1,6 +1,8 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { openSync } from "node:fs";
+import { join } from "node:path";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -575,5 +577,78 @@ describe("structuredClone with Blob and File", () => {
       // measured window still grows under bun-asan; widen the threshold there.
       expect(deltaMiB).toBeLessThan(isASAN ? 128 : 32);
     }, 30_000);
+
+    // The Blob wire format's File store variant carries either a raw path
+    // string or a raw file descriptor number. Honoring either from a
+    // caller-supplied byte buffer (bun:jsc deserialize, node:v8 deserialize,
+    // IPC) hands whoever crafted the buffer a live handle to an arbitrary
+    // file or an arbitrary open descriptor. Deserializing those tags is only
+    // allowed for byte streams produced by an in-process serialize
+    // (structuredClone / postMessage); raw buffers must be rejected.
+    describe("file-backed stores in caller-supplied buffers", () => {
+      const deserializers: [string, (payload: ArrayBuffer | Uint8Array) => any][] = [
+        ["bun:jsc deserialize", payload => deserialize(payload)],
+        ["node:v8 deserialize", payload => v8.deserialize(Buffer.from(payload as ArrayBuffer))],
+      ];
+
+      test("wire bytes naming a file path do not mint a readable file handle", async () => {
+        using dir = tempDir("blob-deser-path", {
+          "secret.txt": "this is the secret file contents",
+        });
+        const secretPath = join(String(dir), "secret.txt");
+        // Serializing a path-backed Blob is still allowed; only reconstructing
+        // one from the resulting raw bytes is not.
+        const payload = serialize(Bun.file(secretPath));
+        for (const [, de] of deserializers) {
+          expect(() => de(payload)).toThrow();
+        }
+      });
+
+      test("wire bytes naming a file descriptor are rejected", () => {
+        using dir = tempDir("blob-deser-fd", {
+          "fd.txt": "fd-backed contents",
+        });
+        const fd = openSync(join(String(dir), "fd.txt"), "r");
+        const payload = serialize(Bun.file(fd));
+        for (const [, de] of deserializers) {
+          expect(() => de(payload)).toThrow();
+        }
+      });
+
+      test("wire bytes naming an s3:// path are rejected", () => {
+        // Patch the serialized path in-place to an `s3://` URL of the same
+        // length; an honored payload would mint an S3-credential-backed blob.
+        const placeholder = "/tmp/aaaaaaaaaa";
+        const s3Path = "s3://bucket/key";
+        expect(s3Path.length).toBe(placeholder.length);
+        const payload = new Uint8Array(serialize(Bun.file(placeholder)));
+        const needle = Buffer.from(placeholder);
+        const index = Buffer.from(payload).indexOf(needle);
+        expect(index).toBeGreaterThan(-1);
+        payload.set(Buffer.from(s3Path), index);
+        for (const [, de] of deserializers) {
+          expect(() => de(payload)).toThrow();
+        }
+      });
+
+      test("bytes-backed Blob and File still round-trip through deserialize", async () => {
+        const blob = deserialize(serialize(new Blob(["hello"], { type: "text/plain" })));
+        expect(blob).toBeInstanceOf(Blob);
+        expect(await blob.text()).toBe("hello");
+
+        const file = v8.deserialize(v8.serialize(new File(["x"], "a.txt")));
+        expect(file).toBeInstanceOf(File);
+        expect(file.name).toBe("a.txt");
+        expect(await file.text()).toBe("x");
+      });
+
+      test("structuredClone of Bun.file still yields a readable file-backed blob", async () => {
+        using dir = tempDir("blob-clone-path", {
+          "data.txt": "in-process clone keeps the file reference",
+        });
+        const cloned = structuredClone(Bun.file(join(String(dir), "data.txt")));
+        expect(await cloned.text()).toBe("in-process clone keeps the file reference");
+      });
+    });
   });
 });

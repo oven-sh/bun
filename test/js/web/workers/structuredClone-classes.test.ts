@@ -29,6 +29,14 @@ const testTypes = [
     name: "BunFile (cloneable, non-transferable)",
     createValue: () => Bun.file(import.meta.filename),
     isTransferable: false,
+    // A path-backed BunFile cannot be reconstructed from a raw byte buffer:
+    // the deserializer rejects file-backed stores whose bytes were supplied by
+    // the caller (they would mint a handle to an arbitrary path/fd). The child
+    // process's deserialize() throws, so the wire round trip yields nothing.
+    expectedAfterWireBytesRoundtrip: (original: any, cloned: any) => {
+      expect(original).toBeInstanceOf(Blob);
+      expect(cloned).not.toBeInstanceOf(Blob);
+    },
     expectedAfterClone: (original: any, cloned: any, isTransfer: TransferMode, isStorage: boolean) => {
       expect(original).toBeInstanceOf(Blob);
       expect(original.name).toEqual(import.meta.filename);
@@ -89,8 +97,12 @@ describe("serialize & deserialize", () => {
         stdout: "pipe",
         stderr: "inherit",
       });
-      const cloned = deserialize(result.stdout);
-      testType.expectedAfterClone(original, cloned, TransferMode.no, true);
+      const cloned = result.stdout.length > 0 ? deserialize(result.stdout) : undefined;
+      if ("expectedAfterWireBytesRoundtrip" in testType) {
+        testType.expectedAfterWireBytesRoundtrip(original, cloned);
+      } else {
+        testType.expectedAfterClone(original, cloned, TransferMode.no, true);
+      }
     });
   }
 });

@@ -586,6 +586,40 @@ impl BunxCommand {
         true
     }
 
+    /// Refuse to reuse (or install into) a bunx cache root that another local
+    /// user could tamper with.
+    ///
+    /// `is_trusted_cached_binary` only validates the `.bin/<name>` entrypoint,
+    /// but that entrypoint `require()`s the rest of the cached package at
+    /// runtime. POSIX lets the *owner of a directory* rename or replace
+    /// entries inside it regardless of who owns those entries, so if another
+    /// local user pre-created `$TMPDIR/bunx-<uid>-<pkg>/` (and the
+    /// node_modules tree inside it), they could swap any non-entrypoint module
+    /// file after our install populates the cache and the `.bin` check would
+    /// still pass. Require the cache root to be a real directory (not a
+    /// symlink) owned by the current uid and not writable by group/other. A
+    /// root that does not exist yet is trusted: `make_open_path` creates it as
+    /// the current user with mode 0o755.
+    #[cfg(unix)]
+    fn is_trusted_cache_root(cache_root: &ZStr, uid: libc::uid_t) -> bool {
+        match bun_sys::lstat(cache_root) {
+            Ok(st) => {
+                (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                    && st.st_uid == uid
+                    && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+            }
+            // Most likely ENOENT (we create the directory ourselves below);
+            // any other failure will surface from the mkdir/open that follows.
+            Err(_) => true,
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn is_trusted_cache_root(_cache_root: &ZStr, _uid: u32) -> bool {
+        true
+    }
+
     fn exit_with_usage() -> ! {
         crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
         Global::exit(1);
@@ -931,6 +965,27 @@ impl BunxCommand {
             // SAFETY: `written` bytes were just initialized above
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
+
+        // The cache root lives at a predictable path inside the shared,
+        // world-writable temp dir. If it already exists but was not created by
+        // the current user, every probe and install below would operate inside
+        // a directory tree another local user can rewrite, so bail out before
+        // touching it. See `is_trusted_cache_root`.
+        {
+            let mut cache_root_buf = PathBuffer::uninit();
+            cache_root_buf[..bunx_cache_dir.len()].copy_from_slice(bunx_cache_dir);
+            cache_root_buf[bunx_cache_dir.len()] = 0;
+            if !Self::is_trusted_cache_root(
+                ZStr::from_buf(&cache_root_buf[..], bunx_cache_dir.len()),
+                uid,
+            ) {
+                Output::err_generic(
+                    "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
+                    format_args!("{}", BStr::new(bunx_cache_dir)),
+                );
+                Global::exit(1);
+            }
+        }
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 

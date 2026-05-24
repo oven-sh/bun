@@ -42,10 +42,15 @@ test("mock.module does not leak into sibling test files", async () => {
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toContain("2 pass");
-  expect(stderr).toContain("0 fail");
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  // `bun test` writes pass/fail counts to stderr; stdout is captured so it
+  // surfaces in failure logs alongside stderr.
+  expect(stderr + stdout).toContain("2 pass");
+  expect(stderr + stdout).toContain("0 fail");
   expect(exitCode).toBe(0);
 });
 
@@ -71,10 +76,13 @@ test("mock.module still persists within its own file", async () => {
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toContain("2 pass");
-  expect(stderr).toContain("0 fail");
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  expect(stderr + stdout).toContain("2 pass");
+  expect(stderr + stdout).toContain("0 fail");
   expect(exitCode).toBe(0);
 });
 
@@ -107,9 +115,12 @@ test("preload-installed mock.module persists across files", async () => {
     stdout: "pipe",
   });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toContain("2 pass");
-  expect(stderr).toContain("0 fail");
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+  expect(stderr + stdout).toContain("2 pass");
+  expect(stderr + stdout).toContain("0 fail");
   expect(exitCode).toBe(0);
 });

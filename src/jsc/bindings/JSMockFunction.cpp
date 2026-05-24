@@ -86,6 +86,7 @@ inline To tryJSDynamicCast(JSC::WriteBarrier<WriteBarrierT>& from)
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionCall);
+JSC_DECLARE_HOST_FUNCTION(jsMockFunctionConstruct);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_mock);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionGetter_mockGetLastCall);
@@ -462,7 +463,7 @@ public:
     }
 
     JSMockFunction(JSC::VM& vm, JSC::Structure* structure, CallbackKind wrapKind)
-        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionCall)
+        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionConstruct)
     {
         initMock();
     }
@@ -979,6 +980,35 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
     setReturnValue(createMockResult(vm, globalObject, "return"_s, jsUndefined()));
     return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // [[Construct]] must return an object, but the mock implementation can return any value.
+    // Mirror ordinary JS constructor semantics: create `this` from new.target's prototype,
+    // invoke the mock with it, and fall back to it when the implementation returns a primitive.
+    JSValue newTarget = callframe->newTarget();
+    JSObject* thisObject = nullptr;
+    if (newTarget.isObject()) [[likely]] {
+        JSValue prototype = asObject(newTarget)->get(globalObject, vm.propertyNames->prototype);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (prototype.isObject())
+            thisObject = JSC::constructEmptyObject(globalObject, asObject(prototype));
+    }
+    if (!thisObject)
+        thisObject = JSC::constructEmptyObject(globalObject);
+
+    callframe->setThisValue(thisObject);
+    JSValue result = JSValue::decode(jsMockFunctionCall(globalObject, callframe));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (result && result.isObject())
+        return JSValue::encode(result);
+
+    return JSValue::encode(thisObject);
 }
 
 void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

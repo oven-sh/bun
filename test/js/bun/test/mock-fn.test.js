@@ -309,6 +309,39 @@ describe("mock()", () => {
     expect(fn).toHaveBeenLastCalledWith();
     expect(fn).toHaveBeenCalledWith();
   });
+  test("new works", () => {
+    const fn = jest.fn(function () {
+      this.a = 1;
+    });
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(instance.a).toBe(1);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn.mock.contexts[0]).toBe(instance);
+
+    // an object returned from the implementation becomes the result of `new`
+    const returned = { b: 2 };
+    const fn2 = jest.fn(() => returned);
+    expect(new fn2()).toBe(returned);
+
+    // a primitive return value is ignored, like ordinary constructors
+    const fn3 = jest.fn(() => 42);
+    expect(typeof new fn3()).toBe("object");
+
+    // same for mockReturnValue
+    const fn4 = jest.fn().mockReturnValue(5);
+    expect(typeof new fn4()).toBe("object");
+
+    // Reflect.construct on a mock with no implementation returns an object
+    const fn5 = jest.fn();
+    expect(typeof Reflect.construct(fn5, [])).toBe("object");
+    expect(fn5).toHaveBeenCalledTimes(1);
+
+    // the prototype of the instance comes from the mock's .prototype
+    const fn6 = jest.fn();
+    fn6.prototype = { marker: 3 };
+    expect(new fn6().marker).toBe(3);
+  });
   test(".name works", () => {
     const fn = jest.fn(function hey() {
       return this;
@@ -826,6 +859,19 @@ describe("spyOn", () => {
     expect(fn).not.toHaveBeenCalled();
     expect(obj.original()).toBe(42);
     expect(fn).not.toHaveBeenCalled();
+  });
+
+  test("constructing a spy works", () => {
+    var obj = {
+      Original: function () {
+        this.ok = true;
+      },
+    };
+    const fn = spyOn(obj, "Original");
+    const instance = Reflect.construct(obj.Original, []);
+    expect(typeof instance).toBe("object");
+    expect(instance.ok).toBe(true);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
   test("override impl after doesnt break restore", () => {

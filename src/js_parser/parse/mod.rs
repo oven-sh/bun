@@ -926,7 +926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             decls: decls_slice,
                         });
                     }
-                    let r = p.store_name_in_ref(raw)?;
+                    let r = p.store_name_in_ref(raw2)?;
                     break 'value p.new_expr(
                         E::Identifier {
                             ref_: r,

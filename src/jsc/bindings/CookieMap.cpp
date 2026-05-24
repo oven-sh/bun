@@ -112,12 +112,13 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     continue;
                 }
 
-                if (hasAnyPercentEncoded) {
-                    Bun::UTF8View utf8View(nameView);
-                    name = Bun::decodeURIComponentSIMD(utf8View.bytes());
-                } else {
-                    name = nameView.toString();
-                }
+                // Cookie names are matched literally and are never percent-decoded:
+                // decoding would let a cookie literally named "__%48ost-x" alias
+                // "__Host-x" and bypass the __Host-/__Secure- prefix protections that
+                // browsers enforce on the raw, un-decoded name. Only values are
+                // percent-encoded on serialization (see Cookie::appendTo), so only
+                // values are decoded here.
+                name = nameView.toString();
 
                 if (hasAnyPercentEncoded) {
                     Bun::UTF8View utf8View(valueView);

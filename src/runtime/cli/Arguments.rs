@@ -747,7 +747,6 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
 
 pub(crate) use bun_options_types::context::BunCAStore;
 
-
 #[unsafe(no_mangle)]
 static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);

@@ -1490,6 +1490,33 @@ impl ShellRmTask {
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
+                // The directory was replaced by a non-directory after
+                // iteration; unlink the replacement through the verified
+                // parent like `remove_entry_dir_after_children` does.
+                #[cfg(unix)]
+                E::ENOTDIR => {
+                    let parent = match self.open_verified_parent(dir_task) {
+                        Ok(p) => p,
+                        Err(pe) => {
+                            if self.opts.force && pe.get_errno() == E::ENOENT {
+                                return self.verbose_deleted(dir_task, path.as_bytes());
+                            }
+                            return Err(self.error_with_path(&pe, path.as_bytes()));
+                        }
+                    };
+                    // SAFETY: `dir_task` is live and owned by this thread;
+                    // `name` is read-only after construction.
+                    let name = unsafe { (*dir_task).name.as_zstr() };
+                    match bun_sys::unlinkat_with_flags(parent.fd, name, 0) {
+                        Ok(()) => self.verbose_deleted(dir_task, path.as_bytes()),
+                        Err(ue) => {
+                            if self.opts.force && ue.get_errno() == E::ENOENT {
+                                return self.verbose_deleted(dir_task, path.as_bytes());
+                            }
+                            Err(self.error_with_path(&ue, path.as_bytes()))
+                        }
+                    }
+                }
                 _ => Err(self.error_with_path(&e, path.as_bytes())),
             },
         }

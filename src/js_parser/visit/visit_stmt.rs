@@ -826,8 +826,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.create_default_name(stmt.loc).expect("unreachable");
                         }
 
-                        // We only inject a name into classes when there is a decorator
-                        if class.class.has_decorators {
+                        // We only inject a name into classes when decorator lowering
+                        // needs one: legacy TS decorators (`has_decorators`) or
+                        // standard decorator lowering, which also covers classes with
+                        // only auto-accessor fields and no decorators.
+                        if class.class.has_decorators
+                            || class.class.should_lower_standard_decorators
+                        {
                             if class.class.class_name.is_none()
                                 || class.class.class_name.unwrap().ref_.is_none()
                             {

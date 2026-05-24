@@ -1171,6 +1171,11 @@ extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide)
 
 extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state)
 {
+    // Guard the exported ABI: the grapheme class lookup indexes fixed tables,
+    // so reject values outside the Unicode scalar range instead of reading out
+    // of bounds. Invalid input is treated as a cluster boundary.
+    if (!state || cp1 > 0x10FFFF || cp2 > 0x10FFFF)
+        return true;
     return StringWidth::graphemeBreak(cp1, cp2, *state);
 }
 

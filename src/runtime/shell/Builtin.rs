@@ -266,7 +266,7 @@ pub enum BuiltinIO {
     /// stderr aimed at stdout's buffer.
     Buf(IoKind),
     ArrayBuf {
-        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        buf: PinnedArrayBuf,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
@@ -281,11 +281,45 @@ pub enum BuiltinInput {
     /// pipeline-from-builtin.
     Buf(Vec<u8>),
     ArrayBuf {
-        buf: crate::jsc::array_buffer::ArrayBufferStrong,
+        buf: PinnedArrayBuf,
         i: u32,
     },
     Blob(Arc<BuiltinBlob>),
     Ignore,
+}
+
+/// `ArrayBufferStrong` whose backing `JSC::ArrayBuffer` is pinned for the
+/// lifetime of the handle. Builtins cache the buffer's raw `ptr`/`byte_len`
+/// and read/write through them across event-loop ticks, so JS must not be
+/// able to `transfer()`/detach the buffer (freeing the backing store) while
+/// a redirect slot still holds it. The pin is released on `Drop` (JS thread,
+/// alongside the `Strong`); `pinned` records whether the pin was actually
+/// taken so `Drop` never unbalances the pin count.
+pub struct PinnedArrayBuf {
+    buf: crate::jsc::array_buffer::ArrayBufferStrong,
+    pinned: bool,
+}
+
+impl core::ops::Deref for PinnedArrayBuf {
+    type Target = crate::jsc::array_buffer::ArrayBufferStrong;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buf
+    }
+}
+
+impl core::ops::DerefMut for PinnedArrayBuf {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buf
+    }
+}
+
+impl Drop for PinnedArrayBuf {
+    fn drop(&mut self) {
+        if self.pinned {
+            self.buf.array_buffer.unpin();
+        }
+    }
 }
 
 /// Spec: Builtin.zig `BuiltinIO.Blob` — refcounted wrapper around a
@@ -724,11 +758,23 @@ impl Builtin {
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
-                    // Each slot gets its own Strong (sharing one would
+                    // The builtin caches the buffer's raw `ptr`/`byte_len` and
+                    // reads/writes through them across event-loop ticks, so pin
+                    // the backing `JSC::ArrayBuffer` once per slot — otherwise
+                    // JS could `transfer()`/detach it before the command
+                    // finishes and free the backing store out from under the
+                    // cached pointer. `PinnedArrayBuf` unpins on Drop. Each
+                    // slot gets its own pin and Strong (sharing one would
                     // double-free on Drop).
-                    let mk = || crate::jsc::array_buffer::ArrayBufferStrong {
-                        array_buffer: buf,
-                        held: crate::jsc::StrongOptional::create(buf.value, global),
+                    let mk = || {
+                        let pinned = jsval.as_pinned_arraybuffer(global);
+                        PinnedArrayBuf {
+                            buf: crate::jsc::array_buffer::ArrayBufferStrong {
+                                array_buffer: pinned.unwrap_or(buf),
+                                held: crate::jsc::StrongOptional::create(buf.value, global),
+                            },
+                            pinned: pinned.is_some(),
+                        }
                     };
                     let me = Self::of_mut(interp, cmd);
                     if redirect.stdin() {

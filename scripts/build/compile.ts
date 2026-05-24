@@ -251,7 +251,10 @@ export function nasm(
 ): string {
   assert(extname(src) === ".asm", `nasm() expects .asm source, got: ${src}`);
   assert(cfg.nasm !== undefined, "nasm not found in toolchain", {
-    hint: "Install from https://nasm.us or `winget install NASM.NASM`",
+    hint:
+      cfg.host.os === "windows"
+        ? "Install from https://nasm.us or `winget install NASM.NASM`"
+        : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
   });
   const out = objectPath(cfg, src);
   n.build({

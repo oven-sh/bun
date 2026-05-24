@@ -23,7 +23,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { downloadWithRetry, extractTarGz } from "./download.ts";
 import { BuildError } from "./error.ts";
@@ -102,6 +102,25 @@ export async function ensureWindowsSysroot(cfg: Config): Promise<void> {
   // CRT) links work; winsysroot-style + MS arch notation so clang-cl and
   // lld-link resolve it with a single /winsysroot flag; symlinks stay ON
   // (default) to fix include casing on a case-sensitive filesystem.
+  //
+  // The incomplete previous attempt is wiped before re-splatting, but only
+  // when `dest` actually looks like a (partial) sysroot — a mistyped
+  // WINDOWS_SYSROOT / --winsysroot pointing at real data should error, not
+  // be deleted. dirname(dest) === dest catches "/" and drive roots.
+  if (!isAbsolute(dest) || dirname(dest) === dest) {
+    throw new BuildError(`Refusing to create a Windows sysroot at ${JSON.stringify(dest)}`, {
+      hint: "WINDOWS_SYSROOT / --winsysroot must be an absolute, non-root directory.",
+    });
+  }
+  if (existsSync(dest)) {
+    const looksLikeSysroot =
+      existsSync(join(dest, "Windows Kits")) || existsSync(join(dest, "VC")) || readdirSync(dest).length === 0;
+    if (!looksLikeSysroot) {
+      throw new BuildError(`Refusing to replace ${dest}: it exists but does not look like a Windows sysroot`, {
+        hint: "Point WINDOWS_SYSROOT / --winsysroot at an xwin splat (or an empty directory), or delete it manually if it should be re-created.",
+      });
+    }
+  }
   console.log(`fetching MSVC CRT + Windows SDK into ${dest} (xwin splat)`);
   rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });

@@ -24,7 +24,7 @@
  * the dynamic-list / NAPI surface (no inbound static ref) are retained too.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
 import { assert } from "./error.ts";
@@ -248,12 +248,20 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // source-tree path (cargo's own output path is an undeclared intermediate).
   //
   // Copy is *content-conditional* (`fc /b` / `cmp -s` returns 0 iff bytes
-  // match) so `restat` actually prunes: any `.rs` edit re-invokes this rule
-  // (it shares `rustSources` with the main build), cargo no-ops, and a blind
-  // copy would still bump $out's mtime → `bun_install`'s `include_bytes!`
-  // dep-info sees a change → spurious recompile of `bun_install` + downstream
-  // on every build. Skipping the copy when bytes match keeps mtime stable and
-  // lets `restat` cut the edge.
+  // match): any `.rs` edit re-invokes this rule (it shares `rustSources`
+  // with the main build), cargo no-ops, and a blind copy would still bump
+  // the destination's mtime → `bun_install`'s `include_bytes!` dep-info sees
+  // a change → spurious recompile of `bun_install` + downstream on every
+  // build. Skipping the copy when bytes match keeps its mtime stable.
+  //
+  // The declared output ($out) is a per-build-dir stamp, NOT the source-tree
+  // exe: the exe path is shared by every windows arch/profile (the
+  // `include_bytes!` path is fixed), so if it were the output, building x64
+  // then arm64 in sibling build dirs would leave the arm64 dir believing the
+  // (x64) exe is up to date and embed the wrong-arch shim. With the stamp as
+  // output and the shared exe as an implicit *input*, a sibling build dir
+  // overwriting the exe makes this dir's stamp stale → the shim is rebuilt
+  // for the right arch on the next build here.
   //
   // Registered for windows *targets* only; the shell dialect follows the
   // HOST (cmd.exe natively, sh when cross-compiling from linux/macOS).
@@ -261,10 +269,10 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     n.rule("rust_shim", {
       command: hostWin
         ? `cmd /c "${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-          `( fc /b $shim_src $out >nul 2>&1 || copy /Y /B $shim_src $out >nul )"`
+          `( fc /b $shim_src $shim_dest >nul 2>&1 || copy /Y /B $shim_src $shim_dest >nul ) && type nul > $out"`
         : `${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-          `( cmp -s $shim_src $out 2>/dev/null || cp $shim_src $out )`,
-      description: "cargo bun_shim_impl → $out",
+          `( cmp -s $shim_src $shim_dest 2>/dev/null || cp $shim_src $shim_dest ) && touch $out`,
+      description: "cargo bun_shim_impl → $shim_dest",
       pool: "console",
       restat: true,
     });
@@ -722,8 +730,18 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       // so point it at the xwin splat for the kernel32/ntdll import libs.
       ...(cfg.winsysroot !== undefined ? [`-Clink-arg=/winsysroot:${cfg.winsysroot}`] : []),
     ].join("\x1f");
+    // Declared output = per-build-dir stamp; the shared source-tree exe is an
+    // implicit INPUT (see the rust_shim rule comment for why). The exe must
+    // exist before ninja evaluates the graph — pre-create an empty
+    // placeholder the same way `src/install/build.rs` does for bare
+    // `cargo check`, so a fresh checkout doesn't error on a missing input.
+    if (!existsSync(shimDest)) {
+      mkdirSync(dirname(shimDest), { recursive: true });
+      writeFileSync(shimDest, "");
+    }
+    const shimStamp = resolve(targetDir, triple, "shim", "bun_shim_impl.stamp");
     n.build({
-      outputs: [shimDest],
+      outputs: [shimStamp],
       rule: "rust_shim",
       inputs: [],
       // Same staleness signal as the main build (any .rs / Cargo.toml change
@@ -731,18 +749,21 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       // recompiles). vendorStamps order the lol-html fetch first — the shim
       // crate doesn't depend on lol-html, but cargo refuses to load the
       // workspace manifest if any path-dep's `Cargo.toml` is missing.
-      implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.vendorStamps],
+      // shimDest: rebuilt when a sibling build dir (other arch/profile)
+      // overwrote the shared exe.
+      implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.vendorStamps, shimDest],
       vars: {
         cwd: cfg.cwd,
         args: quoteArgs(shimArgs, hostWin),
         shim_src: quote(shimSrc, hostWin),
+        shim_dest: quote(shimDest, hostWin),
         env: Object.entries(shimEnv)
           .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
           .join(" "),
       },
     });
-    n.phony("bun-shim", [shimDest]);
-    shimInputs.push(shimDest);
+    n.phony("bun-shim", [shimStamp]);
+    shimInputs.push(shimStamp);
   }
 
   // ─── Emit build node ───

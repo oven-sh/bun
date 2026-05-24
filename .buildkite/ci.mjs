@@ -661,8 +661,15 @@ function getWindowsCrossBuildStep(arch, options) {
     timeout_in_minutes: 120,
     command: [
       // BoringSSL's win-x64 assembly is NASM syntax; newer images carry nasm
-      // (Dockerfile), best-effort install on older ones.
-      ...(arch === "x64" ? ["which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || true"] : []),
+      // (Dockerfile), best-effort install on older ones. Distro-aware: the
+      // agent may be the Ubuntu-based build container (apt) or an Amazon
+      // Linux host (dnf/yum). `|| true` keeps a missing package manager from
+      // failing the step — the build's own "nasm not found" error is clearer.
+      ...(arch === "x64"
+        ? [
+            "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || sudo dnf install -y -q nasm || true",
+          ]
+        : []),
       `node --experimental-strip-types scripts/build.ts --profile=ci-release --os=windows --arch=${arch} --buildkite=off`,
     ],
   };

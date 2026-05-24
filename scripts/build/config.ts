@@ -780,7 +780,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Shared with the darwin-cross ld64 swap below: for darwin targets
   // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
   // the same rust-lld), so the swap composes with the cross toolchain.
+  // Never swap for windows targets: `ld` there is lld-link (COFF driver)
+  // and `findRustLld()` resolves the HOST-flavored gcc-ld/ld.lld, which
+  // can't stand in for it (cargo's msvc linker + nested cmake would both
+  // receive the wrong flavor). Windows builds don't use cross-language
+  // LTO anyway (no -lto WebKit prebuilt), so nothing is lost.
   const wantRustLld =
+    !windows &&
     crossLangLto &&
     toolchain.rustLld !== undefined &&
     clangMajor !== undefined &&

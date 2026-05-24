@@ -3916,6 +3916,81 @@ it("Bun.Transpiler.transform stack overflows", async () => {
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
 });
 
+it("deeply nested expressions error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      n => repeat("- ", n) + "1",
+      n => repeat("f(", n) + "1" + repeat(")", n),
+      n => repeat("[", n) + "1" + repeat("]", n),
+      n => "void " + repeat("- ", n) + "1",
+      n => repeat("[", n) + "() => 1" + repeat("]", n) + ";{ let x; }",
+      n => repeat("[", n) + "1" + repeat("]", n) + "; someLongIdentifier + anotherIdentifier;",
+      n => "void ((x" + repeat(" ?? x", n) + ") < 1)",
+      n => "(a" + repeat(" && a", n) + ") == 1;",
+      n => "f() ? 1 : g()" + repeat(" || g()", n) + ";",
+      n => "let " + repeat("[", n) + "x" + repeat("]", n) + " = y;",
+    ];
+    const minifyShapes = [
+      n => "function f(){let x = 1; return a" + repeat(" && a", n) + " && x}",
+      n =>
+        "function f(){function g(){return x}" +
+        repeat("[", n) +
+        "1" +
+        repeat("]", n) +
+        ";let x = 1;return " +
+        repeat("a", 500) +
+        ";}",
+    ];
+    const check = (transpiler, src) => {
+      try {
+        transpiler.transformSync(src);
+      } catch (e) {
+        if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+      }
+    };
+    for (const shape of shapes) {
+      for (const n of [4000, 20000, 100000]) {
+        check(new Bun.Transpiler({ loader: "js" }), shape(n));
+      }
+    }
+    for (const shape of minifyShapes) {
+      for (const n of [4000, 20000, 100000]) {
+        check(new Bun.Transpiler({ loader: "js", minify: true }), shape(n));
+      }
+    }
+    console.log("depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+}, 60_000);
+
+it("running a file with deeply nested unary operators does not crash the process", () => {
+  const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";
+  const { exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", code],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(signalCode ?? undefined).toBeUndefined();
+  expect([0, 1]).toContain(exitCode);
+});
+
+it("does not duplicate the branch when simplifying an unused ternary with a comma test", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  expect(transpiler.transformSync("(f(), g()) ? 1 : h();").trim()).toBe("f(), g() || h();");
+  expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("f(), g() && h();");
+});
+
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {
   const transpiler = new Bun.Transpiler({ loader: "tsx" });
 

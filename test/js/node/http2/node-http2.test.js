@@ -1319,6 +1319,181 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
 
+        it("reassembles a header block split mid-instruction across HEADERS + CONTINUATION", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const block = http2utils.kFakeResponseHeaders;
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+
+            // Split the HPACK block 2 bytes into the cache-control literal so
+            // neither fragment is independently decodable.
+            const headersFrame = new http2utils.HeadersFrame(1, block.subarray(0, 7), 0, /* EOH */ false, false);
+            socket.write(headersFrame.data);
+            const continuationFrame = new http2utils.ContinuationFrame(1, block.subarray(7), 0, false);
+            socket.write(continuationFrame.data);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          const client = http2.connect(url);
+          try {
+            const { promise, resolve, reject } = Promise.withResolvers();
+            client.on("error", reject);
+            let sawTrailers = false;
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", reject);
+              req.on("trailers", () => {
+                sawTrailers = true;
+              });
+              req.on("response", headers => {
+                queueMicrotask(() => resolve(headers));
+              });
+              req.end();
+              allowWrite();
+            });
+            const headers = await promise;
+            expect(headers[":status"]).toBe(302);
+            expect(headers["cache-control"]).toBe("private");
+            expect(headers["date"]).toBe("Mon, 21 Oct 2013 20:13:21 GMT");
+            expect(headers["location"]).toBe("https://www.example.com");
+            expect(sawTrailers).toBe(false);
+          } finally {
+            client.destroy();
+            server.close();
+          }
+        });
+
+        it("treats an HPACK decode error in a complete header block as COMPRESSION_ERROR", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const block = http2utils.kFakeResponseHeaders;
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+
+            // END_HEADERS is set, so this truncated block is "complete" and
+            // must fail HPACK decoding as a connection error.
+            const headersFrame = new http2utils.HeadersFrame(1, block.subarray(0, 7), 0, /* EOH */ true, false);
+            socket.write(headersFrame.data);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.on("response", headers => resolve({ response: headers }));
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_COMPRESSION_ERROR");
+          } finally {
+            server.close();
+          }
+        });
+
+        it("rejects a non-CONTINUATION frame while a header block is being reassembled", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const block = http2utils.kFakeResponseHeaders;
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+
+            // RFC 9113 4.3: only CONTINUATION frames for the same stream may
+            // follow a HEADERS frame without END_HEADERS.
+            const headersFrame = new http2utils.HeadersFrame(1, block.subarray(0, 7), 0, /* EOH */ false, false);
+            socket.write(headersFrame.data);
+            socket.write(new http2utils.PingFrame(false).data);
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            // If the interleaved PING is accepted the session pings back and no
+            // error ever fires; surface that as a failure instead of hanging.
+            client.on("ping", () => resolve({ ping: true }));
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.on("response", headers => resolve({ response: headers }));
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+          } finally {
+            server.close();
+          }
+        });
+
+        it("rejects a header block whose compressed size exceeds maxHeaderListSize", async () => {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            const settings = new http2utils.SettingsFrame(true);
+            socket.write(settings.data);
+            await waitToWrite;
+
+            // 5 x 16384 = 81920 compressed bytes > the default 65535
+            // maxHeaderListSize; the connection must be torn down before the
+            // block is ever decoded.
+            const chunk = Buffer.alloc(16384, 0x41);
+            socket.write(Buffer.concat([new http2utils.HeadersFrame(1, chunk, 0, /* EOH */ false, false).data]));
+            for (let i = 0; i < 4; i++) {
+              // raw CONTINUATION frame without END_HEADERS
+              socket.write(Buffer.concat([new http2utils.Frame(chunk.byteLength, 9, 0, 1).data, chunk]));
+            }
+          });
+          server.listen(0, "127.0.0.1", () => serverResolve());
+          await serverListening;
+
+          const url = `http://127.0.0.1:${server.address().port}`;
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const client = http2.connect(url);
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.on("response", headers => resolve({ response: headers }));
+              req.end();
+              allowWrite();
+            });
+            const result = await promise;
+            expect(result).toBeDefined();
+            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(result.message).toBe("Session closed with error code NGHTTP2_ENHANCE_YOUR_CALM");
+          } finally {
+            server.close();
+          }
+        });
+
         it("should handle bad PRIOTITY_FRAME server frame size", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
           const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();

@@ -53,3 +53,46 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
 
   await Promise.all(runs);
 });
+
+// Fuzzer-found: with no editor detectable at all, every Bun.openInEditor call
+// still runs a spawn attempt on a detached thread. Thousands of such calls
+// racing GC (which suspends threads with SIGPWR on Linux) must not corrupt
+// process-wide signal state or take down the process.
+test.skipIf(!isLinux)("Bun.openInEditor with no detectable editor survives a call storm with GC", async () => {
+  const env = { ...bunEnv, PATH: "/does-not-exist" };
+  delete env.EDITOR;
+  delete env.VISUAL;
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      function churn() {
+        let junk = [];
+        for (let i = 0; i < 2000; i++) junk.push({ i, s: "s" + i });
+        return junk;
+      }
+      for (let batch = 0; batch < 30; batch++) {
+        for (let i = 0; i < 50; i++) {
+          try { Bun.openInEditor(Buffer); } catch {}
+        }
+        churn();
+        Bun.gc(false);
+      }
+      Bun.gc(true);
+      console.log("alive");
+      `,
+    ],
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("alive");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});

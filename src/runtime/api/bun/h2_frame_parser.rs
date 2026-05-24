@@ -1418,6 +1418,11 @@ pub struct Stream {
     // arrives. Bounded to one in-flight block per connection (see
     // `expecting_continuation`) and capped at `max_header_list_size` bytes.
     pending_header_block: Vec<u8>,
+    // Flags from the HEADERS frame that started `pending_header_block`.
+    // CONTINUATION frames only define END_HEADERS, so the original flags
+    // (END_STREAM, PADDED, PRIORITY) must be preserved for the
+    // onStreamHeaders dispatch once the block is reassembled.
+    pending_header_flags: u8,
     padding: Option<u8>,
     padding_strategy: PaddingStrategy,
     rst_code: u32,
@@ -1973,6 +1978,7 @@ impl Stream {
             header_block_size: 0,
             header_block_count: 0,
             pending_header_block: Vec::new(),
+            pending_header_flags: 0,
             padding: None,
             padding_strategy,
             rst_code: 0,
@@ -3286,7 +3292,7 @@ impl H2FrameParser {
                         self.last_stream_id.get(),
                         true,
                     );
-                    return Ok(self.streams.get().get(&stream_id).copied());
+                    return Ok(None);
                 }
             };
             offset += header.next;
@@ -3375,7 +3381,7 @@ impl H2FrameParser {
             } else {
                 self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
             }
-            return Ok(self.streams.get().get(&stream_id).copied());
+            return Ok(None);
         }
 
         self.dispatch_with_3_extra(
@@ -4074,7 +4080,11 @@ impl H2FrameParser {
             // from the onStreamHeaders dispatch cannot alias or free the
             // bytes being decoded.
             let block = core::mem::take(&mut stream.pending_header_block);
-            stream = match self.decode_header_block(&block, stream, frame.flags)? {
+            // Report the original HEADERS frame's flags (plus END_HEADERS now
+            // that the block is complete), not the CONTINUATION frame's.
+            let block_flags =
+                stream.pending_header_flags | HeadersFrameFlags::END_HEADERS as u8;
+            stream = match self.decode_header_block(&block, stream, block_flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end),
@@ -4237,6 +4247,7 @@ impl H2FrameParser {
                     return Ok(end_);
                 }
                 stream.pending_header_block.extend_from_slice(fragment);
+                stream.pending_header_flags = frame.flags;
                 self.expecting_continuation.set(frame.stream_identifier);
                 return Ok(end_);
             }

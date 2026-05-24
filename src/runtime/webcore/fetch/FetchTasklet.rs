@@ -1210,6 +1210,13 @@ impl FetchTasklet {
                 }
             }
         }
+        // Defensive fallthrough (empty or unparseable certificate bytes):
+        // release the parked HTTP-thread socket like the sibling
+        // false-return paths above so the caller's "shutdown already
+        // scheduled" assumption holds on every false return.
+        if let Some(http_) = self.http.as_mut() {
+            http::http_thread().schedule_shutdown(http_);
+        }
         self.result.fail = Some(err!("ERR_TLS_CERT_ALTNAME_INVALID"));
         false
     }

@@ -2500,6 +2500,19 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
+        // `protocol: "http2"` combined with a JS `checkServerIdentity`
+        // callback can never succeed: `can_offer_h2` refuses to advertise h2
+        // when the CertErrors signal is set (the h2 session transmits without
+        // consulting the cert-check park gate), so the connection would
+        // complete a full TCP+TLS handshake, invoke the callback, and then
+        // fail in `first_call` anyway. Fail up front instead, mirroring the
+        // `force_http3` guard below.
+        if self.flags.force_http2 && self.signals.get(signals::Field::CertErrors) {
+            self.fail(err!(HTTP2Unsupported));
+            self.complete_connecting_process();
+            return;
+        }
+
         if self.flags.force_http3 {
             // The h3 client performs its own QUIC handshake and never routes
             // through `check_server_identity`, so a JS `checkServerIdentity`

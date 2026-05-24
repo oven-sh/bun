@@ -44,6 +44,13 @@ async function createProxyServer(is_tls: boolean) {
           // Pipe data between client and server
           clientSocket.pipe(serverSocket);
           serverSocket.pipe(clientSocket);
+
+          // `pipe` only tears the upstream down on a clean 'end' from the
+          // client. An abortive client teardown surfaces as 'error'/'close'
+          // with no 'end' (notably on Windows), which would leave the target
+          // holding a half-open connection forever. Propagate it; `end()`
+          // still flushes any data already piped toward the target.
+          clientSocket.on("close", () => serverSocket.end());
         } else {
           serverSocket.write(`${method} ${request_path} HTTP/1.1\r\n`);
           // Send the request to the destination server
@@ -517,13 +524,22 @@ test("HTTPS target through proxy with rejecting checkServerIdentity transmits no
   // Raw TLS target so we can observe exactly which decrypted bytes (if any)
   // reach it before the pinning callback rejects the certificate.
   const receivedPerConnection: Buffer[][] = [];
+  let rawConnections = 0;
   const { promise: firstConnectionClosed, resolve: onFirstConnectionClosed } = Promise.withResolvers<void>();
   const target = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
     const chunks: Buffer[] = [];
     receivedPerConnection.push(chunks);
     socket.on("data", chunk => chunks.push(chunk));
-    socket.on("close", onFirstConnectionClosed);
     socket.on("error", () => {});
+  });
+  // Track teardown on the raw TCP connection rather than the TLS socket: the
+  // client tears the tunnel down as soon as checkServerIdentity rejects, so
+  // the target may never finish its side of the inner handshake and the
+  // secureConnection callback above may never fire.
+  target.on("connection", rawSocket => {
+    rawConnections++;
+    rawSocket.on("close", onFirstConnectionClosed);
+    rawSocket.on("error", () => {});
   });
   target.listen(0);
   await once(target, "listening");
@@ -554,8 +570,12 @@ test("HTTPS target through proxy with rejecting checkServerIdentity transmits no
     // The tunnel must be torn down without the request line, the
     // Authorization header, or the body ever reaching the target.
     await firstConnectionClosed;
-    expect(receivedPerConnection.length).toBe(1);
-    expect(Buffer.concat(receivedPerConnection[0]).byteLength).toBe(0);
+    expect(rawConnections).toBe(1);
+    const decryptedBytesSeenByTarget = receivedPerConnection.reduce(
+      (sum, chunks) => sum + Buffer.concat(chunks).byteLength,
+      0,
+    );
+    expect(decryptedBytesSeenByTarget).toBe(0);
   } finally {
     target.close();
   }

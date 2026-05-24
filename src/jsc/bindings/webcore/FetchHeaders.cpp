@@ -222,7 +222,8 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
         headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
         headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
         headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
-        headers.extraHeaders().appendVector(otherHeaders.m_headers.extraHeaders());
+        headers.extraCommonHeaders().appendVector(otherHeaders.m_headers.extraCommonHeaders());
+        headers.extraUncommonHeaders().appendVector(otherHeaders.m_headers.extraUncommonHeaders());
         setInternalHeaders(WTF::move(headers));
         m_updateCounter++;
         return {};
@@ -235,7 +236,12 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
     }
     // The iterator above yields one entry per primary vector slot; carry the
     // remaining multi-value duplicates across so they survive the copy.
-    for (auto& extra : otherHeaders.m_headers.extraHeaders()) {
+    for (auto& extra : otherHeaders.m_headers.extraCommonHeaders()) {
+        auto result = appendToHeaderMap(httpHeaderNameString(extra.key).toString(), extra.value, m_headers, m_guard);
+        if (result.hasException())
+            return result.releaseException();
+    }
+    for (auto& extra : otherHeaders.m_headers.extraUncommonHeaders()) {
         auto result = appendToHeaderMap(extra.key, extra.value, m_headers, m_guard);
         if (result.hasException())
             return result.releaseException();

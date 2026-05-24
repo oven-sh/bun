@@ -108,22 +108,33 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     // `rawHeaders` array (one `[name, value]` pair per entry) so Node-style
     // consumers see every occurrence. The `headers` object's value for each
     // name is updated to the joined string so `req.headers[name]` reflects
-    // every value that arrived.
+    // every value that arrived. Name casing mirrors the primary pass:
+    // - common extras use `httpHeaderNameStringImpl` (lowercase) to match the
+    //   primary common branch above.
+    // - uncommon extras use the caller-provided case as-is, matching the
+    //   primary uncommon branch.
     {
-        const auto& extras = internal.extraHeaders();
-        for (const auto& it : extras) {
-            const auto& name = it.key;
-            const auto& value = it.value;
-            array->putDirectIndex(globalObject, arrayI++, jsString(vm, name));
-            array->putDirectIndex(globalObject, arrayI++, jsString(vm, value));
+        for (const auto& it : internal.extraCommonHeaders()) {
+            const auto& impl = WTF::httpHeaderNameStringImpl(it.key);
+            JSString* jsName = jsString(vm, impl);
+            JSString* jsValue = jsString(vm, it.value);
+            array->putDirectIndex(globalObject, arrayI++, jsName);
+            array->putDirectIndex(globalObject, arrayI++, jsValue);
             RETURN_IF_EXCEPTION(scope, {});
+            // Refresh the object side with the joined value; `internal.get(it.key)`
+            // joins the primary + all extras for this name.
+            String joined = internal.get(it.key);
+            obj->putDirect(vm, Identifier::fromString(vm, impl), jsString(vm, joined), 0);
+        }
 
-            // Update the object side with the joined value. `internal.get(name)`
-            // already joins primary + all extras for `name`; overwriting here
-            // with the full joined string keeps the object and array sides
-            // consistent regardless of the order extras are encountered.
+        for (const auto& it : internal.extraUncommonHeaders()) {
+            const auto& name = it.key;
+            JSString* jsValue = jsString(vm, it.value);
+            array->putDirectIndex(globalObject, arrayI++, jsString(vm, name));
+            array->putDirectIndex(globalObject, arrayI++, jsValue);
+            RETURN_IF_EXCEPTION(scope, {});
             String joined = internal.get(StringView(name));
-            obj->putDirect(vm, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, joined), 0);
+            obj->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, joined));
         }
     }
 
@@ -623,8 +634,13 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     // Extra duplicate values — one entry per wire line so multi-value headers
     // (e.g. `X-Multi: a` / `X-Multi: b` / `X-Multi: c`) are emitted as
     // separate header lines per RFC 7230 §3.2.2 instead of collapsing to a
-    // single comma-joined line.
-    for (auto& header : internalHeaders.extraHeaders()) {
+    // single comma-joined line. Name casing matches the primary pass above
+    // (wire-canonical Title-Case from `httpHeaderNameString` for common
+    // extras, caller-provided case for uncommon extras).
+    for (auto& header : internalHeaders.extraCommonHeaders()) {
+        writeResponseHeader<isSSL>(res, WebCore::httpHeaderNameString(header.key), header.value);
+    }
+    for (auto& header : internalHeaders.extraUncommonHeaders()) {
         writeResponseHeader<isSSL>(res, header.key, header.value);
     }
 }
@@ -1146,7 +1162,10 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
         writeOne(header.key, header.value);
     }
 
-    for (auto& header : internalHeaders.extraHeaders()) {
+    for (auto& header : internalHeaders.extraCommonHeaders()) {
+        writeOne(WebCore::httpHeaderNameString(header.key), header.value);
+    }
+    for (auto& header : internalHeaders.extraUncommonHeaders()) {
         writeOne(header.key, header.value);
     }
 }

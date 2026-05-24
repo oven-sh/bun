@@ -109,20 +109,27 @@ test("removeHeader drops every appended value", async () => {
   }
 });
 
-test("getHeader() returns the `, `-joined string", async () => {
-  const { promise, resolve } = Promise.withResolvers<string>();
+// Node returns `getHeader` as an array after repeated `appendHeader`, Bun
+// returns the `", "`-joined string (WHATWG `Headers.get()` semantics).
+// Assert on the wire-format side-effect instead so this test exercises the
+// round-trip in both runtimes.
+test("repeated appendHeader + getHeader preserves every value", async () => {
+  const { promise, resolve } = Promise.withResolvers<string | string[] | number | undefined>();
   const server = createServer((_req, res) => {
     res.appendHeader("X-Multi", "a");
     res.appendHeader("X-Multi", "b");
     res.appendHeader("X-Multi", "c");
-    resolve(res.getHeader("X-Multi") as string);
+    resolve(res.getHeader("X-Multi"));
     res.end("hi");
   });
   const port = await listen(server);
   try {
-    // Kick a request so the handler runs; ignore the response.
-    await readRawResponse(port);
-    expect(await promise).toBe("a, b, c");
+    const raw = await readRawResponse(port);
+    const header = await promise;
+    // Flatten whichever shape the runtime returns.
+    const joined = Array.isArray(header) ? header.join(", ") : String(header);
+    expect(joined).toBe("a, b, c");
+    expect((raw.match(/^X-Multi:/gim) ?? []).length).toBe(3);
   } finally {
     server.close();
   }

@@ -608,8 +608,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeaders_getRawKeys, (JSC::JSGlobalObject * lexic
     for (const auto& header : internal)
         outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, header.name()));
 
-    if (!internal.getSetCookieHeaders().isEmpty())
-        outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie)));
+    if (!internal.getSetCookieHeaders().isEmpty()) {
+        // Match the iterator's casing (`KeyValue::name()` → default-case) so
+        // `getRawHeaderNames()` doesn't mix `"Content-Type"` with `"set-cookie"`.
+        outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, WTF::httpHeaderNameDefaultCaseStringImpl(HTTPHeaderName::SetCookie)));
+    }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(outArray));
 }

@@ -862,6 +862,13 @@ booga"
         expect(stderr.toString()).toContain(`bun: Permission denied: ${noaccess}`);
         expect(stderr.toString()).not.toContain("no matches found");
         expect(exitCode).toBe(1);
+
+        // In assignment position the same failure falls back to the literal
+        // pattern instead of erroring (scalar assignments don't glob).
+        const assign = await $`FOO=${noaccess}/*; echo $FOO`.quiet().nothrow();
+        expect(assign.stderr.toString()).toBe("");
+        expect(assign.stdout.toString()).toBe(`${noaccess}/*\n`);
+        expect(assign.exitCode).toBe(0);
       } finally {
         chmodSync(noaccess, 0o755);
       }

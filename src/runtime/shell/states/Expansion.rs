@@ -649,22 +649,39 @@ impl Expansion {
     ) {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
-        // A failed walk (e.g. ENOENT because the pattern's literal directory
-        // prefix does not exist, as in `echo /nonexistent/*`) is not fatal to
-        // the script: fall through so the empty (or partial) result set goes
-        // through the no-match handling below — "no matches found" in command
-        // position, the literal pattern in assignment position — the same
-        // outcome as a relative pattern whose directory is missing. Raising a
-        // JS exception here would leave it pending on the VM with no JS frame
-        // above this task callback to observe it, aborting the process on the
-        // next exception check; `.nothrow()`/`try` could never intercept it.
+        // A failed walk must not raise a JS exception here: that would leave
+        // it pending on the VM with no JS frame above this task callback to
+        // observe it, aborting the process on the next exception check —
+        // `.nothrow()`/`try` could never intercept it.
         if let Some(err) = err {
             match err {
-                ShellGlobErr::Syscall(e) => {
+                // ENOENT/ENOTDIR mean the pattern's literal directory prefix
+                // doesn't exist (`echo /nonexistent/*`): fall through so the
+                // empty result set goes through the no-match handling below —
+                // "no matches found" in command position, the literal pattern
+                // in assignment position — the same outcome as a relative
+                // pattern whose directory is missing.
+                ShellGlobErr::Syscall(e)
+                    if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>
+                {
                     log!("Expansion {} glob walk failed: {}", this, e);
                 }
+                // Any other failure (EACCES, EMFILE, …) aborts the command
+                // through the same error path as a walker-init failure in
+                // `transition_to_glob_state`, so the real error reaches stderr
+                // with exit code 1 instead of masquerading as "no matches".
+                ShellGlobErr::Syscall(e) => {
+                    interp.as_expansion_mut(this).state =
+                        ExpansionState::Err(Box::new(ShellErr::new_sys(&e)));
+                    Yield::Next(this).run(interp);
+                    return;
+                }
                 ShellGlobErr::Unknown(e) => {
-                    log!("Expansion {} glob walk failed: {}", this, e);
+                    interp.as_expansion_mut(this).state = ExpansionState::Err(Box::new(
+                        ShellErr::Custom(e.to_string().into_bytes().into()),
+                    ));
+                    Yield::Next(this).run(interp);
+                    return;
                 }
             }
         }

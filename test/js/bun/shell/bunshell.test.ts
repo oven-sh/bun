@@ -54,6 +54,8 @@ afterAll(async () => {
 });
 
 const BUN = bunExe();
+// Some tests rely on permission checks (EACCES), which root bypasses.
+const isRoot = process.getuid?.() === 0;
 
 describe("bunshell", () => {
   describe("exit codes", async () => {
@@ -844,6 +846,26 @@ booga"
       ]);
       expect(exitCode).toBe(0);
     });
+
+    // Unlike a missing directory (treated as "no matches found" above), a glob
+    // walk that fails for another reason — here EACCES on an unreadable
+    // directory — must surface the real error on stderr with exit code 1, not
+    // pretend the pattern matched nothing. Skipped as root, which bypasses
+    // permission checks.
+    test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
+      const dir = tempDirWithFiles("glob-eacces", { "placeholder.txt": "" });
+      const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
+      mkdirSync(noaccess);
+      chmodSync(noaccess, 0o000);
+      try {
+        const { stderr, exitCode } = await $`echo ${noaccess}/*`.quiet().nothrow();
+        expect(stderr.toString()).toContain(`bun: Permission denied: ${noaccess}`);
+        expect(stderr.toString()).not.toContain("no matches found");
+        expect(exitCode).toBe(1);
+      } finally {
+        chmodSync(noaccess, 0o755);
+      }
+    });
   });
 
   describe("brace expansion", () => {
@@ -1034,7 +1056,6 @@ booga"
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
     // Skipped as root: permission checks don't apply, so EACCES never happens.
-    const isRoot = process.getuid?.() === 0;
     test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
       const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess");

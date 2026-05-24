@@ -930,7 +930,10 @@ impl FetchTasklet {
                 // socket; all that is left is rejecting the promise.
                 let promise_value = self.promise.value_or_empty();
                 if promise_value.is_empty_or_undefined_or_null() {
-                    bun_output::scoped_log!(FetchTasklet, "onProgressUpdate: promise_value is null");
+                    bun_output::scoped_log!(
+                        FetchTasklet,
+                        "onProgressUpdate: promise_value is null"
+                    );
                     self.promise = jsc::JSPromiseStrong::empty();
                     cleanup(self);
                     return Ok(());

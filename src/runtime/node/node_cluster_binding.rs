@@ -248,6 +248,15 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
+    // The child fully controls the bytes on the IPC fd, so it can craft a
+    // message that decodes as "internal" even when the parent never set up
+    // node:cluster's primary callback via `onInternalMessagePrimary`. Drop the
+    // message instead of unwrapping the unset worker/cb Strongs below, which
+    // would abort the parent process.
+    if !ipc_data.internal_msg_queue.is_ready() {
+        return Ok(());
+    }
+
     let event_loop = global.bun_vm().event_loop_mut();
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.

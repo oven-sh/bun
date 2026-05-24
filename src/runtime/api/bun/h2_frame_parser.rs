@@ -2381,7 +2381,7 @@ impl H2FrameParser {
 
     pub(crate) fn send_go_away(
         &self,
-        stream_identifier: u32,
+        triggering_stream_id: u32,
         rst_code: ErrorCode,
         debug_data: &[u8],
         last_stream_id: u32,
@@ -2390,7 +2390,7 @@ impl H2FrameParser {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_GOAWAY {} code {} debug_data {} emitError {}",
-            stream_identifier,
+            triggering_stream_id,
             rst_code.0,
             BStr::new(debug_data),
             emit_error
@@ -2398,10 +2398,15 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 8];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
+        // RFC 9113 section 6.8: GOAWAY frames are always sent on stream 0. A
+        // GOAWAY with a non-zero stream identifier is itself a connection
+        // error of type PROTOCOL_ERROR. The stream that triggered the GOAWAY
+        // is only used for logging above; the last processed stream id goes in
+        // the payload below.
         let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_GOAWAY as u8,
             flags: 0,
-            stream_identifier,
+            stream_identifier: 0,
             length: u32::try_from(8 + debug_data.len()).expect("int cast"),
         };
         let _ = frame.write(&mut stream);

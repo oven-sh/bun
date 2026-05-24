@@ -128,6 +128,23 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(computeFlags(resolveDarwin({ arch: "x64" })).ldflags).toContain("-Wl,-adhoc_codesign");
   });
 
+  test("cross release links get safe ICF backed by the address-significance table", () => {
+    // Apple's ld has no ICF, so this is an lld-only win. `safe` needs the
+    // __llvm_addrsig section from -faddrsig (off by default for Mach-O,
+    // unlike ELF) to know which functions never have their address taken —
+    // without it lld treats everything as address-significant and folds
+    // nothing.
+    const release = computeFlags(resolveDarwin());
+    expect(release.cflags).toContain("-faddrsig");
+    expect(release.ldflags).toContain("-Wl,--icf=safe");
+
+    // Debug: no ICF (matches the Linux gating), but the addrsig table is
+    // harmless and keeps the compile flags identical across profiles.
+    const debug = computeFlags(resolveDarwin({ buildType: "Debug", assertions: true }));
+    expect(debug.cflags).toContain("-faddrsig");
+    expect(debug.ldflags).not.toContain("-Wl,--icf=safe");
+  });
+
   test("link and strip commands run macho-postlink with the stack size and entitlements", () => {
     // ld64.lld doesn't implement -stack_size and the linker's ad-hoc
     // signature carries no entitlements — both are fixed up post-link by

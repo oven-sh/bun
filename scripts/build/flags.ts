@@ -181,6 +181,22 @@ export const globalFlags: Flag[] = [
     desc: "macOS cross: only the SDK's (Apple) libc++/libc/framework headers + clang builtins",
   },
 
+  {
+    // Emit the address-significance table (__DATA,__llvm_addrsig) so
+    // ld64.lld's --icf=safe knows which functions never have their address
+    // taken and can be folded without breaking pointer-identity comparisons
+    // (the same table -faddrsig emits by default on ELF for the Linux
+    // -Wl,-icf=safe). Cross-only: lld consumes the section and drops it
+    // from the output, but Apple's ld doesn't know it and would copy ~8
+    // bytes of dead __DATA per TU into the native binary — and `strip`
+    // won't remove a regular data section post-link. Flip the predicate to
+    // plain `c.darwin` once someone confirms on a Mac that Apple's ld
+    // discards it.
+    flag: "-faddrsig",
+    when: c => c.darwin && c.crossTarget !== undefined,
+    desc: "macOS cross: address-significance table for the linker's safe ICF",
+  },
+
   // ─── CPU target ───
   ...cpuTargetFlags,
   {
@@ -874,6 +890,21 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,-adhoc_codesign",
     when: c => c.darwin && c.crossTarget !== undefined,
     desc: "macOS cross-link: always emit an ad-hoc LC_CODE_SIGNATURE for macho-postlink to replace",
+  },
+  {
+    // Identical-code folding, on top of -dead_strip: dead_strip removes
+    // unreferenced functions, ICF merges duplicate ones (template/bindgen
+    // instantiations, mostly). `safe` only folds functions whose address is
+    // never taken, per the -faddrsig table in globalFlags — the aggressive
+    // mode is what folded callBigIntConstructor into constructBigInt on
+    // Windows (/OPT:ICF) and broke `expect.any()`. Matches the Linux
+    // release link's -Wl,-icf=safe. lld-only: Apple's ld has no ICF, so
+    // this is a cross-only divergence (smaller binary than native). The
+    // prebuilt WebKit objects carry no addrsig table, so lld conservatively
+    // refuses to fold them — only bun's own objects + direct deps fold.
+    flag: "-Wl,--icf=safe",
+    when: c => c.darwin && c.crossTarget !== undefined && c.release,
+    desc: "macOS cross-link: fold identical address-insignificant functions",
   },
   {
     // -ld_new selects Apple's new linker — only meaningful (and only

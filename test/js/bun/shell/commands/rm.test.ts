@@ -291,7 +291,6 @@ test.skipIf(process.platform === "win32")(
     // exercised nothing and the canary probe is broken.
     expect(swapped).toBeGreaterThan(0);
   },
-  60_000,
 );
 
 // Same shape as the test above, but the leaves are empty directories so the
@@ -342,5 +341,4 @@ test.skipIf(process.platform === "win32")(
     }
     expect(swapped).toBeGreaterThan(0);
   },
-  60_000,
 );

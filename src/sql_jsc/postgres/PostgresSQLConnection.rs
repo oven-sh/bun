@@ -1643,8 +1643,7 @@ impl PostgresSQLConnection {
     /// the JS wrapper still points at the query and underflow the FIFO count.
     #[inline]
     fn discard_request(&self, request: *mut PostgresSQLQuery) {
-        if self.requests.get().readable_length() == 0
-            || self.requests.get().peek_item(0) != request
+        if self.requests.get().readable_length() == 0 || self.requests.get().peek_item(0) != request
         {
             return;
         }

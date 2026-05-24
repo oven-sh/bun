@@ -3343,7 +3343,10 @@ impl MappingProps {
             let idx = self.merge_indexed;
             let key = self.list[idx].key.as_ref().unwrap();
             let hash = Parser::<Utf8>::yaml_merge_key_expr_hash(key);
-            self.merge_index.get_or_put(hash)?.value_ptr.push(idx as u32);
+            self.merge_index
+                .get_or_put(hash)?
+                .value_ptr
+                .push(idx as u32);
             self.merge_indexed += 1;
         }
 

@@ -970,7 +970,9 @@ pub mod ssl_wrapper {
             // read data from the input BIO
             loop {
                 log!("handleReading");
-                let Some(ssl) = Self::r(this).ssl else { return false };
+                let Some(ssl) = Self::r(this).ssl else {
+                    return false;
+                };
 
                 let available = &mut buffer[read..];
                 // SAFETY: ssl is a live SSL*; available is a valid mutable slice.
@@ -1046,8 +1048,7 @@ pub mod ssl_wrapper {
                             log!("triggering data callback (read {})", read);
                             Self::r(this).trigger_data_callback(&buffer[0..read]);
                             // The data callback may have closed the connection
-                            if Self::r(this).ssl.is_none()
-                                || Self::r(this).flags.closed_notified()
+                            if Self::r(this).ssl.is_none() || Self::r(this).flags.closed_notified()
                             {
                                 return false;
                             }

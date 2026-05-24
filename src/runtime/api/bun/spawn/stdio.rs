@@ -539,10 +539,8 @@ impl Stdio {
             // meantime — the `held` Strong keeps the cell alive but does not
             // prevent detachment. The copy is never exposed to JS, so it
             // cannot be invalidated out from under the writer.
-            let copied_value = jsc::array_buffer::ArrayBuffer::create_buffer(
-                global,
-                array_buffer.byte_slice(),
-            )?;
+            let copied_value =
+                jsc::array_buffer::ArrayBuffer::create_buffer(global, array_buffer.byte_slice())?;
             let copied = copied_value
                 .as_array_buffer(global)
                 .expect("create_buffer returns a Uint8Array");

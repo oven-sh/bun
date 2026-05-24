@@ -331,8 +331,7 @@ impl Expansion {
         ) {
             if matches!(e, braces::ParserError::TooManyBraces) {
                 let msg = "too many braces in brace expansion".to_string();
-                me.state =
-                    ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
                 return;
             }
             // Spec: error.UnexpectedToken → panic. Mirror it.

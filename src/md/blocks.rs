@@ -225,8 +225,8 @@ impl Parser<'_> {
                             // same quirk). Compare the raw discriminant byte instead of
                             // materializing a BlockType, which would be UB for an
                             // out-of-range byte.
-                            let top_type = self.block_bytes
-                                [self.block_bytes.len() - size_of::<BlockHeader>()];
+                            let top_type =
+                                self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
                             if top_type == BlockType::Li as u8 {
                                 self.last_list_item_starts_with_two_blank_lines = true;
                             }

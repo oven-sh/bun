@@ -5974,56 +5974,54 @@ impl H2FrameParser {
             };
 
             // closure for encode error handling
-            let mut handle_encode =
-                |this: &Self, value: &[u8], never_index: bool| -> JsResult<Option<JSValue>> {
-                    if !is_valid_header_value(value) {
-                        let exception = global_object.to_type_error(
-                            bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                            format_args!(
-                                "Invalid value for header \"{}\"",
-                                BStr::new(validated_name)
-                            ),
-                        );
-                        return Err(global_object.throw_value(exception));
-                    }
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "encode header {} {}",
-                        BStr::new(validated_name),
-                        BStr::new(value)
+            let mut handle_encode = |this: &Self,
+                                     value: &[u8],
+                                     never_index: bool|
+             -> JsResult<Option<JSValue>> {
+                if !is_valid_header_value(value) {
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                        format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)),
                     );
-                    match this.encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        Ok(_) => Ok(None),
-                        Err(err) if err == bun_core::err!("OutOfMemory") => {
-                            Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")))
-                        }
-                        Err(_) => {
-                            stream.state = StreamState::CLOSED;
-                            let identifier = stream.get_identifier();
-                            identifier.ensure_still_alive();
-                            stream.free_resources::<false>(this);
-                            stream.rst_code = ErrorCode::FRAME_SIZE_ERROR.0;
-                            this.dispatch_with_2_extra(
-                                JSH2FrameParser::Gc::onFrameError,
-                                identifier,
-                                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-                            );
-                            this.dispatch_with_extra(
-                                JSH2FrameParser::Gc::onStreamError,
-                                identifier,
-                                JSValue::js_number(stream.rst_code as f64),
-                            );
-                            Ok(Some(JSValue::UNDEFINED))
-                        }
+                    return Err(global_object.throw_value(exception));
+                }
+                bun_output::scoped_log!(
+                    H2FrameParser,
+                    "encode header {} {}",
+                    BStr::new(validated_name),
+                    BStr::new(value)
+                );
+                match this.encode_header_into_list(
+                    &mut encoded_headers,
+                    validated_name,
+                    value,
+                    never_index,
+                ) {
+                    Ok(_) => Ok(None),
+                    Err(err) if err == bun_core::err!("OutOfMemory") => {
+                        Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
-                };
+                    Err(_) => {
+                        stream.state = StreamState::CLOSED;
+                        let identifier = stream.get_identifier();
+                        identifier.ensure_still_alive();
+                        stream.free_resources::<false>(this);
+                        stream.rst_code = ErrorCode::FRAME_SIZE_ERROR.0;
+                        this.dispatch_with_2_extra(
+                            JSH2FrameParser::Gc::onFrameError,
+                            identifier,
+                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+                        );
+                        this.dispatch_with_extra(
+                            JSH2FrameParser::Gc::onStreamError,
+                            identifier,
+                            JSValue::js_number(stream.rst_code as f64),
+                        );
+                        Ok(Some(JSValue::UNDEFINED))
+                    }
+                }
+            };
 
             if js_value.js_type().is_array() {
                 let mut value_iter = js_value.array_iterator(global_object)?;

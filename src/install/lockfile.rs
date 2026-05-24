@@ -3408,8 +3408,7 @@ impl Lockfile {
         (strings::has_prefix_comptime(registry_root, b"https://")
             || strings::has_prefix_comptime(registry_root, b"http://"))
             && registry_root.iter().all(|&c| {
-                c.is_ascii_alphanumeric()
-                    || matches!(c, b'-' | b'.' | b'_' | b'~' | b':' | b'/')
+                c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b'_' | b'~' | b':' | b'/')
             })
     }
 }

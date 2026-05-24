@@ -122,6 +122,13 @@ static bool isAcceptableVectorSource(const std::optional<BufferSource::VariantTy
     return WTF::isValidCapacityForVector<uint8_t>(length);
 }
 
+// RsaKeyGenParams.publicExponent is a WebIDL BigInteger (a Uint8Array, not a
+// BufferSource), but publicExponentVector() does the same unguarded append.
+static bool isAcceptableVectorSource(const RefPtr<Uint8Array>& data)
+{
+    return !data || WTF::isValidCapacityForVector<uint8_t>(data->byteLength());
+}
+
 static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAlgorithmParameters(JSGlobalObject& state, SubtleCrypto::AlgorithmIdentifier algorithmIdentifier, Operations operation)
 {
     VM& vm = state.vm();
@@ -244,6 +251,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
                 return Exception { NotSupportedError, "RSAES-PKCS1-v1_5 support is deprecated"_s };
             auto params = convertDictionary<CryptoAlgorithmRsaKeyGenParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.publicExponent))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmRsaKeyGenParams>(params);
             break;
         }
@@ -252,6 +261,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
             auto params = convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.publicExponent))
+                return Exception { OperationError, "Input data is too large"_s };
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();

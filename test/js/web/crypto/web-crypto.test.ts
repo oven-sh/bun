@@ -272,6 +272,14 @@ describe("oversized inputs", () => {
         "deriveBits salt",
         crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: big, info: new Uint8Array(0) }, hkdfKey, 256),
       );
+      // publicExponent is a WebIDL BigInteger (Uint8Array), not a BufferSource.
+      await record(
+        "generateKey publicExponent",
+        crypto.subtle.generateKey({ name: "RSA-OAEP", modulusLength: 2048, publicExponent: big, hash: "SHA-256" }, true, [
+          "encrypt",
+          "decrypt",
+        ]),
+      );
 
       // Normal-sized inputs must keep working in the same process.
       await crypto.subtle.digest("SHA-256", new Uint8Array(16));
@@ -301,6 +309,7 @@ describe("oversized inputs", () => {
         "encrypt additionalData": "OperationError",
         "encrypt iv": "OperationError",
         "deriveBits salt": "OperationError",
+        "generateKey publicExponent": "OperationError",
         "small round-trip": "ok",
       });
     }

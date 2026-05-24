@@ -2649,14 +2649,15 @@ impl PostgresSQLConnection {
                 // ReadyForQuery. Free any previous fields before overwriting and
                 // invalidate state derived from them so the next DataRow builds
                 // the correct structure instead of reusing a stale cached one.
-                if !statement.fields.is_empty() {
-                    // PORT NOTE: Vec<FieldDescription> drop runs each field's Drop.
-                    statement.fields = Vec::new();
-                    statement.cached_structure = Default::default();
-                    statement.needs_duplicate_check = true;
-                    statement.fields_flags = Default::default();
-                }
+                // This must happen even when the previous field list was empty:
+                // a zero-column result set still caches a zero-property
+                // Structure, and reusing it for a wider field list would write
+                // past the new row object's inline capacity.
+                // PORT NOTE: Vec<FieldDescription> drop runs each field's Drop.
                 statement.fields = description.fields.into_vec();
+                statement.cached_structure = Default::default();
+                statement.needs_duplicate_check = true;
+                statement.fields_flags = Default::default();
             }
             MessageType::Authentication => {
                 let auth =

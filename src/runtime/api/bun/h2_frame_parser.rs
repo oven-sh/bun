@@ -1853,16 +1853,25 @@ impl Stream {
                 lf!().end_stream = end_stream;
                 // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                 // this is fine is like a per-stream CORKING in a frame level
-                if let Some(old_callback) = lf!().callback.get() {
+                //
+                // Install the new callback *before* dispatching the old one:
+                // the write callback runs arbitrary JS that can re-enter
+                // `queue_frame` and push onto `data_frame_queue`, reallocating
+                // its backing store and dangling `last_frame`. Holding the old
+                // callback in a local `StrongOptional` keeps it alive for the
+                // dispatch without touching the queue afterwards.
+                let old_callback = core::mem::replace(
+                    &mut lf!().callback,
+                    StrongOptional::create(callback, &global_this),
+                );
+                if let Some(old_callback_value) = old_callback.get() {
                     // Escape `this` so a self-derived address is observable
                     // across the opaque JS call (belt-and-suspenders; either
                     // launder alone defeats the caching).
                     core::hint::black_box(this);
-                    client.dispatch_write_callback(old_callback);
-                    core::hint::black_box(last_frame);
-                    lf!().callback.deinit();
+                    client.dispatch_write_callback(old_callback_value);
                 }
-                lf!().callback = StrongOptional::create(callback, &global_this);
+                drop(old_callback);
                 return;
             }
             if lf!().len == 0 {
@@ -1889,13 +1898,20 @@ impl Stream {
                     lf!().end_stream = end_stream;
                     // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                     // this is fine is like a per-stream CORKING in a frame level
-                    if let Some(old_callback) = lf!().callback.get() {
+                    //
+                    // See the `bytes.is_empty()` branch above: install the new
+                    // callback before dispatching the old one so no pointer
+                    // into `data_frame_queue` is dereferenced after the JS
+                    // call can have reallocated it.
+                    let old_callback = core::mem::replace(
+                        &mut lf!().callback,
+                        StrongOptional::create(callback, &global_this),
+                    );
+                    if let Some(old_callback_value) = old_callback.get() {
                         core::hint::black_box(this);
-                        client.dispatch_write_callback(old_callback);
-                        core::hint::black_box(last_frame);
-                        lf!().callback.deinit();
+                        client.dispatch_write_callback(old_callback_value);
                     }
-                    lf!().callback = StrongOptional::create(callback, &global_this);
+                    drop(old_callback);
                     return;
                 }
                 // we keep the old callback because the new will be part of another frame

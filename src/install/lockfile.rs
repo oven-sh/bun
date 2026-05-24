@@ -3347,10 +3347,13 @@ impl Lockfile {
             // must not inherit trust from a `trustedDependencies: ["esbuild"]`
             // entry.
             let hash = SemverStringBuilder::string_hash(pkg_name) as u32;
-            // Empty value = legacy bun.lockb sentinel (no name stored);
-            // match by hash alone.
+            // The key is only the truncated 32-bit hash, so a colliding name
+            // would otherwise inherit lifecycle-script trust. Require an exact
+            // name match; an empty value (legacy bun.lockb sentinel, no name
+            // stored) never grants trust on its own — the diff against
+            // package.json backfills those entries with their real names.
             return match trusted_dependencies.get(&hash) {
-                Some(name) => name.is_empty() || **name == *pkg_name,
+                Some(name) => !name.is_empty() && **name == *pkg_name,
                 None => false,
             };
         }

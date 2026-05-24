@@ -397,10 +397,11 @@ impl Stringifier {
                         if let Some(trusted_name) =
                             trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
                         {
-                            // The `is_empty()` arm keeps hash-only entries from a
-                            // legacy bun.lockb (no name stored) when migrating to
-                            // bun.lock.
-                            if trusted_name.is_empty() || **trusted_name == *dep.name.slice(buf) {
+                            // Only persist an exact name match. A hash-only entry
+                            // from a legacy bun.lockb (empty name) must not adopt
+                            // whichever dependency name happens to collide with
+                            // its truncated hash.
+                            if **trusted_name == *dep.name.slice(buf) {
                                 found_trusted_dependencies.insert(dep.name_hash, dep.name);
                             }
                         }

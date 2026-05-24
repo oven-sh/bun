@@ -1240,16 +1240,21 @@ impl Diff {
 
             // 2
             if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_ref(),
+                from_lockfile.trusted_dependencies.as_mut(),
                 to_lockfile.trusted_dependencies.as_ref(),
             ) {
                 // added
                 for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    // Empty name = legacy bun.lockb hash-only sentinel.
+                    // Empty name = legacy bun.lockb hash-only sentinel. Backfill
+                    // it with the exact name from package.json so trust checks
+                    // never have to rely on the truncated hash alone.
                     let already_trusted =
                         from_trusted_dependencies
-                            .get(&to_trusted)
+                            .get_mut(&to_trusted)
                             .is_some_and(|from_name| {
+                                if from_name.is_empty() && !to_name.is_empty() {
+                                    *from_name = to_name.clone();
+                                }
                                 from_name.is_empty()
                                     || to_name.is_empty()
                                     || **from_name == **to_name

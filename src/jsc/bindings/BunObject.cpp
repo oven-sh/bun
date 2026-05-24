@@ -94,6 +94,18 @@ namespace Bun {
 
 extern "C" bool has_bun_garbage_collector_flag_enabled;
 
+JSValue handleLazyPropertyCallbackException(VM& vm, JSValue result)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
+    if (!result) [[unlikely]]
+        return jsUndefined();
+    return result;
+}
+
 static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
 {
     return uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject())->ArrayBufferSink();
@@ -313,29 +325,33 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
     return pluginFunction;
 }
 
-static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
+static JSValue defaultBunSQLObjectImpl(VM& vm, JSObject* bunObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
-#if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
-#endif
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
 }
 
-static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+static JSValue defaultBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    return handleLazyPropertyCallbackException(vm, defaultBunSQLObjectImpl(vm, bunObject));
+}
+
+static JSValue constructBunSQLObjectImpl(VM& vm, JSObject* bunObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(bunObject->globalObject());
     JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
-#if BUN_DEBUG
-    if (scope.exception()) globalObject->reportUncaughtExceptionAtEventLoop(globalObject, scope.exception());
-#endif
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
+}
+
+static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
+{
+    return handleLazyPropertyCallbackException(vm, constructBunSQLObjectImpl(vm, bunObject));
 }
 
 extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
@@ -356,7 +372,7 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
     return fetchFn;
 }
 
-static JSValue constructBunShell(VM& vm, JSObject* bunObject)
+static JSValue constructBunShellImpl(VM& vm, JSObject* bunObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
     JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
@@ -389,6 +405,11 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     bunShell->putDirect(vm, JSC::Identifier::fromString(vm, "ShellError"_s), ShellError.getObject(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     return bunShell;
+}
+
+static JSValue constructBunShell(VM& vm, JSObject* bunObject)
+{
+    return handleLazyPropertyCallbackException(vm, constructBunShellImpl(vm, bunObject));
 }
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)

@@ -1760,6 +1760,103 @@ impl NodeHTTPResponse {
         self.write_or_end::<false>(global_object, arguments, JSValue::ZERO)
     }
 
+    pub(crate) fn write_raw(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+
+        if self.is_done() {
+            return Ok(JSValue::js_boolean(true));
+        }
+        let Some(raw_response) = self.raw_response.get() else {
+            return Ok(JSValue::js_boolean(true));
+        };
+        if self.flags.get().contains(Flags::SOCKET_CLOSED) {
+            return Ok(JSValue::js_boolean(true));
+        }
+
+        let input_value: JSValue = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
+        let encoding_value: JSValue = arguments.get(1).copied().unwrap_or(JSValue::UNDEFINED);
+
+        let mut string_or_buffer = crate::node::StringOrBuffer::EMPTY;
+        if !input_value.is_undefined_or_null() {
+            let mut encoding = crate::node::Encoding::Utf8;
+            if !encoding_value.is_undefined_or_null() && encoding_value.is_string() {
+                encoding = match crate::node::Encoding::from_js(encoding_value, global_object)? {
+                    Some(e) => e,
+                    None => crate::node::Encoding::Utf8,
+                };
+            }
+
+            if !crate::node::StringOrBuffer::from_js_with_encoding_into(
+                &mut string_or_buffer,
+                global_object,
+                input_value,
+                encoding,
+            )? {
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"chunk",
+                    b"string or buffer",
+                    input_value,
+                ));
+            }
+        }
+
+        if global_object.has_exception() {
+            return Err(jsc::JsError::Thrown);
+        }
+
+        let bytes = string_or_buffer.slice();
+        scoped_log!(
+            NodeHTTPResponse,
+            "writeRaw('{}', {})",
+            BStr::new(&bytes[..bytes.len().min(128)]),
+            bytes.len()
+        );
+
+        if bytes.is_empty() {
+            return Ok(JSValue::js_boolean(true));
+        }
+
+        let (_written, no_backpressure) = raw_response.write_raw(bytes);
+        self.bytes_written
+            .set(self.bytes_written.get().saturating_add(bytes.len()));
+        Ok(JSValue::js_boolean(no_backpressure))
+    }
+
+    pub(crate) fn end_raw(
+        &self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if self.is_done() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let Some(raw_response) = self.raw_response.get() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        if self.flags.get().contains(Flags::SOCKET_CLOSED) {
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        scoped_log!(NodeHTTPResponse, "endRaw()");
+
+        let close_connection = true;
+        raw_response.clear_aborted();
+        raw_response.clear_on_writable();
+        raw_response.clear_timeout();
+        self.update_flags(|f| f.insert(Flags::ENDED));
+        if raw_response.is_corked() {
+            raw_response.uncork();
+        }
+        raw_response.end_raw(close_connection);
+        self.on_request_complete();
+
+        Ok(JSValue::UNDEFINED)
+    }
+
     pub(crate) fn on_auto_flush(&self) -> bool {
         // defer this.deref(); — moved to tail.
         let flags = self.flags.get();

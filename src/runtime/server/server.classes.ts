@@ -120,6 +120,14 @@ export default [
         fn: "end",
         length: 2,
       },
+      writeRaw: {
+        fn: "writeRaw",
+        length: 2,
+      },
+      endRaw: {
+        fn: "endRaw",
+        length: 0,
+      },
       getBytesWritten: {
         fn: "getBytesWritten",
         length: 0,

@@ -838,7 +838,16 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
   const hostWin = cfg.host.os === "windows";
   const rcFlags: string[] = [];
   if (cfg.winsysroot !== undefined) {
-    for (const dir of windowsSysrootIncludeDirs(cfg.winsysroot)) {
+    const includeDirs = windowsSysrootIncludeDirs(cfg.winsysroot);
+    // The include dirs are baked into the rc edge at configure time, so the
+    // sysroot must already be populated (configure.ts fetches it in CI
+    // before emitBun). An empty set would only surface later as a cryptic
+    // llvm-rc "windows.h not found" — fail here with the real cause instead.
+    assert(
+      includeDirs.length > 0,
+      `Windows sysroot at ${cfg.winsysroot} has no MSVC/SDK include dirs — is it a complete xwin splat?`,
+    );
+    for (const dir of includeDirs) {
       rcFlags.push("/I", quote(dir, hostWin));
     }
   }

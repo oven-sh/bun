@@ -28,6 +28,7 @@ import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
 /**
@@ -272,6 +273,17 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   mark("ensureMacosSdk");
 
   checkWorkarounds(cfg);
+
+  // Windows cross-compile, CI only: fetch the MSVC CRT + Windows SDK splat
+  // into the per-build cache BEFORE the graph is emitted — emitBun()
+  // enumerates its include dirs (llvm-rc's /I flags) at configure time, so
+  // the sysroot must exist by then, not just before ninja runs. No-op when
+  // the resolved winsysroot is already complete. Local builds never fetch:
+  // resolveConfig() already required a provisioned sysroot (or errored).
+  if (cfg.windows && cfg.host.os !== "windows" && (cfg.ci || cfg.buildkite)) {
+    await ensureWindowsSysroot(cfg);
+    mark("ensureWindowsSysroot");
+  }
 
   // Generated `.cargo/config.toml` — written at configure time (not a ninja
   // rule), like `bun_dependency_versions.h`. Holds the per-target `linker = `

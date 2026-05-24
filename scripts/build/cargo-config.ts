@@ -75,8 +75,8 @@ export function generateCargoConfig(cfg: Config): string {
     "# pulled in by `bun_bin/build.rs` is built with clang and assumes lld",
     "# semantics, and libstdc++ is linked statically via the driver — neither",
     "# of which the default `cc` link handles cleanly. Paths come from the",
-    "# toolchain `scripts/build/tools.ts` discovered (`cfg.cxx`), so this file",
-    "# is correct on whatever machine ran configure.",
+    "# toolchain `scripts/build/tools.ts` discovered (`cfg.hostCxx`), so this",
+    "# file is correct on whatever machine ran configure.",
   ];
 
   for (const triple of allRustTargets) {

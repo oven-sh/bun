@@ -175,6 +175,6 @@ bun run build --profile=windows-x64-release
 bun run build --profile=windows-arm64-release
 ```
 
-Output lands in `build/debug-windows-x64/bun-debug.exe`, `build/release-windows-arm64/bun-profile.exe` + `bun.exe`, etc. Equivalent raw flags: `bun run build --os=windows --arch=aarch64`.
+Output lands in `build/debug-windows-x64/bun-debug.exe`, `build/release-windows-aarch64/bun-profile.exe` + `bun.exe`, etc. Equivalent raw flags: `bun run build --os=windows --arch=aarch64`.
 
 Cross-compiled executables are not run on the host (the `--revision` smoke test is skipped), so test them on a Windows machine or under Wine.

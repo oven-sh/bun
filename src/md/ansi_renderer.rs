@@ -686,6 +686,13 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     pub fn text(&mut self, text_type: TextType, content: &[u8]) {
+        // Markdown source is plain UTF-8 — the parser hands raw ESC / C0
+        // control bytes through as ordinary text. Strip them so attacker-
+        // controlled markdown can't inject its own terminal control
+        // sequences (OSC 52 clipboard writes, title changes, ...) alongside
+        // the renderer's styling escapes.
+        let mut sanitized: Vec<u8> = Vec::new();
+        let content = sanitize_source_text(content, &mut sanitized);
         match text_type {
             TextType::NullChar => self.write_content(b"\xEF\xBF\xBD"),
             TextType::Br => self.write_content(b"\n"),
@@ -702,6 +709,10 @@ impl<'a> AnsiRenderer<'a> {
             TextType::Entity => {
                 let mut buf = [0u8; 8];
                 let decoded = helpers::decode_entity_to_utf8(content, &mut buf).unwrap_or(content);
+                // A numeric reference like `&#27;` decodes to a raw control
+                // byte — sanitize the decoded form too.
+                let mut decoded_sanitized: Vec<u8> = Vec::new();
+                let decoded = sanitize_source_text(decoded, &mut decoded_sanitized);
                 self.write_content(decoded);
             }
             // Inline code spans are atomic — don't let writeWrapped split
@@ -2299,6 +2310,62 @@ fn visible_width(s: &[u8]) -> usize {
 /// `max_cols`. ANSI escapes are zero-width and always included.
 fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
     strings::visible::width::exclude_ansi_colors::utf8_index_at_width(s, max_cols)
+}
+
+/// Strip raw terminal control bytes from source-derived text so the only
+/// escape sequences reaching the terminal are the ones the renderer itself
+/// emits. ESC-initiated sequences (CSI / OSC / two-byte) are dropped whole,
+/// mirroring the image-alt stripper in `emit_inline`; other C0 controls and
+/// DEL are dropped except `\t` and `\n`. Returns the input unchanged (and
+/// leaves `scratch` untouched) when there is nothing to strip.
+fn sanitize_source_text<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>) -> &'b [u8] {
+    fn is_disallowed(c: u8) -> bool {
+        (c < 0x20 && c != b'\n' && c != b'\t') || c == 0x7f
+    }
+    if !bytes.iter().any(|&c| is_disallowed(c)) {
+        return bytes;
+    }
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b {
+            i += 1;
+            if i < bytes.len() && bytes[i] == b'[' {
+                i += 1;
+                while i < bytes.len() && (bytes[i] < 0x40 || bytes[i] > 0x7e) {
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            } else if i < bytes.len() && bytes[i] == b']' {
+                i += 1;
+                while i < bytes.len() {
+                    if bytes[i] == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            } else if i < bytes.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if is_disallowed(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && !is_disallowed(bytes[i]) {
+            i += 1;
+        }
+        scratch.extend_from_slice(&bytes[start..i]);
+    }
+    scratch
 }
 
 fn is_js_lang(lang: &[u8]) -> bool {

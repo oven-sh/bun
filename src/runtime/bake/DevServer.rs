@@ -1415,8 +1415,9 @@ pub(super) enum DevHandlerId {
     MemoryVisualizer,
 }
 
-/// DNS-rebinding guard for `/_bun/...` internal routes and the Chrome
-/// DevTools `/.well-known/...` route. A rebound origin
+/// DNS-rebinding guard for the dev server's routes: `/_bun/...` internals,
+/// the Chrome DevTools `/.well-known/...` route, and the HTML/framework
+/// responses that embed the `client_script_generation` secret. A rebound origin
 /// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
 /// non-loopback / non-IP / non-configured hostnames prevents the attacker's
 /// page from reading bundled source via same-origin fetch.
@@ -1552,7 +1553,7 @@ extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
-    if !matches!(ID, DevHandlerId::Request) && !is_allowed_dev_host(dev, req) {
+    if !is_allowed_dev_host(dev, req) {
         return host_forbidden(resp);
     }
     match ID {
@@ -5329,6 +5330,13 @@ impl DevServer {
         req: &mut Request,
         resp: AnyResponse,
     ) -> Result<(), AllocError> {
+        // The served HTML embeds the `client_script_generation` secret in its
+        // `/_bun/client/...` script URL; apply the same DNS-rebinding guard as
+        // the `/_bun/*` routes before disclosing it.
+        if !is_allowed_dev_host(self, req) {
+            host_forbidden(resp);
+            return Ok(());
+        }
         let route_bundle_index = self
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
             .map_err(|_| AllocError)?;
@@ -5416,7 +5424,14 @@ impl DevServer {
                     });
                 }
             },
-            client_script_generation: bun_core::fast_random() as u32,
+            // Zig: `std.crypto.random.int(u32)` — OS CSPRNG. This value gates
+            // cross-origin access to the client bundle URL, so it must not
+            // come from the predictable xoshiro stream (`fast_random`).
+            client_script_generation: {
+                let mut buf = [0u8; 4];
+                bun_core::csprng(&mut buf);
+                u32::from_ne_bytes(buf)
+            },
             server_state: route_bundle::State::Unqueued,
             client_bundle: None,
             active_viewers: 0,

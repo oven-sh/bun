@@ -41,8 +41,6 @@
 #endif
 #define CONSTRUCTOR_ATTRIBUTE __attribute__((constructor(CONSTRUCTOR_PRIORITY)))
 #else
-// FIXME: For MSVC, we should make a function pointer global in .CRT$X?? so that
-// this runs during initialization.
 #define CONSTRUCTOR_ATTRIBUTE
 #endif
 

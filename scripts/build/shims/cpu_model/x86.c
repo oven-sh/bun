@@ -146,8 +146,7 @@ enum ProcessorFeatures {
   FEATURE_AVX512BITALG,
   FEATURE_AVX512BF16,
   FEATURE_AVX512VP2INTERSECT,
-  // FIXME: Below Features has some missings comparing to gcc, it's because gcc
-  // has some not one-to-one mapped in llvm.
+  // Features gcc defines but llvm doesn't map one-to-one are omitted below.
   // FEATURE_3DNOW,
   // FEATURE_3DNOWP,
   FEATURE_ADX = 40,
@@ -157,9 +156,8 @@ enum ProcessorFeatures {
   FEATURE_CLWB,
   FEATURE_CLZERO,
   FEATURE_CMPXCHG16B,
-  // FIXME: Not adding FEATURE_CMPXCHG8B is a workaround to make 'generic' as
-  // a cpu string with no X86_FEATURE_COMPAT features, which is required in
-  // current implementantion of cpu_specific/cpu_dispatch FMV feature.
+  // FEATURE_CMPXCHG8B is left out so 'generic' stays a cpu string with no
+  // X86_FEATURE_COMPAT features (required by cpu_specific/cpu_dispatch FMV).
   // FEATURE_CMPXCHG8B,
   FEATURE_ENQCMD = 48,
   FEATURE_F16C,
@@ -263,10 +261,6 @@ static bool getX86CpuIDAndInfo(unsigned value, unsigned *rEAX, unsigned *rEBX,
 static bool getX86CpuIDAndInfoEx(unsigned value, unsigned subleaf,
                                  unsigned *rEAX, unsigned *rEBX, unsigned *rECX,
                                  unsigned *rEDX) {
-  // TODO(boomanaiden154): When the minimum toolchain versions for gcc and clang
-  // are such that __cpuidex is defined within cpuid.h for both, we can remove
-  // the __get_cpuid_count function and share the MSVC implementation between
-  // all three.
 #if (defined(__GNUC__) || defined(__clang__)) && !defined(_MSC_VER)
   return !__get_cpuid_count(value, subleaf, rEAX, rEBX, rECX, rEDX);
 #elif defined(_MSC_VER)
@@ -284,9 +278,6 @@ static bool getX86CpuIDAndInfoEx(unsigned value, unsigned subleaf,
 
 // Read control register 0 (XCR0). Used to detect features such as AVX.
 static bool getX86XCR0(unsigned *rEAX, unsigned *rEDX) {
-  // TODO(boomanaiden154): When the minimum toolchain versions for gcc and clang
-  // are such that _xgetbv is supported by both, we can unify the implementation
-  // with MSVC and remove all inline assembly.
 #if defined(__GNUC__) || defined(__clang__)
   // Check xgetbv; this uses a .byte sequence instead of the instruction
   // directly because older assemblers do not include support for xgetbv and

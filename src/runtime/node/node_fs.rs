@@ -3043,23 +3043,24 @@ pub mod args {
         }
     }
 
-    /// Zig: `fn wrapTo(comptime T: type, in: i64) T` where `T` is unsigned.
     /// Only ever instantiated with `uid_t`/`gid_t` — `u32` on POSIX, `u8` on
     /// Windows (libuv's `uv_uid_t`/`uv_gid_t` are `unsigned char`). Hard-code
     /// the per-platform wrap rather than pulling `num_traits`.
+    ///
+    /// Node validates `-1..=u32::MAX` and then does a truncating
+    /// `static_cast<uv_uid_t>(v)` (reduction mod 2^32), so both `-1` and
+    /// `4294967295` become `(uid_t)-1` — the chown(2) "leave unchanged"
+    /// sentinel. Reducing mod `u32::MAX` (2^32 - 1) instead would map
+    /// `4294967295` to 0 (root) and `-1` to `4294967294`.
     #[cfg(not(windows))]
     #[inline]
     fn wrap_to<T: From<u32>>(in_: i64) -> T {
-        // Zig spec (node_fs.zig:1586): `@intCast(@mod(in, std.math.maxInt(T)))`
-        // — modulus is `u32::MAX` (2^32 - 1), **not** 2^32. So `-1 → 4294967294`
-        // and `4294967295 → 0`. Match the spec exactly.
-        T::from(in_.rem_euclid(u32::MAX as i64) as u32)
+        T::from(in_ as u32)
     }
     #[cfg(windows)]
     #[inline]
     fn wrap_to<T: From<u8>>(in_: i64) -> T {
-        // Same `@mod(in, maxInt(T))` semantics with `T = u8`.
-        T::from(in_.rem_euclid(u8::MAX as i64) as u8)
+        T::from(in_ as u8)
     }
 
     pub type LChown = Chown;

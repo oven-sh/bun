@@ -293,9 +293,10 @@ describe("oversized inputs", () => {
       cmd: [bunExe(), "-e", script],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
     if (stdout.trim() !== "SKIP") {
       expect(JSON.parse(stdout)).toEqual({
         "digest": "OperationError",

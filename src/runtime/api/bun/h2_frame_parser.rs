@@ -1274,10 +1274,8 @@ pub struct H2FrameParser {
     out_standing_pings: Cell<u64>,
     max_send_header_block_length: Cell<u32>,
     last_stream_id: Cell<u32>,
-    // Non-zero while a HEADERS frame without END_HEADERS is awaiting its
-    // CONTINUATION frames; holds the stream id whose header block is being
-    // reassembled. RFC 9113 §4.3: any other frame on the connection during
-    // that window is a connection error.
+    // Stream id whose header block is awaiting CONTINUATION frames
+    // (RFC 9113 §4.3); 0 when none.
     expecting_continuation: Cell<u32>,
     is_server: Cell<bool>,
     preface_received_len: Cell<u8>,
@@ -1413,15 +1411,11 @@ pub struct Stream {
     is_waiting_more_headers: bool,
     header_block_size: usize,
     header_block_count: usize,
-    // RFC 9113 §4.3: a header block split across HEADERS + CONTINUATION frames
-    // must be reassembled and HPACK-decoded as a single unit once END_HEADERS
-    // arrives. Bounded to one in-flight block per connection (see
-    // `expecting_continuation`) and capped at `max_header_list_size` bytes.
+    // Header block fragments buffered across HEADERS + CONTINUATION until
+    // END_HEADERS arrives (RFC 9113 §4.3); capped at `max_header_list_size`.
     pending_header_block: Vec<u8>,
-    // Flags from the HEADERS frame that started `pending_header_block`.
-    // CONTINUATION frames only define END_HEADERS, so the original flags
-    // (END_STREAM, PADDED, PRIORITY) must be preserved for the
-    // onStreamHeaders dispatch once the block is reassembled.
+    // Flags from the HEADERS frame that started `pending_header_block`;
+    // CONTINUATION frames only carry END_HEADERS.
     pending_header_flags: u8,
     padding: Option<u8>,
     padding_strategy: PaddingStrategy,
@@ -3280,11 +3274,8 @@ impl H2FrameParser {
             let header = match self.decode(&payload[offset..]) {
                 Ok(h) => h,
                 Err(_) => {
-                    // RFC 9113 §4.3: a decoding error in a complete header
-                    // block is a connection error of type COMPRESSION_ERROR —
-                    // the connection-scoped dynamic table can no longer be
-                    // trusted, and a partially decoded header list must not be
-                    // delivered as if it were complete.
+                    // RFC 9113 §4.3: a decoding error in a header block is a
+                    // connection error of type COMPRESSION_ERROR.
                     self.send_go_away(
                         stream_id,
                         ErrorCode::COMPRESSION_ERROR,
@@ -3319,9 +3310,7 @@ impl H2FrameParser {
                 header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
             stream.header_block_count += 1;
 
-            // Check against maxHeaderListSize / maxHeaderListPairs. Once a
-            // limit is exceeded stop collecting headers but keep decoding the
-            // rest of the block so the dynamic table stays consistent.
+            // Check against maxHeaderListSize / maxHeaderListPairs.
             if rejected
                 || stream.header_block_size
                     > self.local_settings.get().max_header_list_size as usize
@@ -4054,11 +4043,9 @@ impl H2FrameParser {
             if stream.pending_header_block.len() + payload.len()
                 > self.local_settings.get().max_header_list_size as usize
             {
-                // The compressed block already exceeds the header list limit
-                // (HPACK never expands a header list when encoding it, so the
-                // decoded size check would reject it too). Reject the whole
-                // connection rather than leaving the stream waiting on more
-                // fragments for an emptied buffer.
+                // The compressed block already exceeds the header list limit;
+                // HPACK never expands a header list, so the decoded size check
+                // would reject it too.
                 self.send_go_away(
                     frame.stream_identifier,
                     ErrorCode::ENHANCE_YOUR_CALM,
@@ -4075,10 +4062,8 @@ impl H2FrameParser {
             }
             stream.is_waiting_more_headers = false;
             self.expecting_continuation.set(0);
-            // RFC 9113 §4.3: decode the reassembled block as a single unit.
-            // Take ownership of the buffer first so re-entrant parser calls
-            // from the onStreamHeaders dispatch cannot alias or free the
-            // bytes being decoded.
+            // Take ownership of the buffer so re-entrant parser calls from the
+            // onStreamHeaders dispatch can't alias or free the bytes being decoded.
             let block = core::mem::take(&mut stream.pending_header_block);
             // Report the original HEADERS frame's flags (plus END_HEADERS now
             // that the block is complete), not the CONTINUATION frame's.
@@ -4224,18 +4209,14 @@ impl H2FrameParser {
             stream.is_waiting_more_headers =
                 frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
             if stream.is_waiting_more_headers {
-                // RFC 9113 §4.3: the header block is only complete once
-                // END_HEADERS arrives. Buffer this fragment and decode the
-                // concatenated block in handle_continuation_frame; the
-                // END_STREAM finalization is deferred with it so the JS event
-                // order stays onStreamHeaders -> onStreamEnd.
+                // Buffer fragments until END_HEADERS (RFC 9113 §4.3); the block is
+                // decoded and END_STREAM finalized in handle_continuation_frame so
+                // the JS event order stays onStreamHeaders -> onStreamEnd.
                 let fragment = &payload[offset..end];
                 if fragment.len() > self.local_settings.get().max_header_list_size as usize {
-                    // The compressed block already exceeds the header list
-                    // limit (HPACK never expands a header list when encoding
-                    // it, so the decoded size check would reject it too).
-                    // Reject the whole connection rather than leaving a
-                    // partially buffered block behind.
+                    // The compressed block already exceeds the header list limit;
+                    // HPACK never expands a header list, so the decoded size
+                    // check would reject it too.
                     self.send_go_away(
                         frame.stream_identifier,
                         ErrorCode::ENHANCE_YOUR_CALM,
@@ -4714,10 +4695,7 @@ impl H2FrameParser {
     ) -> JsResult<usize> {
         // RFC 9113 §4.3 / §6.10: once a HEADERS frame without END_HEADERS has
         // been received, the only frame permitted on the connection is a
-        // CONTINUATION frame for that same stream until the header block is
-        // complete. This also bounds reassembly to a single in-flight header
-        // block per connection. The check uses only the frame header so it is
-        // stable across partial-frame re-dispatches of the same frame.
+        // CONTINUATION for that same stream until the header block is complete.
         let expecting = self.expecting_continuation.get();
         if expecting != 0
             && (header.type_ != FrameType::HTTP_FRAME_CONTINUATION as u8

@@ -943,12 +943,19 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : resolve(cwd, partial.winsysroot)
         : detectWindowsSysroot();
     if (winsysroot === undefined) {
-      throw new BuildError("--os=windows requires a Windows sysroot (MSVC CRT + Windows SDK) when cross-compiling", {
-        hint:
-          "Set WINDOWS_SYSROOT or pass --winsysroot=<path>. Create one with xwin (https://github.com/Jake-Shadle/xwin):\n" +
-          "  cargo install xwin  (or download a release binary)\n" +
-          "  xwin --accept-license --arch x86_64,aarch64 splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot",
-      });
+      if (ci || buildkite) {
+        // CI always fetches its own sysroot into the per-build cache (see
+        // winsysroot.ts `ensureWindowsSysroot`, called from build.ts before
+        // ninja runs) instead of relying on agent image provisioning.
+        winsysroot = resolve(cacheDir, "winsysroot");
+      } else {
+        throw new BuildError("--os=windows requires a Windows sysroot (MSVC CRT + Windows SDK) when cross-compiling", {
+          hint:
+            "Set WINDOWS_SYSROOT or pass --winsysroot=<path>. Create one with xwin (https://github.com/Jake-Shadle/xwin):\n" +
+            "  cargo install xwin  (or download a release binary)\n" +
+            "  xwin --accept-license --arch x86_64,aarch64 splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot",
+        });
+      }
     }
     if (partial.webkit === "local") {
       throw new BuildError("Cross-compiling for Windows requires the prebuilt WebKit (webkit=local needs msbuild)", {

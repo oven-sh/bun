@@ -37,6 +37,7 @@ import { configure, type ConfigureInput, type ConfigureResult } from "./build/co
 import { BuildError } from "./build/error.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
+import { ensureWindowsSysroot } from "./build/winsysroot.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main
@@ -102,6 +103,12 @@ async function main(): Promise<void> {
     printEnvironment();
     const result = (await startGroup("Configure", () => configure(input))) as ConfigureResult;
     if (args.configureOnly) return;
+
+    // Windows cross-compile: CI always fetches its own MSVC CRT + Windows SDK
+    // splat (no-op when the resolved winsysroot is already complete).
+    if (result.cfg.windows && result.cfg.host.os !== "windows") {
+      await startGroup("Fetch Windows sysroot", () => ensureWindowsSysroot(result.cfg));
+    }
 
     // link-only: download cpp-only + rust-only artifacts before ninja.
     if (result.cfg.buildkite && result.cfg.mode === "link-only") {

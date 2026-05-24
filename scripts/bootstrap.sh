@@ -1128,7 +1128,6 @@ install_build_essentials() {
 		linux)
 			install_packages \
 				make \
-				nasm \
 				python3 \
 				libtool \
 				ruby \
@@ -1143,7 +1142,6 @@ install_build_essentials() {
 	install_rust
 	install_android_ndk
 	install_freebsd_sysroot
-	install_windows_sysroot
 	install_ccache
 	install_docker
 }
@@ -1404,54 +1402,6 @@ install_freebsd_sysroot() {
 	done
 	# No FREEBSD_SYSROOT export — detectFreebsdSysroot() picks the
 	# arch-appropriate /opt/freebsd-sysroot{,-arm64} by well-known path.
-}
-
-xwin_version() {
-	print "0.6.7"
-}
-
-install_windows_sysroot() {
-	case "$os" in
-	linux) ;;
-	*) return ;;
-	esac
-
-	# MSVC CRT/STL + Windows SDK splat for --os=windows cross-compiles,
-	# laid out like a Visual Studio install so clang-cl/lld-link's
-	# /winsysroot flag works (see scripts/build/config.ts `winsysroot`).
-	# Fetched with xwin, which downloads the components from Microsoft's CDN;
-	# --accept-license accepts the Microsoft Software License Terms for the
-	# Build Tools/SDK on behalf of this machine (same terms the Windows CI
-	# images accept when installing VS Build Tools).
-	sysroot="/opt/winsysroot"
-	# Same sentinel detectWindowsSysroot() uses, plus an SDK import lib so a
-	# half-splatted (interrupted) sysroot isn't treated as complete.
-	if [ -d "$sysroot/Windows Kits/10/Include" ] && ls "$sysroot/Windows Kits/10/Lib"/*/um/x64/kernel32.lib >/dev/null 2>&1; then
-		return
-	fi
-
-	xwin_ver="$(xwin_version)"
-	case "$arch" in
-	aarch64) xwin_triple="aarch64-unknown-linux-musl" ;;
-	*) xwin_triple="x86_64-unknown-linux-musl" ;;
-	esac
-	xwin_tar=$(download_file "https://github.com/Jake-Shadle/xwin/releases/download/${xwin_ver}/xwin-${xwin_ver}-${xwin_triple}.tar.gz")
-	xwin_dir="$(dirname "$xwin_tar")/xwin-extract"
-	execute mkdir -p "$xwin_dir"
-	execute tar -xzf "$xwin_tar" -C "$xwin_dir" --strip-components=1
-
-	execute_sudo rm -rf "$sysroot"
-	execute_sudo mkdir -p "$sysroot"
-	# Both target arches in one splat; --include-debug-libs so /MTd (debug
-	# CRT) links work; winsysroot-style + MS arch notation so clang-cl and
-	# lld-link resolve it with a single /winsysroot flag; symlinks stay ON
-	# (default) to fix include casing on a case-sensitive filesystem.
-	execute_sudo "$xwin_dir/xwin" --accept-license --arch x86_64,aarch64 --cache-dir "$xwin_dir/cache" \
-		splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
-		--output "$sysroot"
-	execute_sudo rm -rf "$xwin_dir"
-	# No WINDOWS_SYSROOT export — detectWindowsSysroot() picks up
-	# /opt/winsysroot by well-known path.
 }
 
 install_docker() {

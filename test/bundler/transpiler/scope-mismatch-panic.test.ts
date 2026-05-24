@@ -147,12 +147,12 @@ describe("TypeScript 'declare' statements discard scopes of dropped statements",
   });
 });
 
-describe("decorators on dropped TypeScript class members discard scopes", () => {
-  // Decorators are parsed before the class member they decorate. When the member is
-  // then dropped (an overload signature, abstract/declare method, or index signature),
-  // its decorators are dropped too. Scopes recorded while parsing those decorators
-  // (e.g. arrow functions) used to be left behind, so visiting a later scope of a
-  // different kind hit "Scope mismatch while visiting".
+describe("dropped TypeScript class members discard scopes", () => {
+  // Decorators and computed keys are parsed before the parser knows whether the class
+  // member they belong to will be kept. When the member is then dropped (an overload
+  // signature, abstract/declare method, or index signature), they are dropped too.
+  // Scopes recorded while parsing them (e.g. arrow functions) used to be left behind,
+  // so visiting a later scope of a different kind hit "Scope mismatch while visiting".
   const cases: [name: string, source: string, expected: string[]][] = [
     [
       "arrow decorator on a method overload signature plus an arrow parameter decorator",
@@ -183,6 +183,11 @@ describe("decorators on dropped TypeScript class members discard scopes", () => 
       "arrow decorator on a method overload signature followed by a function after the class",
       "class C { @((td) => { })oo(): oo; }\nfunction f() { { let x; } }",
       ["class C", "function f"],
+    ],
+    [
+      "arrow function in the computed key of a method overload signature",
+      "class C { [((x) => x)('foo')](): void; h() { { let x; } } }",
+      ["class C"],
     ],
   ];
 

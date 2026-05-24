@@ -1506,13 +1506,14 @@ impl<'a> HTTPClient<'a> {
                         // `HTTPThread::schedule_cert_check_resume` on
                         // success, or schedules a shutdown on failure.
                         //
-                        // Known residual gaps (both opt-in): experimental
-                        // HTTP/2 (`force_http2` / the h2 env flag) and HTTP/3
-                        // alt-svc transmit through their own session objects
-                        // before the JS check runs. Pooled keep-alive sockets
-                        // reuse a TLS session whose certificate was already
-                        // approved by the previous request's check, so they
-                        // never re-park.
+                        // Requests carrying a JS callback are pinned to
+                        // HTTP/1.1: `can_offer_h2`, `can_try_h3_alt_svc`, and
+                        // the `force_http3` branch of `start_` all bail out
+                        // when the CertErrors signal is set, because the h2/h3
+                        // session objects transmit without consulting this
+                        // park gate. Pooled keep-alive sockets reuse a TLS
+                        // session whose certificate was already approved by
+                        // the previous request's check, so they never re-park.
                         self.state.flags.is_waiting_for_cert_check = true;
 
                         // we inform the user that the cert is invalid
@@ -1663,6 +1664,16 @@ impl<'a> HTTPClient<'a> {
     /// `BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT` env var, or
     /// `protocol: "http2"` on the fetch options.
     pub fn can_offer_h2(&self) -> bool {
+        // A JS `checkServerIdentity` callback must run before any request
+        // bytes reach the wire. The h2 session transmits the preface and
+        // request frames from `attach()` without consulting the
+        // `is_waiting_for_cert_check` park gate, so keep such requests on
+        // HTTP/1.1 where the gate is enforced. This also blocks adopting or
+        // coalescing onto an existing h2 session, since both paths are gated
+        // on `can_offer_h2`.
+        if self.signals.get(signals::Field::CertErrors) {
+            return false;
+        }
         if self.flags.force_http1 {
             return false;
         }
@@ -1704,6 +1715,13 @@ impl<'a> HTTPClient<'a> {
     /// specific protocol). When true, `start_()` consults `H3.AltSvc.lookup`
     /// before opening TCP.
     pub fn can_try_h3_alt_svc(&self) -> bool {
+        // The h3 client performs its own QUIC handshake and never routes
+        // through `check_server_identity`, so a JS `checkServerIdentity`
+        // callback could never run before the request is transmitted. Stay on
+        // TCP for such requests.
+        if self.signals.get(signals::Field::CertErrors) {
+            return false;
+        }
         if self.flags.force_http1 || self.flags.force_http2 {
             return false;
         }
@@ -2483,6 +2501,16 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.flags.force_http3 {
+            // The h3 client performs its own QUIC handshake and never routes
+            // through `check_server_identity`, so a JS `checkServerIdentity`
+            // callback could never run before the request is transmitted.
+            // Refuse the combination instead of silently skipping the
+            // callback.
+            if self.signals.get(signals::Field::CertErrors) {
+                self.fail(err!(HTTP3Unsupported));
+                self.complete_connecting_process();
+                return;
+            }
             if !IS_SSL {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();

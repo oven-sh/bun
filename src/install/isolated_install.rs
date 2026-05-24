@@ -2200,16 +2200,6 @@ pub(crate) fn install_isolated_packages(
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
-                    // An entry that lost global-store eligibility since the
-                    // previous install (newly patched, newly trusted, a dep
-                    // that became a workspace package) still has a stale
-                    // `node_modules/.bun/<storepath>` symlink/junction into
-                    // `<cache>/links/`. The existence check below would pass
-                    // *through* it and skip the task, leaving the project to
-                    // run against the shared entry (and, if the task did run,
-                    // write the new project-local tree through the link into
-                    // the shared cache). Treat the stale link as
-                    // needs-install so `link_package` detaches and rebuilds.
                     // An active `bun link` for this package name means the
                     // producer dir is the source of truth — override the
                     // cache-based materialization regardless of whether the
@@ -2226,15 +2216,34 @@ pub(crate) fn install_isolated_packages(
                             // the Windows GetFileAttributesW fallback can
                             // lazy-initialize the global link dir if needed.
                             // Worker threads use the read-only companion.
+                            //
+                            // Borrow carefully: reach manager/string_buf through
+                            // `installer.manager_mut()` + `pkg_name.slice(string_buf)`
+                            // rather than the bare `manager` / `lockfile.str(&pkg_name)`,
+                            // matching the convention noted at the top of this
+                            // loop (lines 2106-2110). A direct `manager` reborrow
+                            // pops the `manager_ptr` tag stored on installer and
+                            // invalidates every later `installer.manager_mut()`
+                            // call in this loop iteration and beyond.
                             crate::package_manager_real::directories::linked_package_path_mut(
-                                manager,
-                                lockfile.str(&pkg_name),
+                                installer.manager_mut(),
+                                pkg_name.slice(string_buf),
                                 &mut link_buf,
                             )
                             .is_some()
                         }
                     };
 
+                    // An entry that lost global-store eligibility since the
+                    // previous install (newly patched, newly trusted, a dep
+                    // that became a workspace package) still has a stale
+                    // `node_modules/.bun/<storepath>` symlink/junction into
+                    // `<cache>/links/`. The existence check below would pass
+                    // *through* it and skip the task, leaving the project to
+                    // run against the shared entry (and, if the task did run,
+                    // write the new project-local tree through the link into
+                    // the shared cache). Treat the stale link as
+                    // needs-install so `link_package` detaches and rebuilds.
                     let has_stale_gvs_link = !uses_global_store
                         && 'stale: {
                             if installer.global_store_path.is_none() {

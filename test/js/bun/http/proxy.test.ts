@@ -313,27 +313,29 @@ test("non-TLS origin redirect through HTTPS proxy forwards every hop through the
     },
   });
 
-  const response = await fetch(`${server.url.origin}/bunbun`, {
-    proxy: proxy.url,
-    tls: {
-      rejectUnauthorized: false,
-    },
-  });
-  expect(response.status).toBe(200);
-  expect(await response.text()).toBe("BUN!");
+  try {
+    const response = await fetch(`${server.url.origin}/bunbun`, {
+      proxy: proxy.url,
+      tls: {
+        rejectUnauthorized: false,
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("BUN!");
 
-  // Every redirect hop must have been forwarded through the proxy as its own
-  // absolute-form request — none dropped, none bypassing the proxy, and no
-  // CONNECT fallback.
-  expect(proxy.log).toEqual([
-    `GET localhost:${server.port}/bunbun`,
-    `GET localhost:${server.port}/bun`,
-    `GET localhost:${server.port}/`,
-  ]);
-
-  // Not awaited: the client's pooled keep-alive connection keeps the server's
-  // close event from firing (matches the afterAll teardown above).
-  proxy.server.close();
+    // Every redirect hop must have been forwarded through the proxy as its own
+    // absolute-form request — none dropped, none bypassing the proxy, and no
+    // CONNECT fallback.
+    expect(proxy.log).toEqual([
+      `GET localhost:${server.port}/bunbun`,
+      `GET localhost:${server.port}/bun`,
+      `GET localhost:${server.port}/`,
+    ]);
+  } finally {
+    // Not awaited: the client's pooled keep-alive connection keeps the server's
+    // close event from firing (matches the afterAll teardown above).
+    proxy.server.close();
+  }
 });
 
 test("unsupported protocol", async () => {

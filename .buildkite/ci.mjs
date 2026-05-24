@@ -1224,8 +1224,15 @@ function getOptionsStep() {
         required: false,
         multiple: true,
         default: [],
-        options: [...new Map(testPlatforms.map(platform => [getImageKey(platform), platform])).entries()].map(
-          ([key, platform]) => {
+        // One option per distinct image — the baseline/profile variants collapse
+        // into the first (plain) entry since profiles come from `build-profiles`.
+        // The option value must be that entry's *platform* key: it's what
+        // getPipelineOptions() resolves through testPlatformsMap, and the image
+        // key isn't a platform key (for the darwin `-cross` lanes it names the
+        // linux host image).
+        options: testPlatforms
+          .filter((platform, index, array) => index === array.findIndex(p => getImageKey(p) === getImageKey(platform)))
+          .map(platform => {
             const { os, arch, abi, distro, release } = platform;
             let label = `${getEmoji(os)} ${arch}`;
             if (abi) {
@@ -1239,10 +1246,9 @@ function getOptionsStep() {
             }
             return {
               label,
-              value: key,
+              value: getPlatformKey(platform),
             };
-          },
-        ),
+          }),
       },
       {
         key: "test-files",

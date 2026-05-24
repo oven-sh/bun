@@ -2255,6 +2255,14 @@ pub fn parse_into_binary_lockfile(
                 }
             };
 
+            // The package name is later embedded verbatim in cache folder
+            // names and install paths. Reject anything that could resolve
+            // outside those directories (`..`, empty components, `\`, `:`).
+            if !name_str.is_empty() && !dependency::is_safe_install_folder_name(name_str) {
+                log.add_error(Some(source), res_info.loc, b"Invalid package name");
+                return Err(ParseError::InvalidPackageResolution);
+            }
+
             let name_hash = StringBuilder::string_hash(name_str);
             let name = sbuf!(lockfile).append(name_str)?;
 

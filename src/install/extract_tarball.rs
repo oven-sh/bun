@@ -491,14 +491,31 @@ impl ExtractTarball {
             // PORT NOTE: reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
             // here the entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
-                ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
-                    package_manager,
-                    &mut bufs.folder_name_buf,
-                    name,
-                    self.resolution.npm().version,
-                    None,
-                )
-                .as_bytes(),
+                ResolutionTag::Npm => {
+                    // `name` is written verbatim into the cache folder name and
+                    // the install-index path. It originates from lockfiles and
+                    // manifests, so refuse anything that could resolve outside
+                    // the cache directory.
+                    if !bun_install::dependency::is_safe_install_folder_name(name) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Refusing to install package with invalid name \"{}\"",
+                                bun_fmt::s(name),
+                            ),
+                        );
+                        return Err(bun_core::err!("InstallFailed"));
+                    }
+                    directories::cached_npm_package_folder_name_print(
+                        package_manager,
+                        &mut bufs.folder_name_buf,
+                        name,
+                        self.resolution.npm().version,
+                        None,
+                    )
+                    .as_bytes()
+                }
                 ResolutionTag::Github => directories::cached_github_folder_name_print(
                     &mut bufs.folder_name_buf,
                     resolved,

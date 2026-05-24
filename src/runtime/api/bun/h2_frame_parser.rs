@@ -2364,12 +2364,13 @@ impl H2FrameParser {
         }
         let end = payload.len() - padding;
         self.discard_header_block(&payload[offset..end]);
-        self.discarded_block_stream_id
-            .set(if frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0 {
+        self.discarded_block_stream_id.set(
+            if frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0 {
                 frame.stream_identifier
             } else {
                 0
-            });
+            },
+        );
         Ok(end_)
     }
 

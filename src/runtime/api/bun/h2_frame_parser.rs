@@ -4043,9 +4043,9 @@ impl H2FrameParser {
             if stream.pending_header_block.len() + payload.len()
                 > self.local_settings.get().max_header_list_size as usize
             {
-                // The compressed block already exceeds the header list limit;
-                // HPACK never expands a header list, so the decoded size check
-                // would reject it too.
+                // Cap the buffered compressed block at max_header_list_size as a
+                // DoS bound; the decoded list size is checked separately in
+                // decode_header_block.
                 self.send_go_away(
                     frame.stream_identifier,
                     ErrorCode::ENHANCE_YOUR_CALM,
@@ -4214,9 +4214,9 @@ impl H2FrameParser {
                 // the JS event order stays onStreamHeaders -> onStreamEnd.
                 let fragment = &payload[offset..end];
                 if fragment.len() > self.local_settings.get().max_header_list_size as usize {
-                    // The compressed block already exceeds the header list limit;
-                    // HPACK never expands a header list, so the decoded size
-                    // check would reject it too.
+                    // Cap the buffered compressed block at max_header_list_size
+                    // as a DoS bound; the decoded list size is checked separately
+                    // in decode_header_block.
                     self.send_go_away(
                         frame.stream_identifier,
                         ErrorCode::ENHANCE_YOUR_CALM,

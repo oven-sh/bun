@@ -116,6 +116,11 @@ pub struct AnsiRenderer<'a> {
     theme: Theme<'a>,
     /// Stack of active block contexts (li/quote) for indentation.
     block_stack: Vec<BlockContext>,
+    /// Number of Quote entries currently in block_stack. Kept in sync with
+    /// push/pop so per-line indentation doesn't rescan the whole stack.
+    quote_depth: u32,
+    /// Sum of `indent` over the non-Quote entries currently in block_stack.
+    list_indent_cols: u32,
     /// Currently open span styles (bit flags).
     span_flags: u32,
     /// Non-null when we're inside a link span; the href to emit in OSC 8.
@@ -213,6 +218,14 @@ const SPAN_DEL: u32 = 1 << 2;
 const SPAN_U: u32 = 1 << 3;
 const SPAN_CODE: u32 = 1 << 4;
 
+/// Upper bound on the visible indentation (blockquote bars + list indent)
+/// emitted at the start of each rendered line. Nesting deeper than this is
+/// unreadable on any terminal, and without a cap every line's prefix grows
+/// with the nesting depth — a document of pathologically nested lists or
+/// quotes (e.g. `- - - - …` repeated thousands of times) would otherwise
+/// produce output quadratic in the input size.
+const MAX_INDENT_COLS: u32 = 128;
+
 struct InlineStyle {
     flag: u32,
     on: &'static [u8],
@@ -280,6 +293,8 @@ impl<'a> AnsiRenderer<'a> {
             src_text,
             theme,
             block_stack: Vec::new(),
+            quote_depth: 0,
+            list_indent_cols: 0,
             span_flags: 0,
             link_href: None,
             link_depth: 0,
@@ -327,7 +342,7 @@ impl<'a> AnsiRenderer<'a> {
             BlockType::Doc => {}
             BlockType::Quote => {
                 self.ensure_blank_line();
-                self.block_stack.push(BlockContext {
+                self.push_block(BlockContext {
                     kind: BlockKind::Quote,
                     indent: 2,
                     ..Default::default()
@@ -335,7 +350,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Ul => {
                 self.ensure_newline();
-                self.block_stack.push(BlockContext {
+                self.push_block(BlockContext {
                     kind: BlockKind::Ul,
                     data,
                     indent: 2,
@@ -344,7 +359,7 @@ impl<'a> AnsiRenderer<'a> {
             }
             BlockType::Ol => {
                 self.ensure_newline();
-                self.block_stack.push(BlockContext {
+                self.push_block(BlockContext {
                     kind: BlockKind::Ol,
                     data,
                     indent: 3,
@@ -405,7 +420,7 @@ impl<'a> AnsiRenderer<'a> {
                 // Wrapped continuation lines need to land under the item's
                 // content (past the marker), so record the marker width.
                 entry.indent = u32::try_from(visible_width(glyph)).expect("int cast");
-                self.block_stack.push(entry);
+                self.push_block(entry);
             }
             BlockType::Hr => {
                 self.ensure_blank_line();
@@ -503,7 +518,7 @@ impl<'a> AnsiRenderer<'a> {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote | BlockType::Ul | BlockType::Ol | BlockType::Li => {
-                let _ = self.block_stack.pop();
+                self.pop_block();
                 self.ensure_newline();
             }
             BlockType::Hr => {}
@@ -1137,19 +1152,46 @@ impl<'a> AnsiRenderer<'a> {
         }
     }
 
+    /// Track a block push so indentation stays O(1) per line instead of
+    /// rescanning the whole block_stack.
+    fn push_block(&mut self, entry: BlockContext) {
+        match entry.kind {
+            BlockKind::Quote => self.quote_depth = self.quote_depth.saturating_add(1),
+            _ => {
+                self.list_indent_cols = self.list_indent_cols.saturating_add(entry.indent);
+            }
+        }
+        self.block_stack.push(entry);
+    }
+
+    fn pop_block(&mut self) {
+        let Some(entry) = self.block_stack.pop() else {
+            return;
+        };
+        match entry.kind {
+            BlockKind::Quote => self.quote_depth = self.quote_depth.saturating_sub(1),
+            _ => {
+                self.list_indent_cols = self.list_indent_cols.saturating_sub(entry.indent);
+            }
+        }
+    }
+
+    /// Quote bars and indent spaces to draw for the current block stack,
+    /// capped at MAX_INDENT_COLS visible columns total. writeIndent and
+    /// currentIndent must agree on these numbers so the wrap math matches
+    /// what was actually emitted.
+    fn indent_counts(&self) -> (u32, u32) {
+        let quote_bars = self.quote_depth.min(MAX_INDENT_COLS / 2);
+        let other_indent = self.list_indent_cols.min(MAX_INDENT_COLS - quote_bars * 2);
+        (quote_bars, other_indent)
+    }
+
     fn write_indent(&mut self) {
         // writeIndent is called at the start of every content line, so
         // this is the right place to clear the "blank line just emitted"
         // flag ensureBlankLine uses for dedup.
         self.blank_emitted = false;
-        let mut quote_bars: u32 = 0;
-        let mut other_indent: u32 = 0;
-        for entry in &self.block_stack {
-            match entry.kind {
-                BlockKind::Quote => quote_bars += 1,
-                _ => other_indent += entry.indent,
-            }
-        }
+        let (quote_bars, other_indent) = self.indent_counts();
         let bar: &[u8] = if self.theme.colors {
             "│ ".as_bytes()
         } else {
@@ -1179,15 +1221,8 @@ impl<'a> AnsiRenderer<'a> {
     }
 
     fn current_indent(&self) -> u32 {
-        let mut total: u32 = 0;
-        for entry in &self.block_stack {
-            total += if entry.kind == BlockKind::Quote {
-                2
-            } else {
-                entry.indent
-            };
-        }
-        total
+        let (quote_bars, other_indent) = self.indent_counts();
+        quote_bars * 2 + other_indent
     }
 
     fn update_col_from_text(&mut self, data: &[u8]) {
@@ -1214,12 +1249,7 @@ impl<'a> AnsiRenderer<'a> {
     /// current block_stack. Used by ensureBlankLine so the inter-block
     /// gap inside a blockquote keeps its visual border.
     fn write_quote_bars(&mut self) {
-        let mut quote_bars: u32 = 0;
-        for entry in &self.block_stack {
-            if entry.kind == BlockKind::Quote {
-                quote_bars += 1;
-            }
-        }
+        let (quote_bars, _) = self.indent_counts();
         if quote_bars == 0 {
             return;
         }

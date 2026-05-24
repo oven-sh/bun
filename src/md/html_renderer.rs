@@ -718,12 +718,15 @@ fn match_tag_name_ci(content: &[u8], pos: usize, tag: &[u8]) -> bool {
     if !strings::eql_case_insensitive_ascii_ignore_length(&content[pos..pos + tag.len()], tag) {
         return false;
     }
-    // Check delimiter after tag name
+    // Check delimiter after tag name. This must accept every byte the inline
+    // HTML scanner treats as whitespace (see `helpers::is_whitespace`, which
+    // includes \r, form feed, and vertical tab) or a tag like `<script\x0C...>`
+    // is emitted as raw HTML without being filtered.
     let end = pos + tag.len();
     if end >= content.len() {
         return true;
     }
-    matches!(content[end], b'>' | b' ' | b'\t' | b'\n' | b'/')
+    matches!(content[end], b'>' | b'/') || helpers::is_whitespace(content[end])
 }
 
 /// Find an entity in text starting at `start`. Delegates to helpers.findEntity.

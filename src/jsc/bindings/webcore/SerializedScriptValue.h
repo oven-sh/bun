@@ -175,10 +175,6 @@ public:
     // IDBValue writeBlobsToDiskForIndexedDBSynchronously();
     static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data)
     {
-        // Bytes handed to us as a raw buffer (IPC, user-supplied ArrayBuffers)
-        // did not come from an in-process create(); mark them so deserialization
-        // can refuse to materialize objects that grant ambient authority (e.g.
-        // path/fd-backed Blobs).
         auto value = adoptRef(*new SerializedScriptValue(WTF::move(data)));
         value->m_isFromUntrustedBytes = true;
         return value;

@@ -5290,7 +5290,6 @@ private:
     JSGlobalObject* const m_globalObject;
     const bool m_isDOMGlobalObject;
     // const bool m_canCreateDOMObject;
-    // Set by the static deserialize() entry point right after construction.
     // True when the wire bytes were supplied by the caller as a raw buffer
     // (bun:jsc / node:v8 deserialize(), IPC) rather than produced by an
     // in-process SerializedScriptValue::create().
@@ -6543,9 +6542,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
                                                 ,
-        // The ArrayBuffer's contents are arbitrary bytes supplied by JS
-        // (bun:jsc / node:v8 deserialize()); never treat them as having been
-        // produced by an in-process create().
         /* isFromUntrustedBytes */ true);
 
     if (arrayBuffer->isShared()) {
@@ -6804,9 +6800,6 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
                                                 ,
-        // False for postMessage / structuredClone / MessagePort / Worker
-        // (bytes produced by an in-process create()); true only for values
-        // built by createFromWireBytes (IPC).
         m_isFromUntrustedBytes);
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;

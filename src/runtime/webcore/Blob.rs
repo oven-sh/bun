@@ -4270,12 +4270,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
 
-            // A path- or fd-backed Blob materialized from raw wire bytes would
-            // hand the supplier of those bytes a handle to an arbitrary file
-            // path, an arbitrary open descriptor, or an `s3://` credential
-            // scope. Only bytes produced by an in-process serialize (postMessage,
-            // structuredClone, BroadcastChannel) may reconstruct one; reject the
-            // whole arm for buffers that arrived from JS or the wire.
+            // A path/fd-backed Blob reconstructed from caller-supplied bytes would
+            // grant access to an arbitrary file path, open descriptor, or `s3://`
+            // credential scope; only in-process serialized bytes may rebuild one.
             if is_from_untrusted_bytes {
                 return Err(bun_core::err!("UntrustedFileBlob"));
             }

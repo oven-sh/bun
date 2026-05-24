@@ -24,7 +24,7 @@ bun_output::declare_scope!(zlib, hidden);
 /// Zig: `fn CompressionStream(comptime T: type) type { return struct { ... } }`
 /// This is a mixin: methods all take `this: *T` and access fields on `T`
 /// (write_in_progress, pending_close, pending_reset, closed, stream, this_value,
-/// write_result, task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
+/// task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
 /// `T.ref()/deref()`.
 // PORT NOTE: expressed as a marker struct + trait bound. Field accesses on
 // `T` go through the [`CompressionStreamImpl`] trait below.
@@ -225,22 +225,36 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// deref lives in `BackRef::get`, so callers and impls are safe.
     fn global_this(&self) -> &JSGlobalObject;
     fn stream(&self) -> &JsCell<Self::Stream>;
-    fn write_result_ptr(&self) -> Option<*mut u32>;
 
-    /// Write `(avail_out, avail_in)` into the JS-owned 2-element `Uint32Array`
-    /// (`this._writeState`). Single unsafe deref site for the set-once
-    /// `write_result: Cell<Option<NonNull<u32>>>` field so callers stay safe.
+    /// Write `(avail_out, avail_in)` into the JS-owned `Uint32Array`
+    /// (`this._writeState`).
+    ///
+    /// The typed array is cached as a JSValue (see `writeState` in
+    /// zlib.classes.ts) and its backing store is re-resolved on every call
+    /// rather than captured as a raw pointer at `init()` time: a typed array's
+    /// vector can move (FastTypedArray -> WastefulTypedArray when `.buffer` is
+    /// first accessed) or be freed entirely when the buffer is detached via
+    /// `ArrayBuffer.prototype.transfer()` / `postMessage` / `structuredClone`
+    /// transfer. Re-resolving here (plus the length check) turns a detached
+    /// `_writeState` into a safe no-op instead of a write through a stale
+    /// pointer.
     #[inline]
-    fn flush_write_result(&self) {
-        let Some(write_result) = self.write_result_ptr() else {
+    fn flush_write_result(&self, global: &JSGlobalObject, this_value: JSValue) {
+        let Some(write_state) = Self::write_state_get_cached(this_value) else {
             return;
         };
-        // SAFETY: `write_result` points at a 2-element `u32[]` owned by JS
-        // (set in each impl's `init()`); both indices are in-bounds and the
-        // backing buffer is kept alive by `this._writeState` /
-        // `_handle[owner_symbol]`.
-        let (r1, r0) = unsafe { (&mut *write_result.add(1), &mut *write_result) };
-        self.stream().with_mut(|s| s.update_write_result(r1, r0));
+        let Some(mut buf) = write_state.as_array_buffer(global) else {
+            return;
+        };
+        // A detached view reports byte_len 0 (and may carry a poisoned vector
+        // pointer), so bail out before reinterpreting the storage as u32s.
+        if buf.byte_len < 2 * core::mem::size_of::<u32>() {
+            return;
+        }
+        if let [avail_out, avail_in, ..] = buf.as_u32() {
+            self.stream()
+                .with_mut(|s| s.update_write_result(avail_in, avail_out));
+        }
     }
 
     fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
@@ -282,6 +296,7 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn pending_output_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
     fn pending_input_get_cached(this_value: JSValue) -> Option<JSValue>;
     fn pending_output_get_cached(this_value: JSValue) -> Option<JSValue>;
+    fn write_state_get_cached(this_value: JSValue) -> Option<JSValue>;
 }
 
 impl<T: CompressionStreamImpl> CompressionStream<T> {
@@ -546,7 +561,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             return;
         }
 
-        this.flush_write_result();
+        this.flush_write_result(global, this_value);
         this_value.ensure_still_alive();
 
         let write_callback: JSValue = T::write_callback_get_cached(this_value).unwrap();
@@ -697,7 +712,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this.stream().with_mut(|s| s.do_work());
         if Self::check_error(this, global_this, this_value) {
-            this.flush_write_result();
+            this.flush_write_result(global_this, this_value);
             this.write_in_progress().set(false);
         }
         // SAFETY: matching `ref_()` above. The bracketed `ref_()`/`deref()`
@@ -980,9 +995,9 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
 /// comptime duck-typed `CompressionStream(T)` mixin).
 ///
 /// All three `Native{Zlib,Brotli,Zstd}` structs share the exact field layout
-/// (`global_this`, `stream`, `write_result`, `poll_ref`, `this_value`,
-/// `write_in_progress`, `pending_close`, `pending_reset`, `closed`, `task`,
-/// `ref_count`), so the macro can stamp the impls uniformly.
+/// (`global_this`, `stream`, `poll_ref`, `this_value`, `write_in_progress`,
+/// `pending_close`, `pending_reset`, `closed`, `task`, `ref_count`), so the
+/// macro can stamp the impls uniformly.
 ///
 /// `$type_name` is the C++-side class name (matches `.classes.ts`); the macro
 /// emits a `pub mod js { … }` with the cached-property accessors
@@ -1001,7 +1016,7 @@ macro_rules! __impl_compression_stream {
         /// `generate-classes.ts` for the `values:` list in `zlib.classes.ts`.
         #[allow(unused)]
         pub(crate) mod js {
-            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary, pendingInput, pendingOutput);
+            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary, pendingInput, pendingOutput, writeState);
         }
 
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
@@ -1019,7 +1034,6 @@ macro_rules! __impl_compression_stream {
 
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
-            #[inline] fn write_result_ptr(&self) -> Option<*mut u32> { self.write_result.get().map(|p| p.cast::<u32>()) }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
@@ -1068,6 +1082,9 @@ macro_rules! __impl_compression_stream {
             }
             #[inline] fn pending_output_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
                 js::pending_output_get_cached(this_value)
+            }
+            #[inline] fn write_state_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+                js::write_state_get_cached(this_value)
             }
         }
     };

@@ -247,6 +247,13 @@ fn search_bin_in_path<'a>(
         let _ = path_buf;
         path
     };
+    // `buf` is a fixed-size `WPathBuffer`: the writes below are `segment` +
+    // SEP + `bin` + NUL plus a 4-unit `.exe`/`.cmd`/`.bat` probe in
+    // `search_bin`. Reject oversized inputs instead of overflowing — mirrors
+    // the `len_z > MAX_PATH_BYTES` check in the POSIX `is_valid`.
+    if segment.len() + 1 + bin.len() + 5 > buf.len() {
+        return None;
+    }
     let segment_utf16 = bun_core::strings::convert_utf8_to_utf16_in_buffer(
         &mut buf[..],
         bun_core::strings::without_trailing_slash(segment),

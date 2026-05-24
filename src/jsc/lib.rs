@@ -1322,6 +1322,11 @@ pub enum BuiltinName {
     type_,
     signal,
     cmd,
+    /// Resolves to the *private* `shellRaw` identifier on the C++ side
+    /// (`builtinNameMap` in bindings.cpp). Used as an unforgeable brand for
+    /// `Bun.$.raw()` objects; deliberately absent from `BUILTIN_NAME_MAP`
+    /// because it does not correspond to a public string-keyed property.
+    shellRaw,
 }
 
 #[allow(non_upper_case_globals)]

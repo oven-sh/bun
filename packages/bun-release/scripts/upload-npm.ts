@@ -282,7 +282,7 @@ async function test() {
     });
 
     console.log("Testing", install + " bun");
-    await $`${{ raw: install }} ./bun-${version}.tgz`;
+    await $`${Bun.$.raw(install)} ./bun-${version}.tgz`;
 
     console.log("Running " + exec + " bun");
 

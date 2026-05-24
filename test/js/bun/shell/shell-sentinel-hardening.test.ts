@@ -35,7 +35,7 @@ describe("shell sentinel character hardening", () => {
     const testScript = [
       'import { $ } from "bun";',
       "const sentinel = String.fromCharCode(8) + '__bun_9999';",
-      "try { await $`echo hello > ${{ raw: sentinel }}`; } catch {}",
+      "try { await $`echo hello > ${$.raw(sentinel)}`; } catch {}",
       'console.log("OK");',
     ].join("\n");
 

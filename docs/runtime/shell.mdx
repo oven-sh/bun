@@ -514,16 +514,18 @@ console.log($.escape('$(foo) `bar` "baz"'));
 // => \$(foo) \`bar\` \"baz\"
 ```
 
-If you do not want your string to be escaped, wrap it in a `{ raw: 'str' }` object:
+If you do not want your string to be escaped, wrap it with `$.raw()`:
 
 ```js
 import { $ } from "bun";
 
-await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`;
+await $`echo ${$.raw('$(foo) `bar` "baz"')}`;
 // => bun: command not found: foo
 // => bun: command not found: bar
 // => baz
 ```
+
+Plain `{ raw: '...' }` object literals are rejected with a `TypeError`. Any attacker-shaped object — a parsed JSON body, a `qs`-parsed query string — could otherwise set a `raw` property and smuggle unescaped shell syntax into your command. Only objects returned by `$.raw()` carry the internal brand that opts out of escaping.
 
 ---
 

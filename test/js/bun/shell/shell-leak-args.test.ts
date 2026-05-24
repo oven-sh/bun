@@ -6,13 +6,13 @@ test("shell parsing error does not leak emmory", async () => {
   const buffer = Buffer.alloc(1024 * 1024, "A").toString();
   for (let i = 0; i < 5; i++) {
     try {
-      $`${{ raw: buffer }} <!INVALID ==== SYNTAX!>`;
+      $`${$.raw(buffer)} <!INVALID ==== SYNTAX!>`;
     } catch (e) {}
   }
   const rss = process.memoryUsage.rss();
   for (let i = 0; i < 200; i++) {
     try {
-      $`${{ raw: buffer }} <!INVALID ==== SYNTAX!>`;
+      $`${$.raw(buffer)} <!INVALID ==== SYNTAX!>`;
     } catch (e) {}
   }
   const after = process.memoryUsage.rss() / 1024 / 1024;
@@ -37,11 +37,11 @@ test("shell execution doesn't leak argv", async () => {
   const buffer = Buffer.alloc(1024 * 1024, "bun!").toString();
   const cmd = `echo ${buffer}`;
   for (let i = 0; i < 5; i++) {
-    await $`${{ raw: cmd }}`.quiet();
+    await $`${$.raw(cmd)}`.quiet();
   }
   const rss = process.memoryUsage.rss();
   for (let i = 0; i < 200; i++) {
-    await $`${{ raw: cmd }}`.quiet();
+    await $`${$.raw(cmd)}`.quiet();
   }
   const after = process.memoryUsage.rss() / 1024 / 1024;
   const before = rss / 1024 / 1024;
@@ -62,11 +62,11 @@ test("non-awaited shell command does not leak argv", async () => {
   const buffer = Buffer.alloc(1024 * 1024, "bun!").toString();
   const cmd = `echo ${buffer}`;
   for (let i = 0; i < 5; i++) {
-    $`${{ raw: cmd }}`.quiet();
+    $`${$.raw(cmd)}`.quiet();
   }
   const rss = process.memoryUsage.rss();
   for (let i = 0; i < 200; i++) {
-    $`${{ raw: cmd }}`.quiet();
+    $`${$.raw(cmd)}`.quiet();
   }
   const after = process.memoryUsage.rss() / 1024 / 1024;
   const before = rss / 1024 / 1024;

@@ -3,6 +3,11 @@ declare module "bun" {
     | { toString(): string }
     | Array<ShellExpression>
     | string
+    /**
+     * Raw, unescaped shell syntax. Only objects returned by {@link $.raw} are
+     * accepted at runtime; plain `{ raw: string }` object literals throw a
+     * `TypeError` because they could be forged by untrusted data.
+     */
     | { raw: string }
     | Subprocess<SpawnOptions.Writable, SpawnOptions.Readable, SpawnOptions.Readable>
     | SpawnOptions.Readable
@@ -42,6 +47,25 @@ declare module "bun" {
      * @param input
      */
     function escape(input: string): string;
+
+    /**
+     * Mark a string as raw shell syntax so it is interpolated without
+     * escaping. This is the only supported way to opt out of escaping:
+     * the returned object carries an internal brand that plain
+     * `{ raw: string }` object literals do not have, so untrusted data
+     * (JSON bodies, parsed query strings) cannot forge it.
+     *
+     * @param str - Raw shell syntax to splice into the command
+     *
+     * @example
+     * ```js
+     * import { $ } from "bun";
+     * await $`echo a ${$.raw("&& echo b")}`;
+     * // a
+     * // b
+     * ```
+     */
+    function raw(str: string): { raw: string };
 
     /**
      *

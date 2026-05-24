@@ -64,7 +64,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     TestBuilder.command /* sh */ `
     echo hi! > hello.txt
     mkdir somedir 
-    cp ${{ raw: Array(50).fill("hello.txt").join(" ") }} somedir 
+    cp ${$.raw(Array(50).fill("hello.txt").join(" "))} somedir 
     `
       .ensureTempDir()
       .exitCode(0)

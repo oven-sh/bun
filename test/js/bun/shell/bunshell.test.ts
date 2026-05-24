@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, existsSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -81,7 +81,7 @@ describe("bunshell", () => {
 
     failing_cmds.forEach(cmdstr =>
       !!cmdstr
-        ? TestBuilder.command`${{ raw: cmdstr }}`
+        ? TestBuilder.command`${$.raw(cmdstr)}`
             .exitCode(c => c !== 0)
             .stdout(() => {})
             .stderr(() => {})
@@ -172,6 +172,44 @@ describe("bunshell", () => {
     });
   });
 
+  describe("raw interpolation", () => {
+    test("JSON-shaped { raw } object throws instead of injecting", () => {
+      const dir = tempDirWithFiles("raw-inject", {});
+      const marker = join(dir, "pwned");
+      const payload = JSON.parse(`{"file": {"raw": "; touch ${JSON.stringify(marker).slice(1, -1)}"}}`);
+      expect(() => $`ls ${payload.file}`).toThrow(/\$\.raw/);
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    test("plain object literal with truthy raw throws", () => {
+      expect(() => $`echo ${{ raw: "; echo injected" } as any}`).toThrow(/no longer interpolated as raw shell syntax/);
+    });
+
+    test("the brand cannot be forged by copying a branded object", () => {
+      const legit = $.raw("x");
+      expect(Object.getOwnPropertySymbols(legit)).toHaveLength(0);
+      const forged = { ...legit, raw: "; echo injected" };
+      expect(() => $`echo ${forged}`).toThrow(/no longer interpolated as raw shell syntax/);
+    });
+
+    test("null bytes still rejected on the raw path", () => {
+      expect(() => $`echo ${$.raw("a\0b")}`).toThrow(/must be a string without null bytes/);
+    });
+
+    test("$.raw rejects non-strings", () => {
+      expect(() => $.raw(123 as any)).toThrow("$.raw() expects a string");
+    });
+
+    test("$.raw interpolates unescaped shell syntax", async () => {
+      const { stdout } = await $`echo a ${$.raw("&& echo b")}`;
+      expect(stdout.toString()).toBe("a\nb\n");
+    });
+
+    test("$.raw return value exposes .raw", () => {
+      expect($.raw("x").raw).toBe("x");
+    });
+  });
+
   describe("quiet", async () => {
     test("basic", async () => {
       // Check its buffered
@@ -253,7 +291,7 @@ describe("bunshell", () => {
   describe("echo+cmdsubst edgecases", async () => {
     async function doTest(cmd: string, expected: string) {
       test(cmd, async () => {
-        const { stdout } = await $`${{ raw: cmd }}`;
+        const { stdout } = await $`${$.raw(cmd)}`;
         expect(stdout.toString()).toEqual(expected);
       });
     }
@@ -518,9 +556,9 @@ describe("bunshell", () => {
   // I'm not sure why, this isn't documented behavior, so I'm choosing to ignore it.
   describe("gnu_quote", () => {
     // An unfortunate consequence of our use of String.raw and tagged template
-    // functions for the shell make it so that we have to use { raw: string } to do
+    // functions for the shell make it so that we have to use $.raw() to do
     // backtick command substitution
-    const BACKTICK = { raw: "`" };
+    const BACKTICK = $.raw("`");
 
     // Single Quote
     TestBuilder.command`
@@ -796,7 +834,7 @@ booga"
   describe("brace expansion", () => {
     function doTest(pattern: string, expected: string) {
       test(pattern, async () => {
-        const { stdout } = await $`echo ${{ raw: pattern }} `;
+        const { stdout } = await $`echo ${$.raw(pattern)} `;
         expect(stdout.toString()).toEqual(`${expected}\n`);
       });
     }
@@ -1740,20 +1778,20 @@ fi
     .runAsTest("multi statement in all branches");
 
   ["if", "else", "elif", "then", "fi"].map(tok => {
-    TestBuilder.command`"${{ raw: tok }}"`
+    TestBuilder.command`"${$.raw(tok)}"`
       .stderr(`bun: command not found: ${tok}\n`)
       .exitCode(1)
       .runAsTest(`quoted ${tok} doesn't break`);
 
-    TestBuilder.command`echo ${{ raw: "lksdfjklsdjf" + tok }}`
+    TestBuilder.command`echo ${$.raw("lksdfjklsdjf" + tok)}`
       .stdout(`lksdfjklsdjf${tok}\n`)
       .runAsTest(`${tok} in script does not break parsing 1`);
 
-    TestBuilder.command`echo ${{ raw: "hi " + tok }}`
+    TestBuilder.command`echo ${$.raw("hi " + tok)}`
       .stdout(`hi ${tok}\n`)
       .runAsTest(`${tok} in script does not break parsing 2`);
 
-    TestBuilder.command`echo ${{ raw: tok + " hi" }}`
+    TestBuilder.command`echo ${$.raw(tok + " hi")}`
       .stdout(`${tok} hi\n`)
       .runAsTest(`${tok} in script does not break parsing 3`);
   });
@@ -1862,12 +1900,12 @@ fi
       .todo("! not supported")
       .runAsTest("execution path of if-elif-elif-else, false-false-false");
 
-    const exit = (code: number): { raw: string } => ({
-      raw:
+    const exit = (code: number): ReturnType<typeof $.raw> =>
+      $.raw(
         process.platform !== "win32"
           ? `bash -c 'exit $1' -- ${code}`
           : `BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e 'process.exit(${code})'`,
-    });
+      );
 
     // test_x -e 0 'exit status of if, true-true'
     TestBuilder.command`if ${exit(0)}; then ${exit(0)}; fi`.exitCode(0).runAsTest("exit status of if, true-true");

@@ -5123,6 +5123,7 @@ enum class BuiltinNamesMap : uint8_t {
     type,
     signal,
     cmd,
+    shellRaw,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5201,6 +5202,12 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::cmd: {
         return clientData->builtinNames().cmdPublicName();
+    }
+    case BuiltinNamesMap::shellRaw: {
+        // Deliberately the *private* name: the brand is stored via
+        // @putByIdDirectPrivate in shell.ts and must not be forgeable from
+        // user JS through an ordinary string-keyed property.
+        return clientData->builtinNames().shellRawPrivateName();
     }
     default: {
         ASSERT_NOT_REACHED();

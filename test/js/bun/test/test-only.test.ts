@@ -15,7 +15,7 @@ test.each(["./only-fixture-1.ts", "./only-fixture-2.ts", "./only-fixture-3.ts"])
 
 test("only resets per test", async () => {
   const files = ["./only-fixture-1.ts", "./only-fixture-2.ts", "./only-fixture-3.ts", "./only-fixture-4.ts"];
-  const result = await $.cwd(import.meta.dir)`${bunExe()} test ${{ raw: files.join(" ") }}`.env({
+  const result = await $.cwd(import.meta.dir)`${bunExe()} test ${$.raw(files.join(" "))}`.env({
     ...bunEnv,
     CI: "false",
   });

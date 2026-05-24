@@ -840,7 +840,7 @@ it("process.execArgv", async () => {
 
   for (const [cmd, execArgv, argv] of fixtures) {
     const replacedCmd = cmd.replace("index.ts", Bun.$.escape(join(__dirname, "print-process-execArgv.js")));
-    const result = await Bun.$`${bunExe()} ${{ raw: replacedCmd }}`.json();
+    const result = await Bun.$`${bunExe()} ${Bun.$.raw(replacedCmd)}`.json();
     expect(result, `bun ${cmd}`).toEqual({ execArgv, argv });
   }
 });

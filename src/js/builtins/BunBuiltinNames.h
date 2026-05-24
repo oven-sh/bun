@@ -183,6 +183,7 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(shellRaw) \
     macro(signal) \
     macro(sink) \
     macro(size) \

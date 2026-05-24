@@ -112,7 +112,7 @@ describe("null byte injection protection", () => {
     });
 
     test("throws error when object with raw property contains null byte", () => {
-      const raw = { raw: "test\0value" };
+      const raw = $.raw("test\0value");
       expect(() => $`echo ${raw}`).toThrow(/must be a string without null bytes/);
     });
 

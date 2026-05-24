@@ -895,8 +895,12 @@ pub fn handle_template_value(
         }
 
         if template_value.is_object() {
-            if let Some(maybe_str) = template_value.get_own_truthy(global, "raw")? {
-                let bunstr = OwnedString::new(maybe_str.to_bun_string(global)?);
+            // Raw (unescaped) interpolation is gated on a private-symbol brand
+            // that only `Bun.$.raw()` (shell.ts) can set. A string-keyed `raw`
+            // property is forgeable by attacker-shaped data (JSON bodies,
+            // qs-parsed query strings), so it must not opt out of escaping.
+            if let Some(raw_str) = template_value.fast_get(global, jsc::BuiltinName::shellRaw)? {
+                let bunstr = OwnedString::new(raw_str.to_bun_string(global)?);
 
                 // Check for null bytes in shell argument (security: prevent null byte injection)
                 if bunstr.index_of_ascii_char(0).is_some() {
@@ -914,6 +918,20 @@ pub fn handle_template_value(
                     );
                 }
                 return Ok(());
+            }
+
+            // Legacy `{ raw: ... }` plain objects used to be spliced in
+            // unescaped. Throw an actionable error instead of either silently
+            // injecting or silently changing the semantics to escaped.
+            if template_value.get_own_truthy(global, "raw")?.is_some() {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_TYPE,
+                        format_args!(
+                            "Plain objects with a `raw` property are no longer interpolated as raw shell syntax. Use Bun.$.raw(string) to opt into unescaped interpolation."
+                        ),
+                    )
+                    .throw());
             }
         }
 

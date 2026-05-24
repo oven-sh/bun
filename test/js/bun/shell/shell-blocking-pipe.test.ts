@@ -9,9 +9,7 @@ import { isWindows } from "harness";
 test.skipIf(isWindows)("writing > send buffer size doesn't block the main thread", async () => {
   const expected = Buffer.alloc(1024 * 1024, "bun!").toString();
   const massiveComamnd = "echo " + expected + " | " + Bun.which("cat");
-  const pendingResult = $`${{
-    raw: massiveComamnd,
-  }}`.text();
+  const pendingResult = $`${$.raw(massiveComamnd)}`.text();
 
   // Ensure that heap snapshot works, to excercise the memoryCost & estimated fields.
   generateHeapSnapshot("v8");

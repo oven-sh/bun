@@ -23,7 +23,7 @@ describe("bun exec", () => {
     )
     .runAsTest("no args prints help text");
 
-  TestBuilder.command`${BUN} exec ${{ raw: Bun.$.escape(`echo 'hi "there bud"'`) }}`
+  TestBuilder.command`${BUN} exec ${$.raw(Bun.$.escape(`echo 'hi "there bud"'`))}`
     .stdout('hi "there bud"\n')
     .runAsTest("it works2");
 

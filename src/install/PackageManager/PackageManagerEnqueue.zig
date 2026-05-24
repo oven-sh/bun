@@ -1166,7 +1166,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                 );
 
             const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-            try entry.value_ptr.append(this.allocator, null, @unionInit(TaskCallbackContext, callback_tag, id));
+            try entry.value_ptr.append(this.allocator, parent_package_id, @unionInit(TaskCallbackContext, callback_tag, id));
 
             if (dependency.behavior.isPeer()) {
                 if (!install_peer) {

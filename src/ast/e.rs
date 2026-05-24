@@ -621,13 +621,15 @@ pub struct PrivateIdentifier {
 /// In development mode, the new JSX transform has a few special props
 /// - `React.jsxDEV(type, arguments, key, isStaticChildren, source, self)`
 /// - `arguments`:
-///      ```{ ...props, children: children, }```
+///      `{ ...props, children: children, }`
 /// - `source`: https://github.com/babel/babel/blob/ef87648f3f05ccc393f89dea7d4c7c57abf398ce/packages/babel-plugin-transform-react-jsx-source/src/index.js#L24-L48
-///      ```{
-///         fileName: string | null,
-///         columnNumber: number | null,
-///         lineNumber: number | null,
-///      }```
+///   ```text
+///   {
+///      fileName: string | null,
+///      columnNumber: number | null,
+///      lineNumber: number | null,
+///   }
+///   ```
 /// - `children`:
 ///     - static the function is React.jsxsDEV, "jsxs" instead of "jsx"
 ///     - one child? the function is React.jsxDEV,

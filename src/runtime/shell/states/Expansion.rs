@@ -649,15 +649,6 @@ impl Expansion {
     ) {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
-        // A failed walk must not raise a JS exception here: that would leave
-        // it pending on the VM with no JS frame above this task callback to
-        // observe it, aborting the process on the next exception check —
-        // `.nothrow()`/`try` could never intercept it.
-        //
-        // ENOENT/ENOTDIR mean the pattern's literal directory prefix doesn't
-        // exist (`echo /nonexistent/*`): treat that exactly like a glob that
-        // matched nothing — the same outcome as a relative pattern whose
-        // directory is missing. Any other failure is kept and surfaced below.
         let walk_err = match err {
             Some(ShellGlobErr::Syscall(e))
                 if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>
@@ -669,11 +660,8 @@ impl Expansion {
         };
 
         if result.is_empty() || walk_err.is_some() {
-            // Spec lines 559-578: in variable assignments a no-match (or
-            // failed) glob expands to the literal pattern; otherwise it's an
-            // error. The parent of an assignment never prints expansion
-            // errors, so the literal-pattern fallback applies to every kind
-            // of walk failure there.
+            // Spec lines 559-578: in variable assignments a no-match glob
+            // expands to the literal pattern; otherwise it's an error.
             let parent = interp.as_expansion(this).base.parent;
             let in_assign = matches!(interp.node(parent).kind(), StateKind::Assign)
                 || matches!(
@@ -688,11 +676,6 @@ impl Expansion {
                 Self::push_current_out(me);
                 me.state = ExpansionState::Done;
             } else if let Some(err) = walk_err {
-                // A real walk failure (EACCES, EMFILE, …) aborts the command
-                // through the same error path as a walker-init failure in
-                // `transition_to_glob_state`, so the actual error reaches
-                // stderr with exit code 1 instead of masquerading as
-                // "no matches found".
                 let shell_err = match err {
                     ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
                     ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),

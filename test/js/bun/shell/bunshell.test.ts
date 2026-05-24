@@ -54,7 +54,6 @@ afterAll(async () => {
 });
 
 const BUN = bunExe();
-// Some tests rely on permission checks (EACCES), which root bypasses.
 const isRoot = process.getuid?.() === 0;
 
 describe("bunshell", () => {
@@ -794,14 +793,6 @@ booga"
         .runAsTest("long leading run of injected ! stays literal");
     });
 
-    // A glob whose literal directory prefix does not exist (e.g.
-    // `echo /nonexistent/*`) makes the walker fail with ENOENT before matching
-    // anything. That failure must flow through the normal no-match handling
-    // ("no matches found" / literal pattern in assignments) instead of raising
-    // a JS exception from the glob task callback, which left the exception
-    // pending on the VM and aborted the whole process — not even `.nothrow()`
-    // or try/catch could intercept it. Spawned in a subprocess so a regression
-    // crashes the child, not the test runner.
     test("glob on a nonexistent absolute directory does not crash the process", async () => {
       const missing = join(tmpdirSync(), "does-not-exist").replaceAll("\\", "/");
       const script = `
@@ -809,13 +800,11 @@ booga"
         const missing = ${JSON.stringify(missing)};
         const results = [];
 
-        // command position, .nothrow(): shell error, script keeps running
         {
           const r = await $\`echo \${missing}/*\`.nothrow().quiet();
           results.push({ exitCode: r.exitCode, stderr: r.stderr.toString() });
         }
 
-        // command position, default throws: catchable ShellError
         try {
           await $\`echo \${missing}/*\`.quiet();
           results.push({ threw: false });
@@ -823,7 +812,6 @@ booga"
           results.push({ threw: true, exitCode: e.exitCode, stderr: e.stderr.toString() });
         }
 
-        // assignment position: expands to the literal pattern
         {
           const r = await $\`FOO=\${missing}/*; echo $FOO\`.nothrow().quiet();
           results.push({ exitCode: r.exitCode, stdout: r.stdout.toString() });
@@ -847,11 +835,6 @@ booga"
       expect(exitCode).toBe(0);
     });
 
-    // Unlike a missing directory (treated as "no matches found" above), a glob
-    // walk that fails for another reason — here EACCES on an unreadable
-    // directory — must surface the real error on stderr with exit code 1, not
-    // pretend the pattern matched nothing. Skipped as root, which bypasses
-    // permission checks.
     test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
       const dir = tempDirWithFiles("glob-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
@@ -863,8 +846,6 @@ booga"
         expect(stderr.toString()).not.toContain("no matches found");
         expect(exitCode).toBe(1);
 
-        // In assignment position the same failure falls back to the literal
-        // pattern instead of erroring (scalar assignments don't glob).
         const assign = await $`FOO=${noaccess}/*; echo $FOO`.quiet().nothrow();
         expect(assign.stderr.toString()).toBe("");
         expect(assign.stdout.toString()).toBe(`${noaccess}/*\n`);
@@ -1062,7 +1043,6 @@ booga"
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
-    // Skipped as root: permission checks don't apply, so EACCES never happens.
     test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
       const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess");

@@ -89,6 +89,11 @@ bitflags::bitflags! {
         const FINISHED      = 1 << 1;
         const ERRORED       = 1 << 2;
         const RESP_DETACHED = 1 << 3;
+        /// Exactly one in-flight-read ref (taken before `reader.read()`) is
+        /// outstanding. A still-armed poll can deliver extra reader callbacks
+        /// after the ref was already consumed by a backpressure/done/error
+        /// path; this bit makes the release exactly-once.
+        const READ_REF_HELD = 1 << 4;
     }
 }
 
@@ -219,7 +224,7 @@ impl FileResponseStream {
         }
 
         // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
-        this.ref_();
+        this.hold_read_ref();
         this.reader.read();
     }
 
@@ -282,9 +287,12 @@ impl FileResponseStream {
         match self.resp.write(chunk) {
             WriteResult::Backpressure(_) => {
                 // release the read ref; on_writable re-takes it. Adopts the ref
-                // taken before `reader.read()` — no fresh `ref_()` here.
-                // SAFETY: `this` is the live intrusive allocation owning `self`.
-                let _guard2 = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+                // taken before `reader.read()` — no fresh `ref_()` here. A
+                // still-armed poll can deliver another chunk before
+                // `on_writable` re-takes the ref, so only release it if it is
+                // actually held; a second release would drop the base ref and
+                // free the object while uWS still points at it.
+                let _guard2 = self.take_read_ref();
                 self.resp.on_writable(
                     |p: *mut FileResponseStream, off, r| {
                         // SAFETY: uWS hands back the userdata pointer set below.
@@ -301,17 +309,42 @@ impl FileResponseStream {
     }
 
     pub(crate) fn on_reader_done(&mut self) {
-        // Adopts the in-flight read ref taken before `reader.read()`.
-        // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
+        // Adopts the in-flight read ref taken before `reader.read()`, if it is
+        // still held (a backpressure result may have already consumed it).
+        let _guard = self.take_read_ref();
         self.finish();
     }
 
     pub(crate) fn on_reader_error(&mut self, err: sys::Error) {
-        // Adopts the in-flight read ref taken before `reader.read()`.
-        // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
+        // Adopts the in-flight read ref taken before `reader.read()`, if it is
+        // still held (a backpressure result may have already consumed it).
+        let _guard = self.take_read_ref();
         self.fail_with(err);
+    }
+
+    /// Take the in-flight-read ref before calling `reader.read()`. No-op if it
+    /// is already held so a repeated `on_writable` cannot double-acquire.
+    fn hold_read_ref(&mut self) {
+        if self.state.contains(State::READ_REF_HELD) {
+            return;
+        }
+        self.state.insert(State::READ_REF_HELD);
+        self.ref_();
+    }
+
+    /// Release the in-flight-read ref exactly once. Returns a guard that
+    /// derefs on drop, or `None` if a prior backpressure/done/error callback
+    /// already consumed it — a still-armed poll can deliver extra reader
+    /// callbacks after the ref was released, and releasing it again would free
+    /// the object while uWS still holds it as callback userdata.
+    fn take_read_ref(&mut self) -> Option<bun_ptr::ScopedRef<Self>> {
+        if !self.state.contains(State::READ_REF_HELD) {
+            return None;
+        }
+        self.state.remove(State::READ_REF_HELD);
+        // SAFETY: `self` is the live intrusive allocation; `READ_REF_HELD`
+        // witnesses exactly one outstanding ref taken in `hold_read_ref`.
+        Some(unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) })
     }
 
     fn on_writable(&mut self, _: u64, _: AnyResponse) -> bool {
@@ -328,7 +361,7 @@ impl FileResponseStream {
             return true;
         }
         self.resp.timeout(self.idle_timeout);
-        self.ref_();
+        self.hold_read_ref();
         self.reader.read();
         true
     }

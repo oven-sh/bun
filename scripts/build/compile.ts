@@ -28,7 +28,9 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // Quote tool paths — ninja passes commands through cmd/sh; a space in a
   // toolchain path (e.g. "C:\Program Files\LLVM\bin\clang-cl.exe") would
   // split argv without quoting. quote() passes through safe paths unchanged.
-  const q = (p: string) => quote(p, cfg.windows);
+  // Quoting style follows the HOST shell (cmd vs sh) — the target decides
+  // the command *shape* (clang-cl vs clang flags) below.
+  const q = (p: string) => quote(p, cfg.host.os === "windows");
   const cc = q(cfg.cc);
   const cxx = q(cfg.cxx);
   const ar = q(cfg.ar);

@@ -22,7 +22,7 @@
  * build in parallel on separate machines then meet for linking.
  */
 
-import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
@@ -710,11 +710,12 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
   const out = resolve(cfg.buildDir, "bun" + cfg.exeSuffix);
 
   // Windows: strip equivalent is handled at link time (/OPT:REF etc), no
-  // separate strip binary. The "stripped" bun is just a copy.
+  // separate strip binary. The "stripped" bun is just a copy. Copy command
+  // follows the HOST shell (cmd natively, cp when cross-compiling).
   if (cfg.windows) {
     // Copy as-is. /OPT:REF already applied at link.
     n.rule("strip", {
-      command: `cmd /c "copy /Y $in $out"`,
+      command: cfg.host.os === "windows" ? `cmd /c "copy /Y $in $out"` : `cp $in $out`,
       description: "copy $out (windows: no strip)",
     });
   } else {
@@ -831,10 +832,19 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
 
   // ─── Compile .rc → .res (ninja time) ───
   // llvm-rc: /FO sets output. `#include "windows.h"` in the .rc resolves
-  // via the INCLUDE env var set by the VS dev shell (vs-shell.ps1).
+  // via the INCLUDE env var set by the VS dev shell (vs-shell.ps1) on a
+  // Windows host; when cross-compiling there is no dev shell, so the SDK
+  // and MSVC include dirs from the winsysroot are passed explicitly.
+  const hostWin = cfg.host.os === "windows";
+  const rcFlags: string[] = [];
+  if (cfg.winsysroot !== undefined) {
+    for (const dir of windowsSysrootIncludeDirs(cfg.winsysroot)) {
+      rcFlags.push("/I", quote(dir, hostWin));
+    }
+  }
   const resFile = resolve(cfg.buildDir, "windows-app-info.res");
   n.rule("rc", {
-    command: `${quote(cfg.rc, true)} /FO $out $in`,
+    command: `${quote(cfg.rc, hostWin)} $rcflags /FO $out $in`,
     description: "rc $out",
   });
   n.build({
@@ -845,9 +855,37 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
     // The template is NOT tracked here: it's substituted at configure
     // time, so template edits need a reconfigure (happens rarely).
     implicitInputs: [ico],
+    vars: { rcflags: rcFlags.join(" ") },
   });
 
   return resFile;
+}
+
+/**
+ * Include dirs inside an xwin-style Windows sysroot, for tools that don't
+ * understand `/winsysroot` themselves (llvm-rc). Layout:
+ *   <root>/VC/Tools/MSVC/<ver>/include
+ *   <root>/Windows Kits/10/Include/<sdkver>/{ucrt,shared,um}
+ */
+function windowsSysrootIncludeDirs(winsysroot: string): string[] {
+  const dirs: string[] = [];
+  const msvcRoot = resolve(winsysroot, "VC", "Tools", "MSVC");
+  if (existsSync(msvcRoot)) {
+    for (const ver of readdirSync(msvcRoot)) {
+      const d = resolve(msvcRoot, ver, "include");
+      if (existsSync(d)) dirs.push(d);
+    }
+  }
+  const sdkInclude = resolve(winsysroot, "Windows Kits", "10", "Include");
+  if (existsSync(sdkInclude)) {
+    for (const ver of readdirSync(sdkInclude)) {
+      for (const sub of ["ucrt", "shared", "um"]) {
+        const d = resolve(sdkInclude, ver, sub);
+        if (existsSync(d)) dirs.push(d);
+      }
+    }
+  }
+  return dirs;
 }
 
 /**

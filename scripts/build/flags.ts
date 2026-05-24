@@ -13,7 +13,7 @@
 
 import { join } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
-import { slash } from "./shell.ts";
+import { quote, slash } from "./shell.ts";
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
 
@@ -97,6 +97,16 @@ export const globalFlags: Flag[] = [
     flag: c => `--sysroot=${c.sysroot!}`,
     when: c => c.sysroot !== undefined,
     desc: "Cross-compile sysroot (target libc headers + libs)",
+  },
+  {
+    // Windows cross-compile: clang-cl can't read the VS dev shell's INCLUDE
+    // env on a non-Windows host. /winsysroot points it at an xwin-style
+    // splat laid out like a VS install (VC/Tools/MSVC + Windows Kits/10),
+    // covering the MSVC CRT/STL and Windows SDK headers + import libs.
+    // The lld-link equivalent (/winsysroot:) is added in linkerFlags below.
+    flag: c => ["/winsysroot", quote(c.winsysroot!, false)],
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Windows cross-compile: MSVC CRT + Windows SDK root (xwin splat)",
   },
   {
     // Same host-GCC #include_next leak as the FreeBSD block below: on
@@ -907,6 +917,16 @@ export const linkerFlags: Flag[] = [
     flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
     when: c => c.windows,
     desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
+  },
+  {
+    // Windows cross-compile: these ldflags go after /link, straight to
+    // lld-link, which doesn't see the compile-side `/winsysroot` from
+    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
+    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
+    // without a VS dev shell's LIB env.
+    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
   },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],

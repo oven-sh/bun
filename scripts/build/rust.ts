@@ -86,8 +86,12 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
  *     compiles C for the target; if one ever does, emitRust's
  *     CFLAGS_<triple>/SDKROOT forwarding (set when the SDK is resolved)
  *     points cc-rs at the macOS SDK.
- *   windows-msvc × {x64,aarch64}: NOT from linux without `cargo-xwin`
- *     (or wine + the MSVC SDK). CI runs these on a Windows agent.
+ *   windows-msvc × {x64,aarch64}: yes *when a Windows sysroot (xwin splat)
+ *     is present* — the staticlib itself needs no SDK, but the bun_shim_impl
+ *     PE that emitRust() also builds links against kernel32/ntdll import
+ *     libs via lld-link + /winsysroot (see config.ts `winsysroot`). The
+ *     shared CI rust box doesn't carry the splat yet, so CI still runs these
+ *     on a Windows agent.
  *
  * Unlike zig (which bundled its own libc/SDK for every target), cargo
  * delegates to a system C toolchain for any `cc`/`bindgen`/link step, so
@@ -98,7 +102,8 @@ export function rustCanCrossFromLinux(cfg: Config): boolean {
   if (cfg.linux) return true; // gnu, musl, android — all archs
   if (cfg.freebsd) return true;
   if (cfg.darwin) return true;
-  // windows: native agent required.
+  // windows: possible with a winsysroot (see above), but the shared rust
+  // box isn't provisioned with one — windows rust-only still runs natively.
   return false;
 }
 
@@ -242,21 +247,23 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // `include_bytes!`. One rule does both so the declared output is the
   // source-tree path (cargo's own output path is an undeclared intermediate).
   //
-  // Copy is *content-conditional* (`fc /b` returns 0 iff bytes match) so
-  // `restat` actually prunes: any `.rs` edit re-invokes this rule (it shares
-  // `rustSources` with the main build), cargo no-ops, and a blind `copy /Y`
-  // would still bump $out's mtime → `bun_install`'s `include_bytes!` dep-info
-  // sees a change → spurious recompile of `bun_install` + downstream on every
-  // build. Skipping the copy when bytes match keeps mtime stable and lets
-  // `restat` cut the edge.
+  // Copy is *content-conditional* (`fc /b` / `cmp -s` returns 0 iff bytes
+  // match) so `restat` actually prunes: any `.rs` edit re-invokes this rule
+  // (it shares `rustSources` with the main build), cargo no-ops, and a blind
+  // copy would still bump $out's mtime → `bun_install`'s `include_bytes!`
+  // dep-info sees a change → spurious recompile of `bun_install` + downstream
+  // on every build. Skipping the copy when bytes match keeps mtime stable and
+  // lets `restat` cut the edge.
   //
-  // Windows-only — never registered elsewhere, so the rule body hard-assumes
-  // cmd.exe (`fc`, `copy`, `>nul`).
+  // Registered for windows *targets* only; the shell dialect follows the
+  // HOST (cmd.exe natively, sh when cross-compiling from linux/macOS).
   if (cfg.windows) {
     n.rule("rust_shim", {
-      command:
-        `cmd /c "${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-        `( fc /b $shim_src $out >nul 2>&1 || copy /Y /B $shim_src $out >nul )"`,
+      command: hostWin
+        ? `cmd /c "${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
+          `( fc /b $shim_src $out >nul 2>&1 || copy /Y /B $shim_src $out >nul )"`
+        : `${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
+          `( cmp -s $shim_src $out 2>/dev/null || cp $shim_src $out )`,
       description: "cargo bun_shim_impl → $out",
       pool: "console",
       restat: true,
@@ -710,6 +717,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       "-Clink-arg=/NODEFAULTLIB",
       "-Clink-arg=kernel32.lib",
       "-Clink-arg=ntdll.lib",
+      // Cross-compiling from a unix host: this is the only cargo-driven link
+      // of a *target* artifact, and the linker is lld-link (no MSVC install),
+      // so point it at the xwin splat for the kernel32/ntdll import libs.
+      ...(cfg.winsysroot !== undefined ? [`-Clink-arg=/winsysroot:${cfg.winsysroot}`] : []),
     ].join("\x1f");
     n.build({
       outputs: [shimDest],

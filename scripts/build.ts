@@ -392,6 +392,7 @@ function parseArgs(argv: string[]): CliArgs {
     "androidNdk",
     "macosSdk",
     "osxDeploymentTarget",
+    "winsysroot",
   ]);
 
   for (let i = 0; i < argv.length; i++) {

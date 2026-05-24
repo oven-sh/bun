@@ -11,7 +11,15 @@ import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
-import { type Config, type PartialConfig, type Toolchain, detectHost, findRepoRoot, resolveConfig } from "./config.ts";
+import {
+  type Config,
+  type OS,
+  type PartialConfig,
+  type Toolchain,
+  detectHost,
+  findRepoRoot,
+  resolveConfig,
+} from "./config.ts";
 import { BuildError } from "./error.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
@@ -25,12 +33,16 @@ import { checkWorkarounds } from "./workarounds.ts";
 /**
  * Full toolchain discovery. Returns absolute paths to all required tools.
  *
+ * `targetOs` (defaults to the host) decides which tool family is resolved —
+ * a windows target needs the MSVC-style drivers (clang-cl, llvm-lib,
+ * lld-link, llvm-rc) even from a linux/macOS host.
+ *
  * Throws BuildError with a hint if a required tool is missing. Optional
  * tools (ccache, cargo if no rust deps needed) become `undefined`.
  */
-export function resolveToolchain(): Toolchain {
+export function resolveToolchain(targetOs?: OS): Toolchain {
   const host = detectHost();
-  const llvm = resolveLlvmToolchain(host.os, host.arch);
+  const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
 
   // cmake — required for nested dep builds.
   const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
@@ -245,7 +257,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     });
   }
 
-  const toolchain = resolveToolchain();
+  const toolchain = resolveToolchain(partial.os);
   mark("resolveToolchain");
   const cfg = resolveConfig(partial, toolchain);
 

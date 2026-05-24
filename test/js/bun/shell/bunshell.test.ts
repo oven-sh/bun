@@ -2729,3 +2729,31 @@ function sentinelByte(buf: Uint8Array): number {
   }
   throw new Error("No sentinel byte");
 }
+
+describe("interpolated values in assignment position", () => {
+  // An `=` that arrives via an interpolated template value is data, not shell
+  // syntax. The value must remain a single inert command word instead of being
+  // reinterpreted as an environment-variable assignment applied to the rest of
+  // the command line.
+  TestBuilder.command`${"FOO_INJECTED=1"} echo hi`
+    .exitCode(1)
+    .stderr("bun: command not found: FOO_INJECTED=1\n")
+    .runAsTest("interpolated word containing equals stays a single command word");
+
+  // The assignment-shaped value must not land in a spawned child's environment
+  // with the following word promoted to the command name.
+  TestBuilder.command`${"SHELL_TEST_INJECTED=evil"} ${BUN} -e ${"console.log(process.env.SHELL_TEST_INJECTED)"}`
+    .exitCode(1)
+    .stderr("bun: command not found: SHELL_TEST_INJECTED=evil\n")
+    .runAsTest("interpolated word containing equals is not exported to the child environment");
+
+  // Legitimate uses keep working: a literal `=` in the template source still
+  // creates an assignment even when its value is interpolated, and an
+  // interpolated `=` in argument position passes through verbatim.
+  TestBuilder.command`FOO=${"bar"} ${BUN} -e ${"console.log(process.env.FOO)"}`
+    .stdout("bar\n")
+    .runAsTest("literal assignment with interpolated value still works");
+  TestBuilder.command`echo ${"a=b"}`
+    .stdout("a=b\n")
+    .runAsTest("interpolated equals in argument position passes through");
+});

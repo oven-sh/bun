@@ -8722,3 +8722,79 @@ registry = "http://localhost:${port}/"
     });
   }
 });
+
+test("rejects dependency aliases containing relative path segments", async () => {
+  // A dependency alias is used verbatim as a folder name when building install
+  // paths (`node_modules/<alias>/node_modules/...`). `one-fixed-dep@2.0.0`
+  // depends on `no-deps@2.0.0`, which conflicts with the root `no-deps@1.0.0`
+  // and therefore has to nest underneath the aliased folder. With the alias
+  // below, that nested install destination would resolve to
+  // `<packageDir>/escaped-target/node_modules/no-deps`, outside of
+  // `node_modules`.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "../escaped-target": "npm:one-fixed-dep@2.0.0",
+      },
+    }),
+  );
+
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  let err = await stderr.text();
+  await stdout.text();
+  expect(err).toContain('Invalid dependency name "../escaped-target"');
+  // Nothing may be created outside of `node_modules`. `node_modules/../escaped-target`
+  // resolves to a sibling of `node_modules` inside the project directory.
+  expect(await exists(join(packageDir, "escaped-target"))).toBe(false);
+  expect(await exited).not.toBe(0);
+
+  // The same dependency graph with a well-formed alias still installs, and the
+  // conflicting transitive dependency nests under the aliased folder.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, "bun.lockb"), { force: true });
+  await rm(join(packageDir, "bun.lock"), { force: true });
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "no-deps": "1.0.0",
+        "escaped-target": "npm:one-fixed-dep@2.0.0",
+      },
+    }),
+  );
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(
+    await file(join(packageDir, "node_modules", "escaped-target", "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ name: "no-deps", version: "2.0.0" });
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  expect(await exited).toBe(0);
+});

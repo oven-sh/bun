@@ -1172,3 +1172,73 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+test("non-200 CONNECT response from proxy is surfaced and its Location header is not followed", async () => {
+  // RFC 9110 §9.3.6: a non-2xx response to CONNECT means the tunnel was not
+  // established. The proxy's response must be returned to the caller, but a
+  // Location header on it must never be followed — otherwise the original
+  // method, body, and custom headers would be re-sent to whatever plaintext
+  // origin the proxy names.
+
+  // Records anything that reaches the address named in the proxy's Location
+  // header. Nothing should ever arrive here.
+  const reachedRedirectTarget: { method: string; apiKey: string | null; body: string }[] = [];
+  using redirectTarget = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      reachedRedirectTarget.push({
+        method: req.method,
+        apiKey: req.headers.get("x-api-key"),
+        body: await req.text(),
+      });
+      return new Response("redirect target reached");
+    },
+  });
+
+  // Proxy that refuses the CONNECT with a redirect pointing at the plaintext
+  // target above, instead of establishing the tunnel.
+  const proxySockets = new Set<net.Socket>();
+  const sawConnect: string[] = [];
+  const proxy = net.createServer(clientSocket => {
+    proxySockets.add(clientSocket);
+    clientSocket.on("close", () => proxySockets.delete(clientSocket));
+    clientSocket.on("error", () => {});
+    clientSocket.once("data", data => {
+      sawConnect.push(data.toString().split("\r\n")[0]);
+      clientSocket.write(
+        "HTTP/1.1 307 Temporary Redirect\r\n" +
+          `Location: ${redirectTarget.url.origin}/\r\n` +
+          "Content-Length: 0\r\n" +
+          "\r\n",
+      );
+    });
+  });
+  proxy.listen(0);
+  await once(proxy, "listening");
+  const proxyPort = (proxy.address() as net.AddressInfo).port;
+
+  try {
+    const response = await fetch(httpsServer.url, {
+      method: "POST",
+      body: "secret request body",
+      headers: { "X-Api-Key": "super-secret" },
+      proxy: `http://localhost:${proxyPort}`,
+      keepalive: false,
+      tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+    });
+
+    // The request did go through the proxy as a CONNECT...
+    expect(sawConnect.length).toBe(1);
+    expect(sawConnect[0]!.startsWith("CONNECT ")).toBe(true);
+    // ...the proxy's refusal is surfaced to the caller as-is...
+    expect(response.status).toBe(307);
+    // ...and the Location header on the failed CONNECT is never followed:
+    // the body and the X-Api-Key header must not reach the plaintext server
+    // it points at.
+    expect(reachedRedirectTarget).toEqual([]);
+  } finally {
+    for (const s of proxySockets) s.destroy();
+    proxy.close();
+    await once(proxy, "close");
+  }
+});

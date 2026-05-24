@@ -597,9 +597,11 @@ impl FileSystemRouter {
         // `route`. Borrowck can't see that the allocation travels with the borrow, so we
         // detach the slice from `path`'s ownership here. The bytes stay valid: `path` is
         // never dropped on any path between here and `MatchedRoute::init` taking ownership
-        // (early returns above this point already dropped/replaced `path`).
+        // (early returns above this point already dropped/replaced `path`), except when
+        // `URLPath::parse` percent-decoded — in that case nothing borrows `path_bytes`
+        // anymore and `path` is swapped for the decode buffer below.
         let path_bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(path.slice()) };
-        let url_path = match URLPath::parse(path_bytes) {
+        let mut url_path = match URLPath::parse(path_bytes) {
             Ok(v) => v,
             Err(err) => {
                 return Err(global_this.throw(format_args!(
@@ -621,6 +623,17 @@ impl FileSystemRouter {
         else {
             return Ok(JSValue::NULL);
         };
+
+        // If `URLPath::parse` had to percent-decode, `route.pathname`/`query_string` and
+        // the param values borrow the decode buffer — not `path` — and that buffer would
+        // be freed when `url_path` drops at the end of this call. Take ownership of it and
+        // make it the backing allocation instead. (`Box<[u8]>` -> `Vec<u8>` ->
+        // `ZigStringSlice::Owned` reuses the same heap allocation, so the borrowed slices
+        // stay valid; nothing in `route` points into the original encoded `path` once a
+        // decode happened.)
+        if let Some(decoded) = url_path.take_decoded_storage() {
+            path = ZigStringSlice::init_owned(decoded.into_vec());
+        }
 
         // PORT NOTE: Zig leaked `path` here (TODO comment in spec) and pointer-freed it
         // in `MatchedRoute.deinit` via `mi_free(pathname.ptr)`. We instead MOVE `path`

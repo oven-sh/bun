@@ -1979,3 +1979,60 @@ it("http2 request.destroy() with error", async () => {
     });
   });
 });
+
+it("http2 client.request() rejects header names longer than 4096 bytes with a catchable error", async () => {
+  // A header name longer than the 4096-byte HPACK name buffer must surface as a
+  // thrown ERR_INVALID_HTTP_TOKEN, not terminate the process. Run in a
+  // subprocess so a crash shows up as a failed assertion instead of taking down
+  // the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        client.on("connect", () => {
+          try {
+            client.request({ ":path": "/", [Buffer.alloc(5000, "x").toString()]: "1" });
+            console.log("NO_ERROR");
+          } catch (err) {
+            console.log("CODE:" + err.code);
+            console.log("NAME:" + err.name);
+          }
+          // A legitimate request on the same session still succeeds afterwards.
+          const req = client.request({ ":path": "/" });
+          req.on("response", headers => {
+            console.log("STATUS:" + headers[":status"]);
+          });
+          req.resume();
+          req.on("close", () => {
+            client.close();
+            server.close();
+          });
+          req.end();
+        });
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toContain("CODE:ERR_INVALID_HTTP_TOKEN");
+  expect(stdout).toContain("NAME:TypeError");
+  expect(stdout).not.toContain("NO_ERROR");
+  expect(stdout).toContain("STATUS:200");
+  expect(exitCode).toBe(0);
+});

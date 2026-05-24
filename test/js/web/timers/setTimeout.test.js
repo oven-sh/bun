@@ -464,3 +464,68 @@ it("setTimeout does not leak a pending exception when emitting a timeout warning
   expect(stdout.trim()).toBe("survived");
   expect(exitCode).toBe(0);
 });
+
+it("clearTimeout with a numeric id is a no-op after a timeout promoted to an interval is cleared and collected", async () => {
+  // A setTimeout whose numeric id has been observed via `+timer` registers itself in the
+  // setTimeout id map. Assigning `_repeat` promotes it to a setInterval after its first
+  // fire. Once the timer is cleared and its wrapper is collected, the id-map entry must be
+  // gone from whichever map it was inserted into, so that a later clearTimeout(id) with the
+  // raw number is a harmless no-op instead of resolving to the freed timer.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        async function main() {
+          let fires = 0;
+          let resolveSecondFire;
+          const secondFire = new Promise(resolve => {
+            resolveSecondFire = resolve;
+          });
+          let t = setTimeout(() => {
+            fires++;
+            if (fires === 2) resolveSecondFire();
+          }, 1);
+          const id = +t; // register the numeric id in the setTimeout id map
+          t._repeat = 1; // promoted to an interval after the first fire
+
+          // The second fire only happens because the timer became an interval.
+          await secondFire;
+          console.log("converted:", fires >= 2 ? "ok" : fires);
+
+          clearInterval(t);
+          t = null;
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+          Bun.gc(true);
+
+          // The numeric id must no longer resolve to the collected timer.
+          clearTimeout(id);
+          clearTimeout(id);
+          clearInterval(id);
+          console.log("survived");
+        }
+        main().then(
+          () => {},
+          err => {
+            console.error(err);
+            process.exit(1);
+          },
+        );
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+  expect(stdout).toBe("converted: ok\nsurvived\n");
+  expect(exitCode).toBe(0);
+});

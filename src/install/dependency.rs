@@ -584,6 +584,28 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
     Err(PackageNameError::InvalidPackageName)
 }
 
+/// A dependency name/alias becomes a directory under `node_modules/`. Names
+/// come from untrusted `package.json` / manifest keys, so reject anything that
+/// could resolve outside that directory. `@scope/name` stays valid.
+pub fn is_safe_install_folder_name(name: &[u8]) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    for component in name.split(|&c| c == b'/') {
+        if component.is_empty() || component == b"." || component == b".." {
+            return false;
+        }
+        for &c in component {
+            if c == b'\\' || c == b':' || c == 0 {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 /// assumes version is valid
 pub fn without_build_tag(version: &[u8]) -> &[u8] {
     if let Some(plus) = strings::index_of_char(version, b'+') {

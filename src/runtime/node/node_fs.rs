@@ -2885,6 +2885,7 @@ pub mod args {
     impl Unprotect for FdVectorIo {
         #[inline]
         fn unprotect(&mut self) {
+            self.buffers.release();
             self.buffers.value.unprotect();
             // Zig: `self.buffers.buffers.deinit()` — `Vec` frees on drop.
         }
@@ -2896,11 +2897,14 @@ pub mod args {
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let buffers = VectorArrayBuffer::from_js(
+            let mut buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| {
                     ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]"))
                 })?,
+                // The iovec pointers outlive this call on the async path; root
+                // each element and pin its backing store until completion.
+                arguments.will_be_async,
             )?;
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {
@@ -2908,6 +2912,9 @@ pub mod args {
                     if pos_value.is_number() {
                         position = Some(pos_value.to_int64() as u64);
                     } else {
+                        // `buffers` never reaches the Unprotect hook on this
+                        // path; drop its element roots and pins here.
+                        buffers.release();
                         return Err(
                             ctx.throw_invalid_arguments(format_args!("position must be a number"))
                         );
@@ -3927,6 +3934,9 @@ pub mod args {
         pub offset: u64,
         pub length: u64,
         pub position: Option<ReadPosition>,
+        /// True when `from_js` pinned `buffer` for the async path; balanced in
+        /// `unprotect()` (the JS-thread release hook).
+        pub pinned: bool,
     }
     impl Read {
         pub fn to_thread_safe(&self) {
@@ -3936,6 +3946,9 @@ pub mod args {
     impl Unprotect for Read {
         #[inline]
         fn unprotect(&mut self) {
+            if self.pinned {
+                self.buffer.buffer.unpin();
+            }
             self.buffer.buffer.value.unprotect();
         }
     }
@@ -3993,6 +4006,7 @@ pub mod args {
                     length: 0,
                     offset: 0,
                     position: None,
+                    pinned: false,
                 });
             }
 
@@ -4105,12 +4119,28 @@ pub mod args {
                 None
             };
 
+            let (buffer, pinned) = if arguments.will_be_async {
+                match buffer_value.as_pinned_arraybuffer(ctx) {
+                    Some(pinned) => (
+                        Buffer {
+                            buffer: pinned,
+                            owns_buffer: false,
+                        },
+                        true,
+                    ),
+                    None => (buffer, false),
+                }
+            } else {
+                (buffer, false)
+            };
+
             Ok(Read {
                 fd,
                 buffer,
                 offset,
                 length,
                 position,
+                pinned,
             })
         }
     }

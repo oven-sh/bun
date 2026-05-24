@@ -90,7 +90,7 @@ fn run_async<A: FsArgument>(
     // Task completes), and `slice` is intentionally not dropped — its
     // `Drop`-unprotect would race that.
 
-    let args = match <A as FsArgument>::from_js(global, &mut slice) {
+    let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
         Ok(a) => a,
         Err(err) => {
             // SAFETY: not yet dropped; only drop site for this path.
@@ -100,6 +100,7 @@ fn run_async<A: FsArgument>(
     };
 
     if global.has_exception() {
+        args.unprotect();
         drop(args);
         // SAFETY: not yet dropped; only drop site for this path.
         unsafe { ManuallyDrop::drop(&mut slice) };
@@ -114,6 +115,7 @@ fn run_async<A: FsArgument>(
                         global,
                         reason.to_js(global),
                     );
+                args.unprotect();
                 drop(args);
                 // SAFETY: not yet dropped; only drop site for this path.
                 unsafe { ManuallyDrop::drop(&mut slice) };

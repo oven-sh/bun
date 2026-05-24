@@ -2231,3 +2231,66 @@ it.todo("Bun.serve hostname with interior NUL byte does not crash the process", 
     exitCode: 0,
   });
 });
+
+// The HTTP parser shares HttpParser.h between Bun.serve and node:http. When a request
+// handler tears the connection down from inside the request-body data callback, the
+// parser must stop consuming the rest of the TCP segment instead of routing a request
+// that was pipelined behind the body onto the already-closed socket.
+it("does not dispatch a pipelined request after the connection is destroyed inside the body data callback", async () => {
+  const script = `
+const http = require("node:http");
+const net = require("node:net");
+
+const seen = [];
+const server = http.createServer((req, res) => {
+  seen.push(req.url);
+  if (req.url === "/first") {
+    req.on("data", () => {
+      // Reject the upload: finish the response and tear down the socket,
+      // synchronously, from inside the request body data callback.
+      res.writeHead(400);
+      res.end();
+      req.socket.destroy();
+    });
+    return;
+  }
+  res.end("ok");
+});
+
+server.listen(0, "127.0.0.1", () => {
+  const port = server.address().port;
+  const socket = net.connect(port, "127.0.0.1", () => {
+    // One TCP segment: a POST with a body, immediately followed by a pipelined GET.
+    socket.write(
+      "POST /first HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nContent-Length: 5\\r\\n\\r\\nhello" +
+        "GET /second HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n",
+    );
+  });
+  socket.on("error", () => {});
+  socket.resume();
+  socket.on("close", async () => {
+    // A fresh connection must still get a normal response afterwards.
+    const res = await fetch("http://127.0.0.1:" + port + "/after");
+    await res.text();
+    console.log(JSON.stringify({ seen, after: res.status }));
+    server.close();
+    process.exit(0);
+  });
+});
+`;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // "/second" arrived in the same TCP segment as the POST body, after the handler had
+  // already torn the connection down. It must never reach the request listener.
+  expect(stdout.trim()).toBe('{"seen":["/first","/after"],"after":200}');
+  expect(exitCode).toBe(0);
+});

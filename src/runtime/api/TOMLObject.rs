@@ -1,6 +1,6 @@
 use bun_ast::{E, Expr, expr::Data as ExprData};
 use bun_collections::VecExt;
-use bun_core::{String as BunString, ZigString};
+use bun_core::{StackCheck, String as BunString, ZigString};
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc, StringJsc};
 use bun_parsers::toml::TOML;
 
@@ -38,7 +38,8 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // `print_json` + `JSON.parse` — JSON rejects `Infinity`/`NaN` /
             // overflowed float literals, so the printed form of a TOML float
             // like `1e999` or `inf` couldn't re-parse.
-            expr_to_js(parse_result, global)
+            let stack_check = StackCheck::init();
+            expr_to_js(parse_result, global, &stack_check)
         },
     )
 }
@@ -53,7 +54,19 @@ fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue>
     }
 }
 
-fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
+fn expr_to_js(
+    expr: Expr,
+    global: &JSGlobalObject,
+    stack_check: &StackCheck,
+) -> JsResult<JSValue> {
+    // Match `YAMLObject::ParserCtx::to_js` — the TOML parser bounds admitted
+    // depth via its own `StackCheck`, but this walker starts from the same
+    // stack position after all parser frames unwind, so a separately guarded
+    // recursion here is the defense-in-depth the YAML walker documents.
+    if !stack_check.is_safe_to_recurse() {
+        return Err(global.throw_stack_overflow());
+    }
+
     match expr.data {
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
@@ -62,25 +75,32 @@ fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
         ExprData::EArray(arr) => {
             let items = arr.slice();
             let js_arr = JSValue::create_empty_array(global, items.len())?;
-            // `gcProtect` the under-construction array: the recursive
-            // `expr_to_js` and `put_index` calls can allocate and trigger GC,
-            // and `js_arr` is only reachable through this Rust local (which
-            // the JSC collector does not scan). RAII guard unprotects on exit.
+            // `gcProtect` the under-construction array: belt-and-suspenders on
+            // the conservative stack scan, matching `expr_jsc::array_to_js`.
+            // The recursive `expr_to_js` and `put_index` calls can allocate
+            // and trigger GC; the RAII guard unprotects on scope exit.
             let _guard = js_arr.protected();
             for (i, item) in items.iter().enumerate() {
-                js_arr.put_index(global, i as u32, expr_to_js(*item, global)?)?;
+                js_arr.put_index(global, i as u32, expr_to_js(*item, global, stack_check)?)?;
             }
             Ok(js_arr)
         }
         ExprData::EObject(obj) => {
             let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
-            // Same GC-root concern as the array branch above.
+            // Same GC-root rationale as the array branch above.
             let _guard = js_obj.protected();
             for prop in obj.properties.slice() {
+                // Compute the key and its BunString first so that the only
+                // live JSValue between `value` creation and the put is `value`
+                // itself — matches `expr_jsc::object_to_js`'s ordering.
                 let key_expr = prop.key.expect("infallible: prop has key");
-                let value = expr_to_js(prop.value.expect("infallible: prop has value"), global)?;
-                let key_js = expr_to_js(key_expr, global)?;
+                let key_js = expr_to_js(key_expr, global, stack_check)?;
                 let key_str = bun_core::OwnedString::new(key_js.to_bun_string(global)?);
+                let value = expr_to_js(
+                    prop.value.expect("infallible: prop has value"),
+                    global,
+                    stack_check,
+                )?;
                 js_obj.put_may_be_index(global, &key_str, value)?;
             }
             Ok(js_obj)

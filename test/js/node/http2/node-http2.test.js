@@ -1530,6 +1530,96 @@ it("http2 session.goaway() sends custom data", async done => {
   });
 });
 
+it("http2 server sends protocol-error GOAWAY on stream 0", async () => {
+  // RFC 9113 section 6.8: GOAWAY frames MUST be sent with a stream identifier
+  // of 0 in the frame header; the last processed stream id lives in the
+  // payload. Trigger a connection-level protocol violation (a PING addressed
+  // to stream 1) from a raw socket and inspect the GOAWAY frame the server
+  // writes back.
+  const server = http2.createServer();
+  server.on("error", () => {});
+  server.on("session", session => session.on("error", () => {}));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const chunks = [];
+    const { promise: closed, resolve: onClose } = Promise.withResolvers();
+    const socket = net.connect(server.address().port, "127.0.0.1", () => {
+      socket.write(http2utils.kClientMagic);
+      socket.write(new http2utils.SettingsFrame().data);
+      // PING frame (type 0x6) addressed to stream 1 is a connection error.
+      socket.write(Buffer.concat([new http2utils.Frame(8, 0x6, 0, 1).data, Buffer.alloc(8)]));
+    });
+    socket.on("error", () => {});
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("close", onClose);
+    await closed;
+
+    const data = Buffer.concat(chunks);
+    let offset = 0;
+    let goaway = null;
+    while (offset + 9 <= data.length) {
+      const length = data.readUIntBE(offset, 3);
+      const type = data.readUInt8(offset + 3);
+      if (type === 0x07) {
+        goaway = data.subarray(offset, offset + 9 + length);
+        break;
+      }
+      offset += 9 + length;
+    }
+
+    expect(goaway).not.toBeNull();
+    // Frame header stream identifier must be 0 (the connection stream).
+    expect(goaway.readUInt32BE(5) & 0x7fffffff).toBe(0);
+    // Payload: last-stream-id (no stream was ever opened) followed by the
+    // error code, which must still be PROTOCOL_ERROR.
+    expect(goaway.readUInt32BE(9) & 0x7fffffff).toBe(0);
+    expect(goaway.readUInt32BE(13)).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 client receives 'goaway' when the server rejects a stream", async () => {
+  // When the server rejects a stream and gives up on the session, the GOAWAY
+  // it sends must be readable by a conforming client: the client should emit
+  // 'goaway' with the server's error code instead of treating the frame
+  // itself as a protocol error.
+  const server = http2.createServer({ maxSessionRejectedStreams: 0, settings: { maxHeaderListSize: 100 } });
+  server.on("error", () => {});
+  server.on("session", session => session.on("error", () => {}));
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const { promise: goawayReceived, resolve: onGoaway } = Promise.withResolvers();
+    const { promise: clientClosed, resolve: onClientClose } = Promise.withResolvers();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    let sessionError = null;
+    client.on("error", err => {
+      sessionError = err;
+    });
+    client.on("close", onClientClose);
+    client.on("goaway", (code, lastStreamID, opaqueData) => {
+      onGoaway({ code, lastStreamID, opaqueData });
+    });
+
+    // The header block exceeds the server's maxHeaderListSize, so the server
+    // rejects the stream; with maxSessionRejectedStreams: 0 it answers with a
+    // GOAWAY carrying NGHTTP2_ENHANCE_YOUR_CALM.
+    const req = client.request({ ":path": "/", "x-filler": Buffer.alloc(256, "a").toString() });
+    req.on("error", () => {});
+    req.end();
+
+    const { code } = await goawayReceived;
+    expect(code).toBe(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM);
+    expect(sessionError?.code).not.toBe("ERR_HTTP2_SESSION_ERROR");
+
+    await clientClosed;
+  } finally {
+    server.close();
+  }
+});
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {

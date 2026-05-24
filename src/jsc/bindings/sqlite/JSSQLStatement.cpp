@@ -1848,12 +1848,20 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    int resultInt = -1;
+    // Some file-control opcodes write a pointer or an int64 through pArg
+    // (e.g. SQLITE_FCNTL_VFSNAME, SQLITE_FCNTL_MMAP_SIZE, SQLITE_FCNTL_FILE_POINTER),
+    // so the output slot must be at least 8 bytes even when JS passes a 32-bit int.
+    int64_t resultInt = -1;
     void* resultPtr = nullptr;
     if (resultValue.isObject()) {
         if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(resultValue.getObject())) {
             if (view->isDetached()) {
                 throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray is detached"_s));
+                return {};
+            }
+
+            if (view->byteLength() < sizeof(int64_t)) {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "TypedArray must be at least 8 bytes"_s));
                 return {};
             }
 

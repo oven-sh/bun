@@ -312,13 +312,22 @@ describe.concurrent("fetch-tls", () => {
     // Records every plaintext (post-TLS-decryption) byte each connection
     // delivers, and resolves a deferred once the first connection closes.
     const receivedPerConnection: Buffer[][] = [];
+    let rawConnections = 0;
     const { promise: firstConnectionClosed, resolve: onFirstConnectionClosed } = Promise.withResolvers<void>();
     const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       const chunks: Buffer[] = [];
       receivedPerConnection.push(chunks);
       socket.on("data", chunk => chunks.push(chunk));
-      socket.on("close", onFirstConnectionClosed);
       socket.on("error", () => {});
+    });
+    // Track teardown on the raw TCP connection rather than the TLS socket: the
+    // client tears the connection down as soon as checkServerIdentity rejects,
+    // so the server may never finish its side of the handshake and the
+    // secureConnection callback above may never fire.
+    server.on("connection", rawSocket => {
+      rawConnections++;
+      rawSocket.on("close", onFirstConnectionClosed);
+      rawSocket.on("error", () => {});
     });
     try {
       const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
@@ -346,9 +355,16 @@ describe.concurrent("fetch-tls", () => {
 
       // The connection must be torn down without the request line, the
       // Authorization header, or anything else ever reaching the server.
+      // `localhost` can resolve to both ::1 and 127.0.0.1, and the client
+      // races both, so more than one raw connection may be observed; only the
+      // total plaintext byte count matters.
       await firstConnectionClosed;
-      expect(receivedPerConnection.length).toBe(1);
-      expect(Buffer.concat(receivedPerConnection[0]).byteLength).toBe(0);
+      expect(rawConnections).toBeGreaterThanOrEqual(1);
+      const decryptedBytesSeenByServer = receivedPerConnection.reduce(
+        (sum, chunks) => sum + Buffer.concat(chunks).byteLength,
+        0,
+      );
+      expect(decryptedBytesSeenByServer).toBe(0);
     } finally {
       server.close();
     }

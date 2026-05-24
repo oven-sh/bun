@@ -1265,9 +1265,9 @@ impl ShellRmTask {
                     }
                     return Err(self.error_with_path(&e, path.as_bytes()));
                 }
-                E::ENOTDIR => {
-                    // The entry the parent classified as a directory is no
-                    // longer one.
+                // ENOTDIR (Linux) or ELOOP/EMLINK (macOS/BSD): the entry the
+                // parent classified as a directory is no longer one.
+                E::ENOTDIR | E::ELOOP | E::EMLINK => {
                     let mut dummy = DummyRemoveFile;
                     #[cfg(unix)]
                     {

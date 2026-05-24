@@ -47,6 +47,12 @@ import {
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
+ * @property {boolean} [crossCompile]
+ *   Build on a Linux host for a foreign target OS (currently: darwin).
+ *   Keys/labels/artifacts get a `-cross` suffix so they never collide with
+ *   the native lanes for the same target, and agents/images resolve to the
+ *   Linux build fleet. FreeBSD/Android don't set this — they have no native
+ *   lane to collide with and already imply a Linux host.
  */
 
 /**
@@ -54,7 +60,7 @@ import {
  * @returns {string}
  */
 function getTargetKey(target) {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, crossCompile } = target;
   let key = `${os}-${arch}`;
   if (abi) {
     key += `-${abi}`;
@@ -65,6 +71,9 @@ function getTargetKey(target) {
   if (profile && profile !== "release") {
     key += `-${profile}`;
   }
+  if (crossCompile) {
+    key += "-cross";
+  }
   return key;
 }
 
@@ -73,7 +82,7 @@ function getTargetKey(target) {
  * @returns {string}
  */
 function getTargetLabel(target) {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, crossCompile } = target;
   let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
     label += `-${abi}`;
@@ -83,6 +92,9 @@ function getTargetLabel(target) {
   }
   if (profile && profile !== "release") {
     label += `-${profile}`;
+  }
+  if (crossCompile) {
+    label += "-cross";
   }
   return label;
 }
@@ -138,6 +150,13 @@ const buildPlatforms = [
   // same model as Android. Target os/arch are explicit.
   { os: "freebsd", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "freebsd", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // macOS cross-compiled from glibc amazonlinux (clang --target + macOS SDK +
+  // ld64.lld — see scripts/build/macos-sdk.ts). Build-only verification lanes
+  // for now: the native darwin lanes above still produce the artifacts that
+  // ship; these prove macOS binaries can be built on the Linux fleet and
+  // upload `bun-darwin-<arch>-cross*.zip` for manual validation.
+  { os: "darwin", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
+  { os: "darwin", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
   { os: "windows", arch: "aarch64", release: "11" },
@@ -206,11 +225,11 @@ function getPlatformLabel(platform) {
  * @returns {string}
  */
 function getImageKey(platform) {
-  const { os, arch, distro, release, features, abi } = platform;
-  // Cross-compiled targets (Android, FreeBSD) build from a Linux host image
-  // — bootstrap.sh installs the NDK / base.txz sysroot on it. No separate
-  // image is baked.
-  const hostOs = os === "freebsd" ? "linux" : os;
+  const { os, arch, distro, release, features, abi, crossCompile } = platform;
+  // Cross-compiled targets (Android, FreeBSD, macOS-cross) build from a Linux
+  // host image — bootstrap.sh installs the NDK / base.txz sysroot on it (the
+  // macOS SDK is fetched by the build itself). No separate image is baked.
+  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
   const version = release.replace(/\./g, "");
   let key = `${hostOs}-${arch}-${version}`;
   if (distro) {
@@ -303,11 +322,11 @@ function getPriority() {
  * @returns {Agent}
  */
 function getEc2Agent(platform, options, ec2Options) {
-  const { os, arch, abi, distro, release } = platform;
+  const { os, arch, abi, distro, release, crossCompile } = platform;
   const { instanceType, cpuCount, threadsPerCore } = ec2Options;
   // Cross-compiled targets run on a Linux EC2 box; the agent tag must match
   // the host (`linux`), not the target.
-  const hostOs = os === "freebsd" ? "linux" : os;
+  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
   return {
     os: hostOs,
     arch,
@@ -330,9 +349,9 @@ function getEc2Agent(platform, options, ec2Options) {
  * @returns {string}
  */
 function getCppAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os, arch, crossCompile } = platform;
 
-  if (os === "darwin") {
+  if (os === "darwin" && !crossCompile) {
     return {
       queue: `build-${os}`,
       os,
@@ -351,9 +370,9 @@ function getCppAgent(platform, options) {
  * @returns {string}
  */
 function getLinkBunAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os, arch, crossCompile } = platform;
 
-  if (os === "darwin") {
+  if (os === "darwin" && !crossCompile) {
     return {
       queue: `build-${os}`,
       os,
@@ -409,10 +428,12 @@ function getRustAgent(platform, options) {
     });
   }
 
-  // Darwin: rustc cross-compiles fine but the dep graph's `cc` build
-  // scripts need an osxcross SDK + cctools `ar`. Runs natively on a
-  // mac agent until osxcross is in the linux image.
-  if (os === "darwin") {
+  // Darwin (native lanes): keep the cargo build on a mac agent so the
+  // shipped artifacts stay bit-for-bit products of the native toolchain.
+  // The `-cross` lanes skip this branch and share the Linux rust box —
+  // `aarch64/x86_64-apple-darwin` are Tier 2 targets with prebuilt std and
+  // a staticlib needs no Mach-O link (see rustCanCrossFromLinux()).
+  if (os === "darwin" && !platform.crossCompile) {
     return {
       queue: `build-${os}`,
       os,
@@ -420,9 +441,9 @@ function getRustAgent(platform, options) {
     };
   }
 
-  // Linux (gnu/musl/android) and FreeBSD: cross-compile from one Linux
-  // aarch64 box. cargo build is wide (1 codegen unit per crate × ~80
-  // crates), so size for cores. ASAN doubles the IR — bigger box.
+  // Linux (gnu/musl/android), FreeBSD, and macOS-cross: cross-compile from
+  // one Linux aarch64 box. cargo build is wide (1 codegen unit per crate ×
+  // ~80 crates), so size for cores. ASAN doubles the IR — bigger box.
   return getEc2Agent(getRustPlatform(), options, {
     instanceType: platform.profile === "asan" ? "r8g.4xlarge" : "r8g.2xlarge",
   });
@@ -513,7 +534,7 @@ function getTestAgent(platform, options) {
  * @returns {string}
  */
 function getBuildArgs(target, options, mode) {
-  const { os, arch, abi, baseline, profile } = target;
+  const { os, arch, abi, baseline, profile, crossCompile } = target;
   const { canary } = options;
 
   const args = [`--profile=ci-${mode}`];
@@ -523,7 +544,11 @@ function getBuildArgs(target, options, mode) {
   // /etc/alpine-release) would report the build box's abi (Alpine→musl), not
   // the target's. darwin/windows rust-only run natively (see getRustAgent), so
   // host detection is correct there. cpp-only/link-only: native build.
-  if (mode === "rust-only" && os !== "darwin" && os !== "windows") {
+  if (crossCompile) {
+    // macOS-cross: every step (cpp/rust/link) runs on a Linux host, so the
+    // target os/arch are always explicit.
+    args.push(`--os=${os}`, `--arch=${arch}`);
+  } else if (mode === "rust-only" && os !== "darwin" && os !== "windows") {
     args.push(`--os=${os}`, `--arch=${arch}`);
     if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
   } else if (abi === "musl") {
@@ -641,7 +666,7 @@ function getLinkBunStep(platform, options) {
  * @returns {string}
  */
 function getTargetTriplet(platform) {
-  const { os, arch, abi, baseline } = platform;
+  const { os, arch, abi, baseline, crossCompile } = platform;
   let triplet = `bun-${os}-${arch}`;
   if (abi === "musl") {
     triplet += "-musl";
@@ -651,6 +676,11 @@ function getTargetTriplet(platform) {
   }
   if (baseline) {
     triplet += "-baseline";
+  }
+  if (crossCompile) {
+    // Matches computeBunTriplet() in scripts/build/ci.ts — cross-built
+    // artifacts must never collide with the native lanes' zips.
+    triplet += "-cross";
   }
   return triplet;
 }
@@ -940,11 +970,15 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
+  // The release only ships artifacts from the native lanes; -cross lanes are
+  // build verification and must not be able to block a release.
+  const releasePlatforms = buildPlatforms.filter(p => !p.crossCompile);
+
   // When signing ran, depend on windows-sign instead of the raw Windows builds
   // so we wait for signed artifacts before releasing.
   const depends_on = signed
-    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
-    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+    ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
+    : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
 
   return {
     key: "release",
@@ -1443,7 +1477,10 @@ async function getPipeline(options = {}) {
     }
   }
 
-  const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
+  // Binary-size tracking covers the artifacts that ship — the -cross lanes
+  // build the same sources for the same targets, so their sizes would be
+  // redundant noise in the baseline comparison.
+  const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release" && !p.crossCompile);
   if (!buildId && strippedPlatforms.length) {
     steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
   }

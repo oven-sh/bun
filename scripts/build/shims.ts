@@ -27,6 +27,22 @@ export interface ShimLinkOpts {
 const ASAN_DYLD_SHIM = "asan-dyld-shim.dylib";
 
 /**
+ * macOS-from-Linux cross links resolve compiler-rt builtins from the SDK's
+ * libSystem reexport (libcompiler_rt.tbd), which covers the generic builtins
+ * (__divti3 …) but NOT the x86 `__builtin_cpu_supports` support globals
+ * (___cpu_model / ___cpu_indicator_init / ___cpu_features2) — on native
+ * builds those come from Apple clang's static libclang_rt.osx.a, which the
+ * Linux LLVM toolchain doesn't ship. Compile compiler-rt's own cpu_model
+ * sources (vendored under shims/cpu_model/, Apache-2.0 WITH LLVM-exception)
+ * into the link so the cross binary behaves exactly like the native one.
+ * Tracked in workarounds.ts ("darwin-cross-cpu-model") so it self-obsoletes
+ * if the SDK ever exports these symbols.
+ */
+function needsDarwinCpuModelShim(cfg: Config): boolean {
+  return cfg.darwin && cfg.crossTarget !== undefined && cfg.x64 && cfg.osxSysroot !== undefined;
+}
+
+/**
  * musl + rust-lld: Alpine ships the libc CRT objects (Scrt1.o, crti.o,
  * crtn.o) with ELFCOMPRESS_ZLIB debug sections, but rust-lang/llvm-project
  * builds lld without LLVM_ENABLE_ZLIB so rust-lld errors at input-section
@@ -62,6 +78,15 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
     });
   }
 
+  if (needsDarwinCpuModelShim(cfg)) {
+    // Plain object compiled for the cross target; $flags carries
+    // --target/-isysroot/-mmacosx-version-min from emitShims().
+    n.rule("shim_cc", {
+      command: `${q(cfg.cc)} $flags -O2 -c $in -o $out`,
+      description: "shim $out",
+    });
+  }
+
   if (needsMuslCrtDecompress(cfg)) {
     // binutils objcopy (same package as `strip`, already required on linux —
     // see tools.ts). restat=1: a no-op decompress keeps the mtime so the
@@ -83,6 +108,28 @@ export function registerShimRules(n: Ninja, cfg: Config): void {
 export function emitShims(n: Ninja, cfg: Config): ShimLinkOpts {
   const ldflags: string[] = [];
   const implicitInputs: string[] = [];
+
+  if (needsDarwinCpuModelShim(cfg)) {
+    const src = resolve(cfg.cwd, "scripts", "build", "shims", "cpu_model", "x86.c");
+    const header = resolve(cfg.cwd, "scripts", "build", "shims", "cpu_model", "cpu_model.h");
+    const out = resolve(cfg.buildDir, "cpu_model_x86.o");
+    n.build({
+      outputs: [out],
+      rule: "shim_cc",
+      inputs: [src],
+      implicitInputs: [header],
+      vars: {
+        flags: [
+          `--target=${cfg.crossTarget!}`,
+          "-isysroot",
+          cfg.osxSysroot!,
+          `-mmacosx-version-min=${cfg.osxDeploymentTarget!}`,
+        ].join(" "),
+      },
+    });
+    ldflags.push(out);
+    implicitInputs.push(out);
+  }
 
   if (cfg.darwin && cfg.asan) {
     // macOS 26.4 ASAN dyld deadlock — see shims/asan-dyld-shim.c.

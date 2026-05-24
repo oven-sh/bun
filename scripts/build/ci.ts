@@ -350,6 +350,12 @@ function computeBunTriplet(cfg: Config): string {
   if (cfg.abi === "musl") t += "-musl";
   if (cfg.abi === "android") t += "-android";
   if (cfg.baseline) t += "-baseline";
+  // macOS built on a Linux host (the `-cross` CI lanes): distinct artifact
+  // names so the zips and binary-size metadata never collide with the native
+  // darwin lanes that produce the shipped artifacts. Matches ci.mjs
+  // getTargetTriplet(). Drop this suffix if/when the cross lanes replace the
+  // native darwin build lanes.
+  if (cfg.darwin && cfg.crossTarget !== undefined) t += "-cross";
   return t;
 }
 

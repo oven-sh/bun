@@ -755,13 +755,15 @@ function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string):
   // --object-prefix-map: rewrite DWARF path prefixes so debuggers find
   //   source in the repo root rather than the build machine's absolute path.
   // -j: parallelism. Use all cores (dsymutil parallelizes per compile unit).
-  //   CMake uses CMAKE_BUILD_PARALLEL_LEVEL; we use nproc equivalent via
-  //   a subshell.
+  //   CMake uses CMAKE_BUILD_PARALLEL_LEVEL; we use the host's core-count
+  //   command via a subshell (sysctl on a darwin host, nproc when
+  //   cross-compiling from linux).
   // stream.ts --console for pool:console consistency (no-op on darwin).
-  const q = (p: string) => quote(p, false); // darwin-only → posix
+  const q = (p: string) => quote(p, false); // darwin/linux host → posix
+  const ncpu = cfg.host.os === "darwin" ? "sysctl -n hw.ncpu" : "nproc";
   const wrap = `${cfg.jsRuntime} ${q(streamPath)} dsym --console`;
   n.rule("dsymutil", {
-    command: `${wrap} sh -c '${cfg.dsymutil} $in --flat --keep-function-for-static --object-prefix-map .=${cfg.cwd} -o $out -j $$(sysctl -n hw.ncpu)'`,
+    command: `${wrap} sh -c '${cfg.dsymutil} $in --flat --keep-function-for-static --object-prefix-map .=${cfg.cwd} -o $out -j $$(${ncpu})'`,
     description: "dsymutil $out",
     // Not restat — dsymutil always writes.
     pool: "console", // Can take a while, show progress

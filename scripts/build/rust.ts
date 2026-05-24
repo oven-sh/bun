@@ -81,9 +81,11 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
  *     installs prebuilt std, no foreign linker needed for a staticlib.
  *   freebsd × {x64,aarch64}: yes — Tier 2/3 (`-Zbuild-std` for aarch64),
  *     staticlib needs no FreeBSD libc to produce.
- *   darwin × {x64,aarch64}: NOT from a stock linux box. rustc itself is
- *     fine, but any `cc`-crate build script in the dep graph needs an
- *     osxcross SDK + `cctools` ar. CI runs these on a darwin agent.
+ *   darwin × {x64,aarch64}: yes — Tier 2 prebuilt std, and a staticlib
+ *     needs no Mach-O link. No build script in the current dep graph
+ *     compiles C for the target; if one ever does, emitRust's
+ *     CFLAGS_<triple>/SDKROOT forwarding (set when the SDK is resolved)
+ *     points cc-rs at the macOS SDK.
  *   windows-msvc × {x64,aarch64}: NOT from linux without `cargo-xwin`
  *     (or wine + the MSVC SDK). CI runs these on a Windows agent.
  *
@@ -95,7 +97,8 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
 export function rustCanCrossFromLinux(cfg: Config): boolean {
   if (cfg.linux) return true; // gnu, musl, android — all archs
   if (cfg.freebsd) return true;
-  // darwin, windows: native agent required.
+  if (cfg.darwin) return true;
+  // windows: native agent required.
   return false;
 }
 
@@ -583,6 +586,22 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // across worktrees; rustup's directory walk could otherwise resolve a
   // different worktree's `rust-toolchain.toml`.
   if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
+  // Darwin cross-compile from a non-darwin host: point anything in the dep
+  // graph that cares about the Apple SDK at the extracted sysroot. rustc
+  // itself doesn't need it for a staticlib, but cc-rs (build scripts
+  // compiling target C) honours CFLAGS_<triple>/SDKROOT, and
+  // MACOSX_DEPLOYMENT_TARGET keeps the LC_BUILD_VERSION minos rustc stamps
+  // into its objects consistent with the C++ side's -mmacosx-version-min.
+  if (cfg.darwin && cfg.host.os !== "darwin") {
+    if (cfg.osxDeploymentTarget !== undefined) env.MACOSX_DEPLOYMENT_TARGET = cfg.osxDeploymentTarget;
+    if (cfg.osxSysroot !== undefined && cfg.crossTarget !== undefined && cfg.osxDeploymentTarget !== undefined) {
+      env.SDKROOT = cfg.osxSysroot;
+      const sdkFlags = `--target=${cfg.crossTarget} -isysroot ${cfg.osxSysroot} -mmacosx-version-min=${cfg.osxDeploymentTarget}`;
+      const tripleEnv = triple.replace(/-/g, "_");
+      env[`CFLAGS_${tripleEnv}`] = sdkFlags;
+      env[`CXXFLAGS_${tripleEnv}`] = sdkFlags;
+    }
+  }
   if (cfg.crossLangLto) {
     // The workspace `[profile.release]` sets `lto = "fat"` so non-LTO release
     // builds (where the rust .a is linked as native code) still get

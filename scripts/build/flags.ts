@@ -140,6 +140,20 @@ export const globalFlags: Flag[] = [
     when: c => c.freebsd,
     desc: "FreeBSD: expose BSD typedefs (u_long etc.) in <sys/types.h>",
   },
+  {
+    // macOS cross-compile: clang prefers its own toolchain libc++ headers
+    // (<llvm>/include/c++/v1) over the SDK's. Those are a newer libc++ than
+    // the OS dylib the SDK's libc++.tbd describes, so compiles pick up
+    // out-of-line symbols (e.g. std::__hash_memory, added in libc++ 19) that
+    // Apple's libc++ never exports → undefined symbols at link. Use the
+    // SDK's own headers: they match the .tbd exactly and carry Apple's
+    // availability annotations for the deployment target. Native darwin
+    // builds keep the default search (host clang and host libc++ agree).
+    flag: c => ["-nostdinc++", "-isystem", join(c.osxSysroot!, "usr", "include", "c++", "v1")],
+    when: c => c.darwin && c.crossTarget !== undefined && c.osxSysroot !== undefined,
+    lang: "cxx",
+    desc: "macOS cross: use the SDK's libc++ headers (match the libc++.tbd being linked)",
+  },
 
   // ─── CPU target ───
   ...cpuTargetFlags,
@@ -501,6 +515,8 @@ export const bunOnlyFlags: Flag[] = [
   // UBSan is bun-only because it's stricter and vendored code often violates it.
   // Enabled: debug builds (non-musl — musl's implementation hits false positives),
   // and release-asan builds (if you're debugging memory you want UBSan too).
+  // Darwin cross-compiles are excluded: the UBSan runtime dylib for macOS
+  // isn't shipped by the Linux LLVM toolchain, so the link would fail.
   {
     flag: [
       "-fsanitize=null",
@@ -513,7 +529,10 @@ export const bunOnlyFlags: Flag[] = [
       "-fsanitize=returns-nonnull-attribute",
       "-fsanitize=unreachable",
     ],
-    when: c => c.unix && ((c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd) || (c.release && c.asan)),
+    when: c =>
+      c.unix &&
+      !(c.darwin && c.crossTarget !== undefined) &&
+      ((c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd) || (c.release && c.asan)),
     desc: "Undefined-behavior sanitizers",
   },
   {
@@ -696,7 +715,13 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: "-fsanitize=null",
-    when: c => c.unix && c.debug && c.abi !== "musl" && c.abi !== "android" && !c.freebsd,
+    when: c =>
+      c.unix &&
+      c.debug &&
+      c.abi !== "musl" &&
+      c.abi !== "android" &&
+      !c.freebsd &&
+      !(c.darwin && c.crossTarget !== undefined),
     desc: "Link UBSan runtime",
   },
   {
@@ -810,9 +835,43 @@ export const linkerFlags: Flag[] = [
 
   // ─── macOS ───
   {
-    flag: ["-Wl,-ld_new", "-Wl,-no_compact_unwind", "-Wl,-stack_size,0x1200000", "-fno-keep-static-consts"],
+    flag: ["-Wl,-no_compact_unwind", "-Wl,-stack_size,0x1200000", "-fno-keep-static-consts"],
     when: c => c.darwin,
-    desc: "Use new Apple linker, 18MB stack, skip compact unwind",
+    desc: "18MB stack, skip compact unwind",
+  },
+  {
+    // -ld_new selects Apple's new linker — only meaningful (and only
+    // understood) when Apple's ld driver does the link. ld64.lld (the
+    // cross-link path) parses it as `-l d_new` and fails.
+    flag: "-Wl,-ld_new",
+    when: c => c.darwin && c.crossTarget === undefined,
+    desc: "Use new Apple linker (native darwin links only)",
+  },
+  {
+    // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —
+    // target triple + explicit linker. -isysroot is added by the deployment-
+    // target flag below; the clang driver forwards it to ld64.lld as
+    // -syslibroot. -mlinker-version≥520 makes the driver emit the modern
+    // -platform_version argument ld64.lld requires (without it the driver
+    // assumes an ancient host ld64 and emits nothing usable); the exact
+    // value only gates driver behavior, so track a recent ld64 release.
+    flag: c => [`--target=${c.crossTarget!}`, "-mlinker-version=705", `--ld-path=${c.ld}`],
+    when: c => c.darwin && c.crossTarget !== undefined,
+    desc: "macOS cross-link: target triple + ld64.lld + modern linker arg style",
+  },
+  {
+    // The `__BUN,__bun` standalone-graph placeholder (c-bindings.cpp) is a
+    // 16 KB-aligned section. On x86_64, ld64.lld 16K-aligns its FILE offset
+    // inside a 4K-aligned segment but not its VM span, producing
+    // filesize > vmsize for the __BUN segment — an invalid Mach-O that
+    // llvm-strip/dsymutil (and codesign) reject. Capping the section's
+    // alignment at the x86_64 page size removes the padding asymmetry; the
+    // placeholder only needs 8-byte alignment at runtime, and
+    // `bun build --compile` rewrites the segment at 16 KB alignment anyway
+    // (exe_format/macho.rs). arm64 uses 16 KB pages, so it's unaffected.
+    flag: ["-Wl,-sectalign,__BUN,__bun,0x1000"],
+    when: c => c.darwin && c.crossTarget !== undefined && c.x64,
+    desc: "macOS x64 cross-link: keep the __BUN segment's filesize ≤ vmsize under ld64.lld",
   },
   {
     // Must also be passed at link: ld64 reads this to write LC_BUILD_VERSION.minos.

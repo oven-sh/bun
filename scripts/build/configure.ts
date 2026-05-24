@@ -14,6 +14,7 @@ import { generateCargoConfig } from "./cargo-config.ts";
 import { type Config, type PartialConfig, type Toolchain, detectHost, findRepoRoot, resolveConfig } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
+import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
@@ -250,6 +251,12 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
 
   validateBunConfig(cfg);
   checkWorkarounds(cfg);
+
+  // Darwin cross-compile: the SDK must exist before ninja runs (every compile
+  // edge passes -isysroot). resolveConfig picked the path; this downloads the
+  // pinned SDK into the cache dir when nothing was found. No-op otherwise.
+  await ensureMacosSdk(cfg);
+  mark("ensureMacosSdk");
 
   // Generated `.cargo/config.toml` — written at configure time (not a ninja
   // rule), like `bun_dependency_versions.h`. Holds the per-target `linker = `

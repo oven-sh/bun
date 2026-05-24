@@ -4,7 +4,7 @@ import { bunEnv, bunExe } from "harness";
 // Reifying a lazy property of the Bun object (e.g. Bun.$, Bun.sql) while the
 // stack is nearly exhausted used to cache an empty JSValue and leave the stack
 // overflow exception pending, crashing the process.
-test("accessing Bun's lazy properties near stack exhaustion does not crash", async () => {
+test.concurrent("accessing Bun's lazy properties near stack exhaustion does not crash", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -41,7 +41,7 @@ console.log("OK");`,
 
 // A lazy getter that throws (here: an invalid REDIS_URL) used to cache an
 // empty JSValue, so reading the property again crashed the process.
-test("a throwing lazy Bun property getter does not corrupt the property", async () => {
+test.concurrent("a throwing lazy Bun property getter does not corrupt the property", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -487,7 +487,53 @@ impl NetworkTask {
             }
 
             // This actually duplicates the string! So we defer deref the WTF managed one above.
-            break 'blk tmp.to_owned_slice().into_boxed_slice();
+            let url_bytes = tmp.to_owned_slice().into_boxed_slice();
+
+            // The manifest URL is built by joining the registry URL with the
+            // package name, which is attacker-controlled (e.g. an `npm:` alias
+            // target in any dependencies map). WHATWG URL joining treats '\'
+            // as '/' for special schemes, so a name like "\\evil.com\pkg"
+            // resolves to "https://evil.com/pkg" and would receive this
+            // scope's Authorization header below. Reject any join whose origin
+            // no longer matches the registry scope. Protocol/hostname are
+            // compared ASCII-case-insensitively because the joined href is
+            // normalized (lowercased) by WTF::URL while `scope.url` keeps the
+            // configured spelling.
+            {
+                let joined = URL::parse(&url_bytes);
+                let registry = scope.url.url();
+                if !joined.protocol.eq_ignore_ascii_case(registry.protocol)
+                    || !joined.hostname.eq_ignore_ascii_case(registry.hostname)
+                    || joined.get_port_auto() != registry.get_port_auto()
+                {
+                    if !is_optional {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Invalid package name {}: manifest URL {} is not on registry {}",
+                                quote(name),
+                                quote(&url_bytes),
+                                quote(scope.url.href()),
+                            ),
+                        );
+                    } else {
+                        log.add_warning_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Invalid package name {}: manifest URL {} is not on registry {}",
+                                quote(name),
+                                quote(&url_bytes),
+                                quote(scope.url.href()),
+                            ),
+                        );
+                    }
+                    return Err(ForManifestError::InvalidURL);
+                }
+            }
+
+            break 'blk url_bytes;
         };
 
         let mut last_modified: &[u8] = b"";

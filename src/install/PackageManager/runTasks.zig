@@ -785,7 +785,7 @@ pub fn runTasks(
                                     // will still have the original.
                                     else => {},
                                 }
-                                try manager.processDependencyListItem(dep.context, &any_root, install_peer, package_id);
+                                try manager.processDependencyListItem(dep.context, &any_root, install_peer, dep.parent_package_id);
                             },
                             else => {
                                 // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
@@ -1030,20 +1030,20 @@ pub fn runTasks(
                         }
                     }
 
-                    for (dependency_list.items.items) |dep| {
-                        switch (dep.context) {
-                            .dependency, .root_dependency => |id| {
-                                var repo = &manager.lockfile.buffers.dependencies.items[id].version.value.git;
-                                repo.resolved = pkg.resolution.value.git.resolved;
-                                repo.package_name = pkg.name;
-                                try manager.processDependencyListItem(dep.context, &any_root, install_peer, package_id);
-                            },
-                            else => {
-                                // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                dependency_list_entry.value_ptr.append(manager.allocator, null, dep.context) catch unreachable;
-                            },
-                        }
-                    }
+for (dependency_list.items.items) |dep| {
+                                switch (dep.context) {
+                                    .dependency, .root_dependency => |id| {
+                                        var repo = &manager.lockfile.buffers.dependencies.items[id].version.value.git;
+                                        repo.resolved = pkg.resolution.value.git.resolved;
+                                        repo.package_name = pkg.name;
+                                        try manager.processDependencyListItem(dep.context, &any_root, install_peer, dep.parent_package_id);
+                                    },
+                                    else => {
+                                        // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
+                                        dependency_list_entry.value_ptr.append(manager.allocator, null, dep.context) catch unreachable;
+                                    },
+                                }
+                            }
 
                     if (@TypeOf(callbacks.onExtract) != void) {
                         @compileError("ctx should be void");

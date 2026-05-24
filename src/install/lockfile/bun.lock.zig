@@ -1270,8 +1270,6 @@ pub fn parseIntoBinaryLockfile(
             }
 
             const name_str = key.asString(allocator).?;
-            const name_hash = String.Builder.stringHash(name_str);
-            const name = try string_buf.appendWithHash(name_str, name_hash);
 
             // TODO(dylan-conway) also accept object when supported
             if (!value.isString()) {
@@ -1284,24 +1282,7 @@ pub fn parseIntoBinaryLockfile(
             const version = try string_buf.appendWithHash(version_str, version_hash);
             const version_sliced = version.sliced(string_buf.bytes.items);
 
-            const dep: Dependency = .{
-                .name = name,
-                .name_hash = name_hash,
-                .version = Dependency.parse(
-                    allocator,
-                    name,
-                    name_hash,
-                    version_sliced.slice,
-                    &version_sliced,
-                    log,
-                    manager,
-                ) orelse {
-                    try log.addError(source, value.loc, "Invalid override version");
-                    return error.InvalidOverridesObject;
-                },
-            };
-
-            // Detect scoped override: parent/child format
+            // Detect scoped override: parent/child format before building dep
             const is_scoped = brk: {
                 if (name_str[0] == '@') {
                     const first_slash = strings.indexOfChar(name_str, '/') orelse break :brk false;
@@ -1324,23 +1305,10 @@ pub fn parseIntoBinaryLockfile(
                 };
                 const parent_str = name_str[0..split_at];
                 const child_str = name_str[split_at + 1 ..];
-                const parent_name_stripped = name_stripped: {
-                    if (parent_str.len > 0 and parent_str[0] == '@') {
-                        const first_slash = strings.indexOfChar(parent_str, '/') orelse break :name_stripped parent_str;
-                        if (strings.indexOfChar(parent_str[first_slash + 1 ..], '@')) |at_idx| {
-                            break :name_stripped parent_str[0 .. first_slash + 1 + at_idx];
-                        }
-                        break :name_stripped parent_str;
-                    }
-                    if (strings.indexOfChar(parent_str, '@')) |at_idx| {
-                        break :name_stripped parent_str[0..at_idx];
-                    }
-                    break :name_stripped parent_str;
-                };
+                const parent_name_stripped = OverrideMap.stripVersionSuffix(parent_str);
                 const parent_hash = String.Builder.stringHash(parent_name_stripped);
                 const child_hash = String.Builder.stringHash(child_str);
                 const child_name = try string_buf.appendWithHash(child_str, child_hash);
-                const child_version_sliced = version.sliced(string_buf.bytes.items);
                 const child_dep: Dependency = .{
                     .name = child_name,
                     .name_hash = child_hash,
@@ -1348,8 +1316,8 @@ pub fn parseIntoBinaryLockfile(
                         allocator,
                         child_name,
                         child_hash,
-                        child_version_sliced.slice,
-                        &child_version_sliced,
+                        version_sliced.slice,
+                        &version_sliced,
                         log,
                         manager,
                     ) orelse {
@@ -1364,6 +1332,24 @@ pub fn parseIntoBinaryLockfile(
                     .parent_name = parent_name,
                 }, child_dep);
             } else {
+                const name_hash = String.Builder.stringHash(name_str);
+                const name = try string_buf.appendWithHash(name_str, name_hash);
+                const dep: Dependency = .{
+                    .name = name,
+                    .name_hash = name_hash,
+                    .version = Dependency.parse(
+                        allocator,
+                        name,
+                        name_hash,
+                        version_sliced.slice,
+                        &version_sliced,
+                        log,
+                        manager,
+                    ) orelse {
+                        try log.addError(source, value.loc, "Invalid override version");
+                        return error.InvalidOverridesObject;
+                    },
+                };
                 try lockfile.overrides.global.put(allocator, name_hash, dep);
             }
         }

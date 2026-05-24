@@ -263,14 +263,16 @@ pub fn installWithManager(
                             result[idx] = k.child_name_hash;
                             idx += 1;
                         }
-                        var i: usize = 0;
-                        while (i < result.len) {
-                            if (std.mem.indexOfScalar(PackageNameHash, result[0..i], result[i]) != null) {
-                                result[i] = result[result.len - 1];
-                                result = result[0 .. result.len - 1];
-                            } else {
-                                i += 1;
+                        std.sort.pdq(PackageNameHash, result, {}, std.sort.asc(PackageNameHash));
+                        {
+                            var unique_count: usize = 0;
+                            for (result) |hash| {
+                                if (unique_count == 0 or result[unique_count - 1] != hash) {
+                                    result[unique_count] = hash;
+                                    unique_count += 1;
+                                }
                             }
+                            result = result[0..unique_count];
                         }
                         break :brk result;
                     };

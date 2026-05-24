@@ -4286,6 +4286,14 @@ pub fn escape_8bit<const ADD_QUOTES: bool>(
                 continue 'outer;
             }
         }
+        if c == SPECIAL_JS_CHAR {
+            // The lexer resolves `\x08__bunstr_N` / `\x08__bun_N` interpolation
+            // markers in every quote state. Emit an empty quoted string after the
+            // byte so the marker prefix can never form while the data still
+            // round-trips byte-for-byte.
+            outbuf.extend_from_slice(&[SPECIAL_JS_CHAR, b'"', b'"']);
+            continue;
+        }
         outbuf.push(c);
     }
 
@@ -4330,6 +4338,13 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
                 outbuf.extend_from_slice(&[b'\\', char as u8]);
                 continue 'outer;
             }
+        }
+
+        if char == u32::from(SPECIAL_JS_CHAR) {
+            // See escape_8bit: keep the `\x08` byte but break the
+            // `\x08__bunstr_N` marker prefix the lexer would otherwise resolve.
+            outbuf.extend_from_slice(&[SPECIAL_JS_CHAR, b'"', b'"']);
+            continue;
         }
 
         let len = bun_core::encode_wtf8_rune(&mut cp_buf, char);

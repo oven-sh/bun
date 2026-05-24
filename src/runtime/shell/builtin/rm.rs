@@ -1133,8 +1133,6 @@ impl ShellRmTask {
     /// Remove the (now empty) directory `dir_task` describes by unlinking its
     /// single-component name from a freshly opened, identity-verified parent
     /// directory fd, so no intermediate path component is re-resolved.
-    /// Returns the raw syscall result; callers keep their existing
-    /// ENOENT/`--force`/ENOTDIR handling.
     #[cfg(unix)]
     fn rmdir_self(&self, dir_task: *mut DirTask) -> bun_sys::Maybe<()> {
         let parent = self.open_verified_parent(dir_task)?;
@@ -1226,10 +1224,8 @@ impl ShellRmTask {
                         }
                         E::ENOTDIR => {
                             state.treat_as_dir = false;
-                            // `-d` without `-r` is root-only (children are
-                            // only created under `-r`), so the user-supplied
-                            // operand relative to the shell cwd is the trust
-                            // anchor.
+                            // `-d` without `-r` is root-only, so `name` is
+                            // the full operand relative to the shell cwd.
                             self.remove_entry_file(
                                 dir_task,
                                 dirfd,
@@ -1271,8 +1267,7 @@ impl ShellRmTask {
                 }
                 E::ENOTDIR => {
                     // The entry the parent classified as a directory is no
-                    // longer one; unlink it relative to its (verified)
-                    // parent directory instead of re-resolving the full path.
+                    // longer one.
                     let mut dummy = DummyRemoveFile;
                     #[cfg(unix)]
                     {
@@ -1323,11 +1318,9 @@ impl ShellRmTask {
             }
         });
 
-        // Confirm the directory we just opened by (multi-component, freshly
-        // re-resolved) path is the one the parent task discovered through its
-        // own open fd. A mismatch means some component of the path was
-        // replaced while this task was queued — fail closed instead of
-        // descending into whatever is reachable there now.
+        // Confirm the directory we just opened by path is the one the parent
+        // task discovered through its own open fd; on a mismatch fail closed
+        // instead of descending into whatever is reachable there now.
         #[cfg(unix)]
         {
             let actual = match bun_sys::fstat(fd) {
@@ -1429,9 +1422,6 @@ impl ShellRmTask {
                     let joined = self.buf_join(buf, &[path.as_bytes(), name]);
                     ZBox::from_bytes(joined.as_bytes())
                 };
-                // Unlink the entry through the already-open directory fd and
-                // its single-component name so no intermediate path component
-                // is re-resolved; the joined path is only for display.
                 #[cfg(unix)]
                 self.remove_entry_file(
                     dir_task,
@@ -1487,9 +1477,6 @@ impl ShellRmTask {
             }
         }
 
-        // No pending children: remove the directory itself by unlinking its
-        // single-component name from its identity-verified parent fd instead
-        // of re-resolving the full path from the cwd.
         #[cfg(unix)]
         let rmdir_result = self.rmdir_self(dir_task);
         #[cfg(not(unix))]
@@ -1514,9 +1501,6 @@ impl ShellRmTask {
     fn remove_entry_dir_after_children(&self, dir_task: *mut DirTask) -> bun_sys::Maybe<bool> {
         // SAFETY: `dir_task` is live; this thread owns it.
         let (path, is_abs) = unsafe { ((*dir_task).path.as_zstr(), (*dir_task).is_absolute) };
-        // Address the directory as a single component relative to a freshly
-        // opened, identity-verified parent fd so no intermediate path
-        // component is re-resolved by the deletion syscalls below.
         #[cfg(unix)]
         let parent = match self.open_verified_parent(dir_task) {
             Ok(p) => p,
@@ -1619,7 +1603,6 @@ impl ShellRmTask {
                         let expected_id = match bun_sys::lstatat(dirfd, name) {
                             Ok(st) => FileId::from_stat(&st),
                             Err(e2) => {
-                                // The entry vanished after the unlink attempt.
                                 if self.opts.force && e2.get_errno() == E::ENOENT {
                                     return self.verbose_deleted(parent_dir_task, path.as_bytes());
                                 }
@@ -1673,10 +1656,6 @@ impl ShellRmTask {
                                     E::ENOTEMPTY => {
                                         #[cfg(unix)]
                                         {
-                                            // Capture the directory's identity
-                                            // through `dirfd` before handing it
-                                            // off so the enqueued child task can
-                                            // verify its own re-open by path.
                                             let expected_id = match bun_sys::lstatat(dirfd, name) {
                                                 Ok(st) => FileId::from_stat(&st),
                                                 Err(e3) => {

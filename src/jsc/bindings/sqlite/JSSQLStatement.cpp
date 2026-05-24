@@ -1106,7 +1106,23 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
 
     int i = 0;
     for (; i < count; i++) {
-        JSC::JSValue value = array->getIndexQuickly(i);
+        JSC::JSValue value;
+        if (array->canGetIndexQuickly(static_cast<unsigned>(i))) [[likely]] {
+            value = array->getIndexQuickly(i);
+        } else {
+            // Sparse / ArrayStorage-backed arrays can have a public length
+            // greater than the butterfly's vector length, so getIndexQuickly()
+            // would read out of bounds. Fall back to the slow path, which can
+            // run arbitrary JS (getters), so re-validate the statement after.
+            value = array->getDirectIndex(lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (statement && statement->stmt != stmt) [[unlikely]] {
+                throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                return {};
+            }
+            if (!value)
+                value = JSC::jsUndefined();
+        }
         if (!rebindValue(lexicalGlobalObject, db, stmt, i + 1, value, scope, safeIntegers)) {
             return {};
         }

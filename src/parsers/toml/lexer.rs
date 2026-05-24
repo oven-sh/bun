@@ -1314,7 +1314,6 @@ pub(crate) fn is_identifier_part(code_point: CodePoint) -> bool {
     // The `(0..=127)` bound is required for the byte cast above to be sound.
 }
 
-
 #[inline]
 fn float64(num: CodePoint) -> f64 {
     num as f64

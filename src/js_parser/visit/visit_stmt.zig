@@ -452,24 +452,11 @@ pub fn VisitStmt(
                                 data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                             }
 
-                            // Inject the default name into the class when a downstream
-                            // lowering will actually dereference `class.class_name`:
-                            //   - when it has decorators (existing behavior), or
-                            //   - when it has any `accessor` field (instance or static).
-                            //     Auto-accessor classes are routed through standard-decorator
-                            //     lowering, whose statement path unconditionally unwraps
-                            //     `class.class_name.?.ref.?` — without a name, an anonymous
-                            //     `export default class { accessor x = 1 }` panics.
-                            var needs_default_name = class.class.has_decorators;
-                            if (!needs_default_name) {
-                                for (class.class.properties) |prop| {
-                                    if (prop.kind == .auto_accessor) {
-                                        needs_default_name = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (needs_default_name) {
+                            // We only inject a name into classes when decorator lowering
+                            // needs one: legacy TS decorators (`has_decorators`) or
+                            // standard decorator lowering, which also covers classes with
+                            // only auto-accessor fields and no decorators.
+                            if (class.class.has_decorators or class.class.should_lower_standard_decorators) {
                                 if (class.class.class_name == null or
                                     class.class.class_name.?.ref == null)
                                 {

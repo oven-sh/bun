@@ -1594,11 +1594,7 @@ describe.concurrent("node:http socket.fd (Bun extension)", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), signalCode: proc.signalCode ?? null, exitCode }).toMatchObject({
       stdout: "OK",
       signalCode: null,

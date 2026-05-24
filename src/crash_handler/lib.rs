@@ -18,7 +18,9 @@
 //! A lot of this handler is based on the Zig Standard Library implementation
 //! for std.debug.panicImpl and their code for gathering backtraces.
 
-#![feature(core_intrinsics)]
+// `core::intrinsics::abort()` is only reachable on the non-Windows crash path;
+// declaring the feature on Windows trips `unused_features` in release builds.
+#![cfg_attr(not(windows), feature(core_intrinsics))]
 #![allow(internal_features)]
 #![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
@@ -510,7 +512,7 @@ mod draft {
         #[cfg(windows)]
         {
             #[cfg(debug_assertions)]
-            core::intrinsics::breakpoint();
+            core::arch::breakpoint();
             bun_sys::windows::kernel32::ExitProcess(3)
         }
         #[cfg(not(windows))]

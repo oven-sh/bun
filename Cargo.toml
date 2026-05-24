@@ -189,6 +189,11 @@ warnings = { level = "deny", priority = -1 }
 # by scripts/build/rust.ts for asan builds; register it here so a plain
 # `cargo build` / `cargo check` (without those flags) doesn't warn.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)'] }
+# link.exe unconditionally prints "Creating library X.dll.lib and object
+# X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
+# there is no linker flag to suppress it. The lint already exempts itself
+# from `-D warnings`, so this only silences the noise.
+linker_messages = "allow"
 dead_code = "deny"
 # Every crate in this workspace is an internal implementation detail of one
 # binary, so `pub` is a claim that *another crate* imports the item. If it

@@ -2176,6 +2176,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                     RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
                     RETURN_IF_EXCEPTION(scope, {});
+                    // push() can re-enter JS (e.g. an indexed accessor on
+                    // Array.prototype), which can finalize this statement.
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                        return {};
+                    }
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             } else {
@@ -2184,6 +2190,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
                     RETURN_IF_EXCEPTION(scope, {});
                     resultArray->push(lexicalGlobalObject, result);
                     RETURN_IF_EXCEPTION(scope, {});
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                        return {};
+                    }
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             }
@@ -2328,6 +2338,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
                     }
                     resultArray->push(lexicalGlobalObject, row);
                     RETURN_IF_EXCEPTION(scope, {});
+                    // push() can re-enter JS, which can finalize this statement.
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                        return {};
+                    }
                     status = sqlite3_step(stmt);
                 } while (status == SQLITE_ROW);
             }
@@ -2416,6 +2431,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
                     if (scope.exception()) [[unlikely]] {
                         sqlite3_reset(stmt);
                         RELEASE_AND_RETURN(scope, {});
+                    }
+
+                    // push() can re-enter JS, which can finalize this statement.
+                    if (castedThis->stmt != stmt) [[unlikely]] {
+                        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s));
+                        return {};
                     }
 
                     status = sqlite3_step(stmt);

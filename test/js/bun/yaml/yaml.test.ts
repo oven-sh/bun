@@ -1270,6 +1270,18 @@ folded: >
           expect(YAML.parse("a:\n  &x\n  b\n")).toEqual({ a: "b" });
         });
 
+        test("tag does not leak to abandoned sibling key", () => {
+          // The post-tag re-scan resolves a plain scalar under that tag; when
+          // belongs_to_parent then abandons it, the sibling key must be
+          // re-scanned tag-neutral.
+          expect(YAML.parse("a: !!str\n0xFF: c\n")).toEqual({ a: "", 255: "c" });
+          expect(YAML.parse("a: !!str\n~: c\n")).toEqual({ a: "", null: "c" });
+          expect(YAML.parse("a: !!int\ntrue: c\n")).toEqual({ a: null, true: "c" });
+          // Content (indent > n) keeps the tag.
+          expect(YAML.parse("a: !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
+          expect(YAML.parse("a:\n  !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
+        });
+
         test("tag on e-node resolves per resolve_null", () => {
           expect(YAML.parse("a: !!null\nb: y\n")).toEqual({ a: null, b: "y" });
           expect(YAML.parse("a: !!str\nb: y\n").a).toBe("");

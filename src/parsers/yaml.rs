@@ -3494,6 +3494,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token.indent.is_less_than_or_equal(n)
                 };
                 if belongs_to_parent {
+                    // The post-property re-scan baked `value_tag` into a plain
+                    // scalar's resolution (`ScanOptions.tag`); if that scalar
+                    // is now abandoned to the parent, rewind to its start and
+                    // re-scan tag-neutral so the sibling key resolves under
+                    // the default schema.
+                    if value_tag.is_some()
+                        && matches!(self.token.data, TokenData::Scalar(_))
+                    {
+                        self.pos = self.token.start;
+                        self.line = self.token.line;
+                        self.line_indent = self.token.indent;
+                        self.scan(ScanOptions::default())?;
+                    }
                     return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
                 }
             }

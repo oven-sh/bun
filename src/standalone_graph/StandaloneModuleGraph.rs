@@ -126,7 +126,7 @@ pub fn target_base_public_path(
     }
 }
 
-pub fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
+pub(crate) fn is_bun_standalone_file_path_canonicalized(str_: &[u8]) -> bool {
     str_.starts_with(BASE_PATH.as_bytes())
         || (cfg!(windows) && str_.starts_with(BASE_PUBLIC_PATH.as_bytes()))
 }
@@ -234,7 +234,7 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct CompiledModuleGraphFile {
+pub(crate) struct CompiledModuleGraphFile {
     pub name: StringPointer,
     pub contents: StringPointer,
     pub sourcemap: StringPointer,
@@ -513,7 +513,7 @@ impl LazySourceMap {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub struct Offsets {
+pub(crate) struct Offsets {
     pub byte_count: usize,
     pub modules_ptr: StringPointer,
     pub entry_point_id: u32,
@@ -711,7 +711,7 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
 
-pub fn to_bytes(
+pub(crate) fn to_bytes(
     prefix: &[u8],
     output_files: &[OutputFile],
     output_format: Format,
@@ -1010,7 +1010,7 @@ pub fn to_bytes(
     Ok(output_bytes.to_vec())
 }
 
-pub type InjectOptions = WindowsOptions;
+pub(crate) type InjectOptions = WindowsOptions;
 
 pub enum CompileResult {
     Success,
@@ -1058,7 +1058,7 @@ impl CompileResult {
     }
 }
 
-pub fn inject(
+pub(crate) fn inject(
     bytes: &[u8],
     self_exe: &ZStr,
     inject_options: &InjectOptions,
@@ -1545,7 +1545,7 @@ pub use bun_options_types::compile_target::CompileTarget;
 /// `bun_options_types` (T3) so it can name `bun_http::AsyncHTTP` directly
 /// instead of routing through `extern "Rust"` shims; the only callers are the
 /// two `download*` fns below in this crate.
-pub fn download_to_path(
+pub(crate) fn download_to_path(
     target: &CompileTarget,
     env: &mut bun_dotenv::Loader<'_>,
     dest_z: &ZStr,
@@ -1701,62 +1701,6 @@ pub fn download_to_path(
         }
     }
     Ok(())
-}
-
-pub fn download(
-    target: &CompileTarget,
-    env: &mut bun_dotenv::Loader<'_>,
-) -> Result<bun_core::ZBox, BunError> {
-    let mut exe_path_buf = PathBuffer::uninit();
-    let mut version_str_buf = [0u8; 1024];
-    // TODO(port): std.fmt.bufPrintZ — write into fixed buffer with NUL.
-    let written = {
-        let mut cursor = &mut version_str_buf[..];
-        write!(cursor, "{}", target).map_err(|_| err!("NoSpaceLeft"))?;
-        1024 - cursor.len()
-    };
-    version_str_buf[written] = 0;
-    // SAFETY: version_str_buf[written] == 0 written above; buffer outlives the borrow.
-    let version_str = ZStr::from_buf(&version_str_buf[..], written);
-    let mut needs_download: bool = true;
-    let dest_z = target.exe_path(&mut exe_path_buf, version_str, env, &mut needs_download);
-    if needs_download {
-        if let Err(e) = download_to_path(target, env, dest_z) {
-            // For CLI, provide detailed error messages and exit
-            if e == err!("TargetNotFound") {
-                Output::err_fmt(format_args!(
-                    "Does this target and version of Bun exist?\n\n404 downloading {} from npm registry",
-                    target
-                ));
-            } else if e == err!("NetworkError") {
-                Output::err_fmt(format_args!(
-                    "Failed to download cross-compilation target.\n\nNetwork error downloading {} from npm registry",
-                    target
-                ));
-            } else if e == err!("InvalidResponse") {
-                Output::err_fmt(format_args!(
-                    "Failed to verify the integrity of the downloaded tarball.\n\nThe downloaded content for {} appears to be corrupted",
-                    target
-                ));
-            } else if e == err!("ExtractionFailed") {
-                Output::err_fmt(format_args!(
-                    "Failed to extract the downloaded tarball.\n\nCould not extract executable for {}",
-                    target
-                ));
-            } else {
-                Output::err_fmt(format_args!(
-                    "Failed to download {}: {}",
-                    target,
-                    bstr::BStr::new(e.name())
-                ));
-            }
-            return Err(err!("DownloadFailed"));
-        }
-    }
-
-    Ok(bun_core::ZBox::from_vec_with_nul(
-        dest_z.as_bytes().to_vec(),
-    ))
 }
 
 pub fn to_executable(
@@ -2069,6 +2013,7 @@ impl StandaloneModuleGraph {
             // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
             // ever spans the writable bytecode region carried in `base`'s provenance.
             let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
             let trailer_bytes = unsafe {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
@@ -2099,6 +2044,7 @@ impl StandaloneModuleGraph {
             // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
             // ever spans the writable bytecode region carried in `base`'s provenance.
             let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
             let trailer_bytes = unsafe {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
@@ -2256,20 +2202,20 @@ pub struct SerializedSourceMap {
 /// - all the StringPointer contents
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct SerializedSourceMapHeader {
+pub(crate) struct SerializedSourceMapHeader {
     pub source_files_count: u32,
     pub map_bytes_length: u32,
 }
 
 impl SerializedSourceMap {
-    pub fn header(self) -> SerializedSourceMapHeader {
+    pub(crate) fn header(self) -> SerializedSourceMapHeader {
         // SAFETY: bytes.len() >= size_of::<Header>() must hold (caller checked); align(1) read.
         unsafe {
             core::ptr::read_unaligned(self.bytes.as_ptr().cast::<SerializedSourceMapHeader>())
         }
     }
 
-    pub fn mapping_blob(self) -> Option<&'static [u8]> {
+    pub(crate) fn mapping_blob(self) -> Option<&'static [u8]> {
         if self.bytes.len() < size_of::<SerializedSourceMapHeader>() {
             return None;
         }
@@ -2287,7 +2233,7 @@ impl SerializedSourceMap {
     // `&[StringPointer]` would require `align_of::<StringPointer>() == 4` alignment
     // (UB otherwise), so expose count + indexed unaligned reads instead.
 
-    pub fn source_files_count(self) -> usize {
+    pub(crate) fn source_files_count(self) -> usize {
         self.header().source_files_count as usize
     }
 
@@ -2297,17 +2243,10 @@ impl SerializedSourceMap {
             .cast()
     }
 
-    pub fn source_file_name(self, index: usize) -> StringPointer {
+    pub(crate) fn source_file_name(self, index: usize) -> StringPointer {
         debug_assert!(index < self.source_files_count());
         // SAFETY: index bounds-checked; layout per Header doc; pointer may be misaligned.
         unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(index)) }
-    }
-
-    fn compressed_source_file(self, index: usize) -> StringPointer {
-        let count = self.source_files_count();
-        debug_assert!(index < count);
-        // SAFETY: second contiguous StringPointer array immediately follows the first.
-        unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(count + index)) }
     }
 }
 
@@ -2321,47 +2260,7 @@ pub struct SerializedSourceMapLoaded {
     pub decompressed_files: Box<[Option<Vec<u8>>]>,
 }
 
-impl SerializedSourceMapLoaded {
-    pub fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
-        // PORT NOTE: reshaped for borrowck — populate cache first, then borrow once.
-        if self.decompressed_files[index].is_none() {
-            // SAFETY: `self.map.bytes` is a 'static read-only sourcemap subrange (disjoint
-            // from bytecode); StringPointer was serialized by `to_bytes` and is in-bounds.
-            let compressed_file = unsafe {
-                slice_to(
-                    self.map.bytes.as_ptr(),
-                    self.map.bytes.len(),
-                    self.map.compressed_source_file(index),
-                )
-            };
-            let size = bun_zstd::get_decompressed_size(compressed_file);
-
-            let mut bytes = vec![0u8; size];
-            match bun_zstd::decompress(&mut bytes, compressed_file) {
-                bun_zstd::Result::Err(err_msg) => {
-                    Output::warn(format_args!(
-                        "Source map decompression error: {}",
-                        bstr::BStr::new(err_msg.as_bytes())
-                    ));
-                    self.decompressed_files[index] = Some(Vec::new());
-                }
-                bun_zstd::Result::Success(n) => {
-                    bytes.truncate(n);
-                    self.decompressed_files[index] = Some(bytes);
-                }
-            }
-        }
-
-        let decompressed = self.decompressed_files[index].as_deref().unwrap();
-        if decompressed.is_empty() {
-            None
-        } else {
-            Some(decompressed)
-        }
-    }
-}
-
-pub fn serialize_json_source_map_for_standalone(
+pub(crate) fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,
     json_source: &[u8],

@@ -973,22 +973,6 @@ impl Expr {
     }
 }
 
-// TODO(refactor): jsonStringify protocol — replace with serde or a custom trait.
-// `Serializable` is its payload shape.
-
-impl Expr {
-    // PORT NOTE: Zig's `jsonStringify` fed `Serializable` to `std.json.stringify`.
-    // The Rust port emits the same shape directly (no serde dependency).
-    pub fn json_stringify(self_: &Expr, writer: &mut impl fmt::Write) -> fmt::Result {
-        let tag: &'static str = self_.data.tag().into();
-        write!(
-            writer,
-            "{{\"type\":\"{}\",\"object\":\"expr\",\"loc\":{}}}",
-            tag, self_.loc.start
-        )
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Static state
 // ───────────────────────────────────────────────────────────────────────────
@@ -1000,7 +984,7 @@ impl Expr {
 // (i.e. racy garbage under threads) so a debug-gated atomic is strictly more
 // faithful than the old unconditional one.
 #[cfg(debug_assertions)]
-pub static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+pub(crate) static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 // PORT NOTE: Zig `expr.zig` declares `true_bool`/`false_bool`/`bool_values`
 // statics but never references them — `E.Boolean` is stored by value in
@@ -1318,11 +1302,6 @@ impl Tag {
             Tag::EClass | Tag::EFunction | Tag::EArrow => b"function",
             _ => return None,
         })
-    }
-
-    // TODO(port): jsonStringify — serde or custom JSON writer
-    pub fn json_stringify(self_: Tag, writer: &mut impl fmt::Write) -> fmt::Result {
-        writer.write_str(<&'static str>::from(self_))
     }
 
     pub fn is_array(self) -> bool {

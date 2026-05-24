@@ -82,7 +82,7 @@ impl MarkedArgumentBuffer {
 macro_rules! marked_argument_buffer_wrap {
     ($function:path) => {{
         #[$crate::host_fn]
-        pub fn wrapper(
+        pub(crate) fn wrapper(
             global_this: &$crate::JSGlobalObject,
             callframe: &$crate::CallFrame,
         ) -> $crate::JsResult<$crate::JSValue> {

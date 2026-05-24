@@ -9,7 +9,7 @@ pub fn to_js(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValu
     })
 }
 
-pub fn to_js_object(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn to_js_object(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     Ok(Bun__X509__toJS(cert, global_object))
 }
 

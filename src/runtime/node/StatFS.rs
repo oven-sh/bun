@@ -6,9 +6,9 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // names match (`f_type`/`f_bsize`/…); widths differ (u64 vs platform-specific)
 // but `init` does an explicit `as i64`/`as $Int` truncate so either shape works.
 #[cfg(unix)]
-pub type RawStatFS = libc::statfs;
+pub(crate) type RawStatFS = libc::statfs;
 #[cfg(not(unix))]
-pub type RawStatFS = bun_sys::StatFS;
+pub(crate) type RawStatFS = bun_sys::StatFS;
 
 // PORT NOTE: Zig `pub fn StatFSType(comptime big: bool) type` picks the field
 // integer type via `const Int = if (big) i64 else i32;`. Stable Rust const
@@ -107,7 +107,7 @@ unsafe extern "C" {
     pub safe fn Bun__JSBigIntStatFSObjectConstructor(global: &JSGlobalObject) -> JSValue;
     pub safe fn Bun__JSStatFSObjectConstructor(global: &JSGlobalObject) -> JSValue;
 
-    pub safe fn Bun__createJSStatFSObject(
+    pub(crate) safe fn Bun__createJSStatFSObject(
         global: &JSGlobalObject,
         fstype: i64,
         bsize: i64,
@@ -118,7 +118,7 @@ unsafe extern "C" {
         ffree: i64,
     ) -> JSValue;
 
-    pub safe fn Bun__createJSBigIntStatFSObject(
+    pub(crate) safe fn Bun__createJSBigIntStatFSObject(
         global: &JSGlobalObject,
         fstype: i64,
         bsize: i64,

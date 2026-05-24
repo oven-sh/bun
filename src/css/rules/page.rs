@@ -89,7 +89,7 @@ pub struct PageMarginRule {
 }
 
 impl PageMarginRule {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -100,7 +100,7 @@ impl PageMarginRule {
 }
 
 impl PageMarginRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `PageMarginBox` is `Copy`.
         Self {
             margin_box: self.margin_box,
@@ -124,7 +124,7 @@ pub struct PageRule {
 }
 
 impl PageRule {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_str("@page")?;
@@ -186,7 +186,7 @@ impl PageRule {
 }
 
 impl PageRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
@@ -199,7 +199,7 @@ impl PageRule {
 
 // ─── PageRule parse ───────────────────────────────────────────────────────
 impl PageRule {
-    pub fn parse(
+    pub(crate) fn parse(
         selectors: ArrayList<PageSelector>,
         input: &mut css::Parser,
         loc: Location,
@@ -257,7 +257,7 @@ pub enum PagePseudoClass {
 
 impl PagePseudoClass {
     #[inline]
-    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
         // `Copy` enum (generics.zig "simple copy types" → identity).
         self
     }
@@ -304,7 +304,7 @@ pub enum PageMarginBox {
     BottomRightCorner,
 }
 
-pub struct PageRuleParser<'a> {
+pub(crate) struct PageRuleParser<'a> {
     pub declarations: &'a mut DeclarationBlock<'static>,
     pub rules: &'a mut ArrayList<PageMarginRule>,
     pub options: &'a css::ParserOptions<'a>,

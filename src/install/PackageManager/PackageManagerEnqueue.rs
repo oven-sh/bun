@@ -65,8 +65,8 @@ const fail_root_resolution: FailFn = PackageManager::fail_root_resolution;
 // (value namespace) alongside the struct (type namespace), so re-declaring it here
 // would collide. `scoped_log!(PackageManager, ...)` below resolves to that import.
 
-pub type EnqueuePackageForDownloadError = crate::network_task::ForTarballError;
-pub type EnqueueTarballForDownloadError = crate::network_task::ForTarballError;
+pub(crate) type EnqueuePackageForDownloadError = crate::network_task::ForTarballError;
+pub(crate) type EnqueueTarballForDownloadError = crate::network_task::ForTarballError;
 
 const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 
@@ -600,7 +600,7 @@ pub fn enqueue_dependency_to_root(
 /// Mirrors Zig's `runTasks(void, {}, .{ all-void callbacks }, ...)` shape used
 /// by `enqueueDependencyToRoot` and `runAndWaitFn`: `Ctx = void`, every `on*`
 /// is `{}` so the `HAS_*` const-gates compile out the callback paths.
-pub struct VoidRunTasksCallbacks;
+pub(crate) struct VoidRunTasksCallbacks;
 impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
     type Ctx = ();
 }
@@ -1995,7 +1995,7 @@ fn update_name_and_name_hash_from_version_replacement(
     }
 }
 
-pub enum ResolvedPackageTask {
+pub(crate) enum ResolvedPackageTask {
     /// Pending network task to schedule
     NetworkTask(*mut NetworkTask),
 
@@ -2004,7 +2004,7 @@ pub enum ResolvedPackageTask {
 }
 
 #[derive(Default)]
-pub struct ResolvedPackageResult {
+pub(crate) struct ResolvedPackageResult {
     pub package: Package,
 
     /// Is this the first time we've seen this package?

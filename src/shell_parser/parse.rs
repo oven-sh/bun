@@ -118,7 +118,7 @@ pub mod ast {
     // PORT NOTE: must match Zig `@tagName(AST.Expr.Tag)` exactly — used in
     // user-visible parser errors (see add_error_expected_pipeline_item).
     #[strum(serialize_all = "snake_case")]
-    pub enum ExprTag {
+    pub(crate) enum ExprTag {
         Assign,
         Binary,
         Pipeline,
@@ -168,7 +168,7 @@ pub mod ast {
         pub args: CondExprArgList<'arena>,
     }
 
-    pub type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
+    pub(crate) type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
 
     impl<'arena> CondExpr<'arena> {
         pub fn memory_cost(&self) -> usize {
@@ -494,12 +494,6 @@ pub mod ast {
         Assigns(&'arena [Assign<'arena>]),
     }
 
-    #[derive(Clone, Copy)]
-    pub enum CmdOrAssignsTag {
-        Cmd,
-        Assigns,
-    }
-
     impl<'arena> CmdOrAssigns<'arena> {
         pub fn to_pipeline_item(self, bump: &'arena Bump) -> PipelineItem<'arena> {
             match self {
@@ -534,12 +528,6 @@ pub mod ast {
         pub fn new(idx: u32) -> JSBuf {
             JSBuf { idx }
         }
-    }
-
-    /// A Subprocess from JS
-    #[derive(Clone, Copy)]
-    pub struct JSProc {
-        pub idx: JSValue,
     }
 
     pub struct Assign<'arena> {
@@ -757,13 +745,6 @@ pub mod ast {
     pub enum Atom<'arena> {
         Simple(SimpleAtom<'arena>),
         Compound(CompoundAtom<'arena>),
-    }
-
-    #[repr(u8)]
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum AtomTag {
-        Simple,
-        Compound,
     }
 
     impl<'arena> Atom<'arena> {
@@ -2466,7 +2447,7 @@ pub enum SubShellKind {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RedirectDirection {
+pub(crate) enum RedirectDirection {
     Out,
     In,
 }
@@ -3822,7 +3803,7 @@ pub struct SrcAscii<'a> {
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct SrcAsciiIndexValue(u8); // packed: char:7 + escaped:1
+pub(crate) struct SrcAsciiIndexValue(u8); // packed: char:7 + escaped:1
 
 impl SrcAsciiIndexValue {
     #[inline]
@@ -3859,7 +3840,7 @@ impl<'a> SrcAscii<'a> {
     }
 }
 
-pub type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
+pub(crate) type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
 
 // PORT NOTE: Zig holds a `CodepointIterator` by value (whose only state used
 // by `next(cursor)` is `bytes`). The Rust `NewCodePointIterator` lacks
@@ -3874,7 +3855,7 @@ pub struct SrcUnicode<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub struct SrcUnicodeIndexValue {
+pub(crate) struct SrcUnicodeIndexValue {
     pub char: u32,
     pub width: u8,
 }
@@ -4253,7 +4234,7 @@ pub const SPECIAL_CHARS: [u8; 34] = [
 pub struct ByteTable(pub [bool; 256]);
 impl ByteTable {
     #[inline]
-    pub const fn is_set(&self, idx: usize) -> bool {
+    pub(crate) const fn is_set(&self, idx: usize) -> bool {
         self.0[idx]
     }
 }
@@ -4450,7 +4431,7 @@ unsafe impl core::alloc::Allocator for SmolListAlloc {
     }
 }
 
-pub type SmolListHeap<T> = Vec<T, SmolListAlloc>;
+pub(crate) type SmolListHeap<T> = Vec<T, SmolListAlloc>;
 
 /// A list that can store its items inlined, and promote itself to an
 /// arena-backed heap list.
@@ -4476,23 +4457,19 @@ impl<T, const INLINED_MAX: usize> Default for SmolListInlined<T, INLINED_MAX> {
 }
 
 impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
-    pub fn slice(&self) -> &[T] {
+    pub(crate) fn slice(&self) -> &[T] {
         // SAFETY: first `len` elements are initialized
         unsafe { core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len as usize) }
     }
 
-    pub fn slice_mut(&mut self) -> &mut [T] {
+    pub(crate) fn slice_mut(&mut self) -> &mut [T] {
         // SAFETY: first `self.len` elements are initialized; pointer is valid for `len` reads/writes.
         unsafe {
             core::slice::from_raw_parts_mut(self.items.as_mut_ptr().cast::<T>(), self.len as usize)
         }
     }
 
-    pub fn allocated_slice(&self) -> &[core::mem::MaybeUninit<T>] {
-        &self.items
-    }
-
-    pub fn promote(&mut self, n: usize, new: T, bump: &Bump) -> SmolListHeap<T> {
+    pub(crate) fn promote(&mut self, n: usize, new: T, bump: &Bump) -> SmolListHeap<T> {
         let mut list = Vec::with_capacity_in(n + 1, SmolListAlloc::new(bump));
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
@@ -4504,7 +4481,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         list
     }
 
-    pub fn ordered_remove(&mut self, idx: usize) -> T {
+    pub(crate) fn ordered_remove(&mut self, idx: usize) -> T {
         if self.len as usize - 1 == idx {
             return self.pop();
         }
@@ -4516,7 +4493,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         // (likely a Zig bug). Here we return it.
     }
 
-    pub fn swap_remove(&mut self, idx: usize) -> T {
+    pub(crate) fn swap_remove(&mut self, idx: usize) -> T {
         if self.len as usize - 1 == idx {
             return self.pop();
         }
@@ -4528,7 +4505,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         // TODO(port): same Zig oddity — pop() decremented len already; restore by writing back.
     }
 
-    pub fn pop(&mut self) -> T {
+    pub(crate) fn pop(&mut self) -> T {
         // SAFETY: caller guarantees self.len > 0; slot at len-1 is initialized.
         let ret = unsafe { self.items[self.len as usize - 1].assume_init_read() };
         self.len -= 1;

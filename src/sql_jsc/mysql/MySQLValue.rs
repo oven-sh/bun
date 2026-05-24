@@ -15,7 +15,7 @@ use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
 
-pub fn field_type_from_js(
+pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,
     value: JSValue,
     unsigned: &mut bool,

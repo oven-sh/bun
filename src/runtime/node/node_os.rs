@@ -13,7 +13,7 @@ unsafe extern "C" {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct CPUTimes {
+pub(crate) struct CPUTimes {
     pub user: u64,
     pub nice: u64,
     pub sys: u64,
@@ -21,7 +21,7 @@ pub struct CPUTimes {
     pub irq: u64,
 }
 
-pub fn freemem() -> u64 {
+pub(crate) fn freemem() -> u64 {
     // OsBinding.cpp
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
@@ -213,7 +213,7 @@ mod _impl {
         }
     }
 
-    pub fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
         // TODO(port): JSObject::create struct-literal API — define a builder/macro
         let obj = JSValue::create_empty_object(global, 14);
         // SAFETY: pure FFI getter
@@ -251,7 +251,7 @@ mod _impl {
     }
 
     impl CPUTimes {
-        pub fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
+        pub(crate) fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
             // Zig used comptime std.meta.fieldNames + inline for; expand manually.
             let ret = JSValue::create_empty_object(global_this, 5);
             ret.put(
@@ -283,7 +283,7 @@ mod _impl {
         }
     }
 
-    pub fn cpus(global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn cpus(global: &JSGlobalObject) -> JsResult<JSValue> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let result = cpus_impl_linux(global);
         #[cfg(target_os = "macos")]
@@ -585,9 +585,9 @@ mod _impl {
             c::host_processor_info(
                 c::mach_host_self(),
                 c::PROCESSOR_CPU_LOAD_INFO,
-                &mut num_cpus,
-                &mut info as *mut *mut c::processor_cpu_load_info as *mut c::processor_info_array_t,
-                &mut info_size,
+                &raw mut num_cpus,
+                (&raw mut info).cast::<c::processor_info_array_t>(),
+                &raw mut info_size,
             )
         } != 0
         {
@@ -722,7 +722,7 @@ mod _impl {
         safe fn get_process_priority(pid: i32) -> i32;
     }
 
-    pub fn get_priority(global: &JSGlobalObject, pid: i32) -> JsResult<i32> {
+    pub(crate) fn get_priority(global: &JSGlobalObject, pid: i32) -> JsResult<i32> {
         let result = get_process_priority(pid);
         if result == i32::MAX {
             let err = SystemError {
@@ -740,7 +740,7 @@ mod _impl {
         Ok(result)
     }
 
-    pub fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
+    pub(crate) fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
         {
@@ -845,7 +845,7 @@ mod _impl {
         }
     }
 
-    pub fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn hostname(global: &JSGlobalObject) -> JsResult<JSValue> {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
@@ -883,7 +883,7 @@ mod _impl {
         }
     }
 
-    pub fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn loadavg(global: &JSGlobalObject) -> JsResult<JSValue> {
         #[cfg(target_os = "macos")]
         let result: [f64; 3] = 'loadavg: {
             let mut avg: c::struct_loadavg = bun_core::ffi::zeroed();
@@ -1460,10 +1460,10 @@ mod _impl {
 
     // TODO(port): move to <area>_sys
     unsafe extern "C" {
-        pub safe fn set_process_priority(pid: i32, priority: i32) -> i32;
+        pub(crate) safe fn set_process_priority(pid: i32, priority: i32) -> i32;
     }
 
-    pub fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
+    pub(crate) fn set_process_priority_impl(pid: i32, priority: i32) -> bun_sys::E {
         if pid < 0 {
             return bun_sys::E::ESRCH;
         }
@@ -1481,7 +1481,7 @@ mod _impl {
         bun_sys::get_errno(code)
     }
 
-    pub fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {
+    pub(crate) fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {
         let errcode = set_process_priority_impl(pid, priority);
         match errcode {
             bun_sys::E::ESRCH => {
@@ -1530,11 +1530,11 @@ mod _impl {
         }
     }
 
-    pub fn set_priority2(global: &JSGlobalObject, priority: i32) -> JsResult<()> {
+    pub(crate) fn set_priority2(global: &JSGlobalObject, priority: i32) -> JsResult<()> {
         set_priority1(global, 0, priority)
     }
 
-    pub fn totalmem() -> u64 {
+    pub(crate) fn totalmem() -> u64 {
         #[cfg(target_os = "macos")]
         {
             let mut memory_: [core::ffi::c_ulonglong; 32] = [0; 32];
@@ -1604,7 +1604,7 @@ mod _impl {
         }
     }
 
-    pub fn user_info(
+    pub(crate) fn user_info(
         global_this: &JSGlobalObject,
         options: &gen_::UserInfoOptions,
     ) -> JsResult<JSValue> {
@@ -1655,7 +1655,7 @@ mod _impl {
         Ok(result)
     }
 
-    pub fn version() -> JsResult<BunString> {
+    pub(crate) fn version() -> JsResult<BunString> {
         let mut name_buffer = [0u8; HOST_NAME_MAX];
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]

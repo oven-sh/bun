@@ -155,7 +155,10 @@ pub enum CompressError {
 bun_core::named_error_set!(DecompressError, CompressError);
 
 impl PerMessageDeflate {
-    pub fn init(params: Params, rare_data: &mut JscRareData) -> Result<Box<Self>, bun_core::Error> {
+    pub(crate) fn init(
+        params: Params,
+        rare_data: &mut JscRareData,
+    ) -> Result<Box<Self>, bun_core::Error> {
         // TODO(port): narrow error set
         let mut self_ = Box::new(Self {
             params,
@@ -222,7 +225,11 @@ impl PerMessageDeflate {
         len < RareData::STACK_BUFFER_SIZE
     }
 
-    pub fn decompress(&mut self, in_buf: &[u8], out: &mut Vec<u8>) -> Result<(), DecompressError> {
+    pub(crate) fn decompress(
+        &mut self,
+        in_buf: &[u8],
+        out: &mut Vec<u8>,
+    ) -> Result<(), DecompressError> {
         let initial_len = out.len();
 
         // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
@@ -293,7 +300,11 @@ impl PerMessageDeflate {
         Ok(())
     }
 
-    pub fn compress(&mut self, in_buf: &[u8], out: &mut Vec<u8>) -> Result<(), CompressError> {
+    pub(crate) fn compress(
+        &mut self,
+        in_buf: &[u8],
+        out: &mut Vec<u8>,
+    ) -> Result<(), CompressError> {
         self.compress_stream.next_in = in_buf.as_ptr();
         self.compress_stream.avail_in = u32::try_from(in_buf.len()).expect("unreachable");
 

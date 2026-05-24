@@ -4,7 +4,6 @@
 //! functions become inherent methods on it.
 
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 #[path = "AsyncHTTP.rs"]
 pub mod async_http;
 #[path = "CertificateInfo.rs"]

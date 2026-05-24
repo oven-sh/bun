@@ -17,7 +17,6 @@
 //! a real ownership story (likely `bun_core::String` or a `'source` lifetime
 //! threaded through `Location`/`Data`/`Msg`) is still needed.
 
-#![warn(unreachable_pub)]
 use core::fmt;
 use std::borrow::Cow;
 
@@ -84,8 +83,6 @@ pub enum ImportKind {
     Internal = 11,
 }
 
-pub type ImportKindLabel = enum_map::EnumMap<ImportKind, &'static [u8]>;
-
 // E0015: EnumMap indexing isn't const; Zig's `comptime brk: { ... }` initializer
 // is folded into match arms inside label()/error_label() below — same lookup
 // table, zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
@@ -135,16 +132,6 @@ impl ImportKind {
     #[inline]
     pub fn is_common_js(self) -> bool {
         matches!(self, Self::Require | Self::RequireResolve)
-    }
-
-    // TODO(port): Zig `jsonStringify` uses the std.json writer protocol; replace
-    // with a `serde::Serialize` impl or the project's JSON writer trait. For now
-    // emit the quoted string directly — every tag name is a plain ASCII
-    // identifier with no chars that need JSON escaping.
-    pub fn json_stringify<W: core::fmt::Write>(self, writer: &mut W) -> core::fmt::Result {
-        writer.write_char('"')?;
-        writer.write_str(<&'static str>::from(self))?;
-        writer.write_char('"')
     }
 
     pub fn is_from_css(self) -> bool {
@@ -711,28 +698,6 @@ impl Loc {
     #[inline]
     pub fn is_empty(self) -> bool {
         self.eql(Self::EMPTY)
-    }
-
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        writer.write_i32(self.start)
-    }
-}
-
-// TODO(port): `writer: anytype` for jsonStringify — the Zig calls
-// `writer.write(value)` for arbitrary `value`. Model as a single generic
-// `write<V>` until the real serializer exists.
-pub trait JsonWriter {
-    fn write<V: ?Sized>(&mut self, value: &V) -> core::result::Result<(), bun_core::Error>;
-
-    // Legacy specialised entry points (Loc/Range) — default to `write`.
-    #[inline]
-    fn write_i32(&mut self, v: i32) -> core::result::Result<(), bun_core::Error> {
-        self.write(&v)
-    }
-    #[inline]
-    fn write_i32_pair(&mut self, v: [i32; 2]) -> core::result::Result<(), bun_core::Error> {
-        self.write(&v)
     }
 }
 
@@ -1538,10 +1503,6 @@ impl Range {
     pub fn end_i(self) -> usize {
         // std.math.lossyCast(usize, ...) — saturates negatives to 0.
         (self.loc.start + self.len).max(0) as usize
-    }
-
-    pub fn json_stringify(self, writer: &mut impl JsonWriter) -> Result<(), bun_core::Error> {
-        writer.write_i32_pair([self.loc.start, self.len + self.loc.start])
     }
 }
 
@@ -3205,7 +3166,7 @@ pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys
 ///
 /// MOVE_DOWN from `bun_sys::File::to_source_at`. Zig source:
 /// `src/sys/File.zig:toSourceAt`.
-pub fn source_from_file_at(
+pub(crate) fn source_from_file_at(
     dir_fd: bun_sys::Fd,
     path: &bun_core::ZStr,
     opts: ToSourceOptions,
@@ -3222,16 +3183,7 @@ pub fn source_from_file_at(
     Ok(Source::init_path_string_owned(path.as_bytes(), bytes))
 }
 
-/// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
-pub fn to_source_at(
-    dir_fd: bun_sys::Fd,
-    path: &bun_core::ZStr,
-    opts: ToSourceOptions,
-) -> bun_sys::Result<Source> {
-    source_from_file_at(dir_fd, path, opts)
-}
-
-/// `to_source_at` rooted at the process CWD.
+/// `source_from_file_at` rooted at the process CWD.
 pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Result<Source> {
     source_from_file(path, opts)
 }
@@ -3461,7 +3413,7 @@ pub mod store_ast_alloc_heap {
         core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get())
     }
 
-    pub fn enter() {
+    pub(crate) fn enter() {
         if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
             return;
         }
@@ -3490,7 +3442,7 @@ pub mod store_ast_alloc_heap {
         ast_alloc::reset_active_state();
     }
 
-    pub fn exit() {
+    pub(crate) fn exit() {
         if STATE_ID.get().is_null() {
             return;
         }
@@ -3521,11 +3473,11 @@ static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
     core::cell::Cell::new(core::ptr::null());
 
 #[inline]
-pub fn data_store_override() -> *const bun_alloc::Arena {
+pub(crate) fn data_store_override() -> *const bun_alloc::Arena {
     DATA_STORE_OVERRIDE.get()
 }
 #[inline]
-pub fn set_data_store_override(p: *const bun_alloc::Arena) {
+pub(crate) fn set_data_store_override(p: *const bun_alloc::Arena) {
     DATA_STORE_OVERRIDE.set(p);
 }
 

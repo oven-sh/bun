@@ -22,7 +22,6 @@
 //! `wyhash` lives in `bun_wyhash`; `crc32` is provided by `bun_zlib`.
 
 #![allow(clippy::many_single_char_names)]
-#![warn(unreachable_pub)]
 pub mod adler32;
 pub mod cityhash;
 pub mod murmur;

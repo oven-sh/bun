@@ -247,12 +247,11 @@ pub fn copy_file_with_state(
     #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
     {
         loop {
-            match copy_file_read_write_loop(in_.native(), out.native(), (i32::MAX - 1) as usize) {
-                Err(err) => return Err(err),
-                Ok(amt) => {
-                    if amt == 0 {
-                        break;
-                    }
+            {
+                let amt =
+                    copy_file_read_write_loop(in_.native(), out.native(), (i32::MAX - 1) as usize)?;
+                if amt == 0 {
+                    break;
                 }
             }
         }

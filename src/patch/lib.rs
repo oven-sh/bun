@@ -4,7 +4,6 @@
 
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
@@ -427,7 +426,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         patch_dir,
         &file_path,
         sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
-        sys::Mode::try_from(stat.st_mode).expect("int cast"),
+        stat.st_mode as sys::Mode,
     ) {
         sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
         sys::Result::Ok(fd) => fd,
@@ -592,7 +591,7 @@ impl Header {
 // Zig `Hunk.deinit` only freed owned fields → Drop is automatic.
 
 impl<'a> Hunk<'a> {
-    pub fn verify_integrity(&self) -> bool {
+    pub(crate) fn verify_integrity(&self) -> bool {
         let mut original_length: usize = 0;
         let mut patched_length: usize = 0;
 
@@ -628,11 +627,11 @@ pub enum FileMode {
 }
 
 impl FileMode {
-    pub fn to_bun_mode(self) -> sys::Mode {
+    pub(crate) fn to_bun_mode(self) -> sys::Mode {
         sys::Mode::try_from(self as u32).expect("int cast")
     }
 
-    pub fn from_u32(mode: u32) -> Option<FileMode> {
+    pub(crate) fn from_u32(mode: u32) -> Option<FileMode> {
         match mode {
             0o644 => Some(FileMode::NonExecutable),
             0o755 => Some(FileMode::Executable),
@@ -683,7 +682,7 @@ pub struct FileCreation<'a> {
 // Zig `deinit` freed hunk + bun.destroy(this) → Drop on Box<FileCreation> handles both.
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum PatchFilePartKind {
+pub(crate) enum PatchFilePartKind {
     FilePatch,
     FileDeletion,
     FileCreation,

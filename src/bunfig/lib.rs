@@ -8,7 +8,6 @@
 //! introduced; this only makes the existing edge direct.
 
 #![allow(non_snake_case)]
-#![warn(unreachable_pub)]
 pub mod arguments;
 pub mod bunfig;
 

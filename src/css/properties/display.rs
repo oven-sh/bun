@@ -14,23 +14,18 @@ pub enum Display {
 // PORT NOTE: Zig `DeriveParse`/`DeriveToCss` for a 2-payload union(enum) tries each
 // payload's `parse` in declaration order; `toCss` dispatches to the active payload.
 impl Display {
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Ok(kw) = input.try_parse(DisplayKeyword::parse) {
             return Ok(Display::Keyword(kw));
         }
         DisplayPair::parse(input).map(Display::Pair)
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             Display::Keyword(kw) => kw.to_css(dest),
             Display::Pair(p) => p.to_css(dest),
         }
-    }
-
-    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
-        // All payloads are Copy.
-        self
     }
 }
 
@@ -80,7 +75,7 @@ pub struct DisplayPair {
 }
 
 impl DisplayPair {
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut list_item = false;
         let mut outside: Option<DisplayOutside> = None;
         let mut inside: Option<DisplayInside> = None;
@@ -165,7 +160,7 @@ impl DisplayPair {
         })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         // PORT NOTE: reshaped Zig if-else chain into match for tagged-union payload extraction.
         match (self.outside, &self.inside, self.is_list_item) {
             (DisplayOutside::Inline, DisplayInside::FlowRoot, false) => {
@@ -244,7 +239,7 @@ pub enum DisplayInside {
 }
 
 impl DisplayInside {
-    pub fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
@@ -276,7 +271,7 @@ impl DisplayInside {
         })
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             DisplayInside::Flow => dest.write_str("flow"),
             DisplayInside::FlowRoot => dest.write_str("flow-root"),

@@ -31,7 +31,7 @@ use crate::api::bun::process::sync as proc_sync;
 
 bun_output::declare_scope!(bunx, visible);
 
-pub struct BunxCommand;
+pub(crate) struct BunxCommand;
 
 /// bunx-specific options parsed from argv.
 //
@@ -212,7 +212,7 @@ impl Options {
 // so no explicit `Drop` impl is needed.
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GetBinNameError {
+pub(crate) enum GetBinNameError {
     #[error("NoBinFound")]
     NoBinFound,
     #[error("NeedToInstall")]
@@ -229,7 +229,7 @@ impl BunxCommand {
     /// occupies `v[..v.len()-1]` (matches Zig `[:0]const u8` from `allocSentinel`).
     // TODO(port): return owned `bun_core::ZString` / `Box<ZStr>` once that type exists,
     // instead of a Vec<u8> with a trailing-NUL convention.
-    pub fn add_create_prefix(input: &[u8]) -> Result<Vec<u8>, AllocError> {
+    pub(crate) fn add_create_prefix(input: &[u8]) -> Result<Vec<u8>, AllocError> {
         const PREFIX_LENGTH: usize = b"create-".len();
 
         if input.is_empty() {
@@ -591,7 +591,10 @@ impl BunxCommand {
         Global::exit(1);
     }
 
-    pub fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(
+        ctx: &mut ContextData,
+        argv: &[&'static ZStr],
+    ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         // Don't log stuff
         ctx.debug.silent = true;

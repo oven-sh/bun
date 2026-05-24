@@ -54,8 +54,6 @@ impl<'a> Snapshots<'a> {
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
 }
 
-// std.HashMap(usize, string, bun.IdentityContext(usize), default_max_load_percentage)
-// TODO(perf): IdentityContext — key is its own hash; consider `BuildHasherDefault<IdentityHasher>`.
 // PORT NOTE: hoisted out of `impl Snapshots` — inherent associated types are unstable.
 pub type ValuesHashMap = HashMap<u64, Box<[u8]>>;
 

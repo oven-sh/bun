@@ -1536,17 +1536,13 @@ impl BlobExt for Blob {
                 };
                 let sink = webcore::FileSink::init(
                     fd,
-                    // SAFETY: `global_this().bun_vm().event_loop()` is the live
-                    // per-thread `jsc::EventLoop`.
-                    unsafe {
-                        jsc::EventLoopHandle::init(
-                            self.global_this()
-                                .expect("Blob.global_this set at construction")
-                                .bun_vm()
-                                .as_mut()
-                                .event_loop() as *mut (),
-                        )
-                    },
+                    jsc::EventLoopHandle::init(
+                        self.global_this()
+                            .expect("Blob.global_this set at construction")
+                            .bun_vm()
+                            .as_mut()
+                            .event_loop() as *mut (),
+                    ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
                 unsafe {
@@ -1905,17 +1901,13 @@ impl BlobExt for Blob {
 
             let sink = webcore::FileSink::init(
                 fd,
-                // SAFETY: `global_this().bun_vm().event_loop()` is the live
-                // per-thread `jsc::EventLoop`.
-                unsafe {
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .as_mut()
-                            .event_loop() as *mut (),
-                    )
-                },
+                jsc::EventLoopHandle::init(
+                    self.global_this()
+                        .expect("Blob.global_this set at construction")
+                        .bun_vm()
+                        .as_mut()
+                        .event_loop() as *mut (),
+                ),
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
             let sink_mut = unsafe { &mut *sink };
@@ -3968,7 +3960,7 @@ fn escape_form_data_name(bytes: Vec<u8>) -> Box<[u8]> {
 }
 
 impl FormDataContext<'_> {
-    pub fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
+    pub(crate) fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
             return;
         }
@@ -4087,7 +4079,7 @@ struct StructuredCloneWriter {
 }
 
 impl StructuredCloneWriter {
-    pub fn write(&self, bytes: &[u8]) -> usize {
+    pub(crate) fn write(&self, bytes: &[u8]) -> usize {
         // SAFETY: ctx and impl_ are supplied by C++ SerializedScriptValue and valid
         // for the duration of on_structured_clone_serialize.
         unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
@@ -4302,7 +4294,7 @@ struct URLSearchParamsConverter {
 }
 
 impl URLSearchParamsConverter {
-    pub fn convert(&mut self, str: ZigString) {
+    pub(crate) fn convert(&mut self, str: ZigString) {
         self.buf = str.to_owned_slice();
     }
 }

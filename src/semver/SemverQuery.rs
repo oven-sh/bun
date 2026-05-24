@@ -275,7 +275,7 @@ impl List {
     }
 }
 
-pub type FlagsBitSet = IntegerBitSet<3>;
+pub(crate) type FlagsBitSet = IntegerBitSet<3>;
 
 pub struct Flags;
 impl Flags {

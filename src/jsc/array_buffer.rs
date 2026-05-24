@@ -716,7 +716,7 @@ pub enum BinaryType {
     // DataView,
 }
 
-pub static BINARY_TYPE_MAP: phf::Map<&'static [u8], BinaryType> = phf::phf_map! {
+pub(crate) static BINARY_TYPE_MAP: phf::Map<&'static [u8], BinaryType> = phf::phf_map! {
     b"ArrayBuffer" => BinaryType::ArrayBuffer,
     b"Buffer" => BinaryType::Buffer,
     // b"DataView" => BinaryType::DataView,
@@ -908,7 +908,7 @@ pub struct MarkedArrayBuffer {
 // TODO(port): Zig `ArrayBuffer.Stream = std.io.FixedBufferStream([]u8)`.
 // `std::io::Cursor<&mut [u8]>` is the closest in-memory equivalent.
 // Hoisted to module scope (inherent associated type aliases are unstable).
-pub type ArrayBufferStream<'a> = std::io::Cursor<&'a mut [u8]>;
+pub(crate) type ArrayBufferStream<'a> = std::io::Cursor<&'a mut [u8]>;
 
 impl MarkedArrayBuffer {
     #[inline]
@@ -1077,8 +1077,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSCArrayBuffer;
 }
 
-// Zig: `pub const Ref = bun.ptr.ExternalShared(Self)` with
-// `external_shared_descriptor = struct { ref, deref }` (array_buffer.zig:673).
 pub type JSCArrayBufferRef = bun_ptr::ExternalShared<JSCArrayBuffer>;
 
 // SAFETY: `JSC__ArrayBuffer__ref`/`deref` operate on JSC's internal

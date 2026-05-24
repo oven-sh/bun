@@ -1,4 +1,3 @@
-#![warn(unreachable_pub)]
 use core::ptr;
 
 pub use bun_brotli_sys::brotli_c as c;

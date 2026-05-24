@@ -505,9 +505,8 @@ unsafe extern "C" {
 }
 
 #[cfg(windows)]
-pub fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
-    // SAFETY: FFI call into libuv. Raw extern lives in `bun_core::fd` (T0).
-    let out = unsafe { bun_core::fd::uv_open_osfhandle(in_) };
+pub(crate) fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
+    let out = bun_core::fd::uv_open_osfhandle(in_);
     debug_assert!(out >= -1);
     if out == -1 {
         return Err(MakeLibUvOwnedError::SystemFdQuotaExceeded);

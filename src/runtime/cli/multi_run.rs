@@ -45,7 +45,7 @@ struct ScriptConfig {
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
 /// so output can be routed to the correct parent stream.
-struct PipeReader<'a> {
+pub struct PipeReader<'a> {
     reader: BufferedReader,
     handle: *const ProcessHandle<'a>, // set in ProcessHandle::start()
     is_stderr: bool,
@@ -94,7 +94,7 @@ struct ProcessSlot {
     status: Status,
 }
 
-pub struct ProcessHandle<'a> {
+pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: *const State<'a>,
     color_idx: usize,
@@ -305,7 +305,7 @@ struct State<'a> {
 }
 
 impl<'a> State<'a> {
-    pub fn is_done(&self) -> bool {
+    pub(crate) fn is_done(&self) -> bool {
         self.remaining_scripts == 0
     }
 
@@ -504,7 +504,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn abort(&mut self) {
+    pub(crate) fn abort(&mut self) {
         self.aborted = true;
         for handle in self.handles.iter_mut() {
             if let Some(proc) = &mut handle.process {
@@ -517,7 +517,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn finalize(&self) -> u8 {
+    pub(crate) fn finalize(&self) -> u8 {
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
                 match &proc.status {
@@ -562,7 +562,7 @@ impl AbortHandler {
         bun_sys::windows::FALSE
     }
 
-    pub fn install() {
+    pub(crate) fn install() {
         #[cfg(unix)]
         {
             // bun_sys::posix::Sigaction is a re-export of libc::sigaction; construct
@@ -592,7 +592,7 @@ impl AbortHandler {
         }
     }
 
-    pub fn uninstall() {
+    pub(crate) fn uninstall() {
         #[cfg(windows)]
         {
             let _ = bun_sys::windows::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
@@ -759,7 +759,7 @@ fn add_script_configs(
 
 // TODO(port): `!noreturn` — Zig returns either an error or diverges. Using
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
-pub fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
+pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
     // Validate flags
     if ctx.parallel && ctx.sequential {
         Output::pretty_errorln(

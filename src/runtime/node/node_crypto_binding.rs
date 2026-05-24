@@ -76,7 +76,7 @@ macro_rules! extern_crypto_job {
                 safe fn ctx_deinit(ctx: &Ctx);
             }
 
-            pub struct ExternCtx {
+            pub(crate) struct ExternCtx {
                 ctx: *mut Ctx,
                 callback: StrongOptional,
             }
@@ -106,11 +106,11 @@ macro_rules! extern_crypto_job {
                 }
             }
 
-            pub type Job = AnyTaskJob<ExternCtx>;
+            pub(crate) type Job = AnyTaskJob<ExternCtx>;
 
             // Zig `comptime { @export(...) }` — exported C symbols.
             #[unsafe(export_name = concat!("Bun__", $name_str, "__create"))]
-            pub extern "C" fn __create(
+            pub(crate) extern "C" fn __create(
                 global: &JSGlobalObject,
                 ctx: *mut Ctx,
                 callback: JSValue,
@@ -126,13 +126,13 @@ macro_rules! extern_crypto_job {
             }
 
             #[unsafe(export_name = concat!("Bun__", $name_str, "__schedule"))]
-            pub extern "C" fn __schedule(this: &mut Job) {
+            pub(crate) extern "C" fn __schedule(this: &mut Job) {
                 // SAFETY: `this` is a live pointer returned by `__create`.
                 unsafe { Job::schedule(this) };
             }
 
             #[unsafe(export_name = concat!("Bun__", $name_str, "__createAndSchedule"))]
-            pub extern "C" fn __create_and_schedule(
+            pub(crate) extern "C" fn __create_and_schedule(
                 global: &JSGlobalObject,
                 ctx: *mut Ctx,
                 callback: JSValue,
@@ -212,11 +212,9 @@ impl<C: CryptoJobCtx> Drop for CallbackCtx<C> {
     }
 }
 
-pub type CryptoJob<C> = AnyTaskJob<CallbackCtx<C>>;
-
 /// Zig `CryptoJob.initAndSchedule` — kept as a free fn since `CryptoJob<C>` is
 /// now a type alias for the foreign `AnyTaskJob<_>`.
-pub fn crypto_job_init_and_schedule<C: CryptoJobCtx>(
+pub(crate) fn crypto_job_init_and_schedule<C: CryptoJobCtx>(
     global: &JSGlobalObject,
     callback: JSValue,
     ctx: C,
@@ -254,14 +252,12 @@ pub mod random {
         pub result: (), // void
     }
 
-    pub type Job = CryptoJob<JobCtx>;
-
-    pub const MAX_POSSIBLE_LENGTH: usize = {
+    pub(crate) const MAX_POSSIBLE_LENGTH: usize = {
         let a = ArrayBuffer::MAX_SIZE as usize;
         let b = i32::MAX as usize;
         if a < b { a } else { b }
     };
-    pub const MAX_RANGE: i64 = 0xffff_ffff_ffff;
+    pub(crate) const MAX_RANGE: i64 = 0xffff_ffff_ffff;
 
     impl CryptoJobCtx for JobCtx {
         fn init(&mut self, _: &JSGlobalObject) -> JsResult<()> {
@@ -323,7 +319,10 @@ pub mod random {
         use bun_jsc::{JSType, StringJsc as _, UUID};
 
         #[bun_jsc::host_fn]
-        pub fn random_int(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn random_int(
+            global: &JSGlobalObject,
+            call_frame: &CallFrame,
+        ) -> JsResult<JSValue> {
             let [mut min_value, mut max_value, mut callback] = call_frame.arguments_as_array::<3>();
 
             let mut min_specified = true;
@@ -431,7 +430,10 @@ pub mod random {
         }
 
         #[bun_jsc::host_fn]
-        pub fn random_uuid(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn random_uuid(
+            global: &JSGlobalObject,
+            call_frame: &CallFrame,
+        ) -> JsResult<JSValue> {
             let args = call_frame.arguments();
 
             let mut disable_entropy_cache = false;
@@ -472,7 +474,7 @@ pub mod random {
             str.transfer_to_js(global)
         }
 
-        pub fn assert_offset(
+        pub(crate) fn assert_offset(
             global: &JSGlobalObject,
             offset_value: JSValue,
             element_size: u8,
@@ -503,7 +505,7 @@ pub mod random {
             Ok(offset as u32)
         }
 
-        pub fn assert_size(
+        pub(crate) fn assert_size(
             global: &JSGlobalObject,
             size_value: JSValue,
             element_size: u8,
@@ -540,7 +542,10 @@ pub mod random {
         }
 
         #[bun_jsc::host_fn]
-        pub fn random_bytes(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn random_bytes(
+            global: &JSGlobalObject,
+            call_frame: &CallFrame,
+        ) -> JsResult<JSValue> {
             let [size_value, callback] = call_frame.arguments_as_array::<2>();
 
             let size = assert_size(global, size_value, 1, 0, MAX_POSSIBLE_LENGTH + 1)?;
@@ -571,7 +576,7 @@ pub mod random {
         }
 
         #[bun_jsc::host_fn]
-        pub fn random_fill_sync(
+        pub(crate) fn random_fill_sync(
             global: &JSGlobalObject,
             call_frame: &CallFrame,
         ) -> JsResult<JSValue> {
@@ -618,7 +623,10 @@ pub mod random {
         }
 
         #[bun_jsc::host_fn]
-        pub fn random_fill(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn random_fill(
+            global: &JSGlobalObject,
+            call_frame: &CallFrame,
+        ) -> JsResult<JSValue> {
             let [buf_value, offset_value, mut size_value, mut callback] =
                 call_frame.arguments_as_array::<4>();
 
@@ -695,7 +703,7 @@ pub mod random {
 // ───────────────────────────────────────────────────────────────────────────
 // Scrypt
 // ───────────────────────────────────────────────────────────────────────────
-pub struct Scrypt {
+pub(crate) struct Scrypt {
     // Plain `StringOrBuffer` — NOT `ThreadSafe<_>`. The struct serves both
     // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
     // `from_js_maybe_async(.., true)`); wrapping in `ThreadSafe` here would make
@@ -718,8 +726,6 @@ pub struct Scrypt {
     err: Option<u32>,
 }
 
-pub type ScryptJob = CryptoJob<Scrypt>;
-
 mod _impl {
     use super::*;
     use crate::node::util::validators;
@@ -735,7 +741,7 @@ mod _impl {
         /// Rust cannot vary the return type on a const-generic bool, so this always returns
         /// `(Self, JSValue)`; the sync caller ignores the second element.
         // PORT NOTE: reshaped — return type unified across IS_ASYNC.
-        pub fn from_js<const IS_ASYNC: bool>(
+        pub(crate) fn from_js<const IS_ASYNC: bool>(
             global: &JSGlobalObject,
             call_frame: &CallFrame,
         ) -> JsResult<(Self, JSValue)> {
@@ -1170,22 +1176,22 @@ mod _impl {
     }
 
     #[bun_jsc::host_fn]
-    pub fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]
-    pub fn get_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn get_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::js_number(0.0))
     }
 
     #[bun_jsc::host_fn]
-    pub fn set_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn set_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]
-    pub fn set_engine(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(super) fn set_engine(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Err(global
             .err(
                 ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED,

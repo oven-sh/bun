@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 pub mod alloc;
 
 #[path = "CriticalSection.rs"]

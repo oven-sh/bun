@@ -13,7 +13,7 @@ use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsRes
 // absorbs the signature differences.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub trait HashOutput: Copy {
+pub(crate) trait HashOutput: Copy {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
 }
 
@@ -31,7 +31,7 @@ impl HashOutput for u64 {
     }
 }
 
-pub trait HashAlgorithm {
+pub(crate) trait HashAlgorithm {
     type Output: HashOutput;
     /// `seed` is always passed as u64 from JS; impls truncate to their native
     /// seed width (matches Zig's `@truncate(seed)`). Hashers that take no
@@ -44,7 +44,7 @@ pub trait HashAlgorithm {
 // Each must produce output **bit-identical** to Zig's `std.hash.*`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Wyhash;
+pub(crate) struct Wyhash;
 impl HashAlgorithm for Wyhash {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
@@ -52,7 +52,7 @@ impl HashAlgorithm for Wyhash {
     }
 }
 
-pub struct Adler32;
+pub(crate) struct Adler32;
 impl HashAlgorithm for Adler32 {
     type Output = u32;
     fn hash(_seed: u64, input: &[u8]) -> u32 {
@@ -62,7 +62,7 @@ impl HashAlgorithm for Adler32 {
 }
 
 /// Use hardware-accelerated CRC32 from zlib
-pub struct Crc32;
+pub(crate) struct Crc32;
 impl HashAlgorithm for Crc32 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
@@ -86,7 +86,7 @@ impl HashAlgorithm for Crc32 {
     }
 }
 
-pub struct CityHash32;
+pub(crate) struct CityHash32;
 impl HashAlgorithm for CityHash32 {
     type Output = u32;
     fn hash(_seed: u64, input: &[u8]) -> u32 {
@@ -97,7 +97,7 @@ impl HashAlgorithm for CityHash32 {
     }
 }
 
-pub struct CityHash64;
+pub(crate) struct CityHash64;
 impl HashAlgorithm for CityHash64 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
@@ -106,7 +106,7 @@ impl HashAlgorithm for CityHash64 {
     }
 }
 
-pub struct XxHash32;
+pub(crate) struct XxHash32;
 impl HashAlgorithm for XxHash32 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
@@ -116,7 +116,7 @@ impl HashAlgorithm for XxHash32 {
     }
 }
 
-pub struct XxHash64;
+pub(crate) struct XxHash64;
 impl HashAlgorithm for XxHash64 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
@@ -126,7 +126,7 @@ impl HashAlgorithm for XxHash64 {
     }
 }
 
-pub struct XxHash3;
+pub(crate) struct XxHash3;
 impl HashAlgorithm for XxHash3 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
@@ -138,7 +138,7 @@ impl HashAlgorithm for XxHash3 {
     }
 }
 
-pub struct Murmur32v2;
+pub(crate) struct Murmur32v2;
 impl HashAlgorithm for Murmur32v2 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
@@ -147,7 +147,7 @@ impl HashAlgorithm for Murmur32v2 {
     }
 }
 
-pub struct Murmur32v3;
+pub(crate) struct Murmur32v3;
 impl HashAlgorithm for Murmur32v3 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
@@ -156,7 +156,7 @@ impl HashAlgorithm for Murmur32v3 {
     }
 }
 
-pub struct Murmur64v2;
+pub(crate) struct Murmur64v2;
 impl HashAlgorithm for Murmur64v2 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
@@ -165,7 +165,7 @@ impl HashAlgorithm for Murmur64v2 {
     }
 }
 
-pub struct Rapidhash;
+pub(crate) struct Rapidhash;
 impl HashAlgorithm for Rapidhash {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
@@ -181,12 +181,12 @@ impl HashAlgorithm for Rapidhash {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[bun_jsc::host_fn]
-pub fn wyhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn wyhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Wyhash>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn adler32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn adler32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Adler32>(global, frame)
 }
 
@@ -195,58 +195,58 @@ pub fn adler32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
 // shim. The shim ident (`__jsc_host_crc32`) is unchanged, so `create()` below
 // keeps resolving.
 #[bun_jsc::host_fn(export = "Bun__HashObject__crc32")]
-pub fn crc32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn crc32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Crc32>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn city_hash32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn city_hash32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<CityHash32>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn city_hash64(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn city_hash64(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<CityHash64>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn xx_hash32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn xx_hash32(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<XxHash32>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn xx_hash64(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn xx_hash64(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<XxHash64>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn xx_hash3(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn xx_hash3(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<XxHash3>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn murmur32v2(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn murmur32v2(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Murmur32v2>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn murmur32v3(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn murmur32v3(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Murmur32v3>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn murmur64v2(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn murmur64v2(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Murmur64v2>(global, frame)
 }
 
 #[bun_jsc::host_fn]
-pub fn rapidhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn rapidhash(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Rapidhash>(global, frame)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     // `Bun.hash` is itself callable (wyhash); the named algorithms hang off it.
     JSFunction::create(global, "hash", __jsc_host_wyhash, 1, Default::default()).put_host_functions(
         global,

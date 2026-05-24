@@ -381,7 +381,7 @@ extern "C" fn on_process_exit() {
 /// (so its child set is stable while we recurse), which is what makes the
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
-pub fn kill_descendants() {
+pub(crate) fn kill_descendants() {
     #[cfg(unix)]
     {
         let self_pid = getpid();
@@ -648,7 +648,7 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
             bun_sys::c::proc_listchildpids(
                 parent,
                 out.as_mut_ptr().cast(),
-                c_int::try_from(out.len() * core::mem::size_of::<libc::pid_t>()).expect("int cast"),
+                c_int::try_from(std::mem::size_of_val(out)).expect("int cast"),
             )
         };
         if rc <= 0 {

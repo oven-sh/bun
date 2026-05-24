@@ -621,13 +621,15 @@ pub struct PrivateIdentifier {
 /// In development mode, the new JSX transform has a few special props
 /// - `React.jsxDEV(type, arguments, key, isStaticChildren, source, self)`
 /// - `arguments`:
-///      ```{ ...props, children: children, }```
+///      `{ ...props, children: children, }`
 /// - `source`: https://github.com/babel/babel/blob/ef87648f3f05ccc393f89dea7d4c7c57abf398ce/packages/babel-plugin-transform-react-jsx-source/src/index.js#L24-L48
-///      ```{
-///         fileName: string | null,
-///         columnNumber: number | null,
-///         lineNumber: number | null,
-///      }```
+///   ```text
+///   {
+///      fileName: string | null,
+///      columnNumber: number | null,
+///      lineNumber: number | null,
+///   }
+///   ```
 /// - `children`:
 ///     - static the function is React.jsxsDEV, "jsxs" instead of "jsx"
 ///     - one child? the function is React.jsxDEV,
@@ -706,11 +708,6 @@ impl JSXSpecialProp {
         }
     }
 }
-
-// `Missing` re-exported from `crate::E` above.
-// TODO(port): `Missing::json_stringify` — Zig std.json protocol; orphan rules
-// prevent an inherent impl here now that the type lives at T2. Pick a
-// serde strategy (extension trait or move the method down).
 
 #[derive(Clone, Copy)]
 pub struct Number {
@@ -824,13 +821,6 @@ impl Number {
         T::from_f64(clamped)
     }
 
-    pub fn json_stringify<W: crate::JsonWriter>(
-        self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(&self.value)
-    }
-
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 }
 
@@ -858,13 +848,6 @@ pub struct BigInt {
 }
 impl BigInt {
     pub const EMPTY: BigInt = BigInt { value: Str::EMPTY };
-
-    pub fn json_stringify<W: crate::JsonWriter>(
-        &self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(&self.value)
-    }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 }
@@ -1826,23 +1809,6 @@ impl EString {
             ZigString::init_utf16(self.slice16())
         }
     }
-
-    // TODO(port): jsonStringify — Zig std.json protocol; pick a serde strategy.
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        let _ = writer;
-        let mut buf = [0u8; 4096];
-        let mut i: usize = 0;
-        for &char in self.slice16() {
-            buf[i] = u8::try_from(char).expect("int cast");
-            i += 1;
-            if i >= 4096 {
-                break;
-            }
-        }
-        let _ = &buf[..i];
-        // writer.write(&buf[..i])
-        Err(bun_core::err!(Unimplemented))
-    }
 }
 
 impl fmt::Display for EString {
@@ -2164,13 +2130,6 @@ impl RegExp {
         }
 
         b""
-    }
-
-    pub fn json_stringify<W: crate::JsonWriter>(
-        &self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(&self.value)
     }
 }
 

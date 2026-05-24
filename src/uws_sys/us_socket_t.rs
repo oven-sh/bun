@@ -402,67 +402,79 @@ mod c {
     // Shims that take a (ptr,len) pair, nullable raw, or transfer ownership
     // stay unsafe.
     unsafe extern "C" {
-        pub safe fn us_socket_get_native_handle(s: &mut us_socket_t) -> *mut c_void;
+        pub(super) safe fn us_socket_get_native_handle(s: &mut us_socket_t) -> *mut c_void;
 
-        pub safe fn us_socket_local_port(s: &us_socket_t) -> i32;
-        pub safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
-        pub fn us_socket_remote_address(s: *const us_socket_t, buf: *mut u8, length: *mut i32);
-        pub fn us_socket_local_address(s: *const us_socket_t, buf: *mut u8, length: *mut i32);
-        pub safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
-        pub safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
-        pub safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
-        pub safe fn us_socket_keepalive(s: &mut us_socket_t, enable: c_int, delay: c_uint)
-        -> c_int;
+        pub(super) safe fn us_socket_local_port(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
+        pub(super) fn us_socket_remote_address(
+            s: *const us_socket_t,
+            buf: *mut u8,
+            length: *mut i32,
+        );
+        pub(super) fn us_socket_local_address(
+            s: *const us_socket_t,
+            buf: *mut u8,
+            length: *mut i32,
+        );
+        pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
+        pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
+        pub(super) safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);
+        pub(super) safe fn us_socket_keepalive(
+            s: &mut us_socket_t,
+            enable: c_int,
+            delay: c_uint,
+        ) -> c_int;
 
-        pub safe fn us_socket_ext(s: &mut us_socket_t) -> *mut c_void;
-        pub safe fn us_socket_group(s: &mut us_socket_t) -> *mut SocketGroup;
-        pub safe fn us_socket_kind(s: &us_socket_t) -> u8;
-        pub safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
-        pub safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
-        pub safe fn us_socket_is_tls(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_ext(s: &mut us_socket_t) -> *mut c_void;
+        pub(super) safe fn us_socket_group(s: &mut us_socket_t) -> *mut SocketGroup;
+        pub(super) safe fn us_socket_kind(s: &us_socket_t) -> u8;
+        pub(super) safe fn us_socket_set_kind(s: &mut us_socket_t, kind: u8);
+        pub(super) safe fn us_socket_set_ssl_raw_tap(s: &mut us_socket_t, enabled: c_int);
+        pub(super) safe fn us_socket_is_tls(s: &us_socket_t) -> i32;
 
-        pub fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
+        pub(super) fn us_socket_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
         #[cfg(not(windows))]
-        pub fn us_socket_ipc_write_fd(
+        pub(super) fn us_socket_ipc_write_fd(
             s: *mut us_socket_t,
             data: *const u8,
             length: i32,
             fd: i32,
         ) -> i32;
-        pub fn us_socket_write2(
+        pub(super) fn us_socket_write2(
             s: *mut us_socket_t,
             header: *const u8,
             len: usize,
             payload: *const u8,
             len2: usize,
         ) -> i32;
-        pub fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32) -> i32;
-        pub safe fn us_socket_flush(s: &mut us_socket_t);
+        pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
+        -> i32;
+        pub(super) safe fn us_socket_flush(s: &mut us_socket_t);
 
-        pub fn us_socket_open(
+        pub(super) fn us_socket_open(
             s: *mut us_socket_t,
             is_client: i32,
             ip: *const u8,
             ip_length: i32,
         ) -> *mut us_socket_t;
-        pub safe fn us_socket_pause(s: &mut us_socket_t);
-        pub safe fn us_socket_resume(s: &mut us_socket_t);
-        pub fn us_socket_close(
+        pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        pub(super) fn us_socket_close(
             s: *mut us_socket_t,
             code: CloseCode,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
-        pub safe fn us_socket_shutdown(s: &mut us_socket_t);
-        pub safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
-        pub safe fn us_socket_shutdown_read(s: &mut us_socket_t);
-        pub safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
-        pub safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
-        pub safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
-        pub safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
-        pub safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
-        pub safe fn us_socket_is_established(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_shutdown_read(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
+        pub(super) safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
+        pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
 
-        pub fn us_socket_adopt(
+        pub(super) fn us_socket_adopt(
             s: *mut us_socket_t,
             group: *mut SocketGroup,
             kind: u8,
@@ -470,7 +482,7 @@ mod c {
             ext_size: i32,
         ) -> *mut us_socket_t;
         /// ssl_ctx is required (the whole point); sni may be null.
-        pub fn us_socket_adopt_tls(
+        pub(super) fn us_socket_adopt_tls(
             s: *mut us_socket_t,
             group: *mut SocketGroup,
             kind: u8,
@@ -479,7 +491,7 @@ mod c {
             old_ext_size: i32,
             ext_size: i32,
         ) -> *mut us_socket_t;
-        pub safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
     }
 }
 
@@ -566,7 +578,7 @@ impl us_socket_stream_buffer_t {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
+pub(crate) extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
     // SAFETY: caller (C) passes a live us_socket_stream_buffer_t*
     unsafe { us_socket_stream_buffer_t::destroy(buffer) };
 }

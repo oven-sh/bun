@@ -13,7 +13,7 @@ use super::node_assert;
 /// declare function myersDiff(actual: string, expected: string): Diff[];
 /// ```
 #[bun_jsc::host_fn]
-pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // PERF(port): was stack-fallback (2KB) + ArenaAllocator bulk-free.
 
     let nargs = frame.arguments_count();

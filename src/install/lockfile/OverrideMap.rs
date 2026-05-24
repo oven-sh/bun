@@ -34,7 +34,7 @@ impl OverrideMap {
     /// A potential approach is to add another buffer to the lockfile that maps Dependency ID to Package ID,
     /// and from there `OverrideMap.map` can have a union as the value, where the union is between "override all"
     /// and "here is a list of overrides depending on the package that imported" similar to PackageIndex above.
-    pub fn get(&self, name_hash: PackageNameHash) -> Option<dependency::Version> {
+    pub(crate) fn get(&self, name_hash: PackageNameHash) -> Option<dependency::Version> {
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
         if self.map.count() == 0 {
             return None;
@@ -45,7 +45,7 @@ impl OverrideMap {
     // PORT NOTE: reshaped for borrowck — Zig took `*const Lockfile` but every
     // caller already holds `&mut self` on `lockfile.overrides`, so accept just
     // the string buffer (the only field `sort` reads).
-    pub fn sort(&mut self, string_bytes: &[u8]) {
+    pub(crate) fn sort(&mut self, string_bytes: &[u8]) {
         self.map.sort(|_, deps: &[Dependency], l, r| {
             deps[l].name.order(deps[r].name, string_bytes, string_bytes) == Ordering::Less
         });
@@ -54,7 +54,7 @@ impl OverrideMap {
     /// PORT NOTE: Zig took `*const Lockfile` but only ever read
     /// `lockfile.buffers.string_bytes` — accept the slice directly so callers
     /// can split-borrow the lockfile alongside a live `StringBuilder`.
-    pub fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
+    pub(crate) fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
         for dep in self.map.values() {
             dep.count(string_bytes, builder);
         }
@@ -65,7 +65,7 @@ impl OverrideMap {
     /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
     /// caller already holding `&mut manager.lockfile` can pass
     /// `&mut manager.known_npm_aliases` instead of the whole manager.
-    pub fn clone<PM: crate::dependency::NpmAliasRegistry>(
+    pub(crate) fn clone<PM: crate::dependency::NpmAliasRegistry>(
         &self,
         pm: &mut PM,
         old_string_bytes: &[u8],
@@ -89,7 +89,7 @@ impl OverrideMap {
     // (string transcode); JSON strings are already UTF-8 here, so the parameter
     // is dropped — also avoids the `&mut lockfile.overrides` / `&mut lockfile`
     // alias at the only call site.
-    pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
+    pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(overrides) = expr.as_property(b"overrides") {
             let ExprData::EObject(obj) = &overrides.expr.data else {
                 return;
@@ -157,7 +157,7 @@ impl OverrideMap {
 
     /// Given a package json expression, detect and parse override configuration into the given override map.
     /// It is assumed the input map is uninitialized (zero entries)
-    pub fn parse_append(
+    pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
@@ -194,7 +194,7 @@ impl OverrideMap {
     }
 
     /// https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
-    pub fn parse_from_overrides(
+    pub(crate) fn parse_from_overrides(
         &mut self,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
@@ -311,7 +311,7 @@ impl OverrideMap {
 
     /// yarn classic: https://classic.yarnpkg.com/lang/en/docs/selective-version-resolutions/
     /// yarn berry: https://yarnpkg.com/configuration/manifest#resolutions
-    pub fn parse_from_resolutions(
+    pub(crate) fn parse_from_resolutions(
         &mut self,
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],

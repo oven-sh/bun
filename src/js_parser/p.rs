@@ -55,7 +55,7 @@ type Map<K, V> = HashMap<K, V>;
 /// (which Zig wrote as `comptime P: type`) can take any instantiation. Only the
 /// surface those helpers actually touch is exposed; widen this as the
 /// parse_* / visit_* sibling files un-gate.
-pub trait ParserLike<'a> {
+pub(crate) trait ParserLike<'a> {
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
     fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log>;
     fn bump(&self) -> &'a Bump;
@@ -118,28 +118,28 @@ pub enum ImportRecordList<'a> {
 }
 impl<'a> ImportRecordList<'a> {
     #[inline]
-    pub fn items(&self) -> &[ImportRecord] {
+    pub(crate) fn items(&self) -> &[ImportRecord] {
         match self {
             Self::Owned(v) => v.as_slice(),
             Self::Borrowed(v) => v.as_slice(),
         }
     }
     #[inline]
-    pub fn items_mut(&mut self) -> &mut [ImportRecord] {
+    pub(crate) fn items_mut(&mut self) -> &mut [ImportRecord] {
         match self {
             Self::Owned(v) => v.as_mut_slice(),
             Self::Borrowed(v) => v.as_mut_slice(),
         }
     }
     #[inline]
-    pub fn push(&mut self, record: ImportRecord) {
+    pub(crate) fn push(&mut self, record: ImportRecord) {
         match self {
             Self::Owned(v) => v.push(record),
             Self::Borrowed(v) => v.push(record),
         }
     }
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Self::Owned(v) => v.len(),
             Self::Borrowed(v) => v.len(),
@@ -156,7 +156,7 @@ impl<'a> ImportRecordList<'a> {
     /// Drop then ran element destructors on records the returned `Ast` still
     /// pointed at. This adapter restores Zig's move-and-zero semantics for both
     /// the bump-backed and externally-borrowed variants.
-    pub fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
+    pub(crate) fn move_to_baby_list(&mut self, arena: &'a Bump) -> BumpVec<'a, ImportRecord> {
         match core::mem::replace(self, Self::Owned(BumpVec::new_in(arena))) {
             Self::Owned(v) => v,
             // SCAN_ONLY path never reaches `to_ast`, so `Borrowed` never hits
@@ -189,17 +189,16 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
 }
 
 // In Zig: `if (only_scan_imports_and_do_not_visit) bool else void`.
-pub type NeedsJSXType = bool;
+pub(crate) type NeedsJSXType = bool;
 // In Zig: `if (track_symbol_usage_during_parse_pass) *Map else void`.
-pub type ParsePassSymbolUsageType<'a> = Option<&'a mut crate::ParsePassSymbolUsageMap>;
+pub(crate) type ParsePassSymbolUsageType<'a> = Option<&'a mut crate::ParsePassSymbolUsageMap>;
 // In Zig: `if (allow_macros) u32 else u0`.
-pub type MacroCallCountType = u32;
+pub(crate) type MacroCallCountType = u32;
 
 // ─── Re-exports of sibling-module impls (Zig: `pub const X = mod.X;`) ───
 // In Rust these are inherent methods on `P` defined in sibling files via separate
 // `impl<...> P<...>` blocks. Round-D/E: those files un-gate per-module; until
 // then their re-exports are gated so the *struct* + core helpers compile.
-pub use crate::parse::parse_skip_typescript::*;
 pub use crate::parse::*;
 pub use crate::visit::*;
 // Re-export the real visitor so `P::binary_expression_stack` is typed against
@@ -211,12 +210,6 @@ pub struct RecentlyVisitedTSNamespace {
     pub expr: js_ast::ExprData,
     // ARENA back-pointer — `StoreRef` for safe `Deref` at the read sites.
     pub map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
-}
-
-// Unused in Zig (per LIFETIMES.tsv evidence).
-pub enum RecentlyVisitedTSNamespaceExpressionData {
-    Ref(Ref),
-    Ptr(*const E::Dot),
 }
 
 #[derive(Clone, Copy)]
@@ -734,8 +727,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
 // captured fn. The Rust port type-erases `*P` (which is generic over
 // `<'a, TYPESCRIPT, J, SCAN_ONLY>`) into `binding::ToExprWrapper` - same shim
 // pattern as `ImportTransposer` above. Wired in `prepare_for_visit_pass`.
-pub type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
-pub type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
+pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
+pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {

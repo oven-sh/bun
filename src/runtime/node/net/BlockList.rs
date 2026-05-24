@@ -484,7 +484,7 @@ bun_jsc::jsc_host_abi! {
     /// written into the wire buffer. Releases the `+1` taken by
     /// [`BlockList::on_structured_clone_serialize`].
     #[unsafe(no_mangle)]
-    pub unsafe fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) -> () {
+    pub(crate) unsafe fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) -> () {
         let addr = ptr as usize;
         {
             let mut refs = SERIALIZED_REFS.lock();
@@ -499,7 +499,7 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-pub enum Rule {
+pub(crate) enum Rule {
     Addr(sockaddr),
     Range { start: sockaddr, end: sockaddr },
     Subnet { network: sockaddr, prefix: u8 },

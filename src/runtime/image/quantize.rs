@@ -12,7 +12,7 @@
 use bun_alloc::AllocError;
 
 // PORT NOTE: Zig named this `Result`; renamed to avoid shadowing `core::result::Result`.
-pub struct QuantizeResult {
+pub(crate) struct QuantizeResult {
     /// `[colors][4]u8` RGBA palette.
     pub palette: Box<[u8]>,
     /// One palette index per input pixel.
@@ -69,7 +69,12 @@ pub struct Options {
     pub dither: bool,
 }
 
-pub fn quantize(rgba: &[u8], w: u32, h: u32, opts: Options) -> Result<QuantizeResult, AllocError> {
+pub(crate) fn quantize(
+    rgba: &[u8],
+    w: u32,
+    h: u32,
+    opts: Options,
+) -> Result<QuantizeResult, AllocError> {
     let max_colors = opts.max_colors;
     let n: u32 = u32::try_from(rgba.len() / 4).expect("int cast");
     let want: u16 = 1.max(max_colors.min(256));

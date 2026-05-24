@@ -2,14 +2,11 @@
 use crate as css;
 
 use css::css_properties::Property;
-use css::{PrintErr, Printer, PropertyHandlerContext, SmallList};
+use css::{PrintErr, Printer, PropertyHandlerContext};
 
-use css::css_values::color::CssColor;
 use css::css_values::ident::DashedIdent;
-use css::css_values::number::CSSNumber;
-use css::css_values::url::Url;
 
-use bun_alloc::Arena; // bumpalo::Bump re-export (CSS is an arena crate)
+// bumpalo::Bump re-export (CSS is an arena crate)
 
 bitflags::bitflags! {
     /// A value for the [color-scheme](https://drafts.csswg.org/css-color-adjust/#color-scheme-prop) property.
@@ -26,11 +23,7 @@ bitflags::bitflags! {
 }
 
 impl ColorScheme {
-    pub fn eql(a: ColorScheme, b: ColorScheme) -> bool {
-        a == b
-    }
-
-    pub fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
         let mut res = ColorScheme::empty();
         let ident = input.expect_ident_cloned()?;
 
@@ -66,7 +59,7 @@ impl ColorScheme {
         Ok(res)
     }
 
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self == ColorScheme::empty() {
             return dest.write_str("normal");
         }
@@ -87,11 +80,6 @@ impl ColorScheme {
         }
 
         Ok(())
-    }
-
-    pub fn deep_clone(self, _arena: &Arena) -> Self {
-        // PORT NOTE: bitflags is Copy.
-        self
     }
 }
 
@@ -119,73 +107,6 @@ fn color_scheme_map_get(ident: &[u8]) -> Option<ColorSchemeKeyword> {
 // TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — intentionally unimplemented upstream.
 pub struct Resize;
 
-/// A value for the [cursor](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#cursor) property.
-pub struct Cursor {
-    /// A list of cursor images.
-    pub images: SmallList<CursorImage, 1>,
-    /// A pre-defined cursor.
-    pub keyword: CursorKeyword,
-}
-
-/// A [cursor image](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#cursor) value, used in the `cursor` property.
-///
-/// See [Cursor](Cursor).
-pub struct CursorImage {
-    /// A url to the cursor image.
-    pub url: Url,
-    /// The location in the image where the mouse pointer appears.
-    pub hotspot: Option<[CSSNumber; 2]>,
-}
-
-/// A pre-defined [cursor](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#cursor) value,
-/// used in the `cursor` property.
-///
-/// See [Cursor](Cursor).
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — intentionally unimplemented upstream.
-pub struct CursorKeyword;
-
-/// A value for the [caret-color](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#caret-color) property.
-pub enum ColorOrAuto {
-    /// The `currentColor`, adjusted by the UA to ensure contrast against the background.
-    Auto,
-    /// A color.
-    Color(CssColor),
-}
-
-/// A value for the [caret-shape](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#caret-shape) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — intentionally unimplemented upstream.
-pub struct CaretShape;
-
-/// A value for the [caret](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#caret) shorthand property.
-// TODO(port): Zig source is `@compileError(css.todo_stuff.depth)` — intentionally unimplemented upstream.
-pub struct Caret;
-
-/// A value for the [user-select](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#content-selection) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — intentionally unimplemented upstream.
-pub struct UserSelect;
-
-/// A value for the [appearance](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#appearance-switching) property.
-pub enum Appearance {
-    None,
-    Auto,
-    Textfield,
-    MenulistButton,
-    Button,
-    Checkbox,
-    Listbox,
-    Menulist,
-    Meter,
-    ProgressBar,
-    PushButton,
-    Radio,
-    Searchfield,
-    SliderHorizontal,
-    SquareButton,
-    Textarea,
-    // TODO(port): arena-owned slice in Zig (`[]const u8`); using raw fat ptr until `'bump` threading lands.
-    NonStandard(*const [u8]),
-}
-
 #[derive(Default)]
 pub struct ColorSchemeHandler;
 
@@ -193,7 +114,7 @@ pub struct ColorSchemeHandler;
 // `define_var` no longer needs an arena because `TokenList.v` is a std
 // `Vec<TokenOrValue>` (LIFETIMES.tsv classification).
 impl ColorSchemeHandler {
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &Property,
         dest: &mut css::DeclarationList,
@@ -234,7 +155,7 @@ impl ColorSchemeHandler {
         }
     }
 
-    pub fn finalize(
+    pub(crate) fn finalize(
         &mut self,
         _: &mut css::DeclarationList<'_>,
         _: &mut PropertyHandlerContext<'_>,

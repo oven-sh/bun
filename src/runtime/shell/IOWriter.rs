@@ -48,14 +48,14 @@ pub struct ChildPtr {
 }
 
 impl ChildPtr {
-    pub const NULL: ChildPtr = ChildPtr {
+    pub(crate) const NULL: ChildPtr = ChildPtr {
         node: NodeId::NONE,
         tag: WriterTag::Cmd,
         raw: core::ptr::null_mut(),
     };
 
     #[inline]
-    pub const fn new(node: NodeId, tag: WriterTag) -> ChildPtr {
+    pub(crate) const fn new(node: NodeId, tag: WriterTag) -> ChildPtr {
         ChildPtr {
             node,
             tag,
@@ -66,7 +66,7 @@ impl ChildPtr {
     /// Construct a `ChildPtr` targeting a `subproc::CapturedWriter` (lives
     /// outside the NodeId arena, recovered via `container_of` in the Zig).
     #[inline]
-    pub fn subproc_capture(cw: *mut core::ffi::c_void) -> ChildPtr {
+    pub(crate) fn subproc_capture(cw: *mut core::ffi::c_void) -> ChildPtr {
         ChildPtr {
             node: NodeId::NONE,
             tag: WriterTag::Subproc,
@@ -75,7 +75,7 @@ impl ChildPtr {
     }
 
     #[inline]
-    pub fn is_null(&self) -> bool {
+    pub(crate) fn is_null(&self) -> bool {
         self.node == NodeId::NONE && self.raw.is_null()
     }
 }
@@ -160,14 +160,15 @@ const SHRINK_THRESHOLD: usize = 1024 * 128;
 
 /// Spec: IOWriter.zig `WriterImpl = bun.io.BufferedWriter(IOWriter, …)`.
 #[cfg(not(windows))]
-pub type WriterImpl = bun_io::pipe_writer::PosixBufferedWriter<IOWriter>;
+pub(crate) type WriterImpl = bun_io::pipe_writer::PosixBufferedWriter<IOWriter>;
 #[cfg(windows)]
-pub type WriterImpl = bun_io::pipe_writer::WindowsBufferedWriter<IOWriter>;
+pub(crate) type WriterImpl = bun_io::pipe_writer::WindowsBufferedWriter<IOWriter>;
 
 /// Spec: IOWriter.zig `Poll = WriterImpl` — the `FilePoll.Owner` payload type
 /// (`@field(Owner.Tag, @typeName(ShellBufferedWriter))` arm in
 /// `posix_event_loop.zig`).
-pub type Poll = WriterImpl;
+#[allow(dead_code)]
+pub(crate) type Poll = WriterImpl;
 
 /// Poll-dispatch entry for `SHELL_BUFFERED_WRITER`. Holds an extra Arc strong
 /// ref across `on_poll` so child `onIOWriterChunk` callbacks (via `bump()`)
@@ -1195,7 +1196,7 @@ impl Drop for IOWriter {
 /// Hoisted dispatch for the `onIOWriterChunk` callback (PORTING.md §Dispatch
 /// hot-path). Called by `Yield::OnIoWriterChunk` and by the writer's poll
 /// callback.
-pub fn on_io_writer_chunk(
+pub(crate) fn on_io_writer_chunk(
     interp: &Interpreter,
     child: ChildPtr,
     written: usize,

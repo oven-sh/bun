@@ -38,7 +38,7 @@ impl strings::Appender for FilenameStoreAppender<'_> {
 /// Zig `*FileSystem.FilenameStore` callsites in `runTasks.zig` /
 /// `PackageManagerEnqueue.zig`.
 #[inline]
-pub fn filename_store_appender() -> FilenameStoreAppender<'static> {
+pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
     FilenameStoreAppender(FileSystem::instance().filename_store())
 }
 
@@ -137,7 +137,7 @@ pub struct DedupeMapEntry {
 // TODO(port): IdentityContext (hash = value bits) + 80% load factor — verify
 // `bun_collections::HashMap` exposes an identity hasher, or newtype `task::Id`
 // with a pass-through `Hash` impl.
-pub type DedupeMap = HashMap<crate::package_manager_task::Id, DedupeMapEntry>;
+pub(crate) type DedupeMap = HashMap<crate::package_manager_task::Id, DedupeMapEntry>;
 
 impl NetworkTask {
     /// Access the HTTP client after `for_manifest`/`for_tarball` (or `notify`'s

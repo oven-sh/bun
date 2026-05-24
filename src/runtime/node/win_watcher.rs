@@ -56,7 +56,7 @@ static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 
 // TODO: make this a generic so we can reuse code with path_watcher
 // TODO: we probably should use native instead of libuv abstraction here for better performance
-pub struct PathWatcherManager {
+pub(crate) struct PathWatcherManager {
     // Keys are owned path bytes (Zig: `bun.StringArrayHashMapUnmanaged`), values are raw heap
     // PathWatcher ptrs. `StringArrayHashMap` lets `get`/`insert` take `&[u8]` borrows.
     watchers: StringArrayHashMap<*mut PathWatcher>,
@@ -68,7 +68,7 @@ pub struct PathWatcherManager {
 }
 
 impl PathWatcherManager {
-    pub fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
+    pub(crate) fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
             watchers: StringArrayHashMap::default(),
             vm,
@@ -153,7 +153,7 @@ pub struct PathWatcher {
 }
 
 #[derive(Clone, Copy)]
-pub struct ChangeEvent {
+pub(crate) struct ChangeEvent {
     hash: bun_watcher::HashType,
     event_type: EventType,
     timestamp: u64,
@@ -171,7 +171,7 @@ impl Default for ChangeEvent {
 }
 
 impl ChangeEvent {
-    pub fn emit(
+    pub(crate) fn emit(
         &mut self,
         hash: bun_watcher::HashType,
         timestamp: u64,
@@ -191,8 +191,10 @@ impl ChangeEvent {
     }
 }
 
+#[allow(dead_code)]
 pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
-pub type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
+#[allow(dead_code)]
+pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 
 impl PathWatcher {
     extern "C" fn uv_event_callback(
@@ -265,7 +267,7 @@ impl PathWatcher {
         );
     }
 
-    pub fn emit(
+    pub(crate) fn emit(
         &mut self,
         path: &[u8],
         hash: bun_watcher::HashType,
@@ -320,7 +322,7 @@ impl PathWatcher {
         self.maybe_deinit();
     }
 
-    pub fn init(
+    pub(crate) fn init(
         manager: &mut PathWatcherManager,
         path: &ZStr,
         recursive: bool,
@@ -429,7 +431,7 @@ impl PathWatcher {
     /// JS-thread entry point from `FSWatcher.detach()`. Signature matches the posix
     /// `path_watcher::PathWatcher::detach` (associated fn over `*mut Self`) so the
     /// caller in `node_fs_watcher.rs` is platform-agnostic.
-    pub fn detach(this: *mut PathWatcher, handler: *mut c_void) {
+    pub(crate) fn detach(this: *mut PathWatcher, handler: *mut c_void) {
         // SAFETY: `this` is the live `heap::alloc`'d pointer returned from `watch()`;
         // it stays valid until `maybe_deinit` self-destroys on the last handler.
         let me = unsafe { &mut *this };

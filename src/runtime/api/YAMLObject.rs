@@ -11,7 +11,7 @@ use bun_jsc::{
 };
 use bun_parsers::yaml::{YAML, YamlParseError};
 
-pub fn create(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
         global_this,
         &[
@@ -22,7 +22,7 @@ pub fn create(global_this: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();
@@ -60,7 +60,7 @@ pub fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JS
     stringifier.builder.to_string(global)
 }
 
-pub struct Stringifier {
+pub(crate) struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
@@ -72,7 +72,7 @@ pub struct Stringifier {
     space: Space,
 }
 
-pub enum Space {
+pub(crate) enum Space {
     Minified,
     Number(u32),
     /// +1 WTF ref owned for the lifetime of the `Stringifier` (Zig:
@@ -81,7 +81,7 @@ pub enum Space {
 }
 
 impl Space {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
@@ -106,14 +106,7 @@ impl Space {
     }
 }
 
-#[repr(u8)]
-pub enum AnchorOrigin {
-    Root,
-    ArrayItem,
-    PropValue,
-}
-
-pub struct AnchorAlias {
+pub(crate) struct AnchorAlias {
     anchored: bool,
     used: bool,
     name: AnchorAliasName,
@@ -134,7 +127,7 @@ impl Default for AnchorAlias {
 }
 
 impl AnchorAlias {
-    pub fn init(origin: ValueOrigin) -> AnchorAlias {
+    pub(crate) fn init(origin: ValueOrigin) -> AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
@@ -150,7 +143,7 @@ impl AnchorAlias {
     }
 }
 
-pub enum AnchorAliasName {
+pub(crate) enum AnchorAliasName {
     // only one root anchor is possible
     Root,
     ArrayItem(usize),
@@ -162,14 +155,14 @@ pub enum AnchorAliasName {
 }
 
 #[derive(Clone, Copy)]
-pub enum ValueOrigin {
+pub(crate) enum ValueOrigin {
     Root,
     ArrayItem,
     PropValue(BunString),
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum StringifyError {
+pub(crate) enum StringifyError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("JSError")]
@@ -193,7 +186,7 @@ impl From<JsError> for StringifyError {
 bun_core::oom_from_alloc!(StringifyError);
 
 impl Stringifier {
-    pub fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -213,7 +206,7 @@ impl Stringifier {
     // deinit: all fields have Drop (`space: Space::Str` holds an
     // `OwnedString`); no explicit impl needed.
 
-    pub fn find_anchors_and_aliases(
+    pub(crate) fn find_anchors_and_aliases(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -325,7 +318,7 @@ impl Stringifier {
         Ok(())
     }
 
-    pub fn stringify(
+    pub(crate) fn stringify(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -1082,7 +1075,7 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
     )
 }
 
-pub struct ParserCtx<'a> {
+pub(crate) struct ParserCtx<'a> {
     seen_objects: HashMap<*const c_void, JSValue>,
     stack_check: StackCheck,
 
@@ -1093,7 +1086,7 @@ pub struct ParserCtx<'a> {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum ToJsError {
+pub(crate) enum ToJsError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("JSError")]
@@ -1157,7 +1150,7 @@ impl<'a> ParserCtx<'a> {
         };
     }
 
-    pub fn to_js(
+    pub(crate) fn to_js(
         &mut self,
         args: &mut MarkedArgumentBuffer,
         expr: Expr,

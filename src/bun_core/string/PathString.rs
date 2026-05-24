@@ -72,7 +72,7 @@ impl PathString {
         (self.0 >> POINTER_BITS) as usize
     }
 
-    pub fn estimated_size(&self) -> usize {
+    pub fn estimated_size(self) -> usize {
         self.len()
     }
 

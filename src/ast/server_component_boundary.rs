@@ -151,7 +151,7 @@ impl<'a> Slice<'a> {
 // PORT NOTE: Zig stored the full `MultiArrayList.Slice` and called
 // `.items(.source_index)` on each compare. The Rust `Slice<T>` is not `Copy`,
 // so we cache just the `source_index` column the adapter actually needs.
-pub struct Adapter<'a> {
+pub(crate) struct Adapter<'a> {
     pub source_indices: &'a [IndexInt],
 }
 

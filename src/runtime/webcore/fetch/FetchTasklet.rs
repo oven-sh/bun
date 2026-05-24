@@ -51,7 +51,7 @@ impl Taskable for FetchTasklet {
 
 bun_output::declare_scope!(FetchTasklet, visible);
 
-pub type ResumableSink = ResumableFetchSink;
+pub(crate) type ResumableSink = ResumableFetchSink;
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = FetchTasklet::deinit)]
@@ -365,7 +365,7 @@ impl FetchTasklet {
             .map(|p| unsafe { &mut *p.as_ptr() })
     }
 
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         // SAFETY: `self` is live; `ref_` only touches the interior-mutable
         // atomic counter.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
@@ -377,7 +377,7 @@ impl FetchTasklet {
     // `*mut` because the call may drop the last ref and free the allocation, so a `&mut`
     // here would be UB.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn deref(this: *mut FetchTasklet) {
+    pub(crate) fn deref(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
@@ -387,7 +387,7 @@ impl FetchTasklet {
     // Forwards `this` to ThreadSafeRefCount/dealloc without dereferencing; signature must
     // stay `*mut` because the call may drop the last ref and free the allocation.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn deref_from_thread(this: *mut FetchTasklet) {
+    pub(crate) fn deref_from_thread(this: *mut FetchTasklet) {
         // SAFETY: caller contract.
         if !unsafe { bun_ptr::ThreadSafeRefCount::<Self>::release(this) } {
             return;
@@ -614,7 +614,7 @@ impl FetchTasklet {
         self.get_current_response().map(|r| unsafe { &mut *r })
     }
 
-    pub fn start_request_stream(&mut self) {
+    pub(crate) fn start_request_stream(&mut self) {
         self.is_waiting_request_stream_start = false;
         debug_assert!(matches!(
             self.request_body,
@@ -638,7 +638,7 @@ impl FetchTasklet {
         }
     }
 
-    pub fn on_body_received(&mut self) -> JsTerminatedResult<()> {
+    pub(crate) fn on_body_received(&mut self) -> JsTerminatedResult<()> {
         let success = self.result.is_success();
         let global_this = self.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
@@ -793,7 +793,7 @@ impl FetchTasklet {
         Ok(())
     }
 
-    pub fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
+    pub(crate) fn on_progress_update(&mut self) -> JsTerminatedResult<()> {
         jsc::mark_binding!();
         bun_output::scoped_log!(FetchTasklet, "onProgressUpdate");
         self.mutex.lock();
@@ -1077,7 +1077,7 @@ impl FetchTasklet {
         Ok(())
     }
 
-    pub fn check_server_identity(&mut self, certificate_info: &CertificateInfo) -> bool {
+    pub(crate) fn check_server_identity(&mut self, certificate_info: &CertificateInfo) -> bool {
         if let Some(check_server_identity) = self.check_server_identity.get() {
             check_server_identity.ensure_still_alive();
             if !certificate_info.cert.is_empty() {
@@ -1222,7 +1222,7 @@ impl FetchTasklet {
         signal.unref();
     }
 
-    pub fn on_reject(&mut self) -> BodyValueError {
+    pub(crate) fn on_reject(&mut self) -> BodyValueError {
         debug_assert!(self.result.fail.is_some());
         bun_output::scoped_log!(FetchTasklet, "onReject");
 
@@ -1469,7 +1469,7 @@ impl FetchTasklet {
         BodyValueError::SystemError(fetch_error)
     }
 
-    pub fn on_readable_stream_available(
+    pub(crate) fn on_readable_stream_available(
         ctx: *mut c_void,
         global_this: &JSGlobalObject,
         readable: ReadableStream,
@@ -1478,7 +1478,7 @@ impl FetchTasklet {
         this.readable_stream_ref = ReadableStreamStrong::init(readable, global_this);
     }
 
-    pub fn on_start_streaming_http_response_body_callback(ctx: *mut c_void) -> DrainResult {
+    pub(crate) fn on_start_streaming_http_response_body_callback(ctx: *mut c_void) -> DrainResult {
         let this = Self::from_ctx(ctx);
         if this.signal_store.aborted.load(Ordering::Relaxed) {
             return DrainResult::Aborted;
@@ -1645,7 +1645,7 @@ impl FetchTasklet {
         self.ignore_data = true;
     }
 
-    pub fn on_resolve(&mut self) -> JSValue {
+    pub(crate) fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
         let response = bun_core::heap::into_raw(Box::new(self.to_response()));
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
@@ -1666,7 +1666,7 @@ impl FetchTasklet {
         response_js
     }
 
-    pub fn get(
+    pub(crate) fn get(
         global_this: &JSGlobalObject,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
@@ -1931,7 +1931,7 @@ impl FetchTasklet {
     }
 
     #[bun_uws::uws_callback]
-    pub fn abort_listener(&mut self, reason: JSValue) {
+    pub(crate) fn abort_listener(&mut self, reason: JSValue) {
         bun_output::scoped_log!(FetchTasklet, "abortListener");
         let this = self;
         reason.ensure_still_alive();
@@ -1956,7 +1956,7 @@ impl FetchTasklet {
     }
 
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
-    pub fn on_write_request_data_drain(this: *mut FetchTasklet) {
+    pub(crate) fn on_write_request_data_drain(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_ref(this);
         if this_ref.javascript_vm.is_shutting_down() {
             return;
@@ -1974,7 +1974,7 @@ impl FetchTasklet {
     /// This is ALWAYS called from the main thread
     // PORT NOTE: in Zig 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void';
     // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
-    pub fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
+    pub(crate) fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
         let result = (|| {
@@ -2003,7 +2003,7 @@ impl FetchTasklet {
                 && self.request_headers.get(b"transfer-encoding").is_none())
     }
 
-    pub fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
+    pub(crate) fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
         bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", data.len());
         if self.signal_aborted() {
             return ResumableSinkBackpressure::Done;
@@ -2062,7 +2062,7 @@ impl FetchTasklet {
         result
     }
 
-    pub fn write_end_request(&mut self, err: Option<JSValue>) {
+    pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
         let this_ptr = std::ptr::from_mut(self);
         if let Some(js_error) = err {
@@ -2098,7 +2098,7 @@ impl FetchTasklet {
         FetchTasklet::deref(this_ptr);
     }
 
-    pub fn abort_task(&mut self) {
+    pub(crate) fn abort_task(&mut self) {
         self.signal_store.aborted.store(true, Ordering::Relaxed);
         self.tracker.did_cancel(&self.global_this);
 
@@ -2107,7 +2107,7 @@ impl FetchTasklet {
         }
     }
 
-    pub fn queue(
+    pub(crate) fn queue(
         global: &JSGlobalObject,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
@@ -2137,7 +2137,7 @@ impl FetchTasklet {
     // Signature is fixed by `HTTPClientResultCallback`; `task` may be freed by the
     // trailing `deref_from_thread`, so it cannot become `&mut`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn callback(
+    pub(crate) fn callback(
         task: *mut FetchTasklet,
         async_http: *mut AsyncHTTP<'static>,
         result: HTTPClientResult,
@@ -2308,7 +2308,7 @@ impl FetchTasklet {
 
 impl FetchTasklet {
     #[bun_uws::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
-    pub fn on_response_finalize(&mut self) {
+    pub(crate) fn on_response_finalize(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
         let this = self;
         if let Some(response) = this.native_response {

@@ -7,16 +7,16 @@ use core::sync::atomic::{AtomicPtr, Ordering};
     target_arch = "aarch64",
     target_arch = "powerpc64",
 ))]
-pub const CACHE_LINE_LENGTH: usize = 128;
+pub(crate) const CACHE_LINE_LENGTH: usize = 128;
 #[cfg(any(
     target_arch = "arm",
     target_arch = "mips",
     target_arch = "mips64",
     target_arch = "riscv64",
 ))]
-pub const CACHE_LINE_LENGTH: usize = 32;
+pub(crate) const CACHE_LINE_LENGTH: usize = 32;
 #[cfg(target_arch = "s390x")]
-pub const CACHE_LINE_LENGTH: usize = 256;
+pub(crate) const CACHE_LINE_LENGTH: usize = 256;
 #[cfg(not(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
@@ -27,7 +27,7 @@ pub const CACHE_LINE_LENGTH: usize = 256;
     target_arch = "riscv64",
     target_arch = "s390x",
 )))]
-pub const CACHE_LINE_LENGTH: usize = 64;
+pub(crate) const CACHE_LINE_LENGTH: usize = 64;
 
 /// Intrusive next-pointer accessors for `UnboundedQueue<T>` nodes.
 ///

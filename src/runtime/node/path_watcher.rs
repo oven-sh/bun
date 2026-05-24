@@ -79,7 +79,7 @@ static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 // PathWatcherManager
 // ────────────────────────────────────────────────────────────────────────────────
 
-pub struct PathWatcherManager {
+pub(crate) struct PathWatcherManager {
     /// Guards `watchers` and all per-platform dispatch maps. The reader thread holds
     /// this while dispatching, so `detach()` on the JS thread cannot free a PathWatcher
     /// mid-emit. A single lock here replaces the three interacting mutexes of the old
@@ -148,7 +148,7 @@ impl Default for PathWatcherManager {
 }
 
 impl PathWatcherManager {
-    pub fn get() -> sys::Result<&'static PathWatcherManager> {
+    pub(crate) fn get() -> sys::Result<&'static PathWatcherManager> {
         // No unlocked fast path: `default_manager` is a plain global and an unsynchronized
         // read here would be textbook broken DCLP (a concurrent Worker's first `fs.watch()`
         // on ARM64 could observe the non-null pointer before `m.* = .{}` is visible and
@@ -253,7 +253,7 @@ impl EventType {
 /// changing it here would diverge from Windows; fixing all three together is
 /// a separate change.
 #[derive(Default)]
-pub struct ChangeEvent {
+pub(crate) struct ChangeEvent {
     #[cfg(not(windows))]
     hash: u64,
     #[cfg(not(windows))]
@@ -279,11 +279,11 @@ impl ChangeEvent {
 }
 
 pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
-pub type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
+pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 
 impl PathWatcher {
     /// `bun.TrivialNew(PathWatcher)` — heap-allocate and return raw pointer.
-    pub fn new(init: PathWatcher) -> *mut PathWatcher {
+    pub(crate) fn new(init: PathWatcher) -> *mut PathWatcher {
         bun_core::heap::into_raw(Box::new(init))
     }
 
@@ -344,7 +344,8 @@ impl PathWatcher {
     // is therefore scoped to the region where exclusivity actually holds, so
     // clippy's `&mut` rewrite would be unsound here, not just stylistic.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
+    #[allow(dead_code)]
+    pub(crate) fn detach(this: *mut PathWatcher, ctx: *mut c_void) {
         // SAFETY: `this` is a live PathWatcher created via `PathWatcher::new`. Read
         // `manager` via the raw pointer so no `&mut PathWatcher` is asserted before
         // we hold `manager.mutex` — on macOS the CF thread may concurrently raw-read
@@ -660,7 +661,7 @@ compile_error!("path_watcher: unsupported target");
 /// a wd per directory, then adding new subdirectories as they appear (IN_CREATE|IN_ISDIR).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[derive(Default)]
-pub struct Linux {
+pub(crate) struct Linux {
     /// wd → list of owners. `inotify_add_watch` returns the same wd for the same
     /// inode on a given inotify fd, so two PathWatchers whose roots overlap (e.g.
     /// a recursive watch on `/a` plus a watch on `/a/sub`) end up sharing a wd. Each
@@ -683,7 +684,7 @@ struct WdOwner {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[derive(Default)]
-pub struct LinuxWatch {
+pub(crate) struct LinuxWatch {
     /// All wds belonging to this PathWatcher (one for a file/non-recursive dir,
     /// many for a recursive dir).
     wds: Vec<i32>,
@@ -705,8 +706,9 @@ impl PathWatcherManager {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod inotify_masks {
     use bun_sys::linux::IN;
-    pub const WATCH_FILE_MASK: u32 = IN::MODIFY | IN::ATTRIB | IN::MOVE_SELF | IN::DELETE_SELF;
-    pub const WATCH_DIR_MASK: u32 = IN::MODIFY
+    pub(super) const WATCH_FILE_MASK: u32 =
+        IN::MODIFY | IN::ATTRIB | IN::MOVE_SELF | IN::DELETE_SELF;
+    pub(super) const WATCH_DIR_MASK: u32 = IN::MODIFY
         | IN::ATTRIB
         | IN::CREATE
         | IN::DELETE
@@ -1102,7 +1104,7 @@ pub struct Darwin {
 
 #[cfg(target_os = "macos")]
 #[derive(Default)]
-pub struct DarwinWatch {
+pub(crate) struct DarwinWatch {
     fsevents: Option<*mut fsevents::FSEventsWatcher>,
 }
 
@@ -1240,7 +1242,7 @@ impl Darwin {
 /// same behaviour as libuv on FreeBSD; callers are expected to re-scan.
 #[cfg(target_os = "freebsd")]
 #[derive(Default)]
-pub struct Kqueue {
+pub(crate) struct Kqueue {
     /// ident (fd number) → entry (by value — avoids a per-entry heap alloc for
     /// recursive trees). `udata` on the kevent carries a monotonic generation number
     /// so the reader can reject stale events after the fd is recycled.
@@ -1262,7 +1264,7 @@ struct KqEntry {
 
 #[cfg(target_os = "freebsd")]
 #[derive(Default)]
-pub struct KqueueWatch {
+pub(crate) struct KqueueWatch {
     fds: Vec<i32>,
 }
 // Drop: Vec frees automatically.
@@ -1514,7 +1516,7 @@ impl Kqueue {
 
 #[cfg(windows)]
 #[derive(Default)]
-pub struct WindowsStub {}
+pub(crate) struct WindowsStub {}
 
 #[cfg(windows)]
 impl WindowsStub {
@@ -1524,6 +1526,7 @@ impl WindowsStub {
     fn add_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) -> sys::Result<()> {
         Err(sys::Error::from_code(E::ENOTSUP, Tag::watch))
     }
+    #[allow(dead_code)]
     fn remove_watch(_: &'static PathWatcherManager, _: &mut PathWatcher) {}
 }
 

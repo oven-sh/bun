@@ -107,7 +107,7 @@ impl<'a> Coordinator<'a> {
         victim
     }
 
-    pub fn drive(&mut self) {
+    pub(crate) fn drive(&mut self) {
         let _ = self.spawn_worker();
         while !self.is_done() {
             if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
@@ -289,7 +289,7 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    pub fn rel_path(&self, file_idx: u32) -> &[u8] {
+    pub(crate) fn rel_path(&self, file_idx: u32) -> &[u8] {
         bun_paths::resolve_path::relative(
             bun_paths::fs::FileSystem::instance().top_level_dir(),
             self.files[file_idx as usize].slice(),
@@ -333,7 +333,7 @@ impl<'a> Coordinator<'a> {
         w.captured.clear();
     }
 
-    pub fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
+    pub(crate) fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
         match kind {
             frame::Kind::Ready => self.assign_work_or_retry(w),
             frame::Kind::FileStart => {
@@ -447,7 +447,7 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    pub fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus) {
+    pub(crate) fn on_worker_exit(&mut self, w: &mut Worker, status: SpawnStatus) {
         w.exit_status = Some(status);
         // The Channel delivers any remaining buffered data then close (which
         // sets ipc.done and calls tryReap), so no explicit drain is needed —
@@ -455,7 +455,7 @@ impl<'a> Coordinator<'a> {
         self.try_reap(w);
     }
 
-    pub fn try_reap(&mut self, w: &mut Worker) {
+    pub(crate) fn try_reap(&mut self, w: &mut Worker) {
         // PORT NOTE: SpawnStatus is not Copy (Err arm owns a path); take()
         // instead of pattern-match-by-copy.
         if w.exit_status.is_none() || !w.ipc.done {
@@ -656,7 +656,7 @@ impl<'a> Coordinator<'a> {
     }
 
     #[cfg(windows)]
-    pub fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
+    pub(crate) fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
         use bun_sys::windows;
         // SAFETY: Win32 FFI calls.
         unsafe {
@@ -678,11 +678,6 @@ impl<'a> Coordinator<'a> {
             }
             Some(job)
         }
-    }
-
-    #[cfg(not(windows))]
-    pub fn create_windows_kill_on_close_job() -> Option<*mut c_void> {
-        None
     }
 }
 
@@ -748,7 +743,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 pub mod abort_handler {
     use super::*;
 
-    pub static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
+    pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 
     // PORTING.md §Global mutable state: written once in `install()` (single
     // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
@@ -782,7 +777,7 @@ pub mod abort_handler {
     /// Restores the previous SIGINT/SIGTERM (or Windows console-ctrl) handlers
     /// when dropped. Returned by [`install`].
     #[must_use = "dropping the guard uninstalls the abort handler"]
-    pub struct Guard(());
+    pub(crate) struct Guard(());
 
     impl Drop for Guard {
         fn drop(&mut self) {
@@ -790,7 +785,7 @@ pub mod abort_handler {
         }
     }
 
-    pub fn install() -> Guard {
+    pub(crate) fn install() -> Guard {
         #[cfg(unix)]
         {
             // SAFETY: signal handler installation; PREV_* are written before
@@ -825,7 +820,7 @@ pub mod abort_handler {
         Guard(())
     }
 
-    pub fn uninstall() {
+    pub(crate) fn uninstall() {
         #[cfg(unix)]
         {
             // SAFETY: PREV_* were initialized by install().

@@ -55,8 +55,8 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use super::handlers::Handlers;
-pub use super::listener::Listener;
+pub(super) use super::handlers::Handlers;
+pub(super) use super::listener::Listener;
 
 mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
@@ -197,7 +197,7 @@ pub struct NewSocket<const SSL: bool> {
 }
 
 /// Associated `Socket` handler type (Zig: `pub const Socket = uws.NewSocketHandler(ssl)`).
-pub type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
+pub(super) type SocketHandler<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 // Intrusive refcount mixin (Zig: `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`).
 impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
@@ -2010,6 +2010,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
+        #[allow(unused_labels)]
         let wrote: i32 = 'brk: {
             #[cfg(unix)]
             if !SSL {
@@ -3430,7 +3431,7 @@ impl SocketMode {
 // DuplexUpgradeContext
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct DuplexUpgradeContext {
+pub(super) struct DuplexUpgradeContext {
     pub upgrade: UpgradedDuplex,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: Option<IntrusiveRc<TLSSocket>>,
@@ -3455,7 +3456,7 @@ pub struct DuplexUpgradeContext {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum EventState {
+pub(super) enum EventState {
     StartTLS,
     Close,
 }

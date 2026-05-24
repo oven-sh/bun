@@ -30,7 +30,7 @@ extern "C" fn same_value_iterator(
 }
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_one_of(
+pub(crate) fn to_be_one_of(
     this: &Expect,
     global_this: &JSGlobalObject,
     call_frame: &CallFrame,

@@ -15,7 +15,7 @@ pub struct ViewportRule {
 }
 
 impl ViewportRule {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_char(b'@')?;
@@ -26,7 +26,7 @@ impl ViewportRule {
 }
 
 impl ViewportRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `VendorPrefix` is a
         // `Copy` bitflag (generics.zig "simple copy types" → identity).
         Self {

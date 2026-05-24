@@ -8,8 +8,8 @@ use crate::{read_struct, write_struct};
 
 use bun_core::env_var::feature_flag;
 
-pub const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
-pub const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+pub(crate) const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+pub(crate) const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum MachoError {
@@ -544,7 +544,7 @@ impl Shifter {
     }
 }
 
-pub struct MachoSigner {
+pub(crate) struct MachoSigner {
     data: Vec<u8>,
     sig_off: usize,
     linkedit_seg: macho::segment_command_64,
@@ -552,7 +552,7 @@ pub struct MachoSigner {
 }
 
 impl MachoSigner {
-    pub fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
+    pub(crate) fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
         let header_size = size_of::<macho::mach_header_64>();
         let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
 
@@ -642,7 +642,7 @@ impl MachoSigner {
     /// hashes). `writeSection` uses this to size `linkedit_seg.filesize` and
     /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
     /// inside __LINKEDIT.
-    pub fn compute_signature_size(sig_off: u64) -> usize {
+    pub(crate) fn compute_signature_size(sig_off: u64) -> usize {
         let total_pages: usize =
             usize::try_from(sig_off.div_ceil(Self::SIGNATURE_PAGE_SIZE as u64)).unwrap();
         let super_blob_header_size = size_of::<SuperBlob>();
@@ -654,7 +654,7 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    pub fn sign(&mut self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
+    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
@@ -796,25 +796,6 @@ fn align_vmsize(size: u64, page_size: u64) -> u64 {
 }
 
 const SEG_LINKEDIT: &[u8] = b"__LINKEDIT";
-
-pub mod utils {
-    use super::macho;
-
-    pub fn is_elf(data: &[u8]) -> bool {
-        if data.len() < 4 {
-            return false;
-        }
-        u32::from_be_bytes(data[0..4].try_into().expect("infallible: size matches")) == 0x7f454c46
-    }
-
-    pub fn is_macho(data: &[u8]) -> bool {
-        if data.len() < 4 {
-            return false;
-        }
-        u32::from_le_bytes(data[0..4].try_into().expect("infallible: size matches"))
-            == macho::MH_MAGIC_64
-    }
-}
 
 const CSMAGIC_CODEDIRECTORY: u32 = 0xfade0c02;
 const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;

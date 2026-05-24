@@ -171,7 +171,7 @@ pub struct Printer<'a> {
 
 #[cfg(debug_assertions)]
 thread_local! {
-    pub static IN_DEBUG_FMT: Cell<bool> = const { Cell::new(false) };
+    pub(crate) static IN_DEBUG_FMT: Cell<bool> = const { Cell::new(false) };
 }
 
 impl<'a> Printer<'a> {

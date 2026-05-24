@@ -22,7 +22,7 @@ fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
 }
 
 // ── struct_hostent ─────────────────────────────────────────────────────────
-pub fn hostent_to_js_response(
+pub(crate) fn hostent_to_js_response(
     this: &mut c_ares::struct_hostent,
     global_this: &JSGlobalObject,
     lookup_name: &'static [u8], // PERF(port): was comptime monomorphization — profile if hot
@@ -66,7 +66,7 @@ pub fn hostent_to_js_response(
 }
 
 // ── hostent_with_ttls ──────────────────────────────────────────────────────
-pub fn hostent_with_ttls_to_js_response(
+pub(crate) fn hostent_with_ttls_to_js_response(
     this: &mut c_ares::hostent_with_ttls,
     global_this: &JSGlobalObject,
     lookup_name: &'static [u8], // PERF(port): was comptime monomorphization — profile if hot
@@ -152,7 +152,7 @@ pub fn hostent_with_ttls_to_js_response(
 }
 
 // ── struct_nameinfo ────────────────────────────────────────────────────────
-pub fn nameinfo_to_js_response(
+pub(crate) fn nameinfo_to_js_response(
     this: &mut c_ares::struct_nameinfo,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -178,7 +178,7 @@ pub fn nameinfo_to_js_response(
 }
 
 // ── AddrInfo ───────────────────────────────────────────────────────────────
-pub fn addr_info_to_js_array(
+pub(crate) fn addr_info_to_js_array(
     addr_info: &mut c_ares::AddrInfo,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -285,7 +285,7 @@ fn cares_list_to_js_array<T: CAresLinked>(
 }
 
 // ── struct_ares_caa_reply ──────────────────────────────────────────────────
-pub fn caa_reply_to_js_response(
+pub(crate) fn caa_reply_to_js_response(
     this: &mut c_ares::struct_ares_caa_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
@@ -293,7 +293,7 @@ pub fn caa_reply_to_js_response(
     cares_list_to_js_array(this, global_this, caa_reply_to_js)
 }
 
-pub fn caa_reply_to_js(
+pub(crate) fn caa_reply_to_js(
     this: &mut c_ares::struct_ares_caa_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -313,7 +313,7 @@ pub fn caa_reply_to_js(
 }
 
 // ── struct_ares_srv_reply ──────────────────────────────────────────────────
-pub fn srv_reply_to_js_response(
+pub(crate) fn srv_reply_to_js_response(
     this: &mut c_ares::struct_ares_srv_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
@@ -321,7 +321,7 @@ pub fn srv_reply_to_js_response(
     cares_list_to_js_array(this, global_this, srv_reply_to_js)
 }
 
-pub fn srv_reply_to_js(
+pub(crate) fn srv_reply_to_js(
     this: &mut c_ares::struct_ares_srv_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -347,7 +347,7 @@ pub fn srv_reply_to_js(
 }
 
 // ── struct_ares_mx_reply ───────────────────────────────────────────────────
-pub fn mx_reply_to_js_response(
+pub(crate) fn mx_reply_to_js_response(
     this: &mut c_ares::struct_ares_mx_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
@@ -355,7 +355,7 @@ pub fn mx_reply_to_js_response(
     cares_list_to_js_array(this, global_this, mx_reply_to_js)
 }
 
-pub fn mx_reply_to_js(
+pub(crate) fn mx_reply_to_js(
     this: &mut c_ares::struct_ares_mx_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -374,7 +374,7 @@ pub fn mx_reply_to_js(
 }
 
 // ── struct_ares_txt_reply ──────────────────────────────────────────────────
-pub fn txt_reply_to_js_response(
+pub(crate) fn txt_reply_to_js_response(
     this: &mut c_ares::struct_ares_txt_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
@@ -382,7 +382,7 @@ pub fn txt_reply_to_js_response(
     cares_list_to_js_array(this, global_this, txt_reply_to_js)
 }
 
-pub fn txt_reply_to_js(
+pub(crate) fn txt_reply_to_js(
     this: &mut c_ares::struct_ares_txt_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -392,7 +392,7 @@ pub fn txt_reply_to_js(
     Ok(array)
 }
 
-pub fn txt_reply_to_js_for_any(
+pub(crate) fn txt_reply_to_js_for_any(
     this: &mut c_ares::struct_ares_txt_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
@@ -407,7 +407,7 @@ pub fn txt_reply_to_js_for_any(
 }
 
 // ── struct_ares_naptr_reply ────────────────────────────────────────────────
-pub fn naptr_reply_to_js_response(
+pub(crate) fn naptr_reply_to_js_response(
     this: &mut c_ares::struct_ares_naptr_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
@@ -415,7 +415,7 @@ pub fn naptr_reply_to_js_response(
     cares_list_to_js_array(this, global_this, naptr_reply_to_js)
 }
 
-pub fn naptr_reply_to_js(
+pub(crate) fn naptr_reply_to_js(
     this: &mut c_ares::struct_ares_naptr_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -452,7 +452,7 @@ pub fn naptr_reply_to_js(
 }
 
 // ── struct_ares_soa_reply ──────────────────────────────────────────────────
-pub fn soa_reply_to_js_response(
+pub(crate) fn soa_reply_to_js_response(
     this: &mut c_ares::struct_ares_soa_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
@@ -461,7 +461,7 @@ pub fn soa_reply_to_js_response(
     soa_reply_to_js(this, global_this)
 }
 
-pub fn soa_reply_to_js(
+pub(crate) fn soa_reply_to_js(
     this: &mut c_ares::struct_ares_soa_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -505,7 +505,7 @@ pub fn soa_reply_to_js(
 }
 
 // ── struct_any_reply ───────────────────────────────────────────────────────
-pub fn any_reply_to_js_response(
+pub(crate) fn any_reply_to_js_response(
     this: &mut c_ares::struct_any_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
@@ -570,7 +570,7 @@ fn any_reply_append_all(
     Ok(())
 }
 
-pub fn any_reply_to_js(
+pub(crate) fn any_reply_to_js(
     this: &mut c_ares::struct_any_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -652,7 +652,7 @@ pub fn any_reply_to_js(
 }
 
 // ── Error ──────────────────────────────────────────────────────────────────
-pub struct ErrorDeferred {
+pub(crate) struct ErrorDeferred {
     pub errno: c_ares::Error,
     pub syscall: &'static [u8],
     pub hostname: Option<bstr::String>,
@@ -660,7 +660,7 @@ pub struct ErrorDeferred {
 }
 
 impl ErrorDeferred {
-    pub fn init(
+    pub(crate) fn init(
         errno: c_ares::Error,
         syscall: &'static [u8],
         hostname: Option<bstr::String>,
@@ -674,7 +674,7 @@ impl ErrorDeferred {
         })
     }
 
-    pub fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let code = self.errno.code();
         // TODO(port): bun.String.createFormat used Zig {f} spec for bun.String — verify Display impl
         let message = if let Some(hostname) = &self.hostname {
@@ -713,7 +713,7 @@ impl ErrorDeferred {
         Ok(self.promise.reject(global_this, Ok(instance))?)
     }
 
-    pub fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
+    pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
         struct Context {
             deferred: Box<ErrorDeferred>,
             // LIFETIMES.tsv row 1403: JSC_BORROW — the global outlives the
@@ -752,7 +752,7 @@ impl ErrorDeferred {
 // Drop: hostname (bun_core::String) and promise (JSPromiseStrong) drop their own resources.
 // Zig's deinit() additionally did `bun.destroy(this)` — handled by Box drop at the call site.
 
-pub fn error_to_deferred(
+pub(crate) fn error_to_deferred(
     this: c_ares::Error,
     syscall: &'static [u8],
     hostname: Option<&[u8]>,
@@ -763,7 +763,7 @@ pub fn error_to_deferred(
     ErrorDeferred::init(this, syscall, host_string, taken)
 }
 
-pub fn error_to_js_with_syscall(
+pub(crate) fn error_to_js_with_syscall(
     this: c_ares::Error,
     global_this: &JSGlobalObject,
     syscall: &'static [u8],
@@ -789,7 +789,7 @@ pub fn error_to_js_with_syscall(
     Ok(instance)
 }
 
-pub fn error_to_js_with_syscall_and_hostname(
+pub(crate) fn error_to_js_with_syscall_and_hostname(
     this: c_ares::Error,
     global_this: &JSGlobalObject,
     syscall: &'static [u8],
@@ -822,7 +822,7 @@ pub fn error_to_js_with_syscall_and_hostname(
 // Zig: `@export(&jsc.toJSHostFn(Bun__canonicalizeIP_), .{ .name = "Bun__canonicalizeIP" })`
 // — `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
 #[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]
-pub fn bun_canonicalize_ip(
+pub(crate) fn bun_canonicalize_ip(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {

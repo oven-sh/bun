@@ -33,7 +33,7 @@ impl super::validators::StringEnum for OptionValueType {
 
 /// Metadata of an option known to the args parser,
 /// i.e. the values passed to `parseArgs(..., { options: <values> })`
-pub struct OptionDefinition {
+pub(crate) struct OptionDefinition {
     // e.g. "abc" for --abc
     pub long_name: String,
 
@@ -66,7 +66,7 @@ impl Default for OptionDefinition {
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum TokenSubtype {
+pub(crate) enum TokenSubtype {
     /// '--'
     OptionTerminator,
     /// e.g. '-f'
@@ -84,7 +84,7 @@ pub enum TokenSubtype {
 }
 
 #[inline]
-pub fn classify_token(arg: &String, options: &[OptionDefinition]) -> TokenSubtype {
+pub(crate) fn classify_token(arg: &String, options: &[OptionDefinition]) -> TokenSubtype {
     let len = arg.length();
 
     if len == 2 {
@@ -123,7 +123,7 @@ pub fn classify_token(arg: &String, options: &[OptionDefinition]) -> TokenSubtyp
 /// Detect whether there is possible confusion and user may have omitted
 /// the option argument, like `--port --verbose` when `port` of type:string.
 /// In strict mode we throw errors if value is option-like.
-pub fn is_option_like_value(value: &String) -> bool {
+pub(crate) fn is_option_like_value(value: &String) -> bool {
     value.length() > 1 && value.has_prefix_comptime(b"-")
 }
 
@@ -136,7 +136,7 @@ pub fn is_option_like_value(value: &String) -> bool {
 ///   options: { bar: { short: 'b' } }
 /// }) // returns "bar"
 /// ```
-pub fn find_option_by_short_name(
+pub(crate) fn find_option_by_short_name(
     short_name: &String,
     options: &[OptionDefinition],
 ) -> Option<usize> {

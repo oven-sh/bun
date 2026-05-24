@@ -1722,10 +1722,10 @@ impl ReaderContext for Reader {
 pub use bun_sql::mysql::MySQLQueryResult as QueryResult;
 
 // TODO(port): IdentityContext(u64) hasher — bun_collections::HashMap should support identity hash for u64 keys
-pub type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement>;
+pub(crate) type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement>;
 /// Result of `PreparedStatementsMap::get_or_put` — surfaced for
 /// `JSMySQLConnection::get_statement_from_signature_hash`.
-pub type PreparedStatementsMapGetOrPutResult<'a> =
+pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =
     bun_collections::hash_map::GetOrPutResult<'a, *mut MySQLStatement>;
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection

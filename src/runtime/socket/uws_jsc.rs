@@ -93,7 +93,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-pub fn any_web_socket_get_topics_as_js_array(
+pub(crate) fn any_web_socket_get_topics_as_js_array(
     this: AnyWebSocket,
     global_object: &JSGlobalObject,
 ) -> JSValue {
@@ -111,7 +111,7 @@ pub fn any_web_socket_get_topics_as_js_array(
 /// `socket` and `buffer` must be valid, non-null pointers for the duration of the call
 /// (guaranteed by the C++ caller `JSNodeHTTPServerSocket.cpp`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_socket_buffered_js_write(
+pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     socket: *mut us_socket_t,
     // kept for ABI parity with the C++ caller; TLS is now per-socket
     _ssl: bool,

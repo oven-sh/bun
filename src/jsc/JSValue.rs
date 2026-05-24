@@ -2195,7 +2195,7 @@ pub type ForEachCallback =
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`]
 /// (Zig: `*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.c) void`).
-pub type ForEachPropertyCallback = extern "C" fn(
+pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
     key: *mut bun_core::ZigString,

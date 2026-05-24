@@ -1901,7 +1901,7 @@ fn scopes_for_enum_at<'a>(
     unreachable!("scopes_in_order_for_enum miss for enum stmt loc");
 }
 
-pub fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {
+pub(crate) fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {
     use bun_ast::stmt::Data as StmtData;
     for stmt in body {
         // "use strict" has to appear at the top of the function body

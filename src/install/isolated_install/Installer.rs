@@ -668,7 +668,7 @@ pub enum TaskError {
 }
 
 impl TaskError {
-    pub fn clone(&self) -> TaskError {
+    pub(crate) fn clone(&self) -> TaskError {
         match self {
             TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
@@ -737,7 +737,7 @@ impl Step {
     /// only ever stored via `Step::* as u32` (this file) so the value is
     /// always a valid discriminant.
     #[inline]
-    pub const fn from_u32(raw: u32) -> Step {
+    pub(crate) const fn from_u32(raw: u32) -> Step {
         match raw {
             0 => Step::LinkPackage,
             1 => Step::SymlinkDependencies,

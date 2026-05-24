@@ -16,7 +16,7 @@ use bun_core::{self, Error, err};
 // PORT NOTE: Zig nested `Bitset` inside `SkipTypeOptions`; Rust hoists it to a module-level
 // alias. Re-export here so the parser-side type alias used in this file matches the
 // canonical definition in `TypeScript.rs`.
-pub type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
+pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     #[inline]

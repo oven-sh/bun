@@ -556,17 +556,6 @@ pub mod api {
         pub env: Option<EnvConfig>,
     }
 
-    /// schema.zig:1489
-    #[derive(Clone, Debug, Default)]
-    pub struct LoadedFramework {
-        pub package: Box<[u8]>,
-        pub display_name: Box<[u8]>,
-        pub development: bool,
-        pub entry_points: FrameworkEntryPointMap,
-        pub client_css_in_js: CssInJsBehavior,
-        pub override_modules: StringMap,
-    }
-
     /// schema.zig:1528
     #[derive(Clone, Debug, Default)]
     pub struct LoadedRouteConfig {

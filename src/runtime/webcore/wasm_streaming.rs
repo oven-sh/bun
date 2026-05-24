@@ -27,7 +27,7 @@ unsafe extern "C" {
 }
 
 /// Spec `JSGlobalObject.zig:871 getBodyStreamOrBytesForWasmStreaming`.
-pub fn get_body_stream_or_bytes_for_wasm_streaming(
+pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
     this: &JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,
@@ -158,7 +158,7 @@ pub fn get_body_stream_or_bytes_for_wasm_streaming(
 /// `this` must be a valid, live `JSGlobalObject` pointer for the duration of
 /// the call (guaranteed by the C++ host caller).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+pub(crate) unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
     this: *mut JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,

@@ -4,7 +4,7 @@ use super::mock;
 use super::Expect;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-enum Mode {
+pub enum Mode {
     ToHaveReturned,
     ToHaveReturnedTimes,
 }

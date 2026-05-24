@@ -13,7 +13,7 @@ use analyze::{ModuleInfoDeserialized, RecordKind, RequestedModuleValue, StringID
 use bun_bundler::analyze_transpiled_module as analyze;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
+pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     global_object: &JSGlobalObject,
     vm: &VM,
     module_key: &IdentifierArray,
@@ -263,8 +263,8 @@ impl IdentifierArray {
 }
 
 bun_opaque::opaque_ffi! {
-    pub struct SourceCode;
-    pub struct JSModuleRecord;
+    pub(crate) struct SourceCode;
+    pub(crate) struct JSModuleRecord;
 }
 unsafe extern "C" {
     fn JSC_JSModuleRecord__create(
@@ -278,13 +278,6 @@ unsafe extern "C" {
         is_typescript: bool,
         has_tla: bool,
     ) -> *mut JSModuleRecord;
-
-    fn JSC_JSModuleRecord__declaredVariables(
-        module_record: *mut JSModuleRecord,
-    ) -> *mut VariableEnvironment;
-    fn JSC_JSModuleRecord__lexicalVariables(
-        module_record: *mut JSModuleRecord,
-    ) -> *mut VariableEnvironment;
 
     fn JSC_JSModuleRecord__addIndirectExport(
         module_record: *mut JSModuleRecord,
@@ -374,7 +367,7 @@ unsafe extern "C" {
 }
 impl JSModuleRecord {
     #[inline]
-    pub fn create(
+    pub(crate) fn create(
         global_object: &JSGlobalObject,
         vm: &VM,
         module_key: &IdentifierArray,
@@ -399,20 +392,6 @@ impl JSModuleRecord {
                 has_tla,
             )
         }
-    }
-    // Forwards `this` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline]
-    pub fn declared_variables(this: *mut JSModuleRecord) -> *mut VariableEnvironment {
-        // SAFETY: `this` is a valid JSModuleRecord*.
-        unsafe { JSC_JSModuleRecord__declaredVariables(this) }
-    }
-    // Forwards `this` to C++ without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline]
-    pub fn lexical_variables(this: *mut JSModuleRecord) -> *mut VariableEnvironment {
-        // SAFETY: `this` is a valid JSModuleRecord*.
-        unsafe { JSC_JSModuleRecord__lexicalVariables(this) }
     }
 }
 

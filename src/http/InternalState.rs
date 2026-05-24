@@ -72,7 +72,7 @@ pub struct InternalStateFlags {
 
 impl InternalStateFlags {
     /// Zig's field defaults: `allow_keepalive = true`, rest false.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             allow_keepalive: true,
             received_last_chunk: false,
@@ -476,7 +476,7 @@ pub enum Stage {
 
 // Aliases used by the HTTPClient state machine: the Zig side has separate
 // `request_stage` / `response_stage` fields but they share one HTTPStage enum.
-pub type RequestStage = HTTPStage;
-pub type ResponseStage = HTTPStage;
+pub(crate) type RequestStage = HTTPStage;
+pub(crate) type ResponseStage = HTTPStage;
 
 // ported from: src/http/InternalState.zig

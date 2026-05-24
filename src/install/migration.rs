@@ -228,7 +228,7 @@ const DEPENDENCY_KEYS: [DependencyGroup; 4] = [
     DependencyGroup::OPTIONAL,
 ];
 
-pub fn migrate_npm_lockfile<'a>(
+pub(crate) fn migrate_npm_lockfile<'a>(
     this: &'a mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,

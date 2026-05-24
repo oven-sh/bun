@@ -135,7 +135,7 @@ struct TreeDepsSortCtx<'a> {
 }
 
 impl<'a> TreeDepsSortCtx<'a> {
-    pub fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
+    pub(crate) fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
         let l = &self.deps_buf[lhs as usize];
         let r = &self.deps_buf[rhs as usize];
         strings::cmp_strings_asc(
@@ -146,7 +146,7 @@ impl<'a> TreeDepsSortCtx<'a> {
     }
 }
 
-pub struct Stringifier;
+pub(crate) struct Stringifier;
 
 impl Stringifier {
     const INDENT_SCALAR: usize = 2;
@@ -155,7 +155,7 @@ impl Stringifier {
     //     let _ = this;
     // }
 
-    pub fn save_from_binary(
+    pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
         options: &PackageManagerOptions,
@@ -165,7 +165,7 @@ impl Stringifier {
         Self::save_from_binary_inner(lockfile, load_result, options, writer)
     }
 
-    pub fn save_from_binary_inner(
+    pub(crate) fn save_from_binary_inner(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
         options: &PackageManagerOptions,
@@ -1346,14 +1346,14 @@ bun_core::oom_from_alloc!(ParseError);
 
 bun_core::named_error_set!(ParseError);
 
-pub type PkgPathSet = PkgMap<()>;
+pub(crate) type PkgPathSet = PkgMap<()>;
 
-pub struct PkgMap<T> {
+pub(crate) struct PkgMap<T> {
     pub map: StringHashMap<T>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum ResolveError {
+pub(crate) enum ResolveError {
     InvalidPackageKey,
     Unresolvable,
 }
@@ -1362,7 +1362,7 @@ impl<T> PkgMap<T> {
     // PORT NOTE: Zig `pub const Entry = T;` — inherent associated types are
     // unstable in Rust; callers name `T` directly.
 
-    pub fn init() -> Self {
+    pub(crate) fn init() -> Self {
         Self {
             map: StringHashMap::default(),
         }
@@ -1370,7 +1370,7 @@ impl<T> PkgMap<T> {
 
     // deinit → Drop (StringHashMap drops itself)
 
-    pub fn get_or_put(
+    pub(crate) fn get_or_put(
         &mut self,
         name: &[u8],
     ) -> Result<bun_collections::string_hash_map::GetOrPutResult<'_, T>, bun_alloc::AllocError>
@@ -1380,19 +1380,19 @@ impl<T> PkgMap<T> {
         self.map.get_or_put(name)
     }
 
-    pub fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
+    pub(crate) fn put(&mut self, name: impl AsRef<[u8]>, value: T) {
         self.map.put_assume_capacity(name.as_ref(), value);
     }
 
-    pub fn get(&self, name: &[u8]) -> Option<&T> {
+    pub(crate) fn get(&self, name: &[u8]) -> Option<&T> {
         self.map.get(name)
     }
 
-    pub fn contains(&self, path: &[u8]) -> bool {
+    pub(crate) fn contains(&self, path: &[u8]) -> bool {
         self.map.contains_key(path)
     }
 
-    pub fn find_resolution(
+    pub(crate) fn find_resolution(
         &self,
         pkg_path: &[u8],
         dep: &Dependency,

@@ -6,7 +6,6 @@ pub use bun_resolver::fs::Path as FsPath;
 /// Spec `PluginRunner.zig:MacroJSCtx` — re-export of the canonical newtype
 /// (defined at the lowest tier that stores it, `bun_ast::Macro`).
 pub use bun_bundler::transpiler::MacroJSCtx as MacroJsCtx;
-pub const DEFAULT_MACRO_JS_VALUE: MacroJsCtx = MacroJsCtx::ZERO;
 
 /// Spec `PluginRunner.zig:PluginRunner` — re-export of the concrete struct.
 /// `extract_namespace` / `could_be_plugin` (pure byte parsing) live in

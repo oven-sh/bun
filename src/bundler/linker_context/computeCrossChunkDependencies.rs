@@ -84,7 +84,7 @@ pub fn compute_cross_chunk_dependencies(
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
 }
 
-pub struct CrossChunkDependencies<'a, 'bump> {
+pub(crate) struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
     // PORT NOTE: `BackRef` — the same `[Chunk]` slice is also iterated mutably by
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
@@ -125,7 +125,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     // membership — debug-asserted in `assign_chunk_index`).
     // Reads `ctx`/`chunks`/SoA columns shared. Never forms `&mut
     // LinkerContext` (`ctx` is a `BackRef`, deref'd to `&`).
-    pub fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
+    pub(crate) fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
         let deps = self;
         // `ctx` / `chunks` are `BackRef`s into `LinkerContext` / the caller's chunk
         // slice, valid for the link pass (see PORT NOTE on the struct fields).

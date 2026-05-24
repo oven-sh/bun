@@ -1,6 +1,5 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::ffi::{c_char, c_void};
 
 use bun_core::ZStr;
@@ -78,22 +77,10 @@ impl ResponseKind {
     }
 }
 
-pub const LIBUS_TIMEOUT_GRANULARITY: i32 = 4;
-pub const LIBUS_RECV_BUFFER_PADDING: i32 = 32;
-pub const LIBUS_EXT_ALIGNMENT: i32 = 16;
-
-pub const _COMPRESSOR_MASK: i32 = 255;
-pub const _DECOMPRESSOR_MASK: i32 = 3840;
-pub const DISABLED: i32 = 0;
+pub(crate) const _COMPRESSOR_MASK: i32 = 255;
+pub(crate) const _DECOMPRESSOR_MASK: i32 = 3840;
 pub const SHARED_COMPRESSOR: i32 = 1;
 pub const SHARED_DECOMPRESSOR: i32 = 256;
-pub const DEDICATED_DECOMPRESSOR_32KB: i32 = 3840;
-pub const DEDICATED_DECOMPRESSOR_16KB: i32 = 3584;
-pub const DEDICATED_DECOMPRESSOR_8KB: i32 = 3328;
-pub const DEDICATED_DECOMPRESSOR_4KB: i32 = 3072;
-pub const DEDICATED_DECOMPRESSOR_2KB: i32 = 2816;
-pub const DEDICATED_DECOMPRESSOR_1KB: i32 = 2560;
-pub const DEDICATED_DECOMPRESSOR_512B: i32 = 2304;
 pub const DEDICATED_DECOMPRESSOR: i32 = 3840;
 pub const DEDICATED_COMPRESSOR_3KB: i32 = 145;
 pub const DEDICATED_COMPRESSOR_4KB: i32 = 146;
@@ -139,7 +126,7 @@ pub fn on_thread_exit() {
 /// # Safety
 /// `filename` and `error_msg` must be valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
+pub(crate) unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     filename: *const c_char,
     error_msg: *const c_char,
 ) {
@@ -1197,7 +1184,6 @@ pub mod ssl_wrapper {
 // version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
 pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
-pub type LoopCb = unsafe extern "C" fn(*mut Loop);
 
 /// Carrier trait so `set_parent_event_loop` can accept the higher-tier
 /// `EventLoopHandle` without depending on it. The event-loop crate impls this

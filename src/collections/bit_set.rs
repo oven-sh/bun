@@ -790,11 +790,6 @@ pub struct DynamicBitSetUnmanaged {
     // fails.
 }
 
-/// The integer type used to represent a mask in this bit set
-pub type DynMaskInt = usize;
-/// The integer type used to shift a mask in this bit set
-pub type DynShiftInt = u32;
-
 const DYN_MASK_BITS: u32 = usize::BITS;
 
 // Never modified — the Zig comment about needing `static mut` was a Zig
@@ -1438,9 +1433,10 @@ unsafe fn dyn_realloc(
 // ───────────────────────────── AutoBitSet ─────────────────────────────
 
 /// Static arm size: `@bitSizeOf(DynamicBitSetUnmanaged) - 1`.
-pub const AUTO_STATIC_BITS: usize = mem::size_of::<DynamicBitSetUnmanaged>() * 8 - 1;
+pub(crate) const AUTO_STATIC_BITS: usize = mem::size_of::<DynamicBitSetUnmanaged>() * 8 - 1;
 
-pub type AutoBitSetStatic = ArrayBitSet<AUTO_STATIC_BITS, { num_masks_for(AUTO_STATIC_BITS) }>;
+pub(crate) type AutoBitSetStatic =
+    ArrayBitSet<AUTO_STATIC_BITS, { num_masks_for(AUTO_STATIC_BITS) }>;
 
 pub enum AutoBitSet {
     Static(AutoBitSetStatic),
@@ -1557,7 +1553,7 @@ impl AutoBitSet {
 // (see ArrayBitSet::iterator / DynamicBitSetUnmanaged::iterator), so the
 // wrapper enum was a no-op layer of indirection. Keep the public name as a
 // type alias for any external callers.
-pub type AutoBitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> =
+pub(crate) type AutoBitSetIterator<'a, const KIND_SET: bool, const DIR_FWD: bool> =
     BitSetIterator<'a, KIND_SET, DIR_FWD>;
 
 impl Drop for AutoBitSet {

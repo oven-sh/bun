@@ -9,9 +9,11 @@ bun_core::declare_scope!(PosixSignalHandle, hidden);
 const BUFFER_SIZE: u16 = 8192;
 
 pub struct PosixSignalHandle {
+    #[allow(dead_code)]
     signals: [AtomicU8; BUFFER_SIZE as usize],
 
     /// Producer index (signal handler writes).
+    #[allow(dead_code)]
     tail: AtomicU16,
     /// Consumer index (main thread reads).
     head: AtomicU16,
@@ -29,13 +31,15 @@ impl Default for PosixSignalHandle {
 
 impl PosixSignalHandle {
     // `pub const new = bun.TrivialNew(@This());`
-    pub fn new(init: Self) -> Box<Self> {
+    #[allow(dead_code)]
+    pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
 
     /// Called by the signal handler (single producer).
     /// Returns `true` if enqueued successfully, or `false` if the ring is full.
-    pub fn enqueue(&self, signal: u8) -> bool {
+    #[allow(dead_code)]
+    pub(crate) fn enqueue(&self, signal: u8) -> bool {
         // Read the current tail and head (Acquire to ensure we have up-to-date values).
         let old_tail = self.tail.load(Ordering::Acquire);
         let head_val = self.head.load(Ordering::Acquire);
@@ -68,7 +72,8 @@ impl PosixSignalHandle {
 
     /// Called by the main thread (single consumer).
     /// Returns `None` if the ring is empty, or the next signal otherwise.
-    pub fn dequeue(&self) -> Option<u8> {
+    #[allow(dead_code)]
+    pub(crate) fn dequeue(&self) -> Option<u8> {
         // Read the current head and tail.
         let old_head = self.head.load(Ordering::Acquire);
         let tail_val = self.tail.load(Ordering::Acquire);
@@ -90,7 +95,8 @@ impl PosixSignalHandle {
 
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
     /// Called by the main thread.
-    pub fn drain(&self, event_loop: &mut EventLoop) {
+    #[allow(dead_code)]
+    pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
         while let Some(signal) = self.dequeue() {
             // PORT NOTE: Zig stamps the discriminant via `Task.init(&stack_marker)` then
             // overwrites the packed `_ptr` bitfield with `setUintptr(signal)`. The Rust
@@ -108,7 +114,7 @@ impl PosixSignalHandle {
 /// This is the signal handler entry point. Calls enqueue on the ring buffer.
 /// Note: Must be minimal logic here. Only do atomics & signal-safe calls.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__onPosixSignal(number: i32) {
+pub(crate) extern "C" fn Bun__onPosixSignal(number: i32) {
     #[cfg(unix)]
     {
         let Some(vm) = VirtualMachine::get_main_thread_vm() else {
@@ -154,7 +160,7 @@ impl PosixSignalTask {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__ensureSignalHandler() {
+pub(crate) extern "C" fn Bun__ensureSignalHandler() {
     #[cfg(unix)]
     {
         if let Some(vm) = VirtualMachine::get_main_thread_vm() {

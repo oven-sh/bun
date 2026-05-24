@@ -10,7 +10,6 @@ use ::bun_ast::import_record as ast;
 use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
 use bun_ast::Msg;
-use bun_collections::MultiArrayList;
 use bun_core::MutableString;
 use bun_paths::SEP_STR;
 use bun_paths::strings;
@@ -49,13 +48,13 @@ impl Default for PathPair {
     }
 }
 
-pub struct PathPairIter<'a> {
+pub(crate) struct PathPairIter<'a> {
     index: u8, // u2 in Zig
     ctx: &'a mut PathPair,
 }
 
 impl<'a> PathPairIter<'a> {
-    pub fn next(&mut self) -> Option<&mut Path> {
+    pub(crate) fn next(&mut self) -> Option<&mut Path> {
         if let Some(path_) = self.next_() {
             let p: *mut Path = path_;
             // SAFETY: `p` is the exclusive `&mut Path` just returned by `next_()`,
@@ -318,7 +317,7 @@ pub struct DebugMeta {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SuggestionRange {
+pub(crate) enum SuggestionRange {
     Full,
     End,
 }
@@ -549,8 +548,6 @@ impl Default for PendingResolution {
         }
     }
 }
-
-pub type PendingResolutionList = MultiArrayList<PendingResolution>;
 
 impl PendingResolution {
     // PORT NOTE: deinitListItems → Drop on MultiArrayList<PendingResolution>

@@ -272,6 +272,31 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
   });
+  // Numeric property names that would be printed as "1/0" (Infinity) or "-1" (inlined const
+  // enums) are not valid syntax in property-name position and must become computed properties.
+  // The negative const enum key case is https://github.com/oven-sh/bun/issues/14687
+  itBundled("minify/NumericPropertyKeysPrintedAsComputed", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E } from "./enum";
+        const obj = { 1e999: "inf", [E.Negative]: "neg" };
+        const { 1e999: destructured } = obj;
+        class C {
+          1e999() { return "method"; }
+          static 1e999 = "static";
+        }
+        console.log(JSON.stringify([obj[Infinity], obj[-1], destructured, new C()[Infinity](), C[Infinity]]));
+      `,
+      "enum.ts": /* ts */ `
+        export const enum E { Negative = -1 }
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: {
+      stdout: '["inf","neg","inf","method","static"]',
+    },
+  });
   itBundled("minify/InlineArraySpread", {
     files: {
       "/entry.js": /* js */ `

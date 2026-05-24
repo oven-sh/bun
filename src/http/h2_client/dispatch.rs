@@ -735,10 +735,7 @@ pub(crate) fn strip_padding(payload: &[u8]) -> Option<&[u8]> {
 
 /// RFC 9113 §8.2.1/§8.2.2 response-side validation: names must be lowercase
 /// RFC 9110 tokens, no hop-by-hop fields. Names from lshpack are already
-/// lowercase for table hits but a literal can carry anything — HPACK is
-/// length-prefixed, so without this check CR/LF/NUL/':'/space in a name would
-/// pass through verbatim and enable header injection when headers are
-/// forwarded downstream.
+/// lowercase for table hits but a literal can carry anything.
 pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
     if name.is_empty() {
         return true;

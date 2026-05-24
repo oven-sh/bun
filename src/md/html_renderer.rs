@@ -421,10 +421,8 @@ impl<'src> HtmlRenderer<'src> {
                     self.write_html_escaped(&content[start..]);
                 }
             }
-            // Text that is not part of a raw-HTML chunk must always be
-            // entity-escaped, even between filtered disallowed tags --
-            // otherwise a backslash-escaped `\<` could reassemble a live
-            // `<script>` in the output.
+            // Always escape, even between filtered disallowed tags — emitting
+            // raw text there would let `\<` reassemble a live `<script>`.
             _ => self.write_html_escaped(content),
         }
     }
@@ -719,9 +717,8 @@ fn match_tag_name_ci(content: &[u8], pos: usize, tag: &[u8]) -> bool {
         return false;
     }
     // Check delimiter after tag name. This must accept every byte the inline
-    // HTML scanner treats as whitespace (see `helpers::is_whitespace`, which
-    // includes \r, form feed, and vertical tab) or a tag like `<script\x0C...>`
-    // is emitted as raw HTML without being filtered.
+    // HTML scanner treats as whitespace (`helpers::is_whitespace`) or a tag
+    // like `<script\x0C...>` slips through unfiltered.
     let end = pos + tag.len();
     if end >= content.len() {
         return true;

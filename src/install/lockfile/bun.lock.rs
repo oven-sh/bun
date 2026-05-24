@@ -397,10 +397,9 @@ impl Stringifier {
                         if let Some(trusted_name) =
                             trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
                         {
-                            // Only persist an exact name match. A hash-only entry
-                            // from a legacy bun.lockb (empty name) must not adopt
-                            // whichever dependency name happens to collide with
-                            // its truncated hash.
+                            // A hash-only entry from a legacy bun.lockb (empty
+                            // name) must not adopt whichever dependency name
+                            // happens to collide with its truncated hash.
                             if **trusted_name == *dep.name.slice(buf) {
                                 found_trusted_dependencies.insert(dep.name_hash, dep.name);
                             }
@@ -2257,8 +2256,7 @@ pub fn parse_into_binary_lockfile(
             };
 
             // The package name is later embedded verbatim in cache folder
-            // names and install paths. Reject anything that could resolve
-            // outside those directories (`..`, empty components, `\`, `:`).
+            // names and install paths.
             if !name_str.is_empty() && !dependency::is_safe_install_folder_name(name_str) {
                 log.add_error(Some(source), res_info.loc, b"Invalid package name");
                 return Err(ParseError::InvalidPackageResolution);

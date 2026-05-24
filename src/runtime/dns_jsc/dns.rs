@@ -259,8 +259,7 @@ pub(super) mod lib_info {
                     // the slot and leaves `buffer[pos].lookup` pointing at the request we
                     // are about to free (UAF on the next `.inflight` hit).
                     // `PendingCacheKey` owns its `name` buffer, so use `put` (which
-                    // runs `T::drop`) rather than `put_raw`; the previous
-                    // `MaybeUninit::uninit().assume_init()` write was UB regardless.
+                    // runs `T::drop`) rather than `put_raw`.
                     let pos = (*request).cache.pos_in_pending();
                     this.pending_host_cache_native.with_mut(|c| {
                         let slot = c.ptr_at(pos as usize);
@@ -617,9 +616,7 @@ pub mod resolve_info_request {
     pub struct PendingCacheKey<T: CAresRecordType> {
         pub hash: u64,
         pub len: u16,
-        /// Owned copy of the queried name. `hash` is wyhash with a fixed seed —
-        /// not collision resistant — so it is only a fast reject; coalescing onto
-        /// an in-flight lookup must also compare these bytes.
+        /// Owned copy of the queried name; `hash` alone is only a fast reject.
         pub name: Box<[u8]>,
         pub lookup: *mut ResolveInfoRequest<T>,
     }
@@ -762,9 +759,7 @@ pub mod get_host_by_addr_info_request {
     pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
-        /// Owned copy of the queried name. `hash` is wyhash with a fixed seed —
-        /// not collision resistant — so it is only a fast reject; coalescing onto
-        /// an in-flight lookup must also compare these bytes.
+        /// Owned copy of the queried name; `hash` alone is only a fast reject.
         pub name: Box<[u8]>,
         pub lookup: *mut GetHostByAddrInfoRequest,
     }
@@ -1018,9 +1013,7 @@ pub mod get_name_info_request {
     pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
-        /// Owned copy of the queried name. `hash` is wyhash with a fixed seed —
-        /// not collision resistant — so it is only a fast reject; coalescing onto
-        /// an in-flight lookup must also compare these bytes.
+        /// Owned copy of the queried name; `hash` alone is only a fast reject.
         pub name: Box<[u8]>,
         pub lookup: *mut GetNameInfoRequest,
     }
@@ -1168,9 +1161,7 @@ pub mod get_addr_info_request {
     pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
-        /// Owned copy of the queried name. `hash` is wyhash with a fixed seed —
-        /// not collision resistant — so it is only a fast reject; coalescing onto
-        /// an in-flight lookup must also compare these bytes.
+        /// Owned copy of the queried name; `hash` alone is only a fast reject.
         pub name: Box<[u8]>,
         pub lookup: *mut GetAddrInfoRequest,
     }
@@ -3836,9 +3827,7 @@ pub trait HasPendingCacheKey {
     fn key_hash(key: &Self::PendingCacheKey) -> u64;
     /// `key.len`
     fn key_len(key: &Self::PendingCacheKey) -> u16;
-    /// `key.name` — the queried name's bytes. The wyhash in `key.hash` is not
-    /// collision resistant, so it is only a fast reject; coalescing onto an
-    /// in-flight lookup must also compare these bytes.
+    /// `key.name` — the queried name's bytes.
     fn key_name(key: &Self::PendingCacheKey) -> &[u8];
     /// Construct a fully-initialized `PendingCacheKey { hash, len, name, lookup: null }`
     /// from the probe key, for `HiveArray::get_init`. `lookup` is filled in later by

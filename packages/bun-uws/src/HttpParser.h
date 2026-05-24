@@ -295,11 +295,9 @@ namespace uWS
                         return te;
                     }
 
-                    /* The field is present even when its value names no transfer
-                     * coding (empty or whitespace/comma-only). Treating it as absent
-                     * would fall back to Content-Length framing and create a request
-                     * smuggling parser differential; with te.has set and te.chunked
-                     * unset, the RFC 9112 6.3 check below rejects it with 400. */
+                    /* Present even when the value names no transfer coding: treating
+                     * an empty/whitespace-only field as absent would fall back to
+                     * Content-Length framing (request smuggling; RFC 9112 6.3). */
                     te.has = true;
 
                     // Check if the last token is "chunked"

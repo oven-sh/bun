@@ -1317,12 +1317,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut hostname_mismatch = false;
 
         // A certificate that chains to a trusted root but was issued for a
-        // different host must not be reported as authorized. Verify the peer
-        // certificate against the hostname this client connection was opened
-        // for (the SNI server name, falling back to the connect() host) —
-        // the same precedence on_open uses when sending the SNI. Server
-        // sockets and connections with no hostname to verify against (unix
-        // sockets, upgraded duplexes without a servername) skip the check.
+        // different host must not be reported as authorized. The hostname
+        // precedence (SNI server name, then connect() host) matches on_open.
         if SSL && authorized && !handlers.mode.is_server() {
             if let Some(ssl_ptr) = this.socket.get().ssl() {
                 let hostname: &[u8] = if let Some(server_name) = this.server_name.get() {

@@ -686,11 +686,9 @@ impl<'a> AnsiRenderer<'a> {
     // ========================================
 
     pub fn text(&mut self, text_type: TextType, content: &[u8]) {
-        // Markdown source is plain UTF-8 — the parser hands raw ESC / C0
-        // control bytes through as ordinary text. Strip them so attacker-
-        // controlled markdown can't inject its own terminal control
-        // sequences (OSC 52 clipboard writes, title changes, ...) alongside
-        // the renderer's styling escapes.
+        // The parser hands raw ESC / C0 control bytes through as ordinary
+        // text — strip them so attacker-controlled markdown can't inject
+        // its own terminal control sequences (OSC 52, title changes, ...).
         let mut sanitized: Vec<u8> = Vec::new();
         let content = sanitize_source_text(content, &mut sanitized);
         match text_type {

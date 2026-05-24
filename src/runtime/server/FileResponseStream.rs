@@ -89,10 +89,7 @@ bitflags::bitflags! {
         const FINISHED      = 1 << 1;
         const ERRORED       = 1 << 2;
         const RESP_DETACHED = 1 << 3;
-        /// Exactly one in-flight-read ref (taken before `reader.read()`) is
-        /// outstanding. A still-armed poll can deliver extra reader callbacks
-        /// after the ref was already consumed by a backpressure/done/error
-        /// path; this bit makes the release exactly-once.
+        /// An in-flight-read ref is outstanding; see `take_read_ref`.
         const READ_REF_HELD = 1 << 4;
     }
 }
@@ -287,11 +284,7 @@ impl FileResponseStream {
         match self.resp.write(chunk) {
             WriteResult::Backpressure(_) => {
                 // release the read ref; on_writable re-takes it. Adopts the ref
-                // taken before `reader.read()` — no fresh `ref_()` here. A
-                // still-armed poll can deliver another chunk before
-                // `on_writable` re-takes the ref, so only release it if it is
-                // actually held; a second release would drop the base ref and
-                // free the object while uWS still points at it.
+                // taken before `reader.read()` — no fresh `ref_()` here.
                 let _guard2 = self.take_read_ref();
                 self.resp.on_writable(
                     |p: *mut FileResponseStream, off, r| {
@@ -309,15 +302,13 @@ impl FileResponseStream {
     }
 
     pub(crate) fn on_reader_done(&mut self) {
-        // Adopts the in-flight read ref taken before `reader.read()`, if it is
-        // still held (a backpressure result may have already consumed it).
+        // Adopts the in-flight read ref taken before `reader.read()`.
         let _guard = self.take_read_ref();
         self.finish();
     }
 
     pub(crate) fn on_reader_error(&mut self, err: sys::Error) {
-        // Adopts the in-flight read ref taken before `reader.read()`, if it is
-        // still held (a backpressure result may have already consumed it).
+        // Adopts the in-flight read ref taken before `reader.read()`.
         let _guard = self.take_read_ref();
         self.fail_with(err);
     }

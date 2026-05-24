@@ -604,15 +604,10 @@ pub mod ast {
 
 const MAX_NESTED_BRACES: usize = 10;
 
-/// Hard cap on the number of `{` groups in a single brace-expansion word.
-/// `parse_atom` ⇄ `parse_expansion`, `expand_flat`, and `expand_nested` all
-/// recurse proportionally to the count / nesting depth of brace groups, so
-/// without a cap a crafted input (e.g. 50k nested `{`) overflows the native
-/// stack. Legitimate patterns are far below this.
+/// Hard cap on `{` groups in a single brace-expansion word: the parser and
+/// expanders recurse per brace group, so unbounded input overflows the stack.
 const MAX_BRACE_GROUPS: usize = 256;
 
-/// Returns an error if `tokens` contains more `{` groups than the parser /
-/// expander can recurse through without risking stack exhaustion.
 fn check_brace_group_count(tokens: &[Token]) -> Result<(), ParserError> {
     let opens = tokens
         .iter()

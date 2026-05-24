@@ -248,11 +248,9 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     };
 
-    // The child fully controls the bytes on the IPC fd, so it can craft a
-    // message that decodes as "internal" even when the parent never set up
-    // node:cluster's primary callback via `onInternalMessagePrimary`. Drop the
-    // message instead of unwrapping the unset worker/cb Strongs below, which
-    // would abort the parent process.
+    // A child can send a message that decodes as "internal" before the parent
+    // ever registers the worker/cb via `onInternalMessagePrimary`; drop it
+    // instead of unwrapping the unset Strongs below.
     if !ipc_data.internal_msg_queue.is_ready() {
         return Ok(());
     }

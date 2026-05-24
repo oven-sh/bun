@@ -316,8 +316,7 @@ impl Context {
             ZSTD_COMPRESS | ZSTD_DECOMPRESS => unreachable!(),
         };
 
-        // See field comment on `dictionary` — copy out of the JS buffer so a
-        // later detach/transfer/resize cannot invalidate the bytes.
+        // See field comment on `dictionary`.
         self.dictionary = match dictionary {
             Some(d) => d.to_vec(),
             None => Vec::new(),

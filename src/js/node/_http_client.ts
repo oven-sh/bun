@@ -314,9 +314,8 @@ function ClientRequest(input, options, cb) {
         return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
         let proxy: string | undefined;
-        // `options.path` may only influence the path/query of the outgoing
-        // request. Without a leading "/", the WHATWG URL parser would treat the
-        // path as a continuation of the authority (e.g. "@evil.com/" turns the
+        // Without a leading "/", the WHATWG URL parser would treat the path as
+        // a continuation of the authority (e.g. "@evil.com/" turns the
         // configured host into userinfo and connects to evil.com instead).
         const pathname = path.startsWith("/") ? path : "/" + path;
         const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${pathname}`;

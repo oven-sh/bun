@@ -496,10 +496,6 @@ fn parse_option_definitions(
                         }
                     }
                 }
-                // Root the default value for the lifetime of the call: it is
-                // stored in a heap-allocated Vec that JSC's conservative stack
-                // scan cannot see, and tokenizing the args can run user JS and
-                // trigger a GC before Phase 3 consumes it.
                 default_roots.append(default_value);
                 option.default_value = Some(default_value);
             }

@@ -533,12 +533,9 @@ impl Stdio {
                 return Ok(());
             }
 
-            // Snapshot the bytes into a private copy. The pipe writer drains
-            // this buffer across event-loop ticks, and the caller's backing
-            // store can be detached/transferred (freeing it) by JS in the
-            // meantime — the `held` Strong keeps the cell alive but does not
-            // prevent detachment. The copy is never exposed to JS, so it
-            // cannot be invalidated out from under the writer.
+            // The pipe writer drains this buffer across event-loop ticks, and JS
+            // can detach/transfer the caller's backing store in the meantime (the
+            // `held` Strong does not prevent detachment) — so copy the bytes.
             let copied_value =
                 jsc::array_buffer::ArrayBuffer::create_buffer(global, array_buffer.byte_slice())?;
             let copied = copied_value

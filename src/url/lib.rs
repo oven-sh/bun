@@ -119,9 +119,7 @@ pub mod whatwg {
         let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) } as usize;
         // `URL__originLength` returns `WTF::URL::pathStart()` — an offset into the
         // *normalized* URL string, which can be longer than the input before the
-        // path starts (e.g. "http:h" serializes to "http://h/"). Reject offsets
-        // that fall outside the prefix we actually parsed instead of indexing out
-        // of bounds.
+        // path starts (e.g. "http:h" serializes to "http://h/").
         if len == 0 || len > first_non_ascii {
             return None;
         }

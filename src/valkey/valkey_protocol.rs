@@ -251,9 +251,7 @@ impl<'a> ValkeyReader<'a> {
     pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
         // Only the first `MAX_LINE_LEN + 1` positions may legally start the
-        // terminating CRLF; bounding the search keeps the per-call cost
-        // constant when an unterminated line is rescanned on every socket
-        // read.
+        // terminating CRLF.
         let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
         for (i, &byte) in buffer[..limit].iter().enumerate() {
             if byte == b'\r' && buffer.len() > i + 1 && buffer[i + 1] == b'\n' {

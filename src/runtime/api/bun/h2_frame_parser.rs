@@ -620,12 +620,9 @@ fn is_valid_header_value(value: &[u8]) -> bool {
     !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
 }
 
-/// RFC 9113 §8.2/§8.2.1 inbound validation. Field names received over the
-/// wire must be lowercase, and neither names nor values may contain NUL
-/// (0x00), LF (0x0a), or CR (0x0d). HPACK strings are length-prefixed, so
-/// these octets would otherwise reach the application verbatim and enable
-/// header/request injection when headers are re-serialized into HTTP/1.1
-/// downstream. Mirrors `is_malformed_response_value` on the fetch() HTTP/2
+/// RFC 9113 §8.2/§8.2.1 inbound validation: field names received over the
+/// wire must be lowercase, and neither names nor values may contain NUL, LF,
+/// or CR. Mirrors `is_malformed_response_value` on the fetch() HTTP/2
 /// client path.
 #[inline]
 fn is_malformed_field_name(name: &[u8]) -> bool {
@@ -5580,11 +5577,9 @@ impl H2FrameParser {
 impl H2FrameParser {
     // get memory usage in MB
     fn get_session_memory_usage(&self) -> usize {
-        // Stream entries stay in the map until connection teardown, including
-        // CLOSED ones, so every entry must be counted. Excluding closed
-        // streams would let a peer that opens a stream and immediately resets
-        // it accumulate unbounded per-stream state that is invisible to the
-        // session memory cap.
+        // Count CLOSED streams too: entries stay in the map until connection
+        // teardown, so excluding them would let a peer accumulate per-stream
+        // state invisible to the session memory cap.
         let stream_count = self.streams.get().len();
         (self.write_buffer.get().len_u32() as usize
             + self.queued_data_size.get() as usize

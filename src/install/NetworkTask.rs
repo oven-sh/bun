@@ -489,25 +489,15 @@ impl NetworkTask {
             // This actually duplicates the string! So we defer deref the WTF managed one above.
             let url_bytes = tmp.to_owned_slice().into_boxed_slice();
 
-            // The manifest URL is built by joining the registry URL with the
-            // package name, which is attacker-controlled (e.g. an `npm:` alias
-            // target in any dependencies map). WHATWG URL joining treats '\'
-            // as '/' for special schemes, so a name like "\\evil.com\pkg"
-            // resolves to "https://evil.com/pkg" and would receive this
-            // scope's Authorization header below. Reject any join whose origin
-            // no longer matches the registry scope. Protocol/hostname are
-            // compared ASCII-case-insensitively because the joined href is
-            // normalized (lowercased) by WTF::URL while `scope.url` keeps the
-            // configured spelling.
-            //
-            // The same join can also escape *within* the origin: a name like
-            // "..\\other-repo\\pkg" against "https://host/artifactory/api/npm/npm/"
-            // resolves to "https://host/artifactory/api/other-repo/pkg". Require
-            // the joined pathname to stay under the registry path's directory
-            // (everything up to and including its last '/'), which is exactly
-            // the base WHATWG relative resolution uses for the package name —
-            // so well-formed names always pass and the prefix match lands on a
-            // segment boundary by construction.
+            // The package name is attacker-controlled (e.g. an `npm:` alias
+            // target) and WHATWG URL joining treats '\' as '/' for special
+            // schemes, so "\\evil.com\pkg" joins to "https://evil.com/pkg" and
+            // would receive this scope's Authorization header; "..\\x\\pkg" can
+            // likewise escape the registry path within the same origin. Reject
+            // any join that leaves the registry's origin or path directory.
+            // Protocol/hostname compare case-insensitively because WTF::URL
+            // lowercases the joined href while `scope.url` keeps the configured
+            // spelling.
             {
                 let joined = URL::parse(&url_bytes);
                 let registry = scope.url.url();

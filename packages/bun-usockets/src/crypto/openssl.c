@@ -539,11 +539,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         us_verify_callback);
 
   } else if (options.ca && options.ca_count > 0) {
-    /* An explicit `ca` replaces the default trust store (Node.js semantics):
-     * chains must validate exclusively against the supplied CAs, otherwise a
-     * server doing mTLS with `ca: [internalCA]` would also accept any client
-     * certificate that chains to a public root. SSL_CTX_new() already gave
-     * this context a fresh, empty X509_STORE — add the user CAs to that. */
+    /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
+     * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
+     * any client certificate that chains to a public root. */
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     for (unsigned int i = 0; i < options.ca_count; i++) {
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {

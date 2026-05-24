@@ -1324,11 +1324,9 @@ impl<'a> Linker<'a> {
     fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
         // PORT NOTE: hoisted from `defer` block in create_symlink
         if err.is_none() {
-            // `abs_target` is `<package_dir>/<bin entry>`. Git/file dependencies
-            // can ship the bin target as a symlink (the npm tarball extractor
-            // never materializes one), and `chmod` follows symlinks — a package
-            // could point `bin/x` at a file outside node_modules and have the
-            // installer change that file's mode. Skip symlinked bin targets.
+            // Git/file dependencies can ship the bin target as a symlink, and
+            // `chmod` follows symlinks — a package could point `bin/x` at a file
+            // outside node_modules and have the installer change that file's mode.
             let Ok(st) = sys::lstat(abs_target) else {
                 return;
             };

@@ -247,10 +247,8 @@ fn search_bin_in_path<'a>(
         let _ = path_buf;
         path
     };
-    // `buf` is a fixed-size `WPathBuffer`: the writes below are `segment` +
-    // SEP + `bin` + NUL plus a 4-unit `.exe`/`.cmd`/`.bat` probe in
-    // `search_bin`. Reject oversized inputs instead of overflowing — mirrors
-    // the `len_z > MAX_PATH_BYTES` check in the POSIX `is_valid`.
+    // `segment` + SEP + `bin` + NUL plus the 4-unit `.exe`/`.cmd`/`.bat`
+    // probe in `search_bin` must all fit in the fixed-size `buf`.
     if segment.len() + 1 + bin.len() + 5 > buf.len() {
         return None;
     }

@@ -3336,9 +3336,7 @@ impl MappingProps {
         self.list.reserve(merge_props.len());
         // PERF(port): was ensureUnusedCapacity
 
-        // Index any properties appended since the last merge so the duplicate
-        // check below is a hash lookup instead of an O(n) rescan of the whole
-        // property list for every merged key.
+        // Index any properties appended since the last merge.
         while self.merge_indexed < self.list.len() {
             let idx = self.merge_indexed;
             let key = self.list[idx].key.as_ref().unwrap();

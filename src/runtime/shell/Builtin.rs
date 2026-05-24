@@ -758,13 +758,8 @@ impl Builtin {
                 let jsval = interp.jsobjs[idx];
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
-                    // The builtin caches the buffer's raw `ptr`/`byte_len` and
-                    // reads/writes through them across event-loop ticks, so pin
-                    // the backing `JSC::ArrayBuffer` once per slot — otherwise
-                    // JS could `transfer()`/detach it before the command
-                    // finishes and free the backing store out from under the
-                    // cached pointer. `PinnedArrayBuf` unpins on Drop. Each
-                    // slot gets its own pin and Strong (sharing one would
+                    // Pin the backing buffer per slot (see `PinnedArrayBuf`).
+                    // Each slot gets its own pin and Strong (sharing one would
                     // double-free on Drop).
                     let mk = || {
                         let pinned = jsval.as_pinned_arraybuffer(global);

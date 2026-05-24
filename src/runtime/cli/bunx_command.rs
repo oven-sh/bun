@@ -966,11 +966,8 @@ impl BunxCommand {
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
-        // The cache root lives at a predictable path inside the shared,
-        // world-writable temp dir. If it already exists but was not created by
-        // the current user, every probe and install below would operate inside
-        // a directory tree another local user can rewrite, so bail out before
-        // touching it. See `is_trusted_cache_root`.
+        // Bail out before any probe or install touches a cache root another
+        // local user could rewrite — see `is_trusted_cache_root`.
         {
             let mut cache_root_buf = PathBuffer::uninit();
             cache_root_buf[..bunx_cache_dir.len()].copy_from_slice(bunx_cache_dir);

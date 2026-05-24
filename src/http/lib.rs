@@ -1511,9 +1511,10 @@ impl<'a> HTTPClient<'a> {
                         // the `force_http3` branch of `start_` all bail out
                         // when the CertErrors signal is set, because the h2/h3
                         // session objects transmit without consulting this
-                        // park gate. Pooled keep-alive sockets reuse a TLS
-                        // session whose certificate was already approved by
-                        // the previous request's check, so they never re-park.
+                        // park gate. Pooled keep-alive sockets skip the
+                        // handshake, so they never re-park; their certificate
+                        // was validated (native SAN or JS callback) by
+                        // whichever request first established the connection.
                         self.state.flags.is_waiting_for_cert_check = true;
 
                         // we inform the user that the cert is invalid

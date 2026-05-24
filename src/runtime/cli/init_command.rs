@@ -250,7 +250,6 @@ impl InitCommand {
         // for the full rationale — shared with `bun update --interactive`.
         let _signal_guard = crate::cli::prompt_signal::install();
 
-
         // Set raw mode to read single characters without echo.
         //
         // `ENABLE_PROCESSED_INPUT` is intentionally unset on Windows so the

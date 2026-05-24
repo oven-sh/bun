@@ -615,3 +615,92 @@ it("should include unused resolutions in the lockfile", async () => {
   // --frozen-lockfile works
   await runBunInstall(env, packageDir, { frozenLockfile: true });
 });
+
+it("requires an integrity hash when an npm package entry points at a tarball URL outside the configured registry", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // Stand-in for a host that is not the configured registry. A correct install
+  // must never contact it for this lockfile, because the entry carries no
+  // integrity hash that would pin the tarball contents.
+  let offRegistryRequests = 0;
+  await using offRegistry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      offRegistryRequests++;
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "redirected-tarball-url",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  const lockfileWithUrl = (tarballUrl: string) =>
+    JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: {
+        "": {
+          name: "redirected-tarball-url",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        },
+      },
+      packages: {
+        "no-deps": ["no-deps@1.0.0", tarballUrl, {}, ""],
+      },
+    });
+
+  // The entry keeps the well-known name and version but points the tarball at
+  // a different host and provides no integrity hash.
+  await write(
+    join(packageDir, "bun.lock"),
+    lockfileWithUrl(`http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`),
+  );
+
+  let { exited, stdout, stderr } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+  expect(err).toContain(
+    "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
+  );
+  expect(offRegistryRequests).toBe(0);
+  expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(false);
+  expect(await exited).not.toBe(0);
+
+  // The same entry with the tarball URL under the configured registry and no
+  // integrity hash is still accepted (backward compat for lockfiles that omit
+  // the hash for registry-hosted tarballs).
+  await write(join(packageDir, "bun.lock"), lockfileWithUrl(`${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`));
+
+  ({ exited, stdout, stderr } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  }));
+
+  [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+  expect(err).not.toContain("Missing integrity hash");
+  expect(offRegistryRequests).toBe(0);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+});

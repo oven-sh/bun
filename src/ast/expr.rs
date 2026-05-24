@@ -782,22 +782,45 @@ impl Expr {
     // `ConstParamTy` (Op.rs owns the enum); pass at runtime here. Revisit once
     // `Code` gains `ConstParamTy` — call sites are a handful of literal ops.
     pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
-        // "(a, b) op c" => "a, b op c"
-        if let Data::EBinary(mut comma) = a.data {
-            if comma.op == crate::OpCode::BinComma {
-                comma.right = Self::join_with_left_associative_op(op, comma.right, b);
-            }
-        }
+        Self::join_with_left_associative_op_with_check(op, a, b, bun_core::StackCheck::init())
+    }
 
-        // "a op (b op c)" => "(a op b) op c"
-        // "a op (b op (c op d))" => "((a op b) op c) op d"
-        if let Data::EBinary(binary) = b.data {
-            if binary.op == op {
-                return Self::join_with_left_associative_op(
-                    op,
-                    Self::join_with_left_associative_op(op, a, binary.left),
-                    binary.right,
-                );
+    fn join_with_left_associative_op_with_check(
+        op: Op::Code,
+        a: Expr,
+        b: Expr,
+        stack_check: bun_core::StackCheck,
+    ) -> Expr {
+        if stack_check.is_safe_to_recurse() {
+            // "(a, b) op c" => "a, b op c"
+            if let Data::EBinary(mut comma) = a.data {
+                if comma.op == crate::OpCode::BinComma {
+                    comma.right = Self::join_with_left_associative_op_with_check(
+                        op,
+                        comma.right,
+                        b,
+                        stack_check,
+                    );
+                    return a;
+                }
+            }
+
+            // "a op (b op c)" => "(a op b) op c"
+            // "a op (b op (c op d))" => "((a op b) op c) op d"
+            if let Data::EBinary(binary) = b.data {
+                if binary.op == op {
+                    return Self::join_with_left_associative_op_with_check(
+                        op,
+                        Self::join_with_left_associative_op_with_check(
+                            op,
+                            a,
+                            binary.left,
+                            stack_check,
+                        ),
+                        binary.right,
+                        stack_check,
+                    );
+                }
             }
         }
 
@@ -2845,6 +2868,13 @@ impl Data {
     }
 
     pub fn known_primitive(&self) -> PrimitiveType {
+        self.known_primitive_with_check(bun_core::StackCheck::init())
+    }
+
+    fn known_primitive_with_check(&self, stack_check: bun_core::StackCheck) -> PrimitiveType {
+        if !stack_check.is_safe_to_recurse() {
+            return PrimitiveType::Unknown;
+        }
         match self {
             Data::EBigInt(_) => PrimitiveType::Bigint,
             Data::EBoolean(_) | Data::EBranchBoolean(_) => PrimitiveType::Boolean,
@@ -2859,7 +2889,10 @@ impl Data {
                     PrimitiveType::Unknown
                 }
             }
-            Data::EIf(e_if) => e_if.yes.data.merge_known_primitive(&e_if.no.data),
+            Data::EIf(e_if) => e_if
+                .yes
+                .data
+                .merge_known_primitive_with_check(&e_if.no.data, stack_check),
             Data::EBinary(binary) => 'brk: {
                 match binary.op {
                     crate::OpCode::BinStrictEq
@@ -2873,12 +2906,15 @@ impl Data {
                     | crate::OpCode::BinInstanceof
                     | crate::OpCode::BinIn => break 'brk PrimitiveType::Boolean,
                     crate::OpCode::BinLogicalOr | crate::OpCode::BinLogicalAnd => {
-                        break 'brk binary.left.data.merge_known_primitive(&binary.right.data);
+                        break 'brk binary
+                            .left
+                            .data
+                            .merge_known_primitive_with_check(&binary.right.data, stack_check);
                     }
 
                     crate::OpCode::BinNullishCoalescing => {
-                        let left = binary.left.data.known_primitive();
-                        let right = binary.right.data.known_primitive();
+                        let left = binary.left.data.known_primitive_with_check(stack_check);
+                        let right = binary.right.data.known_primitive_with_check(stack_check);
                         if left == PrimitiveType::Null || left == PrimitiveType::Undefined {
                             break 'brk right;
                         }
@@ -2895,8 +2931,8 @@ impl Data {
                     }
 
                     crate::OpCode::BinAdd => {
-                        let left = binary.left.data.known_primitive();
-                        let right = binary.right.data.known_primitive();
+                        let left = binary.left.data.known_primitive_with_check(stack_check);
+                        let right = binary.right.data.known_primitive_with_check(stack_check);
 
                         if left == PrimitiveType::String || right == PrimitiveType::String {
                             break 'brk PrimitiveType::String;
@@ -2945,7 +2981,7 @@ impl Data {
                     | crate::OpCode::BinUShrAssign => break 'brk PrimitiveType::Mixed, // Can be number or bigint (or an exception)
 
                     crate::OpCode::BinAssign | crate::OpCode::BinComma => {
-                        break 'brk binary.right.data.known_primitive();
+                        break 'brk binary.right.data.known_primitive_with_check(stack_check);
                     }
 
                     _ => {}
@@ -2960,7 +2996,7 @@ impl Data {
                 crate::OpCode::UnNot | crate::OpCode::UnDelete => PrimitiveType::Boolean,
                 crate::OpCode::UnPos => PrimitiveType::Number, // Cannot be bigint because that throws an exception
                 crate::OpCode::UnNeg | crate::OpCode::UnCpl => {
-                    match unary.value.data.known_primitive() {
+                    match unary.value.data.known_primitive_with_check(stack_check) {
                         PrimitiveType::Bigint => PrimitiveType::Bigint,
                         PrimitiveType::Unknown | PrimitiveType::Mixed => PrimitiveType::Mixed,
                         _ => PrimitiveType::Number, // Can be number or bigint
@@ -2974,14 +3010,27 @@ impl Data {
                 _ => PrimitiveType::Unknown,
             },
 
-            Data::EInlinedEnum(inlined) => inlined.value.data.known_primitive(),
+            Data::EInlinedEnum(inlined) => {
+                inlined.value.data.known_primitive_with_check(stack_check)
+            }
 
             _ => PrimitiveType::Unknown,
         }
     }
 
     pub fn merge_known_primitive(&self, rhs: &Data) -> PrimitiveType {
-        PrimitiveType::merge(self.known_primitive(), rhs.known_primitive())
+        self.merge_known_primitive_with_check(rhs, bun_core::StackCheck::init())
+    }
+
+    fn merge_known_primitive_with_check(
+        &self,
+        rhs: &Data,
+        stack_check: bun_core::StackCheck,
+    ) -> PrimitiveType {
+        PrimitiveType::merge(
+            self.known_primitive_with_check(stack_check),
+            rhs.known_primitive_with_check(stack_check),
+        )
     }
 
     /// Returns true if the result of the "typeof" operator on this expression is

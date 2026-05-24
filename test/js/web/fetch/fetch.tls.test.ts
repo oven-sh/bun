@@ -29,6 +29,66 @@ async function createServer(cert: TLSOptions, callback: (port: number) => Promis
 }
 
 describe.concurrent("fetch-tls", () => {
+  it("re-derives the Host header and TLS verification hostname from the redirect target on a cross-origin redirect", async () => {
+    // The redirect target records the Host header it actually receives.
+    const receivedHostHeaders: (string | null)[] = [];
+    using target = Bun.serve({
+      port: 0,
+      tls: CERT_LOCALHOST_IP,
+      fetch(req) {
+        receivedHostHeaders.push(req.headers.get("host"));
+        return new Response("from-target");
+      },
+    });
+
+    // The origin issues a cross-origin redirect (different port => different origin).
+    using origin = Bun.serve({
+      port: 0,
+      tls: CERT_LOCALHOST_IP,
+      fetch() {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: `https://127.0.0.1:${target.port}/moved` },
+        });
+      },
+    });
+
+    // An explicit Host header overrides both the wire Host header and the
+    // hostname used for TLS SNI / certificate verification. checkServerIdentity
+    // receives the verification hostname as its first argument.
+    //
+    // fetch() only invokes the JS checkServerIdentity callback for the
+    // connection that produced the final response: certificate info delivered
+    // before response metadata is held (FetchTasklet.on_progress_update returns
+    // early while metadata is null) and is overwritten by the next hop's
+    // certificate info when the redirect is followed internally. So a redirect
+    // chain yields exactly one observation - the verification hostname of the
+    // connection to the redirect target.
+    const verifiedHostnames: string[] = [];
+    const res = await fetch(`https://127.0.0.1:${origin.port}/`, {
+      keepalive: false,
+      headers: { Host: "localhost" },
+      tls: {
+        ca: validTls.cert,
+        checkServerIdentity(hostname: string) {
+          verifiedHostnames.push(hostname);
+          return undefined;
+        },
+      },
+    });
+    expect(await res.text()).toBe("from-target");
+
+    // The Host override names the previous origin, so on a cross-origin
+    // redirect it must be dropped and the verification hostname re-derived from
+    // the redirect target's URL ("127.0.0.1"). The vulnerable behavior carries
+    // the stale override and verifies the second connection against
+    // "localhost" instead.
+    expect(verifiedHostnames).toEqual(["127.0.0.1"]);
+    // The redirect target must see a Host header derived from its own URL,
+    // not the override that was supplied for the previous origin.
+    expect(receivedHostHeaders).toEqual([`127.0.0.1:${target.port}`]);
+  });
+
   it("can handle multiple requests with non native checkServerIdentity", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       async function request() {

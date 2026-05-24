@@ -1,5 +1,6 @@
 // Sub-modules
 
+use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
@@ -23,7 +24,7 @@ use crate::RenderOptions; // Zig: `root.RenderOptions` (root.zig → crate lib.r
 
 // Re-exports that Zig nested under `Parser.*` — Rust has no struct-scoped type
 // aliases, so they live at module scope as `parser::EmphDelim` etc.
-pub use super::inlines::{EmphDelim, MAX_EMPH_MATCHES};
+pub use super::inlines::{EmphDelim, HtmlScanMemo, MAX_EMPH_MATCHES};
 pub use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
@@ -58,6 +59,13 @@ pub struct Parser<'a> {
     pub block_bytes: Vec<u8>,
     pub buffer: Vec<u8>,
     pub emph_delims: Vec<EmphDelim>,
+    // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
+    // processing does not allocate a bracket-pair map per block.
+    pub bracket_pairs: Vec<(OFF, OFF)>,
+    // Memo of failed closing-delimiter searches in find_html_tag (inlines.rs).
+    // Cell because find_html_tag is a &self query reached from both &self and
+    // &mut self scanners.
+    pub html_scan_memo: Cell<HtmlScanMemo>,
 
     // Number of active containers
     pub n_containers: u32,
@@ -188,6 +196,8 @@ impl<'a> Parser<'a> {
             block_bytes: Vec::new(),
             buffer: Vec::new(),
             emph_delims: Vec::new(),
+            bracket_pairs: Vec::new(),
+            html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             n_containers: 0,
             current_block: None,
             current_block_lines: Vec::new(),

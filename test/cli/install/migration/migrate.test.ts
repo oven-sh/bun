@@ -164,3 +164,56 @@ for (const lockfile of lockfiles) {
     ).toEqual([true, false]);
   });
 }
+
+test("npm lockfile migration skips extraneous packages that also declare inBundle: false", async () => {
+  // A package entry carrying both `"inBundle": false` and `"extraneous": true` must be
+  // excluded from every migration pass. The counting pass skips it (so its dependencies
+  // are never reserved); the building and linking passes must apply the exact same
+  // predicate, otherwise they append more package/dependency entries than were counted.
+  const phantomDependencies: Record<string, string> = {};
+  for (let i = 0; i < 200; i++) {
+    phantomDependencies[`phantom-dep-${i}`] = "1.0.0";
+  }
+
+  const testDir = tempDirWithFiles("migrate-extraneous-inbundle", {
+    "package.json": JSON.stringify({
+      name: "extraneous-test",
+      workspaces: ["packages/pkg0"],
+    }),
+    "packages/pkg0/package.json": JSON.stringify({ name: "pkg0" }),
+    "package-lock.json": JSON.stringify({
+      name: "extraneous-test",
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "extraneous-test",
+          workspaces: ["packages/pkg0"],
+        },
+        "node_modules/pkg0": {
+          resolved: "packages/pkg0",
+          link: true,
+        },
+        "packages/pkg0": {},
+        "node_modules/not-actually-installed": {
+          version: "1.0.0",
+          inBundle: false,
+          extraneous: true,
+          dependencies: phantomDependencies,
+        },
+      },
+    }),
+  });
+
+  const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: testDir,
+  });
+
+  const err = stderr.toString();
+  expect(err).toContain("migrated lockfile from package-lock.json");
+  expect(err).not.toContain("InvalidNPMLockfile");
+  expect(exitCode).toBe(0);
+  expect(await Bun.file(join(testDir, "node_modules", "pkg0", "package.json")).json()).toEqual({ name: "pkg0" });
+  expect(fs.existsSync(join(testDir, "bun.lock"))).toBeTrue();
+});

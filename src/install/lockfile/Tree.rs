@@ -300,6 +300,13 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
     }
 }
 
+/// Tree folder names are joined into install destinations as
+/// `node_modules/<name>/...`; this path and the tree builder must agree on the
+/// same validator.
+pub fn folder_name_is_safe(name: &[u8]) -> bool {
+    crate::dependency::is_safe_install_folder_name(name)
+}
+
 /// Returns relative path and the depth of the tree
 // PORT NOTE: reshaped — Zig takes `*const Lockfile`; here we take the three
 // buffer slices directly so callers from both `crate::lockfile` (stub) and
@@ -365,6 +372,13 @@ pub fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
             let id = depth_buf[depth_buf_len];
             let name = trees[id as usize].folder_name(dependencies, buf);
+            if !folder_name_is_safe(name) {
+                Output::err_generic(
+                    "Lockfile is malformed (dependency name \"{}\" is not a valid folder name)",
+                    (bstr::BStr::new(name),),
+                );
+                bun_core::Global::crash();
+            }
             let name_end = match path_written.checked_add(name.len()) {
                 Some(end) if end < MAX_PATH_BYTES => end,
                 _ => path_too_long(),
@@ -805,6 +819,20 @@ impl Tree {
             }
 
             let dependency = &dependencies[dep_id as usize];
+
+            if !crate::dependency::is_safe_install_folder_name(
+                dependency
+                    .name
+                    .slice(lockfile.buffers.string_bytes.as_slice()),
+            ) {
+                builder.maybe_report_error(format_args!(
+                    "Invalid dependency name \"{}\"",
+                    dependency
+                        .name
+                        .fmt(lockfile.buffers.string_bytes.as_slice()),
+                ));
+                continue 'dep;
+            }
 
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.

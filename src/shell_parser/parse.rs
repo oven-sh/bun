@@ -965,6 +965,9 @@ pub use ast as AST;
 pub struct Parser<'bump> {
     pub strpool: &'bump [u8],
     pub tokens: &'bump [Token],
+    /// Strpool ranges that came from interpolated JS values (`\x08__bunstr_N`
+    /// refs). See `Lexer::js_string_ranges`.
+    pub js_string_ranges: &'bump [TextRange],
     pub alloc: &'bump Bump,
     pub jsobjs: &'bump mut [JSValue],
     pub current: u32,
@@ -1004,6 +1007,7 @@ impl<'bump> Parser<'bump> {
         Ok(Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
+            js_string_ranges: lex_result.js_string_ranges,
             alloc: bump,
             jsobjs,
             current: 0,
@@ -1022,6 +1026,7 @@ impl<'bump> Parser<'bump> {
         Parser {
             strpool: self.strpool,
             tokens: self.tokens,
+            js_string_ranges: self.js_string_ranges,
             alloc: self.alloc,
             // PORT NOTE: reshaped for borrowck — Zig copies the slice value; we move the
             // exclusive borrow into the subparser and restore it in continue_from_subparser.
@@ -1673,6 +1678,12 @@ impl<'bump> Parser<'bump> {
                         if eq_idx == 0 {
                             break 'var_decl None;
                         }
+                        // An `=` that came from an interpolated JS value is data, not
+                        // shell syntax — it must not turn the word into an env
+                        // assignment (e.g. interpolating "LD_PRELOAD=/evil.so").
+                        if self.is_interpolated_position(txtrng.start + eq_idx) {
+                            break 'var_decl None;
+                        }
                         let label = &txt[..eq_idx as usize];
                         if !is_valid_var_name(label) {
                             break 'var_decl None;
@@ -1930,6 +1941,14 @@ impl<'bump> Parser<'bump> {
 
     fn text(&self, range: TextRange) -> &'bump [u8] {
         &self.strpool[range.start as usize..range.end as usize]
+    }
+
+    /// Whether the strpool position holds a byte that came from an
+    /// interpolated JS value (a `\x08__bunstr_N` ref spliced in by the lexer).
+    fn is_interpolated_position(&self, pos: u32) -> bool {
+        self.js_string_ranges
+            .iter()
+            .any(|r| pos >= r.start && pos < r.end)
     }
 
     fn advance(&mut self) -> Token {
@@ -2372,6 +2391,7 @@ pub struct LexResult<'bump> {
     pub errors: &'bump [LexError],
     pub tokens: &'bump [Token],
     pub strpool: &'bump [u8],
+    pub js_string_ranges: &'bump [TextRange],
 }
 
 impl<'bump> LexResult<'bump> {
@@ -2477,6 +2497,12 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub subshell_depth: u32,
     pub errors: bun_alloc::ArenaVec<'bump, LexError>,
 
+    /// Strpool ranges that hold bytes spliced in from interpolated JS values
+    /// (`\x08__bunstr_N` refs). Interpolated bytes are data, not shell
+    /// syntax, so the parser must not reinterpret them (e.g. an `=` inside
+    /// one must not create an env assignment).
+    pub js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
+
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
     pub string_refs: &'bump mut [BunString],
@@ -2499,6 +2525,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             tokens: bun_alloc::ArenaVec::new_in(bump),
             strpool: bun_alloc::ArenaVec::new_in(bump),
             errors: bun_alloc::ArenaVec::new_in(bump),
+            js_string_ranges: bun_alloc::ArenaVec::new_in(bump),
             word_start: 0,
             j: 0,
             delimit_quote: false,
@@ -2514,6 +2541,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             tokens: self.tokens.into_bump_slice(),
             strpool: self.strpool.into_bump_slice(),
             errors: self.errors.into_bump_slice(),
+            js_string_ranges: self.js_string_ranges.into_bump_slice(),
         }
     }
 
@@ -2540,6 +2568,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             strpool: core::mem::replace(&mut self.strpool, bun_alloc::ArenaVec::new_in(bump)),
             tokens: core::mem::replace(&mut self.tokens, bun_alloc::ArenaVec::new_in(bump)),
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(bump)),
+            js_string_ranges: core::mem::replace(
+                &mut self.js_string_ranges,
+                bun_alloc::ArenaVec::new_in(bump),
+            ),
             in_subshell: Some(kind),
             subshell_depth: self.subshell_depth + 1,
             word_start: self.word_start,
@@ -2560,6 +2592,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.strpool = core::mem::replace(&mut sublexer.strpool, bun_alloc::ArenaVec::new_in(bump));
         self.tokens = core::mem::replace(&mut sublexer.tokens, bun_alloc::ArenaVec::new_in(bump));
         self.errors = core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
+        self.js_string_ranges = core::mem::replace(
+            &mut sublexer.js_string_ranges,
+            bun_alloc::ArenaVec::new_in(bump),
+        );
 
         self.chars = sublexer.chars;
         self.word_start = sublexer.word_start;
@@ -3487,6 +3523,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         let start = self.j;
         self.append_string_to_str_pool(bunstr)?;
+        self.js_string_ranges.push(TextRange { start, end: self.j });
         // Interpolated values are data, not shell syntax. If the value would
         // begin its Text token with `~`, flush it as a quoted-text token so the
         // parser does not re-interpret it as tilde expansion. Values that

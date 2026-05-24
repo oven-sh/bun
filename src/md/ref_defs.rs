@@ -7,6 +7,10 @@ use crate::parser::{BlockHeader, Parser};
 use crate::types::{self, VerbatimLine};
 use crate::unicode;
 
+/// Maximum raw length of a link label (CommonMark: "a link label can have at
+/// most 999 characters inside the square brackets").
+pub const MAX_LINK_LABEL_LEN: usize = 999;
+
 pub struct RefDef {
     pub label: Box<[u8]>, // normalized label
     pub dest: Box<[u8]>,  // raw destination (slice of source)
@@ -87,7 +91,12 @@ impl Parser<'_> {
     // PORT NOTE: returns `Option<&RefDef>` instead of by-value copy; Zig RefDef was
     // three borrowed slices (Copy), Rust RefDef owns its buffers.
     pub fn lookup_ref_def(&mut self, raw_label: &[u8]) -> Option<&RefDef> {
-        if raw_label.is_empty() {
+        if raw_label.is_empty() || self.ref_defs.is_empty() {
+            return None;
+        }
+        // Labels longer than the spec cap can never match a stored definition
+        // (parse_ref_def enforces the same limit), so skip normalizing them.
+        if raw_label.len() > MAX_LINK_LABEL_LEN {
             return None;
         }
         let normalized = self.normalize_label(raw_label);
@@ -127,7 +136,7 @@ impl Parser<'_> {
                 p += 1;
                 label_len += 1;
             }
-            if label_len > 999 {
+            if label_len > MAX_LINK_LABEL_LEN {
                 return None; // label too long
             }
         }

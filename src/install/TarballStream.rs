@@ -1395,14 +1395,39 @@ fn make_symlink(
         return false;
     }
     {
+        // Normalize `symlink_dir/target` as a *relative* path with leading
+        // `..` preserved, and reject targets that climb above the extraction
+        // root. A fake absolute root cannot be used here: POSIX normalization
+        // clamps excess `..` at `/`, so a target like `../../packages/x`
+        // would normalize back under the fake root while the kernel still
+        // resolves the raw `..` components and escapes the extraction
+        // directory.
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
+        let target_bytes = target.as_bytes();
         let mut join_buf = PathBuffer::uninit();
-        let resolved = resolve_path::join_abs_string_buf::<platform::Posix>(
-            b"/packages/",
-            &mut join_buf[..],
-            &[symlink_dir, target.as_bytes()],
+        if symlink_dir.len() + 1 + target_bytes.len() >= join_buf.len() {
+            return false;
+        }
+        let mut written = 0usize;
+        if !symlink_dir.is_empty() {
+            join_buf[..symlink_dir.len()].copy_from_slice(symlink_dir);
+            written = symlink_dir.len();
+            join_buf[written] = b'/';
+            written += 1;
+        }
+        join_buf[written..written + target_bytes.len()].copy_from_slice(target_bytes);
+        written += target_bytes.len();
+
+        let mut norm_buf = PathBuffer::uninit();
+        let resolved = resolve_path::normalize_string_generic_t::<u8, true, false>(
+            &join_buf[..written],
+            &mut norm_buf[..],
+            b'/',
+            |c| c == b'/',
         );
-        if !resolved.starts_with(b"/packages/") {
+        if bun_core::strings::eql(resolved, b"..")
+            || bun_core::strings::has_prefix_comptime(resolved, b"../")
+        {
             return false;
         }
     }

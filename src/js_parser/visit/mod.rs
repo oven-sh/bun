@@ -61,7 +61,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // p.temp_refs_to_declare.deinit(p.arena); + reset to empty
         self.temp_refs_to_declare = BumpVec::new_in(self.arena);
-        self.temp_ref_count = 0;
 
         self.visit_stmts(stmts, opts.kind)?;
 
@@ -600,6 +599,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         binding: BindingNodeIndex,
         mut duplicate_arg_check: Option<&mut StringVoidMap>,
     ) {
+        if !self.stack_check.is_safe_to_recurse() {
+            self.report_stack_overflow(binding.loc);
+            return;
+        }
         match binding.data {
             BData::BMissing(_) => {}
             BData::BIdentifier(bind) => {

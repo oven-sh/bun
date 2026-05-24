@@ -1013,13 +1013,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         // would pop their borrow-stack tags under SB.
                         let cache_ctx = this.manifest_disk_cache_ctx();
                         let this_ptr: *mut PackageManager = this;
-                        // SAFETY: `string_bytes` is not resized in the
-                        // manifest-lookup path; every call below either copies
-                        // `name_str` out or only reads it before any append.
-                        // Detach the slice lifetime so the `&mut PackageManager`
-                        // reborrows below do not conflict with it.
-                        let name_str = this.lockfile.str_detached(&name);
-                        let task_id = Task::Id::for_manifest(name_str);
+                        // Owned copy: `get_or_put_resolved_package_with_find_result`
+                        // below appends to `string_bytes` (and may reallocate it),
+                        // and `name_str` is still read afterwards on the
+                        // fall-through path.
+                        let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
+                        let task_id = Task::Id::for_manifest(&name_str);
 
                         if cfg!(debug_assertions) {
                             debug_assert!(task_id.get() != 0);
@@ -1051,7 +1050,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     // from `manifests`.
                                     let scope: *const crate::npm::registry::Scope =
                                         unsafe { &(*this_ptr).options }
-                                            .scope_for_package_name(name_str);
+                                            .scope_for_package_name(&name_str);
                                     // SAFETY: `manifests` projected from
                                     // `this_ptr`; `cache_ctx` was snapshotted
                                     // before `this_ptr` so the lookup holds
@@ -1160,14 +1159,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if verbose_install() {
                                     Output::pretty_errorln(format_args!(
                                         "Enqueue package manifest for download: {}",
-                                        bstr::BStr::new(name_str)
+                                        bstr::BStr::new(&name_str)
                                     ));
                                 }
 
                                 // `get_network_task` touches only the
-                                // preallocated pool, not `string_bytes`; with
-                                // `name_str` lifetime-detached above, `this`
-                                // is free to reborrow `&mut`.
+                                // preallocated pool, not `string_bytes`;
+                                // `name_str` is an owned copy, so `this` is
+                                // free to reborrow `&mut`.
                                 let network_task = this.get_network_task();
                                 // SAFETY: `network_task` is the unique handle to a
                                 // freshly-vended pool slot. Zig's `network_task.* = .{ ... }`
@@ -1177,11 +1176,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     NetworkTask::write_init(network_task, task_id, this_ptr, None);
                                 }
 
-                                let scope = this.scope_for_package_name(name_str);
+                                let scope = this.scope_for_package_name(&name_str);
                                 // SAFETY: network_task points to a valid initialized NetworkTask slot
                                 unsafe {
                                     (*network_task).for_manifest(
-                                        name_str,
+                                        &name_str,
                                         scope,
                                         loaded_manifest.as_ref(),
                                         dependency.behavior.is_optional(),

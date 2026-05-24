@@ -356,6 +356,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// hard-overflow. Same `MAX_STMT_DEPTH` rationale as `interchange/json.rs`.
     pub parse_stmt_depth: u32,
 
+    pub reported_stack_overflow: core::cell::Cell<bool>,
+
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
     /// enabled inside each enum body block since TypeScript requires numeric
@@ -774,6 +776,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // allocation as a `NonNull` (not `&mut`), so no long-lived Unique tag
         // exists to be invalidated by this transient reborrow.
         unsafe { &mut *self.log.as_ptr() }
+    }
+
+    pub fn report_stack_overflow(&self, loc: bun_ast::Loc) {
+        if self.reported_stack_overflow.get() {
+            return;
+        }
+        self.reported_stack_overflow.set(true);
+        self.log()
+            .add_error(Some(self.source), loc, b"Maximum call stack size exceeded");
     }
 
     /// Safe mutable projection of `nearest_stmt_list`.
@@ -2518,6 +2529,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         replacement: Expr,
         replacement_can_be_removed: bool,
     ) -> Substitution {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(expr.loc);
+            return Substitution::Failure(expr);
+        }
         // Zig matched on `expr.data` (a tagged union of `*E.*`) and mutated through
         // the captured pointer. `ExprData` is `Copy`; matching by value yields owned
         // `StoreRef<E::*>` copies whose `DerefMut` writes to the same arena slot,
@@ -3389,9 +3404,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut is_sloppy_mode_block_level_fn_stmt = false;
                     let original_member_ref = value.ref_;
 
-                    if self.will_use_renamer()
-                        && self.symbols[symbol_idx].kind == js_ast::symbol::Kind::HoistedFunction
-                    {
+                    if self.symbols[symbol_idx].kind == js_ast::symbol::Kind::HoistedFunction {
                         // Block-level function declarations behave like "let" in strict mode
                         if scope_strict_mode != js_ast::StrictModeKind::SloppyMode {
                             continue;
@@ -3415,20 +3428,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //   }
                         //   f();
                         //
-                        // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
-                        let original_name: &'a [u8] =
-                            self.symbols[symbol_idx].original_name.slice();
-                        let hoisted_ref = self
-                            .new_symbol(js_ast::symbol::Kind::Hoisted, original_name)
-                            .expect("unreachable");
-                        // No live `&` borrow of `scope` exists here (the members
-                        // snapshot was taken by value); `StoreRef` `DerefMut`.
-                        VecExt::append(&mut scope.generated, hoisted_ref);
-                        self.hoisted_ref_for_sloppy_mode_block_fn
-                            .insert(value.ref_, hoisted_ref);
-                        value.ref_ = hoisted_ref;
-                        symbol_idx = hoisted_ref.inner_index() as usize;
-                        is_sloppy_mode_block_level_fn_stmt = true;
+                        if self.will_use_renamer() {
+                            // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
+                            let original_name: &'a [u8] =
+                                self.symbols[symbol_idx].original_name.slice();
+                            let hoisted_ref = self
+                                .new_symbol(js_ast::symbol::Kind::Hoisted, original_name)
+                                .expect("unreachable");
+                            // No live `&` borrow of `scope` exists here (the members
+                            // snapshot was taken by value); `StoreRef` `DerefMut`.
+                            VecExt::append(&mut scope.generated, hoisted_ref);
+                            self.hoisted_ref_for_sloppy_mode_block_fn
+                                .insert(value.ref_, hoisted_ref);
+                            value.ref_ = hoisted_ref;
+                            symbol_idx = hoisted_ref.inner_index() as usize;
+                            is_sloppy_mode_block_level_fn_stmt = true;
+                        }
                     }
 
                     if hash.is_none() {
@@ -3582,6 +3597,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind: js_ast::scope::Kind,
         loc: bun_ast::Loc,
     ) -> Result<(), bun_core::Error> {
+        if self.reported_stack_overflow.get() {
+            while let Some((head, rest)) = self.scope_order_to_visit.split_first() {
+                if head.loc.start == loc.start && head.scope_ref().kind == kind {
+                    break;
+                }
+                self.scope_order_to_visit = rest;
+            }
+        }
+
         let order = self.next_scope_in_order_for_visit_pass();
 
         // Sanity-check that the scopes generated by the first and second passes match
@@ -4586,7 +4610,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             0 => {}
             1 => {
                 if let Some(value) = &decls[0].value {
-                    if is_var {
+                    if is_var && matches!(decls[0].binding.data, js_ast::b::B::BIdentifier(_)) {
                         // This is a weird special case. Initializers are allowed in "var"
                         // statements with identifier bindings.
                         return Ok(());
@@ -5660,6 +5684,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // oroigianlly was !=- modepassthrough
         if !self.fn_only_data_visit.is_this_nested {
+            // In the REPL, top-level `this` must evaluate to the global object
+            // (matching Node's `> this` and `deno repl > this`). The REPL wraps
+            // user input in an arrow IIFE that has no `exports` binding, so the
+            // CommonJS substitution below would emit a reference to an
+            // undefined `exports`. Leaving `E::This` in place lets the arrow
+            // inherit `this` from the enclosing (global) scope at runtime.
+            if self.options.repl_mode {
+                return None;
+            }
             if self.has_es_module_syntax && self.commonjs_named_exports.count() == 0 {
                 // In an ES6 module, "this" is supposed to be undefined. Instead of
                 // doing this at runtime using "fn.call(undefined)", we do it at
@@ -5845,6 +5878,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(expr.loc);
+            return false;
+        }
         match &expr.data {
             js_ast::ExprData::ENull(_)
             | js_ast::ExprData::EUndefined(_)
@@ -9203,6 +9240,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             log,
             stack_check: bun_core::StackCheck::init(),
             parse_stmt_depth: 0,
+            reported_stack_overflow: core::cell::Cell::new(false),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

@@ -67,6 +67,16 @@ fn string_array_hash_context(buf: &[u8]) -> bun_semver::string::ArrayHashContext
     }
 }
 
+/// `true` if `url` points at a resource under `registry`: the registry href
+/// (sans trailing slash) must be an exact prefix and the byte after it must be
+/// a path separator, so `https://registry.example.com.evil.com/x.tgz` does not
+/// count as being under a `https://registry.example.com` registry.
+fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
+    let registry = strings::without_trailing_slash(registry);
+    strings::has_prefix(url, registry)
+        && (url.len() == registry.len() || url[registry.len()] == b'/')
+}
+
 // PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
 // lockfile.stringBuf()` for the whole parser, but in Rust that locks out every
 // other `lockfile.*` access (the `string_buf()` method borrows the whole
@@ -384,10 +394,15 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if trusted_dependencies
-                            .contains(&(dep.name_hash as TruncatedPackageNameHash))
+                        if let Some(trusted_name) =
+                            trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
                         {
-                            found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                            // The `is_empty()` arm keeps hash-only entries from a
+                            // legacy bun.lockb (no name stored) when migrating to
+                            // bun.lock.
+                            if trusted_name.is_empty() || **trusted_name == *dep.name.slice(buf) {
+                                found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                            }
                         }
                     }
                 }
@@ -808,11 +823,9 @@ impl Stringifier {
                                 writer,
                                 "\"{}\", ",
                                 bstr::BStr::new(
-                                    if strings::has_prefix(
+                                    if url_is_under_registry(
                                         url_slice,
-                                        strings::without_trailing_slash(
-                                            Npm::Registry::DEFAULT_URL.as_bytes()
-                                        ),
+                                        Npm::Registry::DEFAULT_URL.as_bytes(),
                                     ) {
                                         b"" as &[u8]
                                     } else {
@@ -1537,14 +1550,24 @@ pub fn parse_into_binary_lockfile(
             .items
             .slice()
         {
-            if !dep.is_string() {
+            let ExprData::EString(s) = &dep.data else {
                 log.add_error(Some(source), dep.loc, b"Expected a string");
                 return Err(ParseError::InvalidTrustedDependenciesSet);
-            }
+            };
+            // JSON-parsed strings are always UTF-8; the UTF-16 arm is kept for
+            // the unreachable branch so the stored name and the hash agree.
+            let name: Box<[u8]> = if s.is_utf8() {
+                Box::from(s.slice8())
+            } else {
+                debug_assert!(
+                    false,
+                    "trustedDependencies: UTF-16 EString from JSON parser"
+                );
+                strings::to_utf8_alloc(s.slice16()).into_boxed_slice()
+            };
             let name_hash: TruncatedPackageNameHash =
-                dep.as_string_hash_utf8(StringBuilder::string_hash)?
-                    .unwrap() as TruncatedPackageNameHash;
-            trusted_dependencies.insert(name_hash, ());
+                StringBuilder::string_hash(&name) as TruncatedPackageNameHash;
+            trusted_dependencies.insert(name_hash, name);
         }
 
         lockfile.trusted_dependencies = Some(trusted_dependencies);
@@ -2258,6 +2281,7 @@ pub fn parse_into_binary_lockfile(
                 }
             };
 
+            let mut npm_url_needs_integrity = false;
             if res.tag == ResolutionTag::Npm {
                 if i >= (pkg_info.len_u32() as usize) {
                     log.add_error(Some(source), value.loc, b"Missing npm registry");
@@ -2290,6 +2314,17 @@ pub fn parse_into_binary_lockfile(
 
                     res.npm_mut().url = sbuf!(lockfile).append(url)?;
                 } else {
+                    let configured_registry = if let Some(mgr) = manager.as_deref() {
+                        mgr.scope_for_package_name(name_str).url.href()
+                    } else {
+                        Npm::Registry::DEFAULT_URL.as_bytes()
+                    };
+                    npm_url_needs_integrity =
+                        !url_is_under_registry(registry_str, configured_registry)
+                            && !url_is_under_registry(
+                                registry_str,
+                                Npm::Registry::DEFAULT_URL.as_bytes(),
+                            );
                     res.npm_mut().url = sbuf!(lockfile).append(registry_str)?;
                 }
             }
@@ -2495,6 +2530,18 @@ pub fn parse_into_binary_lockfile(
                             b"Unsupported or malformed integrity hash; ignoring",
                         );
                         pkg.meta.integrity = Integrity::default();
+                    }
+
+                    // Fail closed: otherwise a tampered lockfile could redirect
+                    // the tarball URL off-registry and install arbitrary content
+                    // under a trusted package name with verification disabled.
+                    if npm_url_needs_integrity && !pkg.meta.integrity.tag.is_supported() {
+                        log.add_error(
+                            Some(source),
+                            integrity_expr.loc,
+                            b"Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
+                        );
+                        return Err(ParseError::InvalidPackageInfo);
                     }
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {

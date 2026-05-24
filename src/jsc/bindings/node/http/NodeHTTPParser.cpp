@@ -117,21 +117,36 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
 
-    m_currentBufferLen = len;
-    m_currentBufferData = data;
+    // Forbid re-entrant execution of a new buffer while a previous execute()
+    // is still on the stack: llhttp keeps span pointers into the in-progress
+    // buffer, and a nested run over a different buffer corrupts them.
+    if (data != nullptr && m_inExecute) {
+        throwTypeError(globalObject, scope, "HTTPParser.execute is not reentrant"_s);
+        return {};
+    }
 
     llhttp_errno_t err;
 
     if (data == nullptr) {
         err = llhttp_finish(&m_parserData);
     } else {
+        m_inExecute = true;
+        m_currentBufferLen = len;
+        m_currentBufferData = data;
         err = llhttp_execute(&m_parserData, data, len);
         save();
     }
 
     size_t nread = len;
     if (err != HPE_OK) {
-        nread = llhttp_get_error_pos(&m_parserData) - data;
+        // On the finish() path `data` is nullptr, and after a lingering error
+        // `error_pos` may point into a previous buffer. Only derive nread from
+        // the error position when it provably lies within the current buffer,
+        // so a raw heap pointer is never exposed to JS via `bytesParsed`.
+        const char* errorPos = llhttp_get_error_pos(&m_parserData);
+        if (data != nullptr && errorPos >= data && errorPos <= data + len) {
+            nread = errorPos - data;
+        }
 
         if (err == HPE_PAUSED_UPGRADE) {
             err = HPE_OK;
@@ -144,8 +159,11 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
         llhttp_pause(&m_parserData);
     }
 
-    m_currentBufferLen = 0;
-    m_currentBufferData = nullptr;
+    if (data != nullptr) {
+        m_currentBufferLen = 0;
+        m_currentBufferData = nullptr;
+        m_inExecute = false;
+    }
 
     RETURN_IF_EXCEPTION(scope, {});
 

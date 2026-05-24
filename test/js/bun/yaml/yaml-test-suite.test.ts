@@ -2102,7 +2102,7 @@ test("yaml-test-suite/9MMA", () => {
   }).toThrow();
 });
 
-test.todo("yaml-test-suite/9MMW", () => {
+test("yaml-test-suite/9MMW", () => {
   // Single Pair Implicit Entries (using test.event for expected values)
   const input: string = `- [ YAML : separate ]
 - [ "JSON like":adjacent ]
@@ -2854,7 +2854,7 @@ test("yaml-test-suite/DE56/05", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/DFF7", () => {
+test("yaml-test-suite/DFF7", () => {
   // Spec Example 7.16. Flow Mapping Entries (using test.event for expected values)
   const input: string = `{
 ? explicit: entry,
@@ -3305,7 +3305,7 @@ test("yaml-test-suite/FQ7F", () => {
   expect(parsed).toEqual(expected);
 });
 
-test.todo("yaml-test-suite/FRK4", () => {
+test("yaml-test-suite/FRK4", () => {
   // Spec Example 7.3. Completely Empty Flow Nodes (using test.event for expected values)
   const input: string = `{
   ? foo :,

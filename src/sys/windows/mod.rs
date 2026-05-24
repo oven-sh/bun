@@ -3407,8 +3407,8 @@ pub fn GetCurrentProcessId() -> DWORD {
 /// `CONTEXT` (winnt.h) — full processor context captured by
 /// `RtlCaptureContext`. Declared as an arch-sized opaque aligned blob so this
 /// crate doesn't need to mirror the (large, arch-specific) field layout; the
-/// only consumer (`btjs::ThreadContext`) treats it as opaque storage and
-/// passes `*mut CONTEXT` straight back to ntdll.
+/// consumer (`bun_runtime::test_runner::harness::recover`) treats it as opaque
+/// storage and passes `*mut CONTEXT` straight back to ntdll.
 #[repr(C, align(16))]
 pub struct CONTEXT {
     // x64: 1232 bytes; ARM64: 912 bytes. Use the larger so the buffer is

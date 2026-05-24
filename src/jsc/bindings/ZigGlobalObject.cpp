@@ -1762,7 +1762,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBunPokePromiseAsHandled, (JSGlobalObject*, CallFrame*
 extern "C" JSC::EncodedJSValue Bun__Jest__createTestModuleObject(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* globalObject)
 {
-    return JSValue::encode(globalObject->lazyTestModuleObject());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* object = globalObject->lazyTestModuleObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(object);
 }
 
 extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
@@ -1992,7 +1996,14 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            init.set(result.toObject(globalObject));
+            JSObject* object = result.isEmpty() ? nullptr : result.getObject();
+            if (!object) [[unlikely]] {
+                // Creation failed and left an exception pending; cache a plain
+                // object so the LazyProperty stays valid instead of crashing on
+                // an empty JSValue.
+                object = JSC::constructEmptyObject(globalObject);
+            }
+            init.set(object);
         });
 
     m_testMatcherUtilsObject.initLater(
@@ -3435,8 +3446,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     JSModuleLoader*,
     JSString* moduleNameValue,
     RefPtr<JSC::ScriptFetchParameters> parameters,
-    const SourceOrigin& sourceOrigin)
+    const SourceOrigin& sourceOrigin,
+    bool deferred)
 {
+    UNUSED_PARAM(deferred);
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
     VM& vm = JSC::getVM(globalObject);

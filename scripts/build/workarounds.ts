@@ -181,15 +181,21 @@ export const workarounds: Workaround[] = [
       "counts on SLP autovectorization stays scalar in darwin LTO links (oven-sh/bun#31343 — " +
       "Bun.stringWidth's ASCII kernel ~2x slower). Accepted rather than patched: no custom lld " +
       "is carried; the hot kernels are moving to explicit SIMD intrinsics instead.",
-    // Exercised by any Mach-O LTO link (darwin release CI cross builds, local --lto darwin builds).
+    // The links that hit this are the darwin LTO cross builds (#31303), which
+    // run the Mach-O link through the ld64.lld flavor of whichever lld
+    // resolveConfig() picked as cfg.ld. Native darwin links don't consume
+    // cfg.ld (clang drives Apple's ld there), so a trip on a local native
+    // --lto build is just the reminder firing early — harmless by design.
     applies: cfg => cfg.darwin && cfg.lto,
     expectedToBeFixed: cfg => {
       // Fix merged to LLVM main on 2026-02-23, after release/22.x branched —
-      // LLVM 23 is the first release train that ships it. Lower the threshold
-      // to the exact 22.1.x if a backport lands. Check whichever lld actually
-      // performs the Mach-O LTO link: rust-lld (rustc's bundled LLVM) when the
-      // cross-language-LTO swap in resolveConfig() fired, clang's ld64.lld
-      // otherwise. No link-flag change is needed once the fix is present:
+      // LLVM 23 is the first release train that ships it; lower the threshold
+      // to the exact 22.1.x if a backport lands. Key on the lld resolveConfig()
+      // selected: rust-lld when the cross-language-LTO swap fired (the normal
+      // case on the LTO cross lanes — rustc's LLVM reaches 23 long before our
+      // pinned clang does), clang's ld64.lld otherwise. Keying on clangVersion
+      // alone would keep this entry silent after the lld doing the Mach-O LTO
+      // already has the fix. No link-flag change is needed once it ships:
       // ld64.lld defaults to --lto-O2 and the fix enables SLP at --lto-O >= 2,
       // mirroring ELF.
       const FIXED_IN_LLVM = "23.0.0";

@@ -794,6 +794,46 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  describe("constructing a mock", () => {
+    test("new on a mock with no implementation returns an object and records the call", () => {
+      const fn = jest.fn();
+      const instance = new fn(1, 2);
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBeNull();
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(fn.mock.calls[0]).toEqual([1, 2]);
+      expect(fn.mock.contexts[0]).toBe(instance);
+    });
+
+    test("Reflect.construct on a mock returns an object", () => {
+      const fn = jest.fn();
+      const instance = Reflect.construct(fn, []);
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBeNull();
+    });
+
+    test("new calls the implementation with the newly created `this`", () => {
+      const fn = jest.fn(function () {
+        this.x = 42;
+      });
+      const instance = new fn();
+      expect(instance.x).toBe(42);
+    });
+
+    test("new returns the implementation's return value when it is an object", () => {
+      const result = { a: 1 };
+      const fn = jest.fn(() => result);
+      expect(new fn()).toBe(result);
+    });
+
+    test("new ignores non-object return values", () => {
+      const fn = jest.fn().mockReturnValue(42);
+      const instance = new fn();
+      expect(typeof instance).toBe("object");
+      expect(instance).not.toBeNull();
+    });
+  });
 });
 
 describe("spyOn", () => {

@@ -86,6 +86,7 @@ inline To tryJSDynamicCast(JSC::WriteBarrier<WriteBarrierT>& from)
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionCall);
+JSC_DECLARE_HOST_FUNCTION(jsMockFunctionConstruct);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl);
 JSC_DECLARE_CUSTOM_GETTER(jsMockFunctionGetter_mock);
 JSC_DECLARE_HOST_FUNCTION(jsMockFunctionGetter_mockGetLastCall);
@@ -462,7 +463,7 @@ public:
     }
 
     JSMockFunction(JSC::VM& vm, JSC::Structure* structure, CallbackKind wrapKind)
-        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionCall)
+        : Base(vm, structure, jsMockFunctionCall, jsMockFunctionConstruct)
     {
         initMock();
     }
@@ -979,6 +980,42 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
     setReturnValue(createMockResult(vm, globalObject, "return"_s, jsUndefined()));
     return JSValue::encode(jsUndefined());
+}
+
+// Native constructors must always return an object, so this mirrors the behavior of
+// constructing a plain JavaScript function: create `this` from newTarget.prototype,
+// invoke the mock with it, and return the result if it is an object, otherwise `this`.
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSMockFunction* fn = dynamicDowncast<JSMockFunction>(callframe->jsCallee());
+    if (!fn) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Expected callee to be mock function"_s);
+        return {};
+    }
+
+    JSObject* newTarget = callframe->newTarget().getObject();
+    if (!newTarget) [[unlikely]] {
+        newTarget = fn;
+    }
+    JSValue prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* thisObject = prototype.isObject()
+        ? JSC::constructEmptyObject(globalObject, asObject(prototype))
+        : JSC::constructEmptyObject(globalObject);
+
+    JSC::CallData callData = JSC::getCallData(fn);
+    ASSERT(callData.type != JSC::CallData::Type::None);
+    JSC::ArgList args = JSC::ArgList(callframe);
+    JSValue returnValue = JSC::call(globalObject, fn, callData, thisObject, args);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (returnValue.isObject()) {
+        return JSValue::encode(returnValue);
+    }
+
+    return JSValue::encode(thisObject);
 }
 
 void JSMockFunctionPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

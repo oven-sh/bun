@@ -24,15 +24,16 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     externals.splice(i, 1);
   }
 
-  // Build all files at once with specific options
+  // Build all files at once with specific options. Interpolating the array
+  // makes the shell escape each flag as its own word, so no raw splice is
+  // needed (and `${{ raw: ... }}` is no longer accepted).
   const externalModules = builtins
     .concat(moduleFiles.filter(f => f !== name))
-    .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
-    .join(" ");
+    .flatMap(b => [`--external:node:${b}`, `--external:${b}`]);
 
   // Create the build command with all the specified options
   const buildCommand =
-    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
+    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${externalModules}`.text();
 
   commands.push(
     buildCommand.then(async text => {

@@ -31,7 +31,6 @@
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
 #include "Exception.h"
-#include "JavaScriptCore/ErrorInstance.h"
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
 #include "wtf/Compiler.h"
@@ -95,38 +94,33 @@ namespace Bun {
 
 extern "C" bool has_bun_garbage_collector_flag_enabled;
 
-static JSValue handleLazyPropertyCallbackResult(VM& vm, TopExceptionScope& scope, JSValue result)
+// The reified value is stored with putDirect() and cannot be empty, and the
+// property slot machinery asserts that no exception is pending once a slot has
+// been produced, so failures cannot be propagated from here: the exception is
+// cleared (except termination) and the property reifies as undefined.
+static JSValue handleLazyPropertyCallbackResult(TopExceptionScope& scope, JSValue result)
 {
-    auto* exception = scope.exception();
-    if (!exception) [[likely]] {
-        if (!result) [[unlikely]]
-            return jsUndefined();
-        return result;
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
     }
-    // The reified value is stored with putDirect() and must not be empty. Stack
-    // overflow and out-of-memory errors are cleared because they cannot be
-    // propagated safely from this path; other errors stay pending so the first
-    // access still reports them, while the property itself reifies as undefined.
-    if (!vm.isTerminationException(exception)) {
-        auto* error = jsDynamicCast<ErrorInstance*>(exception->value());
-        if (error && (error->isStackOverflowError() || error->isOutOfMemoryError()))
-            (void)scope.tryClearException();
-    }
-    return jsUndefined();
+    if (!result) [[unlikely]]
+        return jsUndefined();
+    return result;
 }
 
 JSValue handleLazyPropertyCallbackException(VM& vm, JSObject* object, BunObjectLazyPropCb callback)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue result = JSValue::decode(callback(object->globalObject(), object));
-    return handleLazyPropertyCallbackResult(vm, scope, result);
+    return handleLazyPropertyCallbackResult(scope, result);
 }
 
 static JSValue handleLazyPropertyCallbackException(VM& vm, JSObject* object, JSValue (*callback)(VM&, JSObject*))
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue result = callback(vm, object);
-    return handleLazyPropertyCallbackResult(vm, scope, result);
+    return handleLazyPropertyCallbackResult(scope, result);
 }
 
 static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)

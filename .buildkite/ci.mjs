@@ -632,9 +632,10 @@ function getLinkBunStep(platform, options) {
 /**
  * Cross-compiled Windows build (full compile + link on a Linux agent).
  * Validates that bun.exe for the given arch can be built from Linux with
- * clang-cl + lld-link + an xwin Windows sysroot, which build.ts fetches at
- * the start of the step (scripts/build/winsysroot.ts). The produced binary
- * is not consumed by tests or release — the native Windows lanes above stay
+ * clang-cl + lld-link + an xwin Windows sysroot — baked into newer agent
+ * images (.buildkite/Dockerfile), fetched at configure time on agents that
+ * don't have one (scripts/build/winsysroot.ts). The produced binary is not
+ * consumed by tests or release — the native Windows lanes above stay
  * authoritative — so the step is soft_fail until it has a green history.
  *
  * Runs on the same amazonlinux docker image the other Linux/cross builds

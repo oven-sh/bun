@@ -548,7 +548,11 @@ export function detectFreebsdSysroot(arch: Arch): string | undefined {
  * there's no per-arch variant. Returns undefined if none found.
  */
 export function detectWindowsSysroot(): string | undefined {
-  const looksValid = (p: string) => existsSync(join(p, "Windows Kits", "10", "Include"));
+  // Case-tolerant: a real VS/SDK copy uses "Include", an xwin splat in
+  // winsysroot-style mode writes "include" (winsysroot.ts adds the
+  // title-case alias the LLVM toolchain needs at configure time).
+  const looksValid = (p: string) =>
+    existsSync(join(p, "Windows Kits", "10", "Include")) || existsSync(join(p, "Windows Kits", "10", "include"));
   const env = process.env.WINDOWS_SYSROOT;
   if (env && looksValid(env)) return env;
   for (const p of ["/opt/winsysroot", "/opt/xwin"]) {

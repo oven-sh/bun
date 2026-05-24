@@ -161,7 +161,7 @@ xwin --accept-license --arch x86_64,aarch64 splat \
   --output /opt/winsysroot
 ```
 
-The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically; elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>`.
+The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically; elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>`. Configure validates the splat and adds the title-case `Include`/`Lib` aliases clang-cl and lld-link expect, so the command above is all that's needed. CI agents bake the same splat into their images (`.buildkite/Dockerfile`, `scripts/bootstrap.sh`); when an agent doesn't have one, the build fetches it into its cache dir at configure time.
 
 ### Building
 

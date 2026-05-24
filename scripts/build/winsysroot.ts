@@ -1,11 +1,13 @@
 /**
- * Windows sysroot (xwin splat) fetcher — CI path for Windows cross-compiles.
+ * Windows sysroot (xwin splat) handling for Windows cross-compiles.
  *
  * Cross-compiling for Windows needs the MSVC CRT/STL + Windows SDK headers
- * and import libraries (see `Config.winsysroot`). Local builds point at a
- * sysroot the developer created once (docs/project/building-windows.mdx);
- * CI always fetches one into the per-build cache dir so the build doesn't
- * depend on what the agent image happens to carry.
+ * and import libraries (see `Config.winsysroot`). Provisioned sysroots come
+ * from the agent image (.buildkite/Dockerfile / scripts/bootstrap.sh bake an
+ * xwin splat at /opt/winsysroot) or from a developer-created splat
+ * (docs/project/building-windows.mdx). When none is present, CI builds fetch
+ * one into the per-build cache dir at configure time — the build never
+ * depends on what the agent image happens to carry.
  *
  * The fetch is two steps, both pinned:
  *   1. Download the xwin release binary for the build host (GitHub).
@@ -16,15 +18,15 @@
  *      components (the same terms the Windows CI images accept when
  *      installing VS Build Tools).
  *
- * Idempotent: a sentinel check (SDK include dir + kernel32.lib import libs
- * for both arches) makes re-runs a no-op, so calling this on every CI build
- * only costs time when the cache dir is fresh.
+ * Idempotent: a sentinel check (SDK include + lib trees with the target
+ * arch's kernel32 import lib) makes re-runs a no-op, so calling this on
+ * every build only costs time when the sysroot is genuinely absent.
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import type { Config } from "./config.ts";
+import type { Arch, Config } from "./config.ts";
 import { downloadWithRetry, extractTarGz } from "./download.ts";
 import { BuildError } from "./error.ts";
 
@@ -32,26 +34,80 @@ import { BuildError } from "./error.ts";
 export const XWIN_VERSION = "0.6.7";
 
 /**
- * Does `dir` look like a complete winsysroot? Checks the SDK include tree
- * plus the kernel32 import lib for both target arches so an interrupted
- * splat isn't treated as complete. Mirrors `detectWindowsSysroot()`'s
- * sentinel (config.ts), with the extra per-arch lib check.
+ * Resolve a directory entry whose on-disk casing varies. A real Visual
+ * Studio / Windows SDK copy uses title-case ("Include", "Lib",
+ * "kernel32.Lib"); an xwin splat in winsysroot-style mode writes lowercase
+ * and relies on symlink aliases for the rest (see ensureSdkCaseAliases).
  */
-export function isCompleteWindowsSysroot(dir: string): boolean {
-  const sdkLib = join(dir, "Windows Kits", "10", "Lib");
-  if (!existsSync(join(dir, "Windows Kits", "10", "Include")) || !existsSync(sdkLib)) return false;
-  for (const arch of ["x64", "arm64"]) {
-    const found = sdkVersionDirs(sdkLib).some(ver => existsSync(join(sdkLib, ver, "um", arch, "kernel32.lib")));
-    if (!found) return false;
+function joinIgnoreCase(parent: string, name: string): string | undefined {
+  for (const candidate of [name, name.toLowerCase()]) {
+    const p = join(parent, candidate);
+    if (existsSync(p)) return p;
   }
-  return true;
+  return undefined;
 }
 
-function sdkVersionDirs(sdkLib: string): string[] {
+function listDir(dir: string): string[] {
   try {
-    return readdirSync(sdkLib);
+    return readdirSync(dir);
   } catch {
     return [];
+  }
+}
+
+/** MS arch notation used for per-arch lib dirs inside the SDK. */
+function msArchName(arch: Arch): string {
+  return arch === "x64" ? "x64" : "arm64";
+}
+
+/**
+ * Does `dir` look like a winsysroot usable for an `arch` build? Checks the
+ * SDK include tree plus the kernel32 import lib for the target arch so an
+ * interrupted splat isn't treated as complete. Mirrors
+ * `detectWindowsSysroot()`'s sentinel (config.ts), with the extra lib check.
+ * Case-tolerant: accepts both the SDK's title-case layout and xwin's
+ * lowercase winsysroot-style layout.
+ */
+export function isCompleteWindowsSysroot(dir: string, arch: Arch): boolean {
+  const sdkRoot = join(dir, "Windows Kits", "10");
+  const sdkInclude = joinIgnoreCase(sdkRoot, "Include");
+  const sdkLib = joinIgnoreCase(sdkRoot, "Lib");
+  if (sdkInclude === undefined || sdkLib === undefined) return false;
+  // The SDK ships the file as "kernel32.Lib"; xwin adds a lowercase symlink.
+  return listDir(sdkLib).some(ver =>
+    listDir(join(sdkLib, ver, "um", msArchName(arch))).some(f => f.toLowerCase() === "kernel32.lib"),
+  );
+}
+
+/**
+ * clang-cl and lld-link compose SDK paths under /winsysroot with title-case
+ * "Include" and "Lib" (llvm/lib/WindowsDriver/MSVCPaths.cpp,
+ * lld/COFF/Driver.cpp), but xwin's winsysroot-style splat writes lowercase
+ * "include"/"lib" and only creates title-case aliases for its non-winsysroot
+ * layout. On a case-sensitive filesystem the toolchain would find nothing,
+ * so make sure both spellings resolve, whichever one the sysroot shipped
+ * with. No-op when the alias (or a real title-case dir) already exists.
+ */
+function ensureSdkCaseAliases(dir: string): void {
+  const sdkRoot = join(dir, "Windows Kits", "10");
+  if (!existsSync(sdkRoot)) return;
+  for (const [alias, real] of [
+    ["Include", "include"],
+    ["Lib", "lib"],
+  ] as const) {
+    const aliasPath = join(sdkRoot, alias);
+    if (existsSync(aliasPath) || !existsSync(join(sdkRoot, real))) continue;
+    try {
+      symlinkSync(real, aliasPath);
+    } catch (error) {
+      // EEXIST: another configure raced us (or a dangling alias is present) —
+      // either way the path resolves or the compile error will say so.
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw new BuildError(`Could not create the "${alias}" alias in ${sdkRoot}`, {
+        cause: error as Error,
+        hint: `clang-cl/lld-link look up Windows SDK paths as "${alias}". Create the alias manually: ln -s ${real} "${aliasPath}"`,
+      });
+    }
   }
 }
 
@@ -71,15 +127,32 @@ function xwinHostTriple(cfg: Config): string {
 }
 
 /**
- * Ensure `cfg.winsysroot` exists and is complete, fetching it with xwin if
- * not. No-op for native Windows builds and when the sysroot is already
- * present (the common case locally).
+ * Ensure `cfg.winsysroot` exists, is complete for the target arch, and has
+ * the case aliases the LLVM toolchain needs. Fetches the sysroot with xwin
+ * when it's missing — CI only; local builds get a clear error instead of a
+ * surprise multi-GB download into a directory they configured themselves.
+ * No-op for native Windows builds.
  */
 export async function ensureWindowsSysroot(cfg: Config): Promise<void> {
   if (!cfg.windows || cfg.host.os === "windows" || cfg.winsysroot === undefined) return;
   const dest = cfg.winsysroot;
-  if (isCompleteWindowsSysroot(dest)) return;
 
+  if (!isCompleteWindowsSysroot(dest, cfg.arch)) {
+    if (!cfg.ci && !cfg.buildkite) {
+      throw new BuildError(`Windows sysroot at ${dest} is missing the MSVC CRT / Windows SDK for ${cfg.arch}`, {
+        hint:
+          "Re-create it with xwin (see docs/project/building-windows.mdx):\n" +
+          `  xwin --accept-license --arch x86_64,aarch64 splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output ${dest}`,
+      });
+    }
+    await fetchWindowsSysroot(cfg, dest);
+  }
+
+  ensureSdkCaseAliases(dest);
+}
+
+/** Download xwin and splat the MSVC CRT + Windows SDK into `dest`. */
+async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
   // ─── 1. xwin binary ───
   const triple = xwinHostTriple(cfg);
   const xwinDir = resolve(cfg.cacheDir, `xwin-${XWIN_VERSION}`);
@@ -101,7 +174,7 @@ export async function ensureWindowsSysroot(cfg: Config): Promise<void> {
   // Both target arches in one splat; --include-debug-libs so /MTd (debug
   // CRT) links work; winsysroot-style + MS arch notation so clang-cl and
   // lld-link resolve it with a single /winsysroot flag; symlinks stay ON
-  // (default) to fix include casing on a case-sensitive filesystem.
+  // (default) to fix include/lib casing on a case-sensitive filesystem.
   //
   // The incomplete previous attempt is wiped before re-splatting, but only
   // when `dest` actually looks like a (partial) sysroot — a mistyped
@@ -137,14 +210,19 @@ export async function ensureWindowsSysroot(cfg: Config): Promise<void> {
     "--output",
     dest,
   ];
-  const result = spawnSync(xwinExe, args, { stdio: "inherit" });
+  // xwin draws progress bars to stdout even when it isn't a terminal, which
+  // floods CI logs with megabytes of redraws. Keep stderr (real errors);
+  // only show the progress locally where it's actually a progress bar.
+  const result = spawnSync(xwinExe, args, {
+    stdio: ["ignore", process.stdout.isTTY ? "inherit" : "ignore", "inherit"],
+  });
   if (result.error || result.status !== 0) {
     throw new BuildError(`xwin splat failed${result.status !== null ? ` (exit ${result.status})` : ""}`, {
       cause: result.error,
       hint: "The MSVC CRT / Windows SDK download from Microsoft's CDN failed — check network access, or provide a sysroot via WINDOWS_SYSROOT / --winsysroot.",
     });
   }
-  if (!isCompleteWindowsSysroot(dest)) {
+  if (!isCompleteWindowsSysroot(dest, cfg.arch)) {
     throw new BuildError(`xwin splat finished but ${dest} is missing expected SDK files`, {
       hint: "Delete the directory and retry, or provide a sysroot via WINDOWS_SYSROOT / --winsysroot.",
     });

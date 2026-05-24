@@ -274,13 +274,14 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
 
   checkWorkarounds(cfg);
 
-  // Windows cross-compile, CI only: fetch the MSVC CRT + Windows SDK splat
-  // into the per-build cache BEFORE the graph is emitted — emitBun()
-  // enumerates its include dirs (llvm-rc's /I flags) at configure time, so
-  // the sysroot must exist by then, not just before ninja runs. No-op when
-  // the resolved winsysroot is already complete. Local builds never fetch:
-  // resolveConfig() already required a provisioned sysroot (or errored).
-  if (cfg.windows && cfg.host.os !== "windows" && (cfg.ci || cfg.buildkite)) {
+  // Windows cross-compile: make sure the MSVC CRT + Windows SDK splat is
+  // usable BEFORE the graph is emitted — emitBun() enumerates its include
+  // dirs (llvm-rc's /I flags) at configure time, so the sysroot must exist
+  // by then, not just before ninja runs. CI fetches a missing sysroot into
+  // the per-build cache; local builds require a provisioned one (the fetch
+  // would be a surprise multi-GB download) and only get the case-alias
+  // fixup + completeness check.
+  if (cfg.windows && cfg.host.os !== "windows") {
     await ensureWindowsSysroot(cfg);
     mark("ensureWindowsSysroot");
   }

@@ -875,6 +875,8 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
  * understand `/winsysroot` themselves (llvm-rc). Layout:
  *   <root>/VC/Tools/MSVC/<ver>/include
  *   <root>/Windows Kits/10/Include/<sdkver>/{ucrt,shared,um}
+ * The SDK "Include" dir is title-case in a real VS/SDK copy and lowercase
+ * in an xwin winsysroot-style splat — accept either.
  */
 function windowsSysrootIncludeDirs(winsysroot: string): string[] {
   const dirs: string[] = [];
@@ -885,8 +887,9 @@ function windowsSysrootIncludeDirs(winsysroot: string): string[] {
       if (existsSync(d)) dirs.push(d);
     }
   }
-  const sdkInclude = resolve(winsysroot, "Windows Kits", "10", "Include");
-  if (existsSync(sdkInclude)) {
+  const sdkRoot = resolve(winsysroot, "Windows Kits", "10");
+  const sdkInclude = ["Include", "include"].map(name => resolve(sdkRoot, name)).find(existsSync);
+  if (sdkInclude !== undefined) {
     for (const ver of readdirSync(sdkInclude)) {
       for (const sub of ["ucrt", "shared", "um"]) {
         const d = resolve(sdkInclude, ver, sub);

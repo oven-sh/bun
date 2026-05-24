@@ -174,9 +174,27 @@ RUN FBSD_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "am
     && rm /tmp/base.txz
 ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
 
-# No Windows sysroot is baked into the image: --os=windows cross-compile
-# builds always fetch their own MSVC CRT + Windows SDK splat at build time
-# (scripts/build/winsysroot.ts), so CI doesn't depend on image contents.
+# Windows sysroot — xwin splat of the MSVC CRT/STL + Windows SDK (VS layout)
+# for --os=windows cross-compile; clang-cl/lld-link consume it via
+# /winsysroot (see scripts/build/config.ts `winsysroot`). Both target arches
+# in one splat; --include-debug-libs so /MTd debug links work.
+# --accept-license accepts the Microsoft license terms for the SDK/CRT
+# components, same as the Windows CI images do when installing VS Build Tools.
+# If the image predates this layer, configure falls back to fetching the same
+# splat at build time (scripts/build/winsysroot.ts — keep XWIN_VERSION in sync).
+# The Include/Lib aliases exist because clang-cl/lld-link compose SDK paths
+# in title case while the winsysroot-style splat writes lowercase.
+ARG XWIN_VERSION="0.6.7"
+RUN XWIN_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "aarch64"; else echo "x86_64"; fi) \
+    && curl -fsSL "https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl.tar.gz" \
+       | tar -xz -C /tmp \
+    && /tmp/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl/xwin --accept-license --arch x86_64,aarch64 --cache-dir /tmp/xwin-cache \
+       splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot \
+       > /dev/null \
+    && ln -s include "/opt/winsysroot/Windows Kits/10/Include" \
+    && ln -s lib "/opt/winsysroot/Windows Kits/10/Lib" \
+    && rm -rf /tmp/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl /tmp/xwin-cache
+ENV WINDOWS_SYSROOT=/opt/winsysroot
 
 RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
     echo "Downloading buildkite" && \

@@ -201,7 +201,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                                      |
 | `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                         |
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                             |
-| `winsysroot.ts`                | Fetches the Windows MSVC CRT + SDK sysroot via xwin (CI cross-compile)                                |
+| `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                         |
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                                                            |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                   |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                  |

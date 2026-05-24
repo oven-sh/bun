@@ -3486,21 +3486,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // [201] seq-space: a nested block sequence may sit at indent n in
             // BLOCK-OUT, but needs n+1 in BLOCK-IN.
             if self.token.line != indicator_line {
-                let belongs_to_parent = if matches!(
-                    self.token.data,
-                    TokenData::SequenceEntry
-                ) && kind != BlockIndentedKind::SeqEntry
+                let belongs_to_parent = if matches!(self.token.data, TokenData::SequenceEntry)
+                    && kind != BlockIndentedKind::SeqEntry
                 {
                     self.token.indent.is_less_than(n)
                 } else {
                     self.token.indent.is_less_than_or_equal(n)
                 };
                 if belongs_to_parent {
-                    return self.props_to_e_node(
-                        &value_tag,
-                        &value_anchor,
-                        indicator_start.loc(),
-                    );
+                    return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
                 }
             }
 
@@ -3529,22 +3523,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         BlockIndentedKind::MapValue {
                             flow_pair_allowed: true
                         }
-                    ) && matches!(
-                        self.context.get(),
-                        Context::FlowIn | Context::FlowKey
-                    ) =>
+                    ) && matches!(self.context.get(), Context::FlowIn | Context::FlowKey) =>
                 {
-                    return self.props_to_e_node(
-                        &value_tag,
-                        &value_anchor,
-                        indicator_start.loc(),
-                    );
+                    return self.props_to_e_node(&value_tag, &value_anchor, indicator_start.loc());
                 }
                 _ => {
                     return self.parse_node(ParseNodeOptions {
                         current_mapping_indent: Some(n),
-                        explicit_mapping_key: kind
-                            == BlockIndentedKind::MapExplicitKey,
+                        explicit_mapping_key: kind == BlockIndentedKind::MapExplicitKey,
                         scanned_tag: value_tag,
                         scanned_anchor: value_anchor,
                         ..Default::default()
@@ -3560,7 +3546,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }) => *t,
                 _ => NodeTag::None,
             };
-            self.scan(ScanOptions { tag, ..Default::default() })?;
+            self.scan(ScanOptions {
+                tag,
+                ..Default::default()
+            })?;
         }
     }
 

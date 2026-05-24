@@ -1187,9 +1187,7 @@ folded: >
 
         test("second property at parent indent terminates first", () => {
           // [197] property at indent ≤ n is the parent's, not value content.
-          expect(() => YAML.parse("key: &x\n!!map\n  a: b\n")).toThrow(
-            "Unexpected token",
-          );
+          expect(() => YAML.parse("key: &x\n!!map\n  a: b\n")).toThrow("Unexpected token");
         });
 
         test("second anchor at indent > n is the [200] collection's first key", () => {
@@ -1199,10 +1197,7 @@ folded: >
 
         test("anchor on empty `?` key", () => {
           expect(YAML.parse("? &d\n: v\n")).toEqual({ null: "v" });
-          expect(YAML.parse("- ? &d\n- ? &e\n  : &a\n")).toEqual([
-            { null: null },
-            { null: null },
-          ]);
+          expect(YAML.parse("- ? &d\n- ? &e\n  : &a\n")).toEqual([{ null: null }, { null: null }]);
         });
 
         test.todo("anchor as implicit-key e-node, alias in later entry", () => {
@@ -1287,11 +1282,7 @@ folded: >
           // The helper falls through on a second anchor so parse_node's
           // mapping-anchor split applies. Only valid when the content is a
           // mapping (so the second anchors the first key).
-          expect(YAML.parse("- &outer\n  &inner b: 1\n- *outer\n- *inner\n")).toEqual([
-            { b: 1 },
-            { b: 1 },
-            "b",
-          ]);
+          expect(YAML.parse("- &outer\n  &inner b: 1\n- *outer\n- *inner\n")).toEqual([{ b: 1 }, { b: 1 }, "b"]);
           expect(() => YAML.parse("- &x &y a\n")).toThrow("Multiple anchors");
         });
       });

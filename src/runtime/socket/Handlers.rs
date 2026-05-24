@@ -288,16 +288,51 @@ impl Handlers {
         generated: &GeneratedSocketConfigHandlers,
         is_server: bool,
     ) -> JsResult<Handlers> {
+        // Validate the callbacks before constructing `Handlers` so the error
+        // paths never drop (and thus `unprotect`) a value that was never
+        // `protect`ed.
+        // inline for (callback_fields) |field| { ... @field(generated, field) ... }
+        macro_rules! callback {
+            ($field:ident, $name:literal) => {{
+                let value = generated.$field;
+                if value.is_undefined_or_null() {
+                    JSValue::ZERO
+                } else if !value.is_callable() {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Expected \"{}\" callback to be a function",
+                        $name
+                    )));
+                } else {
+                    value
+                }
+            }};
+        }
+        let on_open = callback!(on_open, "onOpen");
+        let on_close = callback!(on_close, "onClose");
+        let on_data = callback!(on_data, "onData");
+        let on_writable = callback!(on_writable, "onWritable");
+        let on_timeout = callback!(on_timeout, "onTimeout");
+        let on_connect_error = callback!(on_connect_error, "onConnectError");
+        let on_end = callback!(on_end, "onEnd");
+        let on_error = callback!(on_error, "onError");
+        let on_handshake = callback!(on_handshake, "onHandshake");
+
+        if on_data.is_empty() && on_writable.is_empty() {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Expected at least \"data\" or \"drain\" callback"
+            )));
+        }
+
         let mut result = Handlers {
-            on_open: JSValue::ZERO,
-            on_close: JSValue::ZERO,
-            on_data: JSValue::ZERO,
-            on_writable: JSValue::ZERO,
-            on_timeout: JSValue::ZERO,
-            on_connect_error: JSValue::ZERO,
-            on_end: JSValue::ZERO,
-            on_error: JSValue::ZERO,
-            on_handshake: JSValue::ZERO,
+            on_open,
+            on_close,
+            on_data,
+            on_writable,
+            on_timeout,
+            on_connect_error,
+            on_end,
+            on_error,
+            on_handshake,
             binary_type: match generated.binary_type {
                 GeneratedBinaryType::Arraybuffer => BinaryType::ArrayBuffer,
                 GeneratedBinaryType::Buffer => BinaryType::Buffer,
@@ -317,37 +352,6 @@ impl Handlers {
             #[cfg(debug_assertions)]
             protection_count: 0,
         };
-
-        // inline for (callback_fields) |field| { ... @field(generated, field) ... }
-        macro_rules! assign_callback {
-            ($field:ident, $name:literal) => {{
-                let value = generated.$field;
-                if value.is_undefined_or_null() {
-                } else if !value.is_callable() {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "Expected \"{}\" callback to be a function",
-                        $name
-                    )));
-                } else {
-                    result.$field = value;
-                }
-            }};
-        }
-        assign_callback!(on_open, "onOpen");
-        assign_callback!(on_close, "onClose");
-        assign_callback!(on_data, "onData");
-        assign_callback!(on_writable, "onWritable");
-        assign_callback!(on_timeout, "onTimeout");
-        assign_callback!(on_connect_error, "onConnectError");
-        assign_callback!(on_end, "onEnd");
-        assign_callback!(on_error, "onError");
-        assign_callback!(on_handshake, "onHandshake");
-
-        if result.on_data.is_empty() && result.on_writable.is_empty() {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "Expected at least \"data\" or \"drain\" callback"
-            )));
-        }
         result.with_async_context_if_needed(global_object);
         result.protect();
         Ok(result)

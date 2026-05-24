@@ -130,6 +130,9 @@ impl<R> StyleRule<R> {
             // PORT NOTE: `dest.context()` borrows `dest`; copy the (Copy) raw
             // ctx field out so it doesn't conflict with the `&mut *dest` below.
             let ctx = dest.ctx;
+            // Each rule prelude gets its own budget for `&` substitutions when
+            // compiling nesting (see `serialize::serialize_nesting`).
+            dest.nesting_expansions = 0;
             selector::serialize::serialize_selector_list(
                 self.selectors.v.slice(),
                 dest,

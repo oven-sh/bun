@@ -4384,6 +4384,12 @@ where
         })
     }
 
+    pub fn get_fd(&self) -> Option<bun_core::Fd> {
+        let resp = self.resp.get()?;
+        let fd = resp.get_fd();
+        if fd.is_valid() { Some(fd) } else { None }
+    }
+
     pub(crate) fn set_timeout(&self, seconds: c_uint) -> bool {
         if let Some(resp) = self.live_resp() {
             // SAFETY: FFI handle

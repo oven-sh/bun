@@ -31,6 +31,11 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32
 }
 
+// HOST_EXPORT(Bun__VirtualMachine__isInPreload, c)
+pub fn is_in_preload(this: &VirtualMachine) -> bool {
+    this.is_in_preload
+}
+
 // HOST_EXPORT(Bun__getVM, c)
 pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()

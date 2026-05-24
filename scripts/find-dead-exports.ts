@@ -188,8 +188,6 @@ function collectReferences(crates: Crate[]): Map<string, Set<string>> {
   // from any *other* crate's source (plus generated code).
   const refs = new Map<string, Set<string>>(crates.map(c => [c.name, new Set<string>()]));
   const crateNames = new Set(crates.map(c => c.name));
-  const fileToCrate = new Map<string, string>();
-  for (const c of crates) for (const f of c.files) fileToCrate.set(f, c.name);
 
   // `extern crate X as Y;` → references to `Y::…` are references to `X`.
   const aliases = new Map<string, string>();

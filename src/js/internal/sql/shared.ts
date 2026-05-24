@@ -630,7 +630,11 @@ function parseOptions(
         // check adapter then implement for other databases
         // encode string with \0 as finalizer
         // must be key\0value\0
-        query += `${key}\0${queryObject[key]}\0`;
+        const value = `${queryObject[key]}`;
+        if (key.includes("\0") || value.includes("\0")) {
+          throw $ERR_INVALID_ARG_VALUE(`options.${key}`, queryObject[key], "must not contain null bytes");
+        }
+        query += `${key}\0${value}\0`;
       }
     }
     query = query.trim();
@@ -754,7 +758,11 @@ function parseOptions(
   if (connection && $isObject(connection)) {
     for (const key in connection) {
       if (connection[key] !== undefined) {
-        query += `${key}\0${connection[key]}\0`;
+        const value = `${connection[key]}`;
+        if (key.includes("\0") || value.includes("\0")) {
+          throw $ERR_INVALID_ARG_VALUE(`options.connection.${key}`, connection[key], "must not contain null bytes");
+        }
+        query += `${key}\0${value}\0`;
       }
     }
   }

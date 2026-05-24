@@ -366,6 +366,33 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  it("handles 'target' that throws while converting to a string", () => {
+    let setupCalled = false;
+    expect(() => {
+      plugin({
+        setup: () => {
+          setupCalled = true;
+        },
+        target: {
+          toString() {
+            throw new Error("broken target");
+          },
+        },
+      } as any);
+    }).toThrow("broken target");
+    expect(setupCalled).toBe(false);
+
+    expect(() => {
+      plugin({
+        setup: () => {
+          setupCalled = true;
+        },
+        target: Symbol("nope"),
+      } as any);
+    }).toThrow(TypeError);
+    expect(setupCalled).toBe(false);
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];

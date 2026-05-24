@@ -238,6 +238,39 @@ describe("mock()", () => {
     const obj = { fn };
     expect(obj.fn()).toBe(obj);
   });
+  test("can be constructed with new", () => {
+    const fn = jest.fn();
+    const instance = new fn();
+    expect(typeof instance).toBe("object");
+    expect(instance).not.toBe(null);
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(fn.mock.results[0]).toEqual({
+      type: "return",
+      value: undefined,
+    });
+
+    // the implementation is called with `this` set to the newly created object
+    const fn2 = jest.fn(function () {
+      this.x = 42;
+    });
+    const instance2 = new fn2();
+    expect(instance2.x).toBe(42);
+    expect(fn2.mock.contexts[0]).toBe(instance2);
+
+    // a primitive return value from the implementation is ignored, like a plain constructor
+    const fn3 = jest.fn(() => 123);
+    expect(typeof new fn3()).toBe("object");
+
+    // an object return value becomes the result of `new`
+    const result = { a: 1 };
+    const fn4 = jest.fn(() => result);
+    expect(new fn4()).toBe(result);
+
+    // Reflect.construct with a different new.target respects its prototype
+    class Base {}
+    const fn5 = jest.fn();
+    expect(Reflect.construct(fn5, [], Base)).toBeInstanceOf(Base);
+  });
   if (isBun) {
     test("jest.fn(10) return value shorthand", () => {
       expect(jest.fn(10)()).toBe(10);

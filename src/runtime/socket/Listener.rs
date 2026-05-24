@@ -402,14 +402,11 @@ impl Listener {
         let mut errno: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
             UnixOrHost::Host { host, port } => {
-                // NUL-terminate for the C `const char*` parameter. Zig used
-                // `dupeZ` + raw `.ptr`, which tolerates interior NULs (the C
-                // side just truncates at the first one). Build the `&CStr` via
-                // `from_ptr` so we match that instead of asserting via
-                // `ZStr::as_cstr()`.
+                // NUL-terminate for the C `const char*` parameter. Interior
+                // NULs are rejected in `SocketConfig::from_generated`, so the
+                // `&CStr` view cannot silently truncate the hostname.
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
-                // SAFETY: `hostz` is NUL-terminated and outlives `host_cstr`.
-                let host_cstr = unsafe { core::ffi::CStr::from_ptr(hostz.as_ptr()) };
+                let host_cstr = hostz.as_zstr().as_cstr();
                 let ls = this_ref.group.with_mut(|g| {
                     g.listen(
                         kind,

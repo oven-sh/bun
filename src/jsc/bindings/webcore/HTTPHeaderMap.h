@@ -69,6 +69,12 @@ public:
 
     typedef Vector<CommonHeader, 2, CrashOnOverflow, 6> CommonHeadersVector;
     typedef Vector<UncommonHeader, 0, CrashOnOverflow, 0> UncommonHeadersVector;
+    // Extras vectors skip the inline-capacity-of-2 reservation that
+    // `CommonHeadersVector` uses for the primary hot path — multi-value
+    // duplicates are rare, so every `HTTPHeaderMap` (embedded in every
+    // `Headers`/`Request`/`Response`) shouldn't eat ~32 bytes of inline
+    // storage for entries that almost never exist.
+    typedef Vector<CommonHeader, 0, CrashOnOverflow, 0> ExtraCommonHeadersVector;
 
     class HTTPHeaderMapConstIterator {
     public:
@@ -169,11 +175,10 @@ public:
 
     bool isEmpty() const { return m_commonHeaders.isEmpty() && m_uncommonHeaders.isEmpty() && m_setCookieHeaders.isEmpty() && m_extraCommonHeaders.isEmpty() && m_extraUncommonHeaders.isEmpty(); }
     // Counts only the primary slots (one per unique name, plus each `Set-Cookie`).
-    // Extra duplicate values live in `m_extraCommonHeaders` / `m_extraUncommonHeaders`
-    // and are folded into the primary slot's value by `get(...)`, so they don't add
-    // to the unique-name count that `Headers.count` / FFI allocators use.
+    // The primary already holds the `", "`-joined value for multi-value headers,
+    // so callers using `size()` for `fastGet`-style unique-name iteration
+    // (JS `Headers.count`, FFI row allocators) don't see the side channel.
     int size() const { return m_commonHeaders.size() + m_uncommonHeaders.size() + m_setCookieHeaders.size(); }
-    int totalSize() const { return size() + m_extraCommonHeaders.size() + m_extraUncommonHeaders.size(); }
 
     void clear()
     {
@@ -249,8 +254,8 @@ public:
     // canonicalization they want from `HTTPHeaderName` (`httpHeaderNameString`,
     // `httpHeaderNameStringImpl`, or `httpHeaderNameDefaultCaseStringImpl`) for
     // the common extras, mirroring how they canonicalize the primary slot.
-    const CommonHeadersVector &extraCommonHeaders() const { return m_extraCommonHeaders; }
-    CommonHeadersVector &extraCommonHeaders() { return m_extraCommonHeaders; }
+    const ExtraCommonHeadersVector &extraCommonHeaders() const { return m_extraCommonHeaders; }
+    ExtraCommonHeadersVector &extraCommonHeaders() { return m_extraCommonHeaders; }
     const UncommonHeadersVector &extraUncommonHeaders() const { return m_extraUncommonHeaders; }
     UncommonHeadersVector &extraUncommonHeaders() { return m_extraUncommonHeaders; }
     WEBCORE_EXPORT void appendExtra(HTTPHeaderName, const String &value);
@@ -304,7 +309,7 @@ private:
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;
-    CommonHeadersVector m_extraCommonHeaders;
+    ExtraCommonHeadersVector m_extraCommonHeaders;
     UncommonHeadersVector m_extraUncommonHeaders;
 };
 

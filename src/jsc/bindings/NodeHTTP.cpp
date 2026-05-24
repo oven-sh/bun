@@ -50,8 +50,11 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     const auto& extraUncommon = internal.extraUncommonHeaders();
     bool hasCommonExtras = !extraCommon.isEmpty();
     bool hasUncommonExtras = !extraUncommon.isEmpty();
-    // `impl.size()` counts only primary slots; extras each contribute one more
-    // `[name, value]` pair to the flat `rawHeaders` array.
+    // Upper bound — primaries whose name also has side-channel entries are
+    // skipped below (the extras pass emits every individual value for those
+    // names instead). The actual final length is set with `setLength` after
+    // the writes, so any over-allocation here doesn't leave trailing
+    // `undefined` holes in `rawHeaders`.
     JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, (impl.size() + extraCommon.size() + extraUncommon.size()) * 2);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, prototype, size);
@@ -151,6 +154,15 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
     for (const auto& it : extraUncommon) {
         array->putDirectIndex(globalObject, arrayI++, jsString(vm, it.key));
         array->putDirectIndex(globalObject, arrayI++, jsString(vm, it.value));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // Trim the upper-bound allocation down to the actual number of slots
+    // written — `constructEmptyArray` sets `.length` eagerly, so primaries
+    // skipped by the side-channel pass would otherwise leave trailing
+    // `undefined` holes.
+    if (arrayI < array->length()) {
+        array->setLength(globalObject, arrayI);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

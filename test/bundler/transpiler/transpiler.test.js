@@ -3832,14 +3832,8 @@ console.log("boop");
       "async function f() {\n  await using instanceof o;\n}",
     );
     expectPrinted_("async function f() { await using }", "async function f() {\n  await using;\n}");
-    expectPrinted_(
-      "async function f() { await using\n x = 1 }",
-      "async function f() {\n  await using;\n  x = 1;\n}",
-    );
-    expectPrinted_(
-      "async function f() { await using.foo() }",
-      "async function f() {\n  await using.foo();\n}",
-    );
+    expectPrinted_("async function f() { await using\n x = 1 }", "async function f() {\n  await using;\n  x = 1;\n}");
+    expectPrinted_("async function f() { await using.foo() }", "async function f() {\n  await using.foo();\n}");
     expectPrinted_(
       "async function f() { for (await using instanceof o;;); }",
       "async function f() {\n  for (await using instanceof o;; )\n    ;\n}",

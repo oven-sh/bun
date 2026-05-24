@@ -7,7 +7,7 @@
 //
 // Per-file scoping matches Vitest and Jest semantics and removes the need to
 // spawn one process per file for correctness under `bun test`.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("mock.module does not leak into sibling test files", async () => {

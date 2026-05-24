@@ -1232,6 +1232,20 @@ folded: >
           expect(() => YAML.parse("-\ta: b\n")).toThrow("Unexpected token");
         });
 
+        test("rejects same-line `?` at indent ≤ n after indicator", () => {
+          // [185] compact construct on the indicator line needs s-indent
+          // (spaces, indent ≥ n+1). Tab leaves indent at the line's natural
+          // value; implicit-`:` scan has no additional_parent_indent.
+          expect(() => YAML.parse("?\t? x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("a:\t? x\n")).toThrow("Unexpected token");
+          expect(() => YAML.parse("-\t? x\n")).toThrow("Unexpected token");
+          // [194] implicit value reaches s-l+block-node, not block-indented;
+          // no same-line compact `?` allowed.
+          expect(() => YAML.parse("a: ? x\n")).toThrow("Unexpected token");
+          // [186] seq entry reaches block-indented; compact `?` is valid here.
+          expect(YAML.parse("- ? x\n")).toEqual([{ x: null }]);
+        });
+
         test("anchor on empty subsequent-mapping value", () => {
           const r = YAML.parse("a: 1\nb: &x\nc: *x\n");
           expect(r).toEqual({ a: 1, b: null, c: null });

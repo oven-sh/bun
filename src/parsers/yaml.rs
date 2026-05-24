@@ -3505,10 +3505,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 TokenData::Tag(_) if value_tag.is_none() => {
                     value_tag = Some(self.token.clone());
                 }
-                // [185] a compact `- ` on the indicator's line must be at
+                // [185] a compact construct on the indicator's line must be at
                 // indent ≥ n+1 via s-indent (spaces only); tab separation
                 // leaves the token at the line's natural indent.
-                TokenData::SequenceEntry
+                TokenData::SequenceEntry | TokenData::MappingKey
                     if self.token.line == indicator_line
                         && self.token.indent.is_less_than_or_equal(n) =>
                 {
@@ -3847,21 +3847,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         additional_parent_indent: Some(mapping_indent.add(1)),
                         ..Default::default()
                     })?;
-
-                    // [185] a compact construct on the `?` line must be at
-                    // indent >= n+1 via s-indent (spaces). A tab separator
-                    // leaves the token at the line's natural indent, which
-                    // fails this.
-                    if self.token.line == mapping_line
-                        && self.token.indent.is_less_than_or_equal(mapping_indent)
-                        && matches!(
-                            self.token.data,
-                            TokenData::SequenceEntry | TokenData::MappingKey
-                        )
-                    {
-                        self.block_indents.pop();
-                        return Err(Self::unexpected_token());
-                    }
 
                     let key = self.parse_block_indented(
                         mapping_indent,

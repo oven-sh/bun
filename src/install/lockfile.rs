@@ -3368,12 +3368,12 @@ impl Lockfile {
 
         // The recorded name alone does not prove the tarball *is* that
         // package: a tampered lockfile can keep a default-trusted name while
-        // pointing the tarball URL at a different package, and the integrity
-        // hash comes from the same tampered file so it does not help. Only
-        // extend the default lifecycle-script grant when the tarball URL is
-        // the canonical registry tarball for this name and version
-        // (`<registry>/<name>/-/<basename>-<version>.tgz`). Anything else
-        // still installs, but has to be trusted explicitly via
+        // pointing the tarball URL at a different package or host, and the
+        // integrity hash comes from the same tampered file so it does not
+        // help. Only extend the default lifecycle-script grant when the
+        // tarball URL is exactly the canonical tarball URL for this name and
+        // version on the registry configured for the package's scope.
+        // Anything else still installs, but has to be trusted explicitly via
         // `trustedDependencies` / `bun pm trust`.
         let buf = self.buffers.string_bytes.as_slice();
         let npm = resolution.npm();
@@ -3384,8 +3384,12 @@ impl Lockfile {
             // so it cannot be redirected.
             return true;
         }
-        let Ok(canonical_path) = crate::extract_tarball::build_url_with_printer(
-            b"",
+        let registry = PackageManager::get()
+            .scope_for_package_name(pkg_name)
+            .url
+            .href();
+        let Ok(canonical_url) = crate::extract_tarball::build_url_with_printer(
+            registry,
             &strings::StringOrTinyString::init(pkg_name),
             npm.version,
             buf,
@@ -3397,19 +3401,7 @@ impl Lockfile {
         ) else {
             return false;
         };
-        if !strings::ends_with(url, canonical_path.as_slice()) {
-            return false;
-        }
-        // The part before the canonical path must be a plain `http(s)://`
-        // origin (plus an optional path) so the suffix above is the request
-        // path the registry actually resolves: no query, fragment, or
-        // percent-escape that could displace it.
-        let registry_root = &url[..url.len() - canonical_path.len()];
-        (strings::has_prefix_comptime(registry_root, b"https://")
-            || strings::has_prefix_comptime(registry_root, b"http://"))
-            && registry_root.iter().all(|&c| {
-                c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b'_' | b'~' | b':' | b'/')
-            })
+        url == canonical_url.as_slice()
     }
 }
 

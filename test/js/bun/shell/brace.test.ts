@@ -141,7 +141,7 @@ describe("$.braces input bounds", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const pattern = "{".repeat(50000) + "}".repeat(50000);
+        `const pattern = Buffer.alloc(50000, "{").toString() + Buffer.alloc(50000, "}").toString();
 try {
   Bun.$.braces(pattern);
   console.log("expanded");

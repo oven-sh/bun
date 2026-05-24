@@ -72,7 +72,7 @@ test.if(isWindows)("Bun.which skips PATH segments longer than the Windows wide-p
       `const path = require("node:path");
 const dir = path.dirname(process.execPath);
 const name = path.basename(process.execPath, ".exe");
-const oversized = "a".repeat(70000);
+const oversized = Buffer.alloc(70000, "a").toString();
 console.log(Bun.which(name, { PATH: oversized }));
 const found = Bun.which(name, { PATH: oversized + ";" + dir });
 console.log(found !== null && path.basename(found).toLowerCase() === (name + ".exe").toLowerCase());`,

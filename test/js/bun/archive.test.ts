@@ -701,7 +701,7 @@ describe("Bun.Archive", () => {
       // in the archive must still be extracted.
       // ~40 K characters: longer than the platform path buffer everywhere,
       // including Windows where wide paths may be up to 32767 UTF-16 code units.
-      const longName = "d/".repeat(20000) + "payload.txt";
+      const longName = Buffer.alloc(40000, "d/").toString() + "payload.txt";
 
       // GNU longname record: a header with typeflag 'L' whose data block holds
       // the real (overlong) pathname for the entry that follows.

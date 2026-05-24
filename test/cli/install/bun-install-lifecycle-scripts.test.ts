@@ -3541,6 +3541,49 @@ test.concurrent("default trusted dependencies require the canonical registry tar
   expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
   expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
   expect(await exited).toBe(0);
+
+  // Tamper again: keep the canonical path for `electron@1.0.0` but point the
+  // URL at a different origin — a second local server that proxies to the
+  // real registry. The tarball still downloads and the integrity still
+  // matches, but the origin is not the configured registry, so the default
+  // lifecycle-script grant must not apply.
+  using proxy = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      return fetch(`http://localhost:${verdaccio.port}${url.pathname}${url.search}`, {
+        method: req.method,
+        headers: req.headers,
+      });
+    },
+  });
+  const canonicalUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
+  expect(lockfile).toContain(canonicalUrl);
+  await writeFile(
+    lockfilePath,
+    lockfile.replace(canonicalUrl, `http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz`),
+  );
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+
+  err = await stderr.text();
+  out = await stdout.text();
+  expect(err).not.toContain("error:");
+  expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+  expect(await exists(join(packageDir, "node_modules", "electron", "preinstall.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "install.txt"))).toBeFalse();
+  expect(await exists(join(packageDir, "node_modules", "electron", "postinstall.txt"))).toBeFalse();
+  expect(await exited).toBe(0);
 });
 
 test.concurrent("binary lockfile trusted dependency entries require an exact name match", async () => {

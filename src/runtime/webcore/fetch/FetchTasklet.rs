@@ -953,11 +953,10 @@ impl FetchTasklet {
                 return r;
             }
             drop(certificate_info);
-            // checkServerIdentity passed (or rejectUnauthorized is off):
-            // un-park the HTTP-thread connection so the request is finally
-            // written to the now-verified peer. If the connection already
-            // closed/failed the resume is a no-op (keyed through the abort
-            // tracker).
+            // checkServerIdentity passed: un-park the HTTP-thread connection
+            // so the request is finally written to the now-verified peer. If
+            // the connection already closed/failed the resume is a no-op
+            // (keyed through the abort tracker).
             if let Some(http_) = self.http.as_mut() {
                 http::http_thread().schedule_cert_check_resume(http_);
             }

@@ -54,7 +54,7 @@ const RESTORE_SEQUENCE: &[u8] = b"\x1b[?25h\x1b[?1000l\x1b[?1006l\r\n";
 #[cfg(unix)]
 #[allow(clashing_extern_declarations)]
 unsafe extern "C" {
-    pub fn uv_tty_reset_mode() -> libc::c_int;
+    fn uv_tty_reset_mode() -> libc::c_int;
 }
 
 #[cfg(unix)]
@@ -158,7 +158,7 @@ static PREV_TERM: bun_core::RacyCell<core::mem::MaybeUninit<libc::sigaction>> =
 static LEVEL: AtomicI32 = AtomicI32::new(0);
 
 #[must_use = "drop the guard to uninstall the signal handler"]
-pub struct Guard(());
+pub(crate) struct Guard(());
 
 impl Drop for Guard {
     fn drop(&mut self) {
@@ -166,7 +166,7 @@ impl Drop for Guard {
     }
 }
 
-pub fn install() -> Guard {
+pub(crate) fn install() -> Guard {
     #[cfg(unix)]
     {
         if LEVEL.fetch_add(1, Ordering::AcqRel) == 0 {

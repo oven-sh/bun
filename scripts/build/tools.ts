@@ -392,6 +392,7 @@ export function resolveLlvmToolchain(
   | "mt"
   | "nasm"
   | "clangVersion"
+  | "clangResourceDir"
 > {
   // Compute search paths ONCE. Contains a brew spawn on macOS (~100ms)
   // so calling it per-tool would burn ~600ms. Every tool below gets
@@ -411,6 +412,23 @@ export function resolveLlvmToolchain(
     checkVersion: false,
     required: true,
   })?.path;
+
+  // Resource dir (builtin headers live at <resource-dir>/include). Needed by
+  // darwin cross-compiles, which rebuild the include search path explicitly
+  // (-nostdinc) so nothing from the build host can leak in. One ~10ms spawn;
+  // skipped on Windows where nothing consumes it.
+  let clangResourceDir: string | undefined;
+  if (os !== "windows") {
+    const probe = spawnSync(ccResult!.path, ["-print-resource-dir"], {
+      encoding: "utf8",
+      timeout: 30_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (!probe.error && probe.status === 0) {
+      const dir = (probe.stdout ?? "").trim();
+      if (dir.length > 0) clangResourceDir = dir;
+    }
+  }
 
   // ar: llvm-ar (or llvm-lib on Windows)
   // No version check — ar doesn't always print a parseable version,
@@ -522,6 +540,7 @@ export function resolveLlvmToolchain(
   return {
     cc: ccResult.path,
     clangVersion: ccResult.version,
+    clangResourceDir,
     cxx,
     ar,
     ranlib,

@@ -24,6 +24,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     cc: "/fake/llvm/bin/clang",
     cxx: "/fake/llvm/bin/clang++",
     clangVersion: "21.1.8",
+    clangResourceDir: "/fake/llvm/lib/clang/21",
     ar: "/fake/llvm/bin/llvm-ar",
     ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
@@ -101,12 +102,12 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(flags.cxxflags).toContain("-isysroot");
     expect(flags.cxxflags).toContain(`-mmacosx-version-min=${cfg.osxDeploymentTarget}`);
     // C++ uses Apple's libc++/libc headers from the SDK exclusively — every
-    // host system include dir is dropped so nothing from the build machine
+    // default include dir is dropped so nothing from the build machine
     // (LLVM's libc++, a GCC libstdc++ install) can leak into the compile.
-    expect(flags.cxxflags).toContain("-nostdlibinc");
-    const sdkIncludes = flags.cxxflags.filter(f => f.startsWith(String(cfg.osxSysroot)));
-    expect(sdkIncludes).toContain(join(String(cfg.osxSysroot), "usr", "include", "c++", "v1"));
-    expect(sdkIncludes).toContain(join(String(cfg.osxSysroot), "usr", "include"));
+    expect(flags.cxxflags).toContain("-nostdinc");
+    expect(flags.cxxflags).toContain(join(String(cfg.osxSysroot), "usr", "include", "c++", "v1"));
+    expect(flags.cxxflags).toContain(join(String(cfg.osxSysroot), "usr", "include"));
+    expect(flags.cxxflags).toContain(join(String(cfg.clangResourceDir), "include"));
     // No sanitizer runtimes exist for darwin targets in a Linux LLVM install.
     expect(flags.cxxflags.filter(f => f.startsWith("-fsanitize"))).toBeEmpty();
 
@@ -156,7 +157,7 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     const flags = computeFlags(cfg);
     expect(flags.cxxflags.some(f => f.includes("apple-macosx"))).toBe(false);
     expect(flags.cxxflags).not.toContain("-isysroot");
-    expect(flags.cxxflags).not.toContain("-nostdlibinc");
+    expect(flags.cxxflags).not.toContain("-nostdinc");
   });
 });
 

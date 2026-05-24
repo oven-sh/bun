@@ -179,6 +179,12 @@ export interface Config {
   cxx: string;
   /** Parsed X.Y.Z from clang --version. Captured once at resolve time. */
   clangVersion: string | undefined;
+  /**
+   * `clang -print-resource-dir` — builtin headers live at `<dir>/include`.
+   * Used by darwin cross-compiles, which rebuild the C++ include search path
+   * explicitly. undefined on Windows (nothing consumes it there).
+   */
+  clangResourceDir: string | undefined;
   ar: string;
   /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
   ranlib: string | undefined;
@@ -355,6 +361,8 @@ export interface Toolchain {
    * version parsing failed — shouldn't happen since we version-gate cc.
    */
   clangVersion: string | undefined;
+  /** `clang -print-resource-dir`. undefined on Windows. */
+  clangResourceDir: string | undefined;
   ar: string;
   ranlib: string | undefined;
   ld: string;
@@ -902,6 +910,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
         });
       }
+      if (toolchain.clangResourceDir === undefined) {
+        throw new BuildError("Cross-compiling for macOS requires clang's resource directory", {
+          hint: "`clang -print-resource-dir` failed — is the discovered clang runnable?",
+        });
+      }
       ld64StripSwap = { ld: toolchain.ld64Lld, strip: toolchain.llvmStrip };
     }
   }
@@ -956,6 +969,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cc: toolchain.cc,
     cxx: toolchain.cxx,
     clangVersion: toolchain.clangVersion,
+    clangResourceDir: toolchain.clangResourceDir,
     ar: toolchain.ar,
     ranlib: toolchain.ranlib,
     ld: ld64StripSwap?.ld ?? ld,

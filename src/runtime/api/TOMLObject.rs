@@ -38,8 +38,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // `print_json` + `JSON.parse` — JSON rejects `Infinity`/`NaN` /
             // overflowed float literals, so the printed form of a TOML float
             // like `1e999` or `inf` couldn't re-parse.
-            let stack_check = StackCheck::init();
-            expr_to_js(parse_result, global, &stack_check)
+            expr_to_js(parse_result, global, StackCheck::init())
         },
     )
 }
@@ -54,7 +53,7 @@ fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue>
     }
 }
 
-fn expr_to_js(expr: Expr, global: &JSGlobalObject, stack_check: &StackCheck) -> JsResult<JSValue> {
+fn expr_to_js(expr: Expr, global: &JSGlobalObject, stack_check: StackCheck) -> JsResult<JSValue> {
     // Match `YAMLObject::ParserCtx::to_js` — the TOML parser bounds admitted
     // depth via its own `StackCheck`, but this walker starts from the same
     // stack position after all parser frames unwind, so a separately guarded

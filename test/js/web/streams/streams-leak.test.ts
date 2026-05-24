@@ -34,14 +34,15 @@ test("native ReadableStream reuses the pull buffer across small reads", async ()
   const chunks: Uint8Array[] = [];
   for await (const chunk of resp.body!) chunks.push(chunk);
 
-  // This is only a loose guard against a vacuous single-chunk pass. The
-  // number of client-side reads depends entirely on how the 1000 tiny
+  // The number of client-side reads depends entirely on how the 1000 tiny
   // writes coalesce in the socket under load (observed as low as 17 on
   // loaded CI machines), so don't assert a specific count here. The real
   // regression guards are the distinct-buffer-count and backing-bytes
   // assertions below, which detect the pre-fix one-256KB-buffer-per-chunk
   // behavior at any chunk count >= 8 without depending on the exact count.
-  expect(chunks.length).toBeGreaterThan(2);
+  // Require at least that many chunks so a passing run is guaranteed to
+  // have actually exercised those assertions.
+  expect(chunks.length).toBeGreaterThan(7);
 
   // Consecutive small reads should land in the same backing buffer (the
   // tail subarray is reused until a read fills it). 2KB of ~few-byte

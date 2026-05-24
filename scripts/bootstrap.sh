@@ -1429,10 +1429,12 @@ install_windows_sysroot() {
 	# none is present (scripts/build/winsysroot.ts).
 	sysroot="/opt/winsysroot"
 	# Same sentinel scripts/build/winsysroot.ts isCompleteWindowsSysroot()
-	# uses: the SDK lib tree plus a kernel32 import lib, so a half-splatted
-	# (interrupted) sysroot isn't treated as complete. xwin writes the SDK
-	# dirs/files lowercase; a copied VS install is title-case — accept both.
-	if ls "$sysroot/Windows Kits/10/"[Ll]ib/*/um/x64/kernel32.[Ll]ib >/dev/null 2>&1; then
+	# uses: the SDK lib tree plus a kernel32 import lib plus the ATL headers
+	# (--include-atl), so a half-splatted or pre-ATL sysroot isn't treated as
+	# complete. xwin writes the SDK dirs/files lowercase; a copied VS install
+	# is title-case — accept both.
+	if ls "$sysroot/Windows Kits/10/"[Ll]ib/*/um/x64/kernel32.[Ll]ib >/dev/null 2>&1 &&
+		ls "$sysroot"/VC/Tools/MSVC/*/include/atlstr.h >/dev/null 2>&1; then
 		return
 	fi
 
@@ -1449,11 +1451,12 @@ install_windows_sysroot() {
 	execute_sudo rm -rf "$sysroot"
 	execute_sudo mkdir -p "$sysroot"
 	# Both target arches in one splat; --include-debug-libs so /MTd (debug
-	# CRT) links work; winsysroot-style + MS arch notation so clang-cl and
-	# lld-link resolve it with a single /winsysroot flag; symlinks stay ON
-	# (default) to fix include/lib casing on a case-sensitive filesystem.
+	# CRT) links work; --include-atl for <atlstr.h> (rescle.cpp);
+	# winsysroot-style + MS arch notation so clang-cl and lld-link resolve it
+	# with a single /winsysroot flag; symlinks stay ON (default) to fix
+	# include/lib casing on a case-sensitive filesystem.
 	execute_sudo "$xwin_dir/xwin" --accept-license --arch x86_64,aarch64 --cache-dir "$xwin_dir/cache" \
-		splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
+		splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --include-atl \
 		--output "$sysroot"
 	# clang-cl/lld-link compose SDK paths as "Include"/"Lib" (title case);
 	# the winsysroot-style splat writes lowercase — alias both spellings.

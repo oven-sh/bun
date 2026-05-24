@@ -174,10 +174,11 @@ RUN FBSD_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "am
     && rm /tmp/base.txz
 ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
 
-# Windows sysroot — xwin splat of the MSVC CRT/STL + Windows SDK (VS layout)
-# for --os=windows cross-compile; clang-cl/lld-link consume it via
+# Windows sysroot — xwin splat of the MSVC CRT/STL + Windows SDK + ATL (VS
+# layout) for --os=windows cross-compile; clang-cl/lld-link consume it via
 # /winsysroot (see scripts/build/config.ts `winsysroot`). Both target arches
-# in one splat; --include-debug-libs so /MTd debug links work.
+# in one splat; --include-debug-libs so /MTd debug links work; --include-atl
+# for <atlstr.h> (rescle.cpp).
 # --accept-license accepts the Microsoft license terms for the SDK/CRT
 # components, same as the Windows CI images do when installing VS Build Tools.
 # If the image predates this layer, configure falls back to fetching the same
@@ -190,7 +191,7 @@ RUN XWIN_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "aarch64"; else echo "
        -o /tmp/xwin.tar.gz \
     && tar -xzf /tmp/xwin.tar.gz -C /tmp \
     && /tmp/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl/xwin --accept-license --arch x86_64,aarch64 --cache-dir /tmp/xwin-cache \
-       splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot \
+       splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --include-atl --output /opt/winsysroot \
        > /dev/null \
     && ln -s include "/opt/winsysroot/Windows Kits/10/Include" \
     && ln -s lib "/opt/winsysroot/Windows Kits/10/Lib" \

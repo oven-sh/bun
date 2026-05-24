@@ -152,12 +152,12 @@ Windows binaries (both x64 and arm64) can also be built on a Linux host. The bui
 1. The same LLVM version a native build uses (see `scripts/bootstrap.sh` `llvm_version_exact`), installed so that `clang-cl`, `lld-link`, `llvm-lib` and `llvm-rc` are available. On Debian/Ubuntu, `apt.llvm.org` packages provide all of them.
 2. `nasm` (only needed for Windows x64 — BoringSSL's x64 assembly is NASM syntax).
 3. Rust std for the Windows targets (`rust-toolchain.toml` lists them; `rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc` if missing).
-4. A Windows sysroot: an [xwin](https://github.com/Jake-Shadle/xwin) splat of the MSVC CRT and Windows SDK laid out like a Visual Studio install. Note that downloading these components means accepting Microsoft's license terms for them.
+4. A Windows sysroot: an [xwin](https://github.com/Jake-Shadle/xwin) splat of the MSVC CRT, Windows SDK, and ATL laid out like a Visual Studio install. Note that downloading these components means accepting Microsoft's license terms for them.
 
 ```bash
 cargo install xwin # or download a release binary
 xwin --accept-license --arch x86_64,aarch64 splat \
-  --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
+  --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --include-atl \
   --output /opt/winsysroot
 # clang-cl/lld-link look up SDK paths as "Include"/"Lib"; the splat writes
 # them lowercase, so alias both spellings (needs the same privileges as the

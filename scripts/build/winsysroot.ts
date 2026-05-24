@@ -1,17 +1,17 @@
 /**
  * Windows sysroot (xwin splat) handling for Windows cross-compiles.
  *
- * Cross-compiling for Windows needs the MSVC CRT/STL + Windows SDK headers
- * and import libraries (see `Config.winsysroot`). Provisioned sysroots come
- * from the agent image (.buildkite/Dockerfile / scripts/bootstrap.sh bake an
- * xwin splat at /opt/winsysroot) or from a developer-created splat
- * (docs/project/building-windows.mdx). When none is present, CI builds fetch
- * one into the per-build cache dir at configure time — the build never
- * depends on what the agent image happens to carry.
+ * Cross-compiling for Windows needs the MSVC CRT/STL + Windows SDK + ATL
+ * headers and import libraries (see `Config.winsysroot`). Provisioned
+ * sysroots come from the agent image (.buildkite/Dockerfile /
+ * scripts/bootstrap.sh bake an xwin splat at /opt/winsysroot) or from a
+ * developer-created splat (docs/project/building-windows.mdx). When none is
+ * present, CI builds fetch one into the per-build cache dir at configure
+ * time — the build never depends on what the agent image happens to carry.
  *
  * The fetch is two steps, both pinned:
  *   1. Download the xwin release binary for the build host (GitHub).
- *   2. Run `xwin splat` — xwin downloads the CRT/SDK packages from
+ *   2. Run `xwin splat` — xwin downloads the CRT/SDK/ATL packages from
  *      Microsoft's CDN and lays them out like a Visual Studio install so a
  *      single `/winsysroot` flag works for clang-cl and lld-link.
  *      `--accept-license` accepts Microsoft's license terms for those
@@ -19,8 +19,9 @@
  *      installing VS Build Tools).
  *
  * Idempotent: a sentinel check (SDK include + lib trees with the target
- * arch's kernel32 import lib) makes re-runs a no-op, so calling this on
- * every build only costs time when the sysroot is genuinely absent.
+ * arch's kernel32 import lib, plus the ATL headers) makes re-runs a no-op,
+ * so calling this on every build only costs time when the sysroot is
+ * genuinely absent or incomplete.
  */
 
 import { spawnSync } from "node:child_process";
@@ -66,11 +67,11 @@ function msArchName(arch: Arch): string {
 
 /**
  * Does `dir` look like a winsysroot usable for an `arch` build? Checks the
- * SDK include tree plus the kernel32 import lib for the target arch so an
- * interrupted splat isn't treated as complete. Mirrors
- * `detectWindowsSysroot()`'s sentinel (config.ts), with the extra lib check.
- * Case-tolerant: accepts both the SDK's title-case layout and xwin's
- * lowercase winsysroot-style layout.
+ * SDK include tree, the kernel32 import lib for the target arch, and the ATL
+ * headers so an interrupted or pre-ATL splat isn't treated as complete.
+ * Mirrors `detectWindowsSysroot()`'s sentinel (config.ts), with the extra
+ * lib/ATL checks. Case-tolerant: accepts both the SDK's title-case layout
+ * and xwin's lowercase winsysroot-style layout.
  */
 export function isCompleteWindowsSysroot(dir: string, arch: Arch): boolean {
   const sdkRoot = join(dir, "Windows Kits", "10");
@@ -78,8 +79,18 @@ export function isCompleteWindowsSysroot(dir: string, arch: Arch): boolean {
   const sdkLib = joinIgnoreCase(sdkRoot, "Lib");
   if (sdkInclude === undefined || sdkLib === undefined) return false;
   // The SDK ships the file as "kernel32.Lib"; xwin adds a lowercase symlink.
-  return listDir(sdkLib).some(ver =>
+  const hasKernel32 = listDir(sdkLib).some(ver =>
     listDir(join(sdkLib, ver, "um", msArchName(arch))).some(f => f.toLowerCase() === "kernel32.lib"),
+  );
+  if (!hasKernel32) return false;
+  // ATL (<atlstr.h>, needed by src/jsc/bindings/windows/rescle.cpp): xwin's
+  // --include-atl merges the ATL headers into the VC include dir; a real
+  // Visual Studio copy keeps them under atlmfc/include.
+  const msvcRoot = join(dir, "VC", "Tools", "MSVC");
+  return listDir(msvcRoot).some(ver =>
+    [join(msvcRoot, ver, "include"), join(msvcRoot, ver, "atlmfc", "include")].some(incDir =>
+      listDir(incDir).some(f => f.toLowerCase() === "atlstr.h"),
+    ),
   );
 }
 
@@ -143,10 +154,10 @@ export async function ensureWindowsSysroot(cfg: Config): Promise<void> {
 
   if (!isCompleteWindowsSysroot(dest, cfg.arch)) {
     if (!cfg.ci && !cfg.buildkite) {
-      throw new BuildError(`Windows sysroot at ${dest} is missing the MSVC CRT / Windows SDK for ${cfg.arch}`, {
+      throw new BuildError(`Windows sysroot at ${dest} is missing the MSVC CRT / Windows SDK / ATL for ${cfg.arch}`, {
         hint:
           "Re-create it with xwin (see docs/project/building-windows.mdx):\n" +
-          `  xwin --accept-license --arch x86_64,aarch64 splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output ${dest}`,
+          `  xwin --accept-license --arch x86_64,aarch64 splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --include-atl --output ${dest}`,
       });
     }
     await fetchWindowsSysroot(cfg, dest);
@@ -174,11 +185,12 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
     }
   }
 
-  // ─── 2. Splat the MSVC CRT + Windows SDK ───
+  // ─── 2. Splat the MSVC CRT + Windows SDK + ATL ───
   // Both target arches in one splat; --include-debug-libs so /MTd (debug
-  // CRT) links work; winsysroot-style + MS arch notation so clang-cl and
-  // lld-link resolve it with a single /winsysroot flag; symlinks stay ON
-  // (default) to fix include/lib casing on a case-sensitive filesystem.
+  // CRT) links work; --include-atl for <atlstr.h> (rescle.cpp);
+  // winsysroot-style + MS arch notation so clang-cl and lld-link resolve it
+  // with a single /winsysroot flag; symlinks stay ON (default) to fix
+  // include/lib casing on a case-sensitive filesystem.
   //
   // The incomplete previous attempt is wiped before re-splatting, but only
   // when `dest` actually looks like a (partial) sysroot — a mistyped
@@ -211,6 +223,7 @@ async function fetchWindowsSysroot(cfg: Config, dest: string): Promise<void> {
     "--use-winsysroot-style",
     "--preserve-ms-arch-notation",
     "--include-debug-libs",
+    "--include-atl",
     "--output",
     dest,
   ];

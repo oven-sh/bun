@@ -12679,6 +12679,10 @@ console.log("FIXTURE_DONE");
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
 
   // The second result set must expose all three named columns with their
   // values; reusing the zero-property structure from the first result set
@@ -12686,6 +12690,7 @@ console.log("FIXTURE_DONE");
   expect(stdout).toContain('SECOND_RESULT_SET [{"a":"1","b":"2","c":"3"}]');
   expect(stdout).toContain("SECOND_RESULT_SET_KEYS a,b,c");
   expect(stdout).toContain("FIXTURE_DONE");
+  expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);
 

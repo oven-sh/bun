@@ -1314,6 +1314,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
 
         let mut authorized = success == 1;
+        let mut hostname_mismatch = false;
 
         // A certificate that chains to a trusted root but was issued for a
         // different host must not be reported as authorized. Verify the peer
@@ -1340,11 +1341,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                     )
                 {
                     authorized = false;
+                    hostname_mismatch = true;
                 }
             }
         }
 
-        this.update_flags(|f| f.set(Flags::AUTHORIZED, authorized));
+        this.update_flags(|f| {
+            f.set(Flags::AUTHORIZED, authorized);
+            f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
+        });
 
         let mut callback = handlers.on_handshake;
         let mut is_open = false;
@@ -1724,6 +1729,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is very usefull to have this feature depending on the user workflow
         let ssl_error = this.socket.get().get_verify_error();
         if ssl_error.error_no == 0 {
+            // A certificate that failed hostname verification in `on_handshake`
+            // still reads `X509_V_OK` out of BoringSSL (its verify callback only
+            // covers chain validation), so report the mismatch recorded there.
+            if this.flags.get().contains(Flags::HOSTNAME_MISMATCH) {
+                let mismatch = SystemError {
+                    errno: 0,
+                    code: BunString::clone_utf8(b"HOSTNAME_MISMATCH"),
+                    message: BunString::clone_utf8(b"Hostname mismatch"),
+                    path: BunString::EMPTY,
+                    syscall: BunString::EMPTY,
+                    hostname: BunString::EMPTY,
+                    fd: c_int::MIN,
+                    dest: BunString::EMPTY,
+                };
+                return Ok(mismatch.to_error_instance(global));
+            }
             return Ok(JSValue::NULL);
         }
 
@@ -3421,7 +3442,12 @@ bitflags::bitflags! {
         /// pre-handshake bytes / read the underlying TCP stream.
         const BYPASS_TLS           = 1 << 9;
         const OWNS_HANDLERS        = 1 << 10;
-        // bits 11..15 unused (Zig: `_: u6 = 0`)
+        /// The client handshake completed and the certificate chain verified,
+        /// but the peer certificate did not match the requested hostname.
+        /// BoringSSL's stored verify result is still `X509_V_OK` in that case,
+        /// so `getAuthorizationError()` consults this flag instead.
+        const HOSTNAME_MISMATCH    = 1 << 11;
+        // bits 12..15 unused (Zig: `_: u6 = 0`)
     }
 }
 

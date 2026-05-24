@@ -105,7 +105,7 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
   //    that a client which keeps waiting still settles the promise -- with a
   //    connection-closed error instead of the expected protocol error.)
   {
-    const unterminated = Buffer.from("+" + "A".repeat(600_000));
+    const unterminated = Buffer.from("+" + Buffer.alloc(600_000, "A").toString());
     const { server, port } = await listen(unterminated, true);
     try {
       const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
@@ -128,7 +128,7 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
   // 2) A large but properly terminated simple string under the bound still
   //    parses.
   {
-    const value = "B".repeat(100_000);
+    const value = Buffer.alloc(100_000, "B").toString();
     const { server, port } = await listen(Buffer.from("+" + value + "\r\n"), false);
     try {
       const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {

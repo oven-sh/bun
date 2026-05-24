@@ -1252,7 +1252,7 @@ impl Diff {
                         .get_mut(&to_trusted)
                         .is_some_and(|from_name| {
                             if from_name.is_empty() && !to_name.is_empty() {
-                                *from_name = to_name.clone();
+                                from_name.clone_from(to_name);
                             }
                             from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
                         });

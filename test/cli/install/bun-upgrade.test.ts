@@ -267,6 +267,12 @@ it("recreates the staging directory in the temp dir instead of reusing a pre-exi
       NODE_TLS_REJECT_UNAUTHORIZED: "0",
       GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
       BUN_TMPDIR: stagingRootPath,
+      // The upgrade-failure path exits via Global::exit(1) while the HTTP
+      // thread and the intentionally-leaked progress/download buffers are
+      // still live; LeakSanitizer reports those at exit and abort_on_error
+      // turns the clean exit(1) into SIGABRT on the ASAN lane. Leak
+      // detection is not what this test asserts.
+      ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
     },
   });
 

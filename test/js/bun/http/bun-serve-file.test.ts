@@ -753,7 +753,7 @@ test.skipIf(isWindows)(
     using dir = tempDir("serve-fifo-backpressure", {
       "fixture.ts": `
 import { connect } from "node:net";
-import { closeSync, openSync, write } from "node:fs";
+import { openSync, write } from "node:fs";
 
 const fifoPath = process.argv[2];
 
@@ -771,25 +771,20 @@ const server = Bun.serve({
   },
 });
 
-const CHUNK = Buffer.alloc(1024 * 1024, 120);
-const TOTAL = 32 * CHUNK.length;
+// Keep the pipe full for the whole test so the reader-side poll always has
+// another readable event to deliver. Each 16 KiB write only completes once it
+// fits in the 64 KiB pipe, so \`pumped\` tracks how far the server has drained
+// it. The chain is intentionally never awaited to completion: a correctly
+// backpressured server stops draining the pipe once the client stops reading.
+const CHUNK = Buffer.alloc(16 * 1024, 120);
 let pumped = 0;
-
-// Each write only completes once the server drains the FIFO far enough for
-// the bytes to fit (the pipe itself only holds 64 KiB), so finishing TOTAL
-// bytes proves the server kept reading the pollable fd the whole time the
-// client was refusing to read the response.
-const pump = new Promise((resolve, reject) => {
-  function next() {
-    if (pumped >= TOTAL) return resolve(undefined);
-    write(writerFd, CHUNK, 0, CHUNK.length, null, (err, n) => {
-      if (err) return reject(err);
-      pumped += n;
-      next();
-    });
-  }
-  next();
-});
+let stopPumping = false;
+function pump(err, n) {
+  if (err || stopPumping) return;
+  pumped += n || 0;
+  write(writerFd, CHUNK, 0, CHUNK.length, null, pump);
+}
+pump(null, 0);
 
 // Raw client that sends the request and then never reads the response, so
 // every body write on the server side ends up returning backpressure.
@@ -799,8 +794,32 @@ await new Promise(resolve => socket.once("connect", resolve));
 socket.write("GET /stream HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
 socket.pause();
 
-await pump;
-console.log("pumped " + pumped);
+// Wait for the server to start draining the pipe: the pump can only get past
+// the pipe's own 64 KiB capacity once the response stream consumes it.
+for (let i = 0; i < 1000 && pumped <= 64 * 1024; i++) {
+  await Bun.sleep(5);
+}
+console.log(pumped > 64 * 1024 ? "streaming" : "stuck at " + pumped);
+
+// Now wait for the drain to stall. The client never reads, so the body writes
+// must eventually report backpressure and the reader must park; the pump then
+// stops making progress. The extra readable events delivered between the first
+// backpressured write and the stall are what used to over-release the
+// in-flight-read reference. Bounded poll so a broken build fails instead of
+// hanging.
+let last = -1;
+let stable = 0;
+for (let i = 0; i < 500 && stable < 5; i++) {
+  await Bun.sleep(10);
+  if (pumped === last) {
+    stable++;
+  } else {
+    stable = 0;
+    last = pumped;
+  }
+}
+stopPumping = true;
+console.log("stalled");
 
 // Disconnect the stalled client; the server must survive the abort of the
 // backpressured file stream.
@@ -810,7 +829,6 @@ socket.destroy();
 const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
 console.log(await res.text());
 
-closeSync(writerFd);
 server.stop(true);
 process.exit(0);
 `,
@@ -829,7 +847,8 @@ process.exit(0);
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("pumped 33554432\nalive");
+    expect(stdout.trim()).toBe("streaming\nstalled\nalive");
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   },
   30_000,

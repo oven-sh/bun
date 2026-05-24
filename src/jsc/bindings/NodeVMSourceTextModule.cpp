@@ -342,7 +342,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             RETURN_IF_EXCEPTION(scope, {});
             NodeVMModule* moduleNative = dynamicDowncast<NodeVMModule>(moduleNativeValue);
             if (!moduleNative) {
-                throwArgumentTypeError(*globalObject, scope, 1, "moduleNatives"_s, "Module"_s, "Module"_s, "Module"_s);
+                Bun::ERR::INVALID_THIS(scope, globalObject, "Module"_s);
                 return {};
             }
             AbstractModuleRecord* resolvedRecord = moduleNative->moduleRecord(globalObject);

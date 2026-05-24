@@ -245,6 +245,13 @@ async function request(
     const previousURL = new URL(resp.url || currentURL);
     const nextURL = new URL(location, previousURL);
     if (nextURL.protocol !== "http:" && nextURL.protocol !== "https:") break;
+
+    // Release the intermediate redirect body so the connection can be reused
+    // instead of lingering until GC.
+    try {
+      await resp.body?.cancel();
+    } catch {}
+
     redirects++;
 
     // https://fetch.spec.whatwg.org/#http-redirect-fetch
@@ -254,6 +261,17 @@ async function request(
     ) {
       currentMethod = "GET";
       currentBody = null;
+      // The method changed, so drop the request-body headers
+      // (https://fetch.spec.whatwg.org/#request-body-header-name, plus the
+      // framing headers undici's RedirectHandler also removes).
+      const stripped = new Headers(currentHeaders);
+      stripped.delete("content-type");
+      stripped.delete("content-encoding");
+      stripped.delete("content-language");
+      stripped.delete("content-location");
+      stripped.delete("content-length");
+      stripped.delete("transfer-encoding");
+      currentHeaders = stripped;
     }
 
     // Never forward credentials to a different origin.

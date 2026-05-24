@@ -726,6 +726,24 @@ impl UpgradeCommand {
 
             let version_name = version.name().unwrap();
 
+            // `version_name` is derived from remote release metadata and is used
+            // below as a single directory component inside the shared temp dir
+            // (delete_tree / mkdirat / open_at). Reject anything that could name
+            // a path outside that directory or truncate the path early.
+            if version_name.is_empty()
+                || version_name.as_slice() == b"."
+                || version_name.as_slice() == b".."
+                || strings::index_of_char(&version_name, 0).is_some()
+                || strings::index_of_char(&version_name, b'/').is_some()
+                || strings::index_of_char(&version_name, b'\\').is_some()
+            {
+                Output::err_generic(
+                    "Refusing to use release tag as a directory name: {}",
+                    (bstr::BStr::new(&version_name),),
+                );
+                Global::exit(1);
+            }
+
             let save_dir_: sys::Dir = match filesystem.tmpdir() {
                 Ok(d) => d,
                 Err(err) => {

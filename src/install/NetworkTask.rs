@@ -499,12 +499,25 @@ impl NetworkTask {
             // compared ASCII-case-insensitively because the joined href is
             // normalized (lowercased) by WTF::URL while `scope.url` keeps the
             // configured spelling.
+            //
+            // The same join can also escape *within* the origin: a name like
+            // "..\\other-repo\\pkg" against "https://host/artifactory/api/npm/npm/"
+            // resolves to "https://host/artifactory/api/other-repo/pkg". Require
+            // the joined pathname to stay under the registry path's directory
+            // (everything up to and including its last '/'), which is exactly
+            // the base WHATWG relative resolution uses for the package name —
+            // so well-formed names always pass and the prefix match lands on a
+            // segment boundary by construction.
             {
                 let joined = URL::parse(&url_bytes);
                 let registry = scope.url.url();
+                let registry_dir_end =
+                    strings::last_index_of_char(registry.pathname, b'/').map_or(0, |i| i + 1);
+                let registry_dir = &registry.pathname[..registry_dir_end];
                 if !joined.protocol.eq_ignore_ascii_case(registry.protocol)
                     || !joined.hostname.eq_ignore_ascii_case(registry.hostname)
                     || joined.get_port_auto() != registry.get_port_auto()
+                    || !joined.pathname.starts_with(registry_dir)
                 {
                     if !is_optional {
                         log.add_error_fmt(

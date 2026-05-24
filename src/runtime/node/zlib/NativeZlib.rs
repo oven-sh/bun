@@ -198,11 +198,9 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global),
             );
 
-            // Keep the dictionary alive by keeping a reference to it in the JS object.
-            if dictionary.is_some() {
-                js::dictionary_set_cached(this_value, global, arguments.ptr[6]);
-            }
-
+            // No JS-side reference to the dictionary is kept: `Context::init`
+            // copies the bytes into its own Vec, so the original ArrayBuffer
+            // does not need to outlive this call.
             self.stream
                 .with_mut(|s| s.init(level, window_bits, mem_level, strategy, dictionary));
 

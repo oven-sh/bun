@@ -2106,24 +2106,25 @@ it("http2 server resets streams whose request headers contain CR, LF, or NUL oct
   });
   socket.on("close", () => onExchanged());
 
+  let client;
   try {
-    await exchanged;
-    // The malformed request never reaches the application.
-    expect(deliveredValues).toEqual([]);
-    // The stream is reset with PROTOCOL_ERROR instead of being answered.
-    const rst = frames.find(f => f.type === 3 && f.streamId === 1);
-    expect(rst).toBeDefined();
-    expect(rst.payload.readUInt32BE(0)).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
-    expect(frames.find(f => f.type === 1 && f.streamId === 1)).toBeUndefined();
-  } finally {
-    socket.destroy();
-  }
+    try {
+      await exchanged;
+      // The malformed request never reaches the application.
+      expect(deliveredValues).toEqual([]);
+      // The stream is reset with PROTOCOL_ERROR instead of being answered.
+      const rst = frames.find(f => f.type === 3 && f.streamId === 1);
+      expect(rst).toBeDefined();
+      expect(rst.payload.readUInt32BE(0)).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+      expect(frames.find(f => f.type === 1 && f.streamId === 1)).toBeUndefined();
+    } finally {
+      socket.destroy();
+    }
 
-  // A request whose header values contain no forbidden octets still reaches
-  // the application and gets a response.
-  const client = http2.connect(`http://127.0.0.1:${port}`);
-  client.on("error", () => {});
-  try {
+    // A request whose header values contain no forbidden octets still reaches
+    // the application and gets a response.
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
     const { promise: responded, resolve: onResponse, reject: onError } = Promise.withResolvers();
     const req = client.request({ ":path": "/", "x-injected": "clean" });
     req.on("response", onResponse);
@@ -2134,7 +2135,7 @@ it("http2 server resets streams whose request headers contain CR, LF, or NUL oct
     expect(headers[":status"]).toBe(200);
     expect(deliveredValues).toEqual(["clean"]);
   } finally {
-    client.close();
+    client?.close();
     server.close();
   }
 });

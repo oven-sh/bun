@@ -1027,7 +1027,7 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
       native.link(["x"], [{ a: 1.1, b: 2.2, c: 3.3, d: 4.4 }], 0);
       results.push("link(plain object): returned");
     } catch (e) {
-      results.push("link(plain object): " + (e instanceof TypeError ? "TypeError" : "unexpected " + e));
+      results.push("link(plain object): " + (e instanceof TypeError ? "TypeError " + e.code : "unexpected " + e));
     }
     results.push("status after rejected link: " + native.getStatus());
 
@@ -1051,7 +1051,7 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
 
   expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
-    "link(plain object): TypeError
+    "link(plain object): TypeError ERR_INVALID_THIS
     status after rejected link: unlinked
     status after valid link: linked"
   `);

@@ -699,7 +699,9 @@ describe("Bun.Archive", () => {
       // path buffer (PATH_MAX). Such an entry must be skipped during
       // extraction instead of aborting the process, and the remaining entries
       // in the archive must still be extracted.
-      const longName = "d/".repeat(3000) + "payload.txt"; // ~6 KB, longer than PATH_MAX on every platform
+      // ~40 K characters: longer than the platform path buffer everywhere,
+      // including Windows where wide paths may be up to 32767 UTF-16 code units.
+      const longName = "d/".repeat(20000) + "payload.txt";
 
       // GNU longname record: a header with typeflag 'L' whose data block holds
       // the real (overlong) pathname for the entry that follows.

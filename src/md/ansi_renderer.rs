@@ -2316,13 +2316,23 @@ fn visible_index_at(s: &[u8], max_cols: usize) -> usize {
 /// escape sequences reaching the terminal are the ones the renderer itself
 /// emits. ESC-initiated sequences (CSI / OSC / two-byte) are dropped whole,
 /// mirroring the image-alt stripper in `emit_inline`; other C0 controls and
-/// DEL are dropped except `\t` and `\n`. Returns the input unchanged (and
-/// leaves `scratch` untouched) when there is nothing to strip.
+/// DEL are dropped except `\t` and `\n`. UTF-8-encoded C1 controls
+/// (U+0080..=U+009F, i.e. `0xC2 0x80..=0x9F`) are dropped too — terminals
+/// that honor C1 treat U+009B / U+009D as CSI / OSC introducers. Returns the
+/// input unchanged (and leaves `scratch` untouched) when there is nothing to
+/// strip.
 fn sanitize_source_text<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>) -> &'b [u8] {
     fn is_disallowed(c: u8) -> bool {
         (c < 0x20 && c != b'\n' && c != b'\t') || c == 0x7f
     }
-    if !bytes.iter().any(|&c| is_disallowed(c)) {
+    // Two-byte UTF-8 encoding of a C1 control (U+0080..=U+009F) starting at `i`.
+    fn is_utf8_c1(bytes: &[u8], i: usize) -> bool {
+        bytes[i] == 0xC2 && i + 1 < bytes.len() && (0x80..=0x9F).contains(&bytes[i + 1])
+    }
+    fn needs_strip(bytes: &[u8], i: usize) -> bool {
+        is_disallowed(bytes[i]) || is_utf8_c1(bytes, i)
+    }
+    if !(0..bytes.len()).any(|i| needs_strip(bytes, i)) {
         return bytes;
     }
     let mut i: usize = 0;
@@ -2355,12 +2365,16 @@ fn sanitize_source_text<'b>(bytes: &'b [u8], scratch: &'b mut Vec<u8>) -> &'b [u
             }
             continue;
         }
+        if is_utf8_c1(bytes, i) {
+            i += 2;
+            continue;
+        }
         if is_disallowed(bytes[i]) {
             i += 1;
             continue;
         }
         let start = i;
-        while i < bytes.len() && !is_disallowed(bytes[i]) {
+        while i < bytes.len() && !needs_strip(bytes, i) {
             i += 1;
         }
         scratch.extend_from_slice(&bytes[start..i]);

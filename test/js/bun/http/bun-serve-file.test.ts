@@ -772,11 +772,11 @@ const server = Bun.serve({
 });
 
 // Keep the pipe full for the whole test so the reader-side poll always has
-// another readable event to deliver. Each 16 KiB write only completes once it
-// fits in the 64 KiB pipe, so \`pumped\` tracks how far the server has drained
-// it. The chain is intentionally never awaited to completion: a correctly
+// another readable event to deliver. A blocked write only completes once the
+// server drains the FIFO, so \`pumped\` tracks how far the server has read.
+// The chain is intentionally never awaited to completion: a correctly
 // backpressured server stops draining the pipe once the client stops reading.
-const CHUNK = Buffer.alloc(16 * 1024, 120);
+const CHUNK = Buffer.alloc(4 * 1024, 120);
 let pumped = 0;
 let stopPumping = false;
 function pump(err, n) {
@@ -786,6 +786,22 @@ function pump(err, n) {
 }
 pump(null, 0);
 
+// Let the pump fill the pipe to capacity before the request exists. The FIFO
+// buffer size is platform-dependent (16 KiB on macOS, 64 KiB on Linux), so
+// measure it instead of assuming it: with no reader, \`pumped\` stops growing
+// once the pipe is full.
+let prefill = -1;
+let prefillStable = 0;
+for (let i = 0; i < 500 && prefillStable < 3; i++) {
+  await Bun.sleep(10);
+  if (pumped > 0 && pumped === prefill) {
+    prefillStable++;
+  } else {
+    prefillStable = 0;
+    prefill = pumped;
+  }
+}
+
 // Raw client that sends the request and then never reads the response, so
 // every body write on the server side ends up returning backpressure.
 const socket = connect({ port: server.port, host: "127.0.0.1", pauseOnConnect: true });
@@ -794,12 +810,14 @@ await new Promise(resolve => socket.once("connect", resolve));
 socket.write("GET /stream HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
 socket.pause();
 
-// Wait for the server to start draining the pipe: the pump can only get past
-// the pipe's own 64 KiB capacity once the response stream consumes it.
-for (let i = 0; i < 1000 && pumped <= 64 * 1024; i++) {
+// Wait for the server to start draining the pipe: a blocked write can only
+// complete once the response stream consumes the FIFO, so any growth past the
+// prefill level proves the reader is running, regardless of the platform's
+// pipe capacity.
+for (let i = 0; i < 1000 && pumped <= prefill; i++) {
   await Bun.sleep(5);
 }
-console.log(pumped > 64 * 1024 ? "streaming" : "stuck at " + pumped);
+console.log(pumped > prefill ? "streaming" : "stuck at " + pumped + " (prefill " + prefill + ")");
 
 // Now wait for the drain to stall. The client never reads, so the body writes
 // must eventually report backpressure and the reader must park; the pump then

@@ -190,8 +190,8 @@ RUN XWIN_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "aarch64"; else echo "
     && curl -fsSL "https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl.tar.gz" \
        -o /tmp/xwin.tar.gz \
     && tar -xzf /tmp/xwin.tar.gz -C /tmp \
-    && /tmp/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl/xwin --accept-license --arch x86_64,aarch64 --cache-dir /tmp/xwin-cache \
-       splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --include-atl --output /opt/winsysroot \
+    && /tmp/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl/xwin --accept-license --arch x86_64,aarch64 --include-atl --cache-dir /tmp/xwin-cache \
+       splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot \
        > /dev/null \
     && ln -s include "/opt/winsysroot/Windows Kits/10/Include" \
     && ln -s lib "/opt/winsysroot/Windows Kits/10/Lib" \

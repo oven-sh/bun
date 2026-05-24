@@ -1455,9 +1455,11 @@ install_windows_sysroot() {
 	# winsysroot-style + MS arch notation so clang-cl and lld-link resolve it
 	# with a single /winsysroot flag; symlinks stay ON (default) to fix
 	# include/lib casing on a case-sensitive filesystem.
-	execute_sudo "$xwin_dir/xwin" --accept-license --arch x86_64,aarch64 --cache-dir "$xwin_dir/cache" \
-		splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --include-atl \
-		--output "$sysroot"
+	# stdout is dropped: xwin draws progress bars there even without a TTY,
+	# which floods the image-build log. Errors stay on stderr.
+	execute_sudo "$xwin_dir/xwin" --accept-license --arch x86_64,aarch64 --include-atl --cache-dir "$xwin_dir/cache" \
+		splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
+		--output "$sysroot" >/dev/null
 	# clang-cl/lld-link compose SDK paths as "Include"/"Lib" (title case);
 	# the winsysroot-style splat writes lowercase — alias both spellings.
 	execute_sudo ln -s include "$sysroot/Windows Kits/10/Include"

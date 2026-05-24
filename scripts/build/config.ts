@@ -966,7 +966,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           hint:
             "Set WINDOWS_SYSROOT or pass --winsysroot=<path>. Create one with xwin (https://github.com/Jake-Shadle/xwin):\n" +
             "  cargo install xwin  (or download a release binary)\n" +
-            "  xwin --accept-license --arch x86_64,aarch64 splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --include-atl --output /opt/winsysroot",
+            "  xwin --accept-license --arch x86_64,aarch64 --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot",
         });
       }
     }

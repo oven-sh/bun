@@ -1313,7 +1313,36 @@ impl<const SSL: bool> NewSocket<SSL> {
             success
         );
 
-        let authorized = success == 1;
+        let mut authorized = success == 1;
+
+        // A certificate that chains to a trusted root but was issued for a
+        // different host must not be reported as authorized. Verify the peer
+        // certificate against the hostname this client connection was opened
+        // for (the SNI server name, falling back to the connect() host) —
+        // the same precedence on_open uses when sending the SNI. Server
+        // sockets and connections with no hostname to verify against (unix
+        // sockets, upgraded duplexes without a servername) skip the check.
+        if SSL && authorized && !handlers.mode.is_server() {
+            if let Some(ssl_ptr) = this.socket.get().ssl() {
+                let hostname: &[u8] = if let Some(server_name) = this.server_name.get() {
+                    &server_name[..]
+                } else if let Some(super::listener::UnixOrHost::Host { host, .. }) =
+                    this.connection.get()
+                {
+                    &host[..]
+                } else {
+                    b""
+                };
+                if !hostname.is_empty()
+                    && !bun_boringssl::check_server_identity(
+                        boringssl_sys::SSL::opaque_mut(ssl_ptr),
+                        hostname,
+                    )
+                {
+                    authorized = false;
+                }
+            }
+        }
 
         this.update_flags(|f| f.set(Flags::AUTHORIZED, authorized));
 

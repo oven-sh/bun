@@ -4088,6 +4088,13 @@ impl H2FrameParser {
     /// Finalize a stream whose HEADERS frame carried END_STREAM, after the
     /// complete header block has been decoded and dispatched.
     fn finish_headers_end_stream(&self, stream: &mut Stream) {
+        // The stream can be reset (req.close(), AbortSignal) between the
+        // HEADERS fragment and the CONTINUATION that completes the block;
+        // don't regress a CLOSED stream or dispatch onStreamEnd after
+        // onStreamError.
+        if stream.state == StreamState::CLOSED {
+            return;
+        }
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
 

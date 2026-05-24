@@ -242,10 +242,19 @@ impl Scope {
     }
 
     pub fn recursive_set_strict_mode(&mut self, kind: StrictModeKind) {
-        if self.strict_mode == StrictModeKind::SloppyMode {
-            self.strict_mode = kind;
-            for child in self.children.slice_mut() {
-                child.recursive_set_strict_mode(kind);
+        if self.strict_mode != StrictModeKind::SloppyMode {
+            return;
+        }
+        self.strict_mode = kind;
+
+        // Iterative DFS: scope trees are as deep as the source's statement
+        // nesting, so recursing here could overflow the stack on deeply
+        // nested (but otherwise valid) input.
+        let mut worklist: Vec<StoreRef<Scope>> = self.children.slice().to_vec();
+        while let Some(mut scope) = worklist.pop() {
+            if scope.strict_mode == StrictModeKind::SloppyMode {
+                scope.strict_mode = kind;
+                worklist.extend_from_slice(scope.children.slice());
             }
         }
     }

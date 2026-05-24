@@ -4013,21 +4013,111 @@ it("does not crash with --minify-syntax and revisiting dot expressions", () => {
   expect(exitCode).toBe(0);
 });
 
+// Statement nesting is only limited by the available stack (the parser, visitor
+// and printer all guard recursion with a stack check — there is no hard depth
+// cap). 200k nested for-loops exhaust the largest stack the transpiler ever gets
+// (18 MB on Windows) even at the smallest per-level frame size of a release
+// build, so this reliably reports an error on every platform instead of
+// transpiling successfully.
+const deeplyNestedForLoops = (depth = 200_000) =>
+  "let counter = 0;\n" +
+  Buffer.alloc("for (let i = 0; i < 1; i++) ".length * depth, "for (let i = 0; i < 1; i++) ").toString() +
+  "counter++;\n";
+
 it("runtime transpiler stack overflows", async () => {
-  expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
+  using dir = tempDir("deeply-nested-stmts", {
+    "deep.js": deeplyNestedForLoops(),
+  });
+  await expect(import(join(String(dir), "deep.js"))).rejects.toThrow(`Maximum call stack size exceeded`);
 });
 
-it("Bun.Transpiler.transformSync stack overflows", async () => {
-  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
+it("Bun.Transpiler.transformSync stack overflows", () => {
   const transpiler = new Bun.Transpiler();
-  expect(() => transpiler.transformSync(code)).toThrow(`Maximum call stack size exceeded`);
+  expect(() => transpiler.transformSync(deeplyNestedForLoops())).toThrow(`Maximum call stack size exceeded`);
 });
 
 it("Bun.Transpiler.transform stack overflows", async () => {
-  const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
-  expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
+  await expect(transpiler.transform(deeplyNestedForLoops())).rejects.toThrow(`Maximum call stack size exceeded`);
 });
+
+it("statements nested deeper than 1000 transpile when the stack is large enough", () => {
+  // The parser used to reject more than 1000 nested statements no matter how
+  // much stack was actually available. The only limit now is the real stack
+  // headroom, so 2000 nested for-loops must transpile successfully. Debug
+  // (ASAN) builds use roughly 13 KB of stack per nesting level across the
+  // parse/visit/print passes, so give the child process a 64 MB main-thread
+  // stack on POSIX; Windows binaries already reserve an 18 MB stack.
+  const depth = 2000;
+  using dir = tempDir("deep-stmt-ok", {
+    "transpile-deep.js": `
+      const depth = ${depth};
+      const fill = "for (let i = 0; i < 1; i++) ";
+      const code = "let counter = 0;\\n" + Buffer.alloc(fill.length * depth, fill).toString() + "counter++;";
+      const out = new Bun.Transpiler({ loader: "js" }).transformSync(code);
+      const loops = (out.match(/for\\s*\\(/g) || []).length;
+      if (loops !== depth) throw new Error("expected " + depth + " for-loops in the output, got " + loops);
+      console.log("deep-stmt-ok");
+    `,
+  });
+  const script = join(String(dir), "transpile-deep.js");
+  const cmd =
+    process.platform === "win32"
+      ? [bunExe(), script]
+      : ["bash", "-c", 'ulimit -s 65520 2>/dev/null; exec "$0" "$1"', bunExe(), script];
+  const { stdout, stderr, exitCode, signalCode } = Bun.spawnSync({
+    cmd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("deep-stmt-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+});
+
+it("deeply nested statements error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      n => "let counter = 0;" + repeat("for (let i = 0; i < 1; i++) ", n) + "counter++;",
+      n => repeat("{", n) + "let x = 1;" + repeat("}", n),
+      n => repeat("if (true) ", n) + "console.log(1);",
+      n => repeat("if (false) {} else {", n) + "console.log(1);" + repeat("}", n),
+      n => repeat("a: ", n) + "console.log(1);",
+      n => repeat("while (false) ", n) + "console.log(1);",
+      n => repeat("try {", n) + "f();" + repeat("} finally {}", n),
+      n => repeat("function f() { var x = 1; ", n) + "g();" + repeat("}", n),
+      n => "export {};" + repeat("{", n) + "let x = 1;" + repeat("}", n),
+      n => repeat("switch (1) { default: ", n) + "f();" + repeat("}", n),
+    ];
+    const check = (transpiler, src) => {
+      try {
+        transpiler.transformSync(src);
+      } catch (e) {
+        if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+      }
+    };
+    for (const shape of shapes) {
+      for (const n of [2000, 10000, 50000, 100000, 200000]) {
+        const src = shape(n);
+        check(new Bun.Transpiler({ loader: "js" }), src);
+        check(new Bun.Transpiler({ loader: "js", minify: true }), src);
+      }
+    }
+    console.log("stmt-depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("stmt-depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+}, 90_000);
 
 it("deeply nested expressions error instead of crashing the process", () => {
   const script = `

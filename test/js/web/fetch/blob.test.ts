@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
@@ -323,6 +323,76 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   const clonedType = cloned.headers.get("content-type");
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
+});
+
+test("Bun.file(path, {type}).text() does not leak the duped content_type", async () => {
+  // Reading a file-backed Blob goes text() -> doReadFile -> Blob.dupe(),
+  // which deep-copies a heap-allocated (non-registry) content type into the
+  // read handler's context blob. That copy must be released when the handler's
+  // blob is dropped; otherwise every .text() on a typed Bun.file leaks the
+  // whole content-type allocation. A 64 KiB type makes the leak measurable in
+  // RSS: 1024 reads leak >= 64 MiB unfixed.
+  using dir = tempDir("blob-text-content-type", {
+    "data.txt": "hello",
+  });
+  const script = `
+    const p = ${JSON.stringify(path.join(String(dir), "data.txt"))};
+    // Printable-ASCII non-registry type so the mime-table lookup misses and
+    // the content type is heap-allocated. Hoisted out of the loop: the source
+    // handle's own allocation happens exactly once.
+    const type = "application/x-" + Buffer.alloc(64 * 1024, "a").toString();
+    const file = Bun.file(p, { type });
+    for (let i = 0; i < 100; i++) await file.text();
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 1024; i++) await file.text();
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+    console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine retains freed allocations (default
+      // quarantine_size_mb=256), which would make RSS grow by the full 64 MiB
+      // even when every content-type copy is correctly freed. Disable it so
+      // the measurement reflects live memory on ASAN builds too.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { deltaMiB } = JSON.parse(stdout);
+  expect(deltaMiB).toBeLessThan(isASAN ? 400 : 40);
+  expect(exitCode).toBe(0);
+});
+
+test("reading a file-backed Blob does not free the source's content type", async () => {
+  // The read handler's context blob owns a *deep copy* of the content type;
+  // dropping it must not free the source Blob's allocation.
+  using dir = tempDir("blob-text-keeps-type", {
+    "data.txt": "hello",
+  });
+  const customType = "application/x-custom-type-not-in-registry-keepme";
+  const file = Bun.file(path.join(String(dir), "data.txt"), { type: customType });
+  expect(await file.text()).toBe("hello");
+  expect(await file.text()).toBe("hello");
+  expect(file.type).toBe(customType);
+});
+
+test("Bun.write preserves a custom content type on the destination", async () => {
+  // Bun.file(...).write() / Bun.write(Bun.file(...), ...) passes the
+  // destination blob through PathOrBlob::Blob(borrowed_view()) and dupes it
+  // again inside write_file_internal. Both copies must own (and release) their
+  // own content type without freeing the source handle's allocation.
+  using dir = tempDir("blob-write-keeps-type", {});
+  const customType = "application/x-custom-type-not-in-registry-write";
+  const dest = Bun.file(path.join(String(dir), "out.txt"), { type: customType });
+  await Bun.write(dest, "data");
+  expect(await dest.text()).toBe("data");
+  expect(dest.type).toBe(customType);
 });
 
 test("Blob part's bytes survive a later part freeing it during construction", async () => {

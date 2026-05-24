@@ -1984,12 +1984,11 @@ impl PathOrBlob {
         };
         if let Some(blob) = arg.as_class_ref::<Blob>() {
             // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
-            // never `deinit()`. `borrowed_view()` is the sound Rust spelling: it
-            // clones the `StoreRef`/`name` (whose `Drop`s balance the +1) and
-            // aliases `content_type`; `dupe()` would leak the boxed
-            // `content_type` copy. `as_class_ref` is the safe shared-borrow
-            // downcast — the JS wrapper roots the payload while `arg` is on the
-            // stack.
+            // never `deinit()`. `borrowed_view()` is the sound Rust spelling: a
+            // self-owning `dupe()` whose `StoreRef`/`name`/`content_type` are
+            // all released by drop glue at scope exit. `as_class_ref` is the
+            // safe shared-borrow downcast — the JS wrapper roots the payload
+            // while `arg` is on the stack.
             return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
         }
         Err(ctx.throw_invalid_argument_type_value(

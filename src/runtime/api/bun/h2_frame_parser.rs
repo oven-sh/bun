@@ -611,6 +611,15 @@ fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
     }
 }
 
+/// RFC 9113 Section 8.2.1: a field value MUST NOT contain the zero value
+/// (NUL, 0x00), line feed (LF, 0x0a), or carriage return (CR, 0x0d) at any
+/// position. These bytes survive HPACK encoding verbatim and enable response
+/// splitting / request smuggling when the message crosses an h2-to-h1 hop.
+#[inline]
+fn is_valid_header_value(value: &[u8]) -> bool {
+    !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
+}
+
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
 /// Returns a stable index in `0..SINGLE_VALUE_HEADERS_LEN` for headers that
@@ -5941,6 +5950,16 @@ impl H2FrameParser {
             // closure for encode error handling
             let mut handle_encode =
                 |this: &Self, value: &[u8], never_index: bool| -> JsResult<Option<JSValue>> {
+                    if !is_valid_header_value(value) {
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                            format_args!(
+                                "Invalid value for header \"{}\"",
+                                BStr::new(validated_name)
+                            ),
+                        );
+                        return Err(global_object.throw_value(exception));
+                    }
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "encode header {} {}",
@@ -6663,6 +6682,17 @@ impl H2FrameParser {
 
                         let value_slice = value_str.to_slice(global_object);
                         let value = value_slice.slice();
+                        if !is_valid_header_value(value) {
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                    format_args!(
+                                        "Invalid value for header \"{}\"",
+                                        BStr::new(validated_name)
+                                    ),
+                                )
+                                .throw());
+                        }
                         bun_output::scoped_log!(
                             H2FrameParser,
                             "encode header {} {}",
@@ -6739,6 +6769,17 @@ impl H2FrameParser {
 
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
+                    if !is_valid_header_value(value) {
+                        return Err(global_object
+                            .err(
+                                JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                format_args!(
+                                    "Invalid value for header \"{}\"",
+                                    BStr::new(validated_name)
+                                ),
+                            )
+                            .throw());
+                    }
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "encode header {} {}",

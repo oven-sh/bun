@@ -1041,7 +1041,7 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
                         edit.name =
                             unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
                         edit.detect_editor(env);
-                        editor_choice = edit.editor;
+                        editor_choice = edit.editor.filter(|e| *e != Editor::None);
                         if editor_choice.is_none() {
                             slot.name_storage = prev_storage;
                             *edit = prev;
@@ -1074,11 +1074,11 @@ pub fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             }
         }
 
-        let editor = match editor_choice.or(edit.editor) {
+        let editor = match editor_choice.or(edit.editor).filter(|e| *e != Editor::None) {
             Some(e) => e,
             None => {
                 edit.auto_detect_editor(env);
-                match edit.editor {
+                match edit.editor.filter(|e| *e != Editor::None) {
                     Some(e) => e,
                     None => {
                         return Err(global_this.throw(format_args!("Failed to auto-detect editor")));

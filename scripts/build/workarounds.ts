@@ -172,6 +172,35 @@ export const workarounds: Workaround[] = [
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
   },
+  {
+    id: "ld64-lld-lto-no-slp-vectorization",
+    issue: "https://github.com/llvm/llvm-project/pull/182748",
+    description:
+      "lld/MachO/LTO.cpp never set PTO.SLPVectorization (the ELF/COFF ports do), so ld64.lld's " +
+      "LTO pipeline skips the SLP vectorizer at every --lto-O level and straight-line code that " +
+      "counts on SLP autovectorization stays scalar in darwin LTO links (oven-sh/bun#31343 — " +
+      "Bun.stringWidth's ASCII kernel ~2x slower). Accepted rather than patched: no custom lld " +
+      "is carried; the hot kernels are moving to explicit SIMD intrinsics instead.",
+    // Exercised by any Mach-O LTO link (darwin release CI cross builds, local --lto darwin builds).
+    applies: cfg => cfg.darwin && cfg.lto,
+    expectedToBeFixed: cfg => {
+      // Fix merged to LLVM main on 2026-02-23, after release/22.x branched —
+      // LLVM 23 is the first release train that ships it. Lower the threshold
+      // to the exact 22.1.x if a backport lands. Check whichever lld actually
+      // performs the Mach-O LTO link: rust-lld (rustc's bundled LLVM) when the
+      // cross-language-LTO swap in resolveConfig() fired, clang's ld64.lld
+      // otherwise. No link-flag change is needed once the fix is present:
+      // ld64.lld defaults to --lto-O2 and the fix enables SLP at --lto-O >= 2,
+      // mirroring ELF.
+      const FIXED_IN_LLVM = "23.0.0";
+      const linkerLlvm = cfg.ld === cfg.rustLld ? cfg.rustLlvmVersion : cfg.clangVersion;
+      return linkerLlvm !== undefined && satisfiesRange(linkerLlvm, `>=${FIXED_IN_LLVM}`);
+    },
+    cleanup:
+      `Nothing to revert in the build — the gap was accepted, not patched around. Re-run the ` +
+      `bitcode replay from oven-sh/bun#31343 (or benchmark Bun.stringWidth's ASCII path on a ` +
+      `darwin LTO build) to confirm ld64.lld now runs the SLP vectorizer, then delete this entry.`,
+  },
 ];
 
 /**

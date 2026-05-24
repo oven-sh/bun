@@ -688,11 +688,8 @@ impl PatchTask {
                 let mut cursor = std::io::Cursor::new(&mut integrity_str[..]);
                 if write!(cursor, "{}", meta.integrity).is_ok() {
                     let len = cursor.position() as usize;
-                    let _ = sys::File::write_file(
-                        patch.cache_dir,
-                        sidecar_name,
-                        &integrity_str[..len],
-                    );
+                    let _ =
+                        sys::File::write_file(patch.cache_dir, sidecar_name, &integrity_str[..len]);
                 }
             }
         }

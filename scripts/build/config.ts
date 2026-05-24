@@ -915,6 +915,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           hint: "`clang -print-resource-dir` failed — is the discovered clang runnable?",
         });
       }
+      if (toolchain.dsymutil === undefined) {
+        throw new BuildError("Cross-compiling for macOS requires LLVM dsymutil", {
+          hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
+        });
+      }
       ld64StripSwap = { ld: toolchain.ld64Lld, strip: toolchain.llvmStrip };
     }
   }

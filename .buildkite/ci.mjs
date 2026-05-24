@@ -106,6 +106,7 @@ function getTargetLabel(target) {
  * @property {Abi} [abi]
  * @property {boolean} [baseline]
  * @property {Profile} [profile]
+ * @property {boolean} [crossCompile]
  * @property {Distro} [distro]
  * @property {string} release
  * @property {Tier} [tier]
@@ -1196,13 +1197,16 @@ function getOptionsStep() {
         multiple: true,
         default: [],
         options: buildPlatforms.map(platform => {
-          const { os, arch, abi, baseline } = platform;
+          const { os, arch, abi, baseline, crossCompile } = platform;
           let label = `${getEmoji(os)} ${arch}`;
           if (abi) {
             label += `-${abi}`;
           }
           if (baseline) {
             label += `-baseline`;
+          }
+          if (crossCompile) {
+            label += `-cross`;
           }
           return {
             label,

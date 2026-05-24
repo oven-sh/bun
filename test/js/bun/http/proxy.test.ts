@@ -488,6 +488,79 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different crede
   }
 });
 
+test("HTTPS target through proxy with passing checkServerIdentity round-trips", async () => {
+  // The CONNECT tunnel parks after the inner TLS handshake until the JS
+  // checkServerIdentity callback approves the target's certificate. While
+  // parked, raw inner-TLS records (e.g. TLS 1.3 NewSessionTicket) keep
+  // arriving on the outer socket and must keep flowing into the SSL state
+  // machine, otherwise the handshake never completes and this hangs.
+  const verified: string[] = [];
+  const response = await fetch(httpsServer.url, {
+    method: "POST",
+    proxy: httpProxyServer.url,
+    body: "tunneled body",
+    keepalive: false,
+    tls: {
+      ca: tlsCert.cert,
+      checkServerIdentity(hostname: string) {
+        verified.push(hostname);
+        return undefined;
+      },
+    },
+  });
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe("tunneled body");
+  expect(verified).toEqual(["localhost"]);
+});
+
+test("HTTPS target through proxy with rejecting checkServerIdentity transmits nothing to the target", async () => {
+  // Raw TLS target so we can observe exactly which decrypted bytes (if any)
+  // reach it before the pinning callback rejects the certificate.
+  const receivedPerConnection: Buffer[][] = [];
+  const { promise: firstConnectionClosed, resolve: onFirstConnectionClosed } = Promise.withResolvers<void>();
+  const target = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
+    const chunks: Buffer[] = [];
+    receivedPerConnection.push(chunks);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("close", onFirstConnectionClosed);
+    socket.on("error", () => {});
+  });
+  target.listen(0);
+  await once(target, "listening");
+  const targetPort = (target.address() as net.AddressInfo).port;
+
+  try {
+    let err: unknown;
+    try {
+      await fetch(`https://localhost:${targetPort}/`, {
+        method: "POST",
+        proxy: httpProxyServer.url,
+        body: "secret tunneled body",
+        headers: { Authorization: "Bearer super-secret-token" },
+        keepalive: false,
+        tls: {
+          ca: tlsCert.cert,
+          checkServerIdentity() {
+            return new Error("pinned");
+          },
+        },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("pinned");
+
+    // The tunnel must be torn down without the request line, the
+    // Authorization header, or the body ever reaching the target.
+    await firstConnectionClosed;
+    expect(receivedPerConnection.length).toBe(1);
+    expect(Buffer.concat(receivedPerConnection[0]).byteLength).toBe(0);
+  } finally {
+    target.close();
+  }
+});
+
 test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async () => {
   // Create a custom HTTPS server that returns body size for this test
   using customServer = Bun.serve({

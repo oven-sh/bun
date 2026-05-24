@@ -168,6 +168,16 @@ impl AnyRequestContext {
         dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
     }
 
+    pub fn get_fd(self) -> Option<bun_core::Fd> {
+        dispatch!(self, None, |T, ctx| {
+            // HTTP/3 multiplexes streams over one UDP socket — no per-request fd.
+            if T::IS_H3 {
+                return None;
+            }
+            ctx.get_fd()
+        })
+    }
+
     pub fn detach_request(self) {
         dispatch!(self, (), |_T, ctx| {
             ctx.req = None;

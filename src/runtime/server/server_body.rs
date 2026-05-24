@@ -1582,6 +1582,24 @@ where
         self.request_ip(request)
     }
 
+    /// `pub const doRequestFD = host_fn.wrapInstanceMethod(ThisServer, "requestFD", false)`
+    #[bun_jsc::host_fn(method)]
+    pub fn do_request_fd(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments_old::<2>();
+        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
+        let arg = iter.next_eat().ok_or_else(|| {
+            global.throw_invalid_arguments(format_args!("Missing Request object"))
+        })?;
+        let request = arg.as_class_ref::<Request>().ok_or_else(|| {
+            global.throw_invalid_arguments(format_args!("Expected Request object"))
+        })?;
+        self.request_fd(request)
+    }
+
     /// `pub const doReload = onReload`
     #[inline]
     pub fn do_reload(
@@ -1625,6 +1643,14 @@ where
             u16::try_from(info.port).expect("int cast"),
             info.is_ipv6,
         )
+    }
+
+    pub fn request_fd(&self, request: &Request) -> JsResult<JSValue> {
+        use bun_sys_jsc::FdJsc as _;
+        let Some(fd) = request.request_context.get_fd() else {
+            return Ok(JSValue::NULL);
+        };
+        Ok(fd.to_js_without_making_lib_uv_owned())
     }
 
     #[bun_jsc::host_fn(method)]

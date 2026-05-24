@@ -68,9 +68,10 @@ impl Drop for BlobOrStringOrBuffer {
     fn drop(&mut self) {
         match self {
             Self::Blob(blob) => {
-                // `.blob` is a raw bitwise copy of a live JS Blob — it does NOT own
-                // content_type/name. Only release the store reference.
-                // `StoreRef::drop` (via `Option::take`) calls `Store::deref()`.
+                // `.blob` is a self-owning `dupe()`: the `Box<Blob>` drop glue
+                // releases the store ref, the +1 `name`, and the deep-copied
+                // `content_type`. Taking the store first only mirrors Zig's
+                // explicit teardown order; the field drop then sees `None`.
                 let _ = blob.store.with_mut(|s| s.take());
             }
             Self::StringOrBuffer(_) => {

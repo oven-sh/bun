@@ -4,9 +4,10 @@ import { existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // On Linux, JSC uses SIGPWR to suspend/resume threads for GC and the libpas
-// scavenger. Bun.openInEditor spawns a detached thread that goes through
-// bun.spawnSync, whose signal-forwarding setup must not touch SIGPWR or the
-// process is terminated the next time GC/scavenger fires.
+// scavenger. Bun.openInEditor runs its editor spawn on a detached thread;
+// that spawn must not disturb process-wide signal handling (it used to go
+// through bun.spawnSync's signal forwarding) or the process is terminated
+// the next time GC/scavenger fires.
 test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", async () => {
   const sleep = ["/usr/bin/sleep", "/bin/sleep"].find(p => existsSync(p));
   expect(sleep).toBeDefined();

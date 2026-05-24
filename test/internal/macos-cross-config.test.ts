@@ -100,9 +100,13 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(flags.cxxflags).toContain("--target=arm64-apple-macosx");
     expect(flags.cxxflags).toContain("-isysroot");
     expect(flags.cxxflags).toContain(`-mmacosx-version-min=${cfg.osxDeploymentTarget}`);
-    // SDK libc++ headers replace the host toolchain's (they must match the
-    // libc++.tbd the link resolves against).
-    expect(flags.cxxflags).toContain("-nostdinc++");
+    // C++ uses Apple's libc++/libc headers from the SDK exclusively — every
+    // host system include dir is dropped so nothing from the build machine
+    // (LLVM's libc++, a GCC libstdc++ install) can leak into the compile.
+    expect(flags.cxxflags).toContain("-nostdlibinc");
+    const sdkIncludes = flags.cxxflags.filter(f => f.startsWith(String(cfg.osxSysroot)));
+    expect(sdkIncludes).toContain(join(String(cfg.osxSysroot), "usr", "include", "c++", "v1"));
+    expect(sdkIncludes).toContain(join(String(cfg.osxSysroot), "usr", "include"));
     // No sanitizer runtimes exist for darwin targets in a Linux LLVM install.
     expect(flags.cxxflags.filter(f => f.startsWith("-fsanitize"))).toBeEmpty();
 
@@ -152,7 +156,7 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     const flags = computeFlags(cfg);
     expect(flags.cxxflags.some(f => f.includes("apple-macosx"))).toBe(false);
     expect(flags.cxxflags).not.toContain("-isysroot");
-    expect(flags.cxxflags).not.toContain("-nostdinc++");
+    expect(flags.cxxflags).not.toContain("-nostdlibinc");
   });
 });
 

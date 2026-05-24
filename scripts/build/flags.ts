@@ -141,18 +141,31 @@ export const globalFlags: Flag[] = [
     desc: "FreeBSD: expose BSD typedefs (u_long etc.) in <sys/types.h>",
   },
   {
-    // macOS cross-compile: clang prefers its own toolchain libc++ headers
-    // (<llvm>/include/c++/v1) over the SDK's. Those are a newer libc++ than
-    // the OS dylib the SDK's libc++.tbd describes, so compiles pick up
+    // macOS cross-compile: C++ must see Apple's libc++ from the SDK and
+    // nothing from the build host. Left to its defaults, clang prefers its
+    // own toolchain libc++ headers (<llvm>/include/c++/v1) — a newer libc++
+    // than the OS dylib the SDK's libc++.tbd describes, so compiles pick up
     // out-of-line symbols (e.g. std::__hash_memory, added in libc++ 19) that
-    // Apple's libc++ never exports → undefined symbols at link. Use the
-    // SDK's own headers: they match the .tbd exactly and carry Apple's
-    // availability annotations for the deployment target. Native darwin
-    // builds keep the default search (host clang and host libc++ agree).
-    flag: c => ["-nostdinc++", "-isystem", join(c.osxSysroot!, "usr", "include", "c++", "v1")],
+    // Apple's libc++ never exports → undefined symbols at link. On CI images
+    // with a host GCC install the driver also leaks /usr/include/c++/N into
+    // the search list (same behaviour the FreeBSD block above documents),
+    // which breaks the SDK headers' #include_next chains. -nostdlibinc drops
+    // every default system include dir; add back only the SDK's, in the
+    // order Apple's own driver uses: libc++ → clang builtins (kept by
+    // -nostdlibinc) → libc (-idirafter lands after the builtins) →
+    // frameworks. Native darwin builds keep the default search.
+    flag: c => [
+      "-nostdlibinc",
+      "-isystem",
+      join(c.osxSysroot!, "usr", "include", "c++", "v1"),
+      "-idirafter",
+      join(c.osxSysroot!, "usr", "include"),
+      "-iframework",
+      join(c.osxSysroot!, "System", "Library", "Frameworks"),
+    ],
     when: c => c.darwin && c.crossTarget !== undefined && c.osxSysroot !== undefined,
     lang: "cxx",
-    desc: "macOS cross: use the SDK's libc++ headers (match the libc++.tbd being linked)",
+    desc: "macOS cross: only the SDK's (Apple) libc++/libc/framework headers",
   },
 
   // ─── CPU target ───

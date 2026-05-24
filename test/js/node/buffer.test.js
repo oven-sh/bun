@@ -2308,7 +2308,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         });
 
         it("round-trips a large buffer both ways", () => {
-          const text = Buffer.alloc(4000, "€").toString();
+          const text = Buffer.alloc(4000 * Buffer.from("€").length, "€").toString();
           const utf8 = Buffer.from(text, "utf8");
           const ucs2 = Buffer.from(text, "ucs2");
           expect(transcode(utf8, "utf8", "ucs2")).toEqual(ucs2);

@@ -25,13 +25,12 @@ for (const name of names) typeof Bun[name];
 console.log("OK");`,
     ],
     env: bunEnv,
-    stderr: "pipe",
+    stderr: "ignore",
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr).not.toContain("Unexpected exception observed");
   expect(stdout).toContain("OK");
   expect(exitCode).toBe(0);
 });

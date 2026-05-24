@@ -225,7 +225,29 @@ impl PackageManager {
                     return PreinstallState::Extract;
                 }
 
-                if directories::is_folder_in_cache(self, folder_path) {
+                // The cache is shared across every project on the machine, and
+                // its npm entries are keyed only by name@version. A bare
+                // existence check would let any previously cached folder stand
+                // in for this lockfile's package even if it was produced from
+                // a different tarball. Require the folder's recorded integrity
+                // to match this lockfile's expected integrity before treating
+                // it as a hit; on mismatch (or a missing/unreadable record)
+                // fall through to Extract, which re-downloads, re-verifies,
+                // and replaces the folder.
+                let expected = pkg.meta.integrity;
+                let npm_integrity_check_needed = pkg.resolution.tag == ResolutionTag::Npm
+                    && self.options.do_.verify_integrity()
+                    && expected.tag.is_supported();
+
+                if directories::is_folder_in_cache(self, folder_path)
+                    && (patch_hash.is_some()
+                        || !npm_integrity_check_needed
+                        || directories::cached_folder_integrity_matches(
+                            directories::get_cache_directory(self),
+                            folder_path.as_bytes(),
+                            &expected,
+                        ))
+                {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }
@@ -248,7 +270,17 @@ impl PackageManager {
                         });
                     // Zig: `allocator.dupeZ(u8, folder_path[..idx])` — owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
-                    if directories::is_folder_in_cache(self, &non_patched_path) {
+                    // The non-patched base folder is the same shared
+                    // name@version cache slot, so it gets the same integrity
+                    // gate before its contents are copied out and patched.
+                    if directories::is_folder_in_cache(self, &non_patched_path)
+                        && (!npm_integrity_check_needed
+                            || directories::cached_folder_integrity_matches(
+                                directories::get_cache_directory(self),
+                                non_patched_path.as_bytes(),
+                                &expected,
+                            ))
+                    {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
                         // yay step 1 is already done for us
                         return PreinstallState::ApplyPatch;

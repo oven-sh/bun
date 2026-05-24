@@ -158,6 +158,16 @@ impl Integrity {
         &self.value[0..self.tag.digest_len()]
     }
 
+    /// Strict equality between two parsed integrity values. `UNKNOWN` never
+    /// equals anything — including another `UNKNOWN` — so an unparseable or
+    /// missing value can never satisfy a comparison against a real digest.
+    /// Intentionally not a `PartialEq` impl to keep that asymmetry explicit.
+    pub fn eql_supported(&self, other: &Integrity) -> bool {
+        self.tag == other.tag
+            && self.tag.is_supported()
+            && strings::eql_long(self.slice(), other.slice(), true)
+    }
+
     /// Compute a sha512 integrity hash from raw bytes (e.g. a downloaded tarball).
     pub fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;

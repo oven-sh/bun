@@ -2011,6 +2011,7 @@ pub(crate) fn install_isolated_packages(
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
+        let pkg_metas = pkgs.items_meta();
 
         let mut seen_entry_ids: HashMap<store::entry::Id, ()> = HashMap::default();
         seen_entry_ids.reserve(store.entries.len());
@@ -2409,7 +2410,23 @@ pub(crate) fn install_isolated_packages(
                                             pkg_cache_dir_subpath.slice_z(),
                                         );
                                         pkg_cache_dir_subpath.set_length(cache_dir_path_save);
+                                        // The shared cache keys npm entries by
+                                        // name@version only; require the
+                                        // folder's recorded integrity to match
+                                        // this lockfile's expected integrity
+                                        // before linking its contents into the
+                                        // store. On mismatch, treat it as
+                                        // missing so it is re-downloaded,
+                                        // re-verified, and replaced.
+                                        let expected = pkg_metas[pkg_id as usize].integrity;
                                         exists
+                                            && (!installer.manager().options.do_.verify_integrity()
+                                                || !expected.tag.is_supported()
+                                                || package_manager::cached_folder_integrity_matches(
+                                                    cache_dir,
+                                                    pkg_cache_dir_subpath.slice(),
+                                                    &expected,
+                                                ))
                                     }
                                     _ => sys::directory_exists_at(
                                         cache_dir,

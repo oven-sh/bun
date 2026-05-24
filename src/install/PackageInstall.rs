@@ -14,6 +14,7 @@ use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 use bun_threading::{ThreadPool, WaitGroup};
 
+use crate::lockfile::package::PackageColumns as _;
 use crate::package_installer::NodeModulesFolder;
 use crate::{
     BuntagHashBuf, Lockfile, Npm, PackageID, PackageManager, Repository, Resolution,
@@ -2387,6 +2388,18 @@ impl<'a> PackageInstall<'a> {
         match state {
             crate::PreinstallState::Done => false,
             _ => 'brk: {
+                // Shared-cache npm entries are keyed only by name@version, so a
+                // bare existence probe would accept a folder produced from a
+                // different tarball (e.g. by another project's install). When
+                // this lockfile carries an integrity for the package, require
+                // the cache folder's recorded integrity to match before
+                // treating it as present; otherwise report it missing so it is
+                // re-downloaded, re-verified, and replaced.
+                let expected = self.lockfile.packages.items_meta()[package_id as usize].integrity;
+                let npm_integrity_check_needed = resolution_tag == resolution::Tag::Npm
+                    && manager.options.do_.verify_integrity()
+                    && expected.tag.is_supported();
+
                 if self.patch.is_none() {
                     let exists = match resolution_tag {
                         resolution::Tag::Npm => 'package_json_exists: {
@@ -2424,6 +2437,13 @@ impl<'a> PackageInstall<'a> {
                         _ => sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath)
                             .unwrap_or(false),
                     };
+                    let exists = exists
+                        && (!npm_integrity_check_needed
+                            || crate::package_manager::cached_folder_integrity_matches(
+                                self.cache_dir,
+                                strings::without_trailing_slash(self.cache_dir_subpath.as_bytes()),
+                                &expected,
+                            ));
                     if exists {
                         manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                     }
@@ -2444,7 +2464,16 @@ impl<'a> PackageInstall<'a> {
                 // SAFETY: NUL written above.
                 let subpath =
                     ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
-                let exists = sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false);
+                // The non-patched base folder is the same shared name@version
+                // cache slot; apply the same integrity gate before its
+                // contents are copied out and patched.
+                let exists = sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false)
+                    && (!npm_integrity_check_needed
+                        || crate::package_manager::cached_folder_integrity_matches(
+                            self.cache_dir,
+                            cache_dir_subpath_without_patch_hash,
+                            &expected,
+                        ));
                 if exists {
                     manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
                 }

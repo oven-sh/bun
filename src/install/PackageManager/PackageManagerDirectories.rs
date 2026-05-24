@@ -9,6 +9,7 @@ use crate::repository::Repository;
 use bun_core::ZStr;
 use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
+use bun_install::integrity::Integrity;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
@@ -827,6 +828,45 @@ pub fn cached_tarball_folder_name(
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
     sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
+}
+
+/// Suffix appended to a cache folder name to form the name of the sidecar file
+/// that records the integrity the folder's source tarball was verified
+/// against. Cache folder names always end in `@@@<digits>` (the cache version)
+/// or `_patch_hash=<hex>`, never `.integrity`, so the sidecar can never
+/// collide with a real cache folder.
+pub const CACHE_INTEGRITY_SIDECAR_SUFFIX: &[u8] = b".integrity";
+
+/// Writes `<folder_path>.integrity\0` into `buf` and returns it as a `ZStr`
+/// borrowing from `buf`.
+pub fn cache_integrity_sidecar_name<'a>(buf: &'a mut PathBuffer, folder_path: &[u8]) -> &'a ZStr {
+    let len = folder_path.len() + CACHE_INTEGRITY_SIDECAR_SUFFIX.len();
+    buf[..folder_path.len()].copy_from_slice(folder_path);
+    buf[folder_path.len()..len].copy_from_slice(CACHE_INTEGRITY_SIDECAR_SUFFIX);
+    buf[len] = 0;
+    ZStr::from_buf(&buf[..], len)
+}
+
+/// Returns true iff the cache folder's integrity sidecar exists, parses, and
+/// matches `expected`. Any open/read/parse failure — including a missing
+/// sidecar (an entry written before sidecars existed, or whose write was
+/// interrupted) — is reported as a mismatch so the caller treats the entry as
+/// a cache miss and re-downloads + re-verifies the package instead of trusting
+/// a folder whose provenance is unknown.
+pub fn cached_folder_integrity_matches(
+    cache_dir: Fd,
+    folder_path: &[u8],
+    expected: &Integrity,
+) -> bool {
+    if !expected.tag.is_supported() {
+        return false;
+    }
+    let mut sidecar_buf = PathBuffer::uninit();
+    let sidecar = cache_integrity_sidecar_name(&mut sidecar_buf, folder_path);
+    let Ok(bytes) = File::read_from(cache_dir, sidecar.as_bytes()) else {
+        return false;
+    };
+    Integrity::parse(&bytes).eql_supported(expected)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

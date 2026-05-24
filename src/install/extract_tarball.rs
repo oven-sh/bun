@@ -1,5 +1,6 @@
 use core::cell::RefCell;
 use core::fmt;
+use std::io::Write as _;
 
 use bun_core::fmt::s;
 use bun_core::{Output, fmt as bun_fmt};
@@ -520,6 +521,35 @@ impl ExtractTarball {
             }
             let cache_dir = Dir::borrow(&self.cache_dir);
 
+            // The cache folder is about to be replaced, so any existing
+            // integrity sidecar describes bytes that are going away. Remove it
+            // *before* the rename: every failure or interruption from here on
+            // then leaves at worst a folder without a sidecar (which readers
+            // treat as a cache miss), never a folder paired with a sidecar its
+            // contents were not verified against. If the stale sidecar cannot
+            // be removed, abort before touching the folder.
+            let mut sidecar_name_buf = PathBuffer::uninit();
+            let sidecar_name =
+                directories::cache_integrity_sidecar_name(&mut sidecar_name_buf, folder_name);
+            match sys::unlinkat(cache_dir.fd(), sidecar_name) {
+                Ok(()) => {}
+                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
+                Err(err) => {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "moving \"{}\" to cache dir failed: {}\n  From: {}\n    To: {}",
+                            bun_fmt::s(name),
+                            err,
+                            bun_fmt::s(tmpname.as_bytes()),
+                            bun_fmt::s(folder_name),
+                        ),
+                    );
+                    return Err(bun_core::err!("InstallFailed"));
+                }
+            }
+
             // e.g. @next
             // if it's a namespace package, we need to make sure the @name folder exists
             let create_subdir = basename.len() != name.len() && !self.resolution.tag.is_git();
@@ -691,6 +721,24 @@ impl ExtractTarball {
                         ),
                     );
                     return Err(bun_core::err!("InstallFailed"));
+                }
+            }
+
+            // Record the integrity the tarball bytes were verified against so
+            // later installs can require their own lockfile's integrity to
+            // match before trusting this folder. Only written when the bytes
+            // were actually verified (same precondition as `run`'s integrity
+            // check above), so the sidecar value is always the true hash of
+            // the bytes that produced the folder. A failed write is ignored:
+            // a folder without a sidecar is never trusted by the read side, so
+            // the worst case is one redundant re-download on the next install.
+            if !self.skip_verify && self.integrity.tag.is_supported() {
+                let mut integrity_str: [u8; 128] = [0u8; 128];
+                let mut cursor = std::io::Cursor::new(&mut integrity_str[..]);
+                if write!(cursor, "{}", self.integrity).is_ok() {
+                    let len = cursor.position() as usize;
+                    let _ =
+                        sys::File::write_file(cache_dir.fd(), sidecar_name, &integrity_str[..len]);
                 }
             }
 

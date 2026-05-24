@@ -39,6 +39,43 @@ async function withContext(
 // Default context options for most tests
 const defaultOpts = { linker: "hoisted" as const };
 
+// ── minimal in-memory .tgz builder ──────────────────────────────────────────
+// Used by tests that need to serve two different tarballs for the same
+// name@version (something the on-disk fixtures can't express).
+function octal(n: number, width: number) {
+  return n.toString(8).padStart(width - 1, "0") + "\0";
+}
+function tarHeader(name: string, size: number) {
+  const buf = Buffer.alloc(512, 0);
+  buf.write(name, 0, 100, "utf8");
+  buf.write(octal(0o644, 8), 100);
+  buf.write(octal(0, 8), 108);
+  buf.write(octal(0, 8), 116);
+  buf.write(octal(size, 12), 124);
+  buf.write(octal(0, 12), 136);
+  buf.fill(" ", 148, 156);
+  buf.write("0", 156);
+  buf.write("ustar\0", 257);
+  buf.write("00", 263);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += buf[i];
+  buf.write(octal(sum, 8), 148);
+  return buf;
+}
+function pad512(len: number) {
+  return Buffer.alloc((512 - (len % 512)) % 512, 0);
+}
+function buildTarball(files: Record<string, string>) {
+  const parts: Buffer[] = [];
+  for (const [name, contents] of Object.entries(files)) {
+    const body = Buffer.from(contents);
+    parts.push(tarHeader(`package/${name}`, body.length), body, pad512(body.length));
+  }
+  parts.push(Buffer.alloc(1024, 0));
+  const tgz = gzipSync(Buffer.concat(parts));
+  return { tgz, integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64") };
+}
+
 describe.concurrent("tarball integrity", () => {
   it("should store integrity hash for tarball URL in text lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
@@ -506,42 +543,8 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
   // callback is the void `onPackageDownloadError = {}` — i.e. the branch the
   // fix in runTasks.zig now cleans up.
   it("should fail (not hang) when tarball bytes don't match manifest SHA-512", { timeout: 60_000 }, async () => {
-    function octal(n: number, width: number) {
-      return n.toString(8).padStart(width - 1, "0") + "\0";
-    }
-    function tarHeader(name: string, size: number) {
-      const buf = Buffer.alloc(512, 0);
-      buf.write(name, 0, 100, "utf8");
-      buf.write(octal(0o644, 8), 100);
-      buf.write(octal(0, 8), 108);
-      buf.write(octal(0, 8), 116);
-      buf.write(octal(size, 12), 124);
-      buf.write(octal(0, 12), 136);
-      buf.fill(" ", 148, 156);
-      buf.write("0", 156);
-      buf.write("ustar\0", 257);
-      buf.write("00", 263);
-      let sum = 0;
-      for (let i = 0; i < 512; i++) sum += buf[i];
-      buf.write(octal(sum, 8), 148);
-      return buf;
-    }
-    function pad512(len: number) {
-      return Buffer.alloc((512 - (len % 512)) % 512, 0);
-    }
-    function buildTarball(body: Buffer) {
-      const tar = Buffer.concat([
-        tarHeader("package/package.json", body.length),
-        body,
-        pad512(body.length),
-        Buffer.alloc(1024, 0),
-      ]);
-      const tgz = gzipSync(tar);
-      return { tgz, integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64") };
-    }
-
-    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
-    const lie = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+    const real = buildTarball({ "package.json": '{"name":"pkg","version":"1.0.0"}\n' });
+    const lie = buildTarball({ "package.json": '{"name":"other","version":"9.9.9"}\n' });
 
     // Custom server instead of the dummy registry — we need to advertise an
     // integrity hash that deliberately does not match the served bytes, which
@@ -700,5 +703,229 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
         expect(exitCode).not.toBe(0);
       }
     });
+  });
+});
+
+// The shared package cache (`BUN_INSTALL_CACHE_DIR`) keys npm entries by
+// name@version. Each extracted entry records the integrity its tarball was
+// verified against in a `<folder>.integrity` sidecar, and a project whose
+// lockfile expects a different integrity must not reuse the entry — it must
+// re-download and re-verify. These tests share one cache directory across two
+// project directories to exercise that boundary.
+describe.concurrent("npm cache integrity sidecar", () => {
+  const evil = buildTarball({
+    "package.json": '{"name":"pkg","version":"1.0.0","main":"index.js"}\n',
+    "index.js": 'module.exports = "EVIL";\n',
+  });
+  const good = buildTarball({
+    "package.json": '{"name":"pkg","version":"1.0.0","main":"index.js"}\n',
+    "index.js": 'module.exports = "GOOD";\n',
+  });
+
+  function makeRegistry() {
+    const state = {
+      current: good,
+      tarballRequests: 0,
+    };
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/pkg")) {
+          return Response.json({
+            name: "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "pkg",
+                version: "1.0.0",
+                dist: {
+                  integrity: state.current.integrity,
+                  tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz`,
+                },
+              },
+            },
+          });
+        }
+        if (url.pathname.endsWith("/pkg-1.0.0.tgz")) {
+          state.tarballRequests++;
+          return new Response(state.current.tgz, {
+            headers: { "content-length": String(state.current.tgz.length) },
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+    return { server, state };
+  }
+
+  function projectFiles(registryUrl: string, linker: "hoisted" | "isolated") {
+    return {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = "${registryUrl}"\nlinker = "${linker}"\n`,
+    };
+  }
+
+  // `--no-cache` disables only the *manifest* disk cache (which would
+  // otherwise hand the second project the first project's metadata for up to
+  // 5 minutes); the extracted-package cache under BUN_INSTALL_CACHE_DIR — the
+  // thing under test — is unaffected by it.
+  async function install(cwd: string, cacheDir: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--no-cache"],
+      cwd,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    return { stderr, stdout, exitCode };
+  }
+
+  async function installedIndexJs(projectDir: string) {
+    return await file(join(projectDir, "node_modules", "pkg", "index.js")).text();
+  }
+
+  async function findSidecars(cacheDir: string) {
+    const found: string[] = [];
+    for await (const entry of new Bun.Glob("**/*.integrity").scan({ cwd: cacheDir, onlyFiles: true })) {
+      found.push(join(cacheDir, entry));
+    }
+    return found.sort();
+  }
+
+  for (const linker of ["hoisted", "isolated"] as const) {
+    it(`a cache entry from one project is not reused by a project expecting a different integrity (${linker})`, async () => {
+      const { server, state } = makeRegistry();
+      await using _server = server;
+      const registryUrl = `http://127.0.0.1:${server.port}/`;
+      using projectA = tempDir(`cache-integrity-a-${linker}`, projectFiles(registryUrl, linker));
+      using projectB = tempDir(`cache-integrity-b-${linker}`, projectFiles(registryUrl, linker));
+      using cache = tempDir(`cache-integrity-cache-${linker}`, {});
+
+      // Project A installs while the registry maps pkg@1.0.0 to the "evil"
+      // tarball, populating the shared cache slot for pkg@1.0.0.
+      state.current = evil;
+      {
+        const { stderr, exitCode } = await install(String(projectA), String(cache));
+        expect(stderr).not.toContain("Integrity check failed");
+        expect(await installedIndexJs(String(projectA))).toContain("EVIL");
+        expect(exitCode).toBe(0);
+      }
+      expect(state.tarballRequests).toBe(1);
+
+      // Project B resolves the same name@version but its manifest (and
+      // therefore its lockfile) carries the "good" integrity. The existing
+      // cache folder must not be reused as-is.
+      state.current = good;
+      {
+        const { stderr, exitCode } = await install(String(projectB), String(cache));
+        expect(stderr).not.toContain("Integrity check failed");
+        expect(await installedIndexJs(String(projectB))).toContain("GOOD");
+        expect(exitCode).toBe(0);
+      }
+      expect(state.tarballRequests).toBe(2);
+
+      // The cache slot now belongs to the "good" tarball: exactly one sidecar,
+      // containing the good integrity (replaced, not appended to).
+      const sidecars = await findSidecars(String(cache));
+      expect(sidecars).toHaveLength(1);
+      expect(await file(sidecars[0]).text()).toBe(good.integrity);
+    });
+  }
+
+  for (const linker of ["hoisted", "isolated"] as const) {
+    it(`install-phase cache check with an existing lockfile rejects a tampered entry (${linker})`, async () => {
+      const { server, state } = makeRegistry();
+      await using _server = server;
+      const registryUrl = `http://127.0.0.1:${server.port}/`;
+      using project = tempDir(`cache-integrity-install-phase-${linker}`, projectFiles(registryUrl, linker));
+      using cache = tempDir(`cache-integrity-install-phase-cache-${linker}`, {});
+
+      state.current = good;
+      {
+        const { exitCode } = await install(String(project), String(cache));
+        expect(await installedIndexJs(String(project))).toContain("GOOD");
+        expect(exitCode).toBe(0);
+      }
+      expect(state.tarballRequests).toBe(1);
+
+      // Tamper with the cache folder out-of-band and remove its sidecar, then
+      // reinstall with the lockfile present and node_modules removed. The
+      // resolve phase is a no-op, so the install-phase cache probe is the only
+      // gate. Without a sidecar the entry must be treated as a miss.
+      const sidecars = await findSidecars(String(cache));
+      expect(sidecars).toHaveLength(1);
+      const cacheFolder = sidecars[0].slice(0, -".integrity".length);
+      await writeFile(join(cacheFolder, "index.js"), 'module.exports = "TAMPERED";\n');
+      await rm(sidecars[0]);
+      await rm(join(String(project), "node_modules"), { recursive: true, force: true });
+
+      {
+        const { exitCode } = await install(String(project), String(cache));
+        expect(await installedIndexJs(String(project))).toContain("GOOD");
+        expect(exitCode).toBe(0);
+      }
+      expect(state.tarballRequests).toBe(2);
+    });
+  }
+
+  it("matching integrity still hits the cache without re-downloading", async () => {
+    const { server, state } = makeRegistry();
+    await using _server = server;
+    const registryUrl = `http://127.0.0.1:${server.port}/`;
+    using projectA = tempDir("cache-integrity-hit-a", projectFiles(registryUrl, "hoisted"));
+    using projectB = tempDir("cache-integrity-hit-b", projectFiles(registryUrl, "hoisted"));
+    using cache = tempDir("cache-integrity-hit-cache", {});
+
+    state.current = good;
+    {
+      const { exitCode } = await install(String(projectA), String(cache));
+      expect(await installedIndexJs(String(projectA))).toContain("GOOD");
+      expect(exitCode).toBe(0);
+    }
+    expect(state.tarballRequests).toBe(1);
+
+    // Same package, same integrity, shared cache: no second download.
+    {
+      const { exitCode } = await install(String(projectB), String(cache));
+      expect(await installedIndexJs(String(projectB))).toContain("GOOD");
+      expect(exitCode).toBe(0);
+    }
+    expect(state.tarballRequests).toBe(1);
+  });
+
+  it("a cache entry without a sidecar degrades to a re-download, not an error", async () => {
+    const { server, state } = makeRegistry();
+    await using _server = server;
+    const registryUrl = `http://127.0.0.1:${server.port}/`;
+    using projectA = tempDir("cache-integrity-missing-a", projectFiles(registryUrl, "hoisted"));
+    using projectB = tempDir("cache-integrity-missing-b", projectFiles(registryUrl, "hoisted"));
+    using cache = tempDir("cache-integrity-missing-cache", {});
+
+    state.current = good;
+    {
+      const { exitCode } = await install(String(projectA), String(cache));
+      expect(exitCode).toBe(0);
+    }
+    expect(state.tarballRequests).toBe(1);
+
+    // Simulate a cache populated before sidecars existed.
+    const sidecars = await findSidecars(String(cache));
+    expect(sidecars).toHaveLength(1);
+    await rm(sidecars[0]);
+
+    {
+      const { exitCode } = await install(String(projectB), String(cache));
+      expect(await installedIndexJs(String(projectB))).toContain("GOOD");
+      expect(exitCode).toBe(0);
+    }
+    expect(state.tarballRequests).toBe(2);
+    expect(await findSidecars(String(cache))).toHaveLength(1);
   });
 });

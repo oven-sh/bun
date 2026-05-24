@@ -250,13 +250,16 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   const cfg = resolveConfig(partial, toolchain);
 
   validateBunConfig(cfg);
-  checkWorkarounds(cfg);
 
   // Darwin cross-compile: the SDK must exist before ninja runs (every compile
-  // edge passes -isysroot). resolveConfig picked the path; this downloads the
-  // pinned SDK into the cache dir when nothing was found. No-op otherwise.
+  // edge passes -isysroot) and before checkWorkarounds() (the darwin-cross
+  // workaround predicates inspect the SDK). resolveConfig picked the path;
+  // this downloads the pinned SDK into the cache dir when nothing was found.
+  // No-op otherwise.
   await ensureMacosSdk(cfg);
   mark("ensureMacosSdk");
+
+  checkWorkarounds(cfg);
 
   // Generated `.cargo/config.toml` — written at configure time (not a ninja
   // rule), like `bun_dependency_versions.h`. Holds the per-target `linker = `

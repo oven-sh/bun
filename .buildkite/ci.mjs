@@ -152,10 +152,9 @@ const buildPlatforms = [
   { os: "freebsd", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "freebsd", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   // macOS cross-compiled from glibc amazonlinux (clang --target + macOS SDK +
-  // ld64.lld — see scripts/build/macos-sdk.ts). Build-only verification lanes
-  // for now: the native darwin lanes above still produce the artifacts that
-  // ship; these prove macOS binaries can be built on the Linux fleet and
-  // upload `bun-darwin-<arch>-cross*.zip` for manual validation.
+  // ld64.lld — see scripts/build/macos-sdk.ts). The darwin test steps run
+  // against these artifacts (see testPlatforms); the native darwin lanes
+  // above still produce the artifacts that ship from the release step.
   { os: "darwin", arch: "aarch64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "darwin", arch: "x64", crossCompile: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "windows", arch: "x64", release: "2019" },
@@ -173,9 +172,13 @@ const testPlatforms = [
   // whichever Intel box is free. Intel Macs can't run latest macOS and the
   // tier split bottlenecked the smaller pool, so x64 trades guaranteed
   // version coverage for throughput. The `release` field only labels the step.
-  { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
-  { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
-  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  // crossCompile: the darwin test suite runs against the Linux-built
+  // (`-cross`) artifacts — the test steps download from the
+  // `darwin-<arch>-cross-build-bun` steps. Tests still run on real macOS
+  // agents (getTestAgent ignores crossCompile).
+  { os: "darwin", arch: "aarch64", release: "26", tier: "latest", crossCompile: true },
+  { os: "darwin", arch: "aarch64", release: "14", tier: "previous", crossCompile: true },
+  { os: "darwin", arch: "x64", release: "14", tier: "latest", crossCompile: true },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },

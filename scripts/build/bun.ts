@@ -760,7 +760,7 @@ function emitDsymutil(n: Ninja, cfg: Config, inputExe: string, exeName: string):
   //   cross-compiling from linux).
   // stream.ts --console for pool:console consistency (no-op on darwin).
   const q = (p: string) => quote(p, false); // darwin/linux host → posix
-  const ncpu = cfg.host.os === "darwin" ? "sysctl -n hw.ncpu" : "nproc";
+  const ncpu = cfg.host.os === "linux" ? "nproc" : "sysctl -n hw.ncpu";
   const wrap = `${cfg.jsRuntime} ${q(streamPath)} dsym --console`;
   n.rule("dsymutil", {
     command: `${wrap} sh -c '${cfg.dsymutil} $in --flat --keep-function-for-static --object-prefix-map .=${cfg.cwd} -o $out -j $$(${ncpu})'`,

@@ -241,7 +241,10 @@ describe("host-side features.json for cross-compiled binaries", () => {
       env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) {
+      expect(stderr).toBe("");
+    }
     expect(exitCode).toBe(0);
     expect(parsed).toEqual(JSON.parse(stdout));
   });

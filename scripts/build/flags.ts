@@ -403,8 +403,10 @@ export const globalFlags: Flag[] = [
   {
     // Address-significance table: enables safe ICF at link.
     // Macos debug mode + this flag breaks libarchive configure ("pid_t doesn't exist").
+    // darwin cross targets get this from their own entry above (debug and
+    // release), so skip them here rather than emit the flag twice.
     flag: "-faddrsig",
-    when: c => (c.debug && c.linux) || (c.release && c.unix),
+    when: c => (c.debug && c.linux) || (c.release && c.unix && !(c.darwin && c.crossTarget !== undefined)),
     desc: "Emit address-significance table (enables safe ICF)",
   },
 

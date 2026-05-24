@@ -193,6 +193,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                   |
 | `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                             |
 | `macos-sdk.ts`                 | macOS SDK resolution/download for darwin cross-compiles — `resolveMacosSdkPath()`, `ensureMacosSdk()` |
+| `features-json.ts`             | Host-side `features.json` for cross lanes — `parsePackedFeaturesList()`, `crossFeaturesJson()`        |
 | `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                                          |
 | `buildOptionsRs.ts`            | Generates `build_options.rs` (`bun_core::build_options`) from `Config`                                |
 | `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, prefixed line streaming                                    |

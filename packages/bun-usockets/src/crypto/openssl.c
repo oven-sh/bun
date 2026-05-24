@@ -517,8 +517,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   ssl_ctx_drop_passphrase(ssl_context);
 
   if (options.ca_file_name) {
-    SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
-
+    /* An explicit CA replaces the default trust store (Node.js semantics):
+     * chains must validate exclusively against the supplied CAs. The SSL_CTX
+     * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
+     * SSL_CTX_load_verify_locations below populates only the user's CAs. */
     STACK_OF(X509_NAME) *ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
@@ -537,12 +539,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
         us_verify_callback);
 
   } else if (options.ca && options.ca_count > 0) {
-    X509_STORE *cert_store = NULL;
+    /* An explicit `ca` replaces the default trust store (Node.js semantics):
+     * chains must validate exclusively against the supplied CAs, otherwise a
+     * server doing mTLS with `ca: [internalCA]` would also accept any client
+     * certificate that chains to a public root. SSL_CTX_new() already gave
+     * this context a fresh, empty X509_STORE — add the user CAs to that. */
+    X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     for (unsigned int i = 0; i < options.ca_count; i++) {
-      if (cert_store == NULL) {
-        cert_store = us_get_default_ca_store();
-        SSL_CTX_set_cert_store(ssl_context, cert_store);
-      }
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
         ssl_ctx_build_fail(ssl_context);

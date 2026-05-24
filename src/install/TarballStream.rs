@@ -208,7 +208,8 @@ impl TarballStream {
         let compute_if_missing = matches!(
             tarball.resolution.tag,
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball
-        ) || (tarball.resolution.tag == ResolutionTag::Npm && !tarball.skip_verify);
+        ) || (tarball.resolution.tag == ResolutionTag::Npm
+            && !tarball.skip_verify);
 
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
         let want_first_dirname = tarball.resolution.tag == ResolutionTag::Github;

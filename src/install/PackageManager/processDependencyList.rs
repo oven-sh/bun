@@ -356,8 +356,7 @@ impl PackageManager {
                     && *package_id != INVALID_PACKAGE_ID
                     && data.integrity.tag.is_supported()
                 {
-                    let meta =
-                        &mut self.lockfile.packages.items_meta_mut()[*package_id as usize];
+                    let meta = &mut self.lockfile.packages.items_meta_mut()[*package_id as usize];
                     if !meta.integrity.tag.is_supported() {
                         meta.integrity = data.integrity;
                     }

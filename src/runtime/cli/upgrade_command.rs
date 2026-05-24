@@ -734,10 +734,28 @@ impl UpgradeCommand {
                 }
             };
 
-            let save_dir_it = match save_dir_.make_open_path(&version_name, Default::default()) {
+            // The staging directory lives in the shared system temp dir under a
+            // predictable name. Never reuse a pre-existing directory there: it may
+            // have been created by another local user, who would then own it and
+            // could swap the verified binary before it is moved into place. Remove
+            // any stale entry, then create the directory atomically with mode 0700
+            // so it is exclusively owned by the current user.
+            let _ = save_dir_.delete_tree(&version_name);
+            let version_name_z = bun_core::ZBox::from_bytes(&version_name);
+            if let Err(err) = sys::mkdirat(&save_dir_, version_name_z.as_zstr(), 0o700) {
+                Output::err_generic(
+                    "Failed to create temporary directory: {}",
+                    (bstr::BStr::new(err.name()),),
+                );
+                Global::exit(1);
+            }
+            let save_dir_it = match save_dir_.open_at(&version_name) {
                 Ok(d) => d,
                 Err(err) => {
-                    Output::err_generic("Failed to open temporary directory: {}", (err.name(),));
+                    Output::err_generic(
+                        "Failed to open temporary directory: {}",
+                        (bstr::BStr::new(err.name()),),
+                    );
                     Global::exit(1);
                 }
             };

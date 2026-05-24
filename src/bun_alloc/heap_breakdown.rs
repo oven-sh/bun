@@ -11,43 +11,6 @@ type vm_size_t = usize;
 // TODO(port): `enable_asan` mapped to a cargo feature; verify the build wires this the same way.
 pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
-/// Zig: `fn heapLabel(comptime T: type) [:0]const u8`
-///
-/// Uses `@hasDecl(T, "heap_label")` to optionally pick a custom label, else
-/// `bun.meta.typeBaseName(@typeName(T))`. In Rust types implement
-/// `HEAP_LABEL` explicitly.
-pub trait HeapLabel {
-    const HEAP_LABEL: &'static str;
-}
-
-/// Zig: `pub fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator`
-///
-/// In Zig the `"Bun__" ++ name` concatenation and the per-name `static` happen
-/// at comptime via monomorphization. Rust cannot monomorphize on a `&'static str`
-/// const generic on stable, so the per-name `OnceLock` must be minted at the
-/// call site — see the `get_zone!` macro below. This function is a thin wrapper
-/// that defers to that macro at call sites; here we expose the runtime half.
-pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
-    // TODO(port): callers should prefer `named_allocator!("Name")` / `get_zone!` directly
-    // so the OnceLock is per-name. This runtime path falls back to a process-global
-    // map and is not zero-cost like the Zig comptime version.
-    // PERF(port): was comptime monomorphization — profile if hot.
-    //
-    // Zig: `getZone("Bun__" ++ name)` — the "Bun__" prefix is applied HERE, not in
-    // `getZone`/`get_zone_runtime`. PORTING.md §Forbidden: no `Box::leak` for
-    // 'static — `get_zone_runtime` owns the prefixed string in its OnceLock map,
-    // so pass a borrowed `&str` and let the map intern it.
-    let mut prefixed = String::with_capacity(5 + name.len());
-    prefixed.push_str("Bun__");
-    prefixed.push_str(name);
-    get_zone(prefixed.as_bytes()).allocator()
-}
-
-// Comptime-literal form of `named_allocator` lives at crate root as `get_zone!`
-// (see lib.rs). A local `macro_rules! named_allocator` re-export would collide
-// with the `pub fn named_allocator` above in the value namespace on macOS where
-// this module is actually compiled, so it is omitted here.
-
 /// Zig: `pub fn getZone(comptime name: [:0]const u8) *Zone`
 ///
 /// Each comptime instantiation in Zig gets its own `static var zone` + `std.once`.

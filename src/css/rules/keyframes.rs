@@ -24,6 +24,7 @@ pub enum KeyframesName {
     Custom(&'static [u8]),
 }
 
+// Zig: `pub fn HashMap(comptime V: type) type { return std.ArrayHashMapUnmanaged(...) }`
 // → a generic type alias keyed by `KeyframesName` with the custom hash/eq below.
 pub type KeyframesNameHashMap<V> = bun_collections::ArrayHashMap<KeyframesName, V>;
 

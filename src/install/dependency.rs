@@ -771,6 +771,8 @@ impl VersionExt for Version {
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
 
+// PORT NOTE: Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
+// in an earlier draft; rewritten as a length-gated match (cf. 12577e958d71
 // clap::find_param) — 9 entries with near-unique lengths, so a single `usize`
 // compare rejects almost every miss before touching bytes, and hits resolve in
 // ≤3 slice compares with no hashing or static-init overhead.

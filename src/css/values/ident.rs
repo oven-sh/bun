@@ -187,6 +187,9 @@ arena_slice_newtype! {
     DashedIdent
 }
 
+// TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
+// ArrayHashMapUnmanaged with a custom string-hash context. Inherent assoc
+// type aliases are unstable in Rust; expose as a free type alias instead.
 // bun_collections::ArrayHashMap is wyhash-keyed; verify the hasher matches
 // std.array_hash_map.hashString or supply a custom Hash impl.
 // blocked_on: bun_collections::ArrayHashMap surface

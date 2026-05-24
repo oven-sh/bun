@@ -752,15 +752,20 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // Cross-language LTO normally tracks `lto`. Gated off for aarch64-musl
   // where LLVM's `globalopt` pass segfaults on the `bun_runtime` bitcode
-  // module during the merged link (CI build #53109). Both halves still LTO
-  // independently when this is false — only the Rust↔C++ inlining is lost.
+  // module during the merged link (CI build #53109), and for Windows
+  // targets — the C++ side's `-flto` flags are unix-only, there's no -lto
+  // WebKit prebuilt for Windows, and the rust-lld swap below resolves the
+  // HOST-flavored ld.lld which can't stand in for lld-link (an explicit
+  // `--lto=on` would otherwise trip validateBunConfig's rust-lld check
+  // with a misleading error). Both halves still LTO independently when
+  // this is false — only the Rust↔C++ inlining is lost.
   // Tracked in workarounds.ts ("globalopt-crash-aarch64-musl").
   // Darwin cross uses the same rust-lld swap as ELF: rustc's sysroot ships
   // `gcc-ld/ld64.lld` (rust-lld in the Mach-O flavor, built against rustc's
   // LLVM), which findRustLld() already resolves for darwin targets, so the
   // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
   // link time.
-  const crossLangLto = lto && !(arm64 && abi === "musl");
+  const crossLangLto = lto && !windows && !(arm64 && abi === "musl");
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
@@ -780,13 +785,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Shared with the darwin-cross ld64 swap below: for darwin targets
   // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
   // the same rust-lld), so the swap composes with the cross toolchain.
-  // Never swap for windows targets: `ld` there is lld-link (COFF driver)
-  // and `findRustLld()` resolves the HOST-flavored gcc-ld/ld.lld, which
-  // can't stand in for it (cargo's msvc linker + nested cmake would both
-  // receive the wrong flavor). Windows builds don't use cross-language
-  // LTO anyway (no -lto WebKit prebuilt), so nothing is lost.
+  // (No explicit windows guard needed: crossLangLto is already false for
+  // windows targets, and `ld` there is lld-link — the COFF driver — which
+  // the host-flavored rust-lld could not stand in for.)
   const wantRustLld =
-    !windows &&
     crossLangLto &&
     toolchain.rustLld !== undefined &&
     clangMajor !== undefined &&

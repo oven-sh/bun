@@ -873,6 +873,19 @@ describe("spyOn", () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
+  test("constructing a spy works", () => {
+    var obj = {
+      Original: function () {
+        this.ok = true;
+      },
+    };
+    const fn = spyOn(obj, "Original");
+    const instance = Reflect.construct(obj.Original, []);
+    expect(typeof instance).toBe("object");
+    expect(instance.ok).toBe(true);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   test("override impl after doesnt break restore", () => {
     var obj = {
       original() {

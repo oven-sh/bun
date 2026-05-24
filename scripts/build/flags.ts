@@ -721,9 +721,23 @@ export const linkerFlags: Flag[] = [
     // CMake implicitly forwarded CMAKE_CXX_FLAGS (incl. -O2) to the link line;
     // we must do so explicitly. Dropping this cost ~5 MB of .text on linux-x64
     // (less unrolling/inlining in JSC — measurable in Yarr, DFG, BuiltinNames).
+    // ELF only: the driver forwards this to lld as -plugin-opt=O2. The Darwin
+    // driver forwards no opt-level flag at all — see the next entry.
     flag: "-O2",
-    when: c => c.unix && c.lto && c.release && !c.smol,
-    desc: "LTO codegen at -O2",
+    when: c => c.unix && !c.darwin && c.lto && c.release && !c.smol,
+    desc: "LTO codegen at -O2 (ELF: forwarded to lld as -plugin-opt=O2)",
+  },
+  {
+    // The Darwin driver drops a bare -O at link time (`clang++ -### …` shows
+    // no opt-level flag reaching the linker), so Mach-O LTO would codegen at
+    // ld64.lld's built-in defaults: --lto-O2 for the IR pipeline and
+    // --lto-CGO2 (CodeGenOptLevel::Default) for instruction selection —
+    // inline threshold 225 and default isel, while the per-TU build codegens
+    // everything at -O3 + CodeGenOptLevel::Aggressive (threshold 275). Pass
+    // ld64.lld's own options so LTO codegen matches the compile side.
+    flag: ["-Wl,--lto-O3", "-Wl,--lto-CGO3"],
+    when: c => c.darwin && c.lto && c.release && !c.smol,
+    desc: "LTO codegen at -O3 + aggressive isel (Darwin driver forwards no -O to ld64.lld)",
   },
   {
     flag: "-Os",

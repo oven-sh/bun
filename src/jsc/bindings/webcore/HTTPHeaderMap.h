@@ -184,6 +184,7 @@ public:
     {
         m_commonHeaders.clear();
         m_uncommonHeaders.clear();
+        m_setCookieHeaders.clear();
         m_extraCommonHeaders.clear();
         m_extraUncommonHeaders.clear();
     }
@@ -192,6 +193,7 @@ public:
     {
         m_commonHeaders.shrinkToFit();
         m_uncommonHeaders.shrinkToFit();
+        m_setCookieHeaders.shrinkToFit();
         m_extraCommonHeaders.shrinkToFit();
         m_extraUncommonHeaders.shrinkToFit();
     }

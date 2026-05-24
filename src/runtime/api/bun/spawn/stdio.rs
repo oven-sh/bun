@@ -533,9 +533,22 @@ impl Stdio {
                 return Ok(());
             }
 
+            // Snapshot the bytes into a private copy. The pipe writer drains
+            // this buffer across event-loop ticks, and the caller's backing
+            // store can be detached/transferred (freeing it) by JS in the
+            // meantime — the `held` Strong keeps the cell alive but does not
+            // prevent detachment. The copy is never exposed to JS, so it
+            // cannot be invalidated out from under the writer.
+            let copied_value = jsc::array_buffer::ArrayBuffer::create_buffer(
+                global,
+                array_buffer.byte_slice(),
+            )?;
+            let copied = copied_value
+                .as_array_buffer(global)
+                .expect("create_buffer returns a Uint8Array");
             *out_stdio = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
-                array_buffer,
-                held: jsc::StrongOptional::create(array_buffer.value, global),
+                array_buffer: copied,
+                held: jsc::StrongOptional::create(copied.value, global),
             });
             return Ok(());
         }

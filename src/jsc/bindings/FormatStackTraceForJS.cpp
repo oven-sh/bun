@@ -701,9 +701,14 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
-        stackTrace->clear();
+        // Move the frames out of the ErrorInstance before running code that can
+        // re-enter JavaScript (Error.prepareStackTrace) or trigger a GC.
+        // ErrorInstance::finalizeUnconditionally and a re-entrant read of
+        // `error.stack` both reset m_stackTrace, which would otherwise free the
+        // Vector while we still hold a pointer to it.
+        WTF::Vector<JSC::StackFrame> ownedStackTrace = WTF::move(*stackTrace);
         errorObject->setStackFrames(vm, {});
+        result = computeErrorInfoToJSValue(vm, ownedStackTrace, line, column, sourceURL, errorObject, nullptr);
     }
     RETURN_IF_EXCEPTION(scope, {});
     errorObject->putDirect(vm, vm.propertyNames->stack, result, 0);

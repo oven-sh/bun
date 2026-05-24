@@ -6,7 +6,7 @@ use bun_alloc::ArenaVecExt as _;
 
 /// *NOTE* The struct field names must match their corresponding variants in `Property`!
 #[derive(Default)]
-pub(crate) struct FallbackHandler {
+pub struct FallbackHandler {
     pub color: Option<usize>,
     pub text_shadow: Option<usize>,
     // TODO: add these back plz

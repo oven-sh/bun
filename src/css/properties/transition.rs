@@ -20,7 +20,7 @@ use crate::prefixes::Feature;
 
 /// A value for the [transition](https://www.w3.org/TR/2018/WD-css-transitions-1-20181011/#transition-shorthand-property) property.
 #[derive(Clone, PartialEq)]
-pub(crate) struct Transition {
+pub struct Transition {
     /// The property to transition.
     pub property: PropertyId,
     /// The duration of the transition.
@@ -111,7 +111,7 @@ impl Transition {
 }
 
 #[derive(Default)]
-pub(crate) struct TransitionHandler {
+pub struct TransitionHandler {
     pub properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
     pub durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
     pub delays: Option<(SmallList<Time, 1>, VendorPrefix)>,

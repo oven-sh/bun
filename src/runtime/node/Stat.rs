@@ -17,7 +17,7 @@ const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 // const-generic-dependent type alias in stable Rust, so `to_time_ms` is split
 // into `to_time_ms_i64` / `to_time_ms_f64` and called from the appropriate
 // branch in `stat_to_js`. Diff readers should expect this reshape.
-pub(crate) struct StatType<const BIG: bool> {
+pub struct StatType<const BIG: bool> {
     pub value: PosixStat,
 }
 

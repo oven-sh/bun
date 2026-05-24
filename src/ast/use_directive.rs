@@ -13,7 +13,7 @@ pub enum UseDirective {
 
 #[repr(u8)] // Zig: enum(u2)
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum Boundering {
+pub enum Boundering {
     Client = UseDirective::Client as u8,
     Server = UseDirective::Server as u8,
 }

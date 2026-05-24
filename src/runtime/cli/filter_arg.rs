@@ -160,7 +160,7 @@ pub(crate) struct FilterSet {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PatternKind {
+pub enum PatternKind {
     Name,
     /// THIS MEANS THE PATTERN IS ALLOCATED ON THE HEAP! FREE IT!
     Path,

@@ -54,7 +54,7 @@ pub mod argon2 {
 
     /// `std.crypto.pwhash.argon2.Mode`
     #[derive(Copy, Clone, Eq, PartialEq)]
-    pub(crate) enum Mode {
+    pub enum Mode {
         Argon2d,
         Argon2i,
         Argon2id,

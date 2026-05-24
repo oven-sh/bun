@@ -285,7 +285,7 @@ bun_opaque::opaque_ffi! {
     /// the `mi_heap_t*` it belongs to is `Send`. Zig parity is plain
     /// `mi_heap_*`; see `MimallocArena.rs` PERF NOTE. The entry points below
     /// are `#[deprecated]` for this reason.
-    pub(crate) struct THeap;
+    pub struct THeap;
 }
 
 unsafe extern "C" {

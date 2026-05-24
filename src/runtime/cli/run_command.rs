@@ -78,7 +78,7 @@ impl NpmArgs {
 /// Runtime knobs `Command::start` passes through; mirrors the Zig
 /// `comptime`-tuple that selected the per-tag exec body.
 #[derive(Clone, Copy)]
-pub(crate) struct ExecCfg {
+pub struct ExecCfg {
     pub bin_dirs_only: bool,
     pub log_errors: bool,
     pub allow_fast_run_for_extensions: bool,
@@ -3121,7 +3121,7 @@ fn escape_for_js_string(input: &[u8]) -> Vec<u8> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ::core::marker::ConstParamTy)]
-pub(crate) enum Filter {
+pub enum Filter {
     Script,
     Bin,
     BunJs,

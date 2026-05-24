@@ -10,7 +10,7 @@ use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
 
 #[derive(Default)]
-pub(crate) struct Cp {
+pub struct Cp {
     pub opts: Opts,
     pub state: State,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
@@ -32,7 +32,7 @@ pub enum State {
     Done,
 }
 
-pub(crate) struct ExecState {
+pub struct ExecState {
     /// Index into argv where source paths start.
     pub sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is the
@@ -394,7 +394,7 @@ impl OutputTaskVTable for Cp {
 /// Spec: cp.zig `ShellCpTask`. Resolves src/tgt to absolute paths, decides
 /// which POSIX `cp` synopsis applies, then hands off to the node:fs async cp
 /// implementation.
-pub(crate) struct ShellCpTask {
+pub struct ShellCpTask {
     pub cmd: NodeId,
     pub opts: Opts,
     pub operands: usize,

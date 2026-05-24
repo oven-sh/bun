@@ -291,7 +291,7 @@ impl crate::small_list::ImageFallback for Image {
 ///
 /// `image-set()` allows the user agent to choose between multiple versions of an image to
 /// display the most appropriate resolution or file type that it supports.
-pub(crate) struct ImageSet {
+pub struct ImageSet {
     /// The image options to choose from.
     // PERF(port): was ArrayListUnmanaged fed arena — profile if hot
     pub options: Vec<ImageSetOption>,
@@ -384,7 +384,7 @@ impl ImageSet {
 }
 
 /// An image option within the `image-set()` function. See [ImageSet](ImageSet).
-pub(crate) struct ImageSetOption {
+pub struct ImageSetOption {
     /// The image for this option.
     pub image: Image,
     /// The resolution of the image.

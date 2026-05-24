@@ -180,7 +180,7 @@ pub enum FloatColor {
 /// colorspace payload (every `define_colorspace!` type does, via the handwritten
 /// + generated `From` impls). Lets `convert_to::<T>()` dispatch `v.into()`
 /// uniformly without re-stamping the match per `T`.
-pub(crate) trait FromAnyColorspace:
+pub trait FromAnyColorspace:
     From<LAB>
     + From<LCH>
     + From<OKLAB>
@@ -270,7 +270,7 @@ impl_variant_dispatch! { FloatColor {
 /// A CSS [system color](https://drafts.csswg.org/css-color/#css-system-colors) keyword.
 /// *NOTE* these are intentionally in flat case
 #[derive(Debug, Clone, Copy, PartialEq, Eq, crate::DefineEnumProperty)]
-pub(crate) enum SystemColor {
+pub enum SystemColor {
     /// Background of accented user interface controls.
     Accentcolor,
     /// Text of accented user interface controls.
@@ -1013,7 +1013,7 @@ impl ColorFallbackKind {
 /// Trait every colorspace implements. The Zig used `@field(this, "x")` over the
 /// first three struct fields plus `alpha`; here we expose them by index.
 /// `// TODO(port): could be derived with a proc-macro.`
-pub(crate) trait Colorspace: Copy + Sized + FromAnyColorspace {
+pub trait Colorspace: Copy + Sized + FromAnyColorspace {
     const CHANNEL_NAMES: (&'static [u8], &'static [u8], &'static [u8]);
     const CHANNEL_TYPES: (ChannelType, ChannelType, ChannelType);
 
@@ -1090,14 +1090,14 @@ pub(crate) trait Colorspace: Copy + Sized + FromAnyColorspace {
 
 /// Gamut behavior — replaces UnboundedColorGamut / BoundedColorGamut /
 /// HslHwbColorGamut comptime mixins.
-pub(crate) trait ColorGamut: Sized + Copy {
+pub trait ColorGamut: Sized + Copy {
     fn in_gamut(&self) -> bool;
     fn clip(&self) -> Self;
 }
 
 /// Interpolation behavior — replaces DeriveInterpolate +
 /// RecangularPremultiply / PolarPremultiply + AdjustPowerless* mixins.
-pub(crate) trait Interpolate: Colorspace {
+pub trait Interpolate: Colorspace {
     fn fill_missing_components(&mut self, other: &Self) {
         let (oa, ob, oc, oalpha) = other.components();
         let (a, b, c, alpha) = self.components_mut();
@@ -1923,7 +1923,7 @@ define_colorspace! {
 // ComponentParser
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct ComponentParser {
+pub struct ComponentParser {
     pub allow_none: bool,
     pub from: Option<RelativeComponentParser>,
 }
@@ -2088,7 +2088,7 @@ impl LightDarkOwned for CssColor {
 
 /// Either a number or a percentage.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum NumberOrPercentage {
+pub enum NumberOrPercentage {
     /// `<number>`.
     Number {
         /// The numeric value parsed, as a float.
@@ -2116,7 +2116,7 @@ impl NumberOrPercentage {
 // RelativeComponentParser
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct RelativeComponentParser {
+pub struct RelativeComponentParser {
     pub names: (&'static [u8], &'static [u8], &'static [u8]),
     pub components: (f32, f32, f32, f32),
     pub types: (ChannelType, ChannelType, ChannelType),
@@ -2525,7 +2525,7 @@ pub fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
 /// A hue [interpolation method](https://www.w3.org/TR/css-color-4/#typedef-hue-interpolation-method)
 /// used in interpolation functions such as `color-mix()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, crate::DefineEnumProperty)]
-pub(crate) enum HueInterpolationMethod {
+pub enum HueInterpolationMethod {
     /// Angles are adjusted so that θ₂ - θ₁ ∈ [-180, 180].
     Shorter,
     /// Angles are adjusted so that θ₂ - θ₁ ∈ {0, [180, 360)}.

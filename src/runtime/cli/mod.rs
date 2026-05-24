@@ -618,7 +618,7 @@ pub mod help_command {
     use super::*;
 
     #[derive(Copy, Clone, PartialEq, Eq)]
-    pub(crate) enum Reason {
+    pub enum Reason {
         Explicit,
         InvalidCommand,
     }

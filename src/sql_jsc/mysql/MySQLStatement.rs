@@ -20,7 +20,7 @@ bun_core::declare_scope!(MySQLStatement, hidden);
 // `ref_count` field below is the embedded counter that `IntrusiveRc` manipulates.
 // `ref()`/`deref()` are methods on `IntrusiveRc`, not on this struct.
 #[derive(bun_ptr::CellRefCounted)]
-pub(crate) struct MySQLStatement {
+pub struct MySQLStatement {
     pub cached_structure: CachedStructure,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()` or
     // [`Self::init_exact_refs`] at construction time.
@@ -66,7 +66,7 @@ impl Default for MySQLStatement {
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub(crate) struct ExecutionFlags: u8 {
+    pub struct ExecutionFlags: u8 {
         const HEADER_RECEIVED      = 1 << 0;
         const NEEDS_DUPLICATE_CHECK = 1 << 1;
         const NEED_TO_SEND_PARAMS  = 1 << 2;

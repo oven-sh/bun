@@ -21,7 +21,7 @@ bun_core::declare_scope!(Postgres, visible);
 /// (the dispatch site) rather than in `bun_sql::postgres::protocol` because
 /// it is purely a compile-time switch tag in Zig with no wire encoding.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-pub(crate) enum MessageType {
+pub enum MessageType {
     DataRow,
     CopyData,
     ParameterStatus,

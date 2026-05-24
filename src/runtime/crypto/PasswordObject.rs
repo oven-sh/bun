@@ -222,7 +222,7 @@ fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct Argon2Params {
+pub struct Argon2Params {
     // we don't support the other options right now, but can add them later if someone asks
     pub memory_cost: u32,
     pub time_cost: u32,

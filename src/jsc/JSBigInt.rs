@@ -22,7 +22,7 @@ unsafe extern "C" {
 
 /// Types that can be compared against a `JSBigInt` via the FFI order functions.
 /// Mirrors the `comptime T: type` switch in the Zig `order` fn.
-pub(crate) trait BigIntOrderable: Copy {
+pub trait BigIntOrderable: Copy {
     fn raw_order(self, this: &JSBigInt) -> i8;
 }
 

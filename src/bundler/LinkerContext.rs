@@ -1289,7 +1289,7 @@ pub(crate) enum ScanCssImportsResult {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum LinkError {
+pub enum LinkError {
     #[error("out of memory")]
     OutOfMemory,
     #[error("build failed")]
@@ -1362,7 +1362,7 @@ impl Default for LinkerOptions {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LinkerOptionsMode {
+pub enum LinkerOptionsMode {
     Passthrough,
     Bundle,
 }
@@ -1376,7 +1376,7 @@ pub struct SourceMapData {
     pub quoted_contents_tasks: Box<[SourceMapDataTask]>,
 }
 
-pub(crate) struct SourceMapDataTask {
+pub struct SourceMapDataTask {
     /// `None` only in `Default` (the per-index slot is overwritten before
     /// scheduling).
     pub ctx: Option<bun_ptr::ParentRef<LinkerContext<'static>>>,
@@ -1606,7 +1606,7 @@ impl SourceMapData {
 // Clone: bitwise OK — `alias` borrows from the AST arena (non-owning); all
 // other fields are POD.
 #[derive(Clone, Default)]
-pub(crate) struct MatchImport {
+pub struct MatchImport {
     alias: bun_ast::StoreStr, // Zig string borrowed from AST arena
     kind: MatchImportKind,
     namespace_ref: Ref,
@@ -2643,7 +2643,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // integer-arg registers and spills to the stack on every recursive step.
 // Packing the slices into a borrowed context struct keeps each call at 3-4
 // register-sized arguments.
-pub(crate) struct TreeShakeCtx<'a, 'r> {
+pub struct TreeShakeCtx<'a, 'r> {
     pub side_effects: &'r [SideEffects],
     pub parts: &'r [bun_ast::PartList<'a>],
     pub parts_live: &'r mut [bun_collections::AutoBitSet],
@@ -2652,7 +2652,7 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
 }
 
-pub(crate) struct CodeSplitCtx<'a, 'r> {
+pub struct CodeSplitCtx<'a, 'r> {
     pub distances: &'r mut [u32],
     // Spec (LinkerContext.zig:1579) passes `parts: []Vec(Part)` and only
     // reads it.
@@ -4281,7 +4281,7 @@ impl PartialEq for MatchImport {
 // StmtList
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct StmtList {
+pub struct StmtList {
     // TODO(port): arena field dropped — Vec uses global mimalloc; bundler is AST crate but
     // these are temporary scratch buffers, not arena-backed in the original (uses generic arena param)
     pub inside_wrapper_prefix: InsideWrapperPrefix,
@@ -4290,7 +4290,7 @@ pub(crate) struct StmtList {
     pub all_stmts: Vec<Stmt>,
 }
 
-pub(crate) struct InsideWrapperPrefix {
+pub struct InsideWrapperPrefix {
     pub stmts: Vec<Stmt>,
     pub sync_dependencies_end: usize,
     // if true it will exist at `sync_dependencies_end`

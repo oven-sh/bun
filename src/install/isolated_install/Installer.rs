@@ -596,7 +596,7 @@ impl<'a> Installer<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CompleteState {
+pub enum CompleteState {
     Success,
     Skipped,
     Fail,
@@ -653,12 +653,12 @@ pub enum Result {
     Done,
 }
 
-pub(crate) struct DownloadError {
+pub struct DownloadError {
     pub err: bun_core::Error,
     pub url: Box<[u8]>,
 }
 
-pub(crate) enum TaskError {
+pub enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
     RunScripts(bun_core::Error),
@@ -693,7 +693,7 @@ impl TaskError {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Step {
+pub enum Step {
     LinkPackage,
     SymlinkDependencies,
 
@@ -2779,7 +2779,7 @@ impl<'a> Installer<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Which {
+pub enum Which {
     /// The published location (`<cache>/links/<entry>`). Use for symlink
     /// *targets* that point at other entries, and for the warm-hit check.
     Final,

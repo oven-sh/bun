@@ -36,7 +36,7 @@ use bun_url::URL;
 /// inside the parent and we'd otherwise need a simultaneous `&mut self.ci_mode`
 /// + `&self` borrow, model the cache as a `Cell<Option<bool>>` and read the
 /// parent through a raw pointer (mirrors Zig's non-exclusive `*Parent`).
-pub(crate) struct LazyBool<F> {
+pub struct LazyBool<F> {
     value: core::cell::Cell<Option<bool>>,
     getter: F,
 }
@@ -626,7 +626,7 @@ impl WorkspaceFilter {
 // deinit → Drop is automatic for Box<[u8]> variants; no explicit impl needed.
 
 #[derive(Default)]
-pub(crate) struct PackageUpdateInfo {
+pub struct PackageUpdateInfo {
     pub original_version_literal: Box<[u8]>,
     pub is_alias: bool,
     pub original_version_string_buf: Box<[u8]>,
@@ -634,7 +634,7 @@ pub(crate) struct PackageUpdateInfo {
 }
 
 #[derive(Default)]
-pub(crate) enum TrackInstalledBin {
+pub enum TrackInstalledBin {
     #[default]
     None,
     Pending,

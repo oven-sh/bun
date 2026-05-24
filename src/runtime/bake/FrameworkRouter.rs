@@ -123,16 +123,16 @@ pub enum FileKind {
     // NotFound,
 }
 
-pub(crate) enum RouteMarker {}
+pub enum RouteMarker {}
 pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>; // Zig: u31 (loses u31 range debug-assert)
 
 /// Zig: `Route.Edge` — referenced only by the dead `newEdge` free-list helper in the spec.
 /// The struct body is never defined upstream; ported as an opaque unit so `new_edge` compiles
 /// with its real body.
 #[derive(Copy, Clone, Debug, Default)]
-pub(crate) struct RouteEdge;
+pub struct RouteEdge;
 
-pub(crate) enum RouteEdgeMarker {}
+pub enum RouteEdgeMarker {}
 pub(crate) type RouteEdgeIndex = bun_core::GenericIndex<u32, RouteEdgeMarker>;
 
 /// Native code for `FrameworkFileSystemRouterType`
@@ -178,7 +178,7 @@ impl Type {
     }
 }
 
-pub(crate) enum TypeMarker {}
+pub enum TypeMarker {}
 pub type TypeIndex = bun_core::GenericIndex<u8, TypeMarker>;
 
 impl FrameworkRouter {
@@ -407,7 +407,7 @@ impl EncodedPattern {
     }
 }
 
-pub(crate) struct EncodedPatternIterator<'a> {
+pub struct EncodedPatternIterator<'a> {
     pattern: &'a [u8],
     offset: usize,
 }
@@ -453,7 +453,7 @@ impl<'a> Iterator for EncodedPatternIterator<'a> {
 
 /// Hash context for DynamicRouteMap — hashes/compares by effective URL.
 #[derive(Default, Clone, Copy)]
-pub(crate) struct EffectiveUrlContext;
+pub struct EffectiveUrlContext;
 impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
     fn hash(&self, p: &EncodedPattern) -> u32 {
         p.effective_url_hash() as u32 // @truncate
@@ -466,7 +466,7 @@ impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
 /// Wrapper around a slice to provide same interface to be used in `insert`
 /// but with the allocation being backed by a plain string, which each
 /// part separated by slashes.
-pub(crate) struct StaticPattern {
+pub struct StaticPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `StaticPattern` — see `RawSlice` invariant in `bun_ptr`).
     pub route_path: bun_ptr::RawSlice<u8>,
@@ -620,13 +620,13 @@ impl fmt::Display for Part<'_> {
     }
 }
 
-pub(crate) struct ParsedPattern<'a> {
+pub struct ParsedPattern<'a> {
     pub parts: &'a [Part<'a>],
     pub kind: ParsedPatternKind,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub(crate) enum ParsedPatternKind {
+pub enum ParsedPatternKind {
     /// Can be navigated to. Pages can have children, which allows having
     /// nested routes exactly how Remix allows them.
     #[strum(serialize = "page")]
@@ -696,7 +696,7 @@ impl Style {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
-pub(crate) enum UiOrRoutes {
+pub enum UiOrRoutes {
     Ui,
     Routes,
 }
@@ -1043,7 +1043,7 @@ impl Style {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum InsertError {
+pub enum InsertError {
     #[error("RouteCollision")]
     RouteCollision,
     #[error("OutOfMemory")]
@@ -1053,7 +1053,7 @@ bun_core::oom_from_alloc!(InsertError);
 
 // PERF(port): Zig used `comptime insertion_kind` with dependent type `insertion_kind.Pattern()`.
 // Rust models this as a runtime enum carrying both pattern shapes; profile if hot.
-pub(crate) enum InsertPattern {
+pub enum InsertPattern {
     Static(StaticPattern),
     Dynamic(EncodedPattern),
 }
@@ -1247,7 +1247,7 @@ pub struct MatchedParams {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct MatchedParamEntry {
+pub struct MatchedParamEntry {
     // Borrow from the input `path`/`pattern` buffers; both outlive the
     // `MatchedParams` stack frame (Zig: `[]const u8`). See `RawSlice` invariant.
     pub key: bun_ptr::RawSlice<u8>,
@@ -1329,7 +1329,7 @@ impl FrameworkRouter {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum PatternParseError {
+pub enum PatternParseError {
     #[error("InvalidRoutePattern")]
     InvalidRoutePattern,
 }
@@ -1792,7 +1792,7 @@ pub struct JSFrameworkRouter {
     pub stored_parse_errors: Vec<StoredParseError>,
 }
 
-pub(crate) struct StoredParseError {
+pub struct StoredParseError {
     /// Owned by global allocator
     pub rel_path: Box<[u8]>,
     pub log: TinyLog,

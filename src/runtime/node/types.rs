@@ -1634,7 +1634,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 pub struct FileSystemFlags(pub c_int);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum FileSystemFlagsKind {
+pub enum FileSystemFlagsKind {
     Access,
     CopyFile,
 }

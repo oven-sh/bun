@@ -8,7 +8,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::expansion::{Expansion, ExpansionOpts};
 use crate::shell::yield_::Yield;
 
-pub(crate) struct CondExpr {
+pub struct CondExpr {
     pub base: Base,
     pub node: bun_ptr::BackRef<ast::CondExpr>,
     pub io: IO,

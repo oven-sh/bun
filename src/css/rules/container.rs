@@ -50,7 +50,7 @@ pub use ContainerName as ContainerNameFns;
 pub(crate) type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub(crate) enum ContainerSizeFeatureId {
+pub enum ContainerSizeFeatureId {
     /// The [width](https://w3c.github.io/csswg-drafts/css-contain-3/#width) size container feature.
     Width,
     /// The [height](https://w3c.github.io/csswg-drafts/css-contain-3/#height) size container feature.
@@ -95,7 +95,7 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
 impl ContainerSizeFeatureId {}
 
 /// Represents a style query within a container condition.
-pub(crate) enum StyleQuery {
+pub enum StyleQuery {
     /// A style feature, implicitly parenthesized.
     Feature(Box<Property>),
 
@@ -337,7 +337,7 @@ impl ContainerCondition {
 }
 
 /// A [@container](https://drafts.csswg.org/css-contain-3/#container-rule) rule.
-pub(crate) struct ContainerRule<R> {
+pub struct ContainerRule<R> {
     /// The name of the container.
     pub name: Option<ContainerName>,
     /// The container condition.

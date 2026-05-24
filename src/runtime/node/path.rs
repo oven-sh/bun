@@ -192,7 +192,7 @@ const CHAR_STR_DOT: &[u8] = b".";
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L919
 /// The structs returned by parse methods.
 #[derive(Default)]
-pub(crate) struct PathParsed<'a, T: PathCharCwd> {
+pub struct PathParsed<'a, T: PathCharCwd> {
     pub root: &'a [T],
     pub dir: &'a [T],
     pub base: &'a [T],

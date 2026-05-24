@@ -11,14 +11,14 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub(crate) struct Mv {
+pub struct Mv {
     pub opts: Opts,
     pub args: MvArgs,
     pub state: MvState,
 }
 
 #[derive(Default)]
-pub(crate) struct MvArgs {
+pub struct MvArgs {
     /// Index into argv where source paths start.
     pub sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
@@ -27,7 +27,7 @@ pub(crate) struct MvArgs {
 }
 
 #[derive(Default)]
-pub(crate) enum MvState {
+pub enum MvState {
     #[default]
     Idle,
     CheckTarget(Box<ShellMvCheckTargetTask>),
@@ -425,7 +425,7 @@ enum MvFlag {
 
 /// Spec: mv.zig `ShellMvCheckTargetTask`. `openat(target, O_RDONLY|O_DIRECTORY)`
 /// on a worker thread to learn whether the destination is a directory.
-pub(crate) struct ShellMvCheckTargetTask {
+pub struct ShellMvCheckTargetTask {
     pub cmd: NodeId,
     pub cwd: bun_sys::Fd,
     pub target: ZBox,
@@ -450,7 +450,7 @@ impl ShellMvCheckTargetTask {
 }
 
 /// Spec: mv.zig `ShellMvBatchedTask`. renameat() each source into the target.
-pub(crate) struct ShellMvBatchedTask {
+pub struct ShellMvBatchedTask {
     pub cmd: NodeId,
     /// Index into `MvState::Executing::tasks` so the main-thread completion
     /// can route to `Mv::batched_move_task_done` (Zig used `*ShellMvBatchedTask`
@@ -605,7 +605,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Opts {
+pub struct Opts {
     /// `-f` — do not prompt before overwriting (default).
     pub force_overwrite: bool,
     /// `-h` — if target is a symlink to a directory, do not follow it.

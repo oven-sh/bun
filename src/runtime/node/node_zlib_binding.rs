@@ -31,7 +31,7 @@ bun_output::declare_scope!(zlib, hidden);
 pub(crate) struct CompressionStream<T>(PhantomData<T>);
 
 #[derive(Default)]
-pub(crate) struct CountedKeepAlive {
+pub struct CountedKeepAlive {
     pub keep_alive: KeepAlive,
     pub ref_count: u32,
 }

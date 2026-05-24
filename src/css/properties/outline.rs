@@ -8,7 +8,7 @@ pub(crate) type Outline = GenericBorder<OutlineStyle, 11>;
 // to implement the domain protocol — in Rust the protocol is a trait and we derive it.
 // `implementEql`/`implementDeepClone` are field-iteration eq/clone → `#[derive(PartialEq, Clone)]`.
 #[derive(Clone, PartialEq, Eq, crate::Parse, crate::ToCss)]
-pub(crate) enum OutlineStyle {
+pub enum OutlineStyle {
     /// The `auto` keyword.
     Auto,
     /// A value equivalent to the `border-style` property.

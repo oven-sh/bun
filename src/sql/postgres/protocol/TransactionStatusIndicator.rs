@@ -4,7 +4,7 @@
 // associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub(crate) struct TransactionStatusIndicator(pub u8);
+pub struct TransactionStatusIndicator(pub u8);
 
 impl TransactionStatusIndicator {
     /// if idle (not in a transaction block)

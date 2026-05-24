@@ -17,7 +17,7 @@ pub(crate) type LoopDataMutex = u32;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C handle from `us_internal_create_async`.
-    pub(crate) struct us_internal_async;
+    pub struct us_internal_async;
 }
 
 #[repr(C)]

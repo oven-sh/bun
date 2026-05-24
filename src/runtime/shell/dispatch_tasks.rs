@@ -151,7 +151,7 @@ impl ShellCondExprStatTask {
 }
 
 /// Spec: `Interpreter.Expansion.ShellGlobTask.Err`.
-pub(crate) enum ShellGlobErr {
+pub enum ShellGlobErr {
     Syscall(bun_sys::Error),
     Unknown(bun_core::Error),
 }

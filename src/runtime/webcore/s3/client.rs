@@ -563,7 +563,7 @@ pub(crate) fn writable_stream(
     Ok(sink.to_js(global_this))
 }
 
-pub(crate) struct S3UploadStreamWrapper {
+pub struct S3UploadStreamWrapper {
     // intrusive ref_count — bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) → bun_ptr::IntrusiveRc<Self>
     pub ref_count: core::cell::Cell<u32>,
 

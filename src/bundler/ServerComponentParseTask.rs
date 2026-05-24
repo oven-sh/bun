@@ -42,7 +42,7 @@ pub(crate) struct ServerComponentParseTask {
 // `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
 // would leak. The size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum Data {
+pub enum Data {
     /// Generate server-side code for a "use client" module. Given the
     /// client ast, a "reference proxy" is created with identical exports.
     ClientReferenceProxy(ReferenceProxy),
@@ -50,12 +50,12 @@ pub(crate) enum Data {
     ClientEntryWrapper(ClientEntryWrapper),
 }
 
-pub(crate) struct ReferenceProxy {
+pub struct ReferenceProxy {
     pub other_source: Source,
     pub named_exports: NamedExports,
 }
 
-pub(crate) struct ClientEntryWrapper {
+pub struct ClientEntryWrapper {
     // TODO(port): lifetime — Zig `[]const u8` borrowed from caller; never freed in this file.
     pub path: Box<[u8]>,
 }

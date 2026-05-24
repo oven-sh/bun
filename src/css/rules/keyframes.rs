@@ -130,7 +130,7 @@ impl KeyframesName {
 // KeyframeSelector
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) enum KeyframeSelector {
+pub enum KeyframeSelector {
     /// An explicit percentage.
     Percentage(Percentage),
     /// The `from` keyword. Equivalent to 0%.
@@ -207,7 +207,7 @@ impl KeyframeSelector {
 /// An individual keyframe within an `@keyframes` rule.
 ///
 /// See [KeyframesRule](KeyframesRule).
-pub(crate) struct Keyframe {
+pub struct Keyframe {
     /// A list of keyframe selectors to associate with the declarations in this keyframe.
     pub selectors: ArrayList<KeyframeSelector>,
     /// The declarations for this keyframe.
@@ -236,7 +236,7 @@ impl Keyframe {
 // KeyframesRule
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct KeyframesRule {
+pub struct KeyframesRule {
     /// The animation name.
     /// <keyframes-name> = <custom-ident> | <string>
     pub name: KeyframesName,

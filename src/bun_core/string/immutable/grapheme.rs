@@ -9,7 +9,7 @@ use super::grapheme_tables;
 /// which are assumed to be handled externally.
 #[repr(u8)] // Zig: enum(u5) — Rust has no u5 repr; values fit in 5 bits
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum GraphemeBreakNoControl {
+pub enum GraphemeBreakNoControl {
     Other,
     Prepend,
     RegionalIndicator,
@@ -87,7 +87,7 @@ impl BreakState {
 /// stage1 maps high byte → stage2 offset (u16)
 /// stage2 maps to stage3 index (u8, max 255 unique values)
 /// stage3 stores the actual element values
-pub(crate) struct Tables<Elem: 'static> {
+pub struct Tables<Elem: 'static> {
     pub stage1: &'static [u16],
     pub stage2: &'static [u8],
     pub stage3: &'static [Elem],

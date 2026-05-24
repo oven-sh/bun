@@ -140,7 +140,7 @@ impl Flags {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum ModuleInfoError {
+pub enum ModuleInfoError {
     #[error("BadModuleInfo")]
     BadModuleInfo,
 }
@@ -168,7 +168,7 @@ pub struct ModuleInfoDeserialized {
     pub owner: Owner,
 }
 
-pub(crate) enum Owner {
+pub enum Owner {
     /// `Box<ModuleInfo>` whose internal vectors back the raw slice fields.
     ModuleInfo(*mut ModuleInfo),
     AllocatedSlice {

@@ -56,7 +56,7 @@ bun_core::named_error_set!(Error);
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub(crate) enum Action {
+pub enum Action {
     Added = w::FILE_ACTION_ADDED,
     Removed = w::FILE_ACTION_REMOVED,
     Modified = w::FILE_ACTION_MODIFIED,

@@ -56,7 +56,7 @@ pub struct Patch {
 }
 
 #[derive(Default)]
-pub(crate) struct Summary {
+pub struct Summary {
     pub fail: u32,
     pub success: u32,
     pub skipped: u32,
@@ -70,7 +70,7 @@ pub(crate) struct Summary {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, enum_map::Enum)]
-pub(crate) enum Method {
+pub enum Method {
     Clonefile,
 
     /// Slower than clonefile
@@ -176,7 +176,7 @@ impl Method {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct Failure {
+pub struct Failure {
     pub err: bun_core::Error,
     pub step: Step,
     #[cfg(debug_assertions)]
@@ -191,7 +191,7 @@ impl Failure {
     }
 }
 
-pub(crate) enum InstallResult {
+pub enum InstallResult {
     Success,
     Failure(Box<Failure>),
 }
@@ -494,7 +494,7 @@ impl<TaskType> NewTaskQueue<TaskType> {
 }
 
 // TODO(port): helper trait so `NewTaskQueue::push` can reach the intrusive `.task` field generically.
-pub(crate) trait HasWorkPoolTask {
+pub trait HasWorkPoolTask {
     fn task(&mut self) -> &mut WorkPoolTask;
 }
 

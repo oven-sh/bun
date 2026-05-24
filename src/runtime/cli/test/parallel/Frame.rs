@@ -56,7 +56,7 @@ pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 /// then flush in a single write so partial reads on the other side never see a
 /// torn header.
 #[derive(Default)]
-pub(crate) struct Frame {
+pub struct Frame {
     buf: Vec<u8>,
 }
 
@@ -115,7 +115,7 @@ impl Frame {
 // `deinit` dropped: `Vec<u8>` frees on Drop.
 
 /// Payload reader; bounds-checked, returns zero/empty on truncation.
-pub(crate) struct Reader<'a> {
+pub struct Reader<'a> {
     // TODO(port): lifetime — borrowed cursor over caller-owned payload slice
     pub p: &'a [u8],
 }

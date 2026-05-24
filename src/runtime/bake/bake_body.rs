@@ -299,7 +299,7 @@ impl StringRefList {
 }
 
 #[derive(Default)]
-pub(crate) struct SplitBundlerOptions {
+pub struct SplitBundlerOptions {
     pub plugin: Option<NonNull<Plugin>>,
     pub client: BuildConfigSubset,
     pub server: BuildConfigSubset,
@@ -1346,7 +1346,7 @@ impl Framework {
 }
 
 #[derive(Clone)]
-pub(crate) struct FileSystemRouterType {
+pub struct FileSystemRouterType {
     pub root: &'static [u8],
     pub prefix: &'static [u8],
     pub entry_server: &'static [u8],
@@ -1359,7 +1359,7 @@ pub(crate) struct FileSystemRouterType {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum BuiltInModule {
+pub enum BuiltInModule {
     Import(&'static [u8]),
     Code(&'static [u8]),
 }

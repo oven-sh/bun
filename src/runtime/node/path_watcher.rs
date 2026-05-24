@@ -203,7 +203,7 @@ impl PathWatcherManager {
 // PathWatcher
 // ────────────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct PathWatcher {
+pub struct PathWatcher {
     manager: Option<&'static PathWatcherManager>,
 
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
@@ -278,7 +278,7 @@ impl ChangeEvent {
     }
 }
 
-pub(crate) type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
+pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 
 impl PathWatcher {

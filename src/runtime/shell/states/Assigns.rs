@@ -16,7 +16,7 @@ pub enum AssignCtx {
     Exported,
 }
 
-pub(crate) struct Assigns {
+pub struct Assigns {
     pub base: Base,
     /// Points into the AST arena, which outlives every state node — `RawSlice`
     /// invariant.
@@ -27,7 +27,7 @@ pub(crate) struct Assigns {
 }
 
 #[derive(Default)]
-pub(crate) enum AssignsState {
+pub enum AssignsState {
     #[default]
     Idle,
     Expanding {

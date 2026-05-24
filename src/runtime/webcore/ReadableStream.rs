@@ -20,7 +20,7 @@ pub struct ReadableStream {
 
 // ─── ReadableStream::Strong ──────────────────────────────────────────────────
 
-pub(crate) struct Strong {
+pub struct Strong {
     held: bun_jsc::strong::Optional, // jsc.Strong.Optional = .empty
 }
 

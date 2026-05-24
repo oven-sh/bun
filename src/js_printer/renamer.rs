@@ -57,7 +57,7 @@ const SLOT_NAMESPACES: [SlotNamespace; 4] = [
 /// allocation on insert and no free on the per-scope drop in the renamer's
 /// pool walkback. Same shape as Zig's `StringHashMapUnmanaged([]const u8, u32)`.
 #[derive(Clone, Copy)]
-pub(crate) struct NameKey(NameStr);
+pub struct NameKey(NameStr);
 
 impl NameKey {
     #[inline]
@@ -96,7 +96,7 @@ impl core::borrow::Borrow<[u8]> for NameKey {
 pub(crate) type NameCountMap =
     bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
 
-pub(crate) struct NoOpRenamer<'a> {
+pub struct NoOpRenamer<'a> {
     // PORT NOTE: Zig `Symbol.Map` is a non-owning `BabyList(BabyList(Symbol))`
     // slice header passed by value (renamer.zig:2,126,452 — no `deinit` ever
     // frees it). In the Rust port `symbol::Map` is `Vec<Vec<Symbol>>` (owning).
@@ -187,7 +187,7 @@ impl<'r, 'src> Renamer<'r, 'src> {
 // storage). No explicit deinit needed.
 
 #[derive(Clone, Copy)]
-pub(crate) struct SymbolSlot {
+pub struct SymbolSlot {
     // Most minified names are under 15 bytes
     // Instead of allocating a string for every symbol slot
     // We can store the string inline!
@@ -211,7 +211,7 @@ impl Default for SymbolSlot {
 pub(crate) type SymbolSlotList = EnumMap<symbol::SlotNamespace, Vec<SymbolSlot>>;
 
 #[derive(Clone, Copy, Default)]
-pub(crate) struct InlineString {
+pub struct InlineString {
     pub bytes: [u8; 15],
     pub len: u8,
 }
@@ -240,7 +240,7 @@ impl InlineString {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum TinyString {
+pub enum TinyString {
     InlineString(InlineString),
     // Arena-owned slice when len > 15 (allocated from `MinifyRenamer.arena`).
     String(NameStr),
@@ -885,7 +885,7 @@ impl NameUse {
     }
 }
 
-pub(crate) enum UnusedName {
+pub enum UnusedName {
     NoCollision,
     Renamed(NameStr),
 }

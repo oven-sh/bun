@@ -1517,14 +1517,14 @@ pub use bun_bundler::transpiler::BunPluginTarget;
 
 // PORT NOTE: no `Default` derive — Zig's `code: jsc.Node.ErrorCode` has NO default
 // (only `errno`/`name` default to null). Callers must always supply `code`.
-pub(crate) struct SysErrOptions {
+pub struct SysErrOptions {
     pub code: NodeErrorCode,
     pub errno: Option<i32>,
     pub name: Option<&'static [u8]>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum ThreadKind {
+pub enum ThreadKind {
     Main,
     Other,
 }

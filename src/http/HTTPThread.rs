@@ -221,7 +221,7 @@ impl HeapRequestBodyBuffer {
     }
 }
 
-pub(crate) enum RequestBodyBuffer {
+pub enum RequestBodyBuffer {
     // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
     Heap(Option<Box<HeapRequestBodyBuffer>>),
     // PERF(port): was std.heap.StackFallbackAllocator(32KB) — inline stack buffer with heap fallback.
@@ -258,7 +258,7 @@ impl RequestBodyBuffer {
     }
 }
 
-pub(crate) struct WriteMessage {
+pub struct WriteMessage {
     pub async_http_id: u32,
     pub kind: WriteMessageType,
 }
@@ -270,15 +270,15 @@ pub enum WriteMessageType {
     End = 1,
 }
 
-pub(crate) struct DrainMessage {
+pub struct DrainMessage {
     pub async_http_id: u32,
 }
 
-pub(crate) struct ShutdownMessage {
+pub struct ShutdownMessage {
     pub async_http_id: u32,
 }
 
-pub(crate) struct LibdeflateState {
+pub struct LibdeflateState {
     pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
     pub shared_buffer: [u8; 512 * 1024],
 }

@@ -196,7 +196,7 @@ impl<'a> Context<'a> {
 }
 
 #[derive(Clone)]
-pub(crate) struct BundledDep {
+pub struct BundledDep {
     pub name: Box<[u8]>,
     pub was_packed: bool,
     pub from_root_package_json: bool,
@@ -3599,7 +3599,7 @@ pub struct Pattern {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub(crate) struct PatternFlags: u8 {
+    pub struct PatternFlags: u8 {
         /// beginning or middle slash (leading slash was trimmed)
         const REL_PATH = 1 << 0;
         /// can only match directories (had an ending slash, also trimmed)

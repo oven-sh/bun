@@ -5,7 +5,7 @@ use crate::{PrintErr, Printer};
 ///
 /// Note that only the `url-prefix()` function with no arguments is supported, and only the `-moz` prefix
 /// is allowed since Firefox was the only browser that ever implemented this rule.
-pub(crate) struct MozDocumentRule<R> {
+pub struct MozDocumentRule<R> {
     /// Nested rules within the `@-moz-document` rule.
     pub rules: CssRuleList<R>,
     /// The location of the rule in the source file.

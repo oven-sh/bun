@@ -15,13 +15,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub(crate) struct Rm {
+pub struct Rm {
     pub opts: Opts,
     pub state: RmState,
 }
 
 #[derive(Default)]
-pub(crate) enum RmState {
+pub enum RmState {
     #[default]
     Idle,
     ParseOpts {
@@ -37,7 +37,7 @@ pub(crate) enum RmState {
     Err(ExitCode),
 }
 
-pub(crate) struct ExecState {
+pub struct ExecState {
     /// Index into argv where filepath args start.
     pub args_start: usize,
     pub total_tasks: usize,
@@ -57,7 +57,7 @@ impl ExecState {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Opts {
+pub struct Opts {
     /// `--no-preserve-root` / `--preserve-root` — if false, allow recursive
     /// removal of `/`.
     pub preserve_root: bool,
@@ -625,7 +625,7 @@ impl Rm {
 /// separator the user is using and prefer that. If both are used, pick the
 /// first one.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum JoinStyle {
+pub enum JoinStyle {
     Posix,
     Windows,
 }

@@ -42,7 +42,7 @@ mod group_log {
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]
-pub(crate) enum Mode {
+pub enum Mode {
     #[strum(serialize = "describe")]
     Describe,
     #[strum(serialize = "test")]
@@ -523,7 +523,7 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-pub(crate) struct ParseArgumentsResult {
+pub struct ParseArgumentsResult {
     pub description: Option<Vec<u8>>,
     pub callback: Option<JSValue>,
     pub options: ParseArgumentsOptions,
@@ -531,26 +531,26 @@ pub(crate) struct ParseArgumentsResult {
 // PORT NOTE: Zig `deinit` only freed `description`; `Vec<u8>` drops automatically.
 
 #[derive(Default, Clone, Copy)]
-pub(crate) struct ParseArgumentsOptions {
+pub struct ParseArgumentsOptions {
     pub timeout: u32,
     pub retry: Option<u32>,
     pub repeats: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum CallbackMode {
+pub enum CallbackMode {
     Require,
     Allow,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum FunctionKind {
+pub enum FunctionKind {
     TestOrDescribe,
     Hook,
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct ParseArgumentsCfg {
+pub struct ParseArgumentsCfg {
     pub callback: CallbackMode,
     pub kind: FunctionKind,
 }

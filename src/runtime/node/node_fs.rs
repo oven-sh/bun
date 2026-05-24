@@ -1431,7 +1431,7 @@ mod _async_tasks {
     // port flattens builtins under `crate::shell::builtins::*`. The
     // `cp_on_copy`/`cp_on_finish` hooks are inherent methods on that type
     // (cp.rs), called directly below — no trait indirection.
-    type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
+    pub(crate) type ShellCpTask = crate::shell::builtins::cp::ShellCpTask;
 
     pub struct NewAsyncCpTask<const IS_SHELL: bool> {
         pub promise: JSPromiseStrong,

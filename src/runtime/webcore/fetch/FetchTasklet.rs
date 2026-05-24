@@ -55,7 +55,7 @@ pub(crate) type ResumableSink = ResumableFetchSink;
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = FetchTasklet::deinit)]
-pub(crate) struct FetchTasklet {
+pub struct FetchTasklet {
     // PORT NOTE: ResumableSink is intrusively refcounted (`ref_count: Cell<u32>` +
     // heap::alloc); `Arc` can't be mutably borrowed for `cancel/drain`, so model
     // as a raw pointer like Zig's `?*ResumableSink`.

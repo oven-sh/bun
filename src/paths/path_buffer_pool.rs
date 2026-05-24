@@ -29,7 +29,7 @@ thread_local! {
     static U16_POOL: RefCell<Vec<Box<WPathBuffer>>> = const { RefCell::new(Vec::new()) };
 }
 
-pub(crate) trait PoolStorage: Sized + Default + 'static {
+pub trait PoolStorage: Sized + Default + 'static {
     fn with_pool<R>(f: impl FnOnce(&RefCell<Vec<Box<Self>>>) -> R) -> R;
     /// Allocate a fresh boxed buffer. Implemented per concrete type so the
     /// `assume_init` SAFETY obligation is discharged monomorphically (the

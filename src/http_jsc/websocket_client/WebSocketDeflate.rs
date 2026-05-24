@@ -105,7 +105,7 @@ pub type WebSocketDeflate = PerMessageDeflate;
 /// error type.
 pub type Error = DecompressError;
 
-pub(crate) struct PerMessageDeflate {
+pub struct PerMessageDeflate {
     pub compress_stream: zlib::z_stream,
     pub decompress_stream: zlib::z_stream,
     pub params: Params,

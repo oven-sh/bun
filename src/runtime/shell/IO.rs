@@ -58,7 +58,7 @@ impl IO {
 }
 
 #[derive(Clone, Default)]
-pub(crate) enum InKind {
+pub enum InKind {
     Fd(std::sync::Arc<IOReader>),
     #[default]
     Ignore,
@@ -76,7 +76,7 @@ impl fmt::Display for InKind {
 /// Write to a file descriptor (via `IOWriter`), tee into a captured buffer,
 /// pipe to a subprocess, or drop.
 #[derive(Clone, Default)]
-pub(crate) enum OutKind {
+pub enum OutKind {
     Fd(OutFd),
     Pipe,
     #[default]
@@ -87,7 +87,7 @@ pub(crate) enum OutKind {
 // `ShellExecEnv::_buffered_{stdout,stderr}`; the env owns the Vec. `writer`
 // is `Arc` so it ref-counts on clone.
 #[derive(Clone)]
-pub(crate) struct OutFd {
+pub struct OutFd {
     pub writer: std::sync::Arc<IOWriter>,
     /// If set, also append every chunk to this buffer (the JS-side captured
     /// stdout/stderr). Points into `ShellExecEnv::_buffered_{stdout,stderr}`.

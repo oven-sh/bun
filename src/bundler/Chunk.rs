@@ -32,7 +32,7 @@ use crate::{
 
 use crate::IndexInt;
 
-pub(crate) struct ChunkImport {
+pub struct ChunkImport {
     pub chunk_index: u32,
     pub import_kind: ImportKind,
 }
@@ -395,7 +395,7 @@ pub enum IntermediateOutput {
 /// use-after-poison in `generate_isolated_hash`). Keep the box alive next to
 /// the pieces so their raw-pointer slices remain valid for the chunk's
 /// lifetime.
-pub(crate) struct OutputPieces {
+pub struct OutputPieces {
     pieces: Vec<OutputPiece>,
     /// Backing storage for every `OutputPiece::data` in `pieces`.
     /// Never read directly — only pins the allocation.
@@ -1139,7 +1139,7 @@ impl Query {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum QueryKind {
+pub enum QueryKind {
     /// The last piece in an array uses this to indicate it is just data
     None = 0,
     /// Given a source index, print the asset's output
@@ -1336,7 +1336,7 @@ impl Drop for CssChunk {
 /// the Zig-spelled name, so re-export it here.
 pub type CssImportKind = CssImportOrderKind;
 
-pub(crate) struct CssImportOrder {
+pub struct CssImportOrder {
     pub conditions: Vec<bun_css::ImportConditions>,
     pub condition_import_records: Vec<ImportRecord>,
 
@@ -1358,7 +1358,7 @@ impl Drop for CssImportOrder {
 }
 
 #[derive(strum::IntoStaticStr)]
-pub(crate) enum CssImportOrderKind {
+pub enum CssImportOrderKind {
     /// Represents earlier imports that have been made redundant by later ones (see `isConditionalImportRedundant`)
     /// We don't want to redundantly print the rules of these redundant imports
     /// BUT, the imports may include layers.
@@ -1376,7 +1376,7 @@ pub(crate) enum CssImportOrderKind {
 // `std::borrow::Cow<'_, Vec<_>>` requires `Vec: Clone` (not implemented). Port the
 // Zig `bun.ptr.Cow` shape directly: a tag + raw pointer for the borrowed arm. Should
 // thread `'bump` (arena-borrowed) and confirm Clone semantics match deepCloneInfallible.
-pub(crate) enum Layers {
+pub enum Layers {
     /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
     Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
     Owned(Vec<bun_css::LayerName>),

@@ -120,7 +120,7 @@ impl Listener {
 }
 
 #[derive(Clone)]
-pub(crate) enum UnixOrHost {
+pub enum UnixOrHost {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
     Fd(Fd),
@@ -1586,7 +1586,7 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 }
 
 #[cfg(windows)]
-pub(crate) struct WindowsNamedPipeListeningContext {
+pub struct WindowsNamedPipeListeningContext {
     pub uv_pipe: uv::Pipe,
     /// BACKREF: the parent `Listener` heap-allocated this context in
     /// `listen_named_pipe` and outlives it (cleared to `None` in
@@ -1602,7 +1602,7 @@ pub(crate) struct WindowsNamedPipeListeningContext {
 }
 
 #[cfg(not(windows))]
-pub(crate) struct WindowsNamedPipeListeningContext {
+pub struct WindowsNamedPipeListeningContext {
     _priv: (),
 }
 

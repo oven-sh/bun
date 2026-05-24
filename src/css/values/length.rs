@@ -12,7 +12,7 @@ use core::cmp::Ordering;
 
 /// Either a [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) or a [`<number>`](https://www.w3.org/TR/css-values-4/#numbers).
 #[derive(Clone, PartialEq, css::Parse, css::ToCss)]
-pub(crate) enum LengthOrNumber {
+pub enum LengthOrNumber {
     /// A number.
     Number(CSSNumber),
     /// A length.
@@ -93,7 +93,7 @@ macro_rules! define_length_units {
         ),* $(,)?
     ) => {
         #[derive(Clone, Copy, Debug, crate::generics::CssEql, crate::generics::CssHash, crate::generics::DeepClone)]
-        pub(crate) enum LengthValue {
+        pub enum LengthValue {
             $(
                 $(#[$doc])*
                 $variant(CSSNumber),
@@ -405,7 +405,7 @@ impl PartialEq for LengthValue {
 
 /// A CSS [`<length>`](https://www.w3.org/TR/css-values-4/#lengths) value, with support for `calc()`.
 #[derive(Clone, PartialEq, css::ToCss)]
-pub(crate) enum Length {
+pub enum Length {
     /// An explicitly specified length value.
     Value(LengthValue),
     /// A computed length value using `calc()`.

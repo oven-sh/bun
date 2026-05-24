@@ -44,7 +44,7 @@ impl Drop for Query {
     }
 }
 
-pub(crate) struct QueryFormatter<'a> {
+pub struct QueryFormatter<'a> {
     query: &'a Query,
     buffer: &'a [u8],
 }
@@ -174,7 +174,7 @@ impl Clone for List {
     }
 }
 
-pub(crate) struct ListFormatter<'a> {
+pub struct ListFormatter<'a> {
     list: &'a List,
     buffer: &'a [u8],
 }

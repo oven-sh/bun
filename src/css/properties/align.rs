@@ -21,7 +21,7 @@ use crate::css_properties::flex::{
 // Zig: `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss` —
 // comptime-reflection generators ported as proc-macro derives.
 #[derive(css::Parse, css::ToCss)]
-pub(crate) enum AlignContent {
+pub enum AlignContent {
     /// Default alignment.
     Normal,
     /// A baseline position.
@@ -39,7 +39,7 @@ pub(crate) enum AlignContent {
 // `__inner.to_css(dest)` then resolves to this generated inherent.
 #[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
-pub(crate) struct AlignContentContentPosition {
+pub struct AlignContentContentPosition {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
     /// A content position keyword.
@@ -67,7 +67,7 @@ impl AlignContentContentPosition {
 /// A [`<baseline-position>`](https://www.w3.org/TR/css-align-3/#typedef-baseline-position) value,
 /// as used in the alignment properties.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BaselinePosition {
+pub enum BaselinePosition {
     /// The first baseline.
     First,
     /// The last baseline.
@@ -107,7 +107,7 @@ impl BaselinePosition {
 
 /// A value for the [justify-content](https://www.w3.org/TR/css-align-3/#propdef-justify-content) property.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) enum JustifyContent {
+pub enum JustifyContent {
     /// Default justification.
     Normal,
     /// A content distribution keyword.
@@ -127,7 +127,7 @@ pub(crate) enum JustifyContent {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct JustifyContentContentPosition {
+pub struct JustifyContentContentPosition {
     /// A content position keyword.
     pub value: ContentPosition,
     /// An overflow alignment mode.
@@ -213,7 +213,7 @@ impl JustifyContent {
 #[derive(Clone, PartialEq, Eq)]
 // Zig: `css.DeriveParse` / `css.DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
-pub(crate) enum AlignSelf {
+pub enum AlignSelf {
     /// Automatic alignment.
     Auto,
     /// Default alignment.
@@ -229,7 +229,7 @@ pub(crate) enum AlignSelf {
 // Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
 #[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
-pub(crate) struct AlignSelfSelfPosition {
+pub struct AlignSelfSelfPosition {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
     /// A self position keyword.
@@ -260,7 +260,7 @@ impl AlignSelfSelfPosition {
 
 /// A value for the [justify-self](https://www.w3.org/TR/css-align-3/#justify-self-property) property.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) enum JustifySelf {
+pub enum JustifySelf {
     /// Automatic justification.
     Auto,
     /// Default justification.
@@ -284,7 +284,7 @@ pub(crate) enum JustifySelf {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct JustifySelfSelfPosition {
+pub struct JustifySelfSelfPosition {
     /// A self position keyword.
     pub value: SelfPosition,
     /// An overflow alignment mode.
@@ -383,7 +383,7 @@ impl JustifySelf {
 #[derive(Clone, PartialEq, Eq)]
 // Zig: `css.DeriveParse` / `css.DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
-pub(crate) enum AlignItems {
+pub enum AlignItems {
     /// Default alignment.
     Normal,
     /// Items are stretched.
@@ -397,7 +397,7 @@ pub(crate) enum AlignItems {
 // Zig: `__generateToCss` marker — see `AlignContentContentPosition` note.
 #[derive(Clone, PartialEq, Eq, css::ToCss)]
 #[css(generate_to_css)]
-pub(crate) struct AlignItemsSelfPosition {
+pub struct AlignItemsSelfPosition {
     /// An overflow alignment mode.
     pub overflow: Option<OverflowPosition>,
     /// A self position keyword.
@@ -428,7 +428,7 @@ impl AlignItemsSelfPosition {
 
 /// A value for the [justify-items](https://www.w3.org/TR/css-align-3/#justify-items-property) property.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) enum JustifyItems {
+pub enum JustifyItems {
     /// Default justification.
     Normal,
     /// Items are stretched.
@@ -452,7 +452,7 @@ pub(crate) enum JustifyItems {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct JustifyItemsSelfPosition {
+pub struct JustifyItemsSelfPosition {
     /// A self position keyword.
     pub value: SelfPosition,
     /// An overflow alignment mode.
@@ -547,7 +547,7 @@ impl JustifyItems {
 
 /// A legacy justification keyword, as used in the `justify-items` property.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LegacyJustify {
+pub enum LegacyJustify {
     /// Left justify.
     Left,
     /// Right justify.
@@ -607,7 +607,7 @@ impl LegacyJustify {
 #[derive(Clone, PartialEq)]
 // Zig: `css.DeriveParse` / `css.DeriveToCss`
 #[derive(css::Parse, css::ToCss)]
-pub(crate) enum GapValue {
+pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
     Normal,
     /// An explicit length.
@@ -616,7 +616,7 @@ pub(crate) enum GapValue {
 
 /// A value for the [gap](https://www.w3.org/TR/css-align-3/#gap-shorthand) shorthand property.
 #[derive(Clone, PartialEq)]
-pub(crate) struct Gap {
+pub struct Gap {
     /// The row gap.
     pub row: GapValue,
     /// The column gap.
@@ -651,7 +651,7 @@ impl Gap {
 
 /// A value for the [place-items](https://www.w3.org/TR/css-align-3/#place-items-property) shorthand property.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct PlaceItems {
+pub struct PlaceItems {
     /// The item alignment.
     pub align: AlignItems,
     /// The item justification.
@@ -716,7 +716,7 @@ impl PlaceItems {
 
 /// A value for the [place-self](https://www.w3.org/TR/css-align-3/#place-self-property) shorthand property.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct PlaceSelf {
+pub struct PlaceSelf {
     /// The item alignment.
     pub align: AlignSelf,
     /// The item justification.
@@ -781,7 +781,7 @@ impl PlaceSelf {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 // TODO(port): css.DefineEnumProperty — derive-based eql/hash/parse/toCss/deepClone for plain enums.
 #[derive(css::DefineEnumProperty)]
-pub(crate) enum SelfPosition {
+pub enum SelfPosition {
     /// Item is centered within the container.
     #[css(name = "center")]
     Center,
@@ -811,7 +811,7 @@ pub(crate) enum SelfPosition {
 
 /// A value for the [place-content](https://www.w3.org/TR/css-align-3/#place-content) shorthand property.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct PlaceContent {
+pub struct PlaceContent {
     /// The content alignment.
     pub align: AlignContent,
     /// The content justification.
@@ -889,7 +889,7 @@ impl PlaceContent {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 // TODO(port): css.DefineEnumProperty
 #[derive(css::DefineEnumProperty)]
-pub(crate) enum ContentDistribution {
+pub enum ContentDistribution {
     /// Items are spaced evenly, with the first and last items against the edge of the container.
     #[css(name = "space-between")]
     SpaceBetween,
@@ -908,7 +908,7 @@ pub(crate) enum ContentDistribution {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 // TODO(port): css.DefineEnumProperty
 #[derive(css::DefineEnumProperty)]
-pub(crate) enum OverflowPosition {
+pub enum OverflowPosition {
     /// If the size of the alignment subject overflows the alignment container,
     /// the alignment subject is instead aligned as if the alignment mode were start.
     #[css(name = "safe")]
@@ -923,7 +923,7 @@ pub(crate) enum OverflowPosition {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 // TODO(port): css.DefineEnumProperty
 #[derive(css::DefineEnumProperty)]
-pub(crate) enum ContentPosition {
+pub enum ContentPosition {
     /// Content is centered within the container.
     #[css(name = "center")]
     Center,
@@ -966,7 +966,7 @@ pub(crate) struct ContentPositionInner {
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub(crate) struct AlignHandler {
+pub struct AlignHandler {
     pub align_content: Option<(AlignContent, VendorPrefix)>,
     pub flex_line_pack: Option<(FlexLinePack, VendorPrefix)>,
     pub justify_content: Option<(JustifyContent, VendorPrefix)>,

@@ -36,7 +36,7 @@ pub struct Cmd {
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub(crate) enum CmdState {
+pub enum CmdState {
     #[default]
     Idle,
     ExpandingAssigns,
@@ -52,7 +52,7 @@ pub(crate) enum CmdState {
 }
 
 #[derive(Default)]
-pub(crate) enum Exec {
+pub enum Exec {
     #[default]
     None,
     Builtin(Box<Builtin>),
@@ -72,7 +72,7 @@ impl Cmd {
 }
 
 /// Spec: Cmd.zig `Exec.subproc` anonymous struct.
-pub(crate) struct SubprocExec {
+pub struct SubprocExec {
     pub child: *mut ShellSubprocess,
     pub buffered_closed: BufferedIoClosed,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
@@ -92,14 +92,14 @@ pub(crate) struct SubprocExec {
 /// completion. `Some(state)` means it was piped and must reach `Closed` before
 /// [`Cmd::has_finished`] returns true.
 #[derive(Default)]
-pub(crate) struct BufferedIoClosed {
+pub struct BufferedIoClosed {
     pub stdin: Option<bool>,
     pub stdout: Option<BufferedIoState>,
     pub stderr: Option<BufferedIoState>,
 }
 
 #[derive(Default)]
-pub(crate) enum BufferedIoState {
+pub enum BufferedIoState {
     #[default]
     Open,
     Closed(Vec<u8>),

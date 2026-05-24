@@ -47,18 +47,18 @@ fn signal_name(raw: u8) -> &'static str {
     bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")
 }
 
-pub(crate) struct PackagePath {
+pub struct PackagePath {
     pkg_path: Box<[PackageID]>,
     dep_path: Box<[DependencyID]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub(crate) enum SecurityAdvisoryLevel {
+pub enum SecurityAdvisoryLevel {
     Fatal,
     Warn,
 }
 
-pub(crate) struct SecurityAdvisory {
+pub struct SecurityAdvisory {
     pub level: SecurityAdvisoryLevel,
     pub package: Box<[u8]>,
     pub url: Option<Box<[u8]>>,

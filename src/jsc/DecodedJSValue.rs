@@ -10,7 +10,7 @@ pub struct DecodedJSValue {
 /// ABI-compatible with `JSC::EncodedValueDescriptor`.
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub(crate) union EncodedValueDescriptor {
+pub union EncodedValueDescriptor {
     pub as_int64: i64,
     pub ptr: *mut JSCell,
     pub as_bits: AsBits,
@@ -18,7 +18,7 @@ pub(crate) union EncodedValueDescriptor {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub(crate) struct AsBits {
+pub struct AsBits {
     pub payload: i32,
     pub tag: i32,
 }

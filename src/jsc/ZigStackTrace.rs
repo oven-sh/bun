@@ -133,7 +133,7 @@ impl ZigStackTrace {
     }
 }
 
-pub(crate) struct SourceLineIterator<'a> {
+pub struct SourceLineIterator<'a> {
     pub trace: &'a ZigStackTrace,
     pub i: i32,
 }

@@ -20,7 +20,7 @@ pub(crate) type Hash = u32;
 pub type Map =
     bun_collections::HashMap<Hash, *mut RefString, bun_collections::IdentityContext<Hash>>;
 
-pub(crate) type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
+pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 
 pub struct RefString {
     pub ptr: *const u8,

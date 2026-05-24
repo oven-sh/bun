@@ -22,7 +22,7 @@ pub enum ImplementationVisibility {
 // so a Rust `#[repr(u8)] enum` would be UB for unknown values. Use a newtype.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) struct Intrinsic(u8);
+pub struct Intrinsic(u8);
 
 impl Intrinsic {
     pub(crate) const NONE: Intrinsic = Intrinsic(0);

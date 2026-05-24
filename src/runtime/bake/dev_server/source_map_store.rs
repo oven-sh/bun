@@ -22,7 +22,7 @@ use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
-pub(crate) struct Key(pub u64);
+pub struct Key(pub u64);
 impl Key {
     #[inline]
     pub(crate) const fn init(v: u64) -> Self {

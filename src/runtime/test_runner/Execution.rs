@@ -92,7 +92,7 @@ pub struct Execution {
     pub group_index: usize,
 }
 
-pub(crate) struct ConcurrentGroup {
+pub struct ConcurrentGroup {
     pub sequence_start: usize,
     pub sequence_end: usize,
     /// Index of the next sequence that has not been started yet
@@ -136,13 +136,13 @@ impl ConcurrentGroup {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExpectAssertions {
+pub enum ExpectAssertions {
     NotSet,
     AtLeastOne,
     Exact(u32),
 }
 
-pub(crate) struct ExecutionSequence {
+pub struct ExecutionSequence {
     pub first_entry: Option<NonNull<ExecutionEntry>>,
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
     pub active_entry: Option<NonNull<ExecutionEntry>>,
@@ -162,7 +162,7 @@ pub(crate) struct ExecutionSequence {
 }
 
 #[derive(Clone, Copy, Default)]
-pub(crate) struct FlakyAttempt {
+pub struct FlakyAttempt {
     pub result: Result,
     pub elapsed_ns: u64,
 }
@@ -228,7 +228,7 @@ pub enum Result {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Basic {
+pub enum Basic {
     Pending,
     Pass,
     Fail,
@@ -237,7 +237,7 @@ pub(crate) enum Basic {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PendingIs {
+pub enum PendingIs {
     PendingIsPass,
     PendingIsFail,
 }

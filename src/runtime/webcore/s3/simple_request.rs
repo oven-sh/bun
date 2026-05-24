@@ -29,7 +29,7 @@ use crate::webcore::s3::list_objects;
 // reshaping proves cleaner.
 
 #[derive(Default)]
-pub(crate) struct S3StatSuccess<'a> {
+pub struct S3StatSuccess<'a> {
     pub size: usize,
     /// etag is not owned and need to be copied if used after this callback
     pub etag: &'a [u8],
@@ -96,14 +96,14 @@ pub enum S3ListObjectsResult<'a> {
 }
 
 // commit result also fails if status 200 but with body containing an Error
-pub(crate) enum S3CommitResult<'a> {
+pub enum S3CommitResult<'a> {
     Success,
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
 }
 
 // commit result also fails if status 200 but with body containing an Error
-pub(crate) enum S3PartResult<'a> {
+pub enum S3PartResult<'a> {
     Etag(&'a [u8]),
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -171,7 +171,7 @@ impl Default for S3HttpSimpleTask {
 // Re-export the canonical alias so sibling modules that imported it from here keep compiling.
 pub use bun_jsc::JsTerminatedResult;
 
-pub(crate) enum Callback {
+pub enum Callback {
     Stat(fn(S3StatResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
     Download(fn(S3DownloadResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
     Upload(fn(S3UploadResult<'_>, *mut c_void) -> JsTerminatedResult<()>),
@@ -528,7 +528,7 @@ pub type Options<'a> = S3SimpleRequestOptions<'a>;
 pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
 pub(crate) type S3Callback = Callback;
 
-pub(crate) struct S3SimpleRequestOptions<'a> {
+pub struct S3SimpleRequestOptions<'a> {
     // signing options
     pub path: &'a [u8],
     pub method: Method,

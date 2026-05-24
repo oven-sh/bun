@@ -11,13 +11,13 @@ type Dmp = diff_match_patch::DiffMatchPatch<u8>;
 type DmpUsize = diff_match_patch::DiffMatchPatch<usize>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
+pub enum Mode {
     BgDiffOnly,
     Fg,
 }
 const MODE: Mode = Mode::BgDiffOnly;
 
-pub(crate) struct DiffConfig {
+pub struct DiffConfig {
     pub min_bytes_before_chunking: usize,
     pub chunk_context_lines: usize,
     pub enable_ansi_colors: bool,
@@ -288,7 +288,7 @@ mod styles {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DiffSegmentMode {
+pub enum DiffSegmentMode {
     Equal,
     Removed,
     Inserted,
@@ -298,7 +298,7 @@ pub(crate) enum DiffSegmentMode {
 // TODO(port): lifetime — `removed`/`inserted` borrow from caller input and diff_match_patch output;
 // in Zig these were arena-backed slices. Revisit ownership.
 #[derive(Copy, Clone)]
-pub(crate) struct DiffSegment<'a> {
+pub struct DiffSegment<'a> {
     pub removed: &'a [u8],
     pub inserted: &'a [u8],
     pub mode: DiffSegmentMode,
@@ -346,7 +346,7 @@ fn print_diff_footer(
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct PrefixStyle {
+pub struct PrefixStyle {
     pub msg: &'static str,
     pub color: &'static str,
 }

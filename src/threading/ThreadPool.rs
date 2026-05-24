@@ -1720,7 +1720,7 @@ pub mod node {
         }
     }
 
-    pub(crate) struct Stole {
+    pub struct Stole {
         pub node: NonNull<Node>,
         pub pushed: bool,
     }

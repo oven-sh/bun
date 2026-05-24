@@ -113,7 +113,7 @@ impl UpgradeClientUnion {
 type WebSocketClient = crate::websocket_client::WebSocket<false>;
 
 #[derive(bun_ptr::CellRefCounted)]
-pub(crate) struct WebSocketProxyTunnel {
+pub struct WebSocketProxyTunnel {
     ref_count: Cell<u32>,
     /// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
     upgrade_client: UpgradeClientUnion,

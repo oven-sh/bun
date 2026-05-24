@@ -10,7 +10,7 @@ pub(crate) fn is_list_item_mark(c: u8) -> bool {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct Autolink {
+pub struct Autolink {
     pub beg: usize,
     pub end: usize,
 }

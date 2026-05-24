@@ -167,7 +167,7 @@ pub struct MultiPartUpload {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum State {
+pub enum State {
     WaitStreamCheck,
     NotStarted,
     MultipartStarted,
@@ -200,7 +200,7 @@ impl MultiPartUpload {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PartState {
+pub enum PartState {
     NotAssigned = 0,
     Pending = 1,
     Started = 2,
@@ -208,7 +208,7 @@ pub(crate) enum PartState {
     Canceled = 4,
 }
 
-pub(crate) struct UploadPart {
+pub struct UploadPart {
     /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
     /// Freed via `free_allocated_slice`. Default is a static empty slice.
     pub data: *const [u8],
@@ -220,7 +220,7 @@ pub(crate) struct UploadPart {
     pub index: u8,
 }
 
-pub(crate) struct UploadPartResult {
+pub struct UploadPartResult {
     pub number: u16,
     pub etag: Box<[u8]>,
 }

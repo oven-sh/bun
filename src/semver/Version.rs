@@ -1243,7 +1243,7 @@ impl Tag {
 }
 
 #[derive(Copy, Clone, Default)]
-pub(crate) struct TagResult {
+pub struct TagResult {
     pub tag: Tag,
     pub len: u32,
 }

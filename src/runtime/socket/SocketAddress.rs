@@ -449,7 +449,7 @@ impl SocketAddress {
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub(crate) enum AddressError {
+pub enum AddressError {
     /// Too long or short to be an IPv4 or IPv6 address.
     #[error("InvalidLength")]
     InvalidLength,
@@ -783,7 +783,7 @@ fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
 #[repr(u16)]
 // TODO(port): repr should be inet::sa_family_t but Rust requires concrete int; sa_family_t is u16 on posix+win
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum AF {
+pub enum AF {
     INET = inet::AF_INET as u16,
     INET6 = inet::AF_INET6 as u16,
 }
@@ -869,7 +869,7 @@ impl AF {
 #[allow(non_camel_case_types)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub(crate) union sockaddr {
+pub union sockaddr {
     pub sin: inet::sockaddr_in,
     pub sin6: inet::sockaddr_in6,
 }

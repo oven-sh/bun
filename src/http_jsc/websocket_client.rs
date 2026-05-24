@@ -2214,7 +2214,7 @@ export_websocket_client!(
 // InitialDataHandler
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct InitialDataHandler<const SSL: bool> {
+pub struct InitialDataHandler<const SSL: bool> {
     pub adopted: Option<NonNull<WebSocket<SSL>>>,
     /// Pending-activity ref taken in `init()`/`init_with_tunnel()`; released
     /// (via `Drop`) when [`handle_without_deinit`] consumes `adopted`.
@@ -2373,7 +2373,7 @@ impl Mask {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub(crate) enum ReceiveState {
+pub enum ReceiveState {
     NeedHeader,
     NeedMask,
     NeedBody,
@@ -2384,8 +2384,6 @@ pub(crate) enum ReceiveState {
     Close,
     Fail,
 }
-
-impl ReceiveState {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // parseWebSocketHeader

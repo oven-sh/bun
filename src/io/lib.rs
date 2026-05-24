@@ -1483,7 +1483,7 @@ pub type FlagsSet = enumset::EnumSet<Flags>;
 // registration is not hot enough for the lost monomorphization to matter.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub(crate) enum ApplyAction {
+pub enum ApplyAction {
     Readable,
     Writable,
     Cancel,
@@ -1822,7 +1822,7 @@ pub type FilePollFlag = PollFlags;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum FilePollKind {
+pub enum FilePollKind {
     Readable,
     Writable,
 }

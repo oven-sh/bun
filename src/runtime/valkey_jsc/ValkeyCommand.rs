@@ -33,7 +33,7 @@ impl<'a> Default for Command<'a> {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) enum Args<'a> {
+pub enum Args<'a> {
     Slices(&'a [Slice]),
     Args(&'a [BlobOrStringOrBuffer]),
     Raw(&'a [&'a [u8]]),

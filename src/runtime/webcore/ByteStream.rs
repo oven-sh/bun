@@ -20,7 +20,7 @@ bun_output::declare_scope!(ByteStream, visible);
 /// The `SourceContext` trait still spells its callbacks `&mut self` (shared
 /// across `ByteBlobLoader` / `FileReader`); the trait impl below auto-derefs
 /// to the `&self` inherent bodies.
-pub(crate) struct ByteStream {
+pub struct ByteStream {
     pub buffer: JsCell<Vec<u8>>,
     pub has_received_last_chunk: Cell<bool>,
     pub pending: JsCell<streams::Pending>,

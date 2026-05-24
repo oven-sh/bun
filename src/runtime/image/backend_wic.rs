@@ -47,7 +47,7 @@ use bun_sys::windows;
 // TODO(port): narrow error set — Zig flat-unions codecs::Error with BackendUnavailable;
 // variants used in this file are inlined here. Reconcile with codecs::Error.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
-pub(crate) enum BackendError {
+pub enum BackendError {
     #[error("BackendUnavailable")]
     BackendUnavailable,
     #[error("DecodeFailed")]

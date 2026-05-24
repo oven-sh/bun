@@ -135,7 +135,7 @@ enum StringLiteralFormat {
 /// Tracks indentation guessing state (only meaningful when
 /// `JSONOptions::guess_indentation`).
 #[derive(Clone, Copy)]
-pub(crate) struct IndentInfo {
+pub struct IndentInfo {
     pub guess: Indentation,
     pub first_newline: bool,
 }

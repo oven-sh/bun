@@ -378,7 +378,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 }
 
 #[derive(Copy, Clone)]
-pub(crate) enum GlobalOrRelative<'a> {
+pub enum GlobalOrRelative<'a> {
     Global(&'a [u8]),
     Relative(dependency::version::Tag),
     CacheFolder(&'a [u8]),

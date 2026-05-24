@@ -19,7 +19,7 @@ use css::VendorPrefix;
 use bun_alloc::Arena as Bump;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum BoxSizing {
+pub enum BoxSizing {
     /// Exclude the margin/border/padding from the width and height.
     ContentBox,
     /// Include the padding and border (but not the margin) in the width and height.
@@ -50,7 +50,7 @@ impl BoxSizing {
 }
 
 #[derive(Clone, PartialEq)]
-pub(crate) enum Size {
+pub enum Size {
     /// The `auto` keyworda
     Auto,
     /// An explicit length or percentage.
@@ -199,7 +199,7 @@ impl Size {
 /// and [maximum](https://drafts.csswg.org/css-sizing-3/#max-size-properties) size properties,
 /// e.g. `min-width` and `max-height`.
 #[derive(Clone, PartialEq)]
-pub(crate) enum MaxSize {
+pub enum MaxSize {
     /// The `none` keyword.
     None,
     /// An explicit length or percentage.
@@ -334,7 +334,7 @@ impl MaxSize {
 
 /// A value for the [aspect-ratio](https://drafts.csswg.org/css-sizing-4/#aspect-ratio) property.
 #[derive(Copy, Clone, PartialEq)]
-pub(crate) struct AspectRatio {
+pub struct AspectRatio {
     /// The `auto` keyword.
     pub auto: bool,
     /// A preferred aspect ratio for the box, specified as width / height.
@@ -391,7 +391,7 @@ fn parse_fit_content(input: &mut css::Parser) -> css::Result<LengthPercentage> {
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-    pub(crate) struct SizeProperty: u16 {
+    pub struct SizeProperty: u16 {
         const WIDTH           = 1 << 0;
         const HEIGHT          = 1 << 1;
         const MIN_WIDTH       = 1 << 2;
@@ -431,7 +431,7 @@ impl SizeProperty {
 }
 
 #[derive(Default)]
-pub(crate) struct SizeHandler {
+pub struct SizeHandler {
     pub width: Option<Size>,
     pub height: Option<Size>,
     pub min_width: Option<Size>,

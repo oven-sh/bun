@@ -27,7 +27,7 @@ pub enum Ctx {
 }
 
 #[derive(Default)]
-pub(crate) struct Disabled;
+pub struct Disabled;
 
 impl Disabled {
     #[inline]

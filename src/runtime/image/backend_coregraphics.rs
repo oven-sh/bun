@@ -11,7 +11,7 @@ use super::codecs;
 
 /// Zig: `pub const BackendError = codecs.Error || error{BackendUnavailable};`
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum BackendError {
+pub enum BackendError {
     #[error("BackendUnavailable")]
     BackendUnavailable,
     // ── from codecs::Error ────────────────────────────────────────────────

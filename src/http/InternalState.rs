@@ -55,7 +55,7 @@ pub struct InternalState<'a> {
 // HTTPClient state machine in lib.rs can use field syntax (`flags.allow_keepalive
 // = true`) directly; restore packing if size ever matters.
 #[derive(Clone, Copy)]
-pub(crate) struct InternalStateFlags {
+pub struct InternalStateFlags {
     pub allow_keepalive: bool,
     pub received_last_chunk: bool,
     pub did_set_content_encoding: bool,
@@ -449,7 +449,7 @@ impl<'a> InternalState<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HTTPStage {
+pub enum HTTPStage {
     Pending,
 
     /// The `onOpen` callback has been called for the first time.

@@ -8,7 +8,7 @@ use bun_sys::{self, Fd, Mode};
 // so this is expressed as a sealed trait whose impls encode each `switch (PathT)` arm.
 // TODO(port): verify callers — if only one input type is ever used per call site, consider
 // monomorphizing into two free fns instead of the trait.
-pub(crate) trait OpenForWritingInput {
+pub trait OpenForWritingInput {
     fn open_for_writing_result(
         &self,
         dir: Fd,

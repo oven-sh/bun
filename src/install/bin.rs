@@ -467,7 +467,7 @@ impl Bin {
 }
 
 #[derive(core::marker::ConstParamTy, PartialEq, Eq)]
-pub(crate) enum ToJsonStyle {
+pub enum ToJsonStyle {
     SingleLine,
     MultiLine,
 }
@@ -702,7 +702,7 @@ impl<'a> NamesIterator<'a> {
 // `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
 // installer outlives no concrete lifetime for its own self-borrowed buffers).
 // `BackRef<Vec<_>>` mirrors the Zig ownership model exactly.
-pub(crate) struct PriorityQueueContext {
+pub struct PriorityQueueContext {
     pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
     pub string_buf: bun_ptr::BackRef<Vec<u8>>,
 }

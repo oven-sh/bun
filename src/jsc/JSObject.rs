@@ -352,7 +352,7 @@ pub trait PojoFields {
 ///
 /// Separate from [`PojoFields`] because that trait encodes; this one does not.
 // TODO(port): proc-macro — implement `#[derive(JSValueFields)]` in bun_jsc.
-pub(crate) trait JSValueFields {
+pub trait JSValueFields {
     /// Invoke `put(field_name, self.<field>)` once per struct field. Fields are
     /// `JSValue` and forwarded as-is.
     fn put_fields(&self, put: impl FnMut(&'static [u8], JSValue) -> JsResult<()>) -> JsResult<()>;

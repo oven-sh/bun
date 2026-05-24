@@ -634,13 +634,13 @@ pub struct ExprListLoc {
 
 pub(crate) const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
 
-pub(crate) struct DeferredImportNamespace {
+pub struct DeferredImportNamespace {
     pub namespace: LocRef,
     pub import_record_id: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SkipTypeParameterResult {
+pub enum SkipTypeParameterResult {
     DidNotSkipAnything,
     CouldBeTypeCast,
     DefinitelyTypeParameters,
@@ -648,7 +648,7 @@ pub(crate) enum SkipTypeParameterResult {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub(crate) struct TypeParameterFlag: u8 {
+    pub struct TypeParameterFlag: u8 {
         /// TypeScript 4.7
         const ALLOW_IN_OUT_VARIANCE_ANNOTATIONS = 1 << 0;
         /// TypeScript 5.0
@@ -659,7 +659,7 @@ bitflags::bitflags! {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub(crate) enum JSXImport {
+pub enum JSXImport {
     #[strum(serialize = "jsx")]
     Jsx,
     #[strum(serialize = "jsxDEV")]
@@ -682,7 +682,7 @@ impl JSXImport {
 }
 
 #[derive(Default)]
-pub(crate) struct JSXImportSymbols {
+pub struct JSXImportSymbols {
     pub jsx: Option<LocRef>,
     pub jsx_dev: Option<LocRef>,
     pub jsxs: Option<LocRef>,
@@ -845,7 +845,7 @@ pub(crate) type ScopeOrderList<'bump> = bun_alloc::ArenaVec<'bump, Option<ScopeO
 pub(crate) const EXPORTS_STRING_NAME: &[u8] = b"exports";
 
 #[derive(Clone, Copy)]
-pub(crate) struct MacroRefData<'a> {
+pub struct MacroRefData<'a> {
     pub import_record_id: u32,
     /// if name is None the macro is imported as a namespace import
     /// import * as macros from "./macros.js" with {type: "macro"};
@@ -871,19 +871,19 @@ pub enum Substitution {
 /// to nothing is unsafe
 /// Because "foo" was defined. And now it's not.
 #[derive(Default)]
-pub(crate) struct RelocateVars {
+pub struct RelocateVars {
     pub stmt: Option<Stmt>,
     pub ok: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RelocateVarsMode {
+pub enum RelocateVarsMode {
     Normal,
     ForInOrForOf,
 }
 
 #[derive(Default)]
-pub(crate) struct VisitArgsOpts<'a> {
+pub struct VisitArgsOpts<'a> {
     pub body: &'a [Stmt],
     pub has_rest_arg: bool,
     /// This is true if the function is an arrow function or a method
@@ -947,7 +947,7 @@ pub fn loc_after_op(e: &E::Binary) -> bun_ast::Loc {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct TransposeState {
+pub struct TransposeState {
     pub is_await_target: bool,
     pub is_then_catch_target: bool,
     pub is_require_immediately_assigned_to_decl: bool,
@@ -1212,7 +1212,7 @@ impl AsyncPrefixExpression {
 // transparent u8 with manual shift accessors matching Zig field order (LSB-first).
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct IdentifierOpts(u8);
+pub struct IdentifierOpts(u8);
 
 impl IdentifierOpts {
     const ASSIGN_TARGET_MASK: u8 = 0b0000_0011; // bits 0-1
@@ -1364,13 +1364,13 @@ pub(crate) fn is_eval_or_arguments(name: &[u8]) -> bool {
 }
 
 #[derive(Clone, Copy, Default)]
-pub(crate) struct PrependTempRefsOpts {
+pub struct PrependTempRefsOpts {
     pub fn_body_loc: Option<bun_ast::Loc>,
     pub kind: StmtsKind,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum StmtsKind {
+pub enum StmtsKind {
     #[default]
     None,
     LoopBody,
@@ -1396,7 +1396,7 @@ pub struct ImportNamespaceCallOrConstruct {
     pub is_construct: bool,
 }
 
-pub(crate) struct ThenCatchChain {
+pub struct ThenCatchChain {
     pub next_target: js_ast::ExprData,
     pub has_multiple_args: bool,
     pub has_catch: bool,
@@ -1413,7 +1413,7 @@ impl Default for ThenCatchChain {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct ParsedPath<'a> {
+pub struct ParsedPath<'a> {
     pub loc: bun_ast::Loc,
     pub text: &'a [u8],
     pub is_macro: bool,
@@ -1434,13 +1434,13 @@ pub enum StrictModeFeature {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct InvalidLoc {
+pub struct InvalidLoc {
     pub loc: bun_ast::Loc,
     pub kind: InvalidLocTag,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum InvalidLocTag {
+pub enum InvalidLocTag {
     Spread,
     Parentheses,
     Getter,
@@ -1466,11 +1466,11 @@ impl InvalidLoc {
 }
 
 pub(crate) type LocList<'bump> = bun_alloc::ArenaVec<'bump, InvalidLoc>;
-pub(crate) type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt>;
+pub type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt>;
 
 /// This hash table is used every time we parse function args
 /// Rather than allocating a new hash table each time, we can just reuse the previous allocation
-pub(crate) struct StringVoidMap {
+pub struct StringVoidMap {
     map: StringHashMap<()>,
 }
 
@@ -1568,7 +1568,7 @@ impl Default for ParenExprOpts {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum AwaitOrYield {
+pub enum AwaitOrYield {
     #[default]
     AllowIdent = 0,
     AllowExpr = 1,
@@ -1722,7 +1722,7 @@ pub struct FnOnlyDataVisit<'a> {
 /// This object defers errors about being in one state or the other
 /// until we discover which state we're in.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct DeferredErrors {
+pub struct DeferredErrors {
     /// These are errors for expressions
     pub invalid_expr_default_value: Option<bun_ast::Range>,
     pub invalid_expr_after_question: Option<bun_ast::Range>,
@@ -1741,7 +1741,7 @@ impl DeferredErrors {
     }
 }
 
-pub(crate) struct ImportClause<'a> {
+pub struct ImportClause<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
     /// (`S::Import.items: StoreSlice<ClauseItem>`).
     pub items: &'a mut [js_ast::ClauseItem],
@@ -1749,7 +1749,7 @@ pub(crate) struct ImportClause<'a> {
     pub had_type_only_imports: bool,
 }
 
-pub(crate) struct PropertyOpts {
+pub struct PropertyOpts {
     pub async_range: bun_ast::Range,
     pub declare_range: bun_ast::Range,
     pub is_async: bool,
@@ -1830,20 +1830,20 @@ impl ScanPassResult {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct FindLabelSymbolResult {
+pub struct FindLabelSymbolResult {
     pub r#ref: Ref,
     pub is_loop: bool,
     pub found: bool,
 }
 
 #[derive(Clone, Copy, Default)]
-pub(crate) struct FindSymbolResult {
+pub struct FindSymbolResult {
     pub r#ref: Ref,
     pub declare_loc: Option<bun_ast::Loc>,
     pub is_inside_with_scope: bool,
 }
 
-pub(crate) struct ExportClauseResult<'a> {
+pub struct ExportClauseResult<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
     /// (`S::Export{From,Clause}.items: StoreSlice<ClauseItem>`).
     pub clauses: &'a mut [js_ast::ClauseItem],
@@ -1852,7 +1852,7 @@ pub(crate) struct ExportClauseResult<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct DeferredTsDecorators<'a> {
+pub struct DeferredTsDecorators<'a> {
     pub values: &'a [js_ast::Expr],
 
     /// If this turns out to be a "declare class" statement, we need to undo the
@@ -1862,7 +1862,7 @@ pub(crate) struct DeferredTsDecorators<'a> {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum LexicalDecl {
+pub enum LexicalDecl {
     #[default]
     Forbid = 0,
     AllowAll = 1,
@@ -1871,14 +1871,14 @@ pub(crate) enum LexicalDecl {
 }
 
 #[derive(Default)]
-pub(crate) struct ParseClassOptions<'a> {
+pub struct ParseClassOptions<'a> {
     pub ts_decorators: &'a [Expr],
     pub allow_ts_decorators: bool,
     pub is_type_script_declare: bool,
 }
 
 #[derive(Default, Clone, Copy)]
-pub(crate) struct ParseStatementOptions<'a> {
+pub struct ParseStatementOptions<'a> {
     pub ts_decorators: Option<DeferredTsDecorators<'a>>,
     pub lexical_decl: LexicalDecl,
     pub is_module_scope: bool,
@@ -1947,7 +1947,7 @@ pub mod prefill {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum JSXTransformType {
+pub enum JSXTransformType {
     #[default]
     None,
     React,
@@ -1997,7 +1997,7 @@ impl<'a> MacroState<'a> {
     }
 }
 
-pub(crate) struct Jest {
+pub struct Jest {
     pub test: Ref,
     pub it: Ref,
     pub describe: Ref,
@@ -2106,7 +2106,7 @@ pub use crate::parse::parse_entry::{
 ///   // This is an error
 ///   function* foo() { (x = yield y) => {} }
 #[derive(Clone, Copy)]
-pub(crate) struct DeferredArrowArgErrors {
+pub struct DeferredArrowArgErrors {
     pub invalid_expr_await: bun_ast::Range,
     pub invalid_expr_yield: bun_ast::Range,
 }
@@ -2191,7 +2191,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum WrapMode {
+pub enum WrapMode {
     #[default]
     None,
     BunCommonjs,
@@ -2241,7 +2241,7 @@ pub(crate) enum WrapMode {
 /// from including the link to the refresh runtime, our notation of $RefreshReg$ is just
 /// pointing at `Refresh.register`, which means when we call it, the second argument has
 /// to be a string containing the filepath, not just the component name.
-pub(crate) struct ReactRefresh<'a> {
+pub struct ReactRefresh<'a> {
     /// Set if this JSX/TSX file uses the refresh runtime. If so,
     /// we must insert an import statement to it.
     pub register_used: bool,
@@ -2310,7 +2310,7 @@ impl<'a> Default for ReactRefresh<'a> {
     }
 }
 
-pub(crate) struct HookContext {
+pub struct HookContext {
     pub hasher: Wyhash,
     pub signature_cb: Ref,
     pub user_hooks: ArrayHashMap<Ref, Expr>,
@@ -2430,7 +2430,7 @@ pub(crate) fn float_to_int32(f: f64) -> i32 {
 }
 
 #[derive(Clone, Copy, Default)]
-pub(crate) struct ParseBindingOptions {
+pub struct ParseBindingOptions {
     /// This will prevent parsing of destructuring patterns, as using statement
     /// is only allowed to be `using name, name2, name3`, nothing special.
     pub is_using_statement: bool,

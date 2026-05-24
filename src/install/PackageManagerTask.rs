@@ -649,7 +649,7 @@ pub enum Status {
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
 /// // TODO(port): Phase B — consider folding `Tag` + `Request` + `Data` into a
 /// single Rust `enum` (one discriminant instead of tag + 2 untagged unions).
-pub(crate) union Data {
+pub union Data {
     pub package_manifest: ManuallyDrop<npm::PackageManifest>,
     pub extract: ManuallyDrop<ExtractData>,
     pub git_clone: ManuallyDrop<Fd>,
@@ -657,7 +657,7 @@ pub(crate) union Data {
 }
 
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
-pub(crate) union Request<'a> {
+pub union Request<'a> {
     /// package name
     // todo: Registry URL
     pub package_manifest: ManuallyDrop<PackageManifestRequest<'a>>,
@@ -667,21 +667,21 @@ pub(crate) union Request<'a> {
     pub local_tarball: ManuallyDrop<LocalTarballRequest>,
 }
 
-pub(crate) struct PackageManifestRequest<'a> {
+pub struct PackageManifestRequest<'a> {
     pub name: StringOrTinyString,
     // BORROW_PARAM per LIFETIMES.tsv
     // TODO(port): lifetime — see note on `Task<'a>`; likely `*mut NetworkTask` in Phase B.
     pub network: &'a mut NetworkTask,
 }
 
-pub(crate) struct ExtractRequest<'a> {
+pub struct ExtractRequest<'a> {
     // BORROW_PARAM per LIFETIMES.tsv
     // TODO(port): lifetime — see note on `Task<'a>`; likely `*mut NetworkTask` in Phase B.
     pub network: &'a mut NetworkTask,
     pub tarball: ExtractTarball,
 }
 
-pub(crate) struct GitCloneRequest {
+pub struct GitCloneRequest {
     pub name: StringOrTinyString,
     pub url: StringOrTinyString,
     // PORT NOTE: Zig stores `DotEnv.Map` by value (handle copy of the global
@@ -692,7 +692,7 @@ pub(crate) struct GitCloneRequest {
     pub res: Resolution,
 }
 
-pub(crate) struct GitCheckoutRequest {
+pub struct GitCheckoutRequest {
     pub repo_dir: Fd,
     pub dependency_id: DependencyID,
     pub name: StringOrTinyString,
@@ -703,7 +703,7 @@ pub(crate) struct GitCheckoutRequest {
     pub env: &'static dot_env::Map,
 }
 
-pub(crate) struct LocalTarballRequest {
+pub struct LocalTarballRequest {
     pub tarball: ExtractTarball,
     /// Path to read the tarball from. May be the same as `tarball.url` (when
     /// `normalize` is true) or an absolute path joined with a workspace

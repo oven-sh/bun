@@ -181,7 +181,7 @@ pub enum RouteMethod {
     Method(bun_http_types::Method::Set),
 }
 
-pub(crate) enum State {
+pub enum State {
     Pending,
     Building(Option<*mut JSBundleCompletionTask>),
     Err(Log),
@@ -798,7 +798,7 @@ impl Drop for Route {
 }
 
 /// Represents an in-flight response before the bundle has finished building.
-pub(crate) struct PendingResponse {
+pub struct PendingResponse {
     method: Method,
     resp: AnyResponse,
     is_response_pending: bool,

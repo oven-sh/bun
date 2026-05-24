@@ -417,7 +417,7 @@ impl<'a> Generator<'a> {
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
-pub(crate) struct BasicBlockRange {
+pub struct BasicBlockRange {
     start_offset: c_int,
     end_offset: c_int,
     has_executed: bool,

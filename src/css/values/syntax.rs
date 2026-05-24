@@ -25,7 +25,7 @@ const SPACE_CHARACTERS: &[u8] = &[0x20, 0x09];
 // `*const [u8]` placeholders for arena-borrowed slices (matching `Token` /
 // `ident.rs`). TODO(refactor): thread `'bump` and restore the lifetime.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SyntaxString {
+pub enum SyntaxString {
     /// A list of syntax components.
     // PERF(port): was arena ArrayList — `Vec` until `'bump` is threaded into BumpVec.
     Components(Vec<SyntaxComponent>),
@@ -222,7 +222,7 @@ impl SyntaxString {
 /// A syntax component consists of a component kind an a multiplier, which indicates how the component
 /// may repeat during parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SyntaxComponent {
+pub struct SyntaxComponent {
     pub kind: SyntaxComponentKind,
     pub multiplier: Multiplier,
 }
@@ -263,7 +263,7 @@ impl SyntaxComponent {
 
 /// A [syntax component component name](https://drafts.css-houdini.org/css-properties-values-api/#supported-names).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SyntaxComponentKind {
+pub enum SyntaxComponentKind {
     /// A `<length>` component.
     Length,
     /// A `<number>` component.
@@ -388,7 +388,7 @@ fn is_name_code_point(c: u8) -> bool {
 // PORT NOTE: no `#[derive]` — payload types lack a common Debug/Clone/PartialEq
 // surface (Image: none; TokenList: Default-only; Ident/CustomIdent: no Eq;
 // Transform: no Debug). Zig has only `deepClone` + `toCss`, mirrored below.
-pub(crate) enum ParsedComponent {
+pub enum ParsedComponent {
     /// A `<length>` value.
     Length(Length),
     /// A `<number>` value.
@@ -429,7 +429,7 @@ pub(crate) enum ParsedComponent {
 }
 
 /// A repeated component value.
-pub(crate) struct Repeated {
+pub struct Repeated {
     /// The components to repeat.
     // PERF(port): was arena ArrayList — `Vec` until `'bump` is threaded into BumpVec.
     pub components: Vec<ParsedComponent>,
@@ -517,7 +517,7 @@ impl ParsedComponent {
 /// A [multiplier](https://drafts.css-houdini.org/css-properties-values-api/#multipliers) for a
 /// [SyntaxComponent](SyntaxComponent). Indicates whether and how the component may be repeated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Multiplier {
+pub enum Multiplier {
     /// The component may not be repeated.
     None,
     /// The component may repeat one or more times, separated by spaces.

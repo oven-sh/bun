@@ -823,7 +823,7 @@ impl Number {
 }
 
 /// Helper trait for `Number::to<T>()` — replaces Zig's `comptime T: type` param.
-pub(crate) trait NumberCast: Copy {
+pub trait NumberCast: Copy {
     const MAX_AS_F64: f64;
     fn from_f64(v: f64) -> Self;
 }

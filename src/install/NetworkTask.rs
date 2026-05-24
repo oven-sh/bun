@@ -130,7 +130,7 @@ pub enum Callback {
 }
 
 #[derive(Default, Clone, Copy)]
-pub(crate) struct DedupeMapEntry {
+pub struct DedupeMapEntry {
     pub is_required: bool,
 }
 // Zig: `std.HashMap(Task.Id, DedupeMapEntry, IdentityContext(Task.Id), 80)`
@@ -329,7 +329,7 @@ impl NetworkTask {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum Authorization {
+pub enum Authorization {
     NoAuthorization,
     AllowAuthorization,
 }
@@ -376,7 +376,7 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum ForManifestError {
+pub enum ForManifestError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("InvalidURL")]
@@ -660,7 +660,7 @@ impl NetworkTask {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum ForTarballError {
+pub enum ForTarballError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("InvalidURL")]

@@ -172,7 +172,7 @@ impl EntropyCache {
 pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
 
 #[derive(Clone, Copy)]
-pub(crate) struct CleanupHook {
+pub struct CleanupHook {
     pub ctx: *mut c_void,
     pub func: CleanupHookFunction,
     // PORT NOTE: LIFETIMES.tsv says &'a JSGlobalObject (JSC_BORROW); raw ptr
@@ -201,14 +201,14 @@ impl CleanupHook {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone)]
-pub(crate) struct IsolationWatcher {
+pub struct IsolationWatcher {
     pub ptr: *mut c_void,
     /// `FSWatcher::detach` / `StatWatcher::close` — supplied by the registrant.
     pub close: unsafe fn(*mut c_void),
 }
 
 /// Erased high-tier slot with paired destructor (e.g. `WebSocketDeflate::RareData`).
-pub(crate) struct ErasedBox {
+pub struct ErasedBox {
     pub ptr: NonNull<c_void>,
     pub dtor: unsafe fn(*mut c_void),
 }

@@ -515,7 +515,7 @@ thread_local! {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum MacroError {
+pub enum MacroError {
     #[error("MacroFailed")]
     MacroFailed,
     #[error("OutOfMemory")]

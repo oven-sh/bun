@@ -15,13 +15,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub(crate) struct Ls {
+pub struct Ls {
     pub opts: Opts,
     pub state: State,
 }
 
 #[derive(Default)]
-pub(crate) enum State {
+pub enum State {
     #[default]
     Idle,
     Exec(ExecState),
@@ -29,7 +29,7 @@ pub(crate) enum State {
     Done,
 }
 
-pub(crate) struct ExecState {
+pub struct ExecState {
     pub err: Option<bun_sys::Error>,
     pub task_count: AtomicUsize,
     pub tasks_done: usize,
@@ -805,7 +805,7 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {
 /// Spec: ls.zig `Opts`. Only the fields the current port actually consults
 /// are kept; the rest are recognised by `parse_flag` but not stored.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Opts {
+pub struct Opts {
     /// `-a`, `--all` — do not ignore entries starting with `.`
     pub show_all: bool,
     /// `-A`, `--almost-all` — like `-a` but skip `.` and `..`

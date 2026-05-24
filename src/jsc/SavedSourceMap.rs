@@ -93,7 +93,7 @@ pub type Value = TaggedPtrUnion<ValueTypes>;
 /// types (all five live in `bun_sourcemap`), which the coherence checker
 /// rejects from this crate. Tags are `1024 - i` to match Zig's
 /// `TagTypeEnumWithTypeMap` ordering in `SavedSourceMap.zig`.
-pub(crate) struct ValueTypes;
+pub struct ValueTypes;
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {
     const LEN: usize = 5;

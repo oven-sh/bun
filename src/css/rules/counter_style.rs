@@ -3,7 +3,7 @@ use crate::css_values::ident::CustomIdent;
 use crate::{DeclarationBlock, PrintErr, Printer};
 
 /// A [@counter-style](https://drafts.csswg.org/css-counter-styles/#the-counter-style-rule) rule.
-pub(crate) struct CounterStyleRule {
+pub struct CounterStyleRule {
     /// The name of the counter style to declare.
     pub name: CustomIdent,
     /// Declarations in the `@counter-style` rule.

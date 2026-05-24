@@ -140,7 +140,7 @@ opaque!(
 /// `union { uint8_t opaque[EVP_MAX_MD_DATA_SIZE]; uint64_t alignment; }`
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub(crate) union env_md_ctx_md_data {
+pub union env_md_ctx_md_data {
     pub data: [u8; 240],
     pub alignment: u64,
 }
@@ -226,7 +226,7 @@ pub struct RIPEMD160_CTX {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub(crate) struct OTHERNAME {
+pub struct OTHERNAME {
     pub type_id: *mut ASN1_OBJECT,
     pub value: *mut ASN1_TYPE,
 }

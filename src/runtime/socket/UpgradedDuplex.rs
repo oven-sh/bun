@@ -46,7 +46,7 @@ pub(crate) struct UpgradedDuplex {
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
 
 #[derive(Default)]
-pub(crate) struct CertError {
+pub struct CertError {
     pub error_no: i32,
     // Owned NUL-terminated copies (Zig: `[:0]const u8` allocated via `dupeZ`, freed in deinit).
     // `None` represents the Zig default `""`.

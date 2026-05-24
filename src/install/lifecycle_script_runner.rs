@@ -321,7 +321,7 @@ impl<'a> InstallCtx<'a> {
 // `Context` type instead, so `sort_by_started_at` is provided via a trait impl on a
 // ZST `StartedAtCtx` (the Zig context arg `*PackageManager` is unused by `less`).
 #[derive(Default, Clone, Copy)]
-pub(crate) struct StartedAtCtx;
+pub struct StartedAtCtx;
 pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtCtx>;
 
 impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {

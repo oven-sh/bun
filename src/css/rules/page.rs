@@ -78,7 +78,7 @@ impl PageSelector {
     }
 }
 
-pub(crate) struct PageMarginRule {
+pub struct PageMarginRule {
     /// The margin box identifier for this rule.
     pub margin_box: PageMarginBox,
     /// The declarations within the rule.
@@ -111,7 +111,7 @@ impl PageMarginRule {
 }
 
 /// A [@page](https://www.w3.org/TR/css-page-3/#at-page-rule) rule.
-pub(crate) struct PageRule {
+pub struct PageRule {
     /// A list of page selectors.
     pub selectors: ArrayList<PageSelector>,
     /// The declarations within the `@page` rule.
@@ -242,7 +242,7 @@ impl PageRule {
 ///
 /// See [PageSelector](PageSelector).
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub(crate) enum PagePseudoClass {
+pub enum PagePseudoClass {
     /// The `:left` pseudo class.
     Left,
     /// The `:right` pseudo class.
@@ -265,7 +265,7 @@ impl PagePseudoClass {
 
 /// A [page margin box](https://www.w3.org/TR/css-page-3/#margin-boxes).
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub(crate) enum PageMarginBox {
+pub enum PageMarginBox {
     /// A fixed-size box defined by the intersection of the top and left margins of the page box.
     TopLeftCorner,
     /// A variable-width box filling the top page margin between the top-left-corner and top-center page-margin boxes.

@@ -57,7 +57,7 @@ use crate::server::html_bundle;
 // existing port discrepancy, not addressed by the dedup.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit, debug_name = "JSBundleCompletionTask")]
-pub(crate) struct JSBundleCompletionTask {
+pub struct JSBundleCompletionTask {
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
     // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe

@@ -40,7 +40,7 @@ pub struct OutputFileList {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum OutputFileListError {
+pub enum OutputFileListError {
     #[error("NoSourceMapsOrBytecode")]
     NoSourceMapsOrBytecode,
 }

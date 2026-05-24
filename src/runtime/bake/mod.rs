@@ -117,7 +117,7 @@ impl Default for ReactFastRefresh {
 // body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`). Spec
 // `Style` has a `deinit()` (FrameworkRouter.zig), so it was never trivially
 // copyable.
-pub(crate) struct FileSystemRouterType {
+pub struct FileSystemRouterType {
     pub root: Cow<'static, [u8]>,
     pub prefix: Cow<'static, [u8]>,
     pub entry_client: Option<Cow<'static, [u8]>>,
@@ -492,7 +492,7 @@ impl Framework {
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]
-pub(crate) struct SplitBundlerOptions {
+pub struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
     pub plugin: Option<NonNull<jsc::Plugin>>,
@@ -626,7 +626,7 @@ pub struct BuildConfigSubset {
 /// Canonical definition; `bake_body::HmrRuntime` re-exports this
 /// (`pub use super::HmrRuntime;`) so `bake_body::get_hmr_runtime` returns the
 /// same nominal type IncrementalGraph names via `crate::bake::HmrRuntime`.
-pub(crate) struct HmrRuntime {
+pub struct HmrRuntime {
     /// Spec bake.zig:841 is `[:0]const u8` — NUL-terminated; the sentinel is
     /// load-bearing where this buffer is handed to JSC/C++ as a C string.
     pub code: &'static bun_core::ZStr,

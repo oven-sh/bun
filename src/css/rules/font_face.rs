@@ -21,7 +21,7 @@ use super::ArrayList;
 // properties/mod.rs). The enum body un-gates with the variant payloads
 // once those leaves un-gate.
 
-pub(crate) enum FontFaceProperty {
+pub enum FontFaceProperty {
     /// The `src` property.
     Source(ArrayList<Source>),
     /// The `font-family` property.
@@ -128,7 +128,7 @@ impl FontStyle {
 /// A contiguous range of Unicode code points.
 ///
 /// Cannot be empty. Can represent a single code point when start == end.
-pub(crate) struct UnicodeRange {
+pub struct UnicodeRange {
     /// Inclusive start of the range. In [0, end].
     pub start: u32,
 
@@ -346,7 +346,7 @@ impl UnicodeRange {
 // FontStyle
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) enum FontStyle {
+pub enum FontStyle {
     /// Normal font style.
     Normal,
     /// Italic font style.
@@ -410,7 +410,7 @@ impl FontStyle {
 /// A font format keyword in the `format()` function of the
 /// [src](https://drafts.csswg.org/css-fonts/#src-desc)
 /// property of an `@font-face` rule.
-pub(crate) enum FontFormat {
+pub enum FontFormat {
     /// A WOFF 1.0 font.
     Woff,
     /// A WOFF 2.0 font.
@@ -538,7 +538,7 @@ impl Source {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub(crate) enum FontTechnology {
+pub enum FontTechnology {
     /// A font format keyword in the `format()` function of the
     /// [src](https://drafts.csswg.org/css-fonts/#src-desc)
     /// property of an `@font-face` rule.
@@ -580,7 +580,7 @@ pub(crate) enum FontTechnology {
 
 /// A `url()` value for the [src](https://drafts.csswg.org/css-fonts/#src-desc)
 /// property in an `@font-face` rule.
-pub(crate) struct UrlSource {
+pub struct UrlSource {
     /// The URL.
     pub url: Url,
     /// Optional `format()` function.
@@ -652,7 +652,7 @@ impl UrlSource {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A [@font-face](https://drafts.csswg.org/css-fonts/#font-face-rule) rule.
-pub(crate) struct FontFaceRule {
+pub struct FontFaceRule {
     /// Declarations in the `@font-face` rule.
     pub properties: ArrayList<FontFaceProperty>,
     /// The location of the rule in the source file.

@@ -201,7 +201,7 @@ mod _impl {
         /// (`GeneratedBindings.zig` `node_os.UserInfoOptions`); the C++ side
         /// passes a pointer to this layout, so it must stay `#[repr(C)]`.
         #[repr(C)]
-        pub(crate) struct UserInfoOptions {
+        pub struct UserInfoOptions {
             pub encoding: BunString,
         }
         impl Default for UserInfoOptions {

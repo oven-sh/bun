@@ -43,7 +43,7 @@ pub struct Handler {
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, Default)]
-    pub(crate) struct HandlerFlags: u8 {
+    pub struct HandlerFlags: u8 {
         const SSL             = 1 << 0;
         const PUBLISH_TO_SELF = 1 << 1;
         // remaining 6 bits: padding

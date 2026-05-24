@@ -44,7 +44,7 @@ use bun_sys::windows::libuv::UvHandle as _;
 
 // This is a runtime type instead of comptime due to bugs in Zig.
 // https://github.com/ziglang/zig/issues/18664
-pub(crate) struct BufferedReaderVTable {
+pub struct BufferedReaderVTable {
     pub parent: *mut c_void,
     pub kind: crate::BufferedReaderParentLinkKind,
 }

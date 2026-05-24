@@ -1915,7 +1915,7 @@ pub(super) fn generate_symbols(
 
 // ─── Function ───────────────────────────────────────────────────────────────
 
-pub(crate) struct Function {
+pub struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
     pub base_name: Option<ZBox>,
     pub state: Option<NonNull<TCC::State>>,
@@ -2566,7 +2566,7 @@ unsafe extern "C" {
 
 // ─── Step ───────────────────────────────────────────────────────────────────
 
-pub(crate) enum Step {
+pub enum Step {
     Pending,
     Compiled(Compiled),
     #[allow(dead_code)]
@@ -2576,7 +2576,7 @@ pub(crate) enum Step {
     },
 }
 
-pub(crate) struct Compiled {
+pub struct Compiled {
     pub ptr: *mut c_void,
     // TODO(port): bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef.
     pub js_function: JSValue,

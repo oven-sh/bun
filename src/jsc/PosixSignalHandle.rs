@@ -8,7 +8,7 @@ bun_core::declare_scope!(PosixSignalHandle, hidden);
 
 const BUFFER_SIZE: u16 = 8192;
 
-pub(crate) struct PosixSignalHandle {
+pub struct PosixSignalHandle {
     #[allow(dead_code)]
     signals: [AtomicU8; BUFFER_SIZE as usize],
 

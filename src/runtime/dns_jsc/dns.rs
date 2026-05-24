@@ -576,7 +576,7 @@ impl CacheConfig {
 /// Trait standing in for Zig's `(comptime cares_type: type, comptime type_name: []const u8)` pair.
 /// Each c-ares reply struct implements this with its record-type tag.
 // TODO(port): proc-macro — Zig instantiated this per (type, "name") pair via comptime.
-pub(crate) trait CAresRecordType: Sized {
+pub trait CAresRecordType: Sized {
     const TYPE_NAME: &'static str;
     /// `"query" ++ ucfirst(TYPE_NAME)` — Zig built this at comptime; each impl
     /// carries the precomputed literal so error paths report the right syscall.
@@ -600,7 +600,7 @@ pub(crate) trait CAresRecordType: Sized {
     unsafe fn destroy(this: *mut Self);
 }
 
-pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
+pub struct ResolveInfoRequest<T: CAresRecordType> {
     // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
     pub resolver_for_caching: Option<*mut Resolver>,
     #[allow(dead_code)]
@@ -613,7 +613,7 @@ pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
 pub mod resolve_info_request {
     use super::*;
 
-    pub(crate) struct PendingCacheKey<T: CAresRecordType> {
+    pub struct PendingCacheKey<T: CAresRecordType> {
         pub hash: u64,
         pub len: u16,
         pub lookup: *mut ResolveInfoRequest<T>,
@@ -740,7 +740,7 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 // GetHostByAddrInfoRequest
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct GetHostByAddrInfoRequest {
+pub struct GetHostByAddrInfoRequest {
     // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     #[allow(dead_code)]
@@ -753,7 +753,7 @@ pub(crate) struct GetHostByAddrInfoRequest {
 pub mod get_host_by_addr_info_request {
     use super::*;
 
-    pub(crate) struct PendingCacheKey {
+    pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
         pub lookup: *mut GetHostByAddrInfoRequest,
@@ -876,7 +876,7 @@ impl c_ares::HostentHandler for GetHostByAddrInfoRequest {
 // CAresNameInfo
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct CAresNameInfo {
+pub struct CAresNameInfo {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -991,7 +991,7 @@ impl Drop for CAresNameInfo {
 // GetNameInfoRequest
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct GetNameInfoRequest {
+pub struct GetNameInfoRequest {
     // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     #[allow(dead_code)]
@@ -1004,7 +1004,7 @@ pub(crate) struct GetNameInfoRequest {
 pub mod get_name_info_request {
     use super::*;
 
-    pub(crate) struct PendingCacheKey {
+    pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
         pub lookup: *mut GetNameInfoRequest,
@@ -1149,7 +1149,7 @@ pub mod get_addr_info_request {
     /// on the work pool, then re-enters the JS thread via `then`.
     pub type Task = jsc::work_task::WorkTask<super::GetAddrInfoRequest>;
 
-    pub(crate) struct PendingCacheKey {
+    pub struct PendingCacheKey {
         pub hash: u64,
         pub len: u16,
         pub lookup: *mut GetAddrInfoRequest,
@@ -1175,7 +1175,7 @@ pub mod get_addr_info_request {
     }
 
     #[derive(Default)]
-    pub(crate) struct BackendLibInfo {
+    pub struct BackendLibInfo {
         /// OWNED hive slot from `FilePoll::init` (returned via `FilePoll::deinit`,
         /// not `Box`/global-alloc — Zig: `?*bun.Async.FilePoll`).
         pub file_poll: Option<NonNull<FilePoll>>,
@@ -1223,7 +1223,7 @@ pub mod get_addr_info_request {
 
     /// Non-Windows libc backend (worker-thread blocking getaddrinfo).
     #[cfg(not(windows))]
-    pub(crate) enum LibcBackend {
+    pub enum LibcBackend {
         Success(GetAddrInfoResultList),
         Err(i32),
         Query(GetAddrInfo),
@@ -1299,7 +1299,7 @@ pub mod get_addr_info_request {
 
     /// Windows libc backend wraps a uv_getaddrinfo_t.
     #[cfg(windows)]
-    pub(crate) struct LibcBackend {
+    pub struct LibcBackend {
         pub uv: libuv::uv_getaddrinfo_t,
     }
     #[cfg(windows)]
@@ -1313,7 +1313,7 @@ pub mod get_addr_info_request {
             unreachable!("This path should never be reached on Windows");
         }
     }
-    pub(crate) enum Backend {
+    pub enum Backend {
         CAres,
         #[allow(dead_code)]
         Libinfo(BackendLibInfo),
@@ -1670,7 +1670,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
 // CAresReverse
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct CAresReverse {
+pub struct CAresReverse {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
@@ -1799,7 +1799,7 @@ impl Drop for CAresReverse {
 // CAresLookup<T>
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct CAresLookup<T: CAresRecordType> {
+pub struct CAresLookup<T: CAresRecordType> {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
@@ -1949,7 +1949,7 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
 // DNSLookup
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct DNSLookup {
+pub struct DNSLookup {
     pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
@@ -2267,7 +2267,7 @@ pub mod internal {
 
     #[derive(Default)]
     #[allow(dead_code)]
-    pub(crate) struct MacAsyncDNS {
+    pub struct MacAsyncDNS {
         pub file_poll: Option<NonNull<FilePoll>>, // OWNED hive slot (FilePoll::init)
         pub machport: mach_port,
     }
@@ -2637,7 +2637,7 @@ pub mod internal {
     }
 
     #[repr(C)]
-    pub(crate) struct ResultEntry {
+    pub struct ResultEntry {
         pub info: AddrInfo,
         pub addr: SockaddrStorage,
     }
@@ -3768,7 +3768,7 @@ pub enum CacheHit {
     Disabled,
 }
 
-pub(crate) enum LookupCacheHit<R: HasPendingCacheKey> {
+pub enum LookupCacheHit<R: HasPendingCacheKey> {
     // PORT NOTE: Zig's `LookupCacheHit(request_type)` referenced `request_type.PendingCacheKey`.
     // We thread the request type via `R` and resolve `PendingCacheKey` through `HasPendingCacheKey`.
     Inflight(*mut R::PendingCacheKey), // BORROW_FIELD
@@ -3786,7 +3786,7 @@ impl<R: HasPendingCacheKey> Copy for LookupCacheHit<R> {}
 /// Associates a request type with its `PendingCacheKey` and the matching `HiveArray`
 /// field on `Resolver`. Stands in for Zig's `request_type.PendingCacheKey` projection
 /// and `@field(resolver, comptime cache_name)` reflection.
-pub(crate) trait HasPendingCacheKey {
+pub trait HasPendingCacheKey {
     type PendingCacheKey;
 
     /// Return `&mut @field(resolver, cache_name)` — the per-request-type pending HiveArray.
@@ -3903,7 +3903,7 @@ impl HasPendingCacheKey for GetNameInfoRequest {
     }
 }
 
-pub(crate) enum ChannelResult<'a> {
+pub enum ChannelResult<'a> {
     Err(c_ares::Error),
     Result(&'a mut c_ares::Channel), // BORROW_FIELD — returns this.channel.?
 }

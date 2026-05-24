@@ -5,7 +5,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub(crate) struct Export {
+pub struct Export {
     state: State,
 }
 

@@ -170,7 +170,7 @@ pub mod prompt {
 
     /// Error set for the read-until-delimiter helpers below.
     #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-    pub(crate) enum ReadError {
+    pub enum ReadError {
         #[error("StreamTooLong")]
         StreamTooLong,
         #[error("Io")]
@@ -180,7 +180,7 @@ pub mod prompt {
     /// `reader: anytype` in the Zig — the only method called is `readByte()`.
     /// Bound on a small trait exposing `read_byte() -> Result<u8, _>`; the only
     /// concrete impl is the process-global `BufferedStdin`.
-    pub(crate) trait ReadByte {
+    pub trait ReadByte {
         type Error;
         fn read_byte(&mut self) -> Result<u8, Self::Error>;
     }

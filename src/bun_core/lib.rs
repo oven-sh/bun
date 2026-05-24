@@ -2402,7 +2402,7 @@ pub(crate) mod strings_impl {
 
     // ─── CodepointIterator (fmt.rs identifier formatter) ──────────────────
     #[derive(Default, Clone, Copy)]
-    pub(crate) struct CodepointIteratorCursor {
+    pub struct CodepointIteratorCursor {
         pub i: usize,
         pub c: i32,
         pub width: u8,

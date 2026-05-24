@@ -393,7 +393,7 @@ impl Drop for S3HttpDownloadStreamingTask {
 ///   bits 49..64 : _reserved (u15)
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub(crate) struct State(pub u64);
+pub struct State(pub u64);
 
 pub type StateAtomicType = AtomicU64;
 

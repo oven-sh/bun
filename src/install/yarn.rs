@@ -36,7 +36,7 @@ use bun_sys::Fd;
 // `'a` here is the BORROW_PARAM classification applied to slice fields. Verify the few
 // owned slices (specs inner strings, file, git_repo_name) don't need `Box<[u8]>` instead.
 
-pub(crate) struct YarnLock<'a> {
+pub struct YarnLock<'a> {
     pub entries: Vec<Entry<'a>>,
 }
 

@@ -34,7 +34,7 @@ bun_output::define_scoped_log!(log, SYS, visible);
 
 /// Anonymous payload of `Stdio::Capture` in Zig: `struct { buf: *bun.Vec<u8> }`.
 #[derive(Clone, Copy)]
-pub(crate) struct Capture {
+pub struct Capture {
     // TODO(port): lifetime — Zig holds a raw `*bun.Vec<u8>` backref owned
     // elsewhere (shell). LIFETIMES.tsv has no row; treating as BACKREF.
     pub buf: *mut Vec<u8>,
@@ -42,7 +42,7 @@ pub(crate) struct Capture {
 
 /// Anonymous payload of `Stdio::Dup2` in Zig.
 #[derive(Clone, Copy)]
-pub(crate) struct Dup2 {
+pub struct Dup2 {
     pub out: StdioKind,
     pub to: StdioKind,
 }
@@ -69,7 +69,7 @@ pub enum Stdio {
 // Rust enums cannot nest type decls, so they live at module scope and callers
 // reference them as `stdio::Result` etc.
 
-pub(crate) enum ResultT<T> {
+pub enum ResultT<T> {
     Result(T),
     Err(ToSpawnOptsError),
 }

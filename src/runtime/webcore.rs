@@ -133,7 +133,7 @@ pub struct AutoFlusher {
 
 /// Zig duck-types on `this.auto_flusher` + `Type.onAutoFlush`; modeled as a
 /// trait. Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
-pub(crate) trait HasAutoFlusher: Sized {
+pub trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
     /// erasure: `fn(*anyopaque) bool`.
@@ -427,7 +427,7 @@ pub enum PathOrFileDescriptor {
 // variant payload's `Drop` runs automatically, so no explicit `impl Drop` is needed.
 
 #[derive(Default)]
-pub(crate) struct Pipe {
+pub struct Pipe {
     pub ctx: Option<NonNull<()>>,
     pub on_pipe: Option<Function>,
 }
@@ -439,7 +439,7 @@ impl Pipe {
     }
 }
 
-pub(crate) type Function = fn(ctx: NonNull<()>, stream: streams::Result);
+pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
 
 // TODO(port): Zig `Wrap(comptime Type, comptime function)` takes a *comptime fn pointer* as a
 // generic argument, which stable Rust cannot express. Reshaped: callers implement `PipeHandler`

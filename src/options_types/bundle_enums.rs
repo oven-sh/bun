@@ -131,7 +131,7 @@ impl ModuleType {
 // ─── Target: schema-coupled extension methods ─────────────────────────────
 
 mod sealed {
-    pub(crate) trait Sealed {}
+    pub trait Sealed {}
     impl Sealed for bun_ast::Target {}
     impl Sealed for bun_ast::Loader {}
     impl Sealed for bun_ast::LoaderOptional {}

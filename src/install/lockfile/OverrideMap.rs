@@ -21,7 +21,7 @@ use crate::bun_json::{Expr, ExprData};
 declare_scope!(OverrideMap, visible);
 
 #[derive(Default)]
-pub(crate) struct OverrideMap {
+pub struct OverrideMap {
     // Zig used ArrayIdentityContext.U64 (identity hash on u64 key); the Rust
     // `ArrayHashMap` defaults to identity hashing for integer keys.
     pub map: ArrayHashMap<PackageNameHash, Dependency>,

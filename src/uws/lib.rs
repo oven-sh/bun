@@ -356,7 +356,7 @@ pub mod ssl_wrapper {
 
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub(crate) enum HandshakeState {
+    pub enum HandshakeState {
         HandshakePending = 0,
         HandshakeCompleted = 1,
         HandshakeRenegotiationPending = 2,

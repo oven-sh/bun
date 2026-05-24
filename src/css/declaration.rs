@@ -43,7 +43,7 @@ pub struct DeclarationBlock<'bump> {
     pub declarations: DeclarationList<'bump>,
 }
 
-pub(crate) struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
+pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
 // blocked_on: Printer::new signature (Zig passes arena + Managed(u8) +
 // writer + options + null + null + &symbols; the Rust ctor shape is unsettled).

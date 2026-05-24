@@ -49,7 +49,7 @@ pub(crate) type Border = GenericBorder<LineStyle, 10>;
 
 /// A generic type that represents the `border` and `outline` shorthand properties.
 #[derive(Clone)]
-pub(crate) struct GenericBorder<S, const P: u8> {
+pub struct GenericBorder<S, const P: u8> {
     /// The width of the border.
     pub width: BorderSideWidth,
     /// The border style.
@@ -614,7 +614,7 @@ impl BorderProperty {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub(crate) struct BorderHandler {
+pub struct BorderHandler {
     border_top: BorderShorthand,
     border_bottom: BorderShorthand,
     border_left: BorderShorthand,

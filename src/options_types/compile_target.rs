@@ -50,7 +50,7 @@ impl Default for CompileTarget {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub(crate) enum Libc {
+pub enum Libc {
     /// The default libc for the target
     /// "glibc" for linux, unspecified for other OSes
     Default,

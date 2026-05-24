@@ -32,7 +32,7 @@ pub enum SupportsCondition {
 
 // PORT NOTE: Zig used an anonymous inline struct for the `.declaration` payload;
 // hoisted to a named type because Rust enum variants cannot carry inherent methods.
-pub(crate) struct Declaration {
+pub struct Declaration {
     /// The property id for the declaration.
     pub property_id: PropertyId,
     /// The raw value of the declaration.

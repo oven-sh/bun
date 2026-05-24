@@ -255,7 +255,7 @@ pub enum IoKind {
 
 /// One output stream of a builtin (stdout or stderr). Spec: Builtin.zig
 /// `BuiltinIO.Output`.
-pub(crate) enum BuiltinIO {
+pub enum BuiltinIO {
     /// Async writer (real fd). `needs_io()` returns Some.
     Fd(OutFd),
     /// Captured pipe — writes go to the shell env's `_buffered_{stdout,stderr}`.
@@ -290,7 +290,7 @@ pub enum BuiltinInput {
 
 /// Spec: Builtin.zig `BuiltinIO.Blob` — refcounted wrapper around a
 /// `webcore.Blob`. `Arc` provides the refcount; `Drop` runs `Blob::deinit`.
-pub(crate) struct BuiltinBlob {
+pub struct BuiltinBlob {
     pub blob: crate::webcore::Blob,
 }
 // `BuiltinBlob` is auto-`Send + Sync`: its sole field is `webcore::Blob`,

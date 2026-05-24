@@ -8,7 +8,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
-pub(crate) struct Subshell {
+pub struct Subshell {
     pub base: Base,
     pub node: bun_ptr::BackRef<ast::Subshell>,
     pub io: IO,

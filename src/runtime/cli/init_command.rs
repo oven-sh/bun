@@ -1383,7 +1383,7 @@ impl DependencyGroup {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(u8)]
-pub(crate) enum Template {
+pub enum Template {
     Blank,
     ReactBlank,
     ReactTailwind,

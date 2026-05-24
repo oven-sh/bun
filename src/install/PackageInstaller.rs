@@ -42,13 +42,13 @@ bun_output::declare_scope!(PackageInstaller, hidden);
 
 type Bitset = DynamicBitSet;
 
-pub(crate) struct PendingLifecycleScript {
+pub struct PendingLifecycleScript {
     pub list: lockfile::package::scripts::List,
     pub tree_id: lockfile::tree::Id,
     pub optional: bool,
 }
 
-pub(crate) struct PackageInstaller<'a> {
+pub struct PackageInstaller<'a> {
     /// Zig: `*PackageManager` — BACKREF into the singleton. Raw pointer (not
     /// `&'a mut`) because the install loop also re-borrows the same object
     /// via the caller's `this`/`mgr_ptr` (e.g. `run_tasks(this, &mut installer)`
@@ -119,7 +119,7 @@ pub(crate) struct PackageInstaller<'a> {
 use bun_core::UnwrapOrOom;
 
 #[derive(Default)]
-pub(crate) struct NodeModulesFolder {
+pub struct NodeModulesFolder {
     pub tree_id: lockfile::tree::Id,
     pub path: Vec<u8>,
 }
@@ -285,7 +285,7 @@ impl NodeModulesFolder {
     }
 }
 
-pub(crate) struct TreeContext {
+pub struct TreeContext {
     /// Each tree (other than the root tree) can accumulate packages it cannot install until
     /// each parent tree has installed their packages. We keep arrays of these pending
     /// packages for each tree, and drain them when a tree is completed (each of it's immediate

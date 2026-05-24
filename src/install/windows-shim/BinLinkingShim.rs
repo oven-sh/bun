@@ -26,7 +26,7 @@
 // open-ended, so model as a transparent u16 newtype holding a 13-bit value.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) struct VersionFlag(u16);
+pub struct VersionFlag(u16);
 
 impl VersionFlag {
     pub(crate) const CURRENT: VersionFlag = VersionFlag::V5;

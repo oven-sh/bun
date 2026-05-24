@@ -267,12 +267,12 @@ extern "C" fn on_data(
     this_value.ensure_still_alive();
 }
 
-pub(crate) struct ConnectConfig {
+pub struct ConnectConfig {
     pub port: u16,
     pub address: BunString,
 }
 
-pub(crate) struct UDPSocketConfig {
+pub struct UDPSocketConfig {
     pub hostname: BunString,
     pub connect: Option<ConnectConfig>,
     pub port: u16,

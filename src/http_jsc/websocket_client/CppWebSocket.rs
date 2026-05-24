@@ -19,7 +19,7 @@ use super::websocket_deflate;
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to the C++ `WebCore::WebSocket` object.
-    pub(crate) struct CppWebSocket;
+    pub struct CppWebSocket;
 }
 
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
@@ -200,7 +200,7 @@ impl CppWebSocket {
 /// [`CppWebSocket::unref`]. Replaces the Zig `ws.ref(); defer ws.unref();`
 /// pattern when the ref must outlive the constructing scope (e.g. stored on a
 /// queued task).
-pub(crate) struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
+pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
 
 impl CppWebSocketRef {
     /// Take a pending-activity ref on `ws`.

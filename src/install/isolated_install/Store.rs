@@ -21,7 +21,7 @@ pub struct Ids {
     pub pkg_id: PackageID,
 }
 
-pub(crate) struct Store {
+pub struct Store {
     /// Accessed from multiple threads
     pub entries: entry::List,
     pub nodes: node::List,
@@ -168,7 +168,7 @@ pub(crate) trait OrderedArraySetCtx<T: Copy> {
     fn order(&self, l: T, r: T) -> Ordering;
 }
 
-pub(crate) struct OrderedArraySet<T> {
+pub struct OrderedArraySet<T> {
     pub list: Vec<T>,
 }
 
@@ -348,7 +348,7 @@ pub mod entry {
 
     #[repr(transparent)]
     #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-    pub(crate) struct PeerHash(u64);
+    pub struct PeerHash(u64);
 
     impl PeerHash {
         pub(crate) const NONE: Self = Self(0);
@@ -509,7 +509,7 @@ pub mod entry {
     }
 
     #[derive(Copy, Clone)]
-    pub(crate) struct DependenciesItem {
+    pub struct DependenciesItem {
         pub entry_id: Id,
 
         // TODO: this can be removed, and instead dep_id can be retrieved through:
@@ -626,7 +626,7 @@ pub mod node {
     }
 
     #[derive(Copy, Clone)]
-    pub(crate) struct TransitivePeer {
+    pub struct TransitivePeer {
         pub dep_id: DependencyID,
         pub pkg_id: PackageID,
         pub auto_installed: bool,

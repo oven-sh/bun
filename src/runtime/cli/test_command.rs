@@ -252,7 +252,7 @@ pub struct SuiteInfo {
 // dupe it now in begin_test_suite_with_line). // TODO(port): revisit ownership of file name.
 
 #[derive(Default, Clone, Copy)]
-pub(crate) struct Metrics {
+pub struct Metrics {
     pub test_cases: u32,
     pub assertions: u32,
     pub failures: u32,
@@ -805,7 +805,7 @@ pub struct CommandLineReporter {
 }
 
 #[derive(Default)]
-pub(crate) struct ReportersConfig {
+pub struct ReportersConfig {
     pub dots: bool,
     pub only_failures: bool,
     pub junit: Option<Box<JunitReporter>>,

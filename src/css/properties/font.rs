@@ -40,7 +40,7 @@ use css::CssResult;
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
 #[derive(Clone, PartialEq)]
 // TODO(port): css.DeriveParse / css.DeriveToCss were comptime-reflection derives; provide proc-macro #[derive(Parse, ToCss)]
-pub(crate) enum FontWeight {
+pub enum FontWeight {
     /// An absolute font weight.
     Absolute(AbsoluteFontWeight),
     /// The `bolder` keyword.
@@ -95,7 +95,7 @@ impl FontWeight {
 ///
 /// See [FontWeight](FontWeight).
 #[derive(Clone, PartialEq)]
-pub(crate) enum AbsoluteFontWeight {
+pub enum AbsoluteFontWeight {
     /// An explicit weight.
     Weight(CSSNumber),
     /// Same as `400`.
@@ -154,7 +154,7 @@ impl AbsoluteFontWeight {
 
 /// A value for the [font-size](https://www.w3.org/TR/css-fonts-4/#font-size-prop) property.
 #[derive(Clone, PartialEq, css::Parse, css::ToCss)]
-pub(crate) enum FontSize {
+pub enum FontSize {
     /// An explicit size.
     Length(LengthPercentage),
     /// An absolute font size keyword.
@@ -189,7 +189,7 @@ impl FontSize {
 ///
 /// See [FontSize](FontSize).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum AbsoluteFontSize {
+pub enum AbsoluteFontSize {
     /// "xx-small"
     XxSmall,
     /// "x-small"
@@ -222,14 +222,14 @@ impl AbsoluteFontSize {
 ///
 /// See [FontSize](FontSize).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum RelativeFontSize {
+pub enum RelativeFontSize {
     Smaller,
     Larger,
 }
 
 /// A value for the [font-stretch](https://www.w3.org/TR/css-fonts-4/#font-stretch-prop) property.
 #[derive(Copy, Clone, PartialEq)]
-pub(crate) enum FontStretch {
+pub enum FontStretch {
     /// A font stretch keyword.
     Keyword(FontStretchKeyword),
     /// A percentage.
@@ -286,7 +286,7 @@ impl FontStretch {
 ///
 /// See [FontStretch](FontStretch).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum FontStretchKeyword {
+pub enum FontStretchKeyword {
     /// 100%
     Normal,
     /// 50%
@@ -330,7 +330,7 @@ impl FontStretchKeyword {
 }
 
 /// A value for the [font-family](https://www.w3.org/TR/css-fonts-4/#font-family-prop) property.
-pub(crate) enum FontFamily {
+pub enum FontFamily {
     /// A generic family name.
     Generic(GenericFontFamily),
     /// A custom family name.
@@ -485,7 +485,7 @@ impl Clone for FontFamily {
 ///
 /// See [FontFamily](FontFamily).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum GenericFontFamily {
+pub enum GenericFontFamily {
     Serif,
     SansSerif,
     Cursive,
@@ -531,7 +531,7 @@ impl GenericFontFamily {
 
 /// A value for the [font-style](https://www.w3.org/TR/css-fonts-4/#font-style-prop) property.
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum FontStyle {
+pub enum FontStyle {
     /// Normal font style.
     Normal,
     /// Italic font style.
@@ -599,7 +599,7 @@ impl FontStyle {
 
 /// A value for the [font-variant-caps](https://www.w3.org/TR/css-fonts-4/#font-variant-caps-prop) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum FontVariantCaps {
+pub enum FontVariantCaps {
     /// No special capitalization features are applied.
     Normal,
     /// The small capitals feature is used for lower case letters.
@@ -640,7 +640,7 @@ impl FontVariantCaps {
 
 /// A value for the [line-height](https://www.w3.org/TR/2020/WD-css-inline-3-20200827/#propdef-line-height) property.
 #[derive(Clone, PartialEq)]
-pub(crate) enum LineHeight {
+pub enum LineHeight {
     /// The UA sets the line height based on the font.
     Normal,
     /// A multiple of the element's font size.
@@ -694,7 +694,7 @@ impl LineHeight {
 // is the Rust equivalent — every field type carries the trait via the
 // blankets/bridges in `generics.rs`.
 #[derive(DeepClone, CssEql)]
-pub(crate) struct Font {
+pub struct Font {
     /// The font family.
     pub family: Vec<FontFamily>,
     /// The font size.
@@ -898,7 +898,7 @@ impl FontProperty {
 }
 
 #[derive(Default)]
-pub(crate) struct FontHandler {
+pub struct FontHandler {
     family: Option<Vec<FontFamily>>,
     size: Option<FontSize>,
     style: Option<FontStyle>,

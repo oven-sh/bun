@@ -18,7 +18,7 @@ use bun_jsc::{JSGlobalObject, JsResult};
 use phf::phf_map;
 
 #[derive(Clone, Copy)]
-pub(crate) struct CronExpression {
+pub struct CronExpression {
     pub minutes: u64,               // bits 0-59
     pub hours: u32,                 // bits 0-23
     pub days: u32,                  // bits 1-31

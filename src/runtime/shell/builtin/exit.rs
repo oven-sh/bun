@@ -3,7 +3,7 @@ use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub(crate) struct Exit {
+pub struct Exit {
     state: State,
 }
 

@@ -311,7 +311,7 @@ impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
 }
 
 #[derive(Default)]
-pub(crate) struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx>);
+pub struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx>);
 
 impl TimerHeap {
     #[inline]
@@ -365,7 +365,7 @@ impl TimerHeap {
 pub(crate) type TimeoutMap = ArrayHashMap<i32, *mut EventLoopTimer>;
 
 #[derive(Default)]
-pub(crate) struct Maps {
+pub struct Maps {
     pub set_timeout: TimeoutMap,
     pub set_interval: TimeoutMap,
     pub set_immediate: TimeoutMap,
@@ -394,7 +394,7 @@ pub use crate::test_runner::timers::fake_timers::FakeTimers;
 // need `VirtualMachine.timer: All` (currently `()` in bun_jsc). Struct shape
 // is real so `All` embeds them by value with the correct layout.
 
-pub(crate) struct DateHeaderTimer {
+pub struct DateHeaderTimer {
     pub event_loop_timer: EventLoopTimer,
 }
 impl Default for DateHeaderTimer {
@@ -444,7 +444,7 @@ impl DateHeaderTimer {
     }
 }
 
-pub(crate) struct EventLoopDelayMonitor {
+pub struct EventLoopDelayMonitor {
     // TODO(port): bare JSValue heap field — see EventLoopDelayMonitor.rs PORT NOTE
     js_histogram: JSValue,
     pub event_loop_timer: EventLoopTimer,

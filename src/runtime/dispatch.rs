@@ -177,7 +177,7 @@ use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for Fil
 /// Per-arm result for [`run_task`]: `Continue` means proceed to drain
 /// microtasks and the next item; `EarlyReturn` is the HotReloadTask special
 /// case (Zig: `counter.* = 0; return;` — microtasks must NOT drain).
-pub(crate) enum RunTaskResult {
+pub enum RunTaskResult {
     Continue,
     EarlyReturn,
 }

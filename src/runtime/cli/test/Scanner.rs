@@ -42,7 +42,7 @@ pub struct Scanner<'a> {
 // VecDeque is the direct equivalent (pop_front / push_back).
 pub(crate) type Fifo = VecDeque<ScanEntry>;
 
-pub(crate) struct ScanEntry {
+pub struct ScanEntry {
     pub relative_dir: Fd,
     // TODO(port): lifetime — borrows from FileSystem.dirname_store (process-lifetime arena)
     pub dir_path: &'static [u8],
@@ -50,7 +50,7 @@ pub(crate) struct ScanEntry {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum ScanError {
+pub enum ScanError {
     /// Scan entrypoint file/directory does not exist. Not returned when
     /// a subdirectory is scanned but does not exist.
     #[error("DoesNotExist")]

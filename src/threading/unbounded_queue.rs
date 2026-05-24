@@ -218,7 +218,7 @@ impl<T: Node> Batch<T> {
     )),
     repr(align(32))
 )]
-pub(crate) struct QueuePadded<T>(pub T);
+pub struct QueuePadded<T>(pub T);
 
 pub struct UnboundedQueue<T: Node> {
     pub back: QueuePadded<AtomicPtr<T>>,

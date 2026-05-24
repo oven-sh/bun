@@ -22,7 +22,7 @@ pub enum IfState {
     Done,
 }
 
-pub(crate) struct Exec {
+pub struct Exec {
     pub state: ExecBranch,
     /// Back-reference to the current `SmolList<ast::Stmt, 1>` being walked.
     /// Points into the AST arena, which the interpreter holds for its entire
@@ -49,7 +49,7 @@ impl Exec {
     }
 }
 
-pub(crate) enum ExecBranch {
+pub enum ExecBranch {
     Cond,
     Then,
     Elif { idx: u32 },
@@ -206,7 +206,7 @@ impl If {
     }
 }
 
-enum Action {
+pub enum Action {
     Done(ExitCode),
     SpawnStmt(*const ast::Stmt),
 }

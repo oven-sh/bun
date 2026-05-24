@@ -4,7 +4,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub(crate) struct Basename {
+pub struct Basename {
     state: State,
     buf: Vec<u8>,
 }

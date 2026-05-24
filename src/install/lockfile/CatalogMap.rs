@@ -457,7 +457,7 @@ impl CatalogMap {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum FromPnpmLockfileError {
+pub enum FromPnpmLockfileError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("InvalidPnpmLockfile")]

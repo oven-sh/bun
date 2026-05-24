@@ -26,7 +26,7 @@ pub(crate) struct HtmlRenderer<'src> {
     pub heading_tracker: helpers::HeadingIdTracker,
 }
 
-pub(crate) struct OutputBuffer {
+pub struct OutputBuffer {
     pub list: Vec<u8>,
     // allocator dropped — non-AST crate uses global mimalloc
     pub oom: bool,

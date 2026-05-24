@@ -17,7 +17,7 @@ use crate::{
 // `Property` enum (properties_generated.rs) stays lifetime-free. Re-thread
 // `'bump` through `Property<'a>` crate-wide in a later pass (see line :1096).
 #[derive(Clone, PartialEq, Default)]
-pub(crate) struct TransformList {
+pub struct TransformList {
     pub v: Vec<Transform>,
 }
 
@@ -80,7 +80,7 @@ impl TransformList {
 
 /// An individual transform function (https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#two-d-transform-functions).
 #[derive(Clone, PartialEq)]
-pub(crate) enum Transform {
+pub enum Transform {
     /// A 2D translation.
     Translate {
         x: LengthPercentage,
@@ -581,7 +581,7 @@ impl Transform {
 
 /// A 2D matrix.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Matrix<T> {
+pub struct Matrix<T> {
     pub a: T,
     pub b: T,
     pub c: T,
@@ -594,7 +594,7 @@ impl<T: Clone> Matrix<T> {}
 
 /// A 3D matrix.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Matrix3d<T> {
+pub struct Matrix3d<T> {
     pub m11: T,
     pub m12: T,
     pub m13: T,
@@ -619,7 +619,7 @@ impl<T: PartialEq> Matrix3d<T> {}
 // TODO(port): css.DefineEnumProperty reflection → crate-wide #[derive(EnumProperty)] providing
 // parse/to_css/eql/hash/deep_clone from kebab-case variant names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub(crate) enum TransformStyle {
+pub enum TransformStyle {
     #[css("flat")]
     Flat,
     #[css("preserve-3d")]
@@ -628,7 +628,7 @@ pub(crate) enum TransformStyle {
 
 /// A value for the [transform-box](https://drafts.csswg.org/css-transforms-1/#transform-box) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub(crate) enum TransformBox {
+pub enum TransformBox {
     /// Uses the content box as reference box.
     #[css("content-box")]
     ContentBox,
@@ -648,7 +648,7 @@ pub(crate) enum TransformBox {
 
 /// A value for the [backface-visibility](https://drafts.csswg.org/css-transforms-2/#backface-visibility-property) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub(crate) enum BackfaceVisibility {
+pub enum BackfaceVisibility {
     #[css("visible")]
     Visible,
     #[css("hidden")]
@@ -657,7 +657,7 @@ pub(crate) enum BackfaceVisibility {
 
 /// A value for the perspective property.
 #[derive(Clone, PartialEq, crate::Parse, crate::ToCss)]
-pub(crate) enum Perspective {
+pub enum Perspective {
     /// No perspective transform is applied.
     None,
     /// Distance to the center of projection.
@@ -672,7 +672,7 @@ impl Perspective {
 
 /// A value for the [translate](https://drafts.csswg.org/css-transforms-2/#propdef-translate) property.
 #[derive(Clone, PartialEq)]
-pub(crate) enum Translate {
+pub enum Translate {
     /// The "none" keyword.
     None,
 
@@ -756,7 +756,7 @@ impl Translate {
 
 /// A value for the [rotate](https://drafts.csswg.org/css-transforms-2/#propdef-rotate) property.
 #[derive(Copy, Clone, PartialEq)]
-pub(crate) struct Rotate {
+pub struct Rotate {
     /// Rotation around the x axis.
     pub x: f32,
     /// Rotation around the y axis.
@@ -870,7 +870,7 @@ impl Rotate {
 
 /// A value for the [scale](https://drafts.csswg.org/css-transforms-2/#propdef-scale) property.
 #[derive(Clone, PartialEq)]
-pub(crate) enum Scale {
+pub enum Scale {
     /// The "none" keyword.
     None,
 
@@ -970,7 +970,7 @@ crate::css_eql_partialeq!(
 // `Property` enum is lifetime-free (see TransformList above), so the handler
 // is too. Re-thread `'bump` crate-wide in a later pass.
 #[derive(Default)]
-pub(crate) struct TransformHandler {
+pub struct TransformHandler {
     pub transform: Option<(TransformList, VendorPrefix)>,
     pub translate: Option<Translate>,
     pub rotate: Option<Rotate>,

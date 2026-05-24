@@ -11,13 +11,13 @@ use crate::shell::yield_::Yield;
 use core::ptr::NonNull;
 
 #[derive(Default)]
-pub(crate) struct Mkdir {
+pub struct Mkdir {
     pub opts: Opts,
     pub state: State,
 }
 
 #[derive(Default)]
-pub(crate) enum State {
+pub enum State {
     #[default]
     Idle,
     Exec(Exec),
@@ -25,7 +25,7 @@ pub(crate) enum State {
     Done,
 }
 
-pub(crate) struct Exec {
+pub struct Exec {
     pub started: bool,
     pub tasks_count: usize,
     pub tasks_done: usize,

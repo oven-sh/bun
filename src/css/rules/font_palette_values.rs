@@ -8,7 +8,7 @@ use crate::{PrintErr, Printer};
 use super::ArrayList;
 
 /// A [@font-palette-values](https://drafts.csswg.org/css-fonts-4/#font-palette-values) rule.
-pub(crate) struct FontPaletteValuesRule {
+pub struct FontPaletteValuesRule {
     /// The name of the font palette.
     pub name: DashedIdent,
     /// Declarations in the `@font-palette-values` rule.
@@ -68,7 +68,7 @@ impl FontPaletteValuesRule {
 /// A property within an `@font-palette-values` rule.
 ///
 /// See [FontPaletteValuesRule](FontPaletteValuesRule).
-pub(crate) enum FontPaletteValuesProperty {
+pub enum FontPaletteValuesProperty {
     /// The `font-family` property.
     FontFamily(crate::css_properties::font::FontFamily),
     /// The `base-palette` property.
@@ -133,7 +133,7 @@ impl FontPaletteValuesProperty {
 
 /// A value for the [override-colors](https://drafts.csswg.org/css-fonts-4/#override-color)
 /// property in an `@font-palette-values` rule.
-pub(crate) struct OverrideColors {
+pub struct OverrideColors {
     /// The index of the color within the palette to override.
     pub index: u16,
     /// The replacement color.
@@ -182,7 +182,7 @@ impl css::generics::ToCss for OverrideColors {
 
 /// A value for the [base-palette](https://drafts.csswg.org/css-fonts-4/#base-palette-desc)
 /// property in an `@font-palette-values` rule.
-pub(crate) enum BasePalette {
+pub enum BasePalette {
     /// A light color palette as defined within the font.
     Light,
     /// A dark color palette as defined within the font.

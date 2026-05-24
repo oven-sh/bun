@@ -25,7 +25,7 @@ use bun_alloc::Arena;
 /// `parse_items<D>` / `serialize_items<D>`. Only ever instantiated at
 /// `LengthPercentage` (= `DimensionPercentage<LengthValue>`) and
 /// `AnglePercentage` (= `DimensionPercentage<Angle>`).
-pub(crate) trait GradientPosition: Sized + Clone + PartialEq {
+pub trait GradientPosition: Sized + Clone + PartialEq {
     fn parse(input: &mut Parser) -> Result<Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
     /// `true` iff this is `DimensionPercentage::Percentage(p)` with `p.v == v`.
@@ -59,7 +59,7 @@ impl_gradient_position!(AnglePercentage);
 /// Side-keyword protocol for `WebKitGradientPointComponent<S>` (instantiated
 /// at `HorizontalPositionKeyword` / `VerticalPositionKeyword`). Replaces the
 /// missing `css::css_values::position::IntoLengthPercentage` shape.
-pub(crate) trait GradientSideKeyword: Sized + Clone + PartialEq + Copy {
+pub trait GradientSideKeyword: Sized + Clone + PartialEq + Copy {
     fn parse(input: &mut Parser) -> Result<Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
     fn into_length_percentage(&self) -> LengthPercentage;
@@ -95,7 +95,7 @@ impl GradientSideKeyword for VerticalPositionKeyword {
 
 /// A CSS [`<gradient>`](https://www.w3.org/TR/css-images-3/#gradients) value.
 #[derive(PartialEq, css::DeepClone)]
-pub(crate) enum Gradient {
+pub enum Gradient {
     /// A `linear-gradient()`, and its vendor prefix.
     Linear(LinearGradient),
     /// A `repeating-linear-gradient()`, and its vendor prefix.
@@ -303,7 +303,7 @@ impl Gradient {
 
 /// A CSS [`linear-gradient()`](https://www.w3.org/TR/css-images-3/#linear-gradients) or `repeating-linear-gradient()`.
 #[derive(PartialEq)]
-pub(crate) struct LinearGradient {
+pub struct LinearGradient {
     /// The vendor prefixes for the gradient.
     pub vendor_prefix: VendorPrefix,
     /// The direction of the gradient.
@@ -466,7 +466,7 @@ impl LinearGradient {
 
 /// A CSS [`radial-gradient()`](https://www.w3.org/TR/css-images-3/#radial-gradients) or `repeating-radial-gradient()`.
 #[derive(PartialEq)]
-pub(crate) struct RadialGradient {
+pub struct RadialGradient {
     /// The vendor prefixes for the gradient.
     pub vendor_prefix: VendorPrefix,
     /// The shape of the gradient.
@@ -565,7 +565,7 @@ impl RadialGradient {
 
 /// A CSS [`conic-gradient()`](https://www.w3.org/TR/css-images-4/#conic-gradients) or `repeating-conic-gradient()`.
 #[derive(PartialEq)]
-pub(crate) struct ConicGradient {
+pub struct ConicGradient {
     /// The angle of the gradient.
     pub angle: Angle,
     /// The position of the gradient.
@@ -659,7 +659,7 @@ impl ConicGradient {
 
 /// Payload for the `linear` variant of [`WebKitGradient`].
 #[derive(PartialEq)]
-pub(crate) struct WebKitGradientLinear {
+pub struct WebKitGradientLinear {
     /// The starting point of the gradient.
     pub from: WebKitGradientPoint,
     /// The ending point of the gradient.
@@ -684,7 +684,7 @@ impl WebKitGradientLinear {
 
 /// Payload for the `radial` variant of [`WebKitGradient`].
 #[derive(PartialEq)]
-pub(crate) struct WebKitGradientRadial {
+pub struct WebKitGradientRadial {
     /// The starting point of the gradient.
     pub from: WebKitGradientPoint,
     /// The starting radius of the gradient.
@@ -715,7 +715,7 @@ impl WebKitGradientRadial {
 
 /// A legacy `-webkit-gradient()`.
 #[derive(PartialEq, css::DeepClone)]
-pub(crate) enum WebKitGradient {
+pub enum WebKitGradient {
     /// A linear `-webkit-gradient()`.
     Linear(WebKitGradientLinear),
     /// A radial `-webkit-gradient()`.
@@ -920,7 +920,7 @@ impl WebKitGradient {
 
 /// The corner payload for [`LineDirection::Corner`].
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct LineDirectionCorner {
+pub struct LineDirectionCorner {
     /// A horizontal position keyword, e.g. `left` or `right`.
     pub horizontal: HorizontalPositionKeyword,
     /// A vertical position keyword, e.g. `top` or `bottom`.
@@ -933,7 +933,7 @@ impl LineDirectionCorner {}
 ///
 /// See [LinearGradient](LinearGradient).
 #[derive(Clone, PartialEq)]
-pub(crate) enum LineDirection {
+pub enum LineDirection {
     /// An angle.
     Angle(Angle),
     /// A horizontal position keyword, e.g. `left` or `right`.
@@ -1026,7 +1026,7 @@ impl LineDirection {
 /// This type is generic, and items may be either a [LengthPercentage](super::length::LengthPercentage)
 /// or [Angle](super::angle::Angle) depending on what type of gradient it is within.
 #[derive(Clone, PartialEq)]
-pub(crate) enum GradientItem<D> {
+pub enum GradientItem<D> {
     /// A color stop.
     ColorStop(ColorStop<D>),
     /// A color interpolation hint.
@@ -1081,7 +1081,7 @@ impl<D: GradientPosition> GradientItem<D> {
 ///
 /// See [RadialGradient](RadialGradient).
 #[derive(Clone, PartialEq, css::Parse, css::ToCss)]
-pub(crate) enum EndingShape {
+pub enum EndingShape {
     /// An ellipse.
     Ellipse(Ellipse),
     /// A circle.
@@ -1098,7 +1098,7 @@ impl EndingShape {
 
 /// An x/y position within a legacy `-webkit-gradient()`.
 #[derive(Clone, PartialEq)]
-pub(crate) struct WebKitGradientPoint {
+pub struct WebKitGradientPoint {
     /// The x-position.
     pub x: WebKitGradientPointComponent<HorizontalPositionKeyword>,
     /// The y-position.
@@ -1121,7 +1121,7 @@ impl WebKitGradientPoint {
 
 /// A keyword or number within a [WebKitGradientPoint](WebKitGradientPoint).
 #[derive(Clone, PartialEq)]
-pub(crate) enum WebKitGradientPointComponent<S> {
+pub enum WebKitGradientPointComponent<S> {
     /// The `center` keyword.
     Center,
     /// A number or percentage.
@@ -1202,7 +1202,7 @@ impl<S: GradientSideKeyword> WebKitGradientPointComponent<S> {
 
 /// A color stop within a legacy `-webkit-gradient()`.
 #[derive(Clone, PartialEq)]
-pub(crate) struct WebKitColorStop {
+pub struct WebKitColorStop {
     /// The color of the color stop.
     pub color: CssColor,
     /// The position of the color stop.
@@ -1262,7 +1262,7 @@ impl WebKitColorStop {
 /// This type is generic, and may be either a [LengthPercentage](super::length::LengthPercentage)
 /// or [Angle](super::angle::Angle) depending on what type of gradient it is within.
 #[derive(Clone, PartialEq)]
-pub(crate) struct ColorStop<D> {
+pub struct ColorStop<D> {
     /// The color of the color stop.
     pub color: CssColor,
     /// The position of the color stop.
@@ -1288,7 +1288,7 @@ impl<D: GradientPosition> ColorStop<D> {
 
 /// Payload for [`Ellipse::Size`].
 #[derive(Clone, PartialEq)]
-pub(crate) struct EllipseSize {
+pub struct EllipseSize {
     /// The x-radius of the ellipse.
     pub x: LengthPercentage,
     /// The y-radius of the ellipse.
@@ -1301,7 +1301,7 @@ impl EllipseSize {}
 ///
 /// See [RadialGradient](RadialGradient).
 #[derive(Clone, PartialEq)]
-pub(crate) enum Ellipse {
+pub enum Ellipse {
     /// An ellipse with a specified horizontal and vertical radius.
     Size(EllipseSize),
     /// A shape extent keyword.
@@ -1364,7 +1364,7 @@ impl Ellipse {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub(crate) enum ShapeExtent {
+pub enum ShapeExtent {
     /// The closest side of the box to the gradient's center.
     ClosestSide,
     /// The farthest side of the box from the gradient's center.
@@ -1381,7 +1381,7 @@ impl ShapeExtent {}
 ///
 /// See [RadialGradient](RadialGradient).
 #[derive(Clone, PartialEq)]
-pub(crate) enum Circle {
+pub enum Circle {
     /// A circle with a specified radius.
     Radius(Length),
     /// A shape extent keyword.

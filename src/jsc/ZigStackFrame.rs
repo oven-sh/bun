@@ -124,7 +124,7 @@ impl ZigStackFrame {
     }
 }
 
-pub(crate) struct SourceURLFormatter<'a> {
+pub struct SourceURLFormatter<'a> {
     pub source_url: BunString,
     pub position: ZigStackFramePosition,
     pub enable_color: bool,
@@ -233,7 +233,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
     }
 }
 
-pub(crate) struct NameFormatter {
+pub struct NameFormatter {
     pub function_name: BunString,
     pub code_type: ZigStackFrameCode,
     pub enable_color: bool,

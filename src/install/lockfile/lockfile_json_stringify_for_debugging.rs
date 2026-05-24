@@ -570,7 +570,7 @@ fn origin_name(o: Origin) -> &'static str {
 /// `Lockfile.jsonStringify`. `write` is bounded over [`JsonScalar`] so the
 /// concrete [`WriteStream`] impl can encode bool / integer / byte-string
 /// uniformly (Zig's `WriteStream.write` switches on `@TypeOf` at comptime).
-pub(crate) trait JsonWriter {
+pub trait JsonWriter {
     fn begin_object(&mut self) -> Result<(), bun_core::Error>;
     fn end_object(&mut self) -> Result<(), bun_core::Error>;
     fn begin_array(&mut self) -> Result<(), bun_core::Error>;
@@ -586,7 +586,7 @@ pub(crate) trait JsonWriter {
 /// Dispatch trait standing in for Zig's `@TypeOf` switch inside
 /// `std.json.WriteStream.write`. Each impl emits the JSON encoding of `self`
 /// into `out` (no leading/trailing separator — the writer handles that).
-pub(crate) trait JsonScalar {
+pub trait JsonScalar {
     fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions);
 }
 

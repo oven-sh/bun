@@ -197,7 +197,7 @@ const HPACK_ENTRY_OVERHEAD: usize = 32;
 const MAX_CUSTOM_SETTINGS: usize = 10;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum PaddingStrategy {
+pub enum PaddingStrategy {
     #[default]
     None,
     Aligned,
@@ -1383,7 +1383,7 @@ impl StreamResumableIterator {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FlushState {
+pub enum FlushState {
     NoAction,
     Flushed,
     Backpressure,

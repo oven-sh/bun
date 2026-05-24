@@ -11,7 +11,7 @@ use crate::postgres::protocol::new_writer::{NewWriter, WriterContext};
 // This keeps `write(this, context)` 2-arg, matching the Zig signature for side-by-side diff.
 // TODO(refactor): check call sites and consider flattening this to a trait directly on
 // `Container` (a provided `write` method) instead of a zero-sized generic struct.
-pub(crate) trait WriteFn<Container> {
+pub trait WriteFn<Container> {
     fn call<Ctx: WriterContext>(
         this: &mut Container,
         writer: NewWriter<Ctx>,

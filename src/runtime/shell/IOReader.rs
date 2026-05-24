@@ -22,14 +22,14 @@ use crate::shell::yield_::Yield;
 /// dispatch the `on_read_chunk`/`on_reader_done` callback to. Replaces the
 /// Zig `TaggedPtrUnion<(Cat,)>`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct ChildPtr {
+pub struct ChildPtr {
     pub node: NodeId,
     pub tag: ReaderTag,
 }
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ReaderTag {
+pub enum ReaderTag {
     Cat,
 }
 

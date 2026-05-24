@@ -161,7 +161,7 @@ impl Default for Options {
 }
 
 // PORT NOTE: was an anonymous `union(enum)` field type in Zig.
-pub(crate) enum PatchFeatures {
+pub enum PatchFeatures {
     Nothing,
     Patch,
     Commit { patches_dir: &'static [u8] },
@@ -278,7 +278,7 @@ pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
 #[derive(Default, Copy, Clone)]
-pub(crate) struct Update {
+pub struct Update {
     pub development: bool,
     pub optional: bool,
     pub peer: bool,

@@ -59,7 +59,7 @@ impl Default for GarbageCollectionController {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GcRepeatSetting {
+pub enum GcRepeatSetting {
     Fast,
     Slow,
 }
@@ -320,7 +320,7 @@ pub(crate) extern "C" fn on_gc_repeating_timer(timer: *mut uws::Timer) {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GCTimerState {
+pub enum GCTimerState {
     Pending,
     Scheduled,
     RunOnNextTick,

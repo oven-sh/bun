@@ -98,7 +98,7 @@ impl Flags {
     }
 }
 
-pub(crate) struct UpgradeCTX {
+pub struct UpgradeCTX {
     pub context: *mut uws_sys::WebSocketUpgradeContext,
     // request will be detached when go async
     pub request: *mut uws_sys::Request,
@@ -158,7 +158,7 @@ impl UpgradeCTX {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum BodyReadState {
+pub enum BodyReadState {
     #[default]
     None = 0,
     Pending = 1,
@@ -902,7 +902,7 @@ impl NodeHTTPResponse {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub(crate) enum AbortEvent {
+pub enum AbortEvent {
     None = 0,
     Abort = 1,
     Timeout = 2,

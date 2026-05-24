@@ -21,7 +21,7 @@ use crate::parse_task;
 
 bun_core::declare_scope!(barrel, hidden);
 
-pub(crate) enum RequestedExports {
+pub enum RequestedExports {
     All,
     Partial(StringArrayHashMap<()>),
 }

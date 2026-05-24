@@ -144,7 +144,7 @@ impl PathWatcherManager {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct PathWatcher {
+pub struct PathWatcher {
     handle: uv::uv_fs_event_t,
     // LIFETIMES.tsv: BACKREF → Option<*mut PathWatcherManager>
     manager: Option<*mut PathWatcherManager>,
@@ -192,7 +192,7 @@ impl ChangeEvent {
 }
 
 #[allow(dead_code)]
-pub(crate) type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
+pub type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: bool);
 #[allow(dead_code)]
 pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 

@@ -17,7 +17,7 @@ pub struct MemorySettings {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub(crate) struct SourceLocationBytes {
+pub struct SourceLocationBytes {
     pub start: usize,
     pub end: usize,
 }
@@ -57,7 +57,7 @@ fn ptr_without_panic(buf: &[u8]) -> *const u8 {
 /// `*mut T` (nullable after detach) and recover a usable `&mut T` without a
 /// per-call `unsafe { }` at every method site.
 mod sealed {
-    pub(crate) trait Sealed {}
+    pub trait Sealed {}
 }
 pub trait Opaque: sealed::Sealed {
     /// Null-checked deref. See trait doc for the soundness argument.

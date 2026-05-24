@@ -98,7 +98,7 @@ unsafe extern "Rust" {
 // FORWARD_DECL(b0): bun_jsc::RegularExpression — stored as raw NonNull<()>
 // (NOT Box<ZST>: a zero-sized opaque Box is a dangling sentinel that would
 // leak the real JSC allocation and skip its destructor).
-pub(crate) struct RegularExpression(NonNull<()>);
+pub struct RegularExpression(NonNull<()>);
 
 impl RegularExpression {
     #[inline]

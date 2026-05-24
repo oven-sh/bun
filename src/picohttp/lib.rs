@@ -219,7 +219,7 @@ impl fmt::Display for Header {
 const _: () = assert!(core::mem::size_of::<Header>() == core::mem::size_of::<c::phr_header>());
 const _: () = assert!(core::mem::align_of::<Header>() == core::mem::align_of::<c::phr_header>());
 
-pub(crate) struct HeaderCurlFormatter<'a> {
+pub struct HeaderCurlFormatter<'a> {
     header: &'a Header,
 }
 
@@ -289,7 +289,7 @@ impl<'a> HeaderList<'a> {
 
 // TODO(port): thiserror not in workspace deps — manual Display/Error impl.
 #[derive(Debug, strum::IntoStaticStr)]
-pub(crate) enum ParseRequestError {
+pub enum ParseRequestError {
     BadRequest,
     ShortRead,
 }
@@ -690,7 +690,7 @@ impl fmt::Display for Response<'_> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, strum::IntoStaticStr)]
-pub(crate) enum ParseHeadersError {
+pub enum ParseHeadersError {
     BadHeaders,
     ShortRead,
 }

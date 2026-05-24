@@ -1552,7 +1552,7 @@ pub enum CachingSha2 {
 }
 
 #[derive(strum::IntoStaticStr, Debug)]
-pub(crate) enum FlushQueueError {
+pub enum FlushQueueError {
     AuthenticationFailed,
 }
 impl From<FlushQueueError> for bun_core::Error {
@@ -1617,7 +1617,7 @@ impl WriterContext for Writer {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct Reader {
+pub struct Reader {
     pub connection: *mut MySQLConnection,
 }
 

@@ -115,7 +115,7 @@ pub struct InternalSourceMap {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub(crate) struct SyncEntry {
+pub struct SyncEntry {
     pub generated_line: i32,
     pub generated_column: i32,
     pub byte_offset: u32,

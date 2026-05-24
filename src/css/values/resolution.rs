@@ -12,7 +12,7 @@ use crate::values::number::CSSNumber;
     crate::generics::CssHash,
     crate::generics::DeepClone,
 )]
-pub(crate) enum Resolution {
+pub enum Resolution {
     /// A resolution in dots per inch.
     Dpi(CSSNumber),
     /// A resolution in dots per centimeter.

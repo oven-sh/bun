@@ -41,7 +41,7 @@ pub struct StaticRoute {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct InitFromBytesOptions<'a> {
+pub struct InitFromBytesOptions<'a> {
     pub server: Option<AnyServer>,
     pub mime_type: Option<&'a MimeType>,
     pub status_code: u16,

@@ -50,7 +50,7 @@ pub type ArrayList<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
 /// Per-struct/-enum impls come from `#[derive(DeepClone)]`;
 /// the Zig `implementDeepClone` body is the spec for that derive (field-wise /
 /// variant-wise recursion).
-pub(crate) trait DeepClone<'bump>: Sized {
+pub trait DeepClone<'bump>: Sized {
     fn deep_clone(&self, bump: &'bump Arena) -> Self;
 }
 
@@ -190,7 +190,7 @@ impl<'bump> DeepClone<'bump> for bun_ast::Loc {
 /// `#[derive(PartialEq)]` in Rust — and most impls could be exactly that.
 /// Kept as a separate trait because some CSS types want structural
 /// equality that differs from `PartialEq` (e.g. `VendorPrefix`, idents).
-pub(crate) trait CssEql {
+pub trait CssEql {
     fn eql(&self, other: &Self) -> bool;
 }
 
@@ -881,7 +881,7 @@ mod inherent_bridge {
 pub const HASH_SEED: u64 = 0;
 
 /// Wyhash-based structural hash for CSS values.
-pub(crate) trait CssHash {
+pub trait CssHash {
     fn hash(&self, hasher: &mut Wyhash);
 }
 
@@ -1050,7 +1050,7 @@ impl CssHash for bun_ast::Loc {
 // ───────────────────────────────────────────────────────────────────────────────
 
 /// Uniform `.as_slice()` over the three list container shapes the CSS parser uses.
-pub(crate) trait ListContainer {
+pub trait ListContainer {
     type Item;
     fn slice(&self) -> &[Self::Item];
 }
@@ -1082,7 +1082,7 @@ pub fn slice<L: ListContainer>(val: &L) -> &[L::Item] {
     val.slice()
 }
 
-pub(crate) trait IsCompatible {
+pub trait IsCompatible {
     fn is_compatible(&self, browsers: &crate::targets::Browsers) -> bool;
 }
 

@@ -227,7 +227,7 @@ pub mod js_bundler {
         }
     }
 
-    pub(crate) struct CompileOptions {
+    pub struct CompileOptions {
         pub compile_target: CompileTarget,
         pub exec_argv: OwnedString,
         pub executable_path: OwnedString,
@@ -1289,7 +1289,7 @@ pub mod js_bundler {
     }
 
     #[derive(Default)]
-    pub(crate) struct Minify {
+    pub struct Minify {
         pub whitespace: bool,
         pub identifiers: bool,
         pub syntax: bool,

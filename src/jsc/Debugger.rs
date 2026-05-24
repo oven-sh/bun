@@ -1093,7 +1093,7 @@ impl TestReporterAgent {
 // ─── LifecycleAgent ───────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub(crate) struct LifecycleAgent {
+pub struct LifecycleAgent {
     pub handle: *mut LifecycleHandle,
 }
 

@@ -2,7 +2,7 @@ use crate::css_rules::{CssRuleList, Location};
 use crate::{PrintErr, Printer};
 
 /// A [@starting-style](https://drafts.csswg.org/css-transitions-2/#defining-before-change-style-the-starting-style-rule) rule.
-pub(crate) struct StartingStyleRule<R> {
+pub struct StartingStyleRule<R> {
     /// Nested rules within the `@starting-style` rule.
     pub rules: CssRuleList<R>,
     /// The location of the rule in the source file.

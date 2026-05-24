@@ -347,6 +347,7 @@ impl HostedGitInfo {
     }
 }
 
+// PORT NOTE: Zig nested `pub const StringPair = struct {...}` inside HostedGitInfo;
 // Rust can't nest struct defs inside `impl`, so it lives at module scope but is
 // re-exported through the type's namespace conceptually.
 pub struct StringPair {
@@ -428,7 +429,7 @@ pub fn parse_url(npa_str: &[u8]) -> Result<ParsedUrl<'_>, ParseUrlError> {
 
 /// Enumeration of possible URL protocols.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-pub(crate) enum WellDefinedProtocol {
+pub enum WellDefinedProtocol {
     Git,
     GitPlusFile,
     GitPlusFtp,
@@ -657,7 +658,7 @@ pub(crate) fn is_github_shorthand(npa_str: &[u8]) -> bool {
 // PORT NOTE: Zig `union(enum) { custom: []const u8 }` borrowed the input `npa_str`.
 // Carries a BORROW_PARAM lifetime; lives only for the duration of `parse_url`.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum UrlProtocol<'a> {
+pub enum UrlProtocol<'a> {
     WellFormed(WellDefinedProtocol),
 
     /// A protocol which is not known by the library. Includes the : character, but not the
@@ -1056,7 +1057,7 @@ pub struct Config {
 
 // PORT NOTE: `ExtractResult` corresponds to `Config.formatters.extract.Result`.
 // Reshaped to use `Range<usize>` into `_owned_buffer` (see HostedGitInfo note).
-pub(crate) struct ExtractResult {
+pub struct ExtractResult {
     pub user: Option<Range<usize>>,
     pub project: Range<usize>,
     pub committish: Option<Range<usize>>,

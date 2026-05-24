@@ -19,7 +19,7 @@ const TAG_TURN: u8 = 8;
 /// as their computed value.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, crate::generics::CssHash, crate::generics::DeepClone)]
-pub(crate) enum Angle {
+pub enum Angle {
     /// An angle in degrees. There are 360 degrees in a full circle.
     Deg(CSSNumber) = TAG_DEG,
     /// An angle in radians. There are 2π radians in a full circle.

@@ -71,7 +71,7 @@ impl Default for Mapping {
 
 /// Optimization: if we don't care about the "names" column, then don't store the names.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct MappingWithoutName {
+pub struct MappingWithoutName {
     pub generated: LineColumnOffset,
     pub original: LineColumnOffset,
     pub source_index: i32,
@@ -88,7 +88,7 @@ impl MappingWithoutName {
     }
 }
 
-pub(crate) enum ListValue {
+pub enum ListValue {
     WithoutNames(MultiArrayList<MappingWithoutName>),
     WithNames(MultiArrayList<Mapping>),
 }

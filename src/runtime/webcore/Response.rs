@@ -50,7 +50,7 @@ unsafe extern "C" {
 /// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
 /// C++ side. Transferring ownership is by-move.
 #[repr(transparent)]
-pub(crate) struct HeadersRef(NonNull<FetchHeaders>);
+pub struct HeadersRef(NonNull<FetchHeaders>);
 
 impl HeadersRef {
     /// Adopt a freshly-created `FetchHeaders*` (refcount already 1).

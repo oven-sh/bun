@@ -74,7 +74,7 @@ unsafe impl bun_threading::Linked for PatchTask {
 }
 
 #[derive(strum::IntoStaticStr)]
-pub(crate) enum Callback {
+pub enum Callback {
     #[strum(serialize = "calc_hash")]
     CalcHash(CalcPatchHash),
     #[strum(serialize = "apply")]
@@ -105,7 +105,7 @@ impl Callback {
     }
 }
 
-pub(crate) struct CalcPatchHash {
+pub struct CalcPatchHash {
     pub patchfile_path: Box<[u8]>,
     pub name_and_version_hash: u64,
 
@@ -116,7 +116,7 @@ pub(crate) struct CalcPatchHash {
     pub logger: Log,
 }
 
-pub(crate) struct EnqueueAfterState {
+pub struct EnqueueAfterState {
     pub pkg_id: PackageID,
     pub dependency_id: DependencyID,
     pub url: Box<[u8]>,
@@ -142,7 +142,7 @@ pub struct ApplyPatch {
     pub logger: Log,
 }
 
-pub(crate) struct InstallContext {
+pub struct InstallContext {
     pub dependency_id: DependencyID,
     pub tree_id: crate::lockfile::tree::Id,
     pub path: Vec<u8>,

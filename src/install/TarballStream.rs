@@ -68,7 +68,7 @@ enum Phase {
 // borrowed lifetime cannot be sound. Holding `&'a mut Task` here while
 // `populate_result` materialises another `&mut Task` from a raw copy of it
 // would be aliased UB; raw pointers match the Zig aliasing contract.
-pub(crate) struct TarballStream {
+pub struct TarballStream {
     // ---------------------------------------------------------------------
     // Cross-thread producer state (HTTP → worker)
     // ---------------------------------------------------------------------

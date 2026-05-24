@@ -35,7 +35,7 @@ use crate::selector::parser::{
 /// (from left to right). Once the process is complete, callers should invoke
 /// build(), which transforms the contents of the SelectorBuilder into a heap-
 /// allocated Selector and leaves the builder in a drained state.
-pub(crate) struct SelectorBuilder<Impl: ValidSelectorImpl> {
+pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     /// The entire sequence of simple selectors, from left to right, without combinators.
     ///
     /// We make this large because the result of parsing a selector is fed into a new

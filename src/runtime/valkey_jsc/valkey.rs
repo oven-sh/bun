@@ -32,7 +32,7 @@ type JsTerminated<T> = bun_jsc::JsResult<T>;
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
-pub(crate) struct ConnectionFlags {
+pub struct ConnectionFlags {
     // TODO(markovejnovic): I am not a huge fan of these flags. I would
     // consider refactoring them into an enumerated state machine, as that
     // feels significantly more natural compared to a bag of booleans.
@@ -131,7 +131,7 @@ impl Protocol {
 }
 
 #[derive(Default)]
-pub(crate) enum TLS {
+pub enum TLS {
     #[default]
     None,
     Enabled,
@@ -188,7 +188,7 @@ impl Default for Options {
     }
 }
 
-pub(crate) enum Address {
+pub enum Address {
     // TODO(port): in Zig these slices borrow from `ValkeyClient.connection_strings`
     // (self-referential). Uses owned Box<[u8]> instead; revisit if it shows up as hot.
     Unix(Box<[u8]>),

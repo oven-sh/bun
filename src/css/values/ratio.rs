@@ -4,7 +4,7 @@ use crate::values::number::{CSSNumber, CSSNumberFns};
 /// A CSS [`<ratio>`](https://www.w3.org/TR/css-values-4/#ratios) value,
 /// representing the ratio of two numeric values.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Ratio {
+pub struct Ratio {
     pub numerator: CSSNumber,
     pub denominator: CSSNumber,
 }

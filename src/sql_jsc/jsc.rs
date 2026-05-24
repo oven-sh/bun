@@ -410,7 +410,7 @@ pub struct AutoFlusher {
 
 /// Zig's free fns take (comptime Type: type, this: *Type) and duck-type on
 /// this.auto_flusher + Type.onAutoFlush. SQL connection types implement this.
-pub(crate) trait HasAutoFlush: Sized {
+pub trait HasAutoFlush: Sized {
     fn on_auto_flush(this: *mut Self) -> bool;
 }
 
@@ -779,7 +779,7 @@ pub enum ImplementationVisibility {
 }
 #[repr(u8)]
 #[derive(Clone, Copy, Default)]
-pub(crate) enum Intrinsic {
+pub enum Intrinsic {
     #[default]
     None = 0,
 }

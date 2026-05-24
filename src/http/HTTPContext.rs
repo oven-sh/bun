@@ -28,7 +28,7 @@ const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 // naming convention, not part of the type's identity; LIFETIMES.tsv already
 // aliases `*NewHTTPContext(true)` as `HttpsContext`.
 #[derive(bun_ptr::CellRefCounted)]
-pub(crate) struct HTTPContext<const SSL: bool> {
+pub struct HTTPContext<const SSL: bool> {
     /// Heap-allocated custom-SSL contexts only. The cache entry in
     /// custom_ssl_context_map holds 1; each in-flight HTTPClient that set
     /// `client.custom_ssl_ctx = this` holds 1. Eviction drops the cache
@@ -166,7 +166,7 @@ impl<const SSL: bool> ActiveSocketExt<SSL> for ActiveSocket<SSL> {
     }
 }
 
-pub(crate) struct PooledSocket<const SSL: bool> {
+pub struct PooledSocket<const SSL: bool> {
     pub http_socket: HTTPSocket<SSL>,
     pub hostname_buf: [u8; MAX_KEEPALIVE_HOSTNAME],
     pub hostname_len: u8,
@@ -294,6 +294,10 @@ impl<const SSL: bool> ExistingSocket<SSL> {
     }
 }
 
+/// `dispatch.zig` reaches `Handler` via this name. The ext stores
+/// `*anyopaque` (the `ActiveSocket` tagged pointer), so dispatch reads
+/// it as `**anyopaque` and `Handler` decodes the tag.
+// PORT NOTE: was `pub type ActiveSocketHandler = Handler<SSL>;` (inherent
 // associated type — unstable). Hoisted to a free alias.
 pub type ActiveSocketHandler<const SSL: bool> = Handler<SSL>;
 

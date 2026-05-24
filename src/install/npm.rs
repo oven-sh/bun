@@ -589,7 +589,7 @@ pub use registry as Registry;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
-pub(crate) struct DistTagMap {
+pub struct DistTagMap {
     pub tags: ExternalStringList,
     pub versions: VersionSlice,
 }
@@ -598,7 +598,7 @@ pub(crate) type PackageVersionList = ExternalSlice<PackageVersion>;
 
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
-pub(crate) struct ExternVersionMap {
+pub struct ExternVersionMap {
     pub keys: VersionSlice,
     pub values: PackageVersionList,
 }
@@ -653,7 +653,7 @@ pub(crate) fn negatable_from_json<T: NegatableEnum>(expr: &JSON::Expr) -> Result
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct PackageVersion {
+pub struct PackageVersion {
     /// `"integrity"` field || `"shasum"` field
     /// https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#dist
     // Splitting this into it's own array ends up increasing the final size a little bit.
@@ -817,7 +817,7 @@ const _: () = {
 
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
-pub(crate) struct NpmPackage {
+pub struct NpmPackage {
     /// HTTP response headers
     pub last_modified: SemverString,
     pub etag: SemverString,
@@ -1626,7 +1626,7 @@ impl PackageManifest {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FindVersionError {
+pub enum FindVersionError {
     NotFound,
     TooRecent,
     AllVersionsTooRecent,

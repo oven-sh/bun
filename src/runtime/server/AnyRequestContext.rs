@@ -29,7 +29,7 @@ type DebugHttpsH3Ctx = RequestContext<DebugHTTPSServer, true, true, true>;
 // `bun_ptr` for these six types.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CtxTag {
+pub enum CtxTag {
     None = 0,
     Http,
     Https,
@@ -54,7 +54,7 @@ impl AnyRequestContext {
 
 /// Internal: maps each `RequestContext` monomorphization to its tag so
 /// `AnyRequestContext::init` is generic over the six types without `TypeList`.
-pub(crate) trait CtxKind {
+pub trait CtxKind {
     const TAG: CtxTag;
 }
 

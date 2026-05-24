@@ -40,7 +40,7 @@ pub(crate) type FSEventStreamCallback = unsafe extern "C" fn(
 
 // we only care about info and perform
 #[repr(C)]
-pub(crate) struct CFRunLoopSourceContext {
+pub struct CFRunLoopSourceContext {
     pub version: CFIndex,
     pub info: *mut c_void,
     pub retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
@@ -54,7 +54,7 @@ pub(crate) struct CFRunLoopSourceContext {
 }
 
 #[repr(C)]
-pub(crate) struct FSEventStreamContext {
+pub struct FSEventStreamContext {
     pub version: CFIndex,
     pub info: *mut c_void,
     pub pad: [*mut c_void; 3],
@@ -344,7 +344,7 @@ impl Task {
     }
 }
 
-pub(crate) struct ConcurrentTask {
+pub struct ConcurrentTask {
     pub task: Task,
     pub next: bun_threading::Link<ConcurrentTask>,
     pub auto_delete: bool,
@@ -854,7 +854,7 @@ impl Drop for FSEventsLoop {
     }
 }
 
-pub(crate) struct FSEventsWatcher {
+pub struct FSEventsWatcher {
     /// Borrowed from the owning `PathWatcher` (Zig: `[]const u8`). The
     /// PathWatcher heap-allocates this watcher and only frees it after `Drop`
     /// (→ `unregister_watcher`) has run, so the bytes outlive every read in
@@ -875,7 +875,7 @@ pub(crate) struct FSEventsWatcher {
     pub ctx: *mut c_void,
 }
 
-pub(crate) type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
+pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {

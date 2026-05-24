@@ -1180,7 +1180,7 @@ pub struct JSONParseResult {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum JSONParseResultTag {
+pub enum JSONParseResultTag {
     Expr,
     Ascii,
     Empty,

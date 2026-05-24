@@ -386,7 +386,7 @@ pub mod identifier {
 }
 
 #[derive(enumset::EnumSetType)]
-pub(crate) enum SkipTypeOptions {
+pub enum SkipTypeOptions {
     IsReturnType,
     IsIndexSignature,
     AllowTupleLabels,

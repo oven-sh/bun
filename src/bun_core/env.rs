@@ -107,7 +107,7 @@ pub enum OperatingSystem {
 /// `.windows`) so cross-references in ported code stay 1:1.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum StdOsTag {
+pub enum StdOsTag {
     Macos,
     Linux,
     Freebsd,

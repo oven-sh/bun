@@ -23,12 +23,12 @@ pub struct Pipeline {
     pub state: PipelineState,
 }
 
-pub(crate) enum CmdOrResult {
+pub enum CmdOrResult {
     Cmd(NodeId),
     Result(ExitCode),
 }
 
-pub(crate) enum PipelineState {
+pub enum PipelineState {
     StartingCmds { idx: u32 },
     Pending,
     WaitingWriteErr,

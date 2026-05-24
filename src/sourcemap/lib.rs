@@ -492,7 +492,7 @@ impl SourceProvider for SourceProviderMap {
 bun_opaque::opaque_ffi! { pub struct DevServerSourceProvider; }
 
 #[repr(C)]
-pub(crate) struct DevServerSourceMapData {
+pub struct DevServerSourceMapData {
     pub ptr: *const u8,
     pub length: usize,
 }
@@ -836,7 +836,7 @@ pub mod SerializedSourceMap {
     /// The on-disk view (`bytes` points into the standalone-graph trailer, so
     /// it lives for the process — modelled as `'static`).
     #[derive(Clone, Copy)]
-    pub(crate) struct SerializedSourceMap {
+    pub struct SerializedSourceMap {
         pub bytes: &'static [u8],
     }
 
@@ -868,7 +868,7 @@ pub mod SerializedSourceMap {
     /// Once loaded, this map stores additional data for keeping track of
     /// source code. Held behind `ParsedSourceMap.underlying_provider` as a raw
     /// pointer (see `ParsedSourceMap::standalone_module_graph_data`).
-    pub(crate) struct Loaded {
+    pub struct Loaded {
         pub map: SerializedSourceMap,
         /// Only decompress source code once! Once a file is decompressed,
         /// it is stored here. Decompression failure is recorded as an empty

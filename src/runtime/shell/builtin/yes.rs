@@ -19,7 +19,7 @@ pub enum State {
 }
 
 #[derive(Default)]
-pub(crate) struct Yes {
+pub struct Yes {
     pub state: State,
     /// One repetition of the output (`"y\n"` or joined argv + `'\n'`), tiled
     /// out to ~BUFSIZ.
@@ -200,7 +200,7 @@ impl Yes {
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
 /// don't block the main thread forever. Spec: yes.zig `YesTask`.
 #[repr(C)]
-pub(crate) struct YesTask {
+pub struct YesTask {
     /// Back-ref to the owning [`Interpreter`] (NodeId-arena port replaces
     /// Zig's `container_of` chain).
     pub interp: *mut Interpreter,

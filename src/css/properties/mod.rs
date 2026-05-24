@@ -220,7 +220,7 @@ pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
 // comptime reflection over @tagName. The Rust derive emits `EnumProperty` +
 // `From<Self> for &'static str` + inherent `parse`/`to_css`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub(crate) enum CSSWideKeyword {
+pub enum CSSWideKeyword {
     /// The property's initial value.
     Initial,
     /// The property's computed value on the parent element.

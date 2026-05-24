@@ -18,7 +18,7 @@ pub const X_OK: i32 = posix::X_OK;
 // over i32 with associated decls — modelled here as a transparent tuple struct.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) struct Copyfile(pub i32);
+pub struct Copyfile(pub i32);
 
 impl Copyfile {
     /// Zig: `@enumFromInt(raw)` — wrap a raw flags value.

@@ -1515,7 +1515,7 @@ impl PercentEncoding {
 // ══════════════════════════════════════════════════════════════════════════
 
 #[derive(Clone, Copy)]
-pub(crate) struct ScannerResult {
+pub struct ScannerResult {
     pub name_needs_decoding: bool,
     pub value_needs_decoding: bool,
     pub name: api::StringPointer,

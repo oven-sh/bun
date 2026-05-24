@@ -25,7 +25,7 @@ use crate::{JSGlobalObject, JSPromise, JSValue, JsError};
 // until the stub is removed and `js_global_object::JSGlobalObject` becomes
 // the sole re-export.
 // ──────────────────────────────────────────────────────────────────────────
-pub(crate) trait GlobalObjectRef {
+pub trait GlobalObjectRef {
     /// Raw `JSC::JSGlobalObject*` for FFI.
     fn as_global_ptr(&self) -> *mut c_void;
     /// `globalThis.vm().throwError(globalThis, value)`.

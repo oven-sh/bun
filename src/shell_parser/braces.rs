@@ -400,7 +400,7 @@ impl ExpansionVariant {
 }
 
 #[derive(Default, Copy, Clone)]
-pub(crate) struct ExpansionVariants {
+pub struct ExpansionVariants {
     pub idx: u16,
     pub end: u16,
 }
@@ -572,7 +572,7 @@ pub mod ast {
         Expansion(Expansion),
     }
 
-    pub(crate) enum GroupAtoms {
+    pub enum GroupAtoms {
         Single(Atom),
         // PORT NOTE: bump-owned slice; raw because Group has raw backrefs (see bubble_up).
         Many(*mut [Atom]),
@@ -595,7 +595,7 @@ pub mod ast {
         }
     }
 
-    pub(crate) struct Expansion {
+    pub struct Expansion {
         // PORT NOTE: bump-owned mutable slice; raw because expand_nested writes
         // bubble_up backrefs into elements while recursing through the parent.
         pub variants: *mut [Group],

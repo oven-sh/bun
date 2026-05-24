@@ -263,7 +263,7 @@ impl WindowsImpl {
 /// os_unfair_lock on darwin supports priority inheritance and is generally faster than Futex solutions.
 #[cfg(target_vendor = "apple")]
 #[derive(Default)]
-pub(crate) struct DarwinImpl {
+pub struct DarwinImpl {
     oul: core::cell::UnsafeCell<OsUnfairLock>,
 }
 

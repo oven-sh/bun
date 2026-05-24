@@ -21,7 +21,7 @@ use super::{StdioKind, StdioResult, Subprocess};
 pub type IOReader = BufferedReader;
 
 #[derive(Default)]
-pub(crate) enum State {
+pub enum State {
     #[default]
     Pending,
     Done(Vec<u8>),
@@ -31,7 +31,7 @@ pub(crate) enum State {
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive, single-thread.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
-pub(crate) struct PipeReader {
+pub struct PipeReader {
     pub reader: IOReader,
     // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
     // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;

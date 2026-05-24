@@ -13,7 +13,7 @@ use bun_alloc::Arena;
 use bun_alloc::ArenaVecExt as _; // bumpalo::Bump re-export (CSS is an AST crate)
 
 /// A value for the [box-shadow](https://drafts.csswg.org/css-backgrounds/#box-shadow) property.
-pub(crate) struct BoxShadow {
+pub struct BoxShadow {
     /// The color of the box shadow.
     pub color: CssColor,
     /// The x offset of the shadow.
@@ -180,7 +180,7 @@ impl BoxShadow {
 }
 
 #[derive(Default)]
-pub(crate) struct BoxShadowHandler {
+pub struct BoxShadowHandler {
     pub box_shadows: Option<(SmallList<BoxShadow, 1>, VendorPrefix)>,
     pub flushed: bool,
 }

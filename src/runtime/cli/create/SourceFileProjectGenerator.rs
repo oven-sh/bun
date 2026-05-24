@@ -809,7 +809,7 @@ impl TemplateFile {
 
 #[derive(Clone, Copy, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub(crate) enum Reason {
+pub enum Reason {
     Shadcn,
     Bun,
     Css,
@@ -949,7 +949,7 @@ pub mod react_shadcn_spa {
 // Template type to handle different project types
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
-pub(crate) enum Template {
+pub enum Template {
     ReactTailwindSpa,
     ReactSpa,
     ReactShadcnSpa { components: StringSet },

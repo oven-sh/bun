@@ -15,7 +15,7 @@ use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 
 #[derive(Default, Clone, Copy)]
-pub(crate) struct Buffered {
+pub struct Buffered {
     pub buf: [u8; 3],
     pub len: u8, // Zig: u2
 }

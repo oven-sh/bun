@@ -7,7 +7,7 @@ use crate::values::protocol;
 /// A CSS `<position>` value,
 /// as used in the `background-position` property, gradients, masks, etc.
 #[derive(Clone, PartialEq)]
-pub(crate) struct Position {
+pub struct Position {
     /// The x-position.
     pub x: HorizontalPosition,
     /// The y-position.
@@ -294,7 +294,7 @@ impl Default for Position {
 
 /// A side keyword with an optional offset.
 #[derive(Clone, PartialEq)]
-pub(crate) struct PositionComponentSide<S> {
+pub struct PositionComponentSide<S> {
     /// A side keyword.
     pub side: S,
     /// Offset from the side.
@@ -303,7 +303,7 @@ pub(crate) struct PositionComponentSide<S> {
 
 /// A component of a CSS `<position>` value (horizontal or vertical).
 #[derive(Clone, PartialEq)]
-pub(crate) enum PositionComponent<S> {
+pub enum PositionComponent<S> {
     /// The `center` keyword.
     Center,
     /// A length or percentage from the top-left corner of the box.
@@ -381,7 +381,7 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub(crate) enum HorizontalPositionKeyword {
+pub enum HorizontalPositionKeyword {
     /// The `left` keyword.
     Left,
     /// The `right` keyword.
@@ -400,7 +400,7 @@ impl HorizontalPositionKeyword {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
-pub(crate) enum VerticalPositionKeyword {
+pub enum VerticalPositionKeyword {
     /// The `top` keyword.
     Top,
     /// The `bottom` keyword.

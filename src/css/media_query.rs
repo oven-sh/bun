@@ -37,7 +37,7 @@ type CSSInteger = i32;
 
 /// Trait modeling Zig's `ValidQueryCondition` comptime interface check.
 /// Any type that can appear as a node in a query-condition tree.
-pub(crate) trait QueryCondition: Sized + ToCss {
+pub trait QueryCondition: Sized + ToCss {
     /// Leaf payload: `QueryFeature<_>` for media/container, `Property` for
     /// `StyleQuery`.
     type Feature;
@@ -165,7 +165,7 @@ pub enum Operator {
 
 /// `only` / `not` media-query qualifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum Qualifier {
+pub enum Qualifier {
     Only,
     Not,
 }
@@ -173,7 +173,7 @@ pub(crate) enum Qualifier {
 /// A [media type](https://drafts.csswg.org/mediaqueries/#media-types).
 // Copy: bitwise OK — `Custom` borrows arena-owned parser input (non-owning).
 #[derive(Debug, Copy, Clone)]
-pub(crate) enum MediaType {
+pub enum MediaType {
     /// `all` (default).
     All,
     /// `print`.
@@ -206,7 +206,7 @@ impl PartialEq for MediaType {
 // PORT NOTE: Zig `packed struct(u8)` with two bool fields → bitflags!
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub(crate) struct QueryConditionFlags: u8 {
+    pub struct QueryConditionFlags: u8 {
         /// Whether to allow top-level "or" boolean logic.
         const ALLOW_OR = 1 << 0;
         /// Whether to allow style container queries.
@@ -229,7 +229,7 @@ impl QueryConditionFlags {
 
 /// Represents a media condition. Implements `QueryCondition`.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum MediaCondition {
+pub enum MediaCondition {
     Feature(Box<MediaFeature, ArenaPtr>),
     Not(Box<MediaCondition, ArenaPtr>),
     Operation {
@@ -246,7 +246,7 @@ pub(crate) type MediaFeature = QueryFeature<MediaFeatureId>;
 
 /// A media feature name (either a known `MediaFeatureId` or a custom/unknown ident).
 #[derive(Debug, Clone)]
-pub(crate) enum MediaFeatureName<FeatureId: FeatureIdTrait> {
+pub enum MediaFeatureName<FeatureId: FeatureIdTrait> {
     /// A standard known feature.
     Standard(FeatureId),
     /// A `--custom` feature (custom-media).
@@ -271,7 +271,7 @@ impl<FeatureId: FeatureIdTrait> PartialEq for MediaFeatureName<FeatureId> {
 
 /// A `(name: value)` / `(name)` / `(name > value)` / `(a < name < b)` query feature.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum QueryFeature<FeatureId: FeatureIdTrait> {
+pub enum QueryFeature<FeatureId: FeatureIdTrait> {
     /// A plain media feature, e.g. `(min-width: 240px)`.
     Plain {
         name: MediaFeatureName<FeatureId>,
@@ -301,7 +301,7 @@ pub(crate) enum QueryFeature<FeatureId: FeatureIdTrait> {
 // validate interval operator pairs. Do NOT use implicit 0..=4.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-pub(crate) enum MediaFeatureComparison {
+pub enum MediaFeatureComparison {
     #[strum(serialize = "=")]
     Equal = 1,
     #[strum(serialize = ">")]
@@ -319,7 +319,7 @@ pub(crate) enum MediaFeatureComparison {
 // `Debug`, but the `MediaCondition`/`QueryFeature` chain wants it for
 // diagnostics.
 #[derive(Clone)]
-pub(crate) enum MediaFeatureValue {
+pub enum MediaFeatureValue {
     /// A length value.
     Length(Length),
     /// A number value.
@@ -414,7 +414,7 @@ impl MediaFeatureType {
 
 /// Trait modeling Zig's `MediaFeatureId`-shape comptime interface for the
 /// generic `QueryFeature<FeatureId>`.
-pub(crate) trait FeatureIdTrait: Copy + PartialEq + Eq {
+pub trait FeatureIdTrait: Copy + PartialEq + Eq {
     fn value_type(&self) -> MediaFeatureType;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
     fn from_str(s: &[u8]) -> Option<Self>;
@@ -432,7 +432,7 @@ pub(crate) trait FeatureIdTrait: Copy + PartialEq + Eq {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr)]
-pub(crate) enum MediaFeatureId {
+pub enum MediaFeatureId {
     /// The [width](https://w3c.github.io/csswg-drafts/mediaqueries-5/#width) media feature.
     #[strum(serialize = "width")]
     Width,

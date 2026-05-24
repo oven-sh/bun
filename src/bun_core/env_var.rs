@@ -924,7 +924,7 @@ pub(crate) use __default_opt;
 /// generically inside the macro body. Non-string kinds report len 1 (always non-empty);
 /// callers never invoke `get_not_empty` on non-strings — the impl only satisfies the bound.
 #[doc(hidden)]
-pub(crate) trait HasLen {
+pub trait HasLen {
     fn len(&self) -> usize;
 }
 impl HasLen for &'static [u8] {

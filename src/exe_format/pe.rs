@@ -59,7 +59,7 @@ pub enum StripMode {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct StripOpts {
+pub struct StripOpts {
     pub require_overlay: bool,
     pub recompute_checksum: bool,
 }

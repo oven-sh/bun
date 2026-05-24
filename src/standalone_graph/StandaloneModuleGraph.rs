@@ -251,7 +251,7 @@ pub(crate) struct CompiledModuleGraphFile {
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum FileSide {
+pub enum FileSide {
     #[default]
     Server = 0,
     Client = 1,
@@ -2189,7 +2189,7 @@ fn from_bytes_alloc(
 /// reduce the file size, and mappings are stored as an InternalSourceMap
 /// blob (varint deltas + sync points) so lookups need no decode pass.
 #[derive(Clone, Copy)]
-pub(crate) struct SerializedSourceMap {
+pub struct SerializedSourceMap {
     pub bytes: &'static [u8],
 }
 

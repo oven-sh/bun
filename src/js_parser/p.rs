@@ -112,7 +112,7 @@ pub type NewParser<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> =
 // Zig switched the field type at comptime. Rust const generics cannot select a type, so we
 // store both variants behind an enum and gate access in methods.
 // TODO(port): revisit with associated types / GATs.
-pub(crate) enum ImportRecordList<'a> {
+pub enum ImportRecordList<'a> {
     Owned(BumpVec<'a, ImportRecord>),
     Borrowed(&'a mut Vec<ImportRecord>),
 }
@@ -166,7 +166,7 @@ impl<'a> ImportRecordList<'a> {
     }
 }
 
-pub(crate) enum NamedImportsType<'a> {
+pub enum NamedImportsType<'a> {
     Owned(bun_ast::ast_result::NamedImports),
     Borrowed(&'a mut bun_ast::ast_result::NamedImports),
 }
@@ -206,21 +206,21 @@ pub use crate::visit::*;
 // matching Zig's `p.binary_expression_stack`).
 pub use crate::visit::visit_binary::BinaryExpressionVisitor;
 
-pub(crate) struct RecentlyVisitedTSNamespace {
+pub struct RecentlyVisitedTSNamespace {
     pub expr: js_ast::ExprData,
     // ARENA back-pointer — `StoreRef` for safe `Deref` at the read sites.
     pub map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>>,
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct ReactRefreshImportClause<'a> {
+pub struct ReactRefreshImportClause<'a> {
     pub name: &'a [u8],
     pub enabled: bool,
     pub r#ref: Ref,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReactRefreshExportKind {
+pub enum ReactRefreshExportKind {
     Named,
     Default,
 }
@@ -643,7 +643,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 // later `&mut self` retag (entering any visit method) invalidated it, so the
 // shim's `&mut *(stored as *mut P)` was UB. Call sites now invoke the inherent
 // `P::maybe_transpose_if_*` / `P::transpose_known_to_be_if_*` methods directly.
-pub(crate) struct ImportTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+pub struct ImportTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     core::marker::PhantomData<&'a ()>,
 );
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Clone
@@ -665,7 +665,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
     }
 }
 
-pub(crate) struct RequireTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+pub struct RequireTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     core::marker::PhantomData<&'a ()>,
 );
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Clone
@@ -687,7 +687,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>
     }
 }
 
-pub(crate) struct RequireResolveTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+pub struct RequireResolveTransposer<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     core::marker::PhantomData<&'a ()>,
 );
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Clone
@@ -9801,7 +9801,7 @@ impl LowerUsingDeclarationsContext {
 // ─── Helper trait for generate_import_stmt's `symbols: anytype` param ───
 // TODO(port): two call shapes exist (RuntimeImports and a string→Ref map). Impl
 // this for both and verify the alias_name() RuntimeImports special case.
-pub(crate) trait GenerateImportSymbols {
+pub trait GenerateImportSymbols {
     type Key;
     fn get(&self, key: &Self::Key) -> Option<Ref>;
     fn alias_name(&self, key: &Self::Key) -> &'static [u8];

@@ -8,13 +8,13 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub(crate) struct Touch {
+pub struct Touch {
     pub opts: Opts,
     pub state: State,
 }
 
 #[derive(Default)]
-pub(crate) enum State {
+pub enum State {
     #[default]
     Idle,
     Exec(ExecState),
@@ -22,7 +22,7 @@ pub(crate) enum State {
     Done,
 }
 
-pub(crate) struct ExecState {
+pub struct ExecState {
     pub started: bool,
     pub tasks_count: usize,
     pub tasks_done: usize,

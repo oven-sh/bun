@@ -2,7 +2,7 @@ use crate::css_rules::Location;
 use crate::{DeclarationBlock, PrintErr, Printer, VendorPrefix};
 
 /// A [@viewport](https://drafts.csswg.org/css-device-adapt/#atviewport-rule) rule.
-pub(crate) struct ViewportRule {
+pub struct ViewportRule {
     /// The vendor prefix for this rule, e.g. `@-ms-viewport`.
     pub vendor_prefix: VendorPrefix,
     /// The declarations within the `@viewport` rule.

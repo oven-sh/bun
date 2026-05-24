@@ -16,7 +16,7 @@ use crate::{PackageManager, PackageNameHash};
 // `PackageManager` surface (Zig threads `*PackageManager` directly).
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) trait NpmAliasRegistry {
+pub trait NpmAliasRegistry {
     fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version);
 }
 
@@ -312,7 +312,7 @@ impl DependencyExt for Dependency {
 // .string_bytes.items`), which is intentionally NOT on the base trait since
 // `semver_string::Builder`'s isolated Box<[u8]> would be wrong for callers
 // that need the lockfile's full string_bytes.
-pub(crate) trait StringBuilderLike: bun_semver::StringBuilder {
+pub trait StringBuilderLike: bun_semver::StringBuilder {
     /// Full backing string buffer (Zig: `builder.lockfile.buffers.string_bytes.items`).
     fn string_bytes(&self) -> &[u8];
 }

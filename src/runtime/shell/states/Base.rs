@@ -59,7 +59,7 @@ impl Base {
 
 /// `error{Sys}` — see `Interpreter::try_`.
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub(crate) enum TryError {
+pub enum TryError {
     #[error("Sys")]
     Sys,
 }

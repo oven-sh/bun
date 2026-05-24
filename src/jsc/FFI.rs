@@ -18,14 +18,14 @@ pub type JSCell = *mut c_void;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct struct_unnamed_1 {
+pub struct struct_unnamed_1 {
     pub payload: i32,
     pub tag: i32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) union union_EncodedJSValue {
+pub union union_EncodedJSValue {
     pub as_int64: i64,
     pub ptr: *mut c_void,
     pub as_bits: struct_unnamed_1,

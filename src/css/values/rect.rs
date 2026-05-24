@@ -14,7 +14,7 @@ use crate::values::protocol::{IsCompatible, Parse, ToCss};
 ///
 /// When serialized, as few components as possible are written when
 /// there are duplicate values.
-pub(crate) struct Rect<T> {
+pub struct Rect<T> {
     /// The top component.
     pub top: T,
     /// The right component.

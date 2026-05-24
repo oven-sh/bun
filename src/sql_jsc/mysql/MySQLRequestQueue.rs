@@ -19,7 +19,7 @@ bun_core::define_scoped_log!(debug, MySQLRequestQueue, visible);
 // ref-counted raw pointers (ref/deref managed manually below).
 type Queue = LinearFifo<*mut JSMySQLQuery, DynamicBuffer<*mut JSMySQLQuery>>;
 
-pub(crate) struct MySQLRequestQueue {
+pub struct MySQLRequestQueue {
     // All fields are interior-mutable so `advance()` can mutate via the
     // `ParentRef<Self>` backref (yields `&Self`) without per-site `unsafe`
     // raw-pointer writes. The queue is single-JS-thread (embedded inside the

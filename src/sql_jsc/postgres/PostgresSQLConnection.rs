@@ -1736,7 +1736,7 @@ impl PostgresSQLConnection {
 // `&PostgresSQLConnection` and a `NewReader<Reader>` into `on()`. R-2: `BackRef`
 // (shared) — `read_buffer`/`last_message_start` are `JsCell`/`Cell`.
 #[derive(Clone, Copy)]
-pub(crate) struct Reader {
+pub struct Reader {
     pub connection: BackRef<PostgresSQLConnection>,
 }
 

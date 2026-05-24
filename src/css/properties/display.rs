@@ -4,7 +4,7 @@ use crate::{Parser, PrintErr, Printer, VendorPrefix};
 
 /// A value for the [display](https://drafts.csswg.org/css-display-3/#the-display-properties) property.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum Display {
+pub enum Display {
     /// A display keyword.
     Keyword(DisplayKeyword),
     /// The inside and outside display values.
@@ -31,7 +31,7 @@ impl Display {
 
 /// A value for the [visibility](https://drafts.csswg.org/css-display-3/#visibility) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum Visibility {
+pub enum Visibility {
     /// The element is visible.
     Visible,
     /// The element is hidden.
@@ -44,7 +44,7 @@ pub(crate) enum Visibility {
 ///
 /// See [Display](Display).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum DisplayKeyword {
+pub enum DisplayKeyword {
     None,
     Contents,
     TableRowGroup,
@@ -65,7 +65,7 @@ pub(crate) enum DisplayKeyword {
 ///
 /// See [Display](Display).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct DisplayPair {
+pub struct DisplayPair {
     /// The outside display value.
     pub outside: DisplayOutside,
     /// The inside display value.
@@ -220,7 +220,7 @@ impl DisplayPair {
 
 /// A [`<display-outside>`](https://drafts.csswg.org/css-display-3/#typedef-display-outside) value.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum DisplayOutside {
+pub enum DisplayOutside {
     Block,
     Inline,
     RunIn,
@@ -228,7 +228,7 @@ pub(crate) enum DisplayOutside {
 
 /// A [`<display-inside>`](https://drafts.csswg.org/css-display-3/#typedef-display-inside) value.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum DisplayInside {
+pub enum DisplayInside {
     Flow,
     FlowRoot,
     Table,

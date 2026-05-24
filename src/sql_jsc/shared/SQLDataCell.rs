@@ -334,7 +334,7 @@ impl SQLDataCell {
 /// Coercion helper mirroring Zig's implicit `*const Data` → `?*const Data`
 /// promotion at `raw()` call sites. Lets callers pass `&Data`, `&mut Data`,
 /// `Option<&Data>`, or `Option<&mut Data>` without wrapping.
-pub(crate) trait IntoOptionalData<'a> {
+pub trait IntoOptionalData<'a> {
     fn into_optional_data(self) -> Option<&'a Data>;
 }
 impl<'a> IntoOptionalData<'a> for &'a Data {

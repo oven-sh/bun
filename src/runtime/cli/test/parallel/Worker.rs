@@ -442,7 +442,7 @@ impl ChannelOwner for Worker {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum PipeRole {
+pub enum PipeRole {
     Stdout,
     Stderr,
 }

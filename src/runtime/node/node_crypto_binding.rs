@@ -169,7 +169,7 @@ extern_crypto_job!(SignJob, "SignJob");
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Trait expressing the duck-typed interface Zig's `CryptoJob` expects of `Ctx`.
-pub(crate) trait CryptoJobCtx: Sized {
+pub trait CryptoJobCtx: Sized {
     fn init(&mut self, global: &JSGlobalObject) -> JsResult<()>;
     /// Zig calls `ctx.runTask(ctx.result)`; in Rust the impl reads its own
     /// `result` field directly.

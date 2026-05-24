@@ -4,7 +4,7 @@ use crate::{Parser, PrintErr, Printer, Token, VendorPrefix};
 
 /// A value for the [position](https://www.w3.org/TR/css-position-3/#position-property) property.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum Position {
+pub enum Position {
     /// The box is laid in the document flow.
     Static,
     /// The box is laid out in the document flow and offset from the resulting position.

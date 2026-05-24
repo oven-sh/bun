@@ -383,7 +383,7 @@ pub struct PackageJSON {
 
 /// Port of `bun.PackageJSON.DependencyMap` (src/resolver/package_json.zig).
 #[derive(Default)]
-pub(crate) struct PackageJSONDependencyMap {
+pub struct PackageJSONDependencyMap {
     pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
     // TODO(port): lifetime — borrows the package.json source contents
     pub source_buf: &'static [u8],
@@ -1123,13 +1123,13 @@ pub enum Origin {
 pub use bun_install_types::resolver_hooks::{Features, PreinstallState};
 
 #[derive(Default)]
-pub(crate) struct ExtractDataJson {
+pub struct ExtractDataJson {
     pub path: Box<[u8]>,
     pub buf: Vec<u8>,
 }
 
 #[derive(Default)]
-pub(crate) struct ExtractData {
+pub struct ExtractData {
     pub url: Box<[u8]>,
     pub resolved: Box<[u8]>,
     pub json: Option<ExtractDataJson>,
@@ -1146,7 +1146,7 @@ pub(crate) struct ExtractData {
 /// push into this buffer; the raw-ptr version cannot grow and aliases caller
 /// memory with no lifetime. Own the buffer.
 #[derive(Clone, Default)]
-pub(crate) struct DependencyInstallContext {
+pub struct DependencyInstallContext {
     pub tree_id: lockfile::tree::Id,
     pub path: Vec<u8>,
     pub dependency_id: DependencyID,

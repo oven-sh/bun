@@ -8,7 +8,7 @@ use crate::bake::framework_router;
 use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
 
 /// `bun.GenericIndex(u30, RouteBundle)`.
-pub(crate) enum RouteBundleMarker {}
+pub enum RouteBundleMarker {}
 pub(crate) type Index = bun_core::GenericIndex<u32, RouteBundleMarker>;
 /// `Index.Optional` — packed sentinel in Zig; `Option` here (non-FFI).
 pub(crate) type IndexOptional = Option<Index>;
@@ -34,7 +34,7 @@ pub struct Framework {
     pub evaluate_failure: Option<SerializedFailure>,
 }
 
-pub(crate) struct Html {
+pub struct Html {
     /// SHARED (LIFETIMES.tsv): DevServer increments the route's intrusive
     /// refcount via `.initRef(html)` when storing; `.deref()` on drop.
     /// Stored as raw ptr because `HTMLBundleRoute` does not yet impl
@@ -52,7 +52,7 @@ pub(crate) struct Html {
     pub cached_response: Option<bun_ptr::BackRef<StaticRoute>>,
 }
 
-pub(crate) enum Data {
+pub enum Data {
     Framework(Framework),
     Html(Html),
 }

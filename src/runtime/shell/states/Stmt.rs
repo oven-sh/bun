@@ -5,7 +5,7 @@ use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
-pub(crate) struct Stmt {
+pub struct Stmt {
     pub base: Base,
     pub node: bun_ptr::BackRef<ast::Stmt>,
     pub idx: usize,

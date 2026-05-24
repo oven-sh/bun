@@ -1178,7 +1178,7 @@ pub enum Platform {
 // existing call sites that haven't been migrated yet — both monomorphize
 // identically (`P::P` is a true `const Platform`).
 mod sealed {
-    pub(crate) trait Sealed {}
+    pub trait Sealed {}
 }
 pub trait PlatformT: Copy + sealed::Sealed + 'static {
     const P: Platform;

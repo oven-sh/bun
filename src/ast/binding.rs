@@ -50,7 +50,7 @@ pub(crate) static ICOUNT: AtomicUsize = AtomicUsize::new(0);
 // per call-site like the Zig original.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) trait BindingInit {
+pub trait BindingInit {
     fn into_b(self) -> B;
 }
 impl BindingInit for StoreRef<crate::b::Identifier> {

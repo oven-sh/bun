@@ -71,7 +71,7 @@ mod EventLoop {
 
 #[derive(bun_core::EnumTag)]
 #[enum_tag(existing = ContentsOrFdTag)]
-pub(crate) enum ContentsOrFd {
+pub enum ContentsOrFd {
     Fd { dir: Fd, file: Fd },
     // TODO(port): arena lifetime — contents may be arena-owned, plugin-owned,
     // or &'static (runtime). Using &'static as a placeholder.
@@ -123,7 +123,7 @@ pub struct ParseTask {
     pub is_entry_point: bool,
 }
 
-pub(crate) enum ParseTaskStage {
+pub enum ParseTaskStage {
     NeedsSourceCode,
     NeedsParse(CacheEntry),
 }
@@ -146,13 +146,13 @@ pub struct Result {
 // `Result` lives in a bump arena (no Drop on free); boxing the large arm
 // would leak the heap allocation. The size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum ResultValue {
+pub enum ResultValue {
     Success(Success),
     Err(ResultError),
     Empty { source_index: Index },
 }
 
-pub(crate) struct WatcherData {
+pub struct WatcherData {
     pub fd: Fd,
     pub dir_fd: Fd,
 }
@@ -165,7 +165,7 @@ impl WatcherData {
     };
 }
 
-pub(crate) struct Success {
+pub struct Success {
     pub ast: JSAst<'static>,
     pub source: Source,
     pub log: Log,
@@ -183,7 +183,7 @@ pub(crate) struct Success {
     pub package_name: ast::StoreStr,
 }
 
-pub(crate) struct ResultError {
+pub struct ResultError {
     pub err: AnyError,
     pub step: Step,
     pub log: Log,
@@ -375,7 +375,7 @@ pub(crate) unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
 // RuntimeSource
 // ───────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct RuntimeSource {
+pub struct RuntimeSource {
     pub parse_task: ParseTask,
     pub source: Source,
 }
@@ -1649,7 +1649,7 @@ pub mod parse_worker {
     }
 
     #[repr(C)]
-    pub(crate) struct OnBeforeParseArguments {
+    pub struct OnBeforeParseArguments {
         pub struct_size: usize,
         pub context: *mut OnBeforeParsePlugin<'static, 'static>, // FFI (LIFETIMES.tsv)
         pub path_ptr: *const u8,
@@ -1676,7 +1676,7 @@ pub mod parse_worker {
     }
 
     #[repr(C)]
-    pub(crate) struct BunLogOptions {
+    pub struct BunLogOptions {
         pub struct_size: usize,
         pub message_ptr: *const u8,
         pub message_len: usize,
@@ -1862,7 +1862,7 @@ pub mod parse_worker {
     }
 
     #[repr(C)]
-    pub(crate) struct OnBeforeParseResult {
+    pub struct OnBeforeParseResult {
         pub struct_size: usize,
         pub source_ptr: *const u8,
         pub source_len: usize,

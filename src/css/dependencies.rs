@@ -4,7 +4,7 @@ use crate::SourceLocation;
 // const Location = css.Location; — shadowed by the local `Location` below in Zig too.
 
 /// Options for `analyze_dependencies` in `PrinterOptions`.
-pub(crate) struct DependencyOptions {
+pub struct DependencyOptions {
     /// Whether to remove `@import` rules.
     pub remove_imports: bool,
 }

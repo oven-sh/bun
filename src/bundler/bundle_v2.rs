@@ -1926,7 +1926,7 @@ pub mod bv2_impl {
     /// Decrements the bundle's pending-scan counter when dropped, mirroring Zig's
     /// `defer this.decrementScanCounter()` without holding a unique borrow across
     /// the body. Stores a raw pointer; caller guarantees the `BundleV2` outlives it.
-    pub(crate) struct ScanCounterGuard {
+    pub struct ScanCounterGuard {
         bv2: *mut BundleV2<'static>,
     }
 
@@ -5859,14 +5859,14 @@ pub mod bv2_impl {
         }
     }
 
-    pub(crate) struct ResolveImportRecordCtx<'a> {
+    pub struct ResolveImportRecordCtx<'a> {
         pub import_records: &'a mut [ImportRecord],
         pub source: &'a bun_ast::Source,
         pub loader: Loader,
         pub target: options::Target,
     }
 
-    pub(crate) struct ResolveImportRecordResult {
+    pub struct ResolveImportRecordResult {
         pub resolve_queue: ResolveQueue,
         pub last_error: Option<Error>,
     }
@@ -6686,7 +6686,7 @@ pub mod bv2_impl {
     /// borrow of `import_records` (a column of `graph.ast`) doesn't overlap the
     /// `&mut self` the body needs for `path_to_source_index_map`.
     #[derive(Clone, Copy)]
-    pub(crate) struct PatchImportRecordsCtx<'a> {
+    pub struct PatchImportRecordsCtx<'a> {
         pub source_index: Index,
         pub source_path: &'a [u8],
         pub loader: Loader,

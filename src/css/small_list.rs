@@ -36,7 +36,7 @@ pub use bun_collections::SmallList;
 /// value type that carries an `Image` and can produce color/prefix fallbacks
 /// of itself. Implemented by `values::image::Image` and
 /// `properties::background::Background`.
-pub(crate) trait ImageFallback: Sized {
+pub trait ImageFallback: Sized {
     fn get_image(&self) -> &crate::values::image::Image;
     fn with_image(&self, arena: &bun_alloc::Arena, image: crate::values::image::Image) -> Self;
     fn get_fallback(

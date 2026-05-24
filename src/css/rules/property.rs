@@ -6,7 +6,7 @@ use crate::{PrintErr, Printer};
 
 use crate::css_values::syntax::ParsedComponent;
 
-pub(crate) struct PropertyRule {
+pub struct PropertyRule {
     pub name: DashedIdent,
     pub syntax: SyntaxString,
     pub inherits: bool,

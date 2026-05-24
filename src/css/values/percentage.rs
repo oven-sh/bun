@@ -8,7 +8,7 @@ use crate::values::protocol;
 use core::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Percentage {
+pub struct Percentage {
     pub v: CSSNumber,
 }
 
@@ -127,7 +127,7 @@ impl Percentage {
 // else @compileError). In Rust, `D: Clone` makes this distinction irrelevant for Copy types
 // (clone is memcpy). If a deep-clone protocol is required for non-Copy D, add a trait bound.
 
-pub(crate) enum DimensionPercentage<D> {
+pub enum DimensionPercentage<D> {
     Dimension(D),
     Percentage(Percentage),
     // LIFETIMES.tsv: OWNED → Box<Calc<DimensionPercentage<D>>>
@@ -454,7 +454,7 @@ where
 
 /// Either a `<number>` or `<percentage>`.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum NumberOrPercentage {
+pub enum NumberOrPercentage {
     /// A number.
     Number(CSSNumber),
     /// A percentage.

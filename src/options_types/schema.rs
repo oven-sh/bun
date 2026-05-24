@@ -435,7 +435,7 @@ pub mod api {
     /// schema.zig:2200 — `enum(u8)` (open). Kept closed.
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub(crate) enum ImportKind {
+    pub enum ImportKind {
         #[default]
         _none = 0,
         entry_point = 1,

@@ -2944,7 +2944,7 @@ impl crate::ipc::SendQueueOwner for IPCInstance {
 
 /// Spec VirtualMachine.zig:1708 `ResolveFunctionResult`.
 #[derive(Default)]
-pub(crate) struct ResolveFunctionResult {
+pub struct ResolveFunctionResult {
     pub result: Option<bun_resolver::Result>,
     pub path: &'static [u8], // TODO(port): lifetime — borrows resolver arena
     pub query_string: &'static [u8],

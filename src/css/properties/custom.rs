@@ -833,7 +833,7 @@ pub(crate) type Fallbacks = (SupportsCondition, TokenList);
 /// This can only be done when the only unresolved component is the alpha
 /// since variables can resolve to multiple tokens.
 #[derive(CssEql, CssHash, DeepClone)]
-pub(crate) enum UnresolvedColor {
+pub enum UnresolvedColor {
     /// An rgb() color.
     RGB {
         /// The red component.
@@ -1028,7 +1028,7 @@ impl css_values::color::LightDarkOwned for UnresolvedColor {
 
 /// A CSS variable reference.
 #[derive(CssEql, CssHash, DeepClone)]
-pub(crate) struct Variable {
+pub struct Variable {
     /// The variable name.
     pub name: DashedIdentReference,
     /// A fallback value in case the variable is not defined.
@@ -1075,7 +1075,7 @@ impl Variable {
 
 /// A CSS environment variable reference.
 #[derive(CssEql, CssHash, DeepClone)]
-pub(crate) struct EnvironmentVariable {
+pub struct EnvironmentVariable {
     /// The environment variable name.
     pub name: EnvironmentVariableName,
     /// Optional indices into the dimensions of the environment variable.
@@ -1154,7 +1154,7 @@ impl EnvironmentVariable {
 
 /// A CSS environment variable name.
 #[derive(Clone, Copy, CssEql, CssHash, DeepClone)]
-pub(crate) enum EnvironmentVariableName {
+pub enum EnvironmentVariableName {
     /// A UA-defined environment variable.
     Ua(UAEnvironmentVariable),
     /// A custom author-defined environment variable.
@@ -1195,7 +1195,7 @@ impl EnvironmentVariableName {
 // to_css/deep_clone via comptime reflection over @tagName. Replaced by an
 // `EnumProperty` impl below (kebab-case match) — same protocol surface.
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, CssHash)]
-pub(crate) enum UAEnvironmentVariable {
+pub enum UAEnvironmentVariable {
     /// The safe area inset from the top of the viewport.
     #[strum(serialize = "safe-area-inset-top")]
     SafeAreaInsetTop,
@@ -1263,7 +1263,7 @@ impl EnumProperty for UAEnvironmentVariable {
 
 /// A custom CSS function.
 #[derive(CssEql, CssHash, DeepClone)]
-pub(crate) struct Function {
+pub struct Function {
     /// The function name.
     pub name: Ident,
     /// The function arguments.
@@ -1292,7 +1292,7 @@ impl Function {
 
 /// A raw CSS token, or a parsed value.
 #[derive(CssEql, CssHash, DeepClone)]
-pub(crate) enum TokenOrValue {
+pub enum TokenOrValue {
     /// A token.
     Token(Token),
     /// A parsed CSS color.
@@ -1435,7 +1435,7 @@ impl core::fmt::Debug for EnvironmentVariable {
 /// This type is used when the value of a known property could not
 /// be parsed, e.g. in the case css `var()` references are encountered.
 /// In this case, the raw tokens are stored instead.
-pub(crate) struct UnparsedProperty {
+pub struct UnparsedProperty {
     /// The id of the property.
     pub property_id: css::properties::PropertyId,
     /// The property value, stored as a raw token list.
@@ -1496,7 +1496,7 @@ impl UnparsedProperty {
 }
 
 /// A CSS custom property, representing any unknown property.
-pub(crate) struct CustomProperty {
+pub struct CustomProperty {
     /// The name of the property.
     pub name: CustomPropertyName,
     /// The property value, stored as a raw token list.

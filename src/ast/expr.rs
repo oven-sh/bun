@@ -3148,7 +3148,7 @@ impl Equality {
 // `adt_const_params` (enum const-generic) is nightly-only. Lower to a sealed
 // ZST trait, same pattern as `bun_paths::resolve_path::PlatformT`; callers use
 // `Data::eql::<P, LooseEql>(...)` / `<P, StrictEql>`.
-pub(crate) trait EqlKindT: Copy {
+pub trait EqlKindT: Copy {
     const STRICT: bool;
 }
 #[derive(Clone, Copy)]

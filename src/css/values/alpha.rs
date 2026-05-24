@@ -7,7 +7,7 @@ use crate::{Parser, PrintErr, Printer, Result};
 ///
 /// Parses either a `<number>` or `<percentage>`, but is always stored and serialized as a number.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct AlphaValue {
+pub struct AlphaValue {
     pub v: f32,
 }
 

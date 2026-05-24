@@ -11,7 +11,7 @@ pub struct AutoFlusher {
 
 /// Zig's free functions take `(comptime Type: type, this: *Type)` and duck-type
 /// on `this.auto_flusher` + `Type.onAutoFlush`. In Rust that contract is a trait.
-pub(crate) trait HasAutoFlusher: Sized {
+pub trait HasAutoFlusher: Sized {
     fn auto_flusher(&mut self) -> &mut AutoFlusher;
     /// Zig: `Type.onAutoFlush` — the deferred-task callback. Signature matches
     /// `DeferredRepeatingTask` after the `@ptrCast` erasure at `postTask`:

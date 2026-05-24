@@ -243,7 +243,7 @@ impl Order {
     }
 }
 
-pub(crate) struct AllOrderResult {
+pub struct AllOrderResult {
     pub start: usize,
     pub end: usize,
 }

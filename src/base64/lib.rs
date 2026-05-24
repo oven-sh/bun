@@ -633,7 +633,7 @@ pub mod zig_base64 {
     }
 
     #[derive(Clone)]
-    pub(crate) struct Base64DecoderWithIgnore {
+    pub struct Base64DecoderWithIgnore {
         pub decoder: Base64Decoder,
         pub char_is_ignored: [bool; 256],
     }

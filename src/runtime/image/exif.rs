@@ -23,7 +23,7 @@
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub(crate) enum Orientation {
+pub enum Orientation {
     Normal = 1,
     Flop = 2, // mirror horizontal
     Rotate180 = 3,
@@ -34,7 +34,7 @@ pub(crate) enum Orientation {
     Rotate270 = 8,
 }
 
-pub(crate) struct Transform {
+pub struct Transform {
     pub flop: bool,
     pub flip: bool,
     pub rotate: u16,

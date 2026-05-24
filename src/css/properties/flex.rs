@@ -15,7 +15,7 @@ use css::prefixes::is_flex_2009;
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 // TODO(port): css::DefineEnumProperty derive provides parse/to_css/eql/hash/deep_clone over kebab-case variant names
-pub(crate) enum FlexDirection {
+pub enum FlexDirection {
     /// Flex items are laid out in a row.
     #[default]
     Row,
@@ -41,7 +41,7 @@ impl FlexDirection {
 /// A value for the [flex-wrap](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-wrap-property) property.
 /// A value for the [flex-wrap](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-wrap-property) property.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum FlexWrap {
+pub enum FlexWrap {
     /// The flex items do not wrap.
     #[default]
     Nowrap,
@@ -55,7 +55,7 @@ impl FlexWrap {}
 
 /// A value for the [flex-flow](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-flow-property) shorthand property.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct FlexFlow {
+pub struct FlexFlow {
     /// The direction that flex items flow.
     pub direction: FlexDirection,
     /// How the flex items wrap.
@@ -116,7 +116,7 @@ impl FlexFlow {
 /// A value for the [flex](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-property) shorthand property.
 /// A value for the [flex](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-property) shorthand property.
 #[derive(Clone, PartialEq)]
-pub(crate) struct Flex {
+pub struct Flex {
     /// The flex grow factor.
     pub grow: CSSNumber,
     /// The flex shrink factor.
@@ -234,7 +234,7 @@ impl Flex {
 /// A value for the legacy (prefixed) [box-orient](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#orientation) property.
 /// Partially equivalent to `flex-direction` in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum BoxOrient {
+pub enum BoxOrient {
     /// Items are laid out horizontally.
     Horizontal,
     /// Items are laid out vertically.
@@ -248,7 +248,7 @@ pub(crate) enum BoxOrient {
 /// A value for the legacy (prefixed) [box-direction](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#displayorder) property.
 /// Partially equivalent to the `flex-direction` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum BoxDirection {
+pub enum BoxDirection {
     /// Items flow in the natural direction.
     Normal,
     /// Items flow in the reverse direction.
@@ -262,7 +262,7 @@ pub(crate) type FlexAlign = BoxAlign;
 /// A value for the legacy (prefixed) [box-align](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#alignment) property.
 /// Equivalent to the `align-items` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum BoxAlign {
+pub enum BoxAlign {
     /// Items are aligned to the start.
     Start,
     /// Items are aligned to the end.
@@ -302,7 +302,7 @@ impl BoxAlign {
 /// A value for the legacy (prefixed) [box-pack](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#packing) property.
 /// Equivalent to the `justify-content` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum BoxPack {
+pub enum BoxPack {
     /// Items are justified to the start.
     Start,
     /// Items are justified to the end.
@@ -342,7 +342,7 @@ impl BoxPack {
 /// A value for the legacy (prefixed) [box-lines](https://www.w3.org/TR/2009/WD-css3-flexbox-20090723/#multiple) property.
 /// Equivalent to the `flex-wrap` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum BoxLines {
+pub enum BoxLines {
     /// Items are laid out in a single line.
     Single,
     /// Items may wrap into multiple lines.
@@ -365,7 +365,7 @@ impl BoxLines {
 /// A value for the legacy (prefixed) [flex-pack](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-pack) property.
 /// Equivalent to the `justify-content` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum FlexPack {
+pub enum FlexPack {
     /// Items are justified to the start.
     Start,
     /// Items are justified to the end.
@@ -410,7 +410,7 @@ impl FlexPack {
 /// A value for the legacy (prefixed) [flex-item-align](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-align) property.
 /// Equivalent to the `align-self` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum FlexItemAlign {
+pub enum FlexItemAlign {
     /// Equivalent to the value of `flex-align`.
     Auto,
     /// The item is aligned to the start.
@@ -453,7 +453,7 @@ impl FlexItemAlign {
 /// A value for the legacy (prefixed) [flex-line-pack](https://www.w3.org/TR/2012/WD-css3-flexbox-20120322/#flex-line-pack) property.
 /// Equivalent to the `align-content` property in the standard syntax.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum FlexLinePack {
+pub enum FlexLinePack {
     /// Content is aligned to the start.
     Start,
     /// Content is aligned to the end.
@@ -500,7 +500,7 @@ pub(crate) type BoxOrdinalGroup = CSSInteger;
 
 // A handler for flex-related properties that manages both standard and legacy vendor prefixed values.
 #[derive(Default)]
-pub(crate) struct FlexHandler {
+pub struct FlexHandler {
     /// The flex-direction property value and vendor prefix
     pub direction: Option<(FlexDirection, VendorPrefix)>,
     /// The box-orient property value and vendor prefix (legacy)

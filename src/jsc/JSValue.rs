@@ -1862,7 +1862,7 @@ impl<T: FromAny> FromAny for Option<T> {
 /// (JSValue.zig:366). Zig used `@typeInfo` to route `ZigString`/`bun.String`/
 /// `[]const u8` to the matching FFI; Rust expresses that as a trait per
 /// PORTING.md §Comptime reflection.
-pub(crate) trait PutKey {
+pub trait PutKey {
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue);
 }
 impl PutKey for &bun_core::ZigString {

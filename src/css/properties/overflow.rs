@@ -3,7 +3,7 @@ use crate::{Parser, PrintErr, Printer};
 
 /// A value for the [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) shorthand property.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Overflow {
+pub struct Overflow {
     /// A value for the [overflow](https://www.w3.org/TR/css-overflow-3/#overflow-properties) shorthand property.
     pub x: OverflowKeyword,
     /// The overflow mode for the y direction.
@@ -32,7 +32,7 @@ impl Overflow {
 // PORT NOTE: css.DefineEnumProperty(@This()) — comptime mixin providing
 // eql/hash/parse/to_css/deep_clone from @tagName.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub(crate) enum OverflowKeyword {
+pub enum OverflowKeyword {
     /// Overflowing content is visible.
     Visible,
     /// Overflowing content is hidden. Programmatic scrolling is allowed.
@@ -47,7 +47,7 @@ pub(crate) enum OverflowKeyword {
 
 /// A value for the [text-overflow](https://www.w3.org/TR/css-overflow-3/#text-overflow) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub(crate) enum TextOverflow {
+pub enum TextOverflow {
     /// Overflowing text is clipped.
     Clip,
     /// Overflowing text is truncated with an ellipsis.

@@ -284,7 +284,7 @@ pub trait PoolStorage<T>: 'static {
 /// Fallback storage that panics on first use. Lets `ObjectPool<T, ..>` name a
 /// concrete type before its storage is wired (matches the prior `data()`
 /// `unreachable!`).
-pub(crate) struct UnwiredStorage;
+pub struct UnwiredStorage;
 impl<T: 'static> PoolStorage<T> for UnwiredStorage {
     fn with<R>(_f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
         unreachable!(
@@ -615,7 +615,7 @@ macro_rules! __object_pool_storage {
     ($name:ident, $ty:ty, tls) => {
         #[allow(non_camel_case_types)]
         #[doc(hidden)]
-        pub(crate) struct __ObjectPoolStorage;
+        pub struct __ObjectPoolStorage;
         ::std::thread_local! {
             static __OBJECT_POOL_DATA: ::core::cell::RefCell<
                 $crate::pool::DataStruct<$ty>
@@ -632,7 +632,7 @@ macro_rules! __object_pool_storage {
     ($name:ident, $ty:ty, global) => {
         #[allow(non_camel_case_types)]
         #[doc(hidden)]
-        pub(crate) struct __ObjectPoolStorage;
+        pub struct __ObjectPoolStorage;
         impl $crate::pool::PoolStorage<$ty> for __ObjectPoolStorage {
             fn with<R>(
                 f: impl FnOnce(&::core::cell::RefCell<$crate::pool::DataStruct<$ty>>) -> R,

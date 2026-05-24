@@ -23,14 +23,14 @@ const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 const MAX_WIKI_BRACKET_DEPTH: u32 = 32;
 
 /// Result of `try_match_bracket_link` — Zig anonymous return struct.
-pub(crate) struct BracketLinkMatch {
+pub struct BracketLinkMatch {
     pub is_link: bool,
     pub label_end: usize,
     pub link_end: usize,
 }
 
 /// Result of `find_autolink` — Zig anonymous return struct.
-pub(crate) struct Autolink {
+pub struct Autolink {
     pub end_pos: usize,
     pub is_email: bool,
 }

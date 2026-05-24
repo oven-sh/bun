@@ -27,7 +27,7 @@ struct RepeatInfo {
 }
 
 #[derive(Default)]
-pub(crate) struct CurrentFile {
+pub struct CurrentFile {
     title: Box<[u8]>,
     prefix: Box<[u8]>,
     repeat_info: RepeatInfo,
@@ -248,7 +248,7 @@ impl<'a> TestRunner<'a> {
 use crate::timer::EventLoopTimerState as TimerState;
 
 #[derive(Default, Clone, Copy)]
-pub(crate) struct Summary {
+pub struct Summary {
     pub pass: u32,
     pub expectations: u32,
     pub skip: u32,
@@ -265,7 +265,7 @@ impl Summary {
     }
 }
 
-pub(crate) struct GetOrPutFileResult {
+pub struct GetOrPutFileResult {
     pub file_id: FileId,
 }
 

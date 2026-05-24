@@ -129,7 +129,7 @@ pub(crate) fn line_indentation(text: &[u8], total_indent: u32, off_start: OFF) -
     LineIndentation { indent, off }
 }
 
-pub(crate) struct Utf8DecodeResult {
+pub struct Utf8DecodeResult {
     pub codepoint: u32,
     pub len: u8,
 }

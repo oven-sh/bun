@@ -415,7 +415,7 @@ bun_collections::multi_array_columns! {
 /// `bundle_v2.zig:ContentHasher` — `std.hash.XxHash64` (seed 0). xxhash64
 /// outperforms wyhash above ~1KB.
 #[derive(Default)]
-pub(crate) struct ContentHasher {
+pub struct ContentHasher {
     pub hasher: bun_hash::XxHash64Streaming,
 }
 // `bun.Output.scoped(.ContentHasher, .hidden)` (bundle_v2.zig:4258). The static
@@ -478,7 +478,7 @@ pub mod bun_renamer {
     /// borrowed `Renamer` view on demand. TODO(port): thread `'bump` once
     /// Chunk gains a lifetime.
     #[derive(Default)]
-    pub(crate) enum ChunkRenamer {
+    pub enum ChunkRenamer {
         #[default]
         None,
         Number(Box<bun_js_printer::renamer::NumberRenamer>),

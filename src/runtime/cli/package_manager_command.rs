@@ -29,7 +29,7 @@ pub use crate::cli::scan_command::ScanCommand;
 // PORT NOTE: Owned snapshot of `Lockfile.Tree.Iterator(.node_modules).Next`.
 // `tree::IteratorNext` borrows the iterator's internal `path_buf`; we copy
 // into owned storage so the `directories` Vec can outlive each `next()` call.
-struct NodeModulesFolder {
+pub struct NodeModulesFolder {
     relative_path: bun_core::ZBox,
     dependencies: Box<[DependencyID]>,
 }

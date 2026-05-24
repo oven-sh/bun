@@ -16,7 +16,7 @@ use bun_alloc::ArenaVecExt as _;
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
 // PORT NOTE: Clone derive gated on `Image` gaining `Clone` upstream.
 #[cfg_attr(any(), derive(Clone))]
-pub(crate) struct Background {
+pub struct Background {
     /// The background image.
     pub image: Image,
     /// The background color.
@@ -272,7 +272,7 @@ impl Background {
 
 /// A value for the [background-size](https://www.w3.org/TR/css-backgrounds-3/#background-size) property.
 #[derive(Clone, PartialEq)]
-pub(crate) enum BackgroundSize {
+pub enum BackgroundSize {
     /// An explicit background size.
     Explicit(ExplicitBackgroundSize),
     /// The `cover` keyword. Scales the background image to cover both the width and height of the element.
@@ -282,7 +282,7 @@ pub(crate) enum BackgroundSize {
 }
 
 #[derive(Clone, PartialEq)]
-pub(crate) struct ExplicitBackgroundSize {
+pub struct ExplicitBackgroundSize {
     /// The width of the background.
     pub width: LengthPercentageOrAuto,
     /// The height of the background.
@@ -341,7 +341,7 @@ impl BackgroundSize {
 
 /// A value for the [background-position](https://drafts.csswg.org/css-backgrounds/#background-position) shorthand property.
 #[derive(Clone, PartialEq)]
-pub(crate) struct BackgroundPosition {
+pub struct BackgroundPosition {
     /// The x-position.
     pub x: HorizontalPosition,
     /// The y-position.
@@ -382,7 +382,7 @@ impl BackgroundPosition {
 
 /// A value for the [background-repeat](https://www.w3.org/TR/css-backgrounds-3/#background-repeat) property.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BackgroundRepeat {
+pub struct BackgroundRepeat {
     /// A repeat style for the x direction.
     pub x: BackgroundRepeatKeyword,
     /// A repeat style for the y direction.
@@ -450,7 +450,7 @@ crate::css_eql_partialeq!(
 ///
 /// See [BackgroundRepeat](BackgroundRepeat).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
-pub(crate) enum BackgroundRepeatKeyword {
+pub enum BackgroundRepeatKeyword {
     /// The image is repeated in this direction.
     Repeat,
     /// The image is repeated so that it fits, and then spaced apart evenly.
@@ -464,7 +464,7 @@ pub(crate) enum BackgroundRepeatKeyword {
 /// A value for the [background-attachment](https://www.w3.org/TR/css-backgrounds-3/#background-attachment) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 
-pub(crate) enum BackgroundAttachment {
+pub enum BackgroundAttachment {
     /// The background scrolls with the container.
     Scroll,
     /// The background is fixed to the viewport.
@@ -482,7 +482,7 @@ impl BackgroundAttachment {
 /// A value for the [background-origin](https://www.w3.org/TR/css-backgrounds-3/#background-origin) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 #[repr(u8)]
-pub(crate) enum BackgroundOrigin {
+pub enum BackgroundOrigin {
     /// The position is relative to the border box.
     BorderBox,
     /// The position is relative to the padding box.
@@ -494,7 +494,7 @@ pub(crate) enum BackgroundOrigin {
 /// A value for the [background-clip](https://drafts.csswg.org/css-backgrounds-4/#background-clip) property.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 #[repr(u8)]
-pub(crate) enum BackgroundClip {
+pub enum BackgroundClip {
     /// The background is clipped to the border box.
     BorderBox,
     /// The background is clipped to the padding box.
@@ -531,7 +531,7 @@ impl BackgroundClip {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub(crate) struct BackgroundProperty: u16 {
+    pub struct BackgroundProperty: u16 {
         const COLOR      = 1 << 0;
         const IMAGE      = 1 << 1;
         const POSITION_X = 1 << 2;
@@ -587,7 +587,7 @@ impl BackgroundProperty {
 }
 
 #[derive(Default)]
-pub(crate) struct BackgroundHandler {
+pub struct BackgroundHandler {
     pub color: Option<CssColor>,
     pub images: Option<SmallList<Image, 1>>,
     pub has_prefix: bool,

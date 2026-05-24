@@ -32,7 +32,7 @@ const PAGE_SIZE: usize = 16384;
 // original patch file text. The port generally avoids struct lifetimes, but
 // this parser's whole output is borrowed; raw `*const [u8]` everywhere would
 // be worse.
-pub(crate) enum PatchFilePart<'a> {
+pub enum PatchFilePart<'a> {
     FilePatch(Box<FilePatch<'a>>),
     FileDeletion(Box<FileDeletion<'a>>),
     FileCreation(Box<FileCreation<'a>>),
@@ -543,7 +543,7 @@ impl<'a> FileDeets<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub(crate) struct PatchMutationPart<'a> {
+pub struct PatchMutationPart<'a> {
     pub ty: PartType,
     pub lines: Vec<&'a [u8]>,
     /// This technically can only be on the last part of a hunk
@@ -553,7 +553,7 @@ pub(crate) struct PatchMutationPart<'a> {
 /// Ensure context, insertion, deletion values are in sync with HunkLineType enum
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default, strum::IntoStaticStr)]
-pub(crate) enum PartType {
+pub enum PartType {
     #[default]
     Context = 0,
     Insertion,
@@ -563,13 +563,13 @@ pub(crate) enum PartType {
 // Zig `PatchMutationPart.deinit` only freed `lines` → Drop is automatic.
 
 #[derive(Default)]
-pub(crate) struct Hunk<'a> {
+pub struct Hunk<'a> {
     pub header: Header,
     pub parts: Vec<PatchMutationPart<'a>>,
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct HeaderRange {
+pub struct HeaderRange {
     pub start: u32,
     pub len: u32,
 }
@@ -626,7 +626,7 @@ impl<'a> Hunk<'a> {
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum FileMode {
+pub enum FileMode {
     NonExecutable = 0o644,
     Executable = 0o755,
 }
@@ -649,20 +649,20 @@ impl FileMode {
 // FileRename / FileModeChange / FilePatch / FileDeletion / FileCreation
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct FileRename<'a> {
+pub struct FileRename<'a> {
     pub from_path: &'a [u8],
     pub to_path: &'a [u8],
 }
 // Does not allocate — no Drop needed.
 
-pub(crate) struct FileModeChange<'a> {
+pub struct FileModeChange<'a> {
     pub path: &'a [u8],
     pub old_mode: FileMode,
     pub new_mode: FileMode,
 }
 // Does not allocate — no Drop needed.
 
-pub(crate) struct FilePatch<'a> {
+pub struct FilePatch<'a> {
     pub path: &'a [u8],
     pub hunks: Vec<Hunk<'a>>,
     pub before_hash: Option<&'a [u8]>,
@@ -670,7 +670,7 @@ pub(crate) struct FilePatch<'a> {
 }
 // Zig `deinit` freed hunks + bun.destroy(this) → Drop on Box<FilePatch> handles both.
 
-pub(crate) struct FileDeletion<'a> {
+pub struct FileDeletion<'a> {
     pub path: &'a [u8],
     pub mode: FileMode,
     pub hunk: Option<Box<Hunk<'a>>>,
@@ -678,7 +678,7 @@ pub(crate) struct FileDeletion<'a> {
 }
 // Zig `deinit` freed hunk + bun.destroy(this) → Drop on Box<FileDeletion> handles both.
 
-pub(crate) struct FileCreation<'a> {
+pub struct FileCreation<'a> {
     pub path: &'a [u8],
     pub mode: FileMode,
     pub hunk: Option<Box<Hunk<'a>>>,

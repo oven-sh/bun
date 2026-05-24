@@ -52,7 +52,7 @@ pub(crate) const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", window
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
-pub(crate) enum Backend {
+pub enum Backend {
     System = 0,
     Bun = 1,
 }
@@ -93,7 +93,7 @@ fn use_system() -> bool {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum Format {
+pub enum Format {
     Jpeg,
     Png,
     Webp,
@@ -259,7 +259,7 @@ pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 /// the IDCT work AND shrinking the RGBA buffer the resize pass touches. This
 /// is the same trick Sharp/libvips use and is where most of the perf gap was.
 #[derive(Copy, Clone, Default)]
-pub(crate) struct DecodeHint {
+pub struct DecodeHint {
     /// Final output dims (after rotate). 0 = "no resize, full decode".
     pub target_w: u32,
     pub target_h: u32,
@@ -433,7 +433,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct EncodeOptions {
+pub struct EncodeOptions {
     pub format: Format,
     /// 0–100 for JPEG/WebP-lossy. Ignored for PNG.
     pub quality: u8,
@@ -482,7 +482,7 @@ impl Default for EncodeOptions {
 ///
 /// `free` matches `jsc.C.JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
 /// be passed straight through; the `ctx` arg is unused.
-pub(crate) struct Encoded {
+pub struct Encoded {
     // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced
     // it; `free` is the matching deallocator. Not a Box — drop must call `free`.
     pub bytes: NonNull<[u8]>,
@@ -598,7 +598,7 @@ pub(crate) fn encode(
 
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum Filter {
+pub enum Filter {
     Box = 0,
     Bilinear = 1,
     Lanczos3 = 2,

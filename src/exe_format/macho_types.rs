@@ -55,7 +55,7 @@ pub mod PROT {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(crate) struct section_64 {
+pub struct section_64 {
     pub sectname: [u8; 16],
     pub segname: [u8; 16],
     pub addr: u64,

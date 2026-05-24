@@ -146,7 +146,7 @@ pub type Stream = bun_io::FixedBufferStream<Vec<u8>>;
 /// `anytype` (lockfile/Buffers.zig:142, bun.lockb.zig). Expressed as a trait so
 /// the Rust port can stay generic over the borrowck-reshaped `StreamType` in
 /// `bun.lockb.rs` (which collapses stream + writer into one `&mut`).
-pub(crate) trait PositionalStream {
+pub trait PositionalStream {
     /// Zig: `try stream.getPos()` — current write position.
     fn get_pos(&self) -> Result<usize, BunError>;
     /// Zig: `stream.pwrite(bytes, index)` — positional write, returns bytes
@@ -354,7 +354,7 @@ pub enum LoadStep {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum Migrated {
+pub enum Migrated {
     #[default]
     None,
     Npm,
@@ -2499,7 +2499,7 @@ impl Lockfile {
 // Scratch
 // ────────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Scratch {
+pub struct Scratch {
     pub duplicate_checker_map: DuplicateCheckerMap,
     pub dependency_list_queue: DependencyQueue,
 }

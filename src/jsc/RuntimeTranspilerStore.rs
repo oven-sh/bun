@@ -393,7 +393,7 @@ const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
 pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
-pub(crate) struct TranspilerJob {
+pub struct TranspilerJob {
     // PORT NOTE: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
     // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
     // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.

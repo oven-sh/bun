@@ -83,7 +83,7 @@ macro_rules! arena_slice_newtype {
 /// In CSS modules, when the `dashed_idents` option is enabled, the identifier may be followed by the
 /// `from` keyword and an argument indicating where the referenced identifier is declared (e.g. a filename).
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct DashedIdentReference {
+pub struct DashedIdentReference {
     /// The referenced identifier.
     pub ident: DashedIdent,
     /// CSS modules extension: the filename where the variable is defined.

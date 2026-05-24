@@ -46,7 +46,7 @@ impl<SemverInt: VersionInt> Default for ResolutionType<SemverInt> {
 // associated values; the derive maps `Self::Variant` → `Tag::Variant` by name.
 #[derive(Clone, Copy, bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
-pub(crate) enum TaggedValue<SemverInt: VersionInt> {
+pub enum TaggedValue<SemverInt: VersionInt> {
     Uninitialized,
     Root,
     Npm(VersionedURLType<SemverInt>),
@@ -545,7 +545,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for StorePathFormatter<'a, SemverIn
     }
 }
 
-pub(crate) struct URLFormatter<'a, SemverInt: VersionInt> {
+pub struct URLFormatter<'a, SemverInt: VersionInt> {
     resolution: &'a ResolutionType<SemverInt>,
 
     buf: &'a [u8],
@@ -788,7 +788,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
     }
 }
 
-pub(crate) struct DebugFormatter<'a, SemverInt: VersionInt> {
+pub struct DebugFormatter<'a, SemverInt: VersionInt> {
     resolution: &'a ResolutionType<SemverInt>,
     buf: &'a [u8],
 }
@@ -981,7 +981,7 @@ bun_core::oom_from_alloc!(FromTextLockfileError);
 bun_core::named_error_set!(FromTextLockfileError);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum FromPnpmLockfileError {
+pub enum FromPnpmLockfileError {
     #[error("out of memory")]
     OutOfMemory,
     #[error("invalid pnpm lockfile")]

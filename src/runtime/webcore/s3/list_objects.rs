@@ -45,7 +45,7 @@ struct ObjectOwner<'a> {
     display_name: Option<&'a [u8]>,
 }
 
-pub(crate) struct S3ListObjectsContents<'a> {
+pub struct S3ListObjectsContents<'a> {
     key: &'a [u8],
     // Zig: ?bun.ptr.OwnedIn([]const u8, MaybeOwned(DefaultAllocator)) —
     // i.e. a maybe-owned slice. Cow<'a, [u8]> is the direct equivalent.
@@ -60,7 +60,7 @@ pub(crate) struct S3ListObjectsContents<'a> {
 
 // Zig deinit only freed `etag` when owned; Cow handles that in Drop.
 
-pub(crate) struct S3ListObjectsV2Result<'a> {
+pub struct S3ListObjectsV2Result<'a> {
     pub name: Option<&'a [u8]>,
     pub prefix: Option<&'a [u8]>,
     pub key_count: Option<i64>,

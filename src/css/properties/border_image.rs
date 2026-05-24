@@ -20,7 +20,7 @@ use css::css_values::rect::Rect;
 use bun_alloc::Arena;
 
 /// A value for the [border-image](https://www.w3.org/TR/css-backgrounds-3/#border-image) shorthand property.
-pub(crate) struct BorderImage {
+pub struct BorderImage {
     /// The border image.
     pub source: Image,
     /// The offsets that define where the image is sliced.
@@ -245,7 +245,7 @@ impl BorderImage {
 }
 
 /// A value for the [border-image-repeat](https://www.w3.org/TR/css-backgrounds-3/#border-image-repeat) property.
-pub(crate) struct BorderImageRepeat {
+pub struct BorderImageRepeat {
     /// The horizontal repeat value.
     pub horizontal: BorderImageRepeatKeyword,
     /// The vertical repeat value.
@@ -296,7 +296,7 @@ impl BorderImageRepeat {
 
 /// A value for the [border-image-width](https://www.w3.org/TR/css-backgrounds-3/#border-image-width) property.
 #[derive(Clone, PartialEq)]
-pub(crate) enum BorderImageSideWidth {
+pub enum BorderImageSideWidth {
     /// A number representing a multiple of the border width.
     Number(CSSNumber),
     /// An explicit length or percentage.
@@ -356,7 +356,7 @@ impl crate::generics::IsCompatible for BorderImageSideWidth {
 
 /// A single [border-image-repeat](https://www.w3.org/TR/css-backgrounds-3/#border-image-repeat) keyword.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-pub(crate) enum BorderImageRepeatKeyword {
+pub enum BorderImageRepeatKeyword {
     /// The image is stretched to fill the area.
     Stretch,
     /// The image is tiled (repeated) to fill the area.
@@ -382,7 +382,7 @@ impl BorderImageRepeatKeyword {
 }
 
 /// A value for the [border-image-slice](https://www.w3.org/TR/css-backgrounds-3/#border-image-slice) property.
-pub(crate) struct BorderImageSlice {
+pub struct BorderImageSlice {
     /// The offsets from the edges of the image.
     pub offsets: Rect<NumberOrPercentage>,
     /// Whether the middle of the border image should be preserved.

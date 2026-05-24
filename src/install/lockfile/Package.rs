@@ -114,7 +114,7 @@ pub struct Package<SemverIntType: VersionInt = u64> {
     pub scripts: Scripts,
 }
 
-type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
+pub type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 
 // ─── ResolverContext ─────────────────────────────────────────────────────────
 //
@@ -123,7 +123,7 @@ type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 // comptime. Rust models this as a trait with associated consts; concrete
 // resolvers (folder/cache/git) override what they need. The `()` impl gives
 // the `void` semantics.
-pub(crate) trait ResolverContext {
+pub trait ResolverContext {
     /// Zig: `comptime ResolverContext == void`.
     const IS_VOID: bool = false;
     /// Zig: `comptime ResolverContext == PackageManager.GitResolver`.
@@ -985,7 +985,7 @@ pub struct AddedTrustedDependency {
 }
 
 #[derive(Default)]
-pub(crate) struct DiffSummary {
+pub struct DiffSummary {
     pub add: u32,
     pub remove: u32,
     pub update: u32,

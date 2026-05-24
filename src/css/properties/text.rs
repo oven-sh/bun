@@ -38,7 +38,7 @@ bitflags::bitflags! {
 
 /// A value for the [text-shadow](https://www.w3.org/TR/2020/WD-css-text-decor-4-20200506/#text-shadow-property) property.
 #[derive(Clone, PartialEq)]
-pub(crate) struct TextShadow {
+pub struct TextShadow {
     /// The color of the text shadow.
     pub color: CssColor,
     /// The x offset of the text shadow.

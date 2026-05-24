@@ -523,7 +523,7 @@ impl<const N: usize> IntoStr for &[u8; N] {
 /// Owned/borrowed → `Cow<'static, [u8]>` for `Data.text`. Superset of the old
 /// `impl Into<Cow<'static, [u8]>>` bound on [`range_data`] that additionally
 /// admits `&'static str` (so `concat!()` literals work) and `&[u8; N]`.
-pub(crate) trait IntoText {
+pub trait IntoText {
     fn into_text(self) -> Cow<'static, [u8]>;
 }
 impl IntoText for Cow<'static, [u8]> {
@@ -572,7 +572,7 @@ impl IntoText for Box<[u8]> {
 /// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
 /// `fmt::Write` impl or the `*mut bun_core::io::Writer` returned by
 /// `Output::error_writer()` (the dominant call shape across the tree).
-pub(crate) trait IntoLogWrite {
+pub trait IntoLogWrite {
     type W: fmt::Write;
     fn into_log_write(self) -> Self::W;
 }
@@ -584,7 +584,7 @@ impl<'a, W: fmt::Write> IntoLogWrite for &'a mut W {
     }
 }
 /// `fmt::Write` view over a `*mut bun_core::io::Writer`.
-pub(crate) struct IoWriterAdapter(*mut bun_core::io::Writer);
+pub struct IoWriterAdapter(*mut bun_core::io::Writer);
 impl fmt::Write for IoWriterAdapter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         if self.0.is_null() {
@@ -2693,7 +2693,7 @@ impl Default for Source {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub(crate) struct ErrorPosition {
+pub struct ErrorPosition {
     pub line_start: usize,
     pub line_end: usize,
     pub column_count: usize,

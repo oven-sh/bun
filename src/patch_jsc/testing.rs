@@ -181,7 +181,7 @@ impl TestingAPIs {
     }
 }
 
-pub(crate) struct ApplyArgs {
+pub struct ApplyArgs {
     // TODO(port): lifetime — Zig stored both `ZigString.Slice` and `PatchFile`
     // (which borrows it). Self-referential in Rust; PORTING.md forbids
     // Box::leak/lifetime-extend, so we store owned bytes and reparse on use.

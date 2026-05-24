@@ -16,12 +16,12 @@ pub(crate) struct Arg<'p, 'a, Id> {
 }
 
 #[derive(Copy, Clone)]
-pub(crate) struct Chaining<'a> {
+pub struct Chaining<'a> {
     pub arg: &'a [u8],
     pub index: usize,
 }
 
-pub(crate) enum State<'a> {
+pub enum State<'a> {
     Normal,
     Chaining(Chaining<'a>),
     RestArePositional,

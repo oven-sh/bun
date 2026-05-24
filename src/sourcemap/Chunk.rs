@@ -143,7 +143,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 
 /// Trait capturing the methods `SourceMapFormat<T>` forwards to its `ctx`.
 /// In Zig this was structural (comptime duck typing on `Type`).
-pub(crate) trait SourceMapFormatCtx: Sized {
+pub trait SourceMapFormatCtx: Sized {
     fn init(prepend_count: bool) -> Self;
     fn append_line_separator(&mut self) -> Result<(), bun_core::Error>;
     fn append(
@@ -425,7 +425,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 /// automatically. (A `Drop` impl on `NewBuilder` itself would forbid the
 /// `..Default::default()` struct-update used to build it in
 /// `get_source_map_builder`, hence the newtype.)
-pub(crate) struct OwnedLineOffsetTables(pub line_offset_table::List);
+pub struct OwnedLineOffsetTables(pub line_offset_table::List);
 
 impl Drop for OwnedLineOffsetTables {
     fn drop(&mut self) {

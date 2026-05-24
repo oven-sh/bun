@@ -632,7 +632,7 @@ pub mod defines_full_draft {
         //        call_can_be_unwrapped_if_unused: E.CallUnwrap (u2), method_call_must_be_replaced_with_undefined }`
         // Packed LSB-first → bit positions below match the Zig layout exactly.
         #[derive(Copy, Clone, Default)]
-        pub(crate) struct DefineDataFlags: u8 {
+        pub struct DefineDataFlags: u8 {
             const VALUELESS                                  = 1 << 3;
             const CAN_BE_REMOVED_IF_UNUSED                   = 1 << 4;
             // bits 5..7 hold `E::CallUnwrap` (2 bits) — read via accessor below.

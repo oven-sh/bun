@@ -151,7 +151,7 @@ pub enum Value {
 /// can't sweep the cell whose `RefPtr<ArrayBuffer>` keeps the storage
 /// alive — `params` is on the malloc heap and isn't scanned. `Drop`
 /// unpins.
-pub(crate) struct Bytes {
+pub struct Bytes {
     pub slice: ZigStringSlice,
     /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
     /// when the slice is owned (FastTypedArray dupe), borrowed from a

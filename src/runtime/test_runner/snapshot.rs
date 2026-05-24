@@ -57,7 +57,7 @@ impl<'a> Snapshots<'a> {
 // PORT NOTE: hoisted out of `impl Snapshots` — inherent associated types are unstable.
 pub type ValuesHashMap = HashMap<u64, Box<[u8]>>;
 
-pub(crate) struct InlineSnapshotToWrite {
+pub struct InlineSnapshotToWrite {
     pub line: c_ulong,
     pub col: c_ulong,
     /// owned (was: owned by Snapshots.allocator)

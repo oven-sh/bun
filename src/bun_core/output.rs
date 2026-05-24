@@ -1263,7 +1263,7 @@ pub fn print_start_end_stdout(start: i128, end: i128) {
 
 /// Minimal timer abstraction so bun_core doesn't depend on bun_perf.
 /// bun_perf::SystemTimer impls this (move-in pass).
-pub(crate) trait ReadTimer {
+pub trait ReadTimer {
     fn read(&mut self) -> u64;
 }
 
@@ -1804,7 +1804,7 @@ pub use bun_core_macros::pretty_fmt;
 /// pre-formatted `&fmt::Arguments<'_>` (which is first rendered to a string
 /// then `<tag>`-rewritten — used by `Custom Inspect`-style call sites that
 /// build the template via `format_args!`).
-pub(crate) trait PrettyFmtInput {
+pub trait PrettyFmtInput {
     fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf;
 }
 impl PrettyFmtInput for &str {
@@ -1893,7 +1893,7 @@ impl fmt::Display for PrettyBuf {
 // pre-built `fmt::Arguments<'_>` (treated as a single positional).
 
 /// Positional-argument bundle for runtime template substitution.
-pub(crate) trait FmtTuple {
+pub trait FmtTuple {
     /// Write the `idx`-th positional into `f`. Returns `false` if `idx` is out
     /// of range (caller emits the literal `{}` then).
     fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error>;

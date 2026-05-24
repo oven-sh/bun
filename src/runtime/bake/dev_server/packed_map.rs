@@ -11,7 +11,7 @@ pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 /// between chunks (generated_column is always 0 because minification is off,
 /// generated_line is recomputed per concatenation).
 #[derive(Copy, Clone, Default)]
-pub(crate) struct EndState {
+pub struct EndState {
     pub original_line: i32,
     pub original_column: i32,
 }
@@ -66,7 +66,7 @@ impl PackedMap {
 /// 2-word payload and `MultiArrayElement` cannot be derived for an enum, so
 /// callers store `Vec<Shared>`.
 #[derive(Default)]
-pub(crate) enum Shared {
+pub enum Shared {
     Some(Rc<PackedMap>),
     #[default]
     None,

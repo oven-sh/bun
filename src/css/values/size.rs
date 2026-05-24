@@ -5,7 +5,7 @@ use bun_alloc::Arena;
 /// A generic value that represents a value with two components, e.g. a border radius.
 ///
 /// When serialized, only a single component will be written if both are equal.
-pub(crate) struct Size2D<T> {
+pub struct Size2D<T> {
     pub a: T,
     pub b: T,
 }

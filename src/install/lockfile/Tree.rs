@@ -151,7 +151,7 @@ pub(crate) struct Placement {
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum SubtreeError {
+pub enum SubtreeError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("DependencyLoop")]
@@ -409,7 +409,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
-pub(crate) enum BuilderMethod {
+pub enum BuilderMethod {
     /// Hoist, but include every dependency so it's resolvable if configuration
     /// changes. For saving to disk.
     Resolvable,
@@ -425,7 +425,7 @@ pub(crate) enum BuilderMethod {
 // `packages_to_install` as `void` when method != .filter. Rust const generics cannot vary field
 // types; using Option<_>/empty defaults instead. TODO(refactor): split into two structs or use a
 // trait-associated type if the size matters.
-pub(crate) struct Builder<'a, const METHOD: BuilderMethod> {
+pub struct Builder<'a, const METHOD: BuilderMethod> {
     // PORT NOTE: Zig `std.mem.Allocator` param field dropped. Sole construction site is
     // `Lockfile.hoist()` (src/install/lockfile.zig) which passes `lockfile.allocator` — the
     // lockfile's persistent allocator (bun.default_allocator via PackageManager/CLI ctx), not an
@@ -487,6 +487,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     #[inline]
     pub(crate) fn lockfile(&self) -> &Lockfile {
         self.lockfile.get()
+    }
+
+    pub(crate) fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
+        // TODO(port): bun_ast::Log::add_error_fmt signature — allocator param dropped.
+        let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     }
 
     pub(crate) fn buf(&self) -> &[u8] {
@@ -1148,7 +1153,7 @@ impl Tree {
 // FillItem / TreeFiller
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct FillItem {
+pub struct FillItem {
     pub tree_id: Id,
     pub dependency_id: DependencyID,
 

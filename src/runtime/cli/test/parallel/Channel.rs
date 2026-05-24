@@ -43,7 +43,7 @@ use super::frame;
 /// so the owner instead implements [`bun_core::IntrusiveField<Channel<Self>>`]
 /// (via `bun_core::intrusive_field!`) plus the two callbacks the Zig called
 /// as `owner().onChannelFrame` / `onChannelDone`.
-pub(crate) trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
+pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>);
     fn on_channel_done(&mut self);
 }
@@ -68,9 +68,9 @@ pub struct Channel<Owner> {
 }
 
 #[cfg(windows)]
-pub(crate) type Backend = WindowsBackend;
+pub type Backend = WindowsBackend;
 #[cfg(not(windows))]
-pub(crate) type Backend = PosixBackend;
+pub type Backend = PosixBackend;
 
 impl<Owner> Default for Channel<Owner> {
     fn default() -> Self {
@@ -102,7 +102,7 @@ pub type Socket = uws::NewSocketHandler<false>;
 pub type Socket = ();
 
 #[allow(dead_code)]
-pub(crate) struct PosixBackend {
+pub struct PosixBackend {
     pub socket: Socket,
 }
 

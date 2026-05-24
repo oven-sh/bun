@@ -45,7 +45,7 @@ struct ScriptConfig {
 
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
 /// so output can be routed to the correct parent stream.
-struct PipeReader<'a> {
+pub struct PipeReader<'a> {
     reader: BufferedReader,
     handle: *const ProcessHandle<'a>, // set in ProcessHandle::start()
     is_stderr: bool,

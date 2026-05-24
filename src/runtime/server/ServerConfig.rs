@@ -103,7 +103,7 @@ impl Default for ServerConfig {
     }
 }
 
-pub(crate) enum Address {
+pub enum Address {
     Tcp {
         port: u16,
         hostname: Option<ZBox>,
@@ -125,7 +125,7 @@ impl Default for Address {
 // In Rust, ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DevelopmentOption {
+pub enum DevelopmentOption {
     Development,
     Production,
     DevelopmentWithoutHmr,
@@ -172,12 +172,12 @@ impl ServerConfig {
 }
 
 // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
-pub(crate) struct RouteDeclaration {
+pub struct RouteDeclaration {
     pub path: ZBox,
     pub method: RouteMethod,
 }
 
-pub(crate) enum RouteMethod {
+pub enum RouteMethod {
     Any,
     Specific(Method),
 }
@@ -194,7 +194,7 @@ impl Default for RouteDeclaration {
 // PORT NOTE: Zig `RouteDeclaration.deinit` only freed `path`; ZBox drops automatically.
 
 // TODO: rename to StaticRoute.Entry
-pub(crate) struct StaticRouteEntry {
+pub struct StaticRouteEntry {
     pub path: Box<[u8]>,
     pub route: AnyRoute,
     pub method: MethodOptional,
@@ -1610,7 +1610,7 @@ impl ServerConfig {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct FromJSOptions {
+pub struct FromJSOptions {
     pub allow_bake_config: bool,
     pub is_fetch_required: bool,
     pub has_user_routes: bool,
@@ -1626,7 +1626,7 @@ impl Default for FromJSOptions {
     }
 }
 
-pub(crate) struct UserRouteBuilder {
+pub struct UserRouteBuilder {
     pub route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
 }

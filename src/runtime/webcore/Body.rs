@@ -235,7 +235,7 @@ impl Body {
 // PendingValue
 // ────────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct PendingValue {
+pub struct PendingValue {
     pub promise: Option<JSValue>,
     pub readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink
@@ -445,7 +445,7 @@ impl PendingValue {
     }
 }
 
-pub(crate) enum Action {
+pub enum Action {
     None,
     GetText,
     GetJSON,
@@ -2264,7 +2264,7 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 pub(crate) type ValueBuffererCallback =
     fn(ctx: *mut c_void, bytes: &[u8], err: Option<ValueError>, is_async: bool);
 
-pub(crate) struct ValueBufferer<'a> {
+pub struct ValueBufferer<'a> {
     pub ctx: *mut c_void,
     pub on_finished_buffering: ValueBuffererCallback,
 

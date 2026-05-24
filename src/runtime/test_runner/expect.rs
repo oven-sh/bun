@@ -56,7 +56,7 @@ pub enum Promise {
 
 #[repr(u8)] // TODO(port): Zig used u5; encoded inside Flags packed repr
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum AsymmetricMatcherConstructorType {
+pub enum AsymmetricMatcherConstructorType {
     #[default]
     None = 0,
     Symbol = 1,
@@ -806,7 +806,7 @@ impl Expect {
     }
 }
 
-pub(crate) struct TrimResult<'a> {
+pub struct TrimResult<'a> {
     pub trimmed: &'a [u8],
     pub start_indent: Option<&'a [u8]>,
     pub end_indent: Option<&'a [u8]>,
@@ -1785,7 +1785,7 @@ impl Expect {
 /// `defer this.postMatch(globalThis)` shared by every `expect().toX()` matcher.
 /// R-2: shared borrow only (no `DerefMut`); all `Expect` methods reachable from a
 /// matcher body take `&self`.
-pub(crate) struct PostMatchGuard<'a> {
+pub struct PostMatchGuard<'a> {
     expect: &'a Expect,
     global: &'a JSGlobalObject,
 }
@@ -2136,7 +2136,7 @@ impl Expect {
 /// Where `expected.is_array()` runs relative to `get_value` — observable when
 /// both would throw (Keys-family Zig validates *after*, Values-family *before*).
 #[derive(Clone, Copy)]
-pub(crate) enum ExpectedArray {
+pub enum ExpectedArray {
     /// `toContainKey` / `toContainValue`: scalar `expected`, no array check.
     None,
     /// `toContain*Values`: array check happens before `get_value`.
@@ -2150,7 +2150,7 @@ pub(crate) enum ExpectedArray {
 /// {verb}: …"`. For most matchers both are `"contain"`; the All/Any variants
 /// override to `"contain all keys"` etc.
 #[derive(Clone, Copy)]
-pub(crate) struct ContainMsgs {
+pub struct ContainMsgs {
     pub verb: &'static str,
     pub not_verb: &'static str,
 }
@@ -2162,7 +2162,7 @@ impl ContainMsgs {
 /// Result of a [`Expect::contain_matcher`] body closure: the pass/fail bit and
 /// an optional override for the `Received:` value printed on failure
 /// (`toContainAllKeys` prints `keys(value)` instead of `value`).
-pub(crate) struct ContainOutcome {
+pub struct ContainOutcome {
     pub pass: bool,
     pub received_override: Option<JSValue>,
 }
@@ -3043,7 +3043,7 @@ pub mod mock {
     /// matchers use the Jest-style `Matcher error:` form routed through
     /// [`Expect::throw`]; everything else uses the bare `global.throw(...)` form.
     #[derive(Clone, Copy)]
-    pub(crate) enum MockKind {
+    pub enum MockKind {
         /// `mock.calls`; not-a-mock → `global.throw("Expected value must be a mock function: …")`.
         /// toHaveBeenCalled / toHaveBeenCalledOnce / toHaveBeenCalledTimes.
         Calls,

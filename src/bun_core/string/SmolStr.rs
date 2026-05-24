@@ -248,7 +248,7 @@ impl Drop for SmolStr {
 }
 
 // TODO(port): placeholder for the std.json `writer: anytype` protocol used by json_stringify.
-pub(crate) trait JsonWriter {
+pub trait JsonWriter {
     fn write(&mut self, bytes: &[u8]) -> Result<(), crate::Error>;
 }
 
@@ -260,7 +260,7 @@ pub(crate) trait JsonWriter {
 ///   bit  127      = `_tag: u1`
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) struct Inlined(u128);
+pub struct Inlined(u128);
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
 pub(crate) enum InlinedError {

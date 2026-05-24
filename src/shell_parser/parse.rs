@@ -4231,7 +4231,7 @@ pub const SPECIAL_CHARS: [u8; 34] = [
 // `bun_collections::IntegerBitSet<N>` is single-`usize`-backed (≤64 bits), so a
 // 256-entry membership table is materialised as `[bool; 256]` instead — same
 // O(1) byte-indexed lookup, const-evaluable.
-pub(crate) struct ByteTable(pub [bool; 256]);
+pub struct ByteTable(pub [bool; 256]);
 impl ByteTable {
     #[inline]
     pub(crate) const fn is_set(&self, idx: usize) -> bool {
@@ -4375,7 +4375,7 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
 
 /// `Allocator` routing `SmolList::Heap` through the parser arena. Must not outlive the arena.
 #[derive(Clone, Copy)]
-pub(crate) struct SmolListAlloc(core::ptr::NonNull<Bump>);
+pub struct SmolListAlloc(core::ptr::NonNull<Bump>);
 
 // SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
 unsafe impl Send for SmolListAlloc {}
@@ -4440,7 +4440,7 @@ pub enum SmolList<T, const INLINED_MAX: usize> {
     Heap(SmolListHeap<T>),
 }
 
-pub(crate) struct SmolListInlined<T, const INLINED_MAX: usize> {
+pub struct SmolListInlined<T, const INLINED_MAX: usize> {
     pub items: [core::mem::MaybeUninit<T>; INLINED_MAX],
     pub len: u32,
 }

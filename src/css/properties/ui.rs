@@ -11,7 +11,7 @@ use css::css_values::ident::DashedIdent;
 bitflags::bitflags! {
     /// A value for the [color-scheme](https://drafts.csswg.org/css-color-adjust/#color-scheme-prop) property.
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
-    pub(crate) struct ColorScheme: u8 {
+    pub struct ColorScheme: u8 {
         /// Indicates that the element supports a light color scheme.
         const LIGHT = 1 << 0;
         /// Indicates that the element supports a dark color scheme.
@@ -108,7 +108,7 @@ fn color_scheme_map_get(ident: &[u8]) -> Option<ColorSchemeKeyword> {
 pub struct Resize;
 
 #[derive(Default)]
-pub(crate) struct ColorSchemeHandler;
+pub struct ColorSchemeHandler;
 
 // PORT NOTE: `context.arena` was dropped from PropertyHandlerContext;
 // `define_var` no longer needs an arena because `TokenList.v` is a std

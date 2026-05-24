@@ -159,7 +159,7 @@ pub mod ast {
     use bun_shell_parser::parse::ast as p;
     pub use p::{BinaryOp, CondExprOp, IoKind, JSBuf, RedirectFlags};
 
-    pub(crate) type Script = p::Script<'static>;
+    pub type Script = p::Script<'static>;
     pub type Stmt = p::Stmt<'static>;
     pub type Expr = p::Expr<'static>;
     pub(crate) type Binary = p::Binary<'static>;

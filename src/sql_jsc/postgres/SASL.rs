@@ -39,7 +39,7 @@ impl Default for SASL {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum SASLStatus {
+pub enum SASLStatus {
     Init,
     Continue,
 }

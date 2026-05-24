@@ -656,7 +656,7 @@ impl PromiseResult {
 ///   - `run` — runs on thread pool, stores result in `self`
 ///   - `run_from_js` — returns value to resolve/reject
 ///   - `Drop` — cleanup
-pub(crate) trait TaskContext: Send {
+pub trait TaskContext: Send {
     /// Dispatch tag for this context's `AsyncTask<Self>` variant.
     const TAG: TaskTag;
     /// Runs on thread pool. Stores its result on `self`.
@@ -782,12 +782,12 @@ impl<C: TaskContext> AsyncTask<C> {
 // ============================================================================
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-enum ExtractError {
+pub enum ExtractError {
     #[error("ReadError")]
     ReadError,
 }
 
-enum ExtractResult {
+pub enum ExtractResult {
     Success(u32),
     Err(ExtractError),
 }

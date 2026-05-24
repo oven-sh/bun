@@ -7,7 +7,7 @@
 // release where every macOS artifact is cross-compiled on Linux and the
 // macos -lto variants exist). Repoint at the regular autobuild-<sha> tag
 // once #238 merges to main.
-export const WEBKIT_VERSION = "autobuild-preview-pr-238-747962a5";
+export const WEBKIT_VERSION = "autobuild-preview-pr-238-cd114500";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

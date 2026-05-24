@@ -437,11 +437,14 @@ ctiMasmProbeTrampolineAVX  [AVX]
 
 # ----------------------------------------------------------------------------
 # Highway. MSVC-mangled bun::N_AVX* names.
-# (92 symbols)
+# (96 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX10_2::ContainsNewlineOrNonASCIIOrQuoteImpl                 [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::CopyU16ToU8Impl                                      [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI]
+bun::N_AVX10_2::CountPrintableAscii16Impl                            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX10_2::FillWithSkipMaskImpl                                 [AVX, AVX512DQ, AVX512F]
+bun::N_AVX10_2::FirstNonAscii16Impl                                  [AVX, AVX512BW, AVX512F]
+bun::N_AVX10_2::FirstNonAscii8Impl                                   [AVX, AVX512BW]
 bun::N_AVX10_2::IndexOfAnyCharImpl                                   [AVX, AVX512BW, AVX512F, AVX512VL, AVX512_FP16]
 bun::N_AVX10_2::IndexOfCharImpl                                      [AVX, AVX512BW, BMI2]
 bun::N_AVX10_2::IndexOfInterestingCharacterInStringLiteralImpl       [AVX, AVX512BW, AVX512F]
@@ -451,6 +454,7 @@ bun::N_AVX10_2::IndexOfNewlineOrNonASCIIImpl                         [AVX, AVX51
 bun::N_AVX10_2::IndexOfNewlineOrNonASCIIOrHashOrAtImpl               [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::IndexOfSpaceOrNewlineOrNonASCIIImpl                  [AVX, AVX512BW, AVX512F]
 bun::N_AVX10_2::MemMemImpl                                           [AVX, AVX512BW, AVX512F, BMI1]
+bun::N_AVX10_2::VisibleLatin1WidthImpl                               [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
 bun::N_AVX2::ContainsNewlineOrNonASCIIOrQuoteImpl                    [AVX, AVX2]
 bun::N_AVX2::CopyU16ToU8Impl                                         [AVX, AVX2]
 bun::N_AVX2::CountPrintableAscii16Impl                               [AVX, AVX2]

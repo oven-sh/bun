@@ -523,11 +523,14 @@ impl ExtractTarball {
 
             // The cache folder is about to be replaced, so any existing
             // integrity sidecar describes bytes that are going away. Remove it
-            // *before* the rename: every failure or interruption from here on
-            // then leaves at worst a folder without a sidecar (which readers
-            // treat as a cache miss), never a folder paired with a sidecar its
-            // contents were not verified against. If the stale sidecar cannot
-            // be removed, abort before touching the folder.
+            // *before* the rename: if this process then fails or is
+            // interrupted at any point, it leaves at worst a folder without a
+            // sidecar (which readers treat as a cache miss), never the stale
+            // sidecar paired with the new folder. (Two installs racing on the
+            // same slot can still interleave their unlink/rename/write
+            // sequences — see the note at the sidecar write below.) If the
+            // stale sidecar cannot be removed, abort before touching the
+            // folder.
             let mut sidecar_name_buf = PathBuffer::uninit();
             let sidecar_name =
                 directories::cache_integrity_sidecar_name(&mut sidecar_name_buf, folder_name);
@@ -539,11 +542,10 @@ impl ExtractTarball {
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "moving \"{}\" to cache dir failed: {}\n  From: {}\n    To: {}",
+                            "removing stale integrity sidecar for \"{}\" failed: {}\n  Path: {}",
                             bun_fmt::s(name),
                             err,
-                            bun_fmt::s(tmpname.as_bytes()),
-                            bun_fmt::s(folder_name),
+                            bun_fmt::s(sidecar_name.as_bytes()),
                         ),
                     );
                     return Err(bun_core::err!("InstallFailed"));
@@ -728,10 +730,23 @@ impl ExtractTarball {
             // later installs can require their own lockfile's integrity to
             // match before trusting this folder. Only written when the bytes
             // were actually verified (same precondition as `run`'s integrity
-            // check above), so the sidecar value is always the true hash of
-            // the bytes that produced the folder. A failed write is ignored:
-            // a folder without a sidecar is never trusted by the read side, so
-            // the worst case is one redundant re-download on the next install.
+            // check above). A failed write is ignored: a folder without a
+            // sidecar is never trusted by the read side, so the worst case is
+            // one redundant re-download on the next install.
+            //
+            // The unlink → rename → write sequence is not atomic across
+            // processes. Two installs racing on this slot with different
+            // integrities can leave one install's folder paired with the
+            // other's sidecar. That is accepted rather than closed here: the
+            // folder is still the verified output of one of the racing
+            // installs (never bytes nobody verified), a reader that trusts
+            // the mismatched pair gets exactly what the pre-sidecar cache
+            // handed out unconditionally, and the slot heals on the next
+            // install whose integrity disagrees with the sidecar. Actually
+            // closing the race needs the cache folder keyed by integrity or a
+            // cross-process lock held from extract through link — reordering
+            // the writes here cannot do it, because readers re-resolve the
+            // folder by name after checking the sidecar anyway.
             if !self.skip_verify && self.integrity.tag.is_supported() {
                 let mut integrity_str: [u8; 128] = [0u8; 128];
                 let mut cursor = std::io::Cursor::new(&mut integrity_str[..]);

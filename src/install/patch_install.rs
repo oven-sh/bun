@@ -621,6 +621,33 @@ impl PatchTask {
         );
 
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
+
+        // The patched cache folder is about to be replaced, so any existing
+        // integrity sidecar describes contents that are going away. Remove it
+        // *before* the rename: every failure or interruption from here on then
+        // leaves at worst a folder without a sidecar (which readers treat as a
+        // cache miss), never a folder paired with a sidecar its contents were
+        // not built from.
+        let mut sidecar_name_buf = PathBuffer::uninit();
+        let sidecar_name = package_manager::cache_integrity_sidecar_name(
+            &mut sidecar_name_buf,
+            cache_dir_subpath_z.as_bytes(),
+        );
+        match sys::unlinkat(patch.cache_dir, sidecar_name) {
+            Ok(()) => {}
+            Err(e) if e.get_errno() == sys::Errno::ENOENT => {}
+            Err(e) => {
+                log.add_error_fmt_opts(
+                    format_args!(
+                        "replacing patched package in cache dir: {}",
+                        e.with_path(cache_dir_subpath_z.as_bytes())
+                    ),
+                    Default::default(),
+                );
+                return Ok(());
+            }
+        }
+
         if let Err(e) = sys::renameat_concurrently(
             system_tmpdir,
             path_in_tmpdir,
@@ -639,6 +666,35 @@ impl PatchTask {
                 Default::default(),
             );
             return Ok(());
+        }
+
+        // Record the integrity of the base tarball this patched folder was
+        // built from so later installs can require their own lockfile's
+        // expected integrity to match before trusting it (the folder name only
+        // encodes the patch file's content hash). Only written when the base
+        // contents were actually verified against that integrity — the same
+        // gate the read side applies. A failed write is ignored: a folder
+        // without a sidecar is never trusted, so the worst case is one
+        // redundant re-patch on the next install.
+        {
+            let manager = self.manager.get();
+            let meta = &manager.lockfile.packages.items_meta()[patch.pkg_id as usize];
+            if resolution_tag == crate::resolution::Tag::Npm
+                && manager.options.do_.verify_integrity()
+                && meta.integrity.tag.is_supported()
+            {
+                use std::io::Write as _;
+                let mut integrity_str: [u8; 128] = [0u8; 128];
+                let mut cursor = std::io::Cursor::new(&mut integrity_str[..]);
+                if write!(cursor, "{}", meta.integrity).is_ok() {
+                    let len = cursor.position() as usize;
+                    let _ = sys::File::write_file(
+                        patch.cache_dir,
+                        sidecar_name,
+                        &integrity_str[..len],
+                    );
+                }
+            }
         }
         Ok(())
     }

@@ -2487,8 +2487,26 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
     ) -> bool {
+        // The patched cache folder is keyed by the patch file's content hash
+        // on top of name@version — nothing that pins the base tarball it was
+        // built from — so it gets the same integrity gate as the base folder
+        // before its contents are linked into node_modules. On mismatch (or a
+        // missing record) report it missing so the patch is re-applied on top
+        // of a verified base.
+        let expected = self.lockfile.packages.items_meta()[package_id as usize].integrity;
+        let resolution_tag = self.lockfile.packages.items_resolution()[package_id as usize].tag;
+        let npm_integrity_check_needed = resolution_tag == resolution::Tag::Npm
+            && manager.options.do_.verify_integrity()
+            && expected.tag.is_supported();
         let exists =
             sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath).unwrap_or(false);
+        let exists = exists
+            && (!npm_integrity_check_needed
+                || crate::package_manager::cached_folder_integrity_matches(
+                    self.cache_dir,
+                    strings::without_trailing_slash(self.cache_dir_subpath.as_bytes()),
+                    &expected,
+                ));
         if exists {
             manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }

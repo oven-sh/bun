@@ -239,9 +239,13 @@ impl PackageManager {
                     && self.options.do_.verify_integrity()
                     && expected.tag.is_supported();
 
+                // Patched cache folders are keyed by the patch file's content
+                // hash on top of name@version — still nothing that pins the
+                // base tarball they were built from — so they get the same
+                // gate. Their sidecar is written when the patch is applied
+                // (see `PatchTask::apply`).
                 if directories::is_folder_in_cache(self, folder_path)
-                    && (patch_hash.is_some()
-                        || !npm_integrity_check_needed
+                    && (!npm_integrity_check_needed
                         || directories::cached_folder_integrity_matches(
                             directories::get_cache_directory(self),
                             folder_path.as_bytes(),

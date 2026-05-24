@@ -894,6 +894,22 @@ export const linkerFlags: Flag[] = [
     desc: "macOS cross-link: always emit an ad-hoc LC_CODE_SIGNATURE for macho-postlink to replace",
   },
   {
+    // `bun build --compile` grows the __BUN placeholder segment in place and
+    // can only shift the one segment nothing references by address —
+    // __LINKEDIT — so __BUN must be the last content segment. Apple's ld
+    // orders known segments canonically (…, __DATA_DIRTY, __BUN, __LINKEDIT),
+    // but ld64.lld orders unknown segments by creation order, and the
+    // -sectcreate'd __BUN is created before the input objects' __DATA_DIRTY
+    // is encountered — leaving __DATA_DIRTY *between* __BUN and __LINKEDIT.
+    // Growing __BUN then overlaps it (`OverlappingSegments` from
+    // src/exe_format/macho.rs). Fold __DATA_DIRTY into __DATA instead: it
+    // holds a single 8-byte JSC::SourceProfiler hook and is only meaningful
+    // as a dyld-shared-cache page-grouping hint, which executables don't use.
+    flag: "-Wl,-rename_segment,__DATA_DIRTY,__DATA",
+    when: c => c.darwin && c.crossTarget !== undefined,
+    desc: "macOS cross-link: keep __BUN as the last content segment so `bun build --compile` can grow it",
+  },
+  {
     // Identical-code folding, on top of -dead_strip: dead_strip removes
     // unreferenced functions, ICF merges duplicate ones (template/bindgen
     // instantiations, mostly). `safe` only folds functions whose address is
@@ -902,8 +918,8 @@ export const linkerFlags: Flag[] = [
     // Windows (/OPT:ICF) and broke `expect.any()`. Matches the Linux
     // release link's -Wl,-icf=safe. lld-only: Apple's ld has no ICF, so
     // this is a cross-only divergence (smaller binary than native). The
-    // prebuilt WebKit objects carry no addrsig table, so lld conservatively
-    // refuses to fold them — only bun's own objects + direct deps fold.
+    // prebuilt WebKit archives are compiled with -faddrsig too, so WebKit
+    // code participates in the folding.
     flag: "-Wl,--icf=safe",
     when: c => c.darwin && c.crossTarget !== undefined && c.release,
     desc: "macOS cross-link: fold identical address-insignificant functions",

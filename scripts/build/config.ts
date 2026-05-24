@@ -9,7 +9,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
@@ -702,12 +702,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // module during the merged link (CI build #53109). Both halves still LTO
   // independently when this is false — only the Rust↔C++ inlining is lost.
   // Tracked in workarounds.ts ("globalopt-crash-aarch64-musl").
-  // Also gated off for darwin cross-compiles: the Mach-O link runs through
-  // clang's ld64.lld, which can't read the newer-LLVM bitcode rustc emits
-  // (same skew the rust-lld swap solves for ELF — there's no equivalent swap
-  // wired up for ld64.lld). bun's C++ and WebKit still LTO together; only
-  // the Rust↔C++ inlining is lost.
-  const crossLangLto = lto && !(arm64 && abi === "musl") && !darwinCross;
+  // Darwin cross uses the same rust-lld swap as ELF: rustc's sysroot ships
+  // `gcc-ld/ld64.lld` (rust-lld in the Mach-O flavor, built against rustc's
+  // LLVM), which findRustLld() already resolves for darwin targets, so the
+  // newer-LLVM bitcode rustc emits under -Clinker-plugin-lto is readable at
+  // link time.
+  const crossLangLto = lto && !(arm64 && abi === "musl");
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
   // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
@@ -724,14 +724,17 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   let ld = toolchain.ld;
   const clangMajor = majorOf(toolchain.clangVersion);
   const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);
-  if (
+  // Shared with the darwin-cross ld64 swap below: for darwin targets
+  // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
+  // the same rust-lld), so the swap composes with the cross toolchain.
+  const wantRustLld =
     crossLangLto &&
     toolchain.rustLld !== undefined &&
     clangMajor !== undefined &&
     rustLlvmMajor !== undefined &&
-    rustLlvmMajor > clangMajor
-  ) {
-    ld = toolchain.rustLld;
+    rustLlvmMajor > clangMajor;
+  if (wantRustLld) {
+    ld = toolchain.rustLld!;
   }
 
   // PGO: paths resolved to absolute. generate/use are mutually exclusive.
@@ -925,7 +928,20 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           hint: "Install llvm for the same version as clang: apt install llvm-21 (or equivalent).",
         });
       }
-      ld64StripSwap = { ld: toolchain.ld64Lld, strip: toolchain.llvmStrip };
+      // The Mach-O flavor of whichever lld the rest of the config picked.
+      // `toolchain.rustLld` is the flavor matching the *host* (gcc-ld/ld.lld
+      // on a Linux box); rustc's gcc-ld/ directory ships every flavor of the
+      // same rust-lld, so when the cross-language-LTO bitcode skew applies
+      // (see wantRustLld above) the Mach-O link uses the ld64.lld sibling.
+      // Falls back to clang's ld64.lld if rustc ever stops shipping it — the
+      // configure-time assert in validateBunConfig catches the resulting
+      // bitcode-version mismatch with a clear message.
+      const rustLd64Lld =
+        wantRustLld && toolchain.rustLld !== undefined ? join(dirname(toolchain.rustLld), "ld64.lld") : undefined;
+      ld64StripSwap = {
+        ld: rustLd64Lld !== undefined && existsSync(rustLd64Lld) ? rustLd64Lld : toolchain.ld64Lld,
+        strip: toolchain.llvmStrip,
+      };
     }
   }
 

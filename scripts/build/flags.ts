@@ -976,6 +976,17 @@ export const linkerFlags: Flag[] = [
     when: c => c.darwin && c.release,
     desc: "Dead-code strip + emit linker map",
   },
+  {
+    // Mach-O keeps DWARF in the input .o files and records their paths in
+    // the linked binary's debug map (N_OSO stabs); dsymutil follows the map
+    // to build the .dSYM. Under LTO the "input objects" are temporaries the
+    // linker deletes after the link, which would leave the debug map dangling
+    // and the dSYM empty. -object_path_lto persists the LTO-codegen'd object
+    // at a stable path inside the build dir and points the debug map at it.
+    flag: c => `-Wl,-object_path_lto,${c.buildDir}/${bunExeName(c)}.lto.o`,
+    when: c => c.darwin && c.lto,
+    desc: "Persist the LTO-generated object so dsymutil can extract its DWARF into the dSYM",
+  },
 
   // ─── Linux ───
   {

@@ -23,7 +23,7 @@
  */
 
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
@@ -935,8 +935,11 @@ export function validateBunConfig(cfg: Config): void {
     const rustMajor = Number.parseInt(cfg.rustLlvmVersion.split(".")[0] ?? "", 10);
     const clangMajor = Number.parseInt(cfg.clangVersion.split(".")[0] ?? "", 10);
     if (Number.isFinite(rustMajor) && Number.isFinite(clangMajor) && rustMajor > clangMajor) {
+      // `cfg.ld` must be one of rustc's bundled lld flavors. On ELF targets
+      // it's `cfg.rustLld` exactly; on darwin cross targets it's the
+      // ld64.lld sibling from the same gcc-ld/ directory.
       assert(
-        cfg.ld === cfg.rustLld,
+        cfg.rustLld !== undefined && (cfg.ld === cfg.rustLld || dirname(cfg.ld) === dirname(cfg.rustLld)),
         `Cross-language LTO is on and rustc's LLVM (${cfg.rustLlvmVersion}) is newer than clang's ` +
           `(${cfg.clangVersion}), but rustc's bundled lld wasn't found — the link would fail with ` +
           `"Invalid record" reading libbun_rust.a's bitcode. Install the pinned toolchain on this ` +

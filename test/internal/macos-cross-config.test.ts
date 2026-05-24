@@ -73,11 +73,14 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(x64.crossTarget).toBe("x86_64-apple-macosx");
   });
 
-  test("sanitizers and cross-language LTO are forced off for darwin cross builds", () => {
+  test("sanitizers are forced off for darwin cross builds; LTO is not", () => {
     const cfg = resolveDarwin({ asan: true, lto: true });
+    // No darwin ASAN runtime dylibs in a Linux LLVM install.
     expect(cfg.asan).toBe(false);
     expect(cfg.lto).toBe(true);
-    expect(cfg.crossLangLto).toBe(false);
+    // Cross-language LTO tracks lto, same as Linux: rustc's gcc-ld/ld64.lld
+    // (the Mach-O flavor of rust-lld) handles the bitcode-version skew.
+    expect(cfg.crossLangLto).toBe(true);
   });
 
   test("requires ld64.lld and llvm-strip from the toolchain", () => {

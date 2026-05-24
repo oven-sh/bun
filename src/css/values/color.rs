@@ -560,12 +560,6 @@ impl CssColor {
     }
 
     /// Project this color into the given fallback colorspace.
-    ///
-    /// The fallback kind may have been derived from sibling colors in a compound
-    /// value (e.g. a background shorthand or a gradient stop list), so this color
-    /// itself may not be convertible (`currentColor`, system colors, or a
-    /// `light-dark()` containing one of those). Those colors need no fallback and
-    /// are returned unchanged.
     pub fn get_fallback(&self, _arena: &Arena, kind: ColorFallbackKind) -> CssColor {
         if matches!(self, CssColor::Rgba(_)) {
             return self.clone();
@@ -588,8 +582,6 @@ impl CssColor {
 
         let mut res = crate::SmallList::<CssColor, 2>::default();
 
-        // The conversions can fail for `light-dark()` values where one side is a
-        // system color or `currentColor`; in that case no fallback is added.
         if fallbacks.contains(ColorFallbackKind::RGB) {
             // PERF(port): was assume_capacity
             if let Some(rgb) = self.to_rgb() {

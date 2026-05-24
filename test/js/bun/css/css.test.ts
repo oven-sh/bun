@@ -7529,12 +7529,6 @@ describe("css tests", () => {
     });
 
     describe("color fallbacks with system colors and currentColor", () => {
-      // System colors and currentColor can't be converted to RGB/P3/LAB. When they
-      // sit next to colors that do need fallbacks (in a background shorthand, a
-      // gradient stop list, a shadow list, or light-dark()), they must pass through
-      // unchanged instead of panicking.
-
-      // `background` is a deprecated CSS2 system color.
       prefix_test(
         `
           .foo {

@@ -1835,7 +1835,7 @@ impl NodeHTTPResponse {
 
     pub(crate) fn end_raw(
         &self,
-        _global_object: &JSGlobalObject,
+        global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         // `is_done()` covers REQUEST_HAS_COMPLETED | ENDED | SOCKET_CLOSED.
@@ -1866,6 +1866,10 @@ impl NodeHTTPResponse {
         {
             self.body_read_ref.with_mut(|r| r.unref(vm_get()));
             self.body_read_state.set(BodyReadState::None);
+        }
+
+        if !this_value.is_empty() {
+            js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         }
 
         let close_connection = true;

@@ -1909,37 +1909,48 @@ impl Drop for PostMatchGuard<'_> {
 
 /// State for a `.resolves`/`.rejects` matcher call whose promise hasn't
 /// settled yet. When it does, we re-invoke the matcher and resolve/reject
-/// `deferred` with the outcome.
-pub struct PendingMatcher {
-    /// The `Expect` JS instance (also keeps capturedValue alive).
-    expect_this: bun_jsc::Strong,
-    /// The native matcher function being called (e.g. `toBe`).
-    matcher_fn: bun_jsc::Strong,
-    /// JSArray of the arguments the matcher was called with.
-    matcher_args: bun_jsc::Strong,
-    /// The promise returned to the caller of the matcher.
-    deferred: bun_jsc::JSPromiseStrong,
-    /// Whether `increment_expect_call_counter()` had already run by the
-    /// time we deferred. Restored on re-run so the counter is bumped
-    /// exactly once regardless of whether this matcher calls it before or
-    /// after `get_value()`.
-    was_counted_before_defer: bool,
-    /// The `Expect.flags` at the time we deferred. `.not` / `.resolves` /
-    /// `.rejects` mutate flags in place on the shared instance, so a later
-    /// matcher call on the same `expect()` could flip them before this
-    /// re-run fires; restore so the re-run observes the flags the user
-    /// wrote for *this* matcher call.
-    flags_at_defer: Flags,
-    /// The caller's source location at the time we deferred, captured
-    /// while the user's frame is still on the stack. `inline_snapshot()`
-    /// needs it on the re-run to know which line to write the snapshot
-    /// back to. Stored per-PendingMatcher (not on the shared `Expect`) so
-    /// two deferred inline-snapshot matchers on the same `expect()`
-    /// instance each write to their own call site.
-    srcloc_at_defer: bun_jsc::CallerSrcLoc,
-}
+/// the deferred promise with the outcome.
+///
+/// The state is stored in a GC-managed JS array passed as the promise
+/// reaction's context (`then_with_value`), NOT in a native allocation:
+/// if the input promise never settles (e.g. an un-awaited
+/// `expect(new Promise(()=>{})).resolves...`), the reaction — and with it
+/// this array and everything it references — is simply garbage-collected.
+/// Nothing leaks and LeakSanitizer stays quiet.
+pub struct PendingMatcher;
 
 impl PendingMatcher {
+    /// Slots of the context array built in [`Self::create`].
+    /// The `Expect` JS instance (also keeps capturedValue alive).
+    const SLOT_EXPECT_THIS: u32 = 0;
+    /// The native matcher function being called (e.g. `toBe`).
+    const SLOT_MATCHER_FN: u32 = 1;
+    /// JSArray of the arguments the matcher was called with.
+    const SLOT_MATCHER_ARGS: u32 = 2;
+    /// The pending promise returned to the caller of the matcher.
+    const SLOT_DEFERRED: u32 = 3;
+    /// Whether `increment_expect_call_counter()` had already run by the
+    /// time we deferred (boolean). Restored on re-run so the counter is
+    /// bumped exactly once regardless of whether this matcher calls it
+    /// before or after `get_value()`.
+    const SLOT_WAS_COUNTED: u32 = 4;
+    /// The `Expect.flags` bits at the time we deferred (number). `.not` /
+    /// `.resolves` / `.rejects` mutate flags in place on the shared
+    /// instance, so a later matcher call on the same `expect()` could flip
+    /// them before this re-run fires; restore so the re-run observes the
+    /// flags the user wrote for *this* matcher call.
+    const SLOT_FLAGS: u32 = 5;
+    /// Caller source location captured while the user's frame is still on
+    /// the stack, split into string/line/column slots. `inline_snapshot()`
+    /// needs it on the re-run to know which line to write the snapshot
+    /// back to. Stored per-deferral (not on the shared `Expect`) so two
+    /// deferred inline-snapshot matchers on the same `expect()` instance
+    /// each write to their own call site.
+    const SLOT_SRCLOC_STR: u32 = 6;
+    const SLOT_SRCLOC_LINE: u32 = 7;
+    const SLOT_SRCLOC_COLUMN: u32 = 8;
+    const SLOT_COUNT: usize = 9;
+
     fn create(
         global_this: &JSGlobalObject,
         this_value: JSValue,
@@ -1954,20 +1965,41 @@ impl PendingMatcher {
             args_array.put_index(global_this, i as u32, *arg)?;
         }
 
-        let pending = Box::new(PendingMatcher {
-            expect_this: bun_jsc::Strong::create(this_value, global_this),
-            matcher_fn: bun_jsc::Strong::create(callframe.callee(), global_this),
-            matcher_args: bun_jsc::Strong::create(args_array, global_this),
-            deferred: bun_jsc::JSPromiseStrong::init(global_this),
-            was_counted_before_defer: was_counted,
-            flags_at_defer: flags,
-            srcloc_at_defer: callframe.get_caller_src_loc(global_this),
-        });
-        let deferred_value = pending.deferred.value();
+        let deferred_value = js_promise::JSPromise::create(global_this).to_js();
 
-        promise_value.then(
+        // `get_caller_src_loc` returns the path with a +1 ref; convert it to
+        // a JS string for GC-managed storage and release the native ref on
+        // scope exit.
+        let srcloc = callframe.get_caller_src_loc(global_this);
+        let srcloc_str_guard = bun_core::OwnedString::new(srcloc.str);
+        let srcloc_str_js = srcloc_str_guard.get().to_js(global_this)?;
+
+        let ctx = JSValue::create_empty_array(global_this, Self::SLOT_COUNT)?;
+        ctx.put_index(global_this, Self::SLOT_EXPECT_THIS, this_value)?;
+        ctx.put_index(global_this, Self::SLOT_MATCHER_FN, callframe.callee())?;
+        ctx.put_index(global_this, Self::SLOT_MATCHER_ARGS, args_array)?;
+        ctx.put_index(global_this, Self::SLOT_DEFERRED, deferred_value)?;
+        ctx.put_index(global_this, Self::SLOT_WAS_COUNTED, JSValue::js_boolean(was_counted))?;
+        ctx.put_index(
             global_this,
-            bun_core::heap::into_raw(pending),
+            Self::SLOT_FLAGS,
+            JSValue::js_number_from_int32(flags.0 as i32),
+        )?;
+        ctx.put_index(global_this, Self::SLOT_SRCLOC_STR, srcloc_str_js)?;
+        ctx.put_index(
+            global_this,
+            Self::SLOT_SRCLOC_LINE,
+            JSValue::js_number_from_int32(srcloc.line as i32),
+        )?;
+        ctx.put_index(
+            global_this,
+            Self::SLOT_SRCLOC_COLUMN,
+            JSValue::js_number_from_int32(srcloc.column as i32),
+        )?;
+
+        promise_value.then_with_value(
+            global_this,
+            ctx,
             Bun__Expect__PendingMatcher__onResolve,
             Bun__Expect__PendingMatcher__onReject,
         );
@@ -1978,42 +2010,73 @@ impl PendingMatcher {
     fn on_settle(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments_old::<2>();
         let ctx = args.ptr[1];
-        if ctx.is_empty_or_undefined_or_null() {
+        if ctx.is_empty_or_undefined_or_null() || !ctx.is_cell() {
             return Ok(JSValue::UNDEFINED);
         }
-        // SAFETY: `ctx` was produced by `heap::into_raw` in `create()` and is
-        // consumed exactly once here (onResolve and onReject are mutually
-        // exclusive for a given promise settlement).
-        let mut this =
-            unsafe { bun_core::heap::take(ctx.as_ptr_address() as *mut PendingMatcher) };
-        this.settle(global_this);
-        // `Box` drop releases all `Strong` refs and the srcloc string.
+
+        let expect_this = ctx.get_index(global_this, Self::SLOT_EXPECT_THIS)?;
+        let matcher_fn = ctx.get_index(global_this, Self::SLOT_MATCHER_FN)?;
+        let args_array = ctx.get_index(global_this, Self::SLOT_MATCHER_ARGS)?;
+        let deferred_value = ctx.get_index(global_this, Self::SLOT_DEFERRED)?;
+        let was_counted = ctx.get_index(global_this, Self::SLOT_WAS_COUNTED)?.to_boolean();
+        let flags = Flags(ctx.get_index(global_this, Self::SLOT_FLAGS)?.to_int32() as u8);
+
+        // Rebuild the caller srcloc. The bun String is owned here (+1 from
+        // `to_bun_string`) and released when `_srcloc_str_guard` drops, after
+        // the re-run below has finished using it via `async_rerun_srcloc`.
+        let srcloc_str_js = ctx.get_index(global_this, Self::SLOT_SRCLOC_STR)?;
+        let _srcloc_str_guard =
+            bun_core::OwnedString::new(srcloc_str_js.to_bun_string(global_this)?);
+        let srcloc = bun_jsc::CallerSrcLoc {
+            str: _srcloc_str_guard.get(),
+            line: ctx.get_index(global_this, Self::SLOT_SRCLOC_LINE)?.to_int32() as core::ffi::c_uint,
+            column: ctx.get_index(global_this, Self::SLOT_SRCLOC_COLUMN)?.to_int32()
+                as core::ffi::c_uint,
+        };
+
+        let result = Self::rerun(
+            global_this,
+            expect_this,
+            matcher_fn,
+            args_array,
+            was_counted,
+            flags,
+            srcloc,
+        );
+
+        if let Some(deferred) = deferred_value.as_promise() {
+            // SAFETY: `deferred_value` was created by `JSPromise::create` in
+            // `create()` and is kept alive by the ctx array (rooted by this
+            // frame's arguments) for the duration of this call.
+            let deferred = unsafe { &mut *deferred };
+            match result {
+                Ok(value) => {
+                    let _ = deferred.resolve(global_this, value);
+                }
+                Err(_) => {
+                    let exception = global_this
+                        .try_take_exception()
+                        .unwrap_or(JSValue::UNDEFINED);
+                    let _ = deferred.reject(global_this, Ok(exception));
+                }
+            }
+        }
         Ok(JSValue::UNDEFINED)
     }
 
-    fn settle(&mut self, global_this: &JSGlobalObject) {
-        match self.rerun(global_this) {
-            Ok(result) => {
-                let _ = self.deferred.resolve(global_this, result);
-            }
-            Err(_) => {
-                let exception = global_this
-                    .try_take_exception()
-                    .unwrap_or(JSValue::UNDEFINED);
-                let _ = self.deferred.reject(global_this, Ok(exception));
-            }
-        }
-    }
-
-    fn rerun(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        let expect_this = self.expect_this.get();
-        let matcher_fn = self.matcher_fn.get();
-        let args_array = self.matcher_args.get();
-
+    #[allow(clippy::too_many_arguments)]
+    fn rerun(
+        global_this: &JSGlobalObject,
+        expect_this: JSValue,
+        matcher_fn: JSValue,
+        args_array: JSValue,
+        was_counted: bool,
+        flags: Flags,
+        srcloc: bun_jsc::CallerSrcLoc,
+    ) -> JsResult<JSValue> {
         // Extract the original arguments back out of the array. Most
         // built-in matchers take 0-2 arguments, but `toHaveBeenCalledWith`
         // and `expect.extend()` custom matchers are variadic.
-        // PERF(port): was stack-fallback allocator — profile in Phase B
         let args_len = args_array.get_length(global_this)? as usize;
         let mut args_buf: Vec<JSValue> = Vec::with_capacity(args_len);
         for i in 0..args_len {
@@ -2025,7 +2088,7 @@ impl PendingMatcher {
         // its result synchronously.
         //
         // `is_async_rerun`, `flags`, and `async_rerun_srcloc` are
-        // saved/restored (not hard-reset) because a sibling `PendingMatcher`
+        // saved/restored (not hard-reset) because a sibling deferred matcher
         // on the same input promise can rerun *inside* `matcher_fn.call()`
         // when the matcher re-enters the event loop (e.g. `toThrow` →
         // `get_value_as_to_throw` → `wait_for_promise` → `tick` drains the
@@ -2041,9 +2104,8 @@ impl PendingMatcher {
         impl Drop for RerunGuard {
             fn drop(&mut self) {
                 // SAFETY: `expect` came from `Expect::from_js` on a value
-                // held live by the enclosing `PendingMatcher.expect_this:
-                // Strong` for the duration of this scope (the Box in
-                // `on_settle()` outlives `_guard`).
+                // held live by the ctx array in `on_settle()` (rooted by
+                // that frame's arguments) for the duration of this scope.
                 unsafe {
                     (*self.expect).is_async_rerun.set(self.saved_is_rerun);
                     (*self.expect).flags.set(self.saved_flags);
@@ -2052,7 +2114,7 @@ impl PendingMatcher {
             }
         }
         let _guard = Expect::from_js(expect_this).map(|expect| {
-            // SAFETY: `expect_this` is held live by `self.expect_this`.
+            // SAFETY: `expect_this` is held live by the ctx array in `on_settle()`.
             let e = unsafe { &*expect };
             let guard = RerunGuard {
                 expect,
@@ -2061,9 +2123,9 @@ impl PendingMatcher {
                 saved_srcloc: e.async_rerun_srcloc.get(),
             };
             e.is_async_rerun.set(true);
-            e.counted_expect_call.set(self.was_counted_before_defer);
-            e.flags.set(self.flags_at_defer);
-            e.async_rerun_srcloc.set(Some(self.srcloc_at_defer));
+            e.counted_expect_call.set(was_counted);
+            e.flags.set(flags);
+            e.async_rerun_srcloc.set(Some(srcloc));
             guard
         });
 
@@ -2071,18 +2133,10 @@ impl PendingMatcher {
     }
 }
 
-impl Drop for PendingMatcher {
-    fn drop(&mut self) {
-        // Release the +1 on the captured srcloc string.
-        self.srcloc_at_defer.str.deref();
-        // `Strong` / `JSPromiseStrong` fields release via their own Drop.
-    }
-}
-
 // `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
 // `JSValue::then` against these by identity, so the Rust thunk MUST be the
-// exported symbol itself — see the PORT NOTE on `Bun__TestScope__*` in
-// `bun_test.rs`.
+// exported symbol itself — see the comment on `Bun__TestScope__Describe2__*`
+// in `bun_test.rs`.
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
     pub unsafe fn Bun__Expect__PendingMatcher__onResolve(

@@ -3310,7 +3310,7 @@ impl H2FrameParser {
                     self.last_stream_id.get(),
                     true,
                 );
-                return Ok(self.streams.get().get(&stream_id).copied());
+                return Ok(None);
             }
 
             // RFC 7540 Section 6.5.2: Calculate header list size
@@ -4540,6 +4540,13 @@ impl H2FrameParser {
             return Some(stream);
         }
         if frame_type != FrameType::HTTP_FRAME_HEADERS as u8 || !self.is_server.get() {
+            return None;
+        }
+        // RFC 9113 §4.3: while a header block is mid-reassembly the only legal
+        // frame is a CONTINUATION for that stream, and dispatch_frame will
+        // reject this one. Don't allocate stream state, bump last_stream_id,
+        // or fire onStreamStart for a frame that is about to be rejected.
+        if self.expecting_continuation.get() != 0 {
             return None;
         }
         // Client-initiated streams must use odd identifiers (RFC 9113 §5.1.1).

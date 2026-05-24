@@ -916,20 +916,60 @@ var require_wasi = __commonJS({
           return stats;
         };
         // Resolve a guest-supplied path against the directory backing `stats` and
-        // reject anything that escapes it (absolute paths, ".." traversal).
-        const RESOLVE_PATH = (stats, p) => {
+        // verify the result cannot escape that directory, either lexically
+        // ("..", absolute paths) or through a symlink that already exists on the
+        // host filesystem.
+        const RESOLVE_PATH = (stats, guestPath) => {
           if (!stats.path) {
             throw new types_1.WASIError(constants_1.WASI_EINVAL);
           }
+          // WASI paths are always interpreted relative to the directory fd.
+          // Re-root absolute guest paths under the preopen instead of letting
+          // them name an arbitrary host path.
+          let rel = String(guestPath);
+          while (rel.length !== 0 && (rel.charCodeAt(0) === 47 /* "/" */ || rel.charCodeAt(0) === 92) /* "\\" */) {
+            rel = rel.slice(1);
+          }
           const base = path.resolve(stats.path);
-          const resolved = path.resolve(base, p);
-          if (resolved !== base) {
-            const rel = path.relative(base, resolved);
-            if (rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+          const resolved = path.resolve(base, rel);
+          const isContained = (parent, child) =>
+            child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
+          if (!isContained(base, resolved)) {
+            throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
+          }
+          // A symlink that already exists inside the sandbox can still point
+          // outside of it. Resolve the closest existing ancestor with realpath
+          // and re-check containment.
+          let realBase = base;
+          try {
+            realBase = fs.realpathSync(base);
+          } catch {}
+          let probe = resolved;
+          let suffix = "";
+          for (;;) {
+            let real;
+            try {
+              real = fs.realpathSync(probe);
+            } catch {
+              // Walk up on any resolution failure (ENOENT/ENOTDIR for
+              // not-yet-created components, but also ELOOP etc.) so `real` is
+              // always a *resolved* ancestor plus an unresolved suffix —
+              // comparing an unresolved path against the resolved preopen
+              // base would spuriously fail whenever the preopen itself
+              // traverses a symlink (e.g. macOS /tmp -> /private/tmp).
+              const parent = path.dirname(probe);
+              if (parent !== probe) {
+                suffix = path.sep + path.basename(probe) + suffix;
+                probe = parent;
+                continue;
+              }
+              real = probe;
+            }
+            if (!isContained(realBase, real + suffix)) {
               throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
             }
+            return resolved;
           }
-          return resolved;
         };
         const CPUTIME_START = Bun.nanoseconds();
         const timeOrigin = Math.trunc(performance.timeOrigin * 1e6);

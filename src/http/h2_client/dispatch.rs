@@ -619,7 +619,7 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         if stream.status_code != 0 || malformed {
             continue;
         }
-        if is_malformed_response_field(result.name) {
+        if is_malformed_response_field(result.name) || is_malformed_response_value(result.value) {
             malformed = true;
             continue;
         }
@@ -752,6 +752,14 @@ pub(crate) fn is_malformed_response_field(name: &[u8]) -> bool {
             | b"transfer-encoding"
             | b"upgrade"
     )
+}
+
+/// RFC 9113 §8.2.1: a field value MUST NOT contain NUL (0x00), LF (0x0a), or
+/// CR (0x0d). HPACK is length-prefixed so these would otherwise pass through
+/// verbatim, breaking the no-CR/LF invariant the HTTP/1.1 parser provides and
+/// enabling header injection when values are forwarded downstream.
+pub fn is_malformed_response_value(value: &[u8]) -> bool {
+    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
 }
 
 pub fn error_code_for(err: bun_core::Error) -> wire::ErrorCode {

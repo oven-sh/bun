@@ -397,7 +397,9 @@ fn glob_match_impl(
                         let pi = state.path_index as usize;
                         let gi = state.glob_index as usize;
                         let n = cc_len as usize;
-                        pi + n <= path.len() && path[pi..pi + n] == glob[gi..gi + n]
+                        pi + n <= path.len()
+                            && gi + n <= glob.len()
+                            && path[pi..pi + n] == glob[gi..gi + n]
                     } else {
                         path[state.path_index as usize] == cc
                     };

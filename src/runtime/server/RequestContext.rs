@@ -184,6 +184,10 @@ pub struct RequestContext<
     pub request_body: Option<body::BodyHiveHandle>,
     pub request_body_buf: Vec<u8>,
     pub request_body_content_len: usize,
+    /// Total bytes forwarded to the request-body `ReadableStream`. The
+    /// up-front `maxRequestBodySize` check only sees Content-Length, so
+    /// chunked / H3 bodies consumed as a stream are capped against this.
+    pub request_body_streamed_len: usize,
 
     pub sink: Option<NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>>,
     pub byte_stream: Option<NonNull<ByteStream>>,
@@ -1272,6 +1276,7 @@ where
                 request_body: None,
                 request_body_buf: Vec::new(),
                 request_body_content_len: 0,
+                request_body_streamed_len: 0,
                 sink: None,
                 byte_stream: None,
                 response_body_readable_stream_ref: readable_stream::Strong::default(),
@@ -2292,7 +2297,8 @@ where
             resp.write_header_int(b"content-length", pair.size as u64);
         }
         this.end_without_body(this.should_close_connection());
-        this.deref();
+        // `end_without_body` released the base ref; the caller
+        // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
     }
 
     /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>`.
@@ -3576,6 +3582,50 @@ where
         // we can no longer hold the strong reference from the body value ref.
         if let Some(readable) = this.request_body_readable_stream_ref.get(global_this) {
             debug_assert!(this.request_body_buf.is_empty());
+
+            // Cap streamed bytes against maxRequestBodySize too — the up-front
+            // check only sees Content-Length (see the buffering branch below).
+            this.request_body_streamed_len =
+                this.request_body_streamed_len.saturating_add(chunk.len());
+            if this.request_body_streamed_len > server.config().max_request_body_size {
+                this.resp.expect("infallible: resp bound").clear_on_data();
+                this.flags.set_is_waiting_for_request_body(false);
+
+                let _exit = vm.enter_event_loop_scope();
+
+                // Release the strong stream ref like the `last` arm does, then
+                // error the stream so a pending or future read rejects instead
+                // of hanging forever.
+                let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
+
+                readable.value.ensure_still_alive();
+                if let Some(bytes) = readable.ptr.bytes() {
+                    let mut err = Body::ValueError::Message(BunString::static_(
+                        "Request body exceeded maxRequestBodySize",
+                    ));
+                    let js_err = err.to_js(global_this);
+                    js_err.ensure_still_alive();
+                    // TODO: properly propagate exception upwards
+                    let _ = bytes.on_data(WebCore::streams::Result::Err(
+                        WebCore::streams::StreamError::JSValue(js_err),
+                    ));
+                    err.reset();
+                }
+
+                // Route through the normal end path so this.resp is detached
+                // and the base ref released (see the buffering branch below).
+                // SAFETY: FFI handle
+                if let Some(resp) = this.resp {
+                    if !resp.has_responded() {
+                        this.flags.set_has_written_status(true);
+                        // SAFETY: FFI handle
+                        resp.write_status(b"413 Payload Too Large");
+                    }
+                }
+                this.end_without_body(!HTTP3);
+                return;
+            }
+
             let _exit = vm.enter_event_loop_scope();
 
             // `RawSlice` is non-owning; ownership of `chunk` stays with the
@@ -3716,6 +3766,11 @@ where
         // This means we have received part of the body but not the whole thing
         if !self.request_body_buf.is_empty() {
             let emptied = core::mem::take(&mut self.request_body_buf);
+            // Count the drained pre-stream bytes against maxRequestBodySize so
+            // the streaming-path limit check sees the full body length, not
+            // just the chunks that arrive after the stream becomes active.
+            self.request_body_streamed_len =
+                self.request_body_streamed_len.saturating_add(emptied.len());
             let cap = emptied.capacity();
             return WebCore::DrainResult::Owned {
                 list: emptied,

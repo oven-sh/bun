@@ -278,6 +278,10 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn write_callback_get_cached(this_value: JSValue) -> Option<JSValue>;
     fn error_callback_get_cached(this_value: JSValue) -> Option<JSValue>;
     fn error_callback_set_cached(this_value: JSValue, global: &JSGlobalObject, cb: JSValue);
+    fn pending_input_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn pending_output_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn pending_input_get_cached(this_value: JSValue) -> Option<JSValue>;
+    fn pending_output_get_cached(this_value: JSValue) -> Option<JSValue>;
 }
 
 impl<T: CompressionStreamImpl> CompressionStream<T> {
@@ -300,7 +304,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         let in_off: u32;
         let in_len: u32;
-        let in_: Option<&[u8]>;
 
         let this_value = callframe.this();
 
@@ -322,15 +325,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
 
-        // Hoisted so `in_` can borrow it past the `else` arm (mirrors `out_buf`).
-        let in_buf: jsc::ArrayBuffer;
         if arguments[1].is_null() {
             // just a flush
-            in_ = None;
             in_len = 0;
             in_off = 0;
         } else {
-            in_buf = match arguments[1].as_array_buffer(global_this) {
+            let in_buf = match arguments[1].as_array_buffer(global_this) {
                 Some(b) => b,
                 None => {
                     return Err(global_this
@@ -355,12 +355,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                     )
                     .throw());
             }
-            // Bounds checked above; `byte_slice` is the safe accessor for the JS
-            // ArrayBuffer's backing store (rooted via `arguments[1]` on the call stack).
-            in_ = Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         }
 
-        let Some(mut out_buf) = arguments[4].as_array_buffer(global_this) else {
+        let Some(out_buf) = arguments[4].as_array_buffer(global_this) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_TYPE,
@@ -382,11 +379,6 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 )
                 .throw());
         }
-        // Bounds checked above; `byte_slice_mut` is the safe accessor for the JS
-        // ArrayBuffer's backing store (rooted via `arguments[4]` on the call stack).
-        let out: Option<&mut [u8]> = Some(
-            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
-        );
         let _ = (in_off, in_len, out_off, out_len);
 
         if this.write_in_progress().get() {
@@ -402,8 +394,34 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .err(ErrorCode::INVALID_STATE, format_args!("Pending close"))
                 .throw());
         }
+        // Pin both buffers before mutating any state: materializing a
+        // FastTypedArray's backing store can fail on OOM, and failing here
+        // leaves nothing to unwind.
+        let in_buf: jsc::ArrayBuffer;
+        let in_: Option<&[u8]> = if arguments[1].is_null() {
+            None
+        } else {
+            let Some(buf) = arguments[1].as_pinned_arraybuffer(global_this) else {
+                return Err(global_this.throw_out_of_memory());
+            };
+            in_buf = buf;
+            Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
+        };
+        let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
+            if !arguments[1].is_null() {
+                arguments[1].unpin_array_buffer();
+            }
+            return Err(global_this.throw_out_of_memory());
+        };
+        let out: Option<&mut [u8]> = Some(
+            &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
+        );
+
         this.write_in_progress().set(true);
         this.ref_();
+
+        T::pending_input_set_cached(this_value, global_this, arguments[1]);
+        T::pending_output_set_cached(this_value, global_this, arguments[4]);
 
         this.stream().with_mut(|s| {
             s.set_buffers(in_, out);
@@ -504,6 +522,22 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         };
 
         this_value.ensure_still_alive();
+
+        for pinned in [
+            T::pending_input_get_cached(this_value),
+            T::pending_output_get_cached(this_value),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if pinned.is_cell() {
+                if let Some(buf) = pinned.as_array_buffer(global) {
+                    buf.unpin();
+                }
+            }
+        }
+        T::pending_input_set_cached(this_value, global, JSValue::ZERO);
+        T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
         if !Self::check_error(&this, global, this_value) {
             this.poll_ref().with_mut(|p| p.unref(vm));
@@ -964,11 +998,10 @@ macro_rules! __impl_compression_stream {
         }
 
         /// `T.js.*` — cached-property accessors emitted by
-        /// `generate-classes.ts` for `values: ["writeCallback",
-        /// "errorCallback", "dictionary"]`.
+        /// `generate-classes.ts` for the `values:` list in `zlib.classes.ts`.
         #[allow(unused)]
         pub(crate) mod js {
-            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary);
+            ::bun_jsc::codegen_cached_accessors!($type_name; writeCallback, errorCallback, dictionary, pendingInput, pendingOutput);
         }
 
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
@@ -1023,6 +1056,18 @@ macro_rules! __impl_compression_stream {
             }
             #[inline] fn error_callback_set_cached(this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, cb: ::bun_jsc::JSValue) {
                 js::error_callback_set_cached(this_value, global, cb)
+            }
+            #[inline] fn pending_input_set_cached(this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, value: ::bun_jsc::JSValue) {
+                js::pending_input_set_cached(this_value, global, value)
+            }
+            #[inline] fn pending_output_set_cached(this_value: ::bun_jsc::JSValue, global: &::bun_jsc::JSGlobalObject, value: ::bun_jsc::JSValue) {
+                js::pending_output_set_cached(this_value, global, value)
+            }
+            #[inline] fn pending_input_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+                js::pending_input_get_cached(this_value)
+            }
+            #[inline] fn pending_output_get_cached(this_value: ::bun_jsc::JSValue) -> Option<::bun_jsc::JSValue> {
+                js::pending_output_get_cached(this_value)
             }
         }
     };

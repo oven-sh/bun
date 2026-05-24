@@ -447,6 +447,7 @@ fn parse_array(
                                     slice = try_slice(slice, 5);
                                     continue;
                                 }
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
                                 array.push(SQLDataCell {
                                     tag: Tag::Bool,
@@ -472,6 +473,7 @@ fn parse_array(
                                     slice = try_slice(slice, 4);
                                     continue;
                                 }
+                                return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
                                 array.push(SQLDataCell {
                                     tag: Tag::Bool,

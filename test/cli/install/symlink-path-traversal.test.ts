@@ -1,7 +1,9 @@
 import { spawn } from "bun";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { access, lstat, readlink, rm, writeFile } from "fs/promises";
+import { access, lstat, readdir, readlink, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, tempDir } from "harness";
+import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -132,6 +134,136 @@ const isWindows = process.platform === "win32";
 
 describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () => {
   setDefaultTimeout(60000);
+
+  it("rejects symlink targets that climb above the package root before re-entering a 'packages' directory (streaming extraction)", async () => {
+    // The streaming extractor used to validate symlink targets by joining
+    // them onto a fake absolute root ("/packages/") and checking the prefix
+    // of the normalized result. POSIX normalization clamps excess ".." at
+    // "/", so a target of the form "(../)+packages/<x>" normalized back
+    // under the fake root and passed the check, while the kernel resolves
+    // the raw ".." components from the symlink's real on-disk location and
+    // lands outside the extraction directory. Such targets must be rejected.
+    const escapeTarget = "../../../../packages/escape-target";
+
+    // Incompressible padding so the tarball body is delivered over many
+    // socket reads; the streaming extractor only takes over when the body
+    // arrives in multiple chunks.
+    let pad = "";
+    let seed = "streaming-symlink-pad";
+    while (pad.length < 256 * 1024) {
+      seed = createHash("sha256").update(seed).digest("hex");
+      pad += seed;
+    }
+
+    const tarball = createTarball([
+      { name: "test-package/", type: "dir" },
+      {
+        name: "test-package/package.json",
+        type: "file",
+        content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
+      },
+      { name: "test-package/escape-link", type: "symlink", linkname: escapeTarget },
+      { name: "test-package/pad.bin", type: "file", content: pad },
+    ]);
+
+    // node:http rather than Bun.serve so the response carries an explicit
+    // Content-Length *and* can be drip-fed; each write is its own packet so
+    // the install's HTTP client sees multiple progress callbacks and commits
+    // to the streaming extractor.
+    const httpServer = createServer((req, res) => {
+      const url = new URL(req.url!, "http://localhost");
+      if (url.pathname.includes("/tarball/")) {
+        res.setHeader("Content-Type", "application/gzip");
+        res.setHeader("Content-Length", String(tarball.length));
+        req.socket.setNoDelay(true);
+        let offset = 0;
+        const step = () => {
+          if (offset >= tarball.length) {
+            res.end();
+            return;
+          }
+          res.write(Buffer.from(tarball.subarray(offset, Math.min(offset + 1024, tarball.length))));
+          offset += 1024;
+          setImmediate(step);
+        };
+        step();
+        return;
+      }
+      if (url.pathname.includes("/repos/")) {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify({ default_branch: "main" }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end("Not Found");
+    });
+    await new Promise<void>(resolve => httpServer.listen(0, "127.0.0.1", () => resolve()));
+    const port = (httpServer.address() as { port: number }).port;
+
+    try {
+      using dir = tempDir("streaming-symlink-target-test", {});
+      const installDir = String(dir);
+
+      await writeFile(
+        join(installDir, "package.json"),
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { "test-package": "github:user/repo#main" },
+        }),
+      );
+
+      const proc = spawn({
+        cmd: [bunExe(), "install", "--verbose"],
+        cwd: installDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...env,
+          GITHUB_API_URL: `http://127.0.0.1:${port}`,
+          BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
+          // Lower the streaming threshold so this tarball qualifies without
+          // having to be multiple megabytes.
+          BUN_INSTALL_STREAMING_MIN_SIZE: "1024",
+        },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // Confirm the streaming extractor actually handled this tarball; if the
+      // buffered fallback ran instead this test would not be exercising the
+      // streaming symlink validation at all.
+      expect(stderr).toContain("Streamed ");
+
+      if (exitCode !== 0) {
+        console.error("Install failed with exit code:", exitCode);
+        console.error("stdout:", stdout);
+        console.error("stderr:", stderr);
+      }
+      expect(exitCode).toBe(0);
+
+      // No symlink anywhere under the install root (node_modules and the
+      // package cache included) may point at the escaping target.
+      const escapingSymlinks: string[] = [];
+      for (const entry of await readdir(installDir, { recursive: true, withFileTypes: true })) {
+        if (!entry.isSymbolicLink()) continue;
+        const linkPath = join(entry.parentPath, entry.name);
+        const target = await readlink(linkPath);
+        if (target.includes("escape-target")) {
+          escapingSymlinks.push(`${linkPath} -> ${target}`);
+        }
+      }
+      expect(escapingSymlinks).toEqual([]);
+
+      // The legitimate entries are still extracted.
+      const pkgDir = join(installDir, "node_modules", "test-package");
+      await access(join(pkgDir, "package.json"));
+      await access(join(pkgDir, "pad.bin"));
+    } finally {
+      httpServer.closeAllConnections?.();
+      await new Promise<void>(resolve => httpServer.close(() => resolve()));
+    }
+  });
 
   it("should skip symlinks with relative path traversal targets", async () => {
     // This reproduces the exact attack from the security report:

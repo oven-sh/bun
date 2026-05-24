@@ -324,3 +324,101 @@ test("dupe() preserves allocated content_type for Body clone", () => {
   expect(originalType).toStartWith("multipart/form-data; boundary=");
   expect(clonedType).toBe(originalType);
 });
+
+test("Blob part's bytes survive a later part freeing it during construction", async () => {
+  // Regression: the Blob constructor pushed Blob parts into the string joiner
+  // as *borrowed* views into their Store's bytes. A later part whose
+  // processing runs user JS (an object part's toString) could drop the last
+  // reference to that Blob and GC it, freeing the Store before the joiner
+  // copied the view out — a use-after-free. Blob parts must be copied at push
+  // time. Under ASAN the unfixed read is a use-after-poison crash.
+  using dir = tempDir("blob-part-uaf", {
+    "run.ts": `
+      const SIZE = 1 << 18;
+      const expected = Buffer.alloc(SIZE, "A").toString() + "x";
+      for (let i = 0; i < 16; i++) {
+        const parts: any[] = [
+          new Blob([Buffer.alloc(SIZE, "A")]),
+          {
+            toString() {
+              // Drop the only reference to the Blob part, collect it, then
+              // reallocate same-sized buffers so the freed Store bytes get
+              // clobbered if the joiner still holds a borrowed view into them.
+              parts.length = 0;
+              Bun.gc(true);
+              const clobber = [];
+              for (let j = 0; j < 8; j++) clobber.push(Buffer.alloc(SIZE, "B"));
+              return "x";
+            },
+          },
+        ];
+        const text = await new Blob(parts).text();
+        if (text !== expected) {
+          throw new Error("Blob part bytes were corrupted at iteration " + i);
+        }
+      }
+      process.stdout.write("OK");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+test("Blob constructor copies typed array parts before later parts run user code", async () => {
+  // Constructing a Blob from [typedArray, objectWithToString] must snapshot the
+  // typed array's bytes when that part is visited. Stringifying a later part
+  // runs arbitrary user JS (toString / Symbol.toPrimitive / proxy traps) which
+  // can transfer or resize the earlier part's backing store before the Blob's
+  // contents are assembled. The resulting Blob must contain the bytes the view
+  // held at construction time, not whatever ends up at that address afterwards.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const ab = new ArrayBuffer(64, { maxByteLength: 1024 });
+        const view = new Uint8Array(ab);
+        view.fill(0x41); // "A"
+        const blob = new Blob([
+          view,
+          {
+            toString() {
+              // Detach the first part's buffer and overwrite the moved
+              // backing store while the Blob is still being assembled.
+              const moved = ab.transfer();
+              new Uint8Array(moved).fill(0x42); // "B"
+              return "tail";
+            },
+          },
+        ]);
+        const text = await blob.text();
+        const expected = Buffer.alloc(64, 0x41).toString() + "tail";
+        if (text !== expected) {
+          throw new Error("unexpected blob contents: " + JSON.stringify(text));
+        }
+        console.log("OK", blob.size);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK 68");
+  expect(exitCode).toBe(0);
+});

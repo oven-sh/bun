@@ -9172,3 +9172,43 @@ describe.concurrent("bun-install", () => {
     });
   });
 });
+
+it("rejects dependency aliases containing '..' path segments", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+    // The alias (the key in `dependencies`) becomes the folder name under
+    // node_modules/. An alias containing ".." segments must not be able to
+    // place the package outside the project directory. The name is unique per
+    // run so a previous (vulnerable) run's escape artifact can't fail this one.
+    const escapeName =
+      "bun-install-alias-escape-target-" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+    await writeFile(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: {
+          [`../../${escapeName}`]: "npm:baz@0.0.3",
+        },
+      }),
+    );
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: ctx.package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    const out = await stdout.text();
+    // node_modules/../../<escapeName> resolves to a sibling of the project
+    // directory; nothing may be materialized there.
+    expect(await exists(join(ctx.package_dir, "..", escapeName))).toBe(false);
+    // The alias is reported as invalid instead of being used as a path.
+    expect(err).toContain("Invalid dependency name");
+    expect(out).not.toContain("1 package installed");
+    expect(await exited).toBe(1);
+  });
+});

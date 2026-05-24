@@ -312,7 +312,11 @@ impl<'a> Row<'a> {
         for (index, value) in cells.iter_mut().enumerate() {
             if let Some(result) = decode_length_int(reader.peek()) {
                 let column = &self.columns[index];
-                if result.value == 0xfb {
+                // The NULL marker is the single literal byte 0xfb. A 251-byte
+                // value is length-encoded as `0xfc 0xfb 0x00` and also decodes
+                // to value 251, so the marker must be distinguished by its
+                // 1-byte encoding or row decoding desynchronizes.
+                if result.bytes_read == 1 && result.value == 0xfb {
                     // NULL value
                     reader.skip(result.bytes_read);
                     // this dont matter if is raw because we will sent as null too like in postgres

@@ -5908,20 +5908,19 @@ impl H2FrameParser {
                 );
                 return Err(global_object.throw_value(exception));
             }
-            let validated_name =
-                match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
-                    Ok(n) => n,
-                    Err(_) => {
-                        let exception = global_object.to_type_error(
-                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
-                            format_args!(
-                                "The arguments Header name is invalid. Received {}",
-                                BStr::new(name)
-                            ),
-                        );
-                        return Err(global_object.throw_value(exception));
-                    }
-                };
+            let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                Ok(n) => n,
+                Err(_) => {
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                        format_args!(
+                            "The arguments Header name is invalid. Received {}",
+                            BStr::new(name)
+                        ),
+                    );
+                    return Err(global_object.throw_value(exception));
+                }
+            };
 
             // closure for encode error handling
             let mut handle_encode =
@@ -6540,20 +6539,19 @@ impl H2FrameParser {
                 let name_slice = header_name.to_utf8();
                 let name = name_slice.slice();
 
-                let validated_name =
-                    match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
-                        Ok(n) => n,
-                        Err(_) => {
-                            let exception = global_object.to_type_error(
-                                bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
-                                format_args!(
-                                    "The arguments Header name is invalid. Received \"{}\"",
-                                    BStr::new(name)
-                                ),
-                            );
-                            return Err(global_object.throw_value(exception));
-                        }
-                    };
+                let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                            format_args!(
+                                "The arguments Header name is invalid. Received \"{}\"",
+                                BStr::new(name)
+                            ),
+                        );
+                        return Err(global_object.throw_value(exception));
+                    }
+                };
 
                 if name.first() == Some(&b':') {
                     if ignore_pseudo_headers == 1 {
@@ -7007,10 +7005,15 @@ impl H2FrameParser {
             0
         };
         let available_payload = actual_max_frame_size - priority_overhead;
-        let padding: u8 = if encoded_size > available_payload {
+        // Reserve one byte for the pad-length field so `encoded_size +
+        // padding_overhead` never exceeds `available_payload`; otherwise the
+        // CONTINUATION branch below would slice past the end of the encoded
+        // header block. CONTINUATION frames cannot carry padding, so it is
+        // disabled whenever the block does not fit in a single HEADERS frame.
+        let padding: u8 = if encoded_size >= available_payload {
             0
         } else {
-            stream.get_padding(encoded_size, available_payload)
+            stream.get_padding(encoded_size, available_payload - 1)
         };
         let padding_overhead: usize = if padding != 0 {
             padding as usize + 1

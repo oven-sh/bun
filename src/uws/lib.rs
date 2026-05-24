@@ -225,11 +225,22 @@ pub mod ssl_wrapper {
     /// writes we loop until we have no more data to write/backpressure.
     const BUFFER_SIZE: usize = 65536;
 
+    /// Cap on peer-initiated TLS renegotiations per
+    /// [`MAX_RENEGOTIATION_WINDOW`]. Mirrors the `us_reneg_policy` defaults in
+    /// the uSockets C path (openssl.c) and Node's
+    /// `CLIENT_RENEG_LIMIT`/`CLIENT_RENEG_WINDOW`. Unbounded renegotiation is
+    /// a CPU DoS (CVE-2011-1473).
+    const MAX_RENEGOTIATIONS: u8 = 3;
+    /// See [`MAX_RENEGOTIATIONS`].
+    const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
+
     pub struct SSLWrapper<T: Copy> {
         pub handlers: Handlers<T>,
         pub ssl: Option<NonNull<boring_sys::SSL>>,
         pub ctx: Option<NonNull<boring_sys::SSL_CTX>>,
         pub flags: Flags,
+        pub renegotiation_count: u8,
+        pub renegotiation_window_start: Option<std::time::Instant>,
     }
 
     /// CamelCase alias for callers that imported the Zig name through the
@@ -497,6 +508,8 @@ pub mod ssl_wrapper {
                 flags,
                 ctx: Some(ctx),
                 ssl: Some(ssl),
+                renegotiation_count: 0,
+                renegotiation_window_start: None,
             })
         }
 
@@ -967,8 +980,26 @@ pub mod ssl_wrapper {
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
                             self.flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
+                            // An over-limit renegotiation request is treated
+                            // like a failed SSL_renegotiate(). The count
+                            // resets each MAX_RENEGOTIATION_WINDOW, matching
+                            // the C path's `us_reneg_policy`.
+                            let now = std::time::Instant::now();
+                            match self.renegotiation_window_start {
+                                Some(start)
+                                    if now.duration_since(start) < MAX_RENEGOTIATION_WINDOW => {}
+                                _ => {
+                                    self.renegotiation_window_start = Some(now);
+                                    self.renegotiation_count = 0;
+                                }
+                            }
+                            let renegotiation_allowed =
+                                self.renegotiation_count < MAX_RENEGOTIATIONS;
+                            self.renegotiation_count = self.renegotiation_count.saturating_add(1);
                             // SAFETY: ssl is still valid.
-                            if unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } == 0 {
+                            let renegotiated = renegotiation_allowed
+                                && unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0;
+                            if !renegotiated {
                                 self.flags
                                     .set_handshake_state(HandshakeState::HandshakeCompleted);
                                 // we failed to renegotiate

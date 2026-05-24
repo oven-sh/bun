@@ -24,7 +24,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -218,4 +218,90 @@ describe("bun:jsc", () => {
     expect(result3.stackTraces).toBeDefined();
     expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
   });
+});
+
+it("deserialize rejects an object reference index outside the deserialized object pool", async () => {
+  // A payload whose first value is ObjectReferenceTag must have its pool index
+  // validated against the number of objects deserialized so far (zero here),
+  // instead of indexing past the end of the pool.
+  const script = `
+    import { serialize, deserialize } from "bun:jsc";
+    // serialize(undefined) is [version header][UndefinedTag]; keep just the header.
+    const prefix = new Uint8Array(serialize(undefined));
+    const header = prefix.subarray(0, prefix.length - 1);
+    const payload = new Uint8Array([...header, 19 /* ObjectReferenceTag */, 200 /* index into the (empty) object pool */]);
+    let outcome;
+    try {
+      const value = deserialize(payload);
+      outcome = value === null ? "rejected" : "accepted " + String(value);
+    } catch (error) {
+      outcome = error instanceof Error ? "rejected" : "threw non-error";
+    }
+    console.log(outcome);
+    // A legitimate payload still round-trips.
+    console.log(JSON.stringify(deserialize(serialize({ a: 1 }))));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe('rejected\n{"a":1}\n');
+  expect(exitCode).toBe(0);
+});
+
+it("deserialize rejects a typed array whose backing store is not an array buffer", async () => {
+  // A serialized ArrayBufferView must be backed by an ArrayBuffer (or a
+  // reference to one already in the object pool). A payload that nests
+  // ArrayBufferViewTag inside ArrayBufferViewTag thousands of levels deep must
+  // be rejected at the first level instead of being followed all the way down.
+  const script = `
+    import { serialize, deserialize } from "bun:jsc";
+    // serialize(undefined) is [version header][UndefinedTag]; keep just the header.
+    const prefix = new Uint8Array(serialize(undefined));
+    const header = prefix.subarray(0, prefix.length - 1);
+    const depth = 200000;
+    // Each level is: ArrayBufferViewTag (22), Uint8Array subtag (2),
+    // byteOffset:uint64 = 0, byteLength:uint64 = 0. The next level's tag sits
+    // where the backing ArrayBuffer is supposed to be.
+    const unit = new Uint8Array(18);
+    unit[0] = 22;
+    unit[1] = 2;
+    const payload = new Uint8Array(header.length + unit.length * depth);
+    payload.set(header, 0);
+    for (let i = 0; i < depth; i++) {
+      payload.set(unit, header.length + i * unit.length);
+    }
+    let outcome;
+    try {
+      const value = deserialize(payload);
+      outcome = value === null ? "rejected" : "accepted " + String(value);
+    } catch (error) {
+      outcome = error instanceof Error ? "rejected" : "threw non-error";
+    }
+    console.log(outcome);
+    // Real typed arrays still round-trip, including two views sharing one
+    // buffer (the second view's backing store is serialized as a reference
+    // into the object pool).
+    const shared = new ArrayBuffer(4);
+    const first = new Uint8Array(shared);
+    first.set([1, 2, 3, 4]);
+    const second = new Uint16Array(shared);
+    const out = deserialize(serialize({ first, second }));
+    console.log(out.first instanceof Uint8Array, Array.from(out.first).join(","));
+    console.log(out.second instanceof Uint16Array, Array.from(out.second).join(","));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("rejected\ntrue 1,2,3,4\ntrue 513,1027\n");
+  expect(exitCode).toBe(0);
 });

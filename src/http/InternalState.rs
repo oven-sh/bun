@@ -62,6 +62,12 @@ pub(crate) struct InternalStateFlags {
     pub is_redirect_pending: bool,
     pub is_libdeflate_fast_path_disabled: bool,
     pub resend_request_body_on_redirect: bool,
+    /// Cross-origin redirect: the per-request Host override must be dropped so
+    /// the follow-up connection re-derives SNI/Host from the redirect target.
+    /// The actual clear is deferred to `do_redirect`, after the old socket's
+    /// pool/close decision — that decision needs `hostname` still set to know
+    /// the handshake was verified against an override.
+    pub clear_hostname_on_redirect: bool,
 }
 
 impl InternalStateFlags {
@@ -74,6 +80,7 @@ impl InternalStateFlags {
             is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
+            clear_hostname_on_redirect: false,
         }
     }
 }

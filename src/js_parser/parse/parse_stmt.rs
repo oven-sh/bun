@@ -1164,7 +1164,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TAsterisk => {
                 if !opts.is_module_scope
-                    && !(opts.is_namespace_scope || !opts.is_typescript_declare)
+                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));
@@ -1247,7 +1247,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TOpenBrace => {
                 if !opts.is_module_scope
-                    && !(opts.is_namespace_scope || !opts.is_typescript_declare)
+                    && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
                     return Err(err!("SyntaxError"));

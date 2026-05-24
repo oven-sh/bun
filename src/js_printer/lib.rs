@@ -5527,9 +5527,10 @@ pub mod __gated_printer {
                                     let mut did_print = false;
 
                                     if let Some(namespace) = &symbol.namespace_alias {
-                                        let import_record = self
-                                            .import_record(namespace.import_record_index as usize);
                                         if namespace.was_originally_property_access {
+                                            let import_record = self.import_record(
+                                                namespace.import_record_index as usize,
+                                            );
                                             self.print_identifier(name);
                                             self.print(b": () => ");
                                             self.print_namespace_alias(import_record, namespace);
@@ -5595,9 +5596,10 @@ pub mod __gated_printer {
                                     .map(BackRef::<Symbol>::new);
                                 if let Some(symbol) = symbol {
                                     if let Some(namespace) = &symbol.namespace_alias {
-                                        let import_record = self
-                                            .import_record(namespace.import_record_index as usize);
                                         if namespace.was_originally_property_access {
+                                            let import_record = self.import_record(
+                                                namespace.import_record_index as usize,
+                                            );
                                             self.print(b"var ");
                                             self.print_symbol(
                                                 item.name.ref_.expect("infallible: ref bound"),

@@ -2196,6 +2196,26 @@ pub mod internal {
         pub hash: u64,
     }
 
+    impl RequestKeyOwned {
+        /// Cache-lookup equality: same hash *and* same hostname bytes. The hash
+        /// (wyhash, fixed seed) is not collision resistant, so it is only a
+        /// fast reject — never the sole match criterion.
+        fn matches(&self, other: &RequestKey) -> bool {
+            if self.hash != other.hash {
+                return false;
+            }
+            match (self.host.as_ref(), other.host) {
+                (Some(a), Some(b)) => {
+                    // SAFETY: `other.host` borrows the caller's NUL-terminated
+                    // slice, which outlives the lookup (see `RequestKey.host`).
+                    a.as_bytes() == unsafe { (*b).as_bytes() }
+                }
+                (None, None) => true,
+                _ => false,
+            }
+        }
+    }
+
     impl RequestKey {
         pub fn init(name: Option<&ZStr>, port: u16) -> Self {
             let hash = if let Some(n) = name {
@@ -2397,7 +2417,7 @@ pub mod internal {
                 let entry = self.cache[i];
                 // SAFETY: entries 0..len are valid heap Requests
                 unsafe {
-                    if (*entry).key.hash == key.hash && (*entry).valid {
+                    if (*entry).key.matches(key) && (*entry).valid {
                         if (*entry).is_expired(timestamp_to_store) {
                             bun_output::scoped_log!(dns, "get: expired entry");
                             if (*entry).refcount == 0 {

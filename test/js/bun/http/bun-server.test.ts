@@ -1553,4 +1553,56 @@ describe.concurrent("node:http socket.fd (Bun extension)", () => {
     }
     expect(savedSocket.fd).toBe(-1);
   });
+
+  // Regression: the `fd` prototype getter is a CustomAccessor without
+  // DOMAttribute, so JSC hands the getter an arbitrary receiver. Reaching
+  // the getter via `Object.getOwnPropertyDescriptor` and calling with a
+  // plain object used to hit `uncheckedDowncast`'s security assertion in
+  // debug builds (and type-confused reads in release). It must return -1.
+  test("socket.fd getter rejects unrelated receivers instead of asserting", async () => {
+    const src = /* js */ `
+      const http = require("http");
+      const server = http.createServer((req, res) => {
+        const socket = req.socket;
+        const handleSym = Object.getOwnPropertySymbols(socket)
+          .find(s => s.description === "handle");
+        const nativeHandle = socket[handleSym];
+        const proto = Object.getPrototypeOf(nativeHandle);
+        const desc = Object.getOwnPropertyDescriptor(proto, "fd");
+        if (typeof desc?.get !== "function") {
+          console.error("fd getter missing");
+          process.exit(1);
+        }
+        const got = desc.get.call({});
+        if (got !== -1) {
+          console.error("expected -1, got", got);
+          process.exit(1);
+        }
+        res.end("ok");
+      });
+      server.listen(0, async () => {
+        const { port } = server.address();
+        const r = await fetch("http://127.0.0.1:" + port + "/");
+        await r.text();
+        server.close();
+        console.log("OK");
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect({ stdout: stdout.trim(), signalCode: proc.signalCode ?? null, exitCode }).toMatchObject({
+      stdout: "OK",
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
 });

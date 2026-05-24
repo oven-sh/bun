@@ -375,7 +375,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObj
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterFd, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
 {
-    auto* thisObject = uncheckedDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    // `fd` is a CustomAccessor without DOMAttribute, so JSC calls this getter
+    // with an arbitrary receiver. Validate before dereferencing instead of
+    // uncheckedDowncast so e.g. `Object.getOwnPropertyDescriptor(proto, 'fd').get.call({})`
+    // returns -1 rather than asserting through `thisObject->socket`.
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsNumber(-1));
+    }
     us_socket_t* socket = thisObject->socket;
     if (!socket || thisObject->isClosed()) {
         return JSValue::encode(JSC::jsNumber(-1));

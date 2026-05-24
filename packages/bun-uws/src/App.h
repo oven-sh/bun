@@ -370,6 +370,18 @@ public:
         return std::move(*this);
     }
 
+    /** Closes all connections (idle and in-flight) connected to this server. Does not close the listen socket. */
+    TemplatedApp &&closeAllConnections() {
+        auto *group = httpContext->getSocketGroup();
+        struct us_socket_t *s = group->head_sockets;
+        while (s) {
+            struct us_socket_t *next = s->next;
+            us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+            s = next;
+        }
+        return std::move(*this);
+    }
+
     template <typename UserData>
     TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior) {
         /* Don't compile if alignment rules cannot be satisfied */

@@ -36,6 +36,10 @@ function generate(name) {
         fn: "closeIdleConnections",
         length: 0,
       },
+      closeAllConnections: {
+        fn: "closeAllConnections",
+        length: 0,
+      },
       stop: {
         fn: "doStop",
         length: 1,

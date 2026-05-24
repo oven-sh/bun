@@ -7,8 +7,6 @@ use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_which::which;
 
-use crate::api::bun::process::sync;
-
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -415,33 +413,12 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         argv[j] = unsafe { bun_core::ffi::slice(p, l) };
     }
 
-    // FIXME(windows-leak): the sync::spawn path
-    // requires a `WindowsOptions.loop_`; `MiniEventLoop::init_global` heap-allocates a
-    // MiniEventLoop + uv_loop_t into a thread-local that is NEVER torn down. Because this
-    // runs on a fresh detached std::thread per `Editor::open()` call, every editor-open on
-    // Windows leaks one MiniEventLoop + uv_loop_t (+ DotEnv Loader/Map if env was null).
-    // Proper fix needs either (a) a MiniEventLoop teardown helper (none exists today), or
-    // (b) plumbing the caller's existing EventLoopHandle through SpawnedEditorContext
-    // (signature change to Editor::open + callers). Both are out-of-scope for this file.
-    let owned_argv: Vec<Box<[u8]>> = argv[0..spawned.argc]
-        .iter()
-        .map(|s| s.to_vec().into_boxed_slice())
-        .collect();
-    let _ = sync::spawn(&sync::Options {
-        argv: owned_argv,
-        envp: None,
-        stderr: sync::SyncStdio::Inherit,
-        stdout: sync::SyncStdio::Inherit,
-        stdin: sync::SyncStdio::Inherit,
-        #[cfg(windows)]
-        windows: crate::api::bun::process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
-            ..Default::default()
-        },
-        ..Default::default()
-    });
+    // Zig called `child_process.spawn()` then `.wait()` via std.process.Child. Use the
+    // minimal spawn+wait helper here, NOT `sync::spawn` (bun.spawnSync): spawnSync's
+    // signal-forwarding setup mutates process-wide state (`Bun__registerSignalsForForwarding`,
+    // `Bun__currentSyncPID`) that is only safe on the main thread, and this runs on a
+    // detached thread per `Editor::open()` call.
+    let _ = bun_core::util::spawn_sync_inherit(&argv[0..spawned.argc]);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

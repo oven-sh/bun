@@ -45,10 +45,11 @@ pub(crate) struct OptionDefinition {
 
     pub multiple: bool,
 
-    /// Bare `JSValue` is safe here: the Zig spec keeps the options slice on the
-    /// stack for the lifetime of `parseArgs`, so JSC's conservative stack scan
-    /// roots these values. The Rust caller (`parse_args.rs`) must mirror that
-    /// invariant — keep the backing storage stack-reachable or otherwise rooted.
+    /// Bare `JSValue` is safe here only because the caller (`parse_args.rs`)
+    /// roots each default value in a stack `MarkedArgumentBuffer` for the
+    /// lifetime of `parseArgs`. This struct lives in a heap-allocated `Vec`
+    /// that JSC's conservative stack scan cannot see, so the value must be
+    /// rooted elsewhere.
     pub default_value: Option<JSValue>,
 }
 

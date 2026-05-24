@@ -75,7 +75,7 @@ test.skipIf(!isLinux)("Bun.openInEditor with no detectable editor survives a cal
       }
       for (let batch = 0; batch < 30; batch++) {
         for (let i = 0; i < 50; i++) {
-          try { Bun.openInEditor(Buffer); } catch {}
+          try { Bun.openInEditor("/dev/null"); } catch {}
         }
         churn();
         Bun.gc(false);

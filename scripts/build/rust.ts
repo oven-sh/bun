@@ -274,7 +274,9 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
           `( cmp -s $shim_src $shim_dest 2>/dev/null || cp $shim_src $shim_dest ) && touch $out`,
       description: "cargo bun_shim_impl → $shim_dest",
       pool: "console",
-      restat: true,
+      // No restat: the stamp ($out) is touched unconditionally, so there's
+      // nothing for ninja to prune on; the content-conditional copy above
+      // exists for cargo's dep-info on $shim_dest, not for restat.
     });
   }
 

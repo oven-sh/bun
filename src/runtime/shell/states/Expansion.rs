@@ -649,15 +649,24 @@ impl Expansion {
     ) {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
+        // A failed walk (e.g. ENOENT because the pattern's literal directory
+        // prefix does not exist, as in `echo /nonexistent/*`) is not fatal to
+        // the script: fall through so the empty (or partial) result set goes
+        // through the no-match handling below — "no matches found" in command
+        // position, the literal pattern in assignment position — the same
+        // outcome as a relative pattern whose directory is missing. Raising a
+        // JS exception here would leave it pending on the VM with no JS frame
+        // above this task callback to observe it, aborting the process on the
+        // next exception check; `.nothrow()`/`try` could never intercept it.
         if let Some(err) = err {
-            let shell_err = match err {
-                ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
-                ShellGlobErr::Unknown(e) => ShellErr::Custom(e.to_string().into_bytes().into()),
-            };
-            interp.throw(shell_err);
-            interp.as_expansion_mut(this).state = ExpansionState::Done;
-            Yield::Next(this).run(interp);
-            return;
+            match err {
+                ShellGlobErr::Syscall(e) => {
+                    log!("Expansion {} glob walk failed: {}", this, e);
+                }
+                ShellGlobErr::Unknown(e) => {
+                    log!("Expansion {} glob walk failed: {}", this, e);
+                }
+            }
         }
 
         if result.is_empty() {

@@ -953,8 +953,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     if (winsysroot === undefined) {
       if (ci || buildkite) {
         // CI always fetches its own sysroot into the per-build cache (see
-        // winsysroot.ts `ensureWindowsSysroot`, called from build.ts before
-        // ninja runs) instead of relying on agent image provisioning.
+        // winsysroot.ts `ensureWindowsSysroot`, called from configure.ts
+        // before the graph is emitted) instead of relying on agent image
+        // provisioning.
         winsysroot = resolve(cacheDir, "winsysroot");
       } else {
         throw new BuildError("--os=windows requires a Windows sysroot (MSVC CRT + Windows SDK) when cross-compiling", {

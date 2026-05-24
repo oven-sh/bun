@@ -679,7 +679,6 @@ pub(crate) static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::Atomic
 
 pub(crate) use bun_options_types::context::BunCAStore;
 
-
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);

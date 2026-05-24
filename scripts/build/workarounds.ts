@@ -29,7 +29,6 @@
  *     ambiguous case.
  */
 
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
@@ -161,21 +160,19 @@ export const workarounds: Workaround[] = [
       "ld64.lld parses `-stack_size` but doesn't implement it (\"is not yet implemented. Stay " +
       'tuned..."), so darwin cross links keep the 8 MB default main-thread stack instead of the ' +
       "18 MB JSC needs. shims/macho-postlink.c patches LC_MAIN.stacksize after the link instead.",
-    applies: cfg => cfg.darwin && cfg.crossTarget !== undefined && cfg.ld !== "",
+    applies: cfg => cfg.darwin && cfg.crossTarget !== undefined,
     expectedToBeFixed: cfg => {
-      // Probe the actual linker rather than guessing an LLVM version: drive
-      // a doomed link with -stack_size and look for the "not yet
-      // implemented" warning. One ~10ms spawn, only on darwin cross
-      // configures. If the warning is gone, lld honors the flag we already
-      // pass (-Wl,-stack_size) and the post-link patch is redundant.
-      const arch = cfg.arm64 ? "arm64" : "x86_64";
-      const probe = spawnSync(
-        cfg.ld,
-        ["-arch", arch, "-platform_version", "macos", "13.0", "13.0", "-stack_size", "0x1000", "-o", "/dev/null"],
-        { encoding: "utf8", timeout: 30_000, stdio: ["ignore", "pipe", "pipe"] },
-      );
-      if (probe.error) return false; // can't run the linker — leave the workaround in place
-      return !`${probe.stdout ?? ""}${probe.stderr ?? ""}`.includes("-stack_size' is not yet implemented");
+      // Not implemented as of LLVM 21 (lld/MachO/Driver.cpp keeps
+      // OPT_stack_size in the "unimplemented, warn and ignore" list).
+      // Re-test when the toolchain moves to LLVM 23: link a darwin cross
+      // build and check whether `ld64.lld ... -stack_size 0x1200000` still
+      // prints "is not yet implemented". If it does, bump this threshold.
+      // (A configure-time probe that spawned ld64.lld was tried first and
+      // reverted: the rust/cpp split steps configure on machines whose
+      // ld64.lld doesn't behave like the link machine's, and a probe that
+      // misfires there fails the whole lane.)
+      const FIXED_IN_LLVM = "23.0.0";
+      return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
     },
     cleanup:
       `Drop the --stack-size argument from machoPostlinkCommand() in scripts/build/shims.ts and ` +

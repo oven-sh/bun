@@ -7528,6 +7528,126 @@ describe("css tests", () => {
       minify_test('.foo { color: "a" lab(40% 0.1 0.1) }', '.foo{color:"a" lab(40% .1 .1)}');
     });
 
+    describe("color fallbacks with system colors and currentColor", () => {
+      // System colors and currentColor can't be converted to RGB/P3/LAB. When they
+      // sit next to colors that do need fallbacks (in a background shorthand, a
+      // gradient stop list, a shadow list, or light-dark()), they must pass through
+      // unchanged instead of panicking.
+
+      // `background` is a deprecated CSS2 system color.
+      prefix_test(
+        `
+          .foo {
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        indoc`
+          .foo {
+            background: background linear-gradient(#41001b, #da3671);
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        indoc`
+          .foo {
+            background: background linear-gradient(color(display-p3 .342311 -.157987 .0918331), color(display-p3 .787212 .27046 .444387));
+            background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
+          }
+        `,
+        {
+          safari: 14 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            background: linear-gradient(currentColor, lch(50% 50 180));
+          }
+        `,
+        indoc`
+          .foo {
+            background: linear-gradient(currentColor, #008675);
+            background: linear-gradient(currentColor, lch(50% 50 180));
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            background: buttonface linear-gradient(lch(50% 50 180), canvas);
+          }
+        `,
+        indoc`
+          .foo {
+            background: buttonface linear-gradient(#008675, canvas);
+            background: buttonface linear-gradient(lch(50% 50 180), canvas);
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            color: light-dark(buttonface, lch(50% 50 180));
+          }
+        `,
+        indoc`
+          .foo {
+            color: var(--buncss-light, buttonface) var(--buncss-dark, lch(50% 50 180));
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            text-shadow: 0 0 currentColor, 0 0 lch(50% 50 180);
+          }
+        `,
+        indoc`
+          .foo {
+            text-shadow: 0 0, 0 0 #008675;
+            text-shadow: 0 0, 0 0 lch(50% 50 180);
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+      prefix_test(
+        `
+          .foo {
+            text-shadow: 0 0 currentColor, 0 0 lch(50% 50 180);
+          }
+        `,
+        indoc`
+          .foo {
+            text-shadow: 0 0, 0 0 color(display-p3 -.0472161 .537112 .461858);
+            text-shadow: 0 0, 0 0 lch(50% 50 180);
+          }
+        `,
+        {
+          safari: 14 << 16,
+        },
+      );
+    });
+
     // Deeply nested @keyframes with invalid percentages
     describe("nested keyframes", () => {
       cssTest(

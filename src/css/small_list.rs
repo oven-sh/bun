@@ -213,7 +213,10 @@ pub mod fallbacks_gated {
                 // dummy non-alloced color to avoid deep cloning the real one since we will replace it
                 new_shadow.color = css::css_values::color::CssColor::CurrentColor;
                 new_shadow = new_shadow.deep_clone(arena);
-                new_shadow.color = shadow.color.to_rgb().unwrap();
+                new_shadow.color = shadow
+                    .color
+                    .to_rgb()
+                    .unwrap_or_else(|| shadow.color.deep_clone(arena));
                 rgb.append_assume_capacity(new_shadow);
             }
             res.append(rgb);
@@ -226,7 +229,10 @@ pub mod fallbacks_gated {
                 // dummy non-alloced color to avoid deep cloning the real one since we will replace it
                 new_shadow.color = css::css_values::color::CssColor::CurrentColor;
                 new_shadow = new_shadow.deep_clone(arena);
-                new_shadow.color = shadow.color.to_p3().unwrap();
+                new_shadow.color = shadow
+                    .color
+                    .to_p3()
+                    .unwrap_or_else(|| shadow.color.deep_clone(arena));
                 p3.append_assume_capacity(new_shadow);
             }
             res.append(p3);
@@ -234,7 +240,9 @@ pub mod fallbacks_gated {
 
         if fallbacks.contains(css::ColorFallbackKind::LAB) {
             for shadow in this.slice_mut() {
-                let out = shadow.color.to_lab().unwrap();
+                let Some(out) = shadow.color.to_lab() else {
+                    continue;
+                };
                 // old color dropped via replace
                 let _ = core::mem::replace(&mut shadow.color, out);
             }

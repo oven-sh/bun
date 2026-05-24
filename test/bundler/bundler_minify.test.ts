@@ -274,6 +274,7 @@ describe("bundler", () => {
   });
   // Numeric property names that would be printed as "1/0" (Infinity) or "-1" (inlined const
   // enums) are not valid syntax in property-name position and must become computed properties.
+  // The negative const enum key case is https://github.com/oven-sh/bun/issues/14687
   itBundled("minify/NumericPropertyKeysPrintedAsComputed", {
     files: {
       "/entry.ts": /* ts */ `

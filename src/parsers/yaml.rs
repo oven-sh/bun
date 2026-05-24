@@ -3499,9 +3499,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // is now abandoned to the parent, rewind to its start and
                     // re-scan tag-neutral so the sibling key resolves under
                     // the default schema.
-                    if value_tag.is_some()
-                        && matches!(self.token.data, TokenData::Scalar(_))
-                    {
+                    if value_tag.is_some() && matches!(self.token.data, TokenData::Scalar(_)) {
                         self.pos = self.token.start;
                         self.line = self.token.line;
                         self.line_indent = self.token.indent;

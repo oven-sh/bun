@@ -236,6 +236,32 @@ describe("Bun.Transpiler", () => {
       exp("export default interface Foo { bar(): void }\nexport const x = 1;", "export const x = 1;\n");
     });
 
+    it("rejects export clauses inside a non-declare namespace", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // Fuzz repro: an export clause referencing a sibling namespace member
+      // used to panic in the printer ("index out of bounds" on import_records).
+      err("namespace M {\rexport import M_A = M;}\r\nexport namespace M {\rexport {M_A as a};}\r", "Unexpected {");
+      err("namespace M { export import M_A = M; }\nexport namespace M { export { M_A as a }; }", "Unexpected {");
+
+      // esbuild and tsc (TS1194) both reject export declarations in a namespace.
+      err("namespace M { const x = 1; export { x }; }", "Unexpected {");
+      err("namespace M { export {}; }", "Unexpected {");
+      err("module M { const x = 1; export { x }; }", "Unexpected {");
+      err("namespace M { export { x } from 'y'; }", "Unexpected {");
+      err("namespace M { export * from 'y'; }", "Unexpected *");
+
+      // Still allowed in ambient contexts, where the body is type-only and erased.
+      exp("declare namespace M { export { x }; }", "");
+      exp("declare module 'm' { export { x }; }", "");
+      exp("declare namespace M { export * from 'y'; }", "");
+      exp("declare namespace A { namespace B { export { x }; } }", "");
+
+      // "export import" aliases inside a namespace keep working.
+      exp("namespace M { export import M_A = M; }", "var M;\n((M) => {\n  M.M_A = M;\n})(M ||= {})");
+    });
+
     it("should parse empty type parameters", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

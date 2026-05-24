@@ -1767,13 +1767,20 @@ impl NodeHTTPResponse {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
 
+        // `is_done()` covers REQUEST_HAS_COMPLETED | ENDED | SOCKET_CLOSED.
+        // Return `true` so the socket stream's `_write` resolves its callback
+        // without error — the FakeSocket / NodeHTTPServerSocket surface is
+        // `net.Socket`, where post-close writes are a soft no-op.
         if self.is_done() {
             return Ok(JSValue::js_boolean(true));
         }
         let Some(raw_response) = self.raw_response.get() else {
             return Ok(JSValue::js_boolean(true));
         };
-        if self.flags.get().contains(Flags::SOCKET_CLOSED) {
+        // uWS itself may have already transitioned out of the
+        // response-pending state (e.g. an internal error) even if our flags
+        // say otherwise. Treat that identically to a closed socket.
+        if !raw_response.state().is_response_pending() {
             return Ok(JSValue::js_boolean(true));
         }
 
@@ -1829,19 +1836,37 @@ impl NodeHTTPResponse {
     pub(crate) fn end_raw(
         &self,
         _global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
+        callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        // `is_done()` covers REQUEST_HAS_COMPLETED | ENDED | SOCKET_CLOSED.
         if self.is_done() {
             return Ok(JSValue::UNDEFINED);
         }
         let Some(raw_response) = self.raw_response.get() else {
             return Ok(JSValue::UNDEFINED);
         };
-        if self.flags.get().contains(Flags::SOCKET_CLOSED) {
+        if !raw_response.state().is_response_pending() {
             return Ok(JSValue::UNDEFINED);
         }
 
         scoped_log!(NodeHTTPResponse, "endRaw()");
+
+        // Mirror the unread-body cleanup from `write_or_end::<true>` — if the
+        // user never consumed the request body, drop the body-read ref and
+        // transition `body_read_state` out of `Pending` so
+        // `should_request_be_pending()` no longer keeps the request alive
+        // after we set `ENDED`. Gate on the on-data cached callback the same
+        // way `req._dump()` does: if the user installed one, leave the ref
+        // alone.
+        let this_value = callframe.this();
+        if self.body_read_ref.get().has
+            && self.body_read_state.get() == BodyReadState::Pending
+            && (!self.flags.get().contains(Flags::HAS_CUSTOM_ON_DATA)
+                || js::on_data_get_cached(this_value).is_none())
+        {
+            self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+            self.body_read_state.set(BodyReadState::None);
+        }
 
         let close_connection = true;
         raw_response.clear_aborted();

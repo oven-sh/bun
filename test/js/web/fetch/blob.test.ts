@@ -352,19 +352,16 @@ test("Bun.file(path, {type}).text() does not leak the duped content_type", async
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine retains freed allocations (default
-      // quarantine_size_mb=256), which would make RSS grow by the full 64 MiB
-      // even when every content-type copy is correctly freed. Disable it so
-      // the measurement reflects live memory on ASAN builds too.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
-    },
+    env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   const { deltaMiB } = JSON.parse(stdout);
+  // On ASAN builds LeakSanitizer (not RSS) is the regression guard: an unfixed
+  // build leaks 1024 content-type copies, LSan reports them at exit, and the
+  // exit-code assertion below fails.
   expect(deltaMiB).toBeLessThan(isASAN ? 400 : 40);
   expect(exitCode).toBe(0);
 });

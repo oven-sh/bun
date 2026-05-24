@@ -1452,6 +1452,11 @@ pub struct Stream {
     js_context: StrongOptional, // jsc.Strong.Optional
     wait_for_trailers: bool,
     end_after_headers: bool,
+    /// Both directions have sent END_STREAM (ours on the response HEADERS),
+    /// but the CLOSED transition is deferred until the JS writable side
+    /// finishes so the stream object observes its normal end-of-stream
+    /// lifecycle instead of a mid-`respond()` teardown.
+    close_on_local_finish: bool,
     is_waiting_more_headers: bool,
     header_block_size: usize,
     header_block_count: usize,
@@ -2011,6 +2016,7 @@ impl Stream {
             js_context: StrongOptional::empty(),
             wait_for_trailers: false,
             end_after_headers: false,
+            close_on_local_finish: false,
             is_waiting_more_headers: false,
             header_block_size: 0,
             header_block_count: 0,
@@ -5635,6 +5641,11 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+            if this.is_evicted_stream_id(stream_id) {
+                // Completed without an abort, otherwise the rst path would
+                // have reported it before eviction.
+                return Ok(JSValue::FALSE);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -6579,6 +6590,21 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream_ptr };
         if !stream.can_send_data() {
             this.dispatch_write_callback(callback_arg);
+            if close && stream.close_on_local_finish && stream.state != StreamState::CLOSED {
+                // Both directions sent END_STREAM back when the response
+                // HEADERS went out; the JS writable side is finishing now, so
+                // complete the lifecycle the same way send_data's close path
+                // does for DATA-terminated streams.
+                let identifier = stream.get_identifier();
+                identifier.ensure_still_alive();
+                this.close_stream(stream);
+                stream.free_resources::<false>(this);
+                this.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamEnd,
+                    identifier,
+                    JSValue::js_number(StreamState::CLOSED as u8 as f64),
+                );
+            }
             return Ok(JSValue::FALSE);
         }
 
@@ -6721,6 +6747,9 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id_arg.to_u32()).copied() else {
+            if this.is_evicted_stream_id(stream_id_arg.to_u32()) {
+                return Ok(JSValue::UNDEFINED);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
 
@@ -6747,6 +6776,9 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         }
         let Some(stream) = this.streams.get().get(&stream_id_arg.to_u32()).copied() else {
+            if this.is_evicted_stream_id(stream_id_arg.to_u32()) {
+                return Ok(JSValue::UNDEFINED);
+            }
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         let context_arg = args_list.ptr[1];
@@ -7570,19 +7602,13 @@ impl H2FrameParser {
             {
                 // The peer already half-closed its side and the HEADERS frame
                 // we just wrote carries END_STREAM, so both directions are now
-                // closed (RFC 9113 §5.1). This is the standard server
-                // `respond(headers, { endStream: true })` completion for a
-                // request whose END_STREAM arrived before the response was
-                // sent; without this transition the stream is pinned in
-                // HALF_CLOSED_LOCAL (and retained in the session map) until
-                // connection teardown. No `onStreamEnd` is dispatched here —
-                // the JS side has not finished `respond()` yet (its writable
-                // side has not ended), so a synchronous destroy would emit a
-                // spurious 'aborted'; this matches the previous behavior of
-                // this branch, which dispatched nothing.
-                this.close_stream(stream);
-                stream.free_resources::<false>(this);
-                return Ok(JSValue::js_number(stream_id as f64));
+                // closed (RFC 9113 §5.1). Closing here would tear the stream
+                // down in the middle of `respond()` (its writable side has not
+                // ended yet, so a synchronous destroy emits a spurious
+                // 'aborted' and the JS object never observes CLOSED); instead
+                // defer the CLOSED transition to the writable-finish
+                // `writeStream(..., close=true)` call that always follows.
+                stream.close_on_local_finish = true;
             }
             stream.state = StreamState::HALF_CLOSED_LOCAL;
 

@@ -1087,6 +1087,10 @@ impl TarballStream {
                     if self.resolved_github_dirname.is_empty() {
                         break 'insert_tag;
                     }
+                    // A malicious tarball can plant a `.bun-tag` symlink;
+                    // remove it so the tag write below cannot follow it out
+                    // of the extraction directory.
+                    let _ = bun_sys::unlinkat(self.dest.unwrap(), bun_core::zstr!(".bun-tag"));
                     if bun_sys::File::write_file(
                         self.dest.unwrap(),
                         bun_core::zstr!(".bun-tag"),
@@ -1404,6 +1408,26 @@ fn make_symlink(
         // directory.
         let symlink_dir = bun_paths::dirname(path_slice).unwrap_or(b"");
         let target_bytes = target.as_bytes();
+        // A `..` that follows a named component only collapses lexically when
+        // that component is a real directory. If it is a symlink created by
+        // another entry of this archive (in any order), the kernel resolves
+        // the link first and applies `..` to the link target's parent, so a
+        // chain like `l1 -> .`, `l2 -> l1/..` climbs one directory above the
+        // extraction root per hop while every target still normalizes to a
+        // path inside it. Reject non-leading `..` components so the
+        // normalization below is exact.
+        let mut seen_named_component = false;
+        for component in target_bytes.split(|c| *c == b'/') {
+            match component {
+                b"" | b"." => {}
+                b".." => {
+                    if seen_named_component {
+                        return false;
+                    }
+                }
+                _ => seen_named_component = true,
+            }
+        }
         let mut join_buf = PathBuffer::uninit();
         if symlink_dir.len() + 1 + target_bytes.len() >= join_buf.len() {
             return false;

@@ -1323,6 +1323,27 @@ fn is_symlink_target_safe(
         return false;
     }
 
+    // A `..` that follows a named component only collapses lexically when
+    // that component is a real directory. If it is a symlink created by
+    // another entry of this archive (in any order), the kernel resolves the
+    // link first and applies `..` to the link target's parent, so a chain
+    // like `l1 -> .`, `l2 -> l1/..` climbs one directory above the
+    // extraction root per hop while every target still normalizes to a path
+    // inside it. Reject non-leading `..` components so the normalization
+    // below is exact.
+    let mut seen_named_component = false;
+    for component in link_target_bytes.split(|c| *c == b'/') {
+        match component {
+            b"" | b"." => {}
+            b".." => {
+                if seen_named_component {
+                    return false;
+                }
+            }
+            _ => seen_named_component = true,
+        }
+    }
+
     // Get the directory containing the symlink
     let symlink_dir = bun_paths::dirname_simple(symlink_path);
 

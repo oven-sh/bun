@@ -366,6 +366,40 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  it("handles 'target' that cannot be converted to a string", () => {
+    const opts = {
+      setup: () => {},
+      target: {
+        toString() {
+          return {};
+        },
+        valueOf() {
+          return {};
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow(TypeError);
+  });
+
+  it("propagates exceptions thrown while converting 'target' to a string", () => {
+    const error = new Error("target toString failed");
+    const opts = {
+      setup: () => {},
+      target: {
+        toString() {
+          throw error;
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow(error);
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];

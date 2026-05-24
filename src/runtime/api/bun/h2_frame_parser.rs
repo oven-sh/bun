@@ -4510,9 +4510,10 @@ impl H2FrameParser {
                         self.close_stream(stream);
                         stream.free_resources::<false>(self);
                     } else if stream.state != StreamState::CLOSED {
-                        // A synchronous `respond({endStream:true})` from the
-                        // 'stream' handler dispatched above may have already
-                        // closed the stream; don't resurrect it.
+                        // A synchronous `close()`/`rstStream()` (or a header
+                        // encoding error) from the 'stream' handler dispatched
+                        // above may have already closed the stream; don't
+                        // resurrect it.
                         stream.state = StreamState::HALF_CLOSED_REMOTE;
                     }
                 }

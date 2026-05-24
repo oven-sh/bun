@@ -4082,8 +4082,7 @@ impl H2FrameParser {
             let block = core::mem::take(&mut stream.pending_header_block);
             // Report the original HEADERS frame's flags (plus END_HEADERS now
             // that the block is complete), not the CONTINUATION frame's.
-            let block_flags =
-                stream.pending_header_flags | HeadersFrameFlags::END_HEADERS as u8;
+            let block_flags = stream.pending_header_flags | HeadersFrameFlags::END_HEADERS as u8;
             stream = match self.decode_header_block(&block, stream, block_flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },

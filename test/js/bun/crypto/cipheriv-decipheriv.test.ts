@@ -1,13 +1,5 @@
 import { expect, it } from "bun:test";
-import {
-  BinaryLike,
-  CipherGCM,
-  createCipheriv,
-  createDecipheriv,
-  DecipherGCM,
-  getCiphers,
-  randomBytes,
-} from "crypto";
+import { BinaryLike, CipherGCM, createCipheriv, createDecipheriv, DecipherGCM, getCiphers, randomBytes } from "crypto";
 
 /**
  * Perform a sample encryption and decryption

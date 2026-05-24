@@ -1576,7 +1576,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Re-search for the insertion point: attempts nested inside the one that
             // just failed may have added entries of their own.
             if let Err(insert_at) = self.ts_infer_constraint_backtracks.binary_search(&memo_key) {
-                self.ts_infer_constraint_backtracks.insert(insert_at, memo_key);
+                self.ts_infer_constraint_backtracks
+                    .insert(insert_at, memo_key);
             }
         }
         skipped

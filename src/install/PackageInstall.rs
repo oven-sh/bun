@@ -2388,13 +2388,9 @@ impl<'a> PackageInstall<'a> {
         match state {
             crate::PreinstallState::Done => false,
             _ => 'brk: {
-                // Shared-cache npm entries are keyed only by name@version, so a
-                // bare existence probe would accept a folder produced from a
-                // different tarball (e.g. by another project's install). When
-                // this lockfile carries an integrity for the package, require
-                // the cache folder's recorded integrity to match before
-                // treating it as present; otherwise report it missing so it is
-                // re-downloaded, re-verified, and replaced.
+                // Shared-cache npm entries are keyed only by name@version; require
+                // the folder's recorded integrity to match this lockfile's before
+                // treating it as present.
                 let expected = self.lockfile.packages.items_meta()[package_id as usize].integrity;
                 let npm_integrity_check_needed = resolution_tag == resolution::Tag::Npm
                     && manager.options.do_.verify_integrity()
@@ -2464,9 +2460,6 @@ impl<'a> PackageInstall<'a> {
                 // SAFETY: NUL written above.
                 let subpath =
                     ZStr::from_buf(&join_buf[..], cache_dir_subpath_without_patch_hash.len());
-                // The non-patched base folder is the same shared name@version
-                // cache slot; apply the same integrity gate before its
-                // contents are copied out and patched.
                 let exists = sys::directory_exists_at(self.cache_dir, subpath).unwrap_or(false)
                     && (!npm_integrity_check_needed
                         || crate::package_manager::cached_folder_integrity_matches(
@@ -2488,11 +2481,8 @@ impl<'a> PackageInstall<'a> {
         package_id: PackageID,
     ) -> bool {
         // The patched cache folder is keyed by the patch file's content hash
-        // on top of name@version — nothing that pins the base tarball it was
-        // built from — so it gets the same integrity gate as the base folder
-        // before its contents are linked into node_modules. On mismatch (or a
-        // missing record) report it missing so the patch is re-applied on top
-        // of a verified base.
+        // on top of name@version — nothing pins the base tarball it was built
+        // from — so it gets the same integrity gate as the base folder.
         let expected = self.lockfile.packages.items_meta()[package_id as usize].integrity;
         let resolution_tag = self.lockfile.packages.items_resolution()[package_id as usize].tag;
         let npm_integrity_check_needed = resolution_tag == resolution::Tag::Npm

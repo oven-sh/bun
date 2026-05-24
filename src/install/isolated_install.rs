@@ -2413,11 +2413,7 @@ pub(crate) fn install_isolated_packages(
                                         // The shared cache keys npm entries by
                                         // name@version only; require the
                                         // folder's recorded integrity to match
-                                        // this lockfile's expected integrity
-                                        // before linking its contents into the
-                                        // store. On mismatch, treat it as
-                                        // missing so it is re-downloaded,
-                                        // re-verified, and replaced.
+                                        // before trusting it.
                                         let expected = pkg_metas[pkg_id as usize].integrity;
                                         exists
                                             && (!installer.manager().options.do_.verify_integrity()

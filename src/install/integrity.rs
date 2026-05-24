@@ -159,9 +159,8 @@ impl Integrity {
     }
 
     /// Strict equality between two parsed integrity values. `UNKNOWN` never
-    /// equals anything — including another `UNKNOWN` — so an unparseable or
-    /// missing value can never satisfy a comparison against a real digest.
-    /// Intentionally not a `PartialEq` impl to keep that asymmetry explicit.
+    /// equals anything — including another `UNKNOWN` — which is why this is
+    /// deliberately not a `PartialEq` impl.
     pub fn eql_supported(&self, other: &Integrity) -> bool {
         self.tag == other.tag
             && self.tag.is_supported()

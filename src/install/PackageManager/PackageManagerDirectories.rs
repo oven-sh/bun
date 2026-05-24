@@ -830,11 +830,9 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
     sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
-/// Suffix appended to a cache folder name to form the name of the sidecar file
-/// that records the integrity the folder's source tarball was verified
-/// against. Cache folder names always end in `@@@<digits>` (the cache version)
-/// or `_patch_hash=<hex>`, never `.integrity`, so the sidecar can never
-/// collide with a real cache folder.
+/// Suffix forming the name of the sidecar file that records the integrity a
+/// cache folder's source tarball was verified against. Folder names never end
+/// in `.integrity`, so the sidecar cannot collide with a real cache folder.
 pub const CACHE_INTEGRITY_SIDECAR_SUFFIX: &[u8] = b".integrity";
 
 /// Writes `<folder_path>.integrity\0` into `buf` and returns it as a `ZStr`
@@ -848,11 +846,8 @@ pub fn cache_integrity_sidecar_name<'a>(buf: &'a mut PathBuffer, folder_path: &[
 }
 
 /// Returns true iff the cache folder's integrity sidecar exists, parses, and
-/// matches `expected`. Any open/read/parse failure — including a missing
-/// sidecar (an entry written before sidecars existed, or whose write was
-/// interrupted) — is reported as a mismatch so the caller treats the entry as
-/// a cache miss and re-downloads + re-verifies the package instead of trusting
-/// a folder whose provenance is unknown.
+/// matches `expected`. Any failure (including a missing sidecar) is reported
+/// as a mismatch so the caller treats the entry as a cache miss.
 pub fn cached_folder_integrity_matches(
     cache_dir: Fd,
     folder_path: &[u8],

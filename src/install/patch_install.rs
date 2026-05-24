@@ -622,14 +622,10 @@ impl PatchTask {
 
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
 
-        // The patched cache folder is about to be replaced, so any existing
-        // integrity sidecar describes contents that are going away. Remove it
-        // *before* the rename: if this process then fails or is interrupted at
-        // any point, it leaves at worst a folder without a sidecar (which
-        // readers treat as a cache miss), never the stale sidecar paired with
-        // the new folder. (Two installs racing on the same slot can still
-        // interleave their unlink/rename/write sequences — see the note at the
-        // sidecar write in `extract_tarball.rs`.)
+        // Remove any stale integrity sidecar *before* the rename: an
+        // interruption after this point then leaves at worst a folder without
+        // a sidecar (a cache miss to readers), never a stale sidecar paired
+        // with the new folder.
         let mut sidecar_name_buf = PathBuffer::uninit();
         let sidecar_name = package_manager::cache_integrity_sidecar_name(
             &mut sidecar_name_buf,
@@ -671,13 +667,9 @@ impl PatchTask {
         }
 
         // Record the integrity of the base tarball this patched folder was
-        // built from so later installs can require their own lockfile's
-        // expected integrity to match before trusting it (the folder name only
-        // encodes the patch file's content hash). Only written when the base
-        // contents were actually verified against that integrity — the same
-        // gate the read side applies. A failed write is ignored: a folder
-        // without a sidecar is never trusted, so the worst case is one
-        // redundant re-patch on the next install.
+        // built from (the folder name only encodes the patch file's content
+        // hash). A failed write is ignored: a folder without a sidecar is
+        // never trusted, so the worst case is one redundant re-patch.
         {
             let manager = self.manager.get();
             let meta = &manager.lockfile.packages.items_meta()[patch.pkg_id as usize];

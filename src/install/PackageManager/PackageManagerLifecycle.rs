@@ -225,25 +225,16 @@ impl PackageManager {
                     return PreinstallState::Extract;
                 }
 
-                // The cache is shared across every project on the machine, and
-                // its npm entries are keyed only by name@version. A bare
-                // existence check would let any previously cached folder stand
-                // in for this lockfile's package even if it was produced from
-                // a different tarball. Require the folder's recorded integrity
-                // to match this lockfile's expected integrity before treating
-                // it as a hit; on mismatch (or a missing/unreadable record)
-                // fall through to Extract, which re-downloads, re-verifies,
-                // and replaces the folder.
+                // The shared cache keys npm entries by name@version only; require
+                // the folder's recorded integrity to match this lockfile's before
+                // treating it as a hit. On mismatch, fall through to Extract.
                 let expected = pkg.meta.integrity;
                 let npm_integrity_check_needed = pkg.resolution.tag == ResolutionTag::Npm
                     && self.options.do_.verify_integrity()
                     && expected.tag.is_supported();
 
-                // Patched cache folders are keyed by the patch file's content
-                // hash on top of name@version — still nothing that pins the
-                // base tarball they were built from — so they get the same
-                // gate. Their sidecar is written when the patch is applied
-                // (see `PatchTask::apply`).
+                // Patched cache folders get the same gate; their sidecar is
+                // written when the patch is applied (see `PatchTask::apply`).
                 if directories::is_folder_in_cache(self, folder_path)
                     && (!npm_integrity_check_needed
                         || directories::cached_folder_integrity_matches(
@@ -274,9 +265,6 @@ impl PackageManager {
                         });
                     // Zig: `allocator.dupeZ(u8, folder_path[..idx])` — owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
-                    // The non-patched base folder is the same shared
-                    // name@version cache slot, so it gets the same integrity
-                    // gate before its contents are copied out and patched.
                     if directories::is_folder_in_cache(self, &non_patched_path)
                         && (!npm_integrity_check_needed
                             || directories::cached_folder_integrity_matches(

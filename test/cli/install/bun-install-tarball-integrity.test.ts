@@ -814,8 +814,8 @@ describe.concurrent("npm cache integrity sidecar", () => {
       {
         const { stderr, exitCode } = await install(String(projectA), String(cache));
         expect(stderr).not.toContain("Integrity check failed");
-        expect(await installedIndexJs(String(projectA))).toContain("EVIL");
         expect(exitCode).toBe(0);
+        expect(await installedIndexJs(String(projectA))).toContain("EVIL");
       }
       expect(state.tarballRequests).toBe(1);
 
@@ -826,8 +826,8 @@ describe.concurrent("npm cache integrity sidecar", () => {
       {
         const { stderr, exitCode } = await install(String(projectB), String(cache));
         expect(stderr).not.toContain("Integrity check failed");
-        expect(await installedIndexJs(String(projectB))).toContain("GOOD");
         expect(exitCode).toBe(0);
+        expect(await installedIndexJs(String(projectB))).toContain("GOOD");
       }
       expect(state.tarballRequests).toBe(2);
 
@@ -850,8 +850,8 @@ describe.concurrent("npm cache integrity sidecar", () => {
       state.current = good;
       {
         const { exitCode } = await install(String(project), String(cache));
-        expect(await installedIndexJs(String(project))).toContain("GOOD");
         expect(exitCode).toBe(0);
+        expect(await installedIndexJs(String(project))).toContain("GOOD");
       }
       expect(state.tarballRequests).toBe(1);
 
@@ -868,8 +868,8 @@ describe.concurrent("npm cache integrity sidecar", () => {
 
       {
         const { exitCode } = await install(String(project), String(cache));
-        expect(await installedIndexJs(String(project))).toContain("GOOD");
         expect(exitCode).toBe(0);
+        expect(await installedIndexJs(String(project))).toContain("GOOD");
       }
       expect(state.tarballRequests).toBe(2);
     });
@@ -886,16 +886,16 @@ describe.concurrent("npm cache integrity sidecar", () => {
     state.current = good;
     {
       const { exitCode } = await install(String(projectA), String(cache));
-      expect(await installedIndexJs(String(projectA))).toContain("GOOD");
       expect(exitCode).toBe(0);
+      expect(await installedIndexJs(String(projectA))).toContain("GOOD");
     }
     expect(state.tarballRequests).toBe(1);
 
     // Same package, same integrity, shared cache: no second download.
     {
       const { exitCode } = await install(String(projectB), String(cache));
-      expect(await installedIndexJs(String(projectB))).toContain("GOOD");
       expect(exitCode).toBe(0);
+      expect(await installedIndexJs(String(projectB))).toContain("GOOD");
     }
     expect(state.tarballRequests).toBe(1);
   });
@@ -922,8 +922,8 @@ describe.concurrent("npm cache integrity sidecar", () => {
 
     {
       const { exitCode } = await install(String(projectB), String(cache));
-      expect(await installedIndexJs(String(projectB))).toContain("GOOD");
       expect(exitCode).toBe(0);
+      expect(await installedIndexJs(String(projectB))).toContain("GOOD");
     }
     expect(state.tarballRequests).toBe(2);
     expect(await findSidecars(String(cache))).toHaveLength(1);

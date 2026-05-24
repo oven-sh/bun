@@ -624,10 +624,12 @@ impl PatchTask {
 
         // The patched cache folder is about to be replaced, so any existing
         // integrity sidecar describes contents that are going away. Remove it
-        // *before* the rename: every failure or interruption from here on then
-        // leaves at worst a folder without a sidecar (which readers treat as a
-        // cache miss), never a folder paired with a sidecar its contents were
-        // not built from.
+        // *before* the rename: if this process then fails or is interrupted at
+        // any point, it leaves at worst a folder without a sidecar (which
+        // readers treat as a cache miss), never the stale sidecar paired with
+        // the new folder. (Two installs racing on the same slot can still
+        // interleave their unlink/rename/write sequences — see the note at the
+        // sidecar write in `extract_tarball.rs`.)
         let mut sidecar_name_buf = PathBuffer::uninit();
         let sidecar_name = package_manager::cache_integrity_sidecar_name(
             &mut sidecar_name_buf,
@@ -639,8 +641,8 @@ impl PatchTask {
             Err(e) => {
                 log.add_error_fmt_opts(
                     format_args!(
-                        "replacing patched package in cache dir: {}",
-                        e.with_path(cache_dir_subpath_z.as_bytes())
+                        "removing stale integrity sidecar for patched package: {}",
+                        e.with_path(sidecar_name.as_bytes())
                     ),
                     Default::default(),
                 );

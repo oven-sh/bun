@@ -1319,6 +1319,10 @@ pub struct H2FrameParser {
     // late frame for a just-closed stream can still be in flight.
     recently_evicted: JsCell<[u32; RECENTLY_EVICTED_LEN]>,
     recently_evicted_pos: Cell<u8>,
+    // Stream id of a *discarded* header block (HEADERS for an evicted stream)
+    // whose END_HEADERS has not arrived yet; 0 = none. A CONTINUATION for an
+    // evicted id is only legal while this matches it (RFC 9113 §6.10).
+    discarded_block_stream_id: Cell<u32>,
 }
 
 /// Capacity of `H2FrameParser::recently_evicted`.
@@ -2360,6 +2364,12 @@ impl H2FrameParser {
         }
         let end = payload.len() - padding;
         self.discard_header_block(&payload[offset..end]);
+        self.discarded_block_stream_id
+            .set(if frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0 {
+                frame.stream_identifier
+            } else {
+                0
+            });
         Ok(end_)
     }
 
@@ -4297,10 +4307,23 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "handleContinuationFrame");
         let Some(stream_ptr) = stream_ else {
             if self.is_evicted_stream_id(frame.stream_identifier) {
-                // CONTINUATION of a header block whose HEADERS frame was
-                // discarded above. Keep feeding the HPACK decoder so the
-                // dynamic table stays in sync, but dispatch nothing.
-                return self.discard_headers_frame::<true>(frame, data);
+                // Only legal as the continuation of a header block whose
+                // HEADERS frame was discarded above and has not yet seen
+                // END_HEADERS. Keep feeding the HPACK decoder so the dynamic
+                // table stays in sync, but dispatch nothing. A stray
+                // CONTINUATION with no such block in progress is a connection
+                // error (RFC 9113 §6.10).
+                if self.discarded_block_stream_id.get() == frame.stream_identifier {
+                    return self.discard_headers_frame::<true>(frame, data);
+                }
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::PROTOCOL_ERROR,
+                    b"Continuation without headers",
+                    self.last_stream_id.get(),
+                    true,
+                );
+                return Ok(data.len());
             }
             self.send_go_away(
                 frame.stream_identifier,
@@ -7686,8 +7709,15 @@ impl H2FrameParser {
     }
 
     pub(crate) fn on_native_writable(&self) {
-        let _activity = self.activity_guard();
-        let _ = self.flush();
+        self.ref_();
+        {
+            // Scope the activity guard inside the ref_()/deref() pair: the
+            // depth-0 sweep it triggers on drop must run while `self` is still
+            // kept alive.
+            let _activity = self.activity_guard();
+            let _ = self.flush();
+        }
+        self.deref();
     }
 
     pub(crate) fn on_native_close(&self) {
@@ -7849,6 +7879,7 @@ impl H2FrameParser {
             has_closed_streams: Cell::new(false),
             recently_evicted: JsCell::new([0u32; RECENTLY_EVICTED_LEN]),
             recently_evicted_pos: Cell::new(0),
+            discarded_block_stream_id: Cell::new(0),
         };
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {

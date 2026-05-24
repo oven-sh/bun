@@ -348,10 +348,8 @@ impl PackageManager {
                 }
 
                 // Persist the integrity computed during extraction (registry
-                // manifest carried no usable integrity) so the first install's
-                // lockfile already pins the tarball content. This mirrors the
-                // `package.meta.integrity = data.integrity` write-back the
-                // Github and Local/RemoteTarball arms above perform.
+                // manifest carried no usable integrity) so the lockfile pins
+                // the tarball content.
                 if resolution.tag == ResolutionTag::Npm
                     && *package_id != INVALID_PACKAGE_ID
                     && data.integrity.tag.is_supported()

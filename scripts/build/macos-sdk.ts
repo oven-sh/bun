@@ -89,18 +89,17 @@ export function resolveMacosSdkPath(explicit: string | undefined, cacheDir: stri
     return abs;
   }
 
-  // 2. Well-known locations: /opt/MacOSX*.sdk (what CI images / bootstrap
-  //    install), an osxcross tree, or a previously cached download.
-  for (const candidate of [
-    newestSdkIn("/opt"),
-    newestSdkIn("/opt/macos-sdk"),
-    newestSdkIn("/opt/osxcross/SDK"),
-    newestSdkIn(cacheDir),
-  ]) {
+  // 2. Well-known install locations: /opt/MacOSX*.sdk (what CI images /
+  //    bootstrap install) or an osxcross tree.
+  for (const candidate of [newestSdkIn("/opt"), newestSdkIn("/opt/macos-sdk"), newestSdkIn("/opt/osxcross/SDK")]) {
     if (candidate !== undefined) return candidate;
   }
 
-  // 3. Not installed anywhere — auto-download destination in the cache dir.
+  // 3. The cache dir — a previous auto-download of the *pinned* version is
+  //    reused as-is; any other MacOSX*.sdk in there is deliberately ignored so
+  //    that bumping MACOS_SDK_VERSION fetches the new pin instead of silently
+  //    reusing a stale SDK. ensureMacosSdk() downloads into this path when it
+  //    doesn't exist yet.
   return macosSdkCachePath(cacheDir);
 }
 

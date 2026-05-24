@@ -302,4 +302,27 @@ describe("macOS SDK resolution", () => {
       if (previous !== undefined) process.env.MACOS_SDK_PATH = previous;
     }
   });
+
+  test("a stale cached SDK does not shadow the pinned version", () => {
+    using dir = tempDir("macos-sdk-stale-cache", {});
+    const cacheDir = join(String(dir), "cache");
+    // Leftover auto-download from an older MACOS_SDK_VERSION pin.
+    const stale = makeFakeSdk(cacheDir, "MacOSX14.0.sdk");
+    const previous = process.env.MACOS_SDK_PATH;
+    delete process.env.MACOS_SDK_PATH;
+    try {
+      const resolved = resolveMacosSdkPath(undefined, cacheDir, String(dir));
+      // The stale download must never win — after a version bump the pinned
+      // SDK is fetched instead of silently reusing the old one (which would
+      // surface as undefined-symbol link errors, not a clear message).
+      expect(resolved).not.toBe(stale);
+      if (resolved.startsWith(String(dir))) {
+        // No SDK installed under /opt on this machine, so the cache-dir
+        // fallback was taken: it must be the pinned path.
+        expect(resolved).toBe(macosSdkCachePath(cacheDir));
+      }
+    } finally {
+      if (previous !== undefined) process.env.MACOS_SDK_PATH = previous;
+    }
+  });
 });

@@ -463,7 +463,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn path_with_pretty_initialized(
-        &mut self,
+        &self,
         path: &bun_paths::fs::Path<'static>,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
@@ -1102,7 +1102,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn generate_source_map_for_chunk(
-        &mut self,
+        &self,
         isolated_hash: u64,
         _worker: &mut crate::thread_pool::Worker,
         results: &MultiArrayList<CompileResultForSourceMap>,
@@ -1693,19 +1693,12 @@ impl<'a> GenerateChunkCtx<'a> {
         unsafe { &*LinkerContext::bundle_v2_ptr(self.c.as_mut_ptr()) }
     }
 
-    /// Mutable view of the owning `LinkerContext`. Centralizes the `unsafe`
-    /// deref of the `c: *mut LinkerContext` backref (set in
-    /// `generate_chunks_in_parallel`); callers previously open-coded
-    /// `unsafe { &mut *ctx.c }`. The per-chunk tasks each touch a disjoint
-    /// chunk, so the linker fields they write don't alias across tasks.
+    /// Shared view of the owning `LinkerContext`. Parallel chunk tasks must not
+    /// materialize `&mut LinkerContext`; per-chunk writes go through the unique
+    /// `*mut Chunk` handed to each worker and disjoint compile-result slots.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub fn c(&self) -> &mut LinkerContext<'a> {
-        // SAFETY: ParentRef into `BundleV2.linker`, valid for the
-        // chunk-generation pass; this task's chunk row is disjoint from peers'.
-        // Constructed via `from_raw_mut` (write provenance) in
-        // `generate_chunks_in_parallel`.
-        unsafe { self.c.assume_mut() }
+    pub fn c(&self) -> &LinkerContext<'a> {
+        self.c.get()
     }
 }
 
@@ -1789,7 +1782,55 @@ pub(crate) fn crash_guard_for_part_range(
 // and un-gate together with `LinkerGraph.rs`.
 
 impl<'a> LinkerContext<'a> {
-    pub fn generate_isolated_hash(&mut self, chunk: &Chunk) -> u64 {
+    pub fn prepare_pretty_paths_for_isolated_hash(
+        &mut self,
+        chunks: &[Chunk],
+    ) -> Result<(), BunError> {
+        let mut source_indices: Vec<u32> = Vec::new();
+
+        {
+            let sources = self.parse_graph().input_files.items_source();
+            for chunk in chunks {
+                let crate::chunk::Content::Javascript(js) = &chunk.content else {
+                    continue;
+                };
+
+                for part_range in js.parts_in_chunk_in_order.iter() {
+                    let source_index = part_range.source_index.get() as usize;
+                    let Some(source) = sources.get(source_index) else {
+                        continue;
+                    };
+
+                    if source.path.is_file()
+                        && core::ptr::eq(source.path.text.as_ptr(), source.path.pretty.as_ptr())
+                    {
+                        source_indices.push(source_index as u32);
+                    }
+                }
+            }
+        }
+
+        if source_indices.is_empty() {
+            return Ok(());
+        }
+
+        source_indices.sort_unstable();
+        source_indices.dedup();
+
+        for source_index in source_indices {
+            let old_path = {
+                let sources = self.parse_graph().input_files.items_source();
+                sources[source_index as usize].path.clone()
+            };
+            let new_path = self.path_with_pretty_initialized(&old_path)?;
+            self.parse_graph_mut().input_files.items_source_mut()[source_index as usize].path =
+                new_path;
+        }
+
+        Ok(())
+    }
+
+    pub fn generate_isolated_hash(&self, chunk: &Chunk) -> Result<u64, BunError> {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -1799,19 +1840,22 @@ impl<'a> LinkerContext<'a> {
         // that live in separate parts in the same file must not be merged. This only
         // needs to be done for JavaScript files, not CSS files.
         if let crate::chunk::Content::Javascript(js) = &chunk.content {
-            // SAFETY: parse_graph backref; exclusive access via &mut *.
-            let sources = unsafe { (*self.parse_graph).input_files.items_source_mut() };
+            let sources = self.parse_graph().input_files.items_source();
             for part_range in js.parts_in_chunk_in_order.iter() {
-                let source: &mut Source = &mut sources[part_range.source_index.get() as usize];
+                let source: &Source = &sources[part_range.source_index.get() as usize];
 
+                let pretty_storage;
                 let file_path: &[u8] = 'brk: {
                     if source.path.is_file() {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
                         if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
-                            source.path = self
-                                .path_with_pretty_initialized(&source.path)
-                                .expect("OOM");
+                            // `generate_chunks_in_parallel()` initializes this
+                            // serially before worker fan-out. Keep this local
+                            // fallback so the hash remains correct if this
+                            // helper is ever called from another path.
+                            pretty_storage = self.path_with_pretty_initialized(&source.path)?;
+                            break 'brk &pretty_storage.pretty;
                         }
                         // PORT NOTE: `Path::assert_pretty_is_valid` lives on the
                         // resolver-side `Path<'a>`; the logger `Path` has no
@@ -1848,12 +1892,13 @@ impl<'a> LinkerContext<'a> {
             .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
             // SAFETY: self is BundleV2.linker; container_of recovers the parent.
-            // `transpiler_for_target` only reads `bundle.browser_transpiler`.
-            let bundle = unsafe {
-                &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(self))
-            };
+            // The browser transpiler is initialized before post-processing any
+            // browser chunk (compute-chunks/template setup needs it too).
+            let bundle =
+                unsafe { &*LinkerContext::bundle_v2_ptr(core::ptr::from_ref(self).cast_mut()) };
             &bundle
-                .transpiler_for_target(Target::Browser)
+                .client_transpiler_ref()
+                .expect("browser chunk requires browser transpiler")
                 .options
                 .public_path
         } else {
@@ -1906,7 +1951,7 @@ impl<'a> LinkerContext<'a> {
         hasher.write(&chunk.output_source_map.mappings);
         hasher.write(&chunk.output_source_map.suffix);
 
-        hasher.digest()
+        Ok(hasher.digest())
     }
 
     pub fn validate_tla(
@@ -2065,7 +2110,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn should_remove_import_export_stmt(
-        &mut self,
+        &self,
         stmts: &mut StmtList,
         loc: Loc,
         namespace_ref: Ref,
@@ -2202,7 +2247,7 @@ impl<'a> LinkerContext<'a> {
     // (see "Forward-decl shims for scanImportsAndExports.rs callees" below).
 
     pub fn print_code_for_file_in_chunk_js(
-        &mut self,
+        &self,
         r: renamer::Renamer,
         alloc: &Bump,
         writer: &mut js_printer::BufferWriter,
@@ -2220,9 +2265,7 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
-        let parse_graph = unsafe { &*self.parse_graph };
+        let parse_graph = self.parse_graph();
 
         // PORT NOTE: `Options.arena` / `source_map_allocator` were removed in
         // the Rust port (printer uses global mimalloc + the explicit `bump`
@@ -2232,11 +2275,8 @@ impl<'a> LinkerContext<'a> {
             && parse_graph.input_files.items_loader()[source_index.get() as usize]
                 .is_javascript_like();
 
-        // PORT NOTE: reshaped for borrowck — `Options` borrows `ts_enums` /
-        // `line_offset_tables` / `mangled_props` from `self.graph`, but the
-        // `require_or_import_meta_for_source_callback` field below needs
-        // `&mut self`. Detach the read-only borrows via raw-pointer round-trip
-        // (graph SoA storage is never reallocated during the print step).
+        // PORT NOTE: graph SoA storage is never reallocated during the print
+        // step, so these read-only borrows are stable for the printer.
         // SAFETY: `self.graph` columns are stable heap allocations valid for
         // the duration of this call; the printer only reads from them.
         let ts_enums: &bun_ast::ast_result::TsEnumsMap =
@@ -2370,7 +2410,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         source_index: crate::IndexInt,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
@@ -2632,7 +2672,7 @@ impl<'a> LinkerContext<'a> {
 impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
     #[inline]
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {

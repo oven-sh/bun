@@ -146,7 +146,7 @@ pub fn post_process_css_chunk(
         bun_core::handle_oom(c.break_output_into_pieces(alloc, &mut j, ctx.chunks.len() as u32));
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk);
+    chunk.isolated_hash = c.generate_isolated_hash(chunk)?;
     // chunk.flags.is_executable = is_executable;
 
     if c.options.source_maps != options::SourceMapOption::None {

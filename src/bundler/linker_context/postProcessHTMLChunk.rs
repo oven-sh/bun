@@ -38,7 +38,7 @@ pub fn post_process_html_chunk(
     )); // Zig: `catch |err| bun.handleOom(err)`
 
     // PORT NOTE: reshaped for borrowck (compute hash before assigning into chunk)
-    let isolated_hash = c.generate_isolated_hash(chunk);
+    let isolated_hash = c.generate_isolated_hash(chunk)?;
     chunk.isolated_hash = isolated_hash;
 
     Ok(())

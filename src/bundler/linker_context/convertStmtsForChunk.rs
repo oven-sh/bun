@@ -40,11 +40,11 @@ use crate::ungate_support::WrapKind;
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
 pub fn convert_stmts_for_chunk(
-    c: &mut LinkerContext<'_>,
+    c: &LinkerContext<'_>,
     source_index: u32,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
-    chunk: &mut Chunk,
+    chunk: &Chunk,
     bump: &Bump,
     wrap: WrapKind,
     ast: &JSAst<'_>,

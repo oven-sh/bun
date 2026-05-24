@@ -14,9 +14,9 @@ use crate::{Chunk, CompileResult, Index};
 
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `PendingPartRange`. Writes: `chunk.compile_results_for_chunk[i]` (disjoint
-// by per-task `i`). Reads `c.graph.ast.css` / `c.options` shared. Never forms
-// `&mut LinkerContext` — `c_ptr` stays raw; the CSS printer takes
-// `&LinkerContext`. See `generate_compile_result_for_js_chunk` for the
+// by per-task `i`). Reads `c.graph.ast.css` / `c.options` through shared
+// borrows. Never forms `&mut LinkerContext` or `&mut Chunk`. See
+// `generate_compile_result_for_js_chunk` for the
 // `PendingPartRange: Send` justification.
 //
 /// # Safety

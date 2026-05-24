@@ -1462,10 +1462,12 @@ impl Default for RequireOrImportMetaCallback {
 
 /// PORTING.md §Dispatch — manual vtable. Zig's `init(comptime Context, ctx, callback)`
 /// `@ptrCast`-erased the typed callback at comptime. Rust monomorphizes the erased thunk
-/// over `T: RequireOrImportMetaSource` instead, so `callback` stays a captureless `fn`.
+/// over `T: RequireOrImportMetaSource + Sync` instead, so `callback` stays a
+/// captureless `fn` and any shared context pointer is valid to use from worker
+/// printers.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta;
@@ -1476,19 +1478,22 @@ impl RequireOrImportMetaCallback {
         (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
     }
 
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
-        fn thunk<T: RequireOrImportMetaSource>(
+    pub fn init<T: RequireOrImportMetaSource + Sync>(ctx: &T) -> Self {
+        fn thunk<T: RequireOrImportMetaSource + Sync>(
             p: *mut (),
             id: u32,
             was_unwrapped_require: bool,
         ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
+            // SAFETY: `p` was constructed from `&T` in `init` below; caller guarantees
             // `ctx` outlives this `RequireOrImportMetaCallback` (same contract as the Zig
-            // `*anyopaque` erasure), so the cast-back deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
+            // `*anyopaque` erasure), so the cast-back shared deref is valid.
+            unsafe {
+                (&*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require)
+            }
         }
         Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
+            // Type-erased to `*mut ()` for the ABI, then cast back to `*const T`
+            // inside the thunk before dereference.
             ctx: Some(NonNull::from(ctx).cast::<()>()),
             callback: thunk::<T>,
         }
@@ -2789,13 +2794,15 @@ pub mod __gated_printer {
         }
 
         /// Borrowck-reshape helper: `Renamer::name_for_symbol` returns a slice
-        /// borrowing `&mut self.renamer`, which conflicts with the immediately
-        /// following `self.print_*` call. The returned bytes always point into
-        /// either the AST arena (`Symbol::original_name: *const [u8]`) or the
-        /// `Source::contents` buffer — both are kept alive for `'a` by the
-        /// caller of `Printer::init`. Detach the borrow to a raw ptr per the
-        /// parser's ARENA convention (matching `slice_of` for AST fields).
-        /// PORT NOTE: reshaped for borrowck — TODO(refactor): thread `'bump` through Renamer.
+        /// tied to `self.renamer`, which conflicts with the immediately
+        /// following `self.print_*` call on the printer. The returned bytes
+        /// always point into either the AST arena (`Symbol::original_name:
+        /// *const [u8]`) or the `Source::contents` buffer — both are kept
+        /// alive for `'a` by the caller of `Printer::init`. Detach the borrow
+        /// to a raw ptr per the parser's ARENA convention (matching `slice_of`
+        /// for AST fields).
+        /// PORT NOTE: reshaped for borrowck — TODO(refactor): thread `'bump`
+        /// through Renamer.
         #[inline]
         fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {
             let p = std::ptr::from_ref::<[u8]>(self.renamer.name_for_symbol(ref_));
@@ -7998,13 +8005,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
     // PORT NOTE: Zig declared `renamer`/`no_op_renamer` undefined and assigned per
-    // branch. `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut
-    // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
-    // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
-    // Renamer<'static,'static>`) lets inference unify it with the no-op arm.
-    let mut no_op_renamer;
-    // PORT NOTE: hoisted out of the `minify_identifiers` arm so the
-    // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
+    // branch. Keep the concrete renamer storage outside the branch so the
+    // borrowed `Renamer` view outlives it.
+    let no_op_renamer;
     let mut minify_renamer;
     let renamer: rename::Renamer<'_, '_>;
     // PORT NOTE: Zig copied `tree.module_scope` to a stack local and re-pointed
@@ -8094,7 +8097,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let minifier = tree.char_freq.as_ref().unwrap().compile();
         minify_renamer.assign_names_by_frequency(&minifier)?;
 
-        renamer = rename::Renamer::MinifyRenamer(&mut *minify_renamer);
+        renamer = rename::Renamer::MinifyRenamer(&*minify_renamer);
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
         renamer = no_op_renamer.to_renamer();
@@ -8251,8 +8254,7 @@ pub fn print_json<W: WriterTrait>(
     // `printExpr(expr, ...)` directly without ever walking those parts. Rust
     // constructs the same empty inputs without round-tripping through `Ast`.
     let bump = bun_alloc::Arena::new();
-    let mut no_op =
-        rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
+    let no_op = rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
 
     let full_opts = Options {
         indent: opts.indent,
@@ -8478,7 +8480,7 @@ pub fn print_common_js<
     // See `print_ast`: pre-size the output buffer to avoid grow+memmove churn.
     let _ = writer.reserve(source.contents().len() as u64);
     let mut opts = opts;
-    let mut renamer = rename::NoOpRenamer::init(symbols, source);
+    let renamer = rename::NoOpRenamer::init(symbols, source);
     let source_map_builder = get_source_map_builder::<false>(
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,

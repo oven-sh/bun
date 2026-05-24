@@ -1237,6 +1237,52 @@ folded: >
           expect(() => YAML.parse("-\ta: b\n")).toThrow("Unexpected token");
         });
 
+        test("anchor on empty subsequent-mapping value", () => {
+          const r = YAML.parse("a: 1\nb: &x\nc: *x\n");
+          expect(r).toEqual({ a: 1, b: null, c: null });
+          expect(YAML.parse("a: 1\nb: !!str\nc: y\n")).toEqual({ a: 1, b: "", c: "y" });
+        });
+
+        test("tag on empty `?` key", () => {
+          expect(YAML.parse("? !!str\n: v\n")).toEqual({ "": "v" });
+          expect(YAML.parse("? !!str &k\n: *k\n")).toEqual({ "": "" });
+        });
+
+        test("anchor and tag in both orders on e-node", () => {
+          expect(YAML.parse("a: &x !!str\nb: *x\n")).toEqual({ a: "", b: "" });
+          expect(YAML.parse("a: !!str &x\nb: *x\n")).toEqual({ a: "", b: "" });
+          expect(YAML.parse("- &x !!str\n- *x\n")).toEqual(["", ""]);
+          expect(YAML.parse("- !!str &x\n- *x\n")).toEqual(["", ""]);
+        });
+
+        test("properties span lines, content/e-node decided by next-line indent", () => {
+          expect(YAML.parse("a:\n  &x\n  !!str\nb: *x\n")).toEqual({ a: "", b: "" });
+          expect(YAML.parse("a:\n  &x\n  !!str\n  c\n")).toEqual({ a: "c" });
+          expect(YAML.parse("a:\n  &x\n  b\n")).toEqual({ a: "b" });
+        });
+
+        test("tag on e-node resolves per resolve_null", () => {
+          expect(YAML.parse("a: !!null\nb: y\n")).toEqual({ a: null, b: "y" });
+          expect(YAML.parse("a: !!str\nb: y\n").a).toBe("");
+          // Unknown tag on e-scalar resolves as null.
+          expect(YAML.parse("a: !foo\nb: y\n")).toEqual({ a: null, b: "y" });
+        });
+
+        test("BLOCK-OUT vs BLOCK-IN seq-space at indent == n", () => {
+          // [201] After `:` (BLOCK-OUT) a `- ` at indent n is content; after
+          // `-` (BLOCK-IN) it's a sibling.
+          expect(YAML.parse("a:\n- x\n")).toEqual({ a: ["x"] });
+          expect(YAML.parse("-\n- x\n")).toEqual([null, "x"]);
+          expect(YAML.parse("-\n  - x\n")).toEqual([["x"]]);
+        });
+
+        test("properties on e-node in flow context (PW8X family)", () => {
+          expect(YAML.parse("[&a , *a]\n")).toEqual([null, null]);
+          expect(YAML.parse("[!!str , !!null ]\n")).toEqual(["", null]);
+          expect(YAML.parse("{? &k : v, x: *k}\n")).toEqual({ null: "v", x: null });
+          expect(YAML.parse("{&a : v}\n")).toEqual({ null: "v" });
+        });
+
         test("two anchors on a seq item: [200] collection vs first-key", () => {
           // The helper falls through on a second anchor so parse_node's
           // mapping-anchor split applies. Only valid when the content is a

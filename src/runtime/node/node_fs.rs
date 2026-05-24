@@ -3791,6 +3791,9 @@ pub mod args {
         pub length: u64,
         pub position: Option<ReadPosition>,
         pub encoding: Encoding,
+        /// True when `from_js` pinned `buffer`'s backing store for the async
+        /// path; balanced in `unprotect()` (the JS-thread release hook).
+        pub pinned: bool,
     }
     impl Default for Write {
         fn default() -> Self {
@@ -3801,12 +3804,18 @@ pub mod args {
                 length: u64::MAX,
                 position: None,
                 encoding: Encoding::Buffer,
+                pinned: false,
             }
         }
     }
     impl Unprotect for Write {
         #[inline]
         fn unprotect(&mut self) {
+            if self.pinned {
+                if let Some(buffer) = self.buffer.buffer() {
+                    buffer.buffer.unpin();
+                }
+            }
             self.buffer.unprotect();
         }
     }
@@ -3924,6 +3933,19 @@ pub mod args {
                             arguments.eat();
                         }
                     }
+                }
+            }
+            // The work-pool thread reads the backing store through the raw
+            // pointer captured above; pin it so JS cannot detach/transfer it
+            // mid-write, and re-derive the pointer after pinning (mirrors
+            // `args::Read::from_js`).
+            if arguments.will_be_async && matches!(args.buffer, StringOrBuffer::Buffer(_)) {
+                if let Some(pinned) = bv.as_pinned_arraybuffer(ctx) {
+                    args.buffer = StringOrBuffer::Buffer(Buffer {
+                        buffer: pinned,
+                        owns_buffer: false,
+                    });
+                    args.pinned = true;
                 }
             }
             Ok(args)

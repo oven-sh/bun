@@ -1524,6 +1524,7 @@ pub enum ExprFlag {
     ForbidIn,
     HasNonOptionalChainParent,
     ExprResultIsUnused,
+    IsFollowedByOf,
 }
 
 pub type ExprFlagSet = enumset::EnumSet<ExprFlag>;
@@ -1545,6 +1546,10 @@ impl ExprFlag {
     #[inline]
     pub fn expr_result_is_unused() -> ExprFlagSet {
         ExprFlag::ExprResultIsUnused.into()
+    }
+    #[inline]
+    pub fn is_followed_by_of() -> ExprFlagSet {
+        ExprFlag::IsFollowedByOf.into()
     }
 }
 
@@ -4255,7 +4260,12 @@ pub mod __gated_printer {
                 }
                 ExprData::EIdentifier(e) => {
                     let name = self.name_for_symbol(e.ref_);
-                    let wrap = self.writer.written() == self.for_of_init_start && name == b"let";
+                    // A for-of loop initializer must not start with the token "let" and
+                    // must not be the exact token sequence "async of" (e.g. the escaped
+                    // identifier in "for (\u0061sync of []) ;"), so wrap in parentheses.
+                    let wrap = self.writer.written() == self.for_of_init_start
+                        && (name == b"let"
+                            || (name == b"async" && flags.contains(ExprFlag::IsFollowedByOf)));
 
                     if wrap {
                         self.print(b"(");
@@ -5808,7 +5818,7 @@ pub mod __gated_printer {
                     self.print(b"for");
                     self.print_space();
                     self.print(b"(");
-                    self.print_for_loop_init(s.init);
+                    self.print_for_loop_init(s.init, ExprFlag::none());
                     self.print_space();
                     self.print_space_before_identifier();
                     self.print(b"in");
@@ -5828,7 +5838,7 @@ pub mod __gated_printer {
                     self.print_space();
                     self.print(b"(");
                     self.for_of_init_start = self.writer.written();
-                    self.print_for_loop_init(s.init);
+                    self.print_for_loop_init(s.init, ExprFlag::is_followed_by_of());
                     self.print_space();
                     self.print_space_before_identifier();
                     self.print(b"of");
@@ -5914,7 +5924,7 @@ pub mod __gated_printer {
                     self.print(b"(");
 
                     if let Some(init_) = &s.init {
-                        self.print_for_loop_init(*init_);
+                        self.print_for_loop_init(*init_, ExprFlag::none());
                     }
 
                     self.print(b";");
@@ -6601,13 +6611,13 @@ pub mod __gated_printer {
             self.print(b", enumerable: true, configurable: true})");
         }
 
-        pub fn print_for_loop_init(&mut self, init_st: Stmt) {
+        pub fn print_for_loop_init(&mut self, init_st: Stmt, extra_flags: ExprFlagSet) {
             match &init_st.data {
                 StmtData::SExpr(s) => {
                     self.print_expr(
                         s.value,
                         Level::Lowest,
-                        ExprFlag::ForbidIn | ExprFlag::ExprResultIsUnused,
+                        ExprFlag::ForbidIn | ExprFlag::ExprResultIsUnused | extra_flags,
                     );
                 }
                 StmtData::SLocal(s) => {

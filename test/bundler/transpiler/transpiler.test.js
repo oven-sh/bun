@@ -2052,6 +2052,29 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("await -x ** 0", "Unexpected **");
     });
 
+    it("for-of loop variable named async", () => {
+      // "\u0061sync" is the identifier `async`, which is legal as a for-of loop
+      // variable, but printing it as the raw token sequence `async of` is a
+      // syntax error, so the printer must parenthesize it.
+      expectPrinted_("for (\\u0061sync of [7]);", "for ((async) of [7])\n  ;\n");
+      expectPrinted_("for ((async) of [7]);", "for ((async) of [7])\n  ;\n");
+      expectPrinted_(
+        "async function f() { for await (\\u0061sync of [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
+
+      // The same identifier needs no parentheses when it is not directly followed by `of`
+      expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
+      expectPrinted_("for (x[\\u0061sync] of [7]);", "for (x[async] of [7])\n  ;\n");
+      expectPrinted_("for (\\u0061sync in x);", "for (async in x)\n  ;\n");
+
+      // `let` as a for-of loop variable keeps its parentheses too
+      expectPrinted_("for ((let) of [7]);", "for ((let) of [7])\n  ;\n");
+
+      // The keyword spelling is a syntax error, which is why the parentheses matter
+      expect(() => parsed("for (async of [7]);", false, false)).toThrow();
+    });
+
     it("await", () => {
       expectPrinted("await x", "await x");
       expectPrinted("await +x", "await +x");

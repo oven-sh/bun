@@ -838,6 +838,19 @@ function parseOptions(
     }
   }
 
+  // The native handshake callback only enforces certificate-chain and hostname
+  // verification when sslMode is verify-ca or verify-full. A TLS options object
+  // with an explicit `rejectUnauthorized: true` or a user-supplied CA means the
+  // caller expects the server certificate to actually be verified (matching
+  // node-postgres/mysql2; libpq likewise upgrades `require` to `verify-ca` when
+  // a root CA is configured), so upgrade the mode instead of silently
+  // discarding the verification result.
+  if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
+    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && tls.ca)) {
+      sslMode = SSLMode.verify_full;
+    }
+  }
+
   if (sslMode !== SSLMode.disable && !tls?.serverName) {
     if (hostname) {
       tls = { ...tls, serverName: hostname };

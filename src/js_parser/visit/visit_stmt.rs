@@ -52,6 +52,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts: &mut StmtList<'a>,
         stmt: &mut Stmt,
     ) -> Result<(), Error> {
+        // Statements nest arbitrarily deep (e.g. hundreds of `{` blocks), and each
+        // level stacks a `visit_stmts` + `s_*` frame, so guard here like
+        // `visit_expr_in_out` does for expressions.
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(stmt.loc);
+            return Ok(());
+        }
+
         let p = self;
         // By default any statement ends the const local prefix
         let was_after_after_const_local_prefix = p.cur_scope().is_after_const_local_prefix;

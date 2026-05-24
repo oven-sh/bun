@@ -735,8 +735,12 @@ export const linkerFlags: Flag[] = [
     // inline threshold 225 and default isel, while the per-TU build codegens
     // everything at -O3 + CodeGenOptLevel::Aggressive (threshold 275). Pass
     // ld64.lld's own options so LTO codegen matches the compile side.
+    // Cross links only: --lto-O/--lto-CGO are lld-specific, and only the
+    // darwin cross link uses lld's Mach-O port (ld64.lld). Native darwin
+    // links go through Apple's ld, which rejects unknown double-dash options,
+    // so they keep the driver's default LTO codegen level.
     flag: ["-Wl,--lto-O3", "-Wl,--lto-CGO3"],
-    when: c => c.darwin && c.lto && c.release && !c.smol,
+    when: c => c.darwin && c.crossTarget !== undefined && c.lto && c.release && !c.smol,
     desc: "LTO codegen at -O3 + aggressive isel (Darwin driver forwards no -O to ld64.lld)",
   },
   {

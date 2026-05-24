@@ -296,6 +296,91 @@ describe("certificate authority", () => {
     expect(err).toContain(`HTTPThread: could not find CA file: '${join(packageDir, "does-not-exist")}'`);
     expect(await exited).toBe(1);
   });
+
+  test("cafile from bunfig does not exist in a workspace", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.1.1",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "a", "package.json"),
+        JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+        }),
+      ),
+      write(
+        join(packageDir, "bunfig.toml"),
+        `
+      [install]
+      cache = false
+      registry = "http://localhost:${port}/"
+      cafile = "does-not-exist"`,
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "packages", "a"),
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+
+    const out = await stdout.text();
+    expect(out).not.toContain("no-deps");
+    const err = await stderr.text();
+    expect(err).toContain(
+      `HTTPThread: could not find CA file: '${join(packageDir, "packages", "a", "does-not-exist")}'`,
+    );
+    expect(await exited).toBe(1);
+  });
+
+  test("install from workspace member directory still succeeds", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "a", "package.json"),
+        JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+        }),
+      ),
+    ]);
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "packages", "a"),
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+
+    await stdout.text();
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBe(true);
+    expect(await exited).toBe(0);
+  });
+
   test("invalid cafile", async () => {
     await Promise.all([
       write(

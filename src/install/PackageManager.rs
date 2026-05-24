@@ -816,6 +816,15 @@ mod holder {
     pub(super) static INITIALIZED: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
+    // Thread that ran `allocate_package_manager()` (the main CLI thread).
+    // `deinit_caches_at_exit` runs on whichever thread calls `Global::exit`
+    // first (e.g. the HTTP thread's on_init_error path). The cached
+    // `MapEntry.json_arena` heaps are `mi_heap_new`'d on this thread and
+    // `mi_heap_destroy` from any other thread is UB, so the exit callback
+    // must no-op unless it runs here.
+    pub(super) static OWNER_THREAD: bun_core::thread_id::AtomicThreadId =
+        bun_core::thread_id::AtomicThreadId::new(bun_core::thread_id::INVALID);
+
     // Process-lifetime env storage for `init()`. `dot_env::Loader<'a>` borrows `&'a mut Map`,
     // so the pair is self-referential and cannot live in `OnceLock<T>` (which only yields `&T`).
     // Mirrors Zig's `ctx.allocator.create(dot_env::Map)` / `create(dot_env::Loader)` — owned by
@@ -1414,6 +1423,10 @@ pub(crate) fn allocate_package_manager() {
     let ptr =
         bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
     holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
+    holder::OWNER_THREAD.store(
+        bun_core::thread_id::current(),
+        core::sync::atomic::Ordering::Release,
+    );
     bun_core::add_exit_callback(deinit_caches_at_exit);
 }
 
@@ -1421,11 +1434,24 @@ extern "C" fn deinit_caches_at_exit() {
     if !holder::INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
         return;
     }
+    // This exit callback runs on whichever thread called `Global::exit` first
+    // (quick_exit/atexit run handlers on the calling thread). `deinit_caches()`
+    // drops `MapEntry.json_arena` mimalloc heaps created on the owning thread;
+    // `mi_heap_destroy` from another thread is UB (and forming `&mut
+    // PackageManager` here would alias the main thread's live borrow). The
+    // process is exiting -- skip the free and let the OS reclaim it.
+    if bun_core::thread_id::current()
+        != holder::OWNER_THREAD.load(core::sync::atomic::Ordering::Acquire)
+    {
+        return;
+    }
     let ptr = get();
     if ptr.is_null() {
         return;
     }
-    // SAFETY: `deinit_caches()` only touches main-thread-owned fields.
+    // SAFETY: the owner-thread gate above guarantees this runs on the thread
+    // that allocated the singleton and owns the cached arenas, so
+    // `deinit_caches()` only touches state owned by the current thread.
     unsafe { (*ptr).deinit_caches() };
 }
 

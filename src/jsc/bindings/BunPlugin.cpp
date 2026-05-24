@@ -397,19 +397,61 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject, bool persistent)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
+    auto& onLoad = globalObject->onLoadPlugins;
 
-    if (globalObject->onLoadPlugins.virtualModules == nullptr) {
-        globalObject->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
+    if (onLoad.virtualModules == nullptr) {
+        onLoad.virtualModules = new BunPlugin::VirtualModuleMap;
     }
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    auto* virtualModules = onLoad.virtualModules;
+
+    // Capture the displaced entry *before* overwriting so transient teardown
+    // can restore the preload / `Bun.plugin` mock this call is shadowing.
+    JSC::Strong<JSC::JSObject> displacedEntry;
+    bool displacedWasPersistent = false;
+    if (auto existing = virtualModules->get(path)) {
+        displacedEntry = JSC::Strong<JSC::JSObject> { vm, existing.get() };
+        displacedWasPersistent = onLoad.persistentMockPaths && onLoad.persistentMockPaths->contains(path);
+    }
 
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
 
     if (persistent) {
-        if (globalObject->onLoadPlugins.persistentMockPaths == nullptr) {
-            globalObject->onLoadPlugins.persistentMockPaths = new BunPlugin::PersistentMockPathSet;
+        if (onLoad.persistentMockPaths == nullptr) {
+            onLoad.persistentMockPaths = new BunPlugin::PersistentMockPathSet;
         }
-        globalObject->onLoadPlugins.persistentMockPaths->add(path);
+        onLoad.persistentMockPaths->add(path);
+        // A persistent install clears any stale transient record for this
+        // path — the persistent entry now owns the slot and teardown must
+        // not evict it.
+        if (onLoad.transientMockRecords) {
+            onLoad.transientMockRecords->remove(path);
+        }
+    } else {
+        // Transient install: track what we displaced so teardown can put it
+        // back. Demote the path from `persistentMockPaths` — the current
+        // value in `virtualModules` is the transient mock and is not itself
+        // persistent. `displacedWasPersistent` remembers that the prior
+        // owner was persistent so teardown can re-promote the path when it
+        // restores the displaced entry.
+        if (onLoad.persistentMockPaths) {
+            onLoad.persistentMockPaths->remove(path);
+        }
+        if (onLoad.transientMockRecords == nullptr) {
+            onLoad.transientMockRecords = new BunPlugin::InstalledMocksMap;
+        }
+        // If this is the *first* transient install for this path in the
+        // current test file, record displacement state. If this overwrites
+        // a previous transient install (test file mocks the same path
+        // twice), keep the original displacement + the original ESM
+        // snapshot we already took — re-snapshotting would capture the
+        // previous mock's values, not the real module's.
+        auto it = onLoad.transientMockRecords->find(path);
+        if (it == onLoad.transientMockRecords->end()) {
+            InstalledMockRecord record;
+            record.displacedEntry = std::move(displacedEntry);
+            record.displacedWasPersistent = displacedWasPersistent;
+            onLoad.transientMockRecords->set(path, std::move(record));
+        }
     }
 }
 
@@ -636,6 +678,19 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     bool removeFromESM = false;
     bool removeFromCJS = false;
 
+    // Mocks installed while `--preload` is executing persist across `bun test`
+    // per-file teardown; mocks installed by a test file are transient. We need
+    // the flag here (not only inside `addModuleMock`) so we know whether to
+    // capture the original ESM namespace values for teardown-time restore.
+    const bool persistent = Bun__VirtualMachine__isInPreload(globalObject->bunVM());
+
+    // Snapshot of the module-environment values the mock is about to overwrite.
+    // Populated only for transient mocks against already-loaded ESM modules;
+    // replayed by `BunPlugin__clearTransientModuleMocks` so re-exporters that
+    // bind through this module's environment slots revert to the real values.
+    JSC::JSModuleNamespaceObject* mockedNamespace = nullptr;
+    WTF::Vector<std::pair<JSC::Identifier, JSC::Strong<JSC::Unknown>>> esmOriginals;
+
     auto specifierIdent = JSC::Identifier::fromString(vm, specifierString->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     if (auto* entry = globalObject->moduleLoader()->registryEntry(specifierIdent)) {
@@ -658,6 +713,23 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         RETURN_IF_EXCEPTION(scope, {});
                         auto* object = exportsValue.getObject();
                         removeFromESM = false;
+                        if (!persistent) {
+                            mockedNamespace = moduleNamespaceObject;
+                        }
+
+                        auto snapshotAndOverride = [&](JSC::Identifier name, JSValue value) -> bool {
+                            if (!persistent) {
+                                auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                                JSValue original = moduleNamespaceObject->get(globalObject, name);
+                                if (scope.exception()) [[unlikely]] {
+                                    (void)scope.tryClearException();
+                                    original = jsUndefined();
+                                }
+                                esmOriginals.append({ name, JSC::Strong<JSC::Unknown> { vm, original } });
+                            }
+                            moduleNamespaceObject->overrideExportValue(globalObject, name, value);
+                            return !scope.exception();
+                        };
 
                         if (object) {
                             JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -672,14 +744,16 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                                     (void)scope.tryClearException();
                                     value = jsUndefined();
                                 }
-                                moduleNamespaceObject->overrideExportValue(globalObject, name, value);
-                                RETURN_IF_EXCEPTION(scope, {});
+                                if (!snapshotAndOverride(name, value)) {
+                                    RETURN_IF_EXCEPTION(scope, {});
+                                }
                             }
 
                         } else {
                             // if it's not an object, I guess we just set the default export?
-                            moduleNamespaceObject->overrideExportValue(globalObject, vm.propertyNames->defaultKeyword, exportsValue);
-                            RETURN_IF_EXCEPTION(scope, {});
+                            if (!snapshotAndOverride(vm.propertyNames->defaultKeyword, exportsValue)) {
+                                RETURN_IF_EXCEPTION(scope, {});
+                            }
                         }
 
                         // TODO: do we need to handle intermediate loading state here?
@@ -716,11 +790,26 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // Mocks installed during `--preload` persist across `bun test`'s per-file
-    // teardown; a mock installed while running a test file is scoped to that
-    // file (cleared by `BunPlugin__clearTransientModuleMocks`).
-    bool persistent = Bun__VirtualMachine__isInPreload(globalObject->bunVM());
     globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock, persistent);
+
+    // Attach the ESM teardown snapshot (if any) to the freshly-created
+    // transient record. `addModuleMock` already set up the record slot;
+    // filling in the namespace + originals here keeps the data-collection
+    // logic local to the overrideExportValue loop above.
+    if (!persistent && mockedNamespace) {
+        auto& onLoad = globalObject->onLoadPlugins;
+        if (onLoad.transientMockRecords) {
+            if (auto it = onLoad.transientMockRecords->find(specifier); it != onLoad.transientMockRecords->end()) {
+                // Keep the first snapshot we took — it reflects the *real*
+                // module's values. Re-mocking the same path during the same
+                // file would snapshot the prior mock's values instead.
+                if (it->value.esmOriginals.isEmpty()) {
+                    it->value.esmNamespace = JSC::Strong<JSC::JSModuleNamespaceObject> { vm, mockedNamespace };
+                    it->value.esmOriginals = std::move(esmOriginals);
+                }
+            }
+        }
+    }
 
     return JSValue::encode(jsUndefined());
 }
@@ -985,70 +1074,101 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     delete global->onLoadPlugins.persistentMockPaths;
     global->onLoadPlugins.persistentMockPaths = nullptr;
 
+    delete global->onLoadPlugins.transientMockRecords;
+    global->onLoadPlugins.transientMockRecords = nullptr;
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-/// Clears all per-test-file `mock.module(...)` registrations and evicts the
-/// module loader / require cache entries for their paths, so the next test
-/// file sees the real modules. Preload-installed mocks (paths in
-/// `persistentMockPaths`) and `Bun.plugin({ module })` registrations are
-/// preserved. Called from Rust's per-file teardown in `bun test`.
+/// Clears per-test-file `mock.module(...)` registrations:
+/// - restores the ESM module-environment values the mock overrode (so cached
+///   re-exporters that bind through the same slot see the real value again),
+/// - restores the displaced preload / `Bun.plugin({ module })` entry if the
+///   transient mock shadowed one, or removes the `virtualModules` slot
+///   entirely if there was nothing to restore,
+/// - evicts the ESM registry entry and CJS require-cache entry for fully
+///   removed mocks, so the next import re-executes the real source.
+///
+/// Persistent mocks (paths currently in `persistentMockPaths`) are left
+/// untouched. Called from Rust's per-file teardown in `bun test`.
 extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
 {
     auto& onLoad = global->onLoadPlugins;
-    if (onLoad.virtualModules == nullptr) {
+    auto* transientRecords = onLoad.transientMockRecords;
+    if (transientRecords == nullptr || transientRecords->isEmpty()) {
         return;
     }
 
-    auto& virtualModules = *onLoad.virtualModules;
-    const auto* persistent = onLoad.persistentMockPaths;
-
-    // Two-pass: collect transient paths first, then mutate the map and evict
-    // module-loader / require-map entries. `WTF::HashMap` iteration can alias
-    // with mutation and the eviction callbacks may run arbitrary JS.
-    WTF::Vector<WTF::String> transientPaths;
-    for (const auto& entry : virtualModules) {
-        if (persistent && persistent->contains(entry.key)) {
-            continue;
-        }
-        // Only clear `JSModuleMock` entries — `Bun.plugin({ module })`
-        // callbacks also live in this map and are always persistent.
-        if (!dynamicDowncast<Zig::JSModuleMock>(entry.value.get())) {
-            continue;
-        }
-        transientPaths.append(entry.key);
-    }
-
-    if (transientPaths.isEmpty()) {
-        return;
-    }
+    // Take ownership of the map so iteration doesn't alias with re-entry
+    // from any JS the restore path might invoke (overrideExportValue,
+    // requireMap::remove). A fresh empty map covers the tail case of a JS
+    // callback that itself calls mock.module() during teardown.
+    std::unique_ptr<Zig::BunPlugin::InstalledMocksMap> records { transientRecords };
+    onLoad.transientMockRecords = nullptr;
 
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* moduleLoader = global->moduleLoader();
     auto* requireMap = global->requireMap();
+    auto* virtualModules = onLoad.virtualModules;
 
-    for (const auto& path : transientPaths) {
-        virtualModules.remove(path);
+    for (auto& entry : *records) {
+        const auto& path = entry.key;
+        auto& record = entry.value;
 
-        // Drop the ESM registry entry so the next import re-executes the
-        // real source. `mock.module`'s install path mutates
-        // `JSModuleNamespaceObject::overrideExportValue`; without this
-        // eviction a sibling file that already imported the module would
-        // still see the mocked namespace after we removed the virtual-module
-        // shim.
-        auto ident = JSC::Identifier::fromString(vm, path);
-        moduleLoader->removeEntry(ident);
+        // Skip paths that were re-installed as persistent after this
+        // transient record was created. `addModuleMock(persistent=true)`
+        // already cleared the path from `transientMockRecords`, but guard
+        // again — the map could have been mutated by a re-entry.
+        if (onLoad.persistentMockPaths && onLoad.persistentMockPaths->contains(path)
+            && !record.displacedWasPersistent) {
+            continue;
+        }
 
-        // CJS path — `globalObject->requireMap()` keys by specifier string.
-        auto* pathString = JSC::jsString(vm, path);
-        requireMap->remove(global, pathString);
-
-        // Swallow any non-termination exception; this runs during
-        // test-runner teardown where the reporter has already consumed
-        // results and has no scope to surface an exception through.
+        // 1. Revert the module-environment slots we wrote into at install.
+        //    Covers transitive re-exporters that bind through the same slot.
+        if (auto* ns = record.esmNamespace.get()) {
+            for (auto& [name, strong] : record.esmOriginals) {
+                ns->overrideExportValue(global, name, strong.get());
+                if (!scope.clearExceptionExceptTermination()) {
+                    break;
+                }
+            }
+        }
         if (!scope.clearExceptionExceptTermination()) {
             break;
+        }
+
+        // 2. Restore or remove the `virtualModules` slot.
+        if (record.displacedEntry && virtualModules) {
+            virtualModules->set(path, std::move(record.displacedEntry));
+            if (record.displacedWasPersistent) {
+                if (onLoad.persistentMockPaths == nullptr) {
+                    onLoad.persistentMockPaths = new Zig::BunPlugin::PersistentMockPathSet;
+                }
+                onLoad.persistentMockPaths->add(path);
+            }
+            // A restored persistent mock should still shadow the real module
+            // — don't evict the ESM registry entry in that case. The
+            // displaced mock doesn't re-apply its `overrideExportValue`
+            // patches, but since the preload mock's values are what the
+            // ESM registry entry already held before *this* transient
+            // install (we restored them in step 1), the next import hits
+            // the shim and re-evaluates the preload factory cleanly.
+        } else {
+            if (virtualModules) {
+                virtualModules->remove(path);
+            }
+            // Evict caches only when there's no persistent replacement —
+            // otherwise the next import should go straight back to the
+            // (restored) preload mock.
+            auto ident = JSC::Identifier::fromString(vm, path);
+            moduleLoader->removeEntry(ident);
+            auto* pathString = JSC::jsString(vm, path);
+            requireMap->remove(global, pathString);
+            if (!scope.clearExceptionExceptTermination()) {
+                break;
+            }
         }
     }
 
@@ -1058,7 +1178,7 @@ extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
     // asserts `!mustDoExpensiveRelativeLookup` when `hasVirtualModules()`
     // is false (ZigGlobalObject.cpp:3393). If persistent entries still
     // exist, leave it alone: we don't know which ones need the flag.
-    if (virtualModules.isEmpty()) {
+    if (virtualModules && virtualModules->isEmpty()) {
         delete onLoad.virtualModules;
         onLoad.virtualModules = nullptr;
         onLoad.mustDoExpensiveRelativeLookup = false;

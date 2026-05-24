@@ -49,6 +49,11 @@ mod _impl {
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
         pub pending_reset: Cell<bool>,
+        /// `(level, strategy)` requested by `params()` while a write was in
+        /// flight on the threadpool. Applied on the JS thread at the start of
+        /// the next write (see `apply_pending_params`). Only ever touched from
+        /// the JS thread, so a plain `Cell` suffices.
+        pub pending_params: Cell<Option<(c_int, c_int)>>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
     }
@@ -101,6 +106,7 @@ mod _impl {
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
                 pending_reset: Cell::new(false),
+                pending_params: Cell::new(None),
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),
@@ -130,6 +136,19 @@ mod _impl {
                     ),
                 )
                 .throw());
+            }
+
+            // Re-initializing the z_stream while the worker thread is inside
+            // deflate()/inflate() would be a data race on the native state.
+            // Bun's own JS only calls init() before any write (zlib.ts), so
+            // this is only reachable by scripts poking at `_handle` directly.
+            if self.write_in_progress.get() {
+                return Err(global
+                    .err(
+                        bun_jsc::ErrorCode::INVALID_STATE,
+                        format_args!("Cannot call init() while a write is in progress"),
+                    )
+                    .throw());
             }
 
             let window_bits =
@@ -217,6 +236,20 @@ mod _impl {
             let strategy =
                 validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
 
+            // The JS layer legitimately reaches this method while a write is in
+            // flight: writable's `clearBuffer` starts the next buffered write
+            // before `afterWrite` invokes the params flush callback
+            // (writable.ts `clearBuffer` vs `afterWrite`), so the
+            // `paramsAfterFlushCallback` in zlib.ts can land here with
+            // `write_in_progress == true`. Calling `deflateParams` now would
+            // mutate the same z_stream the worker thread is traversing inside
+            // `deflate()`, so defer the request and apply it on the JS thread
+            // at the start of the next write (see `apply_pending_params`).
+            if self.write_in_progress.get() {
+                self.pending_params.set(Some((level, strategy)));
+                return Ok(JSValue::UNDEFINED);
+            }
+
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));
             if err.is_error() {
                 // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →
@@ -225,6 +258,29 @@ mod _impl {
                 CompressionStream::<Self>::emit_error(self, global, frame.this(), err);
             }
             Ok(JSValue::UNDEFINED)
+        }
+
+        /// Apply a `params()` request that was deferred because a write was in
+        /// flight when it arrived.
+        ///
+        /// Only called from `CompressionStream::write`/`write_sync` on the JS
+        /// thread, after the `write_in_progress` guard has passed and
+        /// `set_buffers` has bound the new output buffer — so no other
+        /// `&mut Context` exists, and any block flushed by `deflateParams`'s
+        /// internal `deflate(Z_BLOCK)` lands in (and is accounted against) the
+        /// new write's `avail_out`.
+        ///
+        /// The result is discarded rather than `emit_error`'d: `Z_BUF_ERROR`
+        /// already means "params silently not applied" on the immediate path,
+        /// `Z_STREAM_ERROR` is only reachable when a caller writes after the
+        /// stream finished (the write itself reports that), and `do_work()`
+        /// overwrites `Context.err` before `check_error` reads it, so a
+        /// discarded failure cannot leak into the write's error reporting.
+        pub(crate) fn apply_pending_params(&self) {
+            let Some((level, strategy)) = self.pending_params.take() else {
+                return;
+            };
+            let _ = self.stream.with_mut(|s| s.set_params(level, strategy));
         }
 
         /// RefCount destroy callback. Invoked when `ref_count` reaches zero.

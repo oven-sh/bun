@@ -736,3 +736,80 @@ describe("dictionary buffer lifetime", () => {
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
   });
 });
+
+describe("deflate params()", () => {
+  // `write(a); params(...); write(b); end()` queues chunk b behind the
+  // Z_SYNC_FLUSH that params() issues, so the writable machinery dequeues
+  // chunk b (setting write_in_progress) before the params flush callback
+  // reaches the native handle. The native params() call therefore arrives
+  // while a write is in flight and must be deferred, not raced or errored.
+  it("params() with a write queued behind the flush does not error and produces valid output", async () => {
+    const a = Buffer.alloc(4096, "a");
+    const b = Buffer.alloc(4096, "b");
+
+    const d = zlib.createDeflate({ level: 9 });
+    const errors = [];
+    const chunks = [];
+    let paramsCallbackFired = false;
+
+    d.on("error", err => errors.push(err));
+    d.on("data", c => chunks.push(c));
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers();
+    d.on("end", onEnd);
+
+    d.write(a);
+    d.params(0, zlib.constants.Z_DEFAULT_STRATEGY, () => {
+      paramsCallbackFired = true;
+    });
+    d.write(b);
+    d.end();
+
+    await ended;
+
+    expect(errors).toEqual([]);
+    expect(paramsCallbackFired).toBe(true);
+    expect(zlib.inflateSync(Buffer.concat(chunks))).toEqual(Buffer.concat([a, b]));
+  });
+
+  // Same shape with a tiny chunkSize so chunk b's Z_FINISH write is reissued
+  // by processCallback (availOutAfter === 0). That reissued write() applies
+  // the deferred params against a stream that may already be in FINISH_STATE,
+  // exercising the discard-on-error branch of the deferred apply.
+  it("params() with a multi-pass finish write does not error and produces valid output", async () => {
+    const a = Buffer.alloc(4096, "a");
+    // Incompressible (xorshift32) so the Z_FINISH write needs many output
+    // chunks regardless of which compression level ends up applying.
+    const b = Buffer.alloc(8192);
+    let x = 0x12345678;
+    for (let i = 0; i < b.length; i++) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      x |= 0;
+      b[i] = x & 0xff;
+    }
+
+    const d = zlib.createDeflate({ level: 9, chunkSize: 64 });
+    const errors = [];
+    const chunks = [];
+    let paramsCallbackFired = false;
+
+    d.on("error", err => errors.push(err));
+    d.on("data", c => chunks.push(c));
+    const { promise: ended, resolve: onEnd } = Promise.withResolvers();
+    d.on("end", onEnd);
+
+    d.write(a);
+    d.params(0, zlib.constants.Z_DEFAULT_STRATEGY, () => {
+      paramsCallbackFired = true;
+    });
+    d.write(b);
+    d.end();
+
+    await ended;
+
+    expect(errors).toEqual([]);
+    expect(paramsCallbackFired).toBe(true);
+    expect(zlib.inflateSync(Buffer.concat(chunks))).toEqual(Buffer.concat([a, b]));
+  });
+});

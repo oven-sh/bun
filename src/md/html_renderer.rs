@@ -20,7 +20,6 @@ pub(crate) struct HtmlRenderer<'src> {
     // RendererImpl trait does not entangle SpanDetail's lifetime with 'src.
     pub saved_img_title: Box<[u8]>,
     pub tag_filter: bool,
-    pub tag_filter_raw_depth: u32,
     pub autolink_headings: bool,
     pub heading_buf: Vec<u8>,
     pub heading_tracker: helpers::HeadingIdTracker,
@@ -67,7 +66,6 @@ impl<'src> HtmlRenderer<'src> {
             image_nesting_level: 0,
             saved_img_title: Box::default(),
             tag_filter: render_opts.tag_filter,
-            tag_filter_raw_depth: 0,
             autolink_headings: render_opts.autolink_headings,
             heading_buf: Vec::new(),
             heading_tracker: helpers::HeadingIdTracker::init(render_opts.heading_ids),
@@ -401,8 +399,6 @@ impl<'src> HtmlRenderer<'src> {
             }
             TextType::Html => {
                 if self.tag_filter {
-                    // Track entry/exit of disallowed tag raw zones
-                    self.update_tag_filter_raw_depth(content);
                     self.write_html_with_tag_filter(content);
                 } else {
                     self.write(content);
@@ -425,14 +421,11 @@ impl<'src> HtmlRenderer<'src> {
                     self.write_html_escaped(&content[start..]);
                 }
             }
-            _ => {
-                // When inside a tag-filtered disallowed tag, emit text as raw
-                if self.tag_filter && self.tag_filter_raw_depth > 0 {
-                    self.write(content);
-                } else {
-                    self.write_html_escaped(content);
-                }
-            }
+            // Text that is not part of a raw-HTML chunk must always be
+            // entity-escaped, even between filtered disallowed tags --
+            // otherwise a backslash-escaped `\<` could reassemble a live
+            // `<script>` in the output.
+            _ => self.write_html_escaped(content),
         }
     }
 
@@ -461,29 +454,6 @@ impl<'src> HtmlRenderer<'src> {
             self.heading_buf.push(b);
         } else {
             self.out.write_byte(b);
-        }
-    }
-
-    /// Track whether we're inside a disallowed tag's raw zone.
-    /// When an opening disallowed tag is seen, increment depth.
-    /// When a closing disallowed tag is seen, decrement depth.
-    fn update_tag_filter_raw_depth(&mut self, content: &[u8]) {
-        if content.len() < 2 || content[0] != b'<' {
-            return;
-        }
-        if content[1] == b'/' {
-            // Closing tag
-            if is_disallowed_tag(content) && self.tag_filter_raw_depth > 0 {
-                self.tag_filter_raw_depth -= 1;
-            }
-        } else {
-            // Opening tag (not self-closing)
-            if is_disallowed_tag(content) {
-                // Check if NOT self-closing (doesn't end with "/>")
-                if content[content.len() - 2] != b'/' || content[content.len() - 1] != b'>' {
-                    self.tag_filter_raw_depth += 1;
-                }
-            }
         }
     }
 

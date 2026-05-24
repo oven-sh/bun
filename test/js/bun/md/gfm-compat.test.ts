@@ -421,8 +421,22 @@ describe("disallowed raw HTML (tagfilter)", () => {
 
   test("tagfilter in inline context", () => {
     const md = `hello <script>alert("xss")</script> world`;
-    const expected = `<p>hello &lt;script>alert("xss")&lt;/script> world</p>`;
+    const expected = `<p>hello &lt;script>alert(&quot;xss&quot;)&lt;/script> world</p>`;
     expect(renderGFM(md).trim()).toBe(expected);
+  });
+
+  test("backslash-escaped angle brackets cannot rebuild a filtered tag", () => {
+    const md = `a <script>\\<script>alert(document.cookie)\\</script></script>`;
+    const out = renderGFM(md);
+    expect(out).not.toContain("<script>");
+    expect(out).toContain("&lt;script>");
+  });
+
+  test("text after a single-line disallowed HTML block stays escaped", () => {
+    const md = `<script>x</script>\n\nafter <b>\\<img src=x onerror=alert(1)></b>`;
+    const out = renderGFM(md);
+    expect(out).not.toContain("<img");
+    expect(out).toContain("&lt;img");
   });
 
   test("self-closing filtered tag", () => {

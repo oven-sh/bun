@@ -54,11 +54,7 @@ fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue>
     }
 }
 
-fn expr_to_js(
-    expr: Expr,
-    global: &JSGlobalObject,
-    stack_check: &StackCheck,
-) -> JsResult<JSValue> {
+fn expr_to_js(expr: Expr, global: &JSGlobalObject, stack_check: &StackCheck) -> JsResult<JSValue> {
     // Match `YAMLObject::ParserCtx::to_js` — the TOML parser bounds admitted
     // depth via its own `StackCheck`, but this walker starts from the same
     // stack position after all parser frames unwind, so a separately guarded

@@ -1454,6 +1454,18 @@ impl JSTranspiler {
                 "string or Uint8Array",
             ));
         };
+        // The work-pool thread parses `code` while JS keeps running; `protect()`
+        // prevents GC but not detachment (`ArrayBuffer.prototype.transfer`,
+        // `postMessage` transfer lists), which would free the backing store
+        // mid-parse. Copy array-buffer-backed input to an owned slice instead
+        // of holding a borrowed view of the JS heap across the thread hop.
+        let mut code = code;
+        if let StringOrBuffer::Buffer(buffer) = &code {
+            let bytes = buffer.slice().to_vec();
+            global.vm().report_extra_memory(bytes.len());
+            buffer.buffer.value.unprotect();
+            code = StringOrBuffer::EncodedSlice(bun_core::ZigStringSlice::init_owned(bytes));
+        }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
         // (is_async=true) already protected; adopt into a `ThreadSafe` so any
         // early-return drop unprotects. `TransformTask::create` takes the guard.

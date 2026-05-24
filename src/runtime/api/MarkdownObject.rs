@@ -1,7 +1,7 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use bun_core::StackCheck;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
+use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
 // PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
@@ -30,6 +30,34 @@ fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
         bun_jsc::JsError::Thrown => ParserError::JSError,
         bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
         bun_jsc::JsError::Terminated => ParserError::JSTerminated,
+    }
+}
+
+/// The parser borrows a TypedArray input's backing store while render
+/// callbacks can run user JS; pin it so it cannot be detached, and unpin when
+/// the render returns.
+struct PinnedView(ArrayBuffer);
+
+impl PinnedView {
+    fn pin(global: &JSGlobalObject, buffer: &StringOrBuffer) -> JsResult<Option<Self>> {
+        let Some(b) = buffer.buffer() else {
+            return Ok(None);
+        };
+        match b.buffer.value.as_pinned_arraybuffer(global) {
+            Some(pinned) => Ok(Some(Self(pinned))),
+            None => Err(global.throw_out_of_memory()),
+        }
+    }
+
+    #[inline]
+    fn slice(&self) -> &[u8] {
+        self.0.byte_slice()
+    }
+}
+
+impl Drop for PinnedView {
+    fn drop(&mut self) {
+        self.0.unpin();
     }
 }
 
@@ -64,15 +92,10 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    // Re-entrant JS (theme getters) can detach or resize the ArrayBuffer
-    // backing a TypedArray input before the parse runs over it; copy
-    // buffer-backed inputs into a runtime-owned allocation first.
-    let owned_input: Vec<u8>;
-    let input: &[u8] = if buffer.buffer().is_some() {
-        owned_input = buffer.slice().to_vec();
-        &owned_input
-    } else {
-        buffer.slice()
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
     };
 
     let mut theme = md::AnsiTheme {
@@ -143,15 +166,10 @@ pub(crate) fn render_to_html(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    // Re-entrant JS (option getters) can detach or resize the ArrayBuffer
-    // backing a TypedArray input before the parse runs over it; copy
-    // buffer-backed inputs into a runtime-owned allocation first.
-    let owned_input: Vec<u8>;
-    let input: &[u8] = if buffer.buffer().is_some() {
-        owned_input = buffer.slice().to_vec();
-        &owned_input
-    } else {
-        buffer.slice()
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
     };
 
     let options = parse_options(global_this, opts_value)?;
@@ -260,16 +278,10 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    // Re-entrant JS (option getters and the render callbacks invoked for every
-    // node) can detach or resize the ArrayBuffer backing a TypedArray input
-    // while the parser still holds a raw slice into it; copy buffer-backed
-    // inputs into a runtime-owned allocation first.
-    let owned_input: Vec<u8>;
-    let input: &[u8] = if buffer.buffer().is_some() {
-        owned_input = buffer.slice().to_vec();
-        &owned_input
-    } else {
-        buffer.slice()
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
     };
 
     // Parse parser options from 3rd argument
@@ -370,16 +382,10 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    // Re-entrant JS (option getters, component getters, element construction)
-    // can detach or resize the ArrayBuffer backing a TypedArray input while
-    // the parser still holds a raw slice into it; copy buffer-backed inputs
-    // into a runtime-owned allocation first.
-    let owned_input: Vec<u8>;
-    let input: &[u8] = if buffer.buffer().is_some() {
-        owned_input = buffer.slice().to_vec();
-        &owned_input
-    } else {
-        buffer.slice()
+    let pinned = PinnedView::pin(global_this, &buffer)?;
+    let input: &[u8] = match &pinned {
+        Some(p) => p.slice(),
+        None => buffer.slice(),
     };
 
     // Parse parser options from 3rd argument

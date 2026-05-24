@@ -212,82 +212,21 @@ async function request(
   }
 
   // undici does not follow redirects unless `maxRedirections` is a positive
-  // number, and must never follow more than that many. fetch() only exposes a
-  // follow/manual switch (with its own internal hop limit), so enforce the
-  // caller's cap by following redirects manually.
-  const maxRedirects = maxRedirections > 0 ? maxRedirections : 0;
-
-  let resp;
-  let currentURL = url;
-  let currentMethod = method;
-  let currentBody = inputBody;
-  let currentHeaders = inputHeaders || kEmptyObject;
-  let redirects = 0;
-
-  while (true) {
-    resp = await fetch(currentURL, {
-      signal,
-      mode: "cors",
-      method: currentMethod,
-      headers: currentHeaders,
-      body: currentBody,
-      redirect: "manual",
-      keepalive: !reset,
-    });
-
-    const status = resp.status;
-    if (status !== 301 && status !== 302 && status !== 303 && status !== 307 && status !== 308) break;
-    if (redirects >= maxRedirects) break;
-
-    const location = resp.headers.get("location");
-    if (location === null) break;
-
-    const previousURL = new URL(resp.url || currentURL);
-    const nextURL = new URL(location, previousURL);
-    if (nextURL.protocol !== "http:" && nextURL.protocol !== "https:") break;
-
-    // Release the intermediate redirect body so the connection can be reused
-    // instead of lingering until GC.
-    try {
-      await resp.body?.cancel();
-    } catch {}
-
-    redirects++;
-
-    // https://fetch.spec.whatwg.org/#http-redirect-fetch
-    if (
-      ((status === 301 || status === 302) && currentMethod === "POST") ||
-      (status === 303 && currentMethod !== "GET" && currentMethod !== "HEAD")
-    ) {
-      currentMethod = "GET";
-      currentBody = null;
-      // The method changed, so drop the request-body headers
-      // (https://fetch.spec.whatwg.org/#request-body-header-name, plus the
-      // framing headers undici's RedirectHandler also removes).
-      const stripped = new Headers(currentHeaders);
-      stripped.delete("content-type");
-      stripped.delete("content-encoding");
-      stripped.delete("content-language");
-      stripped.delete("content-location");
-      stripped.delete("content-length");
-      stripped.delete("transfer-encoding");
-      currentHeaders = stripped;
-    }
-
-    // Never forward credentials to a different origin.
-    if (nextURL.origin !== previousURL.origin) {
-      const sanitized = new Headers(currentHeaders);
-      sanitized.delete("authorization");
-      sanitized.delete("proxy-authorization");
-      sanitized.delete("cookie");
-      sanitized.delete("host");
-      currentHeaders = sanitized;
-    }
-
-    currentURL = nextURL;
-  }
+  // number, and never follows more than that many.
+  const followRedirects = maxRedirections != null && maxRedirections > 0;
 
   /** @type {Response} */
+  const resp = await fetch(url, {
+    signal,
+    mode: "cors",
+    method,
+    headers: inputHeaders || kEmptyObject,
+    body: inputBody,
+    redirect: followRedirects ? "follow" : "manual",
+    maxRedirects: followRedirects ? maxRedirections : undefined,
+    keepalive: !reset,
+  });
+
   const { status: statusCode, headers, trailers } = resp;
 
   // Throw if received 4xx or 5xx response indicating HTTP error

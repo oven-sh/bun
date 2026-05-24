@@ -183,12 +183,13 @@ describe("undici.request maxRedirections", () => {
       const origin = `http://localhost:${server.port}`;
 
       // The caller's cap must be enforced: with maxRedirections: 1 only one
-      // redirect may be followed, so the client stops at /redirect/1 and
-      // surfaces its 302 instead of chasing the chain to the end.
+      // redirect may be followed, so the client stops at /redirect/1 instead
+      // of chasing the chain to the end.
       hits.length = 0;
-      const capped = await request(`${origin}/redirect/0`, { maxRedirections: 1 });
+      await expect(request(`${origin}/redirect/0`, { maxRedirections: 1 })).rejects.toThrow(
+        "redirected too many times",
+      );
       expect(hits).toEqual(["/redirect/0", "/redirect/1"]);
-      expect(capped.statusCode).toBe(302);
 
       // A cap large enough for the whole chain still reaches the final response.
       hits.length = 0;

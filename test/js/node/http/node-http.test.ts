@@ -887,6 +887,33 @@ describe("node:http", () => {
 
       await promise;
     });
+
+    // Node's lib/internal/tls/secure-context.js iterates pfx with
+    // ArrayPrototypeForEach, so an empty array is a silent no-op. Bun used to
+    // reject any truthy `pfx`, which broke ~20 Playwright client-cert tests
+    // because Playwright's convertClientCertificatesToTLSOptions always passes
+    // `pfx: []` even when no PFX is in use.
+    it("accepts an empty pfx array", () => {
+      const req = https.request({ hostname: "127.0.0.1", port: 1, pfx: [] });
+      // Swallow the connection error so the test stays clean — we're only
+      // checking that constructing the request did not throw synchronously.
+      req.on("error", () => {});
+      req.destroy();
+    });
+
+    it("still rejects non-empty pfx values", () => {
+      // Real PFX content is not yet implemented, so non-empty inputs must keep
+      // throwing the same error until the larger feature lands.
+      expect(() => https.request({ hostname: "127.0.0.1", port: 1, pfx: "anything" })).toThrow("pfx is not supported");
+
+      expect(() => https.request({ hostname: "127.0.0.1", port: 1, pfx: Buffer.from("anything") })).toThrow(
+        "pfx is not supported",
+      );
+
+      expect(() => https.request({ hostname: "127.0.0.1", port: 1, pfx: [Buffer.from("anything")] })).toThrow(
+        "pfx is not supported",
+      );
+    });
   });
 
   describe("signal", () => {

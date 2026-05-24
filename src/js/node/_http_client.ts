@@ -781,7 +781,10 @@ function ClientRequest(input, options, cb) {
   }
   this.joinDuplicateHeaders = joinDuplicateHeaders;
 
-  if (options.pfx) {
+  // Match Node.js behavior in lib/internal/tls/secure-context.js: an empty
+  // pfx array is iterated zero times and silently accepted. We don't yet
+  // support real PFX content, so anything non-empty still throws.
+  if (options.pfx != null && !(Array.isArray(options.pfx) && options.pfx.length === 0)) {
     throw new Error("pfx is not supported");
   }
 

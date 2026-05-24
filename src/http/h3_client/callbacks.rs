@@ -17,6 +17,7 @@ use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
+use crate::h2_client::dispatch::{is_malformed_response_field, is_malformed_response_value};
 use crate::h3_client as H3;
 use bun_picohttp as picohttp;
 
@@ -224,6 +225,19 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             }
             i += 1;
             continue;
+        }
+        // Same response-field validation as the HTTP/2 path
+        // (`h2_client::dispatch`): reject uppercase / connection-specific
+        // names and any value containing NUL/CR/LF. QPACK is length-prefixed,
+        // so these octets would otherwise pass through verbatim and enable
+        // header injection when values are forwarded downstream (RFC 9114
+        // §4.1.2, §4.2). Trailers (status_code already set) are discarded
+        // without delivery, so they skip the check like the H2 path does.
+        if stream.status_code == 0
+            && (is_malformed_response_field(name) || is_malformed_response_value(value))
+        {
+            session.fail(stream, err!(HTTP3ProtocolError));
+            return;
         }
         // PERF(port): was appendAssumeCapacity — Vec::push amortizes.
         stream

@@ -74,19 +74,10 @@ pub const MAX_DEPTH: usize = (MAX_PATH_BYTES / b"node_modules".len()) + 1;
 
 pub type DepthBuf = [Id; MAX_DEPTH];
 
-/// Zig `var depth_buf: Tree.DepthBuf = undefined;` — write-only scratch buffer
-/// for [`relative_path_and_depth`]. Every slot is written before it is read
-/// (index 0 unconditionally, indices `1..depth_buf_len` in the parent-walk
-/// loop), so leaving the ~1.4 KB array uninitialised matches the spec and
-/// avoids a `memset` per tree in the `--frozen-lockfile` no-change path.
-/// Same shape/contract as [`bun_core::PathBuffer::uninit`].
+/// Zero-initialized scratch buffer for [`relative_path_and_depth`].
 #[inline]
-#[allow(invalid_value, clippy::uninit_assumed_init)]
 pub fn depth_buf_uninit() -> DepthBuf {
-    // SAFETY: `DepthBuf` is `[u32; N]`; every bit pattern is a valid `u32`.
-    // Callers treat this as a write-only scratch buffer — no element is read
-    // before being assigned by `relative_path_and_depth`.
-    unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    [0; MAX_DEPTH]
 }
 
 impl Tree {
@@ -236,7 +227,8 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             dependencies,
             string_bytes,
             path_buf: PathBuffer::uninit(),
-            // Zig: `depth_stack: DepthBuf = undefined` (Tree.zig:94)
+            // Zig used undefined storage here; Rust zero-initializes this buffer
+            // so the safe constructor returns a valid `DepthBuf`.
             depth_stack: depth_buf_uninit(),
         };
         if PATH_STYLE == IteratorPathStyle::NodeModules {

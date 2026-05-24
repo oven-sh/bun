@@ -97,9 +97,30 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     // or merge with an existing header.
     String trimStorage;
     const String& normalizedValue = trimHTTPSpaceIfNeeded(value, trimStorage);
+    String combinedTemp;
+    const String* valueToSet = &normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {
-        auto canWriteResult = canWriteHeader(headerName, normalizedValue, normalizedValue, guard);
+        auto index = headers.indexOf(headerName);
+
+        String existingPrimary;
+        if (headerName != HTTPHeaderName::SetCookie) {
+            if (index.isValid()) {
+                // Capture the existing primary BEFORE building the joined
+                // replacement — the wire-write side-channel needs it as the
+                // first individual value when this append is the 2nd for this
+                // name.
+                existingPrimary = headers.getIndex(index);
+                if (headerName == HTTPHeaderName::Cookie) {
+                    combinedTemp = makeString(existingPrimary, "; "_s, normalizedValue);
+                } else {
+                    combinedTemp = makeString(existingPrimary, ", "_s, normalizedValue);
+                }
+                valueToSet = &combinedTemp;
+            }
+        }
+
+        auto canWriteResult = canWriteHeader(headerName, normalizedValue, *valueToSet, guard);
 
         if (canWriteResult.hasException())
             return canWriteResult.releaseException();
@@ -107,48 +128,70 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
             return {};
 
         if (headerName == HTTPHeaderName::SetCookie) {
-            // `Set-Cookie` has a dedicated multi-value vector — preserves each
-            // value as a separate entry for the wire.
             headers.add(headerName, normalizedValue);
             return {};
         }
 
-        if (headerName == HTTPHeaderName::Cookie) {
-            // RFC 6265 §5.4 requires all cookies in a single `Cookie` request
-            // header combined with `"; "`, not `", "` — keep the existing
-            // combined-value behavior for this one name.
-            auto index = headers.indexOf(headerName);
-            if (index.isValid()) {
-                auto combined = makeString(headers.getIndex(index), "; "_s, normalizedValue);
-                headers.setIndex(index, combined);
-            } else {
-                headers.set(headerName, normalizedValue);
-            }
-            return {};
-        }
+        // Primary holds the joined value. This preserves the `fastGet`
+        // contract — a `ZigString` returned across the FFI borrows the
+        // primary `StringImpl` directly, so the primary MUST be an owned
+        // reference into `m_commonHeaders` / `m_uncommonHeaders` (see
+        // `WebCore__FetchHeaders__fastGet_`), not a freshly-built temporary.
+        if (!headers.setIndex(index, *valueToSet))
+            headers.set(headerName, *valueToSet);
 
-        // Any other known header: keep duplicates as separate entries so they
-        // survive to the wire as separate header lines (RFC 7230 §3.2.2).
-        // `headers.get()` still joins them with `", "` for WHATWG
-        // `Headers.get()` / Node `getHeader()` callers.
-        if (headers.contains(headerName))
+        // Side-channel the individual values for the wire-write path so
+        // multi-value headers (e.g. repeated `X-Multi`) produce one wire line
+        // per value (RFC 7230 §3.2.2) instead of a single joined line.
+        // `Cookie` is a combine-with-`"; "` header (RFC 6265 §5.4), not a
+        // list header — keep it as a joined primary only.
+        if (headerName != HTTPHeaderName::Cookie && index.isValid()) {
+            // Seed the side-channel with the original primary the first time
+            // a duplicate arrives for this name, then push this append's
+            // value. Subsequent appends just push the new value.
+            bool alreadySeeded = false;
+            for (auto& extra : headers.extraCommonHeaders()) {
+                if (extra.key == headerName) {
+                    alreadySeeded = true;
+                    break;
+                }
+            }
+            if (!alreadySeeded)
+                headers.appendExtra(headerName, existingPrimary);
             headers.appendExtra(headerName, normalizedValue);
-        else
-            headers.set(headerName, normalizedValue);
+        }
 
         return {};
     }
 
-    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, guard);
+    auto index = headers.indexOf(name);
+    String existingPrimary;
+    if (index.isValid()) {
+        existingPrimary = headers.getIndex(index);
+        combinedTemp = makeString(existingPrimary, ", "_s, normalizedValue);
+        valueToSet = &combinedTemp;
+    }
+    auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
 
-    if (headers.contains(StringView(name)))
+    if (!headers.setIndex(index, *valueToSet))
+        headers.set(name, *valueToSet);
+
+    if (index.isValid()) {
+        bool alreadySeeded = false;
+        for (auto& extra : headers.extraUncommonHeaders()) {
+            if (equalIgnoringASCIICase(extra.key, name)) {
+                alreadySeeded = true;
+                break;
+            }
+        }
+        if (!alreadySeeded)
+            headers.appendExtra(name, existingPrimary);
         headers.appendExtra(name, normalizedValue);
-    else
-        headers.set(name, normalizedValue);
+    }
 
     // if (guard == FetchHeaders::Guard::RequestNoCors)
     //     removePrivilegedNoCORSRequestHeaders(headers);
@@ -229,20 +272,16 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
         return {};
     }
 
+    // Non-empty target path: iterate the source's primaries and route each
+    // through `appendToHeaderMap`, which preserves WHATWG `Headers.append`
+    // semantics against whatever is already in `m_headers`. The iterator
+    // yields one entry per primary slot, so the source's joined primary is
+    // re-appended (correct WHATWG behavior — two clones of the same source
+    // merge into one joined value). Current Bun callers only hit this branch
+    // via `FetchHeaders::clone` / `cloneThis`, both of which always call with
+    // an empty target and take the fast path above.
     for (auto& header : otherHeaders.m_headers) {
         auto result = appendToHeaderMap(header, m_headers, m_guard);
-        if (result.hasException())
-            return result.releaseException();
-    }
-    // The iterator above yields one entry per primary vector slot; carry the
-    // remaining multi-value duplicates across so they survive the copy.
-    for (auto& extra : otherHeaders.m_headers.extraCommonHeaders()) {
-        auto result = appendToHeaderMap(httpHeaderNameString(extra.key).toString(), extra.value, m_headers, m_guard);
-        if (result.hasException())
-            return result.releaseException();
-    }
-    for (auto& extra : otherHeaders.m_headers.extraUncommonHeaders()) {
-        auto result = appendToHeaderMap(extra.key, extra.value, m_headers, m_guard);
         if (result.hasException())
             return result.releaseException();
     }

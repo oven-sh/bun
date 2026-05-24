@@ -107,34 +107,14 @@ String HTTPHeaderMap::getUncommonHeader(const StringView name) const
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
     });
-    if (index == notFound)
-        return String();
-
-    // Fast path: no extra duplicate values for this name. Avoid the
-    // StringBuilder setup and the second pass through `m_extraUncommonHeaders`.
-    const String& primary = m_uncommonHeaders[index].value;
-    if (m_extraUncommonHeaders.isEmpty())
-        return primary;
-
-    bool hasExtras = false;
-    for (auto& extra : m_extraUncommonHeaders) {
-        if (equalIgnoringASCIICase(extra.key, name)) {
-            hasExtras = true;
-            break;
-        }
-    }
-    if (!hasExtras)
-        return primary;
-
-    StringBuilder builder;
-    builder.append(primary);
-    for (auto& extra : m_extraUncommonHeaders) {
-        if (equalIgnoringASCIICase(extra.key, name)) {
-            builder.append(", "_s);
-            builder.append(extra.value);
-        }
-    }
-    return builder.toString();
+    // The primary slot already holds the `", "`-joined value for multi-value
+    // headers (see `appendToHeaderMap` in `FetchHeaders.cpp`); the side-channel
+    // `m_extraUncommonHeaders` only carries individual values for the
+    // wire-write path, so no additional join is needed here. Keeping this a
+    // direct map-owned reference is load-bearing for `fastGet` across the FFI
+    // (`WebCore__FetchHeaders__fastGet_` hands back a ZigString that borrows
+    // the returned `String`'s `StringImpl`).
+    return index != notFound ? m_uncommonHeaders[index].value : String();
 }
 
 #if USE(CF)
@@ -309,32 +289,9 @@ String HTTPHeaderMap::get(HTTPHeaderName name) const
     auto index = m_commonHeaders.findIf([&](auto& header) {
         return header.key == name;
     });
-    if (index == notFound)
-        return String();
-
-    const String& primary = m_commonHeaders[index].value;
-    if (m_extraCommonHeaders.isEmpty())
-        return primary;
-
-    bool hasExtras = false;
-    for (auto& extra : m_extraCommonHeaders) {
-        if (extra.key == name) {
-            hasExtras = true;
-            break;
-        }
-    }
-    if (!hasExtras)
-        return primary;
-
-    StringBuilder builder;
-    builder.append(primary);
-    for (auto& extra : m_extraCommonHeaders) {
-        if (extra.key == name) {
-            builder.append(", "_s);
-            builder.append(extra.value);
-        }
-    }
-    return builder.toString();
+    // The primary already holds the `", "`-joined value for multi-value
+    // headers — see `getUncommonHeader` for the full reasoning.
+    return index != notFound ? m_commonHeaders[index].value : String();
 }
 
 HTTPHeaderMap::HeaderIndex HTTPHeaderMap::indexOf(HTTPHeaderName name) const

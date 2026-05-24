@@ -678,10 +678,10 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& vec = internal.commonHeaders();
         for (const auto& it : vec) {
             const auto& name = it.key;
-            // `internal.get(name)` joins any extra duplicate values for this
-            // header with `", "` so the object form reflects every occurrence
-            // rather than only the first-stored value.
-            String value = internal.get(name);
+            // The primary already holds the `", "`-joined string for
+            // multi-value headers (see `appendToHeaderMap`), so the `value`
+            // field reflects every occurrence without a second pass.
+            const auto& value = it.value;
             obj->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(name)), jsString(vm, value), 0);
         }
     }
@@ -709,9 +709,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& vec = internal.uncommonHeaders();
         for (const auto& it : vec) {
             const auto& name = it.key;
-            // See the `commonHeaders` branch above for why we route through
-            // `get(name)` rather than using `it.value` directly.
-            String value = internal.get(StringView(name));
+            const auto& value = it.value;
             obj->putDirectMayBeIndex(lexicalGlobalObject, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value));
         }
     }

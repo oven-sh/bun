@@ -45,14 +45,20 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     uint32_t size = std::min(impl.sizeAfterJoiningSetCookieHeader(), static_cast<uint32_t>(JSFinalObject::maxInlineCapacity));
-    JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, impl.size() * 2);
+    auto& internal = impl.internalHeaders();
+    const auto& extraCommon = internal.extraCommonHeaders();
+    const auto& extraUncommon = internal.extraUncommonHeaders();
+    bool hasCommonExtras = !extraCommon.isEmpty();
+    bool hasUncommonExtras = !extraUncommon.isEmpty();
+    // `impl.size()` counts only primary slots; extras each contribute one more
+    // `[name, value]` pair to the flat `rawHeaders` array.
+    JSC::JSArray* array = constructEmptyArray(globalObject, nullptr, (impl.size() + extraCommon.size() + extraUncommon.size()) * 2);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, prototype, size);
     RETURN_IF_EXCEPTION(scope, {});
 
     unsigned arrayI = 0;
 
-    auto& internal = impl.internalHeaders();
     {
         auto& vec = internal.commonHeaders();
         for (const auto& it : vec) {
@@ -60,7 +66,24 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
             const auto& value = it.value;
             const auto impl = WTF::httpHeaderNameStringImpl(name);
             JSString* jsValue = jsString(vm, value);
+            // `obj` always carries the joined primary — matches Node's
+            // `req.headers[name]` behavior for list headers.
             obj->putDirect(vm, Identifier::fromString(vm, impl), jsValue, 0);
+
+            // Skip the joined primary in `rawHeaders` if the side-channel
+            // will emit each individual value below.
+            if (hasCommonExtras) {
+                bool hasExtras = false;
+                for (auto& extra : extraCommon) {
+                    if (extra.key == name) {
+                        hasExtras = true;
+                        break;
+                    }
+                }
+                if (hasExtras)
+                    continue;
+            }
+
             array->putDirectIndex(globalObject, arrayI++, jsString(vm, impl));
             array->putDirectIndex(globalObject, arrayI++, jsValue);
             RETURN_IF_EXCEPTION(scope, {});
@@ -99,43 +122,36 @@ static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject
             const auto& value = it.value;
             auto* jsValue = jsString(vm, value);
             obj->putDirect(vm, Identifier::fromString(vm, name.convertToASCIILowercase()), jsValue, 0);
+
+            if (hasUncommonExtras) {
+                bool hasExtras = false;
+                for (auto& extra : extraUncommon) {
+                    if (equalIgnoringASCIICase(extra.key, name)) {
+                        hasExtras = true;
+                        break;
+                    }
+                }
+                if (hasExtras)
+                    continue;
+            }
+
             array->putDirectIndex(globalObject, arrayI++, jsString(vm, name));
             array->putDirectIndex(globalObject, arrayI++, jsValue);
         }
     }
 
-    // Extra duplicate values for multi-value headers. Emit each into the flat
-    // `rawHeaders` array (one `[name, value]` pair per entry) so Node-style
-    // consumers see every occurrence. The `headers` object's value for each
-    // name is updated to the joined string so `req.headers[name]` reflects
-    // every value that arrived. Name casing mirrors the primary pass:
-    // - common extras use `httpHeaderNameStringImpl` (lowercase) to match the
-    //   primary common branch above.
-    // - uncommon extras use the caller-provided case as-is, matching the
-    //   primary uncommon branch.
-    {
-        for (const auto& it : internal.extraCommonHeaders()) {
-            const auto& impl = WTF::httpHeaderNameStringImpl(it.key);
-            JSString* jsName = jsString(vm, impl);
-            JSString* jsValue = jsString(vm, it.value);
-            array->putDirectIndex(globalObject, arrayI++, jsName);
-            array->putDirectIndex(globalObject, arrayI++, jsValue);
-            RETURN_IF_EXCEPTION(scope, {});
-            // Refresh the object side with the joined value; `internal.get(it.key)`
-            // joins the primary + all extras for this name.
-            String joined = internal.get(it.key);
-            obj->putDirect(vm, Identifier::fromString(vm, impl), jsString(vm, joined), 0);
-        }
-
-        for (const auto& it : internal.extraUncommonHeaders()) {
-            const auto& name = it.key;
-            JSString* jsValue = jsString(vm, it.value);
-            array->putDirectIndex(globalObject, arrayI++, jsString(vm, name));
-            array->putDirectIndex(globalObject, arrayI++, jsValue);
-            RETURN_IF_EXCEPTION(scope, {});
-            String joined = internal.get(StringView(name));
-            obj->putDirectMayBeIndex(globalObject, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, joined));
-        }
+    // Multi-value headers — emit one `[name, value]` pair per individual
+    // value. `obj` already carries the joined value from the primary pass.
+    for (const auto& it : extraCommon) {
+        const auto& impl = WTF::httpHeaderNameStringImpl(it.key);
+        array->putDirectIndex(globalObject, arrayI++, jsString(vm, impl));
+        array->putDirectIndex(globalObject, arrayI++, jsString(vm, it.value));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    for (const auto& it : extraUncommon) {
+        array->putDirectIndex(globalObject, arrayI++, jsString(vm, it.key));
+        array->putDirectIndex(globalObject, arrayI++, jsString(vm, it.value));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     tuple->putInternalField(vm, 0, obj);
@@ -568,6 +584,10 @@ template<bool isSSL>
 static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
 {
     auto& internalHeaders = headers.internalHeaders();
+    const auto& extraCommon = internalHeaders.extraCommonHeaders();
+    const auto& extraUncommon = internalHeaders.extraUncommonHeaders();
+    bool hasCommonExtras = !extraCommon.isEmpty();
+    bool hasUncommonExtras = !extraUncommon.isEmpty();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
 
@@ -585,7 +605,6 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     for (const auto& header : internalHeaders.commonHeaders()) {
 
         const auto& name = WebCore::httpHeaderNameString(header.key);
-        const auto& value = header.value;
 
         // We have to tell uWS not to automatically insert a TransferEncoding or Date header.
         // Otherwise, you get this when using Fastify;
@@ -621,26 +640,48 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
         if (header.key == WebCore::HTTPHeaderName::TransferEncoding) {
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
         }
-        writeResponseHeader<isSSL>(res, name, value);
+
+        // If the side-channel has entries for this name, skip the joined
+        // primary — the extras pass below emits one header line per
+        // individual value (RFC 7230 §3.2.2).
+        if (hasCommonExtras) {
+            bool hasExtras = false;
+            for (auto& extra : extraCommon) {
+                if (extra.key == header.key) {
+                    hasExtras = true;
+                    break;
+                }
+            }
+            if (hasExtras)
+                continue;
+        }
+
+        writeResponseHeader<isSSL>(res, name, header.value);
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
-        const auto& name = header.key;
-        const auto& value = header.value;
+        if (hasUncommonExtras) {
+            bool hasExtras = false;
+            for (auto& extra : extraUncommon) {
+                if (equalIgnoringASCIICase(extra.key, header.key)) {
+                    hasExtras = true;
+                    break;
+                }
+            }
+            if (hasExtras)
+                continue;
+        }
 
-        writeResponseHeader<isSSL>(res, name, value);
+        writeResponseHeader<isSSL>(res, header.key, header.value);
     }
 
-    // Extra duplicate values — one entry per wire line so multi-value headers
-    // (e.g. `X-Multi: a` / `X-Multi: b` / `X-Multi: c`) are emitted as
-    // separate header lines per RFC 7230 §3.2.2 instead of collapsing to a
-    // single comma-joined line. Name casing matches the primary pass above
-    // (wire-canonical Title-Case from `httpHeaderNameString` for common
-    // extras, caller-provided case for uncommon extras).
-    for (auto& header : internalHeaders.extraCommonHeaders()) {
+    // Multi-value headers — one wire line per individual value. The primary's
+    // original first value was seeded into extras in `appendToHeaderMap` when
+    // the 2nd value arrived, so this loop covers every occurrence.
+    for (auto& header : extraCommon) {
         writeResponseHeader<isSSL>(res, WebCore::httpHeaderNameString(header.key), header.value);
     }
-    for (auto& header : internalHeaders.extraUncommonHeaders()) {
+    for (auto& header : extraUncommon) {
         writeResponseHeader<isSSL>(res, header.key, header.value);
     }
 }
@@ -1143,6 +1184,11 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
         }
     }
 
+    const auto& extraCommon = internalHeaders.extraCommonHeaders();
+    const auto& extraUncommon = internalHeaders.extraUncommonHeaders();
+    bool hasCommonExtras = !extraCommon.isEmpty();
+    bool hasUncommonExtras = !extraUncommon.isEmpty();
+
     for (const auto& header : internalHeaders.commonHeaders()) {
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
             if (!(data->state & uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
@@ -1155,17 +1201,42 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
         }
         // HTTP/3 has no Transfer-Encoding; if a user header reaches here it
         // was already stripped by doWriteHeaders().
+
+        if (hasCommonExtras) {
+            bool hasExtras = false;
+            for (auto& extra : extraCommon) {
+                if (extra.key == header.key) {
+                    hasExtras = true;
+                    break;
+                }
+            }
+            if (hasExtras)
+                continue;
+        }
+
         writeOne(WebCore::httpHeaderNameString(header.key), header.value);
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
+        if (hasUncommonExtras) {
+            bool hasExtras = false;
+            for (auto& extra : extraUncommon) {
+                if (equalIgnoringASCIICase(extra.key, header.key)) {
+                    hasExtras = true;
+                    break;
+                }
+            }
+            if (hasExtras)
+                continue;
+        }
+
         writeOne(header.key, header.value);
     }
 
-    for (auto& header : internalHeaders.extraCommonHeaders()) {
+    for (auto& header : extraCommon) {
         writeOne(WebCore::httpHeaderNameString(header.key), header.value);
     }
-    for (auto& header : internalHeaders.extraUncommonHeaders()) {
+    for (auto& header : extraUncommon) {
         writeOne(header.key, header.value);
     }
 }

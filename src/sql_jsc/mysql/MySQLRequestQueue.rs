@@ -181,7 +181,15 @@ impl MySQLRequestQueue {
                     debug!("run failed");
                     // R-2: `on_error` takes `&self`.
                     conn_ref.on_error(Some(req.get()), err);
-                    if offset == 0 {
+                    // `run()`/`on_error()` execute JS that can synchronously close
+                    // the connection and `clean()` the queue, which already released
+                    // the queue's ref on `request` and emptied the FIFO. Only release
+                    // the ref if `request` is still the queue head; otherwise this
+                    // would double-release the query and underflow `discard(1)`.
+                    if offset == 0
+                        && queue_ref.requests.get().readable_length() > 0
+                        && queue_ref.requests.get().peek_item(0) == request
+                    {
                         queue_ref.requests.with_mut(|q| q.discard(1));
                         // SAFETY: queue held one ref; pointer is live until this deref.
                         unsafe { JSMySQLQuery::deref(request) };

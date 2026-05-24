@@ -1634,8 +1634,20 @@ impl PostgresSQLConnection {
     /// the FIFO head. One audited `unsafe` here replaces the per-site
     /// `unsafe { PostgresSQLQuery::deref(ptr) }; self.requests.with_mut(|q| q.discard(1));`
     /// pair (16 callers in `clean_up_requests` / `advance`).
+    ///
+    /// No-op if `request` is no longer the queue head: re-entrant JS between
+    /// `peek_item` and this call (e.g. `sql.close()` from a parameter's
+    /// `toString` during bind, or a rejection callback inside
+    /// `clean_up_requests`) may have already discarded the entry, releasing
+    /// the queue's ref. Releasing it again would drop the refcount to 0 while
+    /// the JS wrapper still points at the query and underflow the FIFO count.
     #[inline]
     fn discard_request(&self, request: *mut PostgresSQLQuery) {
+        if self.requests.get().readable_length() == 0
+            || self.requests.get().peek_item(0) != request
+        {
+            return;
+        }
         // SAFETY: `request` was obtained via `self.requests.get().peek_item(_)`
         // (queue invariant: every stored pointer is a live, heap-allocated
         // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself); this

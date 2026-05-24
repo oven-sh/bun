@@ -367,7 +367,8 @@ impl Expansion {
     /// but the glob matcher has no general backslash-escape that survives
     /// `build_pattern_components` on every platform, so each byte is wrapped
     /// in a single-character class (`[c]`) — or a one-branch brace group for
-    /// `!` — which the matcher provably treats as that literal character.
+    /// a component-leading `!` — which the matcher provably treats as that
+    /// literal character.
     /// `current_out` itself is not mutated: the no-match error message and the
     /// assignment-position literal fallback keep using the original word.
     fn neutralize_glob_metachars(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {
@@ -384,10 +385,26 @@ impl Expansion {
                 b'*' | b'?' | b'[' | b']' | b'{' | b'}' | b',' => {
                     pattern.extend_from_slice(&[b'[', b, b']']);
                 }
-                // `[!]`/`[^]` would be a negated class and a bare leading `!`
-                // flips the matcher's negation loop, so wrap `!` in a
-                // one-branch brace group whose sole branch is the literal `!`.
-                b'!' => pattern.extend_from_slice(b"{!}"),
+                // `[!]`/`[^]` would be a negated class, so `!` cannot use the
+                // class wrapper. Only a `!` at the start of a path component
+                // (the same split `build_pattern_components` performs) can act
+                // as pattern syntax — the matcher's negation loop — so wrap
+                // that one in a one-branch brace group whose sole branch is
+                // the literal `!`. Every other `!` already matches literally
+                // and is emitted bare: wrapping each one costs a brace-stack
+                // slot per byte, and a run of more than 10 interpolated `!`
+                // would overflow the matcher's bounded brace stack and turn
+                // the whole word into a spurious no-match.
+                b'!' => {
+                    let starts_component = pattern
+                        .last()
+                        .is_none_or(|&prev| bun_core::path_sep::is_sep_native(prev));
+                    if starts_component {
+                        pattern.extend_from_slice(b"{!}");
+                    } else {
+                        pattern.push(b'!');
+                    }
+                }
                 // `[\\]` is a class containing an escaped `\`; the 3-byte
                 // `[\]` would mis-parse as a class containing an escaped `]`.
                 #[cfg(not(windows))]

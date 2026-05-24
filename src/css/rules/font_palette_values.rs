@@ -144,19 +144,18 @@ impl OverrideColors {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<OverrideColors> {
         use crate::css_values::number::CSSIntegerFns;
         let index = CSSIntegerFns::parse(input)?;
-        if index < 0 {
+        // Palette entry indices are stored as u16; reject negatives and values
+        // that don't fit instead of panicking on the cast.
+        let Ok(index) = u16::try_from(index) else {
             return Err(input.new_custom_error(css::ParserError::invalid_value));
-        }
+        };
 
         let color = CssColor::parse(input)?;
         if matches!(color, CssColor::CurrentColor) {
             return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
-        Ok(OverrideColors {
-            index: u16::try_from(index).expect("int cast"),
-            color,
-        })
+        Ok(OverrideColors { index, color })
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -196,10 +195,12 @@ impl BasePalette {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BasePalette> {
         use crate::css_values::number::CSSIntegerFns;
         if let Ok(i) = input.try_parse(CSSIntegerFns::parse) {
-            if i < 0 {
+            // Palette indices are stored as u16; reject negatives and values
+            // that don't fit instead of panicking on the cast.
+            let Ok(i) = u16::try_from(i) else {
                 return Err(input.new_custom_error(css::ParserError::invalid_value));
-            }
-            return Ok(BasePalette::Integer(u16::try_from(i).expect("int cast")));
+            };
+            return Ok(BasePalette::Integer(i));
         }
 
         let location = input.current_source_location();

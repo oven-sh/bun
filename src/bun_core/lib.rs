@@ -1436,9 +1436,9 @@ pub(crate) mod strings_impl {
     }
     /// Zig: `strings.eqlCaseInsensitiveASCII` (src/string/immutable.zig).
     /// Spec-faithful port: defers to libc `strncasecmp`/`_strnicmp` for the
-    /// hot path (CSS parser, HTTP header matching). When `check_len` is false
-    /// the caller guarantees `a.len() <= b.len()` and both are non-empty
-    /// (matches Zig's `bun.unsafeAssert`).
+    /// hot path (CSS parser, HTTP header matching). Unlike Zig's NUL-terminated
+    /// literals, Rust slices have no terminator, so a `b` shorter than `a` is
+    /// rejected instead of read past.
     #[inline]
     pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
         if check_len {
@@ -1448,12 +1448,14 @@ pub(crate) mod strings_impl {
             if a.is_empty() {
                 return true;
             }
+        } else if b.len() < a.len() {
+            return false;
         }
 
         debug_assert!(!b.is_empty());
         debug_assert!(!a.is_empty());
 
-        // SAFETY: a and b are non-empty; strncasecmp reads up to a.len() bytes from each.
+        // SAFETY: a.len() <= b.len() here; strncasecmp reads at most a.len() bytes from each.
         #[cfg(not(windows))]
         unsafe {
             libc::strncasecmp(a.as_ptr().cast(), b.as_ptr().cast(), a.len()) == 0

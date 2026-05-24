@@ -971,6 +971,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
         let p = self;
+        if !p.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
         let loc = p.lexer.loc();
 
         match p.lexer.token {

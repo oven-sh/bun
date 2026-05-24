@@ -764,6 +764,32 @@ booga"
           expect(out.replaceAll("\\", "/")).toContain("sub/b.txt");
         })
         .runAsTest("literal ** still recurses");
+
+      // A run of interpolated `!` longer than the matcher's brace-nesting
+      // limit (10) must still match literally: neutralizing every `!` as its
+      // own `{!}` group used to overflow the brace stack and turn the whole
+      // word into "no matches found".
+      const bangRun = Buffer.alloc(11, "!").toString();
+
+      TestBuilder.command`echo prefix${bangRun}*`
+        .ensureTempDir()
+        .file(`prefix${bangRun}x.txt`, "")
+        .file("prefixy.txt", "")
+        .stdout(out => {
+          expect(out).toContain(`prefix${bangRun}x.txt`);
+          expect(out).not.toContain("prefixy.txt");
+        })
+        .runAsTest("long run of injected ! inside a word stays literal");
+
+      TestBuilder.command`echo ${bangRun}keep*`
+        .ensureTempDir()
+        .file(`${bangRun}keep1.txt`, "")
+        .file("keep2.txt", "")
+        .stdout(out => {
+          expect(out).toContain(`${bangRun}keep1.txt`);
+          expect(out).not.toContain("keep2.txt");
+        })
+        .runAsTest("long leading run of injected ! stays literal");
     });
   });
 

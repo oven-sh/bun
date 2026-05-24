@@ -599,6 +599,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         binding: BindingNodeIndex,
         mut duplicate_arg_check: Option<&mut StringVoidMap>,
     ) {
+        if !self.stack_check.is_safe_to_recurse() {
+            self.report_stack_overflow(binding.loc);
+            return;
+        }
         match binding.data {
             BData::BMissing(_) => {}
             BData::BIdentifier(bind) => {

@@ -6838,6 +6838,15 @@ pub fn fract(val: f32) -> f32 {
 
 pub fn f32_length_with_5_digits(n_input: f32) -> usize {
     let mut n = (n_input * 100000.0).round();
+
+    // Huge values (>= ~3.4e33) overflow to infinity when scaled, and infinity
+    // never drops below 1.0 no matter how many times it is divided by 10, so
+    // the loop below would spin forever. Treat non-finite values as longer
+    // than any finite representation.
+    if !n.is_finite() {
+        return usize::MAX;
+    }
+
     let mut count: usize = 0;
     let mut i: usize = 0;
 

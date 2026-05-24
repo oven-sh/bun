@@ -209,6 +209,33 @@ describe("Bun.Transpiler", () => {
       err("module = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
     });
 
+    it("export default interface that is not an interface declaration does not crash", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      const unexpected = 'Unexpected "interface"';
+
+      // "interface" turns out to start an expression or a labeled statement, not an
+      // interface declaration. None of these can be a default export value.
+      err("export default interface=2", unexpected);
+      err("export default interface + 1", unexpected);
+      err("export default interface.foo()", unexpected);
+      err("export default interface => 1", unexpected);
+      err("export default interface: 2", unexpected);
+
+      // The exact fuzz repro: tsx loader, no trailing newline.
+      expect(() => transpiler.transformSync("export default interface=2")).toThrow(unexpected);
+
+      // Same shapes through the plain JavaScript loader must not crash either.
+      const js = new Bun.Transpiler({ loader: "js" });
+      expect(() => js.transformSync("export default interface=2")).toThrow(unexpected);
+      expect(() => js.transformSync("export default interface => 1")).toThrow(unexpected);
+      expect(() => js.transformSync("export default interface: 2")).toThrow(unexpected);
+
+      // Real interface declarations still parse and get erased.
+      exp("export default interface Foo {}", "");
+      exp("export default interface Foo { bar(): void }\nexport const x = 1;", "export const x = 1;\n");
+    });
+
     it("should parse empty type parameters", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -991,6 +1018,42 @@ class Test extends Bar {
 
     it("export import Foo = Baz.Bar", () => {
       ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
+    });
+
+    it("re-declaring an import binding that is kept in the output is an error", () => {
+      const err = ts.expectParseError;
+
+      err('import{Observable}from""\nimport{Observable} from "x"', '"Observable" has already been declared');
+      err('import { Foo } from "./x";\nexport class Foo {}', '"Foo" has already been declared');
+      err('import Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
+      err('import * as Foo from "./x";\nclass Foo {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nfunction Foo() {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nvar Foo = 1;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nvar Foo = 1;\nvar Foo = 2;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nlet Foo = 1;', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nenum Foo {}', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nimport Foo = require("./y");', '"Foo" has already been declared');
+      err('import { Foo } from "./x";\nimport Foo = Bar.Baz;', '"Foo" has already been declared');
+      err('import { Foo, Foo } from "./x";', '"Foo" has already been declared');
+    });
+
+    it("re-declaring an elided import binding is allowed", () => {
+      const exp = ts.expectPrinted_;
+
+      exp('import type { Foo } from "./x";\nclass Foo {}', "class Foo {\n}");
+      exp(
+        'import { type Foo, Bar } from "./x";\nclass Foo {}\nconsole.log(Bar);',
+        'import { Bar } from "./x";\n\nclass Foo {\n}\nconsole.log(Bar);\n',
+      );
+      exp('import { Foo } from "./x";\ndeclare class Foo {}\nnew Foo();', 'import { Foo } from "./x";\nnew Foo;\n');
+      exp('import { foo } from "./x";\nfunction foo(): void;', 'import { foo } from "./x";\n');
+
+      const trimming = new Bun.Transpiler({ loader: "ts", trimUnusedImports: true });
+      expect(trimming.transformSync('import { Foo } from "./x";\nexport class Foo {}')).toBe("export class Foo {\n}\n");
+      expect(trimming.transformSync('import{Observable}from""\nimport{Observable} from "x"')).toBe("");
+      expect(trimming.transformSync('import { Foo } from "./x";\nnamespace Foo { export const x = 1 }')).toBe(
+        "var Foo;\n((Foo) => {\n  Foo.x = 1;\n})(Foo ||= {});\n",
+      );
     });
 
     it("export = {foo: 123}", () => {
@@ -3851,6 +3914,81 @@ it("Bun.Transpiler.transform stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
+});
+
+it("deeply nested expressions error instead of crashing the process", () => {
+  const script = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const shapes = [
+      n => repeat("- ", n) + "1",
+      n => repeat("f(", n) + "1" + repeat(")", n),
+      n => repeat("[", n) + "1" + repeat("]", n),
+      n => "void " + repeat("- ", n) + "1",
+      n => repeat("[", n) + "() => 1" + repeat("]", n) + ";{ let x; }",
+      n => repeat("[", n) + "1" + repeat("]", n) + "; someLongIdentifier + anotherIdentifier;",
+      n => "void ((x" + repeat(" ?? x", n) + ") < 1)",
+      n => "(a" + repeat(" && a", n) + ") == 1;",
+      n => "f() ? 1 : g()" + repeat(" || g()", n) + ";",
+      n => "let " + repeat("[", n) + "x" + repeat("]", n) + " = y;",
+    ];
+    const minifyShapes = [
+      n => "function f(){let x = 1; return a" + repeat(" && a", n) + " && x}",
+      n =>
+        "function f(){function g(){return x}" +
+        repeat("[", n) +
+        "1" +
+        repeat("]", n) +
+        ";let x = 1;return " +
+        repeat("a", 500) +
+        ";}",
+    ];
+    const check = (transpiler, src) => {
+      try {
+        transpiler.transformSync(src);
+      } catch (e) {
+        if (!/Maximum call stack size exceeded|StackOverflow/.test(String(e?.message))) throw e;
+      }
+    };
+    for (const shape of shapes) {
+      for (const n of [4000, 20000, 100000]) {
+        check(new Bun.Transpiler({ loader: "js" }), shape(n));
+      }
+    }
+    for (const shape of minifyShapes) {
+      for (const n of [4000, 20000, 100000]) {
+        check(new Bun.Transpiler({ loader: "js", minify: true }), shape(n));
+      }
+    }
+    console.log("depth-ok");
+  `;
+  const { stdout, exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe("depth-ok\n");
+  expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
+}, 60_000);
+
+it("running a file with deeply nested unary operators does not crash the process", () => {
+  const code = Buffer.alloc(2 * 4000, "- ").toString() + "1";
+  const { exitCode, signalCode } = Bun.spawnSync({
+    cmd: [bunExe(), "-e", code],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(signalCode ?? undefined).toBeUndefined();
+  expect([0, 1]).toContain(exitCode);
+});
+
+it("does not duplicate the branch when simplifying an unused ternary with a comma test", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  expect(transpiler.transformSync("(f(), g()) ? 1 : h();").trim()).toBe("f(), g() || h();");
+  expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("f(), g() && h();");
 });
 
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {

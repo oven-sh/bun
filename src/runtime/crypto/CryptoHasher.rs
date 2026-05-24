@@ -897,7 +897,7 @@ impl CryptoHasherZig {
     ) -> JsResult<Option<JSValue>> {
         macro_rules! arm {
             ($name:literal, $ty:ty, $g:expr, $alg:expr, $in:expr, $out:expr) => {
-                if $alg.slice() == $name {
+                if $alg.eql_comptime($name) {
                     return Ok(Some(Self::hash_by_name_inner::<$ty>($g, $in, $out)?));
                 }
             };
@@ -1010,7 +1010,7 @@ impl CryptoHasherZig {
     fn constructor(algorithm: &ZigString) -> Option<Box<CryptoHasher>> {
         macro_rules! arm {
             ($name:literal, $ty:ty, $alg:expr) => {
-                if $alg.slice() == $name {
+                if $alg.eql_comptime($name) {
                     return Some(CryptoHasher::new(CryptoHasher::Zig(JsCell::new(
                         CryptoHasherZig {
                             algorithm: <$ty as ZigHashAlgo>::ALGORITHM,

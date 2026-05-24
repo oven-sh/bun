@@ -235,6 +235,10 @@ describe("oversized inputs", () => {
         false,
         ["sign", "verify"],
       );
+      const cbcKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(5), { name: "AES-CBC" }, false, [
+        "encrypt",
+      ]);
+      const hkdfKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(6), "HKDF", false, ["deriveBits"]);
       const iv = new Uint8Array(12).fill(3);
 
       const results = {};
@@ -254,6 +258,19 @@ describe("oversized inputs", () => {
       await record(
         "unwrapKey",
         crypto.subtle.unwrapKey("raw", big, aesKey, { name: "AES-GCM", iv }, { name: "AES-GCM" }, false, ["encrypt"]),
+      );
+
+      // BufferSource members of the algorithm dictionaries are copied into
+      // Vectors by the parameter classes' lazy accessors, not by the entry
+      // points, so they need their own guard.
+      await record(
+        "encrypt additionalData",
+        crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: big }, aesKey, new Uint8Array(16)),
+      );
+      await record("encrypt iv", crypto.subtle.encrypt({ name: "AES-CBC", iv: big }, cbcKey, new Uint8Array(16)));
+      await record(
+        "deriveBits salt",
+        crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: big, info: new Uint8Array(0) }, hkdfKey, 256),
       );
 
       // Normal-sized inputs must keep working in the same process.
@@ -281,6 +298,9 @@ describe("oversized inputs", () => {
         "verify signature": "OperationError",
         "importKey": "OperationError",
         "unwrapKey": "OperationError",
+        "encrypt additionalData": "OperationError",
+        "encrypt iv": "OperationError",
+        "deriveBits salt": "OperationError",
         "small round-trip": "ok",
       });
     }

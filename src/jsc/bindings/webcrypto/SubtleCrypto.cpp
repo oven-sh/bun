@@ -106,6 +106,22 @@ static bool isSafeCurvesEnabled(JSGlobalObject& state)
     // return context && context->settingsValues().webCryptoSafeCurvesEnabled;
 }
 
+// The lazy *Vector() accessors on the parameter classes copy these dictionary members into
+// Vector<uint8_t> with no size check, and exceeding the Vector capacity cap CRASH()es in
+// allocateBuffer. Validate them while normalizing so an oversized member rejects instead.
+static bool isAcceptableVectorSource(const BufferSource& data)
+{
+    return WTF::isValidCapacityForVector<uint8_t>(data.length());
+}
+
+static bool isAcceptableVectorSource(const std::optional<BufferSource::VariantType>& data)
+{
+    if (!data)
+        return true;
+    auto length = std::visit([](auto& buffer) -> size_t { return buffer ? buffer->byteLength() : 0; }, *data);
+    return WTF::isValidCapacityForVector<uint8_t>(length);
+}
+
 static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAlgorithmParameters(JSGlobalObject& state, SubtleCrypto::AlgorithmIdentifier algorithmIdentifier, Operations operation)
 {
     VM& vm = state.vm();
@@ -143,6 +159,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::RSA_OAEP: {
             auto params = convertDictionary<CryptoAlgorithmRsaOaepParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.label))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmRsaOaepParams>(params);
             break;
         }
@@ -150,18 +168,24 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::AES_CFB: {
             auto params = convertDictionary<CryptoAlgorithmAesCbcCfbParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.iv))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmAesCbcCfbParams>(params);
             break;
         }
         case CryptoAlgorithmIdentifier::AES_CTR: {
             auto params = convertDictionary<CryptoAlgorithmAesCtrParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.counter))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmAesCtrParams>(params);
             break;
         }
         case CryptoAlgorithmIdentifier::AES_GCM: {
             auto params = convertDictionary<CryptoAlgorithmAesGcmParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.iv) || !isAcceptableVectorSource(params.additionalData))
+                return Exception { OperationError, "Input data is too large"_s };
             result = makeUnique<CryptoAlgorithmAesGcmParams>(params);
             break;
         }
@@ -309,6 +333,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::HKDF: {
             auto params = convertDictionary<CryptoAlgorithmHkdfParams>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.salt) || !isAcceptableVectorSource(params.info))
+                return Exception { OperationError, "Input data is too large"_s };
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();
@@ -319,6 +345,8 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::PBKDF2: {
             auto params = convertDictionary<CryptoAlgorithmPbkdf2Params>(state, value.get());
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (!isAcceptableVectorSource(params.salt))
+                return Exception { OperationError, "Input data is too large"_s };
             auto hashIdentifier = toHashIdentifier(state, params.hash);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             if (hashIdentifier.hasException()) return hashIdentifier.releaseException();

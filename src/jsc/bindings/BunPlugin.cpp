@@ -149,7 +149,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     // `Bun.plugin({ module })` virtual modules persist across per-file
     // `bun test` teardown — they're process-level plugin registrations,
     // not test-local mocks.
-    global->onLoadPlugins.addModuleMock(vm, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue), /*persistent=*/ true);
+    global->onLoadPlugins.addModuleMock(vm, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue), /*persistent=*/true);
 
     auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});

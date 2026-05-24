@@ -16,6 +16,7 @@
 #include "root.h"
 #include "stringWidth.h"
 #include "ANSIHelpers.h"
+#include "ObjectBindings.h"
 #include "stringWidthTables.h"
 
 #include <algorithm>
@@ -1223,11 +1224,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStringWidth, (JSC::JSGlobalObject * global
     if (optionsValue.isObject()) {
         JSC::JSObject* optionsObject = JSC::asObject(optionsValue);
 
-        JSC::JSValue countAnsiValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "countAnsiEscapeCodes"_s));
+        // Same prototype-pollution-mitigated lookup the previous implementation
+        // (and the other Bun option parsers) use: stops before Object.prototype.
+        JSC::JSValue countAnsiValue = getIfPropertyExistsPrototypePollutionMitigation(globalObject, optionsObject, JSC::Identifier::fromString(vm, "countAnsiEscapeCodes"_s));
         RETURN_IF_EXCEPTION(scope, {});
         applyTruthyBooleanOption(globalObject, countAnsiValue, countAnsiEscapeCodes);
 
-        JSC::JSValue ambiguousIsNarrowValue = optionsObject->get(globalObject, JSC::Identifier::fromString(vm, "ambiguousIsNarrow"_s));
+        JSC::JSValue ambiguousIsNarrowValue = getIfPropertyExistsPrototypePollutionMitigation(globalObject, optionsObject, JSC::Identifier::fromString(vm, "ambiguousIsNarrow"_s));
         RETURN_IF_EXCEPTION(scope, {});
         applyTruthyBooleanOption(globalObject, ambiguousIsNarrowValue, ambiguousIsNarrow);
     }

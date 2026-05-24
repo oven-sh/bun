@@ -983,3 +983,20 @@ describe("stringWidth SIMD fast paths", () => {
     });
   });
 });
+
+test("options lookup ignores Object.prototype pollution", () => {
+  try {
+    (Object.prototype as any).countAnsiEscapeCodes = true;
+    (Object.prototype as any).ambiguousIsNarrow = false;
+    expect(Bun.stringWidth("\x1b[31mhello\x1b[39m", {})).toBe(5);
+    expect(Bun.stringWidth("★", {})).toBe(1);
+    // An explicit own property still wins.
+    expect(Bun.stringWidth("\x1b[31mhello\x1b[39m", { countAnsiEscapeCodes: true })).toBe(13);
+    // Inherited properties from a non-Object.prototype prototype are honored,
+    // same as the previous implementation.
+    expect(Bun.stringWidth("\x1b[31mhello\x1b[39m", { __proto__: { countAnsiEscapeCodes: true } } as any)).toBe(13);
+  } finally {
+    delete (Object.prototype as any).countAnsiEscapeCodes;
+    delete (Object.prototype as any).ambiguousIsNarrow;
+  }
+});

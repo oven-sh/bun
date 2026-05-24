@@ -59,6 +59,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn skip_type_script_binding(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
+        // Nested destructuring patterns in skipped type positions recurse through
+        // this function; bound it like `parse_binding` does.
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
         match self.lexer.token {
             T::TIdentifier | T::TThis => {
                 self.lexer.next()?;
@@ -235,6 +240,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         mut result: Option<&mut Metadata>,
     ) -> Result<(), Error> {
         self.mark_type_script_only();
+
+        // Deeply nested types ("[[[[...", "A<A<A<...", ...) recurse through this
+        // function, so bound it the same way `parse_expr_common` bounds expression
+        // recursion instead of overflowing the stack.
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
 
         loop {
             match self.lexer.token {

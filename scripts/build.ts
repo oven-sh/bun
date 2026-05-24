@@ -95,7 +95,23 @@ async function main(): Promise<void> {
     : { profile: args.profile, overrides: args.overrides };
 
   const ninjaArgv = (cfg: { buildDir: string }) => ["-C", cfg.buildDir, ...args.ninjaArgs, ...args.ninjaTargets];
-  const ninjaEnv = (env: Record<string, string>) => ({ ...process.env, ...env });
+  // GNU-style include-path vars (CPATH, C_INCLUDE_PATH, CPLUS_INCLUDE_PATH,
+  // OBJC_INCLUDE_PATH) apply to every clang invocation regardless of
+  // --target. The CI build containers set them for the *host* gcc toolchain
+  // (.buildkite/Dockerfile), which hijacks <vector> & co. away from the MSVC
+  // STL when cross-compiling for Windows ("'bits/c++config.h' file not
+  // found"). Scrub them for Windows cross builds — they are host-targeted by
+  // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
+  // every other target keep the environment as provisioned.
+  const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
+    const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
+    if (cfg.windows && cfg.host.os !== "windows") {
+      for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
+        delete merged[name];
+      }
+    }
+    return merged;
+  };
 
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
@@ -109,7 +125,7 @@ async function main(): Promise<void> {
     }
 
     await startGroup("Build", () =>
-      spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.env) }),
+      spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.cfg, result.env) }),
     );
 
     // cpp-only/rust-only: upload build outputs for downstream link-only.
@@ -182,7 +198,7 @@ async function main(): Promise<void> {
     }
     const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
       stdio,
-      env: ninjaEnv(result.env),
+      env: ninjaEnv(result.cfg, result.env),
       // cargo's compile output (now part of the ninja graph via emitRust) can
       // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
       maxBuffer: 1024 * 1024 * 1024,

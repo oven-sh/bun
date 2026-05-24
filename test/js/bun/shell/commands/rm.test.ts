@@ -223,3 +223,124 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+// The walker hands multi-component relative paths to asynchronous worker
+// tasks ("target/sub/inner/f.txt") and each deletion syscall must not
+// re-resolve that path from the original cwd. If an *intermediate* component
+// ("sub") is replaced by a symlink after the walker has already opened and
+// validated it, a path-based deletion of anything below it follows the link
+// and lands outside the tree being removed. The extra "inner" nesting level
+// is what makes the swapped component intermediate rather than final — the
+// final-component case is covered by the test above.
+//
+// To make the race land reliably, "sub" contains a sacrificial "canary.txt"
+// that the walker unlinks inline while iterating "sub". Once the canary is
+// gone, "sub" has been opened and "inner" has been (or is about to be) handed
+// to another worker as the multi-component path "target/sub/inner" — swapping
+// "sub" at that point cannot interfere with "sub"'s own open, but every
+// subsequent path-based deletion below it resolves through the symlink into
+// the victim, which holds entries with the same names.
+test.skipIf(process.platform === "win32")(
+  "recursive rm does not unlink files through a swapped intermediate path component",
+  async () => {
+    const FILLER = 128;
+    const ITERATIONS = 5;
+
+    let swapped = 0;
+    for (let iter = 0; iter < ITERATIONS; iter++) {
+      const files: Record<string, string> = {
+        "stash/.keep": "",
+        "target/sub/canary.txt": "",
+      };
+      for (let j = 0; j < FILLER; j++) {
+        files[`victim/inner/f${j}.txt`] = "important";
+        files[`target/sub/inner/f${j}.txt`] = "";
+      }
+      const root = tempDirWithFiles(`rm-swap-mid-${iter}`, files);
+      const victimDir = path.join(root, "victim");
+      const target = path.join(root, "target");
+      const entry = path.join(target, "sub");
+      const canary = path.join(entry, "canary.txt");
+
+      // Start the recursive delete on the worker pool. The worker threads
+      // make progress concurrently with this (synchronous) JS code: wait
+      // until the walker has opened "sub" and unlinked the canary, then swap
+      // "sub" for a symlink to the victim while the deletion of
+      // "target/sub/inner/*" is still pending.
+      const running = $`rm -rf ${target}`.nothrow().quiet().run();
+      const deadline = Date.now() + 10_000;
+      while (existsSync(canary) && Date.now() < deadline) {}
+      try {
+        renameSync(entry, path.join(root, "stash", "sub"));
+        symlinkSync(victimDir, entry);
+        swapped++;
+      } catch {
+        // The walker already deleted the whole subtree; nothing to race.
+      }
+      await running;
+
+      // Every victim file shares its basename with a file the walker was
+      // told to delete; none of them may be reachable through the swapped
+      // component.
+      for (let j = 0; j < FILLER; j++) {
+        expect(existsSync(path.join(victimDir, "inner", `f${j}.txt`))).toBeTrue();
+      }
+      expect(existsSync(victimDir)).toBeTrue();
+    }
+    // If no swap ever landed while the walker was mid-flight, the loop above
+    // exercised nothing and the canary probe is broken.
+    expect(swapped).toBeGreaterThan(0);
+  },
+  60_000,
+);
+
+// Same shape as the test above, but the leaves are empty directories so the
+// racing deletion is the rmdir each worker issues for a directory it has
+// finished with. That rmdir must also be addressed relative to a validated
+// parent directory fd rather than re-resolving the full multi-component path.
+test.skipIf(process.platform === "win32")(
+  "recursive rm does not rmdir through a swapped intermediate path component",
+  async () => {
+    const FILLER = 64;
+    const ITERATIONS = 5;
+
+    let swapped = 0;
+    for (let iter = 0; iter < ITERATIONS; iter++) {
+      const files: import("harness").DirectoryTree = {
+        "stash/.keep": "",
+        "target/sub/canary.txt": "",
+      };
+      for (let j = 0; j < FILLER; j++) {
+        files[`victim/inner/leaf${j}`] = {};
+        files[`target/sub/inner/leaf${j}`] = {};
+      }
+      const root = tempDirWithFiles(`rm-swap-rmdir-${iter}`, files);
+      const victimDir = path.join(root, "victim");
+      const target = path.join(root, "target");
+      const entry = path.join(target, "sub");
+      const canary = path.join(entry, "canary.txt");
+
+      const running = $`rm -rf ${target}`.nothrow().quiet().run();
+      const deadline = Date.now() + 10_000;
+      while (existsSync(canary) && Date.now() < deadline) {}
+      try {
+        renameSync(entry, path.join(root, "stash", "sub"));
+        symlinkSync(victimDir, entry);
+        swapped++;
+      } catch {
+        // The walker already deleted the whole subtree; nothing to race.
+      }
+      await running;
+
+      // Every victim leaf directory shares its name with one the walker was
+      // told to remove; none of them may be reachable through the swapped
+      // component.
+      for (let j = 0; j < FILLER; j++) {
+        expect(existsSync(path.join(victimDir, "inner", `leaf${j}`))).toBeTrue();
+      }
+      expect(existsSync(victimDir)).toBeTrue();
+    }
+    expect(swapped).toBeGreaterThan(0);
+  },
+  60_000,
+);

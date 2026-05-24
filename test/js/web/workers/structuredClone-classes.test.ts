@@ -95,7 +95,10 @@ describe("serialize & deserialize", () => {
         env: bunEnv,
         stdin: serialized,
         stdout: "pipe",
-        stderr: "inherit",
+        // Test types that declare expectedAfterWireBytesRoundtrip expect the
+        // child's deserialize() to die with an uncaught error; don't echo that
+        // expected failure into the test runner's stderr.
+        stderr: "expectedAfterWireBytesRoundtrip" in testType ? "ignore" : "inherit",
       });
       const cloned = result.stdout.length > 0 ? deserialize(result.stdout) : undefined;
       if ("expectedAfterWireBytesRoundtrip" in testType) {

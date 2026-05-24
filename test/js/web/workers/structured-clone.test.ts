@@ -9,7 +9,7 @@ function jscSerializeRoundtrip(value: any) {
   return cloned;
 }
 
-function jscSerializeRoundtripCrossProcess(original: any) {
+function jscSerializeRoundtripCrossProcess(original: any, stderr: "inherit" | "ignore" = "inherit") {
   const serialized = serialize(original);
 
   const result = Bun.spawnSync({
@@ -26,7 +26,7 @@ function jscSerializeRoundtripCrossProcess(original: any) {
     env: bunEnv,
     stdin: serialized,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr,
   });
   return deserialize(result.stdout);
 }
@@ -218,15 +218,16 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
       } else {
         // Cross-process: the child process's deserialize() rejects the
         // payload and exits without writing anything back, so the round trip
-        // never yields a file-backed Blob.
+        // never yields a file-backed Blob. The child's uncaught error is
+        // expected here, so its stderr is not echoed into the test runner's.
         test("file from path is rejected", () => {
           const blob = Bun.file(join(import.meta.dir, "example.txt"));
-          expect(structuredCloneFn(blob)).not.toBeInstanceOf(Blob);
+          expect(jscSerializeRoundtripCrossProcess(blob, "ignore")).not.toBeInstanceOf(Blob);
         });
         test("file from fd is rejected", () => {
           const fd = openSync(join(import.meta.dir, "example.txt"), "r");
           const blob = Bun.file(fd);
-          expect(structuredCloneFn(blob)).not.toBeInstanceOf(Blob);
+          expect(jscSerializeRoundtripCrossProcess(blob, "ignore")).not.toBeInstanceOf(Blob);
         });
       }
       describe("dom file", async () => {

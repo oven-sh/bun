@@ -148,6 +148,9 @@ mod _impl {
                     )
                     .throw());
             }
+            // A deferred params() request must not outlive the stream it was
+            // aimed at and override the level/strategy established below.
+            self.pending_params.set(None);
 
             let window_bits =
                 validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;

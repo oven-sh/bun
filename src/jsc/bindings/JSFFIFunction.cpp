@@ -37,11 +37,8 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 
-// Refcounted so the threadsafe trampoline can extend the wrapper's lifetime
-// from a foreign thread with a single atomic increment instead of copying the
-// JSC::Strong members (a HandleSet mutation that is only safe on the JS
-// thread). ThreadSafeRefCountedBase is non-copyable, which also statically
-// prevents reintroducing the by-value capture.
+// Refcounted so FFI_Callback_threadsafe_call can keep the wrapper alive from a
+// foreign thread; copying the JSC::Strong members is only safe on the JS thread.
 class FFICallbackFunctionWrapper : public ThreadSafeRefCounted<FFICallbackFunctionWrapper> {
 
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FFICallbackFunctionWrapper);
@@ -63,8 +60,7 @@ public:
 };
 extern "C" void FFICallbackFunctionWrapper_destroy(FFICallbackFunctionWrapper* wrapper)
 {
-    // Releases the create-time reference owned by the Rust side. Pending
-    // event-loop tasks may still hold their own refs.
+    // deref, not delete: pending event-loop tasks may still hold refs.
     wrapper->deref();
 }
 
@@ -77,7 +73,6 @@ extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
 
     auto* callbackFunction = uncheckedDowncast<JSC::JSFunction>(JSC::JSValue::decode(callbackFn));
 
-    // refcount 1; released by FFICallbackFunctionWrapper_destroy
     auto* wrapper = new FFICallbackFunctionWrapper(callbackFunction, globalObject);
 
     return wrapper;
@@ -218,9 +213,7 @@ FFI_Callback_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::Enc
 extern "C" void
 FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCount, JSC::EncodedJSValue* args)
 {
-    // This runs on a foreign (non-JS) thread. Do not touch the wrapper's
-    // JSC::Strong members here; only take a thread-safe ref so the wrapper
-    // stays alive until the task runs on the JS thread.
+    // Runs on a foreign thread: do not touch the wrapper's JSC::Strong members here.
     WTF::Vector<JSC::EncodedJSValue, 8> argsVec;
     for (size_t i = 0; i < argCount; ++i)
         argsVec.append(args[i]);

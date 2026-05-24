@@ -2036,3 +2036,105 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
   expect(stdout).toContain("STATUS:200");
   expect(exitCode).toBe(0);
 });
+
+it("http2 server resets streams whose request headers contain CR, LF, or NUL octets", async () => {
+  // RFC 9113 Section 8.2.1: a request carrying a field value with NUL, CR, or
+  // LF is malformed and must be answered with a stream error, not delivered
+  // to the application. HPACK strings are length-prefixed, so a peer can put
+  // raw CR/LF into a header value; if that reaches req.headers it gets
+  // re-serialized into any HTTP/1.1 upstream request the application makes.
+  const deliveredValues = [];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    deliveredValues.push(headers["x-injected"]);
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  const port = server.address().port;
+
+  // HPACK string literal: 7-bit length prefix, no Huffman coding.
+  const literal = str => {
+    const bytes = Buffer.from(str, "latin1");
+    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  };
+  const headerBlock = Buffer.concat([
+    Buffer.from([0x82]), // :method: GET   (static table index 2)
+    Buffer.from([0x86]), // :scheme: http  (static table index 6)
+    Buffer.from([0x84]), // :path: /       (static table index 4)
+    Buffer.from([0x01]), // :authority     (literal without indexing, name index 1)
+    literal("localhost"),
+    Buffer.from([0x00]), // literal header field without indexing, new name
+    literal("x-injected"),
+    literal("a\r\nx-forwarded-for: 127.0.0.1"),
+  ]);
+
+  const frames = [];
+  const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
+  const socket = net.connect(port, "127.0.0.1", () => {
+    socket.write(http2utils.kClientMagic);
+    socket.write(new http2utils.SettingsFrame(false).data);
+    // HEADERS frame on stream 1 with END_HEADERS | END_STREAM.
+    socket.write(new http2utils.HeadersFrame(1, headerBlock, 0, true, true).data);
+    // PING acts as a barrier: by the time its ACK (or a GOAWAY) arrives the
+    // server has fully processed the HEADERS frame above.
+    socket.write(new http2utils.PingFrame(false).data);
+  });
+  socket.on("error", onSocketError);
+  let received = Buffer.alloc(0);
+  socket.on("data", chunk => {
+    received = Buffer.concat([received, chunk]);
+    while (received.length >= 9) {
+      const length = received.readUIntBE(0, 3);
+      if (received.length < 9 + length) break;
+      const frame = {
+        type: received[3],
+        flags: received[4],
+        streamId: received.readUInt32BE(5) & 0x7fffffff,
+        payload: Buffer.from(received.subarray(9, 9 + length)),
+      };
+      received = received.subarray(9 + length);
+      frames.push(frame);
+      if ((frame.type === 6 && (frame.flags & 1) !== 0) || frame.type === 7) {
+        onExchanged();
+        return;
+      }
+    }
+  });
+  socket.on("close", () => onExchanged());
+
+  try {
+    await exchanged;
+    // The malformed request never reaches the application.
+    expect(deliveredValues).toEqual([]);
+    // The stream is reset with PROTOCOL_ERROR instead of being answered.
+    const rst = frames.find(f => f.type === 3 && f.streamId === 1);
+    expect(rst).toBeDefined();
+    expect(rst.payload.readUInt32BE(0)).toBe(http2.constants.NGHTTP2_PROTOCOL_ERROR);
+    expect(frames.find(f => f.type === 1 && f.streamId === 1)).toBeUndefined();
+  } finally {
+    socket.destroy();
+  }
+
+  // A request whose header values contain no forbidden octets still reaches
+  // the application and gets a response.
+  const client = http2.connect(`http://127.0.0.1:${port}`);
+  client.on("error", () => {});
+  try {
+    const { promise: responded, resolve: onResponse, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/", "x-injected": "clean" });
+    req.on("response", onResponse);
+    req.on("error", onError);
+    req.resume();
+    req.end();
+    const headers = await responded;
+    expect(headers[":status"]).toBe(200);
+    expect(deliveredValues).toEqual(["clean"]);
+  } finally {
+    client.close();
+    server.close();
+  }
+});

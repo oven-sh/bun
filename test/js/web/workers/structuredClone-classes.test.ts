@@ -79,7 +79,13 @@ describe("serialize & deserialize", () => {
           "-e",
           `
         import {deserialize, serialize} from "bun:jsc";
-        const serialized = deserialize(await Bun.stdin.bytes());
+        let serialized;
+        try {
+          serialized = deserialize(await Bun.stdin.bytes());
+        } catch (e) {
+          process.stdout.write("DESERIALIZE_THREW");
+          process.exit(0);
+        }
         const cloned = serialize(serialized);
         process.stdout.write(cloned);
         `,
@@ -89,6 +95,13 @@ describe("serialize & deserialize", () => {
         stdout: "pipe",
         stderr: "inherit",
       });
+      if (testType.name.startsWith("BunFile")) {
+        // A file-backed Blob record names a path to re-open; the byte-stream
+        // deserializer in the child process must reject it rather than mint a
+        // file handle from external bytes.
+        expect(result.stdout.toString()).toBe("DESERIALIZE_THREW");
+        return;
+      }
       const cloned = deserialize(result.stdout);
       testType.expectedAfterClone(original, cloned, TransferMode.no, true);
     });

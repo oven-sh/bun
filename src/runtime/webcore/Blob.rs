@@ -181,6 +181,7 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
+        from_wire_bytes: bool,
     ) -> JsResult<JSValue>
     where
         Self: Sized;
@@ -795,6 +796,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
+        from_wire_bytes: bool,
     ) -> JsResult<JSValue> {
         // SAFETY: codegen passes a live `*mut *mut u8` cursor (C++:
         // `(uint8_t**)&ptr`) and a one-past-the-end `*const u8`; both are
@@ -807,8 +809,17 @@ impl BlobExt for Blob {
         let mut buffer_stream =
             bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
 
-        let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
+        let result = match _on_structured_clone_deserialize(
+            global_this,
+            &mut buffer_stream,
+            from_wire_bytes,
+        ) {
             Ok(v) => v,
+            Err(e) if e == bun_core::err!("FileBlobFromExternalBytes") => {
+                return Err(global_this.throw_type_error(format_args!(
+                    "Cannot deserialize a file-backed Blob from serialized bytes; only in-process structured clone can carry file references"
+                )));
+            }
             Err(e)
                 if e == bun_core::err!("EndOfStream")
                     || e == bun_core::err!("TooSmall")
@@ -4133,6 +4144,7 @@ fn read_slice<B: AsRef<[u8]>>(
 fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
     reader: &mut bun_io::FixedBufferStream<B>,
+    from_wire_bytes: bool,
 ) -> Result<JSValue, bun_core::Error> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
@@ -4189,6 +4201,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
+            // Reconstituting a file-backed Blob from bytes that did not come
+            // from this process's serializer would mint a live file handle
+            // (path/fd/s3 URL) from attacker-controlled data, so reject it.
+            if from_wire_bytes {
+                return Err(bun_core::err!("FileBlobFromExternalBytes"));
+            }
             let pathlike_tag =
                 PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
                     .ok_or_else(|| bun_core::err!("InvalidValue"))?;

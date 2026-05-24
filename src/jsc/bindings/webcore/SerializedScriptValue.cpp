@@ -2957,7 +2957,8 @@ public:
         ,
         Vector<RefPtr<WebCodecsEncodedVideoChunkStorage>>&& serializedVideoChunks, Vector<WebCodecsVideoFrameData>&& serializedVideoFrames
 #endif
-    )
+        ,
+        bool fromWireBytes)
     {
         if (!buffer.size())
             return std::make_pair(jsNull(), SerializationReturnCode::UnspecifiedError);
@@ -2979,6 +2980,7 @@ public:
             WTF::move(serializedVideoChunks), WTF::move(serializedVideoFrames)
 #endif
         );
+        deserializer.m_fromWireBytes = fromWireBytes;
         if (!deserializer.isValid())
             return std::make_pair(JSValue(), SerializationReturnCode::ValidationError);
         return deserializer.deserialize();
@@ -4799,7 +4801,7 @@ private:
         //     return JSValue();
 
         // read bun types
-        if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end)) {
+        if (auto value = StructuredCloneableDeserialize::fromTagDeserialize(tag, m_lexicalGlobalObject, m_ptr, m_end, m_fromWireBytes)) {
             JSValue deserialized = JSValue::decode(value.value());
             if (deserialized.isEmpty()) {
                 fail();
@@ -5284,6 +5286,9 @@ private:
     JSGlobalObject* const m_globalObject;
     const bool m_isDOMGlobalObject;
     // const bool m_canCreateDOMObject;
+    // True when the serialized bytes came from outside this process's
+    // serializer (bun:jsc / node:v8 deserialize(), child-process IPC).
+    bool m_fromWireBytes { false };
     const uint8_t* m_ptr;
     const uint8_t* const m_end;
     unsigned m_version;
@@ -6531,7 +6536,8 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         ,
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
-    );
+                                                ,
+        /* fromWireBytes */ true);
 
     if (arrayBuffer->isShared()) {
         arrayBuffer->unpin();
@@ -6788,7 +6794,8 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
                                       ,
         WTF::move(m_serializedVideoChunks), WTF::move(m_serializedVideoFrames)
 #endif
-    );
+                                                ,
+        m_constructedFromWireBytes);
     if (didFail)
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
     // Deserialize may throw an exception. Similar to serialize (~L6240, SerializedScriptValue::create),

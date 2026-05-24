@@ -2111,14 +2111,17 @@ it("http2 client survives a late response for a stream it already reset and stil
         );
       }
     });
+    let prefaceBuffer = Buffer.alloc(0);
     socket.on("data", chunk => {
       if (!prefaceSeen) {
-        // 24-byte client connection preface, then frames.
-        if (chunk.length < 24) return reject(new Error("short preface"));
+        // 24-byte client connection preface, then frames. May span TCP chunks.
+        prefaceBuffer = prefaceBuffer.length === 0 ? chunk : Buffer.concat([prefaceBuffer, chunk]);
+        if (prefaceBuffer.length < 24) return;
         prefaceSeen = true;
         socket.write(new http2utils.SettingsFrame(false).data);
         socket.write(new http2utils.SettingsFrame(true).data);
-        chunk = chunk.subarray(24);
+        chunk = prefaceBuffer.subarray(24);
+        prefaceBuffer = Buffer.alloc(0);
         if (chunk.length === 0) return;
       }
       scan(chunk);

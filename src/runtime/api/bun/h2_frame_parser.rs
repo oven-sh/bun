@@ -2243,7 +2243,12 @@ impl H2FrameParser {
                     self.has_closed_streams.set(true);
                     break;
                 }
-                if stream.data_frame_queue.is_empty() {
+                if stream.is_waiting_more_headers {
+                    // The connection is mid-header-block for this stream; the
+                    // CONTINUATION frames that complete it must still find the
+                    // map entry. Re-examine once the block ends.
+                    self.has_closed_streams.set(true);
+                } else if stream.data_frame_queue.is_empty() {
                     evicted.push((id, ptr));
                 } else {
                     // Unreachable today (every CLOSED transition drains the

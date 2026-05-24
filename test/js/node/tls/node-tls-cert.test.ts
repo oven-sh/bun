@@ -352,7 +352,7 @@ it("explicit rejectUnauthorized: false still admits an unverified client certifi
   client.on("error", () => {});
 
   try {
-    const serverSocket = await handledSocket;
+    const [serverSocket] = await Promise.all([handledSocket, once(client, "secureConnect")]);
     expect(serverSocket.authorized).toBe(false);
     expect(serverSocket.authorizationError).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
   } finally {

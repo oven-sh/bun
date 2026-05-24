@@ -620,14 +620,40 @@ fn is_valid_header_value(value: &[u8]) -> bool {
     !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
 }
 
-/// RFC 9113 §8.2/§8.2.1 inbound validation: field names received over the
-/// wire must be lowercase, and neither names nor values may contain NUL, LF,
-/// or CR. Mirrors `is_malformed_response_value` on the fetch() HTTP/2
-/// client path.
+/// RFC 9113 §8.2.1 inbound validation: a field name must be a lowercase
+/// RFC 9110 token, with at most one leading ':' for pseudo-headers. Mirrors
+/// `is_malformed_response_field` on the fetch() HTTP/2 client path and
+/// nghttp2's `nghttp2_check_header_name`.
 #[inline]
 fn is_malformed_field_name(name: &[u8]) -> bool {
-    name.iter()
-        .any(|&c| c == 0 || c == b'\r' || c == b'\n' || c.is_ascii_uppercase())
+    let rest = match name.split_first() {
+        None => return true,
+        Some((b':', rest)) => rest,
+        Some(_) => name,
+    };
+    rest.is_empty()
+        || !rest.iter().all(|&c| {
+            matches!(
+                c,
+                b'a'..=b'z'
+                    | b'0'..=b'9'
+                    | b'!'
+                    | b'#'
+                    | b'$'
+                    | b'%'
+                    | b'&'
+                    | b'\''
+                    | b'*'
+                    | b'+'
+                    | b'-'
+                    | b'.'
+                    | b'^'
+                    | b'_'
+                    | b'`'
+                    | b'|'
+                    | b'~'
+            )
+        })
 }
 
 #[inline]

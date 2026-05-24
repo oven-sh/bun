@@ -604,12 +604,34 @@ pub mod ast {
 
 const MAX_NESTED_BRACES: usize = 10;
 
+/// Hard cap on the number of `{` groups in a single brace-expansion word.
+/// `parse_atom` ⇄ `parse_expansion`, `expand_flat`, and `expand_nested` all
+/// recurse proportionally to the count / nesting depth of brace groups, so
+/// without a cap a crafted input (e.g. 50k nested `{`) overflows the native
+/// stack. Legitimate patterns are far below this.
+const MAX_BRACE_GROUPS: usize = 256;
+
+/// Returns an error if `tokens` contains more `{` groups than the parser /
+/// expander can recurse through without risking stack exhaustion.
+fn check_brace_group_count(tokens: &[Token]) -> Result<(), ParserError> {
+    let opens = tokens
+        .iter()
+        .filter(|t| matches!(t, Token::Open(_)))
+        .count();
+    if opens > MAX_BRACE_GROUPS {
+        return Err(ParserError::TooManyBraces);
+    }
+    Ok(())
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ParserError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("UnexpectedToken")]
     UnexpectedToken,
+    #[error("TooManyBraces")]
+    TooManyBraces,
 }
 
 bun_core::oom_from_alloc!(ParserError);
@@ -619,6 +641,7 @@ impl From<ParserError> for bun_core::Error {
         match e {
             ParserError::OutOfMemory => bun_core::err!("OutOfMemory"),
             ParserError::UnexpectedToken => bun_core::err!("UnexpectedToken"),
+            ParserError::TooManyBraces => bun_core::err!("TooManyBraces"),
         }
     }
 }
@@ -632,6 +655,7 @@ pub fn expand(
     out: &mut [Vec<u8>],
     contains_nested: bool,
 ) -> Result<(), ExpandError> {
+    check_brace_group_count(tokens)?;
     let mut out_key_counter: u16 = 1;
     if !contains_nested {
         let expansions_table = build_expansion_table_alloc(tokens)?;
@@ -890,6 +914,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<ast::Group, ParserError> {
+        check_brace_group_count(self.tokens)?;
         // PERF(port): was stack-fallback alloc (@sizeOf(AST.Atom)) — profile if hot.
         let mut nodes: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
         while !self.r#match(TokenTag::Eof) {

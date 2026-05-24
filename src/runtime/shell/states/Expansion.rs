@@ -329,6 +329,12 @@ impl Expansion {
             &mut expanded[..],
             lexer_output.contains_nested,
         ) {
+            if matches!(e, braces::ParserError::TooManyBraces) {
+                let msg = "too many braces in brace expansion".to_string();
+                me.state =
+                    ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
+                return;
+            }
             // Spec: error.UnexpectedToken → panic. Mirror it.
             panic!("unexpected error from Braces.expand: {e:?}");
         }

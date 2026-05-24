@@ -43,8 +43,13 @@ pub mod crypto;
 // codegen (`generated_js2native.rs`) addresses this by its file-stem name.
 pub use crypto as node_crypto_binding;
 
+// macOS-only: the FSEvents/CoreFoundation backend for `fs.watch`. Gating the
+// whole module (rather than `#[allow(dead_code)]` on its entry points) keeps
+// the other platforms from compiling CF-specific code at all.
+#[cfg(target_os = "macos")]
 #[path = "node/fs_events.rs"]
 pub mod fs_events;
+#[cfg(target_os = "macos")]
 pub use fs_events as FSEvents;
 
 // Sibling modules node_fs.rs imports by `super::` path. Stat/StatFS/time_like

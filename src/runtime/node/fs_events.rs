@@ -100,11 +100,9 @@ static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 // loop lives for the process lifetime; `close_and_wait()` only `shutdown()`s
 // it (joins the CF thread and releases CF handles) so no `&mut FSEventsLoop`
 // is ever formed after the CF thread starts.
-#[allow(dead_code)]
 static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
     std::sync::OnceLock::new();
 
-#[cfg(unix)]
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
@@ -119,13 +117,6 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // case so the resulting fn pointer is always non-null. Not expressible via
     // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
-}
-#[cfg(not(unix))]
-fn dlsym<T>(_handle: *mut c_void, _symbol: &core::ffi::CStr) -> Option<T> {
-    // FSEvents is macOS-only; CoreFoundation/CoreServices loaders below are
-    // gated behind `target_os = "macos"`, so this body is unreachable on
-    // Windows but must still type-check.
-    None
 }
 
 // Clone/Copy: bitwise OK — `handle` is a leaked dlopen handle held for the
@@ -944,8 +935,6 @@ impl FSEventsLoop {
     /// `close_and_wait` serializes calls under `FSEVENTS_DEFAULT_LOOP_MUTEX`,
     /// and this is idempotent under that lock: `thread.take()` returns `None`
     /// on a repeat call and we bail before touching CF.
-    // Only called from the `cfg(macos)` arm of `close_and_wait()`.
-    #[cfg(target_os = "macos")]
     fn shutdown(&'static self) {
         // SAFETY: `thread` is JS-thread-only; `shutdown()` runs from
         // `close_and_wait()` on the JS thread at exit under
@@ -1016,7 +1005,6 @@ pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
-    #[allow(dead_code)]
     pub(crate) fn init(
         loop_: &'static FSEventsLoop,
         path: &[u8],
@@ -1095,7 +1083,6 @@ extern "C" fn close_and_wait_on_exit() {
 }
 
 pub(crate) fn close_and_wait() {
-    #[cfg(target_os = "macos")]
     if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
         let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
         loop_.shutdown();

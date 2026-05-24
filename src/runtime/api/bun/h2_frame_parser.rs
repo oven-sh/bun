@@ -620,6 +620,24 @@ fn is_valid_header_value(value: &[u8]) -> bool {
     !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
 }
 
+/// RFC 9113 §8.2/§8.2.1 inbound validation. Field names received over the
+/// wire must be lowercase, and neither names nor values may contain NUL
+/// (0x00), LF (0x0a), or CR (0x0d). HPACK strings are length-prefixed, so
+/// these octets would otherwise reach the application verbatim and enable
+/// header/request injection when headers are re-serialized into HTTP/1.1
+/// downstream. Mirrors `is_malformed_response_value` on the fetch() HTTP/2
+/// client path.
+#[inline]
+fn is_malformed_field_name(name: &[u8]) -> bool {
+    name.iter()
+        .any(|&c| c == 0 || c == b'\r' || c == b'\n' || c.is_ascii_uppercase())
+}
+
+#[inline]
+fn is_malformed_field_value(value: &[u8]) -> bool {
+    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
+}
+
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
 /// Returns a stable index in `0..SINGLE_VALUE_HEADERS_LEN` for headers that
@@ -3277,6 +3295,7 @@ impl H2FrameParser {
         headers.ensure_still_alive();
 
         let mut sensitive_headers: JSValue = JSValue::UNDEFINED;
+        let mut malformed = false;
 
         loop {
             let header = match self.decode(&payload[offset..]) {
@@ -3340,7 +3359,16 @@ impl H2FrameParser {
                 return Ok(self.streams.get().get(&stream_id).copied());
             }
 
-            if let Some(js_header_name) =
+            // RFC 9113 §8.2.1: a request or response carrying a field name or
+            // value with forbidden octets is malformed. Keep decoding the rest
+            // of the block so the HPACK dynamic table stays in sync, but do
+            // not deliver any of its headers to JS; reset the stream instead.
+            if malformed
+                || is_malformed_field_name(header.name)
+                || is_malformed_field_value(header.value)
+            {
+                malformed = true;
+            } else if let Some(js_header_name) =
                 get_http2_common_string(&global_object, header.well_know as u32)
             {
                 headers.push(&global_object, js_header_name)?;
@@ -3379,6 +3407,11 @@ impl H2FrameParser {
             if offset >= payload.len() {
                 break;
             }
+        }
+
+        if malformed {
+            self.end_stream(stream, ErrorCode::PROTOCOL_ERROR);
+            return Ok(self.streams.get().get(&stream_id).copied());
         }
 
         self.dispatch_with_3_extra(

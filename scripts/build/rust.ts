@@ -244,8 +244,8 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // preserving the embedded `"..."` around paths/env values). Same pattern as
   // codegen.ts / bun.ts.
   // Windows .bin/ shim PE: cargo build → copy into the source tree for
-  // `include_bytes!`. One rule does both so the declared output is the
-  // source-tree path (cargo's own output path is an undeclared intermediate).
+  // `include_bytes!`. One rule does both; cargo's own output path and the
+  // source-tree copy are undeclared side effects (see below for what $out is).
   //
   // Copy is *content-conditional* (`fc /b` / `cmp -s` returns 0 iff bytes
   // match): any `.rs` edit re-invokes this rule (it shares `rustSources`

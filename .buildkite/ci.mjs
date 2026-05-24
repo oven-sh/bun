@@ -1477,21 +1477,26 @@ async function getPipeline(options = {}) {
     );
 
     // Windows cross-compile validation: full builds of bun.exe (x64 + arm64)
-    // from Linux agents. See getWindowsCrossBuildStep().
-    const crossImageDependsOn = ["x64", "aarch64"]
-      .map(arch => getImageKey({ os: "linux", arch, distro: "amazonlinux", release: "2023", features: ["docker"] }))
-      .filter(imageKey => imagePlatforms.has(imageKey))
-      .map(imageKey => `${imageKey}-build-image`);
-    steps.push(
-      getStepWithDependsOn(
-        {
-          key: "windows-cross",
-          group: `${getBuildkiteEmoji("windows")} cross (linux)`,
-          steps: [getWindowsCrossBuildStep("x64", options), getWindowsCrossBuildStep("aarch64", options)],
-        },
-        ...crossImageDependsOn,
-      ),
-    );
+    // from Linux agents. See getWindowsCrossBuildStep(). Honours the same
+    // platform filtering as the per-target groups above, so a manual build
+    // that narrows `build-platforms` to a non-windows subset doesn't spawn
+    // the cross lanes.
+    if (relevantBuildPlatforms.some(({ os }) => os === "windows")) {
+      const crossImageDependsOn = ["x64", "aarch64"]
+        .map(arch => getImageKey({ os: "linux", arch, distro: "amazonlinux", release: "2023", features: ["docker"] }))
+        .filter(imageKey => imagePlatforms.has(imageKey))
+        .map(imageKey => `${imageKey}-build-image`);
+      steps.push(
+        getStepWithDependsOn(
+          {
+            key: "windows-cross",
+            group: `${getBuildkiteEmoji("windows")} cross (linux)`,
+            steps: [getWindowsCrossBuildStep("x64", options), getWindowsCrossBuildStep("aarch64", options)],
+          },
+          ...crossImageDependsOn,
+        ),
+      );
+    }
   }
 
   if (!isMainBranch()) {

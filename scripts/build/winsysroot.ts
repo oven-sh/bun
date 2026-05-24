@@ -30,7 +30,11 @@ import type { Arch, Config } from "./config.ts";
 import { downloadWithRetry, extractTarGz } from "./download.ts";
 import { BuildError } from "./error.ts";
 
-/** Pinned xwin release — https://github.com/Jake-Shadle/xwin/releases */
+/**
+ * Pinned xwin release — https://github.com/Jake-Shadle/xwin/releases
+ * Keep in sync with the baked splat in .buildkite/Dockerfile (ARG
+ * XWIN_VERSION) and scripts/bootstrap.sh (xwin_version).
+ */
 export const XWIN_VERSION = "0.6.7";
 
 /**

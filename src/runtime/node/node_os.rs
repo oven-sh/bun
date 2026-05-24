@@ -585,9 +585,9 @@ mod _impl {
             c::host_processor_info(
                 c::mach_host_self(),
                 c::PROCESSOR_CPU_LOAD_INFO,
-                &mut num_cpus,
-                &mut info as *mut *mut c::processor_cpu_load_info as *mut c::processor_info_array_t,
-                &mut info_size,
+                &raw mut num_cpus,
+                (&raw mut info).cast::<c::processor_info_array_t>(),
+                &raw mut info_size,
             )
         } != 0
         {

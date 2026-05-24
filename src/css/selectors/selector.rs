@@ -38,8 +38,6 @@ pub mod r#impl {
             pub type PseudoElement = parser::PseudoElement;
             pub type VendorPrefix = css::VendorPrefix;
         }
-
-        pub mod local_identifier {}
     }
 }
 

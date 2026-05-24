@@ -21,6 +21,4 @@ impl Default for OutlineStyle {
     }
 }
 
-impl OutlineStyle {}
-
 // ported from: src/css/properties/outline.zig

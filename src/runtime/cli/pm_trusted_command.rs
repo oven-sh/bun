@@ -216,7 +216,6 @@ struct ScriptInfo {
 
 // structs in impl blocks — hoisted to module level.
 pub struct TrustCommandSorter;
-impl TrustCommandSorter {}
 
 impl TrustCommand {
     fn error_expected_args() -> ! {

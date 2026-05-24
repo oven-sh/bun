@@ -51,8 +51,6 @@ pub enum FlexWrap {
     WrapReverse,
 }
 
-impl FlexWrap {}
-
 /// A value for the [flex-flow](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#flex-flow-property) shorthand property.
 #[derive(Clone, PartialEq, Eq)]
 pub struct FlexFlow {

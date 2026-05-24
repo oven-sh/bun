@@ -136,8 +136,6 @@ pub enum Cleaned<'a> {
     New(Box<Lockfile>),
 }
 
-impl<'a> Cleaned<'a> {}
-
 // TODO(port): std.io.FixedBufferStream([]u8) — replace with cursor over &mut [u8]
 pub type Stream = bun_io::FixedBufferStream<Vec<u8>>;
 

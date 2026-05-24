@@ -5,8 +5,6 @@ pub enum OutKind {
     Stderr,
 }
 
-impl OutKind {}
-
 // Spec (util.zig): `pub const Stdio = bun.spawn.Stdio;` — the user-facing
 // stdio union with `isPiped()` from `runtime/api/bun/spawn/stdio.zig`, NOT the
 // low-level `PosixStdio`/`WindowsStdio` spawn-option shape that the

@@ -880,9 +880,6 @@ impl PEFile {
     }
 }
 
-/// Utilities for PE file detection and validation
-pub mod utils {}
-
 // External C interface declarations - these are implemented in C++ bindings
 // (src/jsc/bindings/c-bindings.cpp). The C++ code uses Windows PE APIs to
 // directly access the .bun section from the current process memory without

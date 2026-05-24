@@ -99,7 +99,7 @@ impl AllocatorVTable {
 
     /// Build a "free-only" vtable: `alloc`/`resize`/`remap` all no-op/fail and
     /// only `free` is meaningful. Each call site still gets its own `static`
-    /// (vtable address is an identity tag for `is_instance`/`allocator_has_pointer`).
+    /// (vtable address is an identity tag for `is_instance`).
     pub const fn free_only(
         free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
     ) -> Self {

@@ -590,8 +590,6 @@ pub struct Matrix<T> {
     pub f: T,
 }
 
-impl<T: Clone> Matrix<T> {}
-
 /// A 3D matrix.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Matrix3d<T> {
@@ -612,8 +610,6 @@ pub struct Matrix3d<T> {
     pub m43: T,
     pub m44: T,
 }
-
-impl<T: PartialEq> Matrix3d<T> {}
 
 /// A value for the [transform-style](https://drafts.csswg.org/css-transforms-2/#transform-style-property) property.
 // TODO(port): css.DefineEnumProperty reflection → crate-wide #[derive(EnumProperty)] providing

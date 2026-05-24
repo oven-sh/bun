@@ -151,7 +151,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
 // -- Windows (uv.Pipe) -------------------------------------------------------
 
 #[cfg(windows)]
-pub(crate) struct WindowsBackend {
+pub struct WindowsBackend {
     pub pipe: Option<Box<uv::Pipe>>,
     /// Read scratch — libuv asks us to allocate before each read.
     pub read_chunk: [u8; 16 * 1024],

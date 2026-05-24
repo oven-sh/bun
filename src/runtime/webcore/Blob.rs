@@ -1536,17 +1536,13 @@ impl BlobExt for Blob {
                 };
                 let sink = webcore::FileSink::init(
                     fd,
-                    // SAFETY: `global_this().bun_vm().event_loop()` is the live
-                    // per-thread `jsc::EventLoop`.
-                    unsafe {
-                        jsc::EventLoopHandle::init(
-                            self.global_this()
-                                .expect("Blob.global_this set at construction")
-                                .bun_vm()
-                                .as_mut()
-                                .event_loop() as *mut (),
-                        )
-                    },
+                    jsc::EventLoopHandle::init(
+                        self.global_this()
+                            .expect("Blob.global_this set at construction")
+                            .bun_vm()
+                            .as_mut()
+                            .event_loop() as *mut (),
+                    ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
                 unsafe {
@@ -1905,17 +1901,13 @@ impl BlobExt for Blob {
 
             let sink = webcore::FileSink::init(
                 fd,
-                // SAFETY: `global_this().bun_vm().event_loop()` is the live
-                // per-thread `jsc::EventLoop`.
-                unsafe {
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .as_mut()
-                            .event_loop() as *mut (),
-                    )
-                },
+                jsc::EventLoopHandle::init(
+                    self.global_this()
+                        .expect("Blob.global_this set at construction")
+                        .bun_vm()
+                        .as_mut()
+                        .event_loop() as *mut (),
+                ),
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
             let sink_mut = unsafe { &mut *sink };

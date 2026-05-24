@@ -130,7 +130,7 @@ impl StoredTrace {
     }
 }
 
-/// Zig: `WriteStackTraceLimits`. Aliased as `DumpOptions` for safety/sys callers.
+/// Zig: `WriteStackTraceLimits`.
 #[derive(Copy, Clone, Debug)]
 pub struct DumpStackTraceOptions {
     pub frame_count: usize,

@@ -361,24 +361,22 @@ mod stdarg {
         }
 
         pub(super) fn inject(state: &mut TCC::State) {
-            // SAFETY: taking addresses of process-global FILE* pointers; the
-            // statics live for the process and we never form a Rust reference
-            // to them (only a raw `*const c_void` for tcc_add_symbol).
-            unsafe {
-                state
-                    .add_symbols(&[
-                        ("__stdinp", core::ptr::addr_of!(FFI_STDINP).cast::<c_void>()),
-                        (
-                            "__stdoutp",
-                            core::ptr::addr_of!(FFI_STDOUTP).cast::<c_void>(),
-                        ),
-                        (
-                            "__stderrp",
-                            core::ptr::addr_of!(FFI_STDERRP).cast::<c_void>(),
-                        ),
-                    ])
-                    .expect("Failed to add macos symbols");
-            }
+            // Taking addresses of process-global FILE* pointers; the statics
+            // live for the process and we never form a Rust reference to them
+            // (only a raw `*const c_void` for tcc_add_symbol).
+            state
+                .add_symbols(&[
+                    ("__stdinp", core::ptr::addr_of!(FFI_STDINP).cast::<c_void>()),
+                    (
+                        "__stdoutp",
+                        core::ptr::addr_of!(FFI_STDOUTP).cast::<c_void>(),
+                    ),
+                    (
+                        "__stderrp",
+                        core::ptr::addr_of!(FFI_STDERRP).cast::<c_void>(),
+                    ),
+                ])
+                .expect("Failed to add macos symbols");
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -526,6 +524,7 @@ impl CompileC {
             // (Zig: `catch return` / `if (process.result.isOK())`).
             // `Command::new("xcrun")` does PATH lookup like `bun.which`, and
             // /usr/bin is always in PATH on macOS, matching the Zig fallback.
+            #[allow(clippy::disallowed_types, clippy::disallowed_methods)]
             let out = match std::process::Command::new("xcrun")
                 .arg("-sdk")
                 .arg("macosx")

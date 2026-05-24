@@ -45,9 +45,7 @@ pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
 
 /// Runtime `getZone(name)` — looks up (or creates) the per-name zone. The
 /// `get_zone!` macro is the zero-cost form. This runtime path keys a
-/// process-global map for callers that pass a non-literal name (or for
-/// `allocator<T>()`/`get_zone_t<T>()`, which cannot expand a per-T static on
-/// stable Rust without a proc-macro).
+/// process-global map for callers that pass a non-literal name.
 // TODO(port): could be replaced with a `#[heap_label]` derive that expands
 // `get_zone!` directly.
 #[allow(clippy::assertions_on_constants)]

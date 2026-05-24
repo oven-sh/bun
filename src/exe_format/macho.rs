@@ -797,8 +797,6 @@ fn align_vmsize(size: u64, page_size: u64) -> u64 {
 
 const SEG_LINKEDIT: &[u8] = b"__LINKEDIT";
 
-pub mod utils {}
-
 const CSMAGIC_CODEDIRECTORY: u32 = 0xfade0c02;
 const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
 const CSSLOT_CODEDIRECTORY: u32 = 0;

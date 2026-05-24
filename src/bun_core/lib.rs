@@ -2958,10 +2958,13 @@ pub mod ffi {
         target_os = "openbsd",
         target_os = "netbsd"
     ))]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     unsafe impl Zeroable for libc::kevent {}
     #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     unsafe impl Zeroable for libc::kevent64_s {}
     #[cfg(target_os = "freebsd")]
+    // SAFETY: C POD (integer/array/raw-pointer fields only); all-zero is valid.
     unsafe impl Zeroable for libc::_umtx_time {}
 
     // Windows POD — `bun_windows_sys` `#[repr(C)]` out-param structs that are

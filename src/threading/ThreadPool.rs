@@ -733,7 +733,7 @@ pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
         // stack size must be a multiple of page_size
         // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
         assert!(
-            size % PAGE_SIZE_MAX == 0,
+            size.is_multiple_of(PAGE_SIZE_MAX),
             "Thread stack size is not a multiple of page size"
         );
         size

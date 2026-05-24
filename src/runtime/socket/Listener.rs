@@ -1606,9 +1606,6 @@ pub struct WindowsNamedPipeListeningContext {
     _priv: (),
 }
 
-#[cfg(not(windows))]
-impl WindowsNamedPipeListeningContext {}
-
 #[cfg(windows)]
 impl WindowsNamedPipeListeningContext {
     fn on_client_connect(this: *mut Self, status: uv::ReturnCode) {

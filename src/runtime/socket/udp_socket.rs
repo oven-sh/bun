@@ -189,6 +189,7 @@ extern "C" fn on_data(
         let slice = buf.get_payload(i);
 
         let span = hostname.unwrap();
+        #[allow(unused_labels)]
         let mut hostname_string = if let Some(id) = scope_id {
             'blk: {
                 #[cfg(not(windows))]

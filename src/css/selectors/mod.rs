@@ -56,8 +56,6 @@ pub mod impl_ {
         type PseudoElement = super::parser::PseudoElement;
         type VendorPrefix = VendorPrefix;
     }
-
-    pub mod local_identifier {}
 }
 
 // ported from: src/css/selectors/

@@ -3449,8 +3449,8 @@ pub mod serializer {
                     let install_script_at = mem::offset_of!(Meta, has_install_script);
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[origin_at], 0 | 1 | 2)
-                            || !matches!(raw[install_script_at], 0 | 1 | 2)
+                        if !matches!(raw[origin_at], 0..=2)
+                            || !matches!(raw[install_script_at], 0..=2)
                         {
                             return Err(bun_core::err!(
                                 "Lockfile validation failed: invalid package meta"
@@ -3465,7 +3465,7 @@ pub mod serializer {
                     let tag_at = mem::offset_of!(Bin, tag);
                     debug_assert!(stride != 0 && src.len().is_multiple_of(stride));
                     for raw in src.chunks_exact(stride) {
-                        if !matches!(raw[tag_at], 0 | 1 | 2 | 3 | 4) {
+                        if !matches!(raw[tag_at], 0..=4) {
                             return Err(bun_core::err!(
                                 "Lockfile validation failed: invalid bin tag"
                             ));

@@ -221,9 +221,9 @@ pub mod debug {
         fn lookup_module_dyld(&mut self, address: usize) -> Result<&mut Module, Error> {
             // PORT NOTE: Zig walks `_dyld_get_image_header` + LoadCommandIterator. `dladdr`
             // gives the same `{base_address, fname}` pair on Darwin without the MachO walk.
-            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
             let mut info: libc::Dl_info = bun_core::ffi::zeroed();
-            let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+            // SAFETY: dladdr only reads; out-param is a valid Dl_info.
+            let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
             if rc == 0 {
                 return Err(err!("MissingDebugInfo"));
             }
@@ -312,9 +312,9 @@ pub mod debug {
 
     #[cfg(target_vendor = "apple")]
     fn lookup_module_name_dyld(address: usize) -> Option<Box<[u8]>> {
-        // SAFETY: dladdr only reads; out-param is a valid Dl_info.
         let mut info: libc::Dl_info = bun_core::ffi::zeroed();
-        let rc = unsafe { libc::dladdr(address as *const c_void, &mut info) };
+        // SAFETY: dladdr only reads; out-param is a valid Dl_info.
+        let rc = unsafe { libc::dladdr(address as *const c_void, &raw mut info) };
         if rc == 0 || info.dli_fname.is_null() {
             return None;
         }
@@ -511,8 +511,7 @@ mod draft {
         {
             #[cfg(debug_assertions)]
             core::intrinsics::breakpoint();
-            // SAFETY: ExitProcess never returns.
-            unsafe { bun_sys::windows::kernel32::ExitProcess(3) }
+            bun_sys::windows::kernel32::ExitProcess(3)
         }
         #[cfg(not(windows))]
         // SAFETY: libc::abort has no preconditions; never returns.
@@ -1058,10 +1057,11 @@ mod draft {
                                         // `noreturn` crash path immediately before `ExitProcess(3)`,
                                         // so the leak is intentional.
                                     } else {
-                                        // SAFETY: GetCurrentThreadId is an infallible Win32 call with no pointer/precondition requirements
-                                        if write!(writer, "(thread {})", unsafe {
+                                        if write!(
+                                            writer,
+                                            "(thread {})",
                                             bun_sys::windows::kernel32::GetCurrentThreadId()
-                                        })
+                                        )
                                         .is_err()
                                         {
                                             abort();
@@ -2166,7 +2166,7 @@ mod draft {
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    write!(writer, "macOS v{}\n", bstr::BStr::new(platform.version))
+                    writeln!(writer, "macOS v{}", bstr::BStr::new(platform.version))
                         .map_err(fmt_err)?;
                 }
                 #[cfg(windows)]
@@ -2456,12 +2456,11 @@ mod draft {
                 // https://github.com/ziglang/zig/blob/215de3ee67f75e2405c177b262cb5c1cd8c8e343/lib/std/debug.zig#L1783
                 let address = if addr == 0 { 0 } else { addr - 1 };
 
-                // SAFETY: dyld APIs are safe to call
-                let image_count = unsafe { bun_sys::c::_dyld_image_count() };
+                let image_count = bun_sys::c::_dyld_image_count();
 
                 let mut i: u32 = 0;
                 while i < image_count {
-                    let header = unsafe { bun_sys::c::_dyld_get_image_header(i) };
+                    let header = bun_sys::c::_dyld_get_image_header(i);
                     if header.is_null() {
                         i += 1;
                         continue;
@@ -2472,8 +2471,7 @@ mod draft {
                         continue;
                     }
                     // This 'slide' is the ASLR offset. Subtract from `address` to get a stable address
-                    let vmaddr_slide =
-                        unsafe { bun_sys::c::_dyld_get_image_vmaddr_slide(i) } as usize;
+                    let vmaddr_slide = bun_sys::c::_dyld_get_image_vmaddr_slide(i) as usize;
 
                     // SAFETY: header points to a valid mach_header_64
                     let header_ref = unsafe { &*header };
@@ -3167,9 +3165,9 @@ mod draft {
                 // SAFETY: lazy debug-only singleton; sole `&mut` for the dump below.
                 Ok(d) => unsafe { &mut *d },
                 Err(err) => {
-                    let _ = write!(
+                    let _ = writeln!(
                         stderr,
-                        "Unable to dump stack trace: Unable to open debug info: {}\n",
+                        "Unable to dump stack trace: Unable to open debug info: {}",
                         bstr::BStr::new(err.name())
                     );
                     return;

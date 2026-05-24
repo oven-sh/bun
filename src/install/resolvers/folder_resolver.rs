@@ -36,8 +36,6 @@ pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
     pub quoted: bool,
 }
 
-impl<'a> PackageWorkspaceSearchPathFormatter<'a> {}
-
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut joined = [0u8; MAX_PATH_BYTES + 2];

@@ -25,7 +25,9 @@ pub struct PathBufferPoolT<T: 'static + Default>(PhantomData<T>);
 // lock; per-thread is closer to "use a thread-local allocator so mimalloc
 // deletes it on thread deinit" (the original comment) and avoids any lock.
 thread_local! {
+    #[allow(clippy::vec_box)]
     static U8_POOL: RefCell<Vec<Box<PathBuffer>>> = const { RefCell::new(Vec::new()) };
+    #[allow(clippy::vec_box)]
     static U16_POOL: RefCell<Vec<Box<WPathBuffer>>> = const { RefCell::new(Vec::new()) };
 }
 

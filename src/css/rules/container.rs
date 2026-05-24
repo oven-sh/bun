@@ -92,8 +92,6 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
     }
 }
 
-impl ContainerSizeFeatureId {}
-
 /// Represents a style query within a container condition.
 pub enum StyleQuery {
     /// A style feature, implicitly parenthesized.

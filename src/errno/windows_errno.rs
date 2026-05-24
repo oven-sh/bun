@@ -613,7 +613,7 @@ pub enum SystemErrno {
 /// Covers every concrete type the codebase actually passes — `i64` (shared
 /// `Error.rs` paths), `u32`/`DWORD` (`GetLastError()`), `c_int` (libuv rc),
 /// `u16`, and `Win32Error`.
-pub(crate) trait SystemErrnoInit {
+pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }
 impl SystemErrnoInit for i64 {

@@ -181,6 +181,10 @@ codegen-units = 1
 strip = "symbols"
 
 [workspace.lints.rust]
+# Every rustc warning is an error. Individual lints below can override this
+# back to "warn" (their priority 0 beats the group's -1) where a warning level
+# is intentional.
+warnings = { level = "deny", priority = -1 }
 # `bun_asan` is set via RUSTFLAGS (`--cfg=bun_asan` + `--check-cfg=cfg(bun_asan)`)
 # by scripts/build/rust.ts for asan builds; register it here so a plain
 # `cargo build` / `cargo check` (without those flags) doesn't warn.

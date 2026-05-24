@@ -927,8 +927,6 @@ pub struct LineDirectionCorner {
     pub vertical: VerticalPositionKeyword,
 }
 
-impl LineDirectionCorner {}
-
 /// The direction of a CSS `linear-gradient()`.
 ///
 /// See [LinearGradient](LinearGradient).
@@ -1295,8 +1293,6 @@ pub struct EllipseSize {
     pub y: LengthPercentage,
 }
 
-impl EllipseSize {}
-
 /// An ellipse ending shape for a `radial-gradient()`.
 ///
 /// See [RadialGradient](RadialGradient).
@@ -1374,8 +1370,6 @@ pub enum ShapeExtent {
     /// The farthest corner of the box from the gradient's center.
     FarthestCorner,
 }
-
-impl ShapeExtent {}
 
 /// A circle ending shape for a `radial-gradient()`.
 ///

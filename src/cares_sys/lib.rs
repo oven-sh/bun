@@ -6,7 +6,7 @@ pub mod c_ares_draft;
 
 /// Winsock typedefs not provided by `libc` on `x86_64-pc-windows-msvc`.
 #[cfg(windows)]
-pub(crate) mod winsock {
+pub mod winsock {
     use core::ffi::{c_int, c_long};
     pub(crate) type socklen_t = c_int; // ws2tcpip.h: `typedef int socklen_t;`
     // Same nominal type as `bun_sys::posix::sockaddr*`; sin_addr is `in_addr{s_addr}`
@@ -15,7 +15,7 @@ pub(crate) mod winsock {
     pub(crate) use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6};
     #[repr(C)]
     #[derive(Clone, Copy)]
-    pub(crate) struct timeval {
+    pub struct timeval {
         pub tv_sec: c_long,
         pub tv_usec: c_long,
     }
@@ -23,7 +23,7 @@ pub(crate) mod winsock {
     /// on Windows for the `asendv` socket-function callback — it does NOT use `WSABUF`.
     #[repr(C)]
     #[derive(Clone, Copy)]
-    pub(crate) struct iovec {
+    pub struct iovec {
         pub iov_base: *mut core::ffi::c_void,
         pub iov_len: usize,
     }

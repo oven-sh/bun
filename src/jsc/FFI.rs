@@ -35,8 +35,6 @@ pub union union_EncodedJSValue {
 }
 pub(crate) type EncodedJSValue = union_EncodedJSValue;
 
-impl union_EncodedJSValue {}
-
 // PORTING.md §Global mutable state: never mutated → would be `const`, but kept
 // as `#[no_mangle] static` to preserve the exported symbol for TinyCC-compiled
 // FFI stubs. `RacyCell` is `repr(transparent)` so the symbol's bytes are

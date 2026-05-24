@@ -787,7 +787,7 @@ impl FilePoll {
                         // registration, it becomes errno
                         0,
                         KEVENT_FLAG_ERROR_EVENTS,
-                        &TIMEOUT,
+                        &raw const TIMEOUT,
                     )
                 };
                 if sys::get_errno(rc) == sys::E::EINTR {
@@ -1092,7 +1092,7 @@ impl FilePoll {
                     changelist.as_mut_ptr(),
                     nchanges,
                     KEVENT_FLAG_ERROR_EVENTS,
-                    &TIMEOUT,
+                    &raw const TIMEOUT,
                 )
             };
 

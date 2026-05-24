@@ -636,7 +636,7 @@ fn list_child_pids(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option<usize
             bun_sys::c::proc_listchildpids(
                 parent,
                 out.as_mut_ptr().cast(),
-                c_int::try_from(out.len() * core::mem::size_of::<libc::pid_t>()).expect("int cast"),
+                c_int::try_from(std::mem::size_of_val(out)).expect("int cast"),
             )
         };
         if rc <= 0 {

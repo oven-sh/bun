@@ -370,9 +370,9 @@ struct IUnknown {
     vt: *const IUnknownVTable,
 }
 
-/// VARIANT/PROPBAG2 layout is fiddly enough (union padding, BRECORD/DECIMAL
-/// arms) that hand-rolling it as `extern struct` is asking for an ABI drift.
-/// The C++ shim uses the SDK's own headers; we just hand it the bag pointer.
+// VARIANT/PROPBAG2 layout is fiddly enough (union padding, BRECORD/DECIMAL
+// arms) that hand-rolling it as `extern struct` is asking for an ABI drift.
+// The C++ shim uses the SDK's own headers; we just hand it the bag pointer.
 // TODO(port): move to runtime_sys
 unsafe extern "C" {
     fn bun_wic_propbag_write_f32(props: *mut c_void, name: *const u16, value: f32) -> i32;

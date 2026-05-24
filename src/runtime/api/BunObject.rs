@@ -3153,7 +3153,7 @@ mod stdio_stores {
     fn build_store(uv_fd: i32, is_atty: bool) -> StoreRef {
         let fd = bun_sys::Fd::from_uv(uv_fd);
         let mode: bun_sys::Mode = match bun_sys::fstat(fd) {
-            Ok(stat) => bun_sys::Mode::try_from(stat.st_mode).unwrap_or(0),
+            Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
         };
         // PORT NOTE: Zig set `ref_count = 2` to account for the RareData slot

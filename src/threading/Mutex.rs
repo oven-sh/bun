@@ -210,7 +210,7 @@ impl DebugImpl {
 /// It also implements an efficient Condition with requeue support for us.
 #[cfg(windows)]
 #[derive(Default)]
-pub(crate) struct WindowsImpl {
+pub struct WindowsImpl {
     pub(crate) srwlock: core::cell::UnsafeCell<bun_sys::windows::SRWLOCK>,
 }
 
@@ -267,8 +267,11 @@ pub struct DarwinImpl {
     oul: core::cell::UnsafeCell<OsUnfairLock>,
 }
 
+// SAFETY: `os_unfair_lock` is the kernel's cross-thread lock primitive; the
+// `UnsafeCell` only exists to hand the FFI a mutable pointer from `&self`.
 #[cfg(target_vendor = "apple")]
 unsafe impl Sync for DarwinImpl {}
+// SAFETY: see `Sync` above.
 #[cfg(target_vendor = "apple")]
 unsafe impl Send for DarwinImpl {}
 
@@ -315,7 +318,7 @@ impl DarwinImpl {
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
 #[derive(Default)]
-pub(crate) struct FutexImpl {
+pub struct FutexImpl {
     state: AtomicU32,
 }
 

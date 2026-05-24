@@ -162,7 +162,6 @@ pub mod border_radius;
 // `box_shadow`: un-gated — real BoxShadow + BoxShadowHandler live in
 // `box_shadow.rs`.
 pub mod box_shadow;
-pub mod contain;
 pub mod display;
 pub mod effects;
 pub mod flex;

@@ -431,7 +431,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         patch_dir,
         &file_path,
         sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
-        sys::Mode::try_from(stat.st_mode).expect("int cast"),
+        stat.st_mode as sys::Mode,
     ) {
         sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
         sys::Result::Ok(fd) => fd,

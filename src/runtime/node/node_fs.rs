@@ -8668,10 +8668,7 @@ impl NodeFS {
                     flags |= sys::O::EXCL;
                 }
 
-                let dest_fd = match Self::_cp_open_dest_with_mkdir(self, dest, flags) {
-                    Ok(fd) => fd,
-                    Err(e) => return Err(e),
-                };
+                let dest_fd = Self::_cp_open_dest_with_mkdir(self, dest, flags)?;
                 let _close_dest =
                     scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                         let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);

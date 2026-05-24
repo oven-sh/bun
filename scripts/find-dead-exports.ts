@@ -106,6 +106,7 @@ function collectExports(crate: Crate): Export[] {
       if (/^\s*#\[cfg\(test\)\]/.test(l) && /^\s*(pub\s+)?mod\s/.test(lines[i + 1] ?? "")) {
         inTestMod = true;
         testModDepth = depth;
+        continue;
       }
       const isImplOrTrait = /^\s*(unsafe\s+)?impl[\s<]/.test(l) || /^\s*(pub\s+)?(unsafe\s+)?trait\s/.test(l);
       if (isImplOrTrait && l.includes("{")) implStack.push(depth);

@@ -390,7 +390,7 @@ pub mod generate_header {
                     libc::sysctlbyname(
                         c"kern.osproductversion".as_ptr(),
                         name.as_mut_ptr().cast(),
-                        &mut len,
+                        &raw mut len,
                         core::ptr::null_mut(),
                         0,
                     )

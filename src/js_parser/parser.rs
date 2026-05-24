@@ -17,8 +17,6 @@ use bun_wyhash::Wyhash;
 pub mod ConvertESMExportsForHmr {
     pub type Ctx = ();
 }
-#[allow(non_snake_case)]
-pub mod ImportScanner {}
 pub use bun_paths::fs;
 
 /// `bun_options_types` is missing several items P.rs/Parser.rs reference

@@ -88,8 +88,6 @@ pub(crate) struct Diff<Unit: DiffUnit> {
     pub text: Box<[Unit]>,
 }
 
-impl<Unit: DiffUnit> Diff<Unit> {}
-
 impl fmt::Display for Diff<u8> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let op = match self.operation {

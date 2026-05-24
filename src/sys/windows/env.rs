@@ -37,8 +37,7 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
         // TODO(port): Zig's wrapper returns OOM on null; verify `crate::windows::GetEnvironmentStringsW` signature.
         let wtf16_buf: *mut u16 = crate::windows::GetEnvironmentStringsW()?;
         let _free = scopeguard::guard(wtf16_buf, |p| {
-            // SAFETY: `p` was returned by GetEnvironmentStringsW and has not been freed.
-            unsafe { crate::windows::FreeEnvironmentStringsW(p) };
+            crate::windows::FreeEnvironmentStringsW(p);
         });
         let mut len: usize = 0;
         loop {

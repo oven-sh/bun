@@ -186,16 +186,16 @@ pub(super) mod lib_info {
 
     pub(crate) fn lookup(
         this: &Resolver,
-        query: GetAddrInfo,
+        query: &GetAddrInfo,
         global_this: &JSGlobalObject,
     ) -> JSValue {
         bun_core::Environment::only_mac();
 
         let Some(getaddrinfo_async_start_) = getaddrinfo_async_start() else {
-            return lib_c::lookup(this, &query, global_this);
+            return lib_c::lookup(this, query, global_this);
         };
 
-        let key = get_addr_info_request::PendingCacheKey::init(&query);
+        let key = get_addr_info_request::PendingCacheKey::init(query);
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
 
@@ -203,6 +203,7 @@ pub(super) mod lib_info {
             let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this);
             // SAFETY: inflight points into resolver's HiveArray buffer
             unsafe { (*inflight).append(dns_lookup) };
+            // SAFETY: `dns_lookup` was just heap-allocated by `DNSLookup::init`.
             return unsafe { (*dns_lookup).promise.value() };
         }
 
@@ -215,7 +216,7 @@ pub(super) mod lib_info {
                 get_addr_info_request::BackendLibInfo::default(),
             ),
             Some(this.as_ctx_ptr()),
-            &query,
+            query,
             global_this,
             PendingCacheField::PendingHostCacheNative,
         );
@@ -231,7 +232,7 @@ pub(super) mod lib_info {
                 ptr::null(),
                 hints
                     .as_ref()
-                    .map(|h| std::ptr::from_ref(h))
+                    .map(std::ptr::from_ref)
                     .unwrap_or(ptr::null()),
                 GetAddrInfoRequest::get_addr_info_async_callback,
                 request.cast::<c_void>(),
@@ -265,7 +266,7 @@ pub(super) mod lib_info {
                     this.pending_host_cache_native.with_mut(|c| {
                         let slot = c.ptr_at(pos as usize);
                         // SAFETY: `pos` was alloc'd; no other token outstanding.
-                        unsafe { c.put_raw(slot) };
+                        c.put_raw(slot);
                     });
                 }
                 // Drop the KeepAlive + resolver ref that `GetAddrInfoRequest.init` took.
@@ -1200,6 +1201,8 @@ pub mod get_addr_info_request {
                 let _ = this;
                 unreachable!();
             }
+            // SAFETY: `this` is the live heap-allocated request; the machport
+            // was registered by `getaddrinfo_async_start` and is still open.
             #[cfg(target_os = "macos")]
             unsafe {
                 jsc::mark_binding();
@@ -2828,6 +2831,7 @@ pub mod internal {
 
         let mut machport: mach_port = 0;
         let mut service_buf = [0u8; 21];
+        // SAFETY: `req` is the live heap-allocated request owned by the caller.
         let port = unsafe { (*req).key.port };
         let service: *const c_char = if port > 0 {
             bun_fmt::itoa_z(&mut service_buf, port as u64).as_ptr()
@@ -2837,6 +2841,8 @@ pub mod internal {
 
         let hints = get_hints();
 
+        // SAFETY: FFI call into libinfo; `req` is heap-allocated and lives
+        // until `libinfo_callback` fires.
         let errno = unsafe {
             getaddrinfo_async_start_(
                 &raw mut machport,
@@ -2876,6 +2882,7 @@ pub mod internal {
             return false;
         }
 
+        // SAFETY: `req` is the live heap-allocated request owned by the caller.
         #[cfg(target_os = "macos")]
         unsafe {
             (*req).libinfo = MacAsyncDNS {
@@ -2894,6 +2901,9 @@ pub mod internal {
         let req: *mut Request = arg.cast();
         let status_int: c_int = status;
         'retry: {
+            // SAFETY: `arg` is the `req` pointer registered with
+            // `getaddrinfo_async_start`; it stays alive until this callback
+            // completes the request.
             unsafe {
                 if status == netc::EAI_NONAME as i32 && (*req).can_retry_for_addrconfig {
                     (*req).can_retry_for_addrconfig = false;
@@ -3733,7 +3743,7 @@ impl bun_ptr::RefCounted for Resolver {
 }
 
 #[cfg(windows)]
-pub(crate) struct UvDnsPoll {
+pub struct UvDnsPoll {
     // BACKREF — Zig: `parent: *Resolver` (mutable). Stored mut because the poll
     // callback hands it to `Resolver::deref`, which may write/free `*this`.
     pub parent: *mut Resolver,
@@ -5257,7 +5267,7 @@ impl Resolver {
             GetAddrInfoBackend::System => {
                 #[cfg(target_os = "macos")]
                 {
-                    lib_info::lookup(self, query, global_this)
+                    lib_info::lookup(self, &query, global_this)
                 }
                 #[cfg(windows)]
                 {

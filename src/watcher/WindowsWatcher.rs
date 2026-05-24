@@ -20,7 +20,7 @@ pub(crate) type Platform = WindowsWatcher;
 #[allow(dead_code)]
 pub(crate) type EventListIndex = core::ffi::c_int;
 
-pub(crate) struct WindowsWatcher {
+pub struct WindowsWatcher {
     #[allow(dead_code)]
     pub mutex: Mutex,
     pub iocp: HANDLE,
@@ -74,7 +74,7 @@ pub(crate) struct FileEvent {
 }
 
 #[repr(C)]
-pub(crate) struct DirWatcher {
+pub struct DirWatcher {
     /// must be initialized to zero (even though it's never read or written in our code),
     /// otherwise ReadDirectoryChangesW will fail with INVALID_HANDLE
     pub overlapped: w::OVERLAPPED,

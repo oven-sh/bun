@@ -3218,7 +3218,7 @@ fn archive_package_json(
     entry.set_size(i64::try_from(edited_package_json.len()).expect("int cast"));
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
-    entry.set_perm(bun_sys::Mode::try_from(stat.st_mode).expect("int cast"));
+    entry.set_perm(stat.st_mode as bun_sys::Mode);
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
     entry.set_mtime(499162500, 0);
@@ -3278,7 +3278,7 @@ fn add_archive_entry(
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
 
-    let mut perm: bun_sys::Mode = bun_sys::Mode::try_from(stat.st_mode).expect("int cast");
+    let mut perm: bun_sys::Mode = stat.st_mode as bun_sys::Mode;
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
     if is_package_bin(bins, filename.as_bytes()) {
         perm |= 0o111;

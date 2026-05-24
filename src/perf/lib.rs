@@ -192,7 +192,7 @@ mod darwin_impl {
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub(crate) struct Linux {
+pub struct Linux {
     start_time: u64,
     event: PerfEvent,
 }

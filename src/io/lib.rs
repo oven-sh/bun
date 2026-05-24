@@ -1564,7 +1564,7 @@ impl Poll {
         );
 
         let one_shot_flag = libc::EV_ONESHOT;
-        let udata: usize = Pollable::init(tag, poll as *mut Poll).ptr() as usize;
+        let udata: usize = Pollable::init(tag, std::ptr::from_mut::<Poll>(poll)).ptr() as usize;
         let (filter, flags_): (i16, u16) = match action {
             ApplyAction::Readable => (libc::EVFILT_READ, libc::EV_ADD | one_shot_flag),
             ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag),

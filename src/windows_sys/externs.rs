@@ -1630,7 +1630,11 @@ pub fn peb() -> *const PEB {
     // SAFETY: `x18` holds the TEB on Windows-arm64 by ABI; TEB+0x60 is the PEB
     // pointer field. Both are valid for the calling thread's lifetime.
     unsafe {
-        *(teb().cast::<u8>().add(0x60) as *const *const PEB)
+        *teb()
+            .cast::<u8>()
+            .add(0x60)
+            .cast::<core::ffi::c_void>()
+            .cast::<*const PEB>()
     }
 }
 

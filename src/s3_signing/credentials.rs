@@ -1331,8 +1331,6 @@ pub(crate) struct SignedHeadersKey {
     pub storage_class: bool,
 }
 
-impl SignedHeadersKey {}
-
 struct SignedHeaders;
 
 impl SignedHeaders {

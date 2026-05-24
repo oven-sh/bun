@@ -636,8 +636,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
             // `*VirtualMachine` and called `vm.eventLoop()` internally; the
             // Rust split keeps `init` taking the erased `*mut ()` event-loop
             // pointer directly, so unwrap it here.
-            // SAFETY: `VirtualMachine::get().event_loop()` is the live per-thread `jsc::EventLoop`.
-            loop_: unsafe { EventLoopHandle::init(VirtualMachine::get().event_loop().cast()) },
+            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
             ..Default::default()
         },
         ..Default::default()

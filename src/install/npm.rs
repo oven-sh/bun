@@ -1079,6 +1079,7 @@ pub mod package_manifest {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut is_using_o_tmpfile = false;
 
+            #[allow(unused_labels)]
             let file: File = 'brk: {
                 let flags = bun_sys::O::WRONLY;
                 #[cfg(unix)]

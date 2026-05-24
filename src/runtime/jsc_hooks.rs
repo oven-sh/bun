@@ -2757,7 +2757,7 @@ fn transpile_source_code_inner(
                     use bun_jsc::runtime_transpiler_cache::{
                         Entry as CacheEntry, ModuleType as CacheModuleType, OutputCode,
                     };
-                    // SAFETY: `entry_ptr` was produced by `heap::leak(Box<CacheEntry>)`
+                    // SAFETY: `entry_ptr` was produced by `heap::into_raw(Box<CacheEntry>)`
                     // in `JSC_PARSER_CACHE_VTABLE.get`; sole owner.
                     let mut entry: Box<CacheEntry> =
                         unsafe { bun_core::heap::take(entry_ptr.cast::<CacheEntry>()) };

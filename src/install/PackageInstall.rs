@@ -1154,7 +1154,7 @@ impl<'a> PackageInstall<'a> {
                 let slash = slash as usize;
                 self.destination_dir_subpath_buf[slash] = 0;
                 // SAFETY: NUL written above.
-                let subdir = ZStr::from_buf(&self.destination_dir_subpath_buf, slash);
+                let subdir = ZStr::from_buf(self.destination_dir_subpath_buf, slash);
                 let _ = sys::mkdirat(destination_dir, subdir, 0o755);
                 self.destination_dir_subpath_buf[slash] = SEP;
             }
@@ -2538,6 +2538,7 @@ impl<'a> PackageInstall<'a> {
                     }
                 }
             }
+            #[allow(unused_labels)]
             Method::Hardlink => 'outer: {
                 match self.install_with_hardlink(destination_dir) {
                     Ok(result) => return result,

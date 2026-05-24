@@ -95,7 +95,7 @@ pub(crate) extern "C" fn Bun__WebViewHost__ensure(
         // `bun_vm()` returns `&'static VirtualMachine`; `spawn` takes the raw
         // `*mut` because it threads through C ABI / event-loop dispatch.
         let fd = match spawn(
-            global.bun_vm() as *const _ as *mut _,
+            std::ptr::from_ref(global.bun_vm()).cast_mut(),
             stdout_inherit,
             stderr_inherit,
         ) {

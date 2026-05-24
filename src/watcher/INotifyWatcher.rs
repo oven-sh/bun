@@ -25,7 +25,7 @@ const EVENTLIST_BYTES_SIZE: usize = (Event::LARGEST_SIZE / 2) * max_count;
 
 /// Aligned to `align_of::<Event>()` so casts from the buffer base are sound.
 #[repr(C, align(4))]
-pub(crate) struct EventListBytes(pub [u8; EVENTLIST_BYTES_SIZE]);
+pub struct EventListBytes(pub [u8; EVENTLIST_BYTES_SIZE]);
 const _: () = assert!(align_of::<Event>() == 4);
 // SAFETY: EventListBytes is a `[u8; N]` newtype; the all-zero bit pattern is valid.
 unsafe impl bun_core::Zeroable for EventListBytes {}
@@ -38,7 +38,7 @@ struct ReadPtr {
 
 pub(crate) type Platform = INotifyWatcher;
 
-pub(crate) struct INotifyWatcher {
+pub struct INotifyWatcher {
     pub fd: Fd,
     pub loaded: bool,
 

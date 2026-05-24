@@ -23,7 +23,7 @@ pub(crate) mod bun_schema {
 
 /// `bun_json` → JSON parser lives in `bun_parsers::json`; AST nodes
 /// (`Expr`, `ExprData`, `E*` variants) live in `bun_ast::js_ast`.
-pub mod bun_json {
+pub(crate) mod bun_json {
     pub(crate) use bun_ast::{Expr, ExprData, G::Property, e as E};
     pub(crate) use bun_parsers::json::*;
 }
@@ -337,6 +337,9 @@ pub use package_manager_real::{
 pub type PackageManagerDoStub = package_manager_real::package_manager_options::Do;
 pub use package_manager_real::package_manager_options::{Access, AuthType};
 
+/// Port of the anonymous `comptime callbacks: anytype` struct passed to
+/// `PackageManager.runTasks` (src/install/PackageManager/runTasks.zig). Zig
+/// duck-types `@TypeOf(callbacks.onExtract) != void` etc.; the Rust shape is
 /// generic over each slot so call sites can pass `()` for unused hooks and a
 /// fn item for active ones. The trait-based dispatch lives in
 /// `package_manager_real::run_tasks::RunTasksCallbacks`; this value-level
@@ -1151,8 +1154,6 @@ pub struct DependencyInstallContext {
     pub path: Vec<u8>,
     pub dependency_id: DependencyID,
 }
-
-impl DependencyInstallContext {}
 
 #[derive(Clone)]
 pub enum TaskCallbackContext {

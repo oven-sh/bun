@@ -398,7 +398,7 @@ impl FileResponseStream {
                     self.fd.native(),
                     self.sendfile.socket_fd.native(),
                     i64::try_from(self.sendfile.offset).expect("int cast"),
-                    &mut sbytes,
+                    &raw mut sbytes,
                     core::ptr::null_mut(),
                     0,
                 )

@@ -2193,6 +2193,7 @@ impl RunCommand {
                 bun_core::handle_error_return_trace(&err);
 
                 // an error occurred before the process was spawned
+                #[allow(unused_labels)]
                 'print_error: {
                     if !silent {
                         #[cfg(unix)]

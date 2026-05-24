@@ -341,8 +341,8 @@ pub mod posix_spawn {
             spawn_errno(errno(unsafe {
                 system::posix_spawnattr_init(attr.as_mut_ptr())
             }))?;
-            // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
             Ok(PosixSpawnAttr {
+                // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
                 attr: unsafe { attr.assume_init() },
                 detached: false,
                 pty_slave_fd: -1,
@@ -355,13 +355,13 @@ pub mod posix_spawn {
             let flags_s: c_short = flags as c_short;
             // SAFETY: self.attr is a live posix_spawnattr_t
             spawn_errno(errno(unsafe {
-                system::posix_spawnattr_setflags(&mut self.attr, flags_s)
+                system::posix_spawnattr_setflags(&raw mut self.attr, flags_s)
             }))
         }
 
         pub fn reset_signals(&mut self) -> Result<(), Error> {
             // SAFETY: self.attr is a live posix_spawnattr_t
-            if unsafe { posix_spawnattr_reset_signals(&mut self.attr) } != 0 {
+            if unsafe { posix_spawnattr_reset_signals(&raw mut self.attr) } != 0 {
                 return Err(err!("SystemResources"));
             }
             Ok(())
@@ -372,7 +372,7 @@ pub mod posix_spawn {
     impl Drop for PosixSpawnAttr {
         fn drop(&mut self) {
             // SAFETY: self.attr was initialized by posix_spawnattr_init
-            unsafe { system::posix_spawnattr_destroy(&mut self.attr) };
+            unsafe { system::posix_spawnattr_destroy(&raw mut self.attr) };
         }
     }
 
@@ -396,8 +396,8 @@ pub mod posix_spawn {
             spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_init(actions.as_mut_ptr())
             }))?;
-            // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
             Ok(PosixSpawnActions {
+                // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
                 actions: unsafe { actions.assume_init() },
             })
         }
@@ -414,7 +414,7 @@ pub mod posix_spawn {
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_addopen(
-                    &mut self.actions,
+                    &raw mut self.actions,
                     fd.native(),
                     path.as_ptr(),
                     flags_c,
@@ -426,7 +426,7 @@ pub mod posix_spawn {
         pub(crate) fn close(&mut self, fd: Fd) -> Result<(), Error> {
             // SAFETY: self.actions is live
             spawn_errno(errno(unsafe {
-                system::posix_spawn_file_actions_addclose(&mut self.actions, fd.native())
+                system::posix_spawn_file_actions_addclose(&raw mut self.actions, fd.native())
             }))
         }
 
@@ -438,7 +438,7 @@ pub mod posix_spawn {
             // SAFETY: self.actions is live
             spawn_errno(errno(unsafe {
                 system::posix_spawn_file_actions_adddup2(
-                    &mut self.actions,
+                    &raw mut self.actions,
                     fd.native(),
                     newfd.native(),
                 )
@@ -449,7 +449,7 @@ pub mod posix_spawn {
             // SAFETY: self.actions is live
             spawn_errno(errno(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
-                    &mut self.actions,
+                    &raw mut self.actions,
                     fd.native(),
                 )
             }))
@@ -465,7 +465,7 @@ pub mod posix_spawn {
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addchdir_np(
-                    &mut self.actions,
+                    &raw mut self.actions,
                     path.as_ptr(),
                 )
             }))
@@ -476,7 +476,7 @@ pub mod posix_spawn {
     impl Drop for PosixSpawnActions {
         fn drop(&mut self) {
             // SAFETY: self.actions was initialized by posix_spawn_file_actions_init
-            unsafe { system::posix_spawn_file_actions_destroy(&mut self.actions) };
+            unsafe { system::posix_spawn_file_actions_destroy(&raw mut self.actions) };
         }
     }
 
@@ -726,12 +726,12 @@ pub mod posix_spawn {
             // never written, so the const→mut element cast is sound.
             let rc = unsafe {
                 system::posix_spawn(
-                    &mut pid,
+                    &raw mut pid,
                     path.as_ptr(),
-                    &posix_actions.actions,
-                    &posix_attr.attr,
-                    argv as *const *mut c_char,
-                    envp as *const *mut c_char,
+                    &raw const posix_actions.actions,
+                    &raw const posix_attr.attr,
+                    argv.cast::<*mut c_char>(),
+                    envp.cast::<*mut c_char>(),
                 )
             };
             if cfg!(debug_assertions) {

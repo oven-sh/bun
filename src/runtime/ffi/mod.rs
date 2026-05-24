@@ -151,9 +151,7 @@ pub(crate) fn get_dl_error() -> Box<[u8]> {
     #[cfg(windows)]
     {
         use std::io::Write as _;
-        // SAFETY: GetLastError() reads thread-local Win32 state, takes no
-        // arguments, and has no preconditions; always safe to call.
-        let err = unsafe { bun_sys::windows::GetLastError() };
+        let err = bun_sys::windows::GetLastError();
         let err_int = err as u32;
         let mut v = Vec::new();
         write!(&mut v, "error code {}", err_int).ok();

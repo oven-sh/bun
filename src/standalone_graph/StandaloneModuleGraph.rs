@@ -2013,6 +2013,7 @@ impl StandaloneModuleGraph {
             // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
             // ever spans the writable bytecode region carried in `base`'s provenance.
             let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
             let trailer_bytes = unsafe {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
@@ -2043,6 +2044,7 @@ impl StandaloneModuleGraph {
             // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
             // ever spans the writable bytecode region carried in `base`'s provenance.
             let offsets_ptr = unsafe { base.add(len - size_of::<Offsets>() - TRAILER.len()) };
+            // SAFETY: `[len - TRAILER.len(), len)` is in-bounds (length checked above) and read-only.
             let trailer_bytes = unsafe {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
@@ -2257,8 +2259,6 @@ pub struct SerializedSourceMapLoaded {
     /// string, which will be treated as "no contents".
     pub decompressed_files: Box<[Option<Vec<u8>>]>,
 }
-
-impl SerializedSourceMapLoaded {}
 
 pub(crate) fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,

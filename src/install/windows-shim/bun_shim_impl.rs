@@ -219,7 +219,7 @@ const FILE_GENERIC_READ: u32 = w::STANDARD_RIGHTS_READ
     | w::SYNCHRONIZE;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FailReason {
+pub enum FailReason {
     NoDirname,
     CouldNotOpenShim,
     CouldNotReadShim,
@@ -1664,7 +1664,7 @@ pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     }
 }
 
-pub(crate) struct FromBunShellContext {
+pub struct FromBunShellContext {
     /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
     pub base_path: *mut u16,
     pub base_path_len: usize,
@@ -1727,7 +1727,7 @@ impl BunCtx for &FromBunShellContext {
 
 // PORT NOTE: Zig `union` (untagged). Rust enums are tagged; the discriminant overhead is
 // negligible here and gives us safe matching.
-pub(crate) enum ReadWithoutLaunchResult {
+pub enum ReadWithoutLaunchResult {
     /// enum which has a predefined custom formatter
     #[allow(dead_code)]
     Err(FailReason),

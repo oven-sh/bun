@@ -31,8 +31,7 @@ use crate::mimalloc;
 //
 // Tracks `mi_heap_new`/`mi_heap_destroy` calls so leak tests can assert the
 // live-heap count is bounded. Gated on `debug_assertions` (zero cost in
-// release). The runtime exposes `bun_alloc::live_arena_heaps()` for ad-hoc
-// probes; nothing reads these counters in production.
+// release); nothing reads these counters in production.
 #[cfg(debug_assertions)]
 pub(crate) static HEAP_NEW_COUNT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);

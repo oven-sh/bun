@@ -72,7 +72,7 @@ pub struct File {
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-pub(crate) enum FileState {
+pub enum FileState {
     /// fs.deinit() called, ready for next operation
     #[default]
     Deinitialized,

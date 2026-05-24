@@ -250,6 +250,11 @@ mod _impl {
                 return Ok(JSValue::UNDEFINED);
             }
 
+            // Drop any stale deferred request so it can't be re-applied by
+            // `apply_pending_params()` on the next write, overriding this
+            // newer immediate one.
+            self.pending_params.set(None);
+
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));
             if err.is_error() {
                 // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →

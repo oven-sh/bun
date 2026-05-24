@@ -3332,6 +3332,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
+        // This runs before the visit pass, so it walks the scope tree at the full
+        // nesting depth the parser allowed; deep trees must error here instead of
+        // overflowing the stack.
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(bun_ast::Loc::EMPTY);
+            return;
+        }
+
         // `StoreRef` is the arena back-pointer with safe `Deref`/`DerefMut` —
         // scope is arena-owned and valid for the parser 'a lifetime; the visit
         // pass is single-threaded so no aliasing `&mut` is outstanding. Read the

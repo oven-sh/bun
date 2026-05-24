@@ -63,7 +63,9 @@ test.skipIf(!isLinux)("concurrent Bun.openInEditor calls do not touch process si
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("ALIVE");
-  const changed = JSON.parse(stdout.match(/^CHANGED:(.*)$/m)![1]);
+  const changedLine = stdout.match(/^CHANGED:(.*)$/m);
+  expect(changedLine).not.toBeNull();
+  const changed = JSON.parse(changedLine![1]);
   expect(changed).toEqual([]);
   expect(stderr).toBe("");
   expect(proc.signalCode).toBeNull();

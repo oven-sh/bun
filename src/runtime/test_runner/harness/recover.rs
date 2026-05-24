@@ -119,12 +119,12 @@ mod musl {
     // opaque handle, so it must reserve real storage — a ZST would let setjmp
     // scribble past the allocation. 32×u64 over-reserves vs every musl arch.
     #[repr(C, align(16))]
-    pub struct jmp_buf {
+    pub(super) struct jmp_buf {
         _buf: [u64; 32],
     }
     unsafe extern "C" {
-        pub fn setjmp(env: *mut jmp_buf) -> c_int;
-        pub fn longjmp(env: *const jmp_buf, val: c_int) -> !;
+        pub(super) fn setjmp(env: *mut jmp_buf) -> c_int;
+        pub(super) fn longjmp(env: *const jmp_buf, val: c_int) -> !;
     }
 }
 

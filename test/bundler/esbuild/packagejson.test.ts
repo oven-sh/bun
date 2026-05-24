@@ -1987,3 +1987,29 @@ describe("bundler", () => {
     nodePaths: ["/usr/lib/pkg", "/lib/pkg", "/var/lib/pkg", "/tmp/pkg"],
   });
 });
+
+describe("bundler", () => {
+  // The wildcard match taken from the import specifier (the part substituted for "*"
+  // in an exports pattern) must be validated for ".", ".." and "node_modules" segments,
+  // including percent-encoded spellings, exactly like Node's PACKAGE_TARGET_RESOLVE does.
+  // "%2e%2e" percent-decodes to ".." after substitution, so without that validation the
+  // resolved target walks out of the package directory and loads /Users/user/project/escaped.js.
+  itBundled("packagejson/ExportsWildcardRejectsParentDirectorySegments", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import 'pkg1/inside.js'
+        import 'pkg1/%2e%2e/%2e%2e/escaped.js'
+      `,
+      "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { "./*": "./*" } }`,
+      "/Users/user/project/node_modules/pkg1/inside.js": `console.log('SUCCESS')`,
+      // Lives outside the package directory. It must never be reachable through pkg1's
+      // exports map; if the wildcard subpath is substituted unvalidated, resolution lands here.
+      "/Users/user/project/escaped.js": `console.log('FAILURE')`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [
+        `Could not resolve: "pkg1/%2e%2e/%2e%2e/escaped.js". Maybe you need to "bun install"?`,
+      ],
+    },
+  });
+});

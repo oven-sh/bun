@@ -21,7 +21,7 @@ struct ArgsSlice {
 
 impl ArgsSlice {
     #[inline]
-    pub fn get(&self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
+    pub(crate) fn get(&self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         self.array.get_index(global, self.start + i)
     }
 }
@@ -35,14 +35,14 @@ enum ValueRef {
 }
 
 impl ValueRef {
-    pub fn as_bun_string(&self, global: &JSGlobalObject) -> JsResult<String> {
+    pub(crate) fn as_bun_string(&self, global: &JSGlobalObject) -> JsResult<String> {
         match self {
             ValueRef::Jsvalue(str) => str.to_bun_string(global),
             ValueRef::Bunstr(str) => Ok(*str),
         }
     }
 
-    pub fn as_js_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn as_js_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             ValueRef::Jsvalue(str) => Ok(*str),
             ValueRef::Bunstr(str) => str.to_js(global),
@@ -171,7 +171,10 @@ impl OptionToken {
     }
 }
 
-pub fn find_option_by_long_name(long_name: String, options: &[OptionDefinition]) -> Option<usize> {
+pub(crate) fn find_option_by_long_name(
+    long_name: String,
+    options: &[OptionDefinition],
+) -> Option<usize> {
     for (i, option) in options.iter().enumerate() {
         if long_name.eql(&option.long_name) {
             return Some(i);
@@ -779,7 +782,7 @@ struct ParseArgsState<'a> {
 }
 
 impl<'a> ParseArgsState<'a> {
-    pub fn handle_token(&mut self, token_generic: &Token) -> JsResult<()> {
+    pub(crate) fn handle_token(&mut self, token_generic: &Token) -> JsResult<()> {
         let global = self.global;
 
         match &token_generic {

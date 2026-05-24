@@ -346,9 +346,9 @@ pub struct PosixSpawnOptions {
 impl Default for PosixSpawnOptions {
     fn default() -> Self {
         Self {
-            stdin: PosixStdio::Ignore,
-            stdout: PosixStdio::Ignore,
-            stderr: PosixStdio::Ignore,
+            stdin: PosixStdio::Inherit,
+            stdout: PosixStdio::Inherit,
+            stderr: PosixStdio::Inherit,
             ipc: None,
             extra_fds: Box::default(),
             cwd: Box::default(),
@@ -575,9 +575,9 @@ impl PosixSpawnResult {
 
 // Apple `<spawn.h>` extensions not exported by the `libc` crate (Zig: `bun.c.*`).
 #[cfg(target_os = "macos")]
-pub const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
+pub(crate) const POSIX_SPAWN_CLOEXEC_DEFAULT: i32 = 0x4000; // _POSIX_SPAWN_CLOEXEC_DEFAULT
 #[cfg(target_os = "macos")]
-pub const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
+pub(crate) const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 
 /// RAII fd cleanup matching the Zig `defer` (process.zig:1393-1403) and
 /// `errdefer` (process.zig:1407-1411) in `spawnProcessPosix`. The `defer`

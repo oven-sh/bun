@@ -21,7 +21,7 @@ use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_which::which;
 
-pub struct PmVersionCommand;
+pub(crate) struct PmVersionCommand;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum VersionType {
@@ -37,7 +37,7 @@ enum VersionType {
 }
 
 impl VersionType {
-    pub fn from_string(str: &[u8]) -> Option<VersionType> {
+    pub(crate) fn from_string(str: &[u8]) -> Option<VersionType> {
         if str == b"patch" {
             return Some(VersionType::Patch);
         }
@@ -67,7 +67,7 @@ impl VersionType {
 }
 
 impl PmVersionCommand {
-    pub fn exec(
+    pub(crate) fn exec(
         ctx: command::Context<'_>,
         pm: &mut PackageManager,
         positionals: &[&[u8]],

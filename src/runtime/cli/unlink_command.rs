@@ -16,10 +16,10 @@ use bun_install::package_manager_real::{
 
 use crate::command::ContextData;
 
-pub struct UnlinkCommand;
+pub(crate) struct UnlinkCommand;
 
 impl UnlinkCommand {
-    pub fn exec(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
         unlink(ctx)
     }

@@ -133,7 +133,7 @@ pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>; // Zig: u31 (los
 pub struct RouteEdge;
 
 pub enum RouteEdgeMarker {}
-pub type RouteEdgeIndex = bun_core::GenericIndex<u32, RouteEdgeMarker>;
+pub(crate) type RouteEdgeIndex = bun_core::GenericIndex<u32, RouteEdgeMarker>;
 
 /// Native code for `FrameworkFileSystemRouterType`
 pub struct Type {
@@ -413,7 +413,7 @@ pub struct EncodedPatternIterator<'a> {
 }
 
 impl<'a> EncodedPatternIterator<'a> {
-    pub fn read_with_size(&self) -> (Part<'a>, usize) {
+    pub(crate) fn read_with_size(&self) -> (Part<'a>, usize) {
         let header = SerializedHeader(u32::from_le_bytes(
             self.pattern[self.offset..self.offset + size_of::<u32>()]
                 .try_into()
@@ -431,7 +431,7 @@ impl<'a> EncodedPatternIterator<'a> {
         (part, size_of::<u32>() + header.len())
     }
 
-    pub fn peek(&self) -> Option<Part<'a>> {
+    pub(crate) fn peek(&self) -> Option<Part<'a>> {
         if self.offset >= self.pattern.len() {
             return None;
         }
@@ -478,7 +478,7 @@ impl StaticPattern {
         self.route_path.slice()
     }
 
-    pub fn iterate(&self) -> StaticPatternIterator<'_> {
+    pub(crate) fn iterate(&self) -> StaticPatternIterator<'_> {
         StaticPatternIterator {
             pattern: self.route_path(),
             offset: 0,
@@ -486,24 +486,17 @@ impl StaticPattern {
     }
 }
 
-pub struct StaticPatternIterator<'a> {
+pub(crate) struct StaticPatternIterator<'a> {
     pattern: &'a [u8],
     offset: usize,
 }
 
 impl<'a> StaticPatternIterator<'a> {
-    pub fn read_with_size(&self) -> (Part<'a>, usize) {
+    pub(crate) fn read_with_size(&self) -> (Part<'a>, usize) {
         let next_i = strings::index_of_char_pos(self.pattern, b'/', self.offset + 1)
             .unwrap_or(self.pattern.len());
         let text = &self.pattern[self.offset + 1..next_i];
         (Part::Text(text), text.len() + 1)
-    }
-
-    pub fn peek(&self) -> Option<Part<'a>> {
-        if self.offset >= self.pattern.len() {
-            return None;
-        }
-        Some(self.read_with_size().0)
     }
 }
 
@@ -676,13 +669,13 @@ impl Clone for Style {
     }
 }
 
-pub static STYLE_MAP: phf::Map<&'static [u8], fn() -> Style> = phf::phf_map! {
+pub(crate) static STYLE_MAP: phf::Map<&'static [u8], fn() -> Style> = phf::phf_map! {
     b"nextjs-pages" => || Style::NextjsPages,
     b"nextjs-app-ui" => || Style::NextjsAppUi,
     b"nextjs-app-routes" => || Style::NextjsAppRoutes,
 };
 
-pub const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
+pub(crate) const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 impl Style {
     // TODO(port): move to *_jsc — calls JSValue methods
@@ -2106,7 +2099,7 @@ impl JSFrameworkRouter {
 // PORT NOTE: free-function host-fn shim — `#[bun_jsc::host_fn]` (Free kind) emits a
 // shim that calls the bare ident, so this cannot live inside the `impl` block.
 #[bun_jsc::host_fn]
-pub fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     JSFrameworkRouter::parse_route_pattern(global, frame)
 }
 

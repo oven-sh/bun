@@ -71,24 +71,18 @@ pub struct AsyncModule {
 
 pub type Id = u32;
 
-pub struct PackageDownloadError<'a> {
+pub(crate) struct PackageDownloadError<'a> {
     pub name: &'a [u8],
     pub resolution: Resolution,
     pub err: bun_core::Error,
     pub url: &'a [u8],
 }
 
-pub struct PackageResolveError<'a> {
+pub(crate) struct PackageResolveError<'a> {
     pub name: &'a [u8],
     pub err: bun_core::Error,
     pub url: &'a [u8],
     pub version: bun_install::dependency::Version,
-}
-
-pub struct DeferredDependencyError {
-    pub dependency: Dependency,
-    pub root_dependency_id: DependencyID,
-    pub err: bun_core::Error,
 }
 
 pub type Map = Vec<AsyncModule>;

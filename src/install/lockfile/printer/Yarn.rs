@@ -18,8 +18,6 @@ use bun_install::lockfile::package;
 use crate::integrity;
 use crate::lockfile_real::Printer;
 
-pub struct Yarn;
-
 // TODO(port): narrow error set (only writer + alloc errors are produced)
 pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     // internal for debugging, print the lockfile as custom json

@@ -73,7 +73,7 @@ fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
     (*s.ext::<Stream>()).map(|p| stream_mut(p.as_ptr()))
 }
 
-pub fn register(qctx: &mut quic::Context) {
+pub(crate) fn register(qctx: &mut quic::Context) {
     qctx.on_hsk_done(on_hsk_done);
     qctx.on_goaway(on_goaway);
     qctx.on_close(on_conn_close);

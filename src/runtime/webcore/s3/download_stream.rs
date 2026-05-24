@@ -395,7 +395,6 @@ impl Drop for S3HttpDownloadStreamingTask {
 #[derive(Copy, Clone)]
 pub struct State(pub u64);
 
-// Zig: `pub const AtomicType = std.atomic.Value(u64);`
 pub type StateAtomicType = AtomicU64;
 
 impl State {
@@ -404,28 +403,28 @@ impl State {
     const HAS_MORE_SHIFT: u32 = 48;
 
     #[inline]
-    pub const fn status_code(self) -> u32 {
+    pub(crate) const fn status_code(self) -> u32 {
         (self.0 >> Self::STATUS_CODE_SHIFT) as u32
     }
     #[inline]
-    pub fn set_status_code(&mut self, v: u32) {
+    pub(crate) fn set_status_code(&mut self, v: u32) {
         self.0 = (self.0 & !0xFFFF_FFFF) | (v as u64);
     }
     #[inline]
-    pub const fn request_error(self) -> u16 {
+    pub(crate) const fn request_error(self) -> u16 {
         (self.0 >> Self::REQUEST_ERROR_SHIFT) as u16
     }
     #[inline]
-    pub fn set_request_error(&mut self, v: u16) {
+    pub(crate) fn set_request_error(&mut self, v: u16) {
         self.0 = (self.0 & !(0xFFFF << Self::REQUEST_ERROR_SHIFT))
             | ((v as u64) << Self::REQUEST_ERROR_SHIFT);
     }
     #[inline]
-    pub const fn has_more(self) -> bool {
+    pub(crate) const fn has_more(self) -> bool {
         (self.0 >> Self::HAS_MORE_SHIFT) & 1 != 0
     }
     #[inline]
-    pub fn set_has_more(&mut self, v: bool) {
+    pub(crate) fn set_has_more(&mut self, v: bool) {
         self.0 = (self.0 & !(1 << Self::HAS_MORE_SHIFT)) | ((v as u64) << Self::HAS_MORE_SHIFT);
     }
 }

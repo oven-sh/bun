@@ -754,7 +754,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::GET_ADDR_INFO_REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let loader = owner.ptr as *mut crate::dns_jsc::GetAddrInfoRequest;
+                let loader = owner.ptr.cast::<crate::dns_jsc::GetAddrInfoRequest>();
                 get_addr_info_request::BackendLibInfo::on_machport_change(loader);
             }
             #[cfg(not(target_os = "macos"))]
@@ -765,7 +765,7 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::REQUEST => {
             #[cfg(target_os = "macos")]
             {
-                let req = owner.ptr as *mut crate::dns_jsc::internal::Request;
+                let req = owner.ptr.cast::<crate::dns_jsc::internal::Request>();
                 crate::dns_jsc::internal::MacAsyncDNS::on_machport_change(req);
             }
             #[cfg(not(target_os = "macos"))]
@@ -806,7 +806,7 @@ use crate::webcore::blob::write_file::WriteFile;
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
+pub(crate) unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
     match tag {
         bun_io::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
@@ -831,7 +831,7 @@ pub unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bu
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_io_pollable_on_io_error(
+pub(crate) unsafe fn __bun_io_pollable_on_io_error(
     tag: bun_io::PollableTag,
     poll: *mut bun_io::Poll,
     err: &bun_sys::Error,
@@ -869,7 +869,7 @@ pub unsafe fn __bun_io_pollable_on_io_error(
 /// `task` was produced by `enqueue_immediate_task` from a live
 /// `timer::ImmediateObject`; `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_run_immediate_task(
+pub(crate) unsafe fn __bun_run_immediate_task(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
@@ -892,7 +892,7 @@ pub unsafe fn __bun_run_immediate_task(
 /// `timer::ImmediateObject` whose event-loop ref has not yet been released;
 /// `vm` is the live per-thread VM with `RuntimeState` still installed.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_cancel_pending_immediate(
+pub(crate) unsafe fn __bun_cancel_pending_immediate(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) {
@@ -914,7 +914,7 @@ pub unsafe fn __bun_cancel_pending_immediate(
 /// `timer` was published by `WTFTimer::update` into `imminent_gc_timer` and
 /// remains live until consumed; `vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_run_wtf_timer(
+pub(crate) unsafe fn __bun_run_wtf_timer(
     timer: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) {
@@ -1158,7 +1158,7 @@ pub unsafe fn __bun_js_timer_epoch(
 /// `el` and `vm` must point at live `EventLoop`/`VirtualMachine` instances
 /// with no other `&mut` held across this call.
 #[unsafe(no_mangle)]
-pub unsafe fn __bun_tick_queue_with_count(
+pub(crate) unsafe fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
@@ -1180,7 +1180,7 @@ pub unsafe fn __bun_tick_queue_with_count(
 /// would have dropped. Tags not yet listed leak their box at exit; add them
 /// as LSan surfaces them.
 #[unsafe(no_mangle)]
-pub fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
+pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
     use bun_event_loop::task_tag;
     match task.tag {
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and

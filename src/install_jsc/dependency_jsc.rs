@@ -18,7 +18,7 @@ fn semver_string_to_js(
     bun_jsc::bun_string_jsc::create_utf8_for_js(global, s.slice(buf))
 }
 
-pub fn version_to_js(
+pub(crate) fn version_to_js(
     dep: &bun_install::dependency::Version,
     buf: &[u8],
     global: &JSGlobalObject,

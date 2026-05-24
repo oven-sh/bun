@@ -146,11 +146,11 @@ pub type ReleaseImpl = DarwinImpl;
 pub type ReleaseImpl = FutexImpl;
 
 #[cfg(windows)]
-pub type ExternImpl = bun_sys::windows::SRWLOCK;
-#[cfg(target_vendor = "apple")]
-pub type ExternImpl = OsUnfairLock;
+#[allow(dead_code)]
+pub(crate) type ExternImpl = bun_sys::windows::SRWLOCK;
 #[cfg(not(any(windows, target_vendor = "apple")))]
-pub type ExternImpl = u32;
+#[allow(dead_code)]
+pub(crate) type ExternImpl = u32;
 
 #[cfg(debug_assertions)]
 type ThreadId = u64;
@@ -162,7 +162,7 @@ fn current_thread_id() -> ThreadId {
 
 #[cfg(debug_assertions)]
 #[derive(Default)]
-pub struct DebugImpl {
+pub(crate) struct DebugImpl {
     /// 0 means it's not locked.
     pub(crate) locking_thread: AtomicU64,
     pub(crate) impl_: ReleaseImpl,
@@ -170,7 +170,7 @@ pub struct DebugImpl {
 
 #[cfg(debug_assertions)]
 impl DebugImpl {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             locking_thread: AtomicU64::new(0),
             impl_: ReleaseImpl::new(),
@@ -239,7 +239,7 @@ unsafe extern "system" {
 
 #[cfg(windows)]
 impl WindowsImpl {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             srwlock: core::cell::UnsafeCell::new(bun_sys::windows::SRWLOCK_INIT),
         }
@@ -267,15 +267,18 @@ pub struct DarwinImpl {
     oul: core::cell::UnsafeCell<OsUnfairLock>,
 }
 
+// SAFETY: `os_unfair_lock` is the kernel's cross-thread lock primitive; the
+// `UnsafeCell` only exists to hand the FFI a mutable pointer from `&self`.
 #[cfg(target_vendor = "apple")]
 unsafe impl Sync for DarwinImpl {}
+// SAFETY: see `Sync` above.
 #[cfg(target_vendor = "apple")]
 unsafe impl Send for DarwinImpl {}
 
 #[cfg(target_vendor = "apple")]
 #[repr(C)]
 #[derive(Default)]
-pub struct OsUnfairLock {
+pub(crate) struct OsUnfairLock {
     _opaque: u32,
 }
 
@@ -294,7 +297,7 @@ unsafe extern "C" {
 
 #[cfg(target_vendor = "apple")]
 impl DarwinImpl {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             oul: core::cell::UnsafeCell::new(OsUnfairLock { _opaque: 0 }),
         }
@@ -321,7 +324,7 @@ pub struct FutexImpl {
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
 impl FutexImpl {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             state: AtomicU32::new(0),
         }
@@ -409,23 +412,21 @@ impl FutexImpl {
 // Inherent associated types are unstable in Rust; the per-platform alias is
 // already exposed as the module-level `ExternImpl` type above.
 
-pub fn spin_cycle() {}
-
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
+pub(crate) unsafe extern "C" fn Bun__lock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer.
     unsafe { (*ptr).lock() }
 }
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
+pub(crate) unsafe extern "C" fn Bun__unlock(ptr: *mut ReleaseImpl) {
     // SAFETY: C caller passes a valid, initialized ReleaseImpl pointer that this thread locked.
     unsafe { (*ptr).unlock() }
 }
 
 #[unsafe(no_mangle)]
-pub static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
+pub(crate) static Bun__lock__size: usize = core::mem::size_of::<ReleaseImpl>();
 
 // ported from: src/threading/Mutex.zig

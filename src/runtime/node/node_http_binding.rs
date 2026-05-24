@@ -5,7 +5,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 
-pub fn get_bun_server_all_closed_promise(
+pub(crate) fn get_bun_server_all_closed_promise(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -40,11 +40,17 @@ pub fn get_bun_server_all_closed_promise(
     Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
 }
 
-pub fn get_max_http_header_size(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn get_max_http_header_size(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
     Ok(JSValue::from(bun_http::max_http_header_size()))
 }
 
-pub fn set_max_http_header_size(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn set_max_http_header_size(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
     let arguments = frame.arguments_old::<1>();
     let arguments = arguments.slice();
     if arguments.is_empty() {

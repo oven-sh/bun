@@ -4,7 +4,7 @@ use super::JSValueTestExt;
 use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_match(
+pub(crate) fn to_match(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,

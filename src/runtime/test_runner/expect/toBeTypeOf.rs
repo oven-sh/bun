@@ -14,7 +14,7 @@ static JS_TYPE_OF_MAP: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
 };
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_type_of(
+pub(crate) fn to_be_type_of(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,

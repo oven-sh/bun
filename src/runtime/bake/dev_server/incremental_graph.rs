@@ -28,10 +28,10 @@ use crate::bake::{self, Side};
 /// and `IncrementalGraph(.client).FileIndex` are distinct types as in the Zig
 /// spec.
 pub struct SideMarker<const SIDE: bake::Side>;
-pub type FileIndex<const SIDE: bake::Side> = bun_core::GenericIndex<u32, SideMarker<SIDE>>;
+pub(crate) type FileIndex<const SIDE: bake::Side> = bun_core::GenericIndex<u32, SideMarker<SIDE>>;
 /// Alias used by `DevServer.route_lookup` (Zig: `IncrementalGraph(.server).FileIndex`).
-pub type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
-pub type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
+pub(crate) type ServerFileIndex = FileIndex<{ bake::Side::Server }>;
+pub(crate) type ClientFileIndex = FileIndex<{ bake::Side::Client }>;
 
 /// Return shape for `IncrementalGraph::insert_empty`.
 pub struct InsertEmptyResult<const SIDE: bake::Side> {
@@ -46,7 +46,7 @@ pub struct InsertEmptyResult<const SIDE: bake::Side> {
 
 /// `bun.GenericIndex(u32, Edge)`.
 pub enum EdgeMarker {}
-pub type EdgeIndex = bun_core::GenericIndex<u32, EdgeMarker>;
+pub(crate) type EdgeIndex = bun_core::GenericIndex<u32, EdgeMarker>;
 
 /// One edge in the import graph. `File` objects act as nodes in a directional
 /// many-to-many graph, where edges represent the imports between modules. A
@@ -1924,7 +1924,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
     /// `IncrementalGraph(side).takeSourceMap` (spec :1843).
     /// Fills in all fields of `out` except `ref_count`.
-    pub fn take_source_map(
+    pub(crate) fn take_source_map(
         &mut self,
         out: &mut source_map_store::Entry,
     ) -> Result<(), bun_core::Error> {

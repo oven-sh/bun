@@ -31,30 +31,13 @@ use crate::mimalloc;
 //
 // Tracks `mi_heap_new`/`mi_heap_destroy` calls so leak tests can assert the
 // live-heap count is bounded. Gated on `debug_assertions` (zero cost in
-// release). The runtime exposes `bun_alloc::live_arena_heaps()` for ad-hoc
-// probes; nothing reads these counters in production.
+// release); nothing reads these counters in production.
 #[cfg(debug_assertions)]
-pub static HEAP_NEW_COUNT: core::sync::atomic::AtomicUsize =
+pub(crate) static HEAP_NEW_COUNT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 #[cfg(debug_assertions)]
-pub static HEAP_DESTROY_COUNT: core::sync::atomic::AtomicUsize =
+pub(crate) static HEAP_DESTROY_COUNT: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
-
-/// Debug-only: number of live `MimallocArena` heaps (`mi_heap_new` minus
-/// `mi_heap_destroy`). Returns 0 in release builds.
-#[inline]
-pub fn live_arena_heaps() -> usize {
-    #[cfg(debug_assertions)]
-    {
-        HEAP_NEW_COUNT
-            .load(core::sync::atomic::Ordering::Relaxed)
-            .saturating_sub(HEAP_DESTROY_COUNT.load(core::sync::atomic::Ordering::Relaxed))
-    }
-    #[cfg(not(debug_assertions))]
-    {
-        0
-    }
-}
 
 // ── Debug-only thread-ownership guard (Zig: `bun.safety.ThreadLock`) ──────
 //
@@ -765,7 +748,7 @@ unsafe fn vtable_free(_ctx: *mut c_void, buf: &mut [u8], a: crate::Alignment, _r
 
 /// Zig: `heap_allocator_vtable` — per-arena thunks; `ctx` is the
 /// `*const MimallocArena` stashed by `std_allocator()`.
-pub static HEAP_ALLOCATOR_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
+pub(crate) static HEAP_ALLOCATOR_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     alloc: vtable_alloc,
     resize: vtable_resize,
     remap: vtable_remap,
@@ -786,7 +769,7 @@ unsafe fn global_vtable_alloc(
 }
 
 /// Zig: `global_mimalloc_vtable`.
-pub static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
+pub(crate) static GLOBAL_MIMALLOC_VTABLE: crate::AllocatorVTable = crate::AllocatorVTable {
     alloc: global_vtable_alloc,
     resize: crate::basic::MimallocAllocator::resize_with_default_allocator,
     remap: crate::basic::MimallocAllocator::remap_with_default_allocator,

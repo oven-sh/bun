@@ -41,7 +41,7 @@ fn splat_byte_all(
     Ok(())
 }
 
-pub struct BuildCommand;
+pub(crate) struct BuildCommand;
 
 impl BuildCommand {
     /// `bun build` subcommand entry point.
@@ -54,7 +54,7 @@ impl BuildCommand {
     /// (those moved the tables, not the bodies).
     #[cold]
     #[inline(never)]
-    pub fn exec(
+    pub(crate) fn exec(
         ctx: Context,
         fetcher: Option<&bundle_v2::DependenciesScanner>,
     ) -> Result<(), bun_core::Error> {

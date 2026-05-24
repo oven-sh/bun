@@ -40,8 +40,6 @@ impl Default for ByteBlobLoader {
     }
 }
 
-pub const TAG: readable_stream::Tag = readable_stream::Tag::Blob;
-
 // Zig `NewSource(@This(), "Blob", onStart, onPull, onCancel, deinit, null, drain,
 // memoryCost, toBufferedValue)` is a comptime type-returning fn that wires callbacks. In Rust
 // this becomes a generic `ReadableStreamSource<Ctx>` where `Ctx` impls `SourceContext`.

@@ -37,7 +37,7 @@ pub struct CurrentTime {
 
 const MIN_TIMESPEC: Timespec = Timespec { sec: i64::MIN, nsec: i64::MIN };
 
-pub static CURRENT_TIME: CurrentTime = CurrentTime {
+pub(crate) static CURRENT_TIME: CurrentTime = CurrentTime {
     offset_raw: RwLock::new(MIN_TIMESPEC),
     date_now_offset: AtomicU64::new(0f64.to_bits()),
 };
@@ -536,9 +536,9 @@ const FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn)] = &[
     ("isFakeTimers", 0, __jsc_host_is_fake_timers),
 ];
 
-pub const TIMER_FNS_COUNT: usize = FAKE_TIMERS_FNS.len();
+pub(crate) const TIMER_FNS_COUNT: usize = FAKE_TIMERS_FNS.len();
 
-pub fn put_timers_fns(global: &JSGlobalObject, jest: JSValue, vi: JSValue) {
+pub(crate) fn put_timers_fns(global: &JSGlobalObject, jest: JSValue, vi: JSValue) {
     // PORT NOTE: Zig `inline for` over homogeneous tuples → plain `for` over const slice.
     for &(name, arity, func) in FAKE_TIMERS_FNS {
         let jsvalue = JSFunction::create(global, name, func, arity, Default::default());

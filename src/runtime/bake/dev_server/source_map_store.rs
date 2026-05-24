@@ -25,11 +25,11 @@ use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
 pub struct Key(pub u64);
 impl Key {
     #[inline]
-    pub const fn init(v: u64) -> Self {
+    pub(crate) const fn init(v: u64) -> Self {
         Self(v)
     }
     #[inline]
-    pub const fn get(self) -> u64 {
+    pub(crate) const fn get(self) -> u64 {
         self.0
     }
 }
@@ -45,30 +45,20 @@ impl Key {
 // shifts and u64 to use this struct.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct SourceId(pub u64);
+pub(crate) struct SourceId(pub u64);
 impl SourceId {
     #[inline]
-    pub const fn kind(self) -> ChunkKind {
+    pub(crate) const fn kind(self) -> ChunkKind {
         if self.0 & 1 == 0 {
             ChunkKind::InitialResponse
         } else {
             ChunkKind::HmrChunk
         }
     }
-    /// `bits.initial_response.generation_id` (top 32 bits)
-    #[inline]
-    pub const fn initial_response_generation_id(self) -> u32 {
-        (self.0 >> 32) as u32
-    }
-    /// `bits.hmr_chunk.content_hash` (upper 63 bits)
-    #[inline]
-    pub const fn hmr_chunk_content_hash(self) -> u64 {
-        self.0 >> 1
-    }
 }
 
-pub const WEAK_REF_EXPIRY_SECONDS: i64 = 10;
-pub const WEAK_REF_ENTRY_MAX: usize = 16;
+pub(crate) const WEAK_REF_EXPIRY_SECONDS: i64 = 10;
+pub(crate) const WEAK_REF_ENTRY_MAX: usize = 16;
 
 /// IncrementalGraph stores partial source maps for each file. A
 /// `SourceMapStore.Entry` is the information + refcount holder to

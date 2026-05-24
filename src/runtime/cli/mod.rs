@@ -39,7 +39,7 @@ pub(crate) mod ci_info_generated {
         };
     }
 
-    pub fn is_ci_uncached_generated() -> bool {
+    pub(crate) fn is_ci_uncached_generated() -> bool {
         env_set!("BUILD_ID")
             || env_set!("BUILD_NUMBER")
             || env_set!("CI")
@@ -51,7 +51,7 @@ pub(crate) mod ci_info_generated {
             || env_set!("RUN_ID")
     }
 
-    pub fn detect_uncached_generated() -> Option<&'static [u8]> {
+    pub(crate) fn detect_uncached_generated() -> Option<&'static [u8]> {
         if env_set!("AGOLA_GIT_REF") {
             return Some(b"agola-ci");
         }
@@ -239,11 +239,11 @@ pub mod open {
     use bun_core::Output;
 
     #[cfg(target_os = "macos")]
-    pub const OPENER: &[u8] = b"/usr/bin/open";
+    pub(crate) const OPENER: &[u8] = b"/usr/bin/open";
     #[cfg(windows)]
-    pub const OPENER: &[u8] = b"start";
+    pub(crate) const OPENER: &[u8] = b"start";
     #[cfg(not(any(target_os = "macos", windows)))]
-    pub const OPENER: &[u8] = b"xdg-open";
+    pub(crate) const OPENER: &[u8] = b"xdg-open";
 
     fn fallback(url: &[u8]) {
         Output::prettyln(format_args!("-> {}", bstr::BStr::new(url)));
@@ -254,7 +254,7 @@ pub mod open {
     /// only falls back to printing on spawn failure; that path needs
     /// `bun.spawnSync` (gated). Until then, always take the fallback so
     /// `bun discord` is usable in headless/CI environments.
-    pub fn open_url(url: &[u8]) {
+    pub(crate) fn open_url(url: &[u8]) {
         // TODO(port): wire `bun.spawnSync({ argv: [OPENER, url] })` once the
         // non-JSC spawn path is un-gated, then only fallback() on error.
         let _ = OPENER;
@@ -412,7 +412,7 @@ pub use ::bun_clap::concat_params;
 /// `OnceLock` lives in `bun_core` (single source of truth); this accessor
 /// remains so existing `crate::cli::start_time()` callers don't churn.
 #[inline]
-pub fn start_time() -> i128 {
+pub(crate) fn start_time() -> i128 {
     bun_core::start_time()
 }
 
@@ -421,7 +421,7 @@ pub fn start_time() -> i128 {
 // `process.title = "..."` (set_title) drops the previous value instead of
 // leaking. The mutex provides exclusion between `get_title`/`set_title`
 // (Zig: `var title_mutex = bun.Mutex{}`).
-pub static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
+pub(crate) static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
     bun_threading::Guarded::new(None);
 
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
@@ -451,7 +451,7 @@ pub(crate) static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc
 /// main thread, which is where the arena is constructed). Do not call from
 /// worker/watcher threads.
 #[inline]
-pub fn cli_arena() -> &'static bun_alloc::Arena {
+pub(crate) fn cli_arena() -> &'static bun_alloc::Arena {
     // SAFETY: `CLI_ARENA` is written exactly once in `Cli::start` during
     // single-threaded startup, before `Command::start` runs and therefore
     // before any caller of `cli_arena()` / `cli_dupe` / `cli_dupe_z` exists.
@@ -464,7 +464,7 @@ pub fn cli_arena() -> &'static bun_alloc::Arena {
 /// `allocator.dupe(u8, s)` with the default allocator. Main-thread only
 /// (see [`cli_arena`]).
 #[inline]
-pub fn cli_dupe(s: &[u8]) -> &'static [u8] {
+pub(crate) fn cli_dupe(s: &[u8]) -> &'static [u8] {
     cli_arena().alloc_slice_copy(s)
 }
 
@@ -473,7 +473,7 @@ pub fn cli_dupe(s: &[u8]) -> &'static [u8] {
 /// a stable address; only the `Box` value moves into the table). Use when the
 /// caller already owns a large buffer (e.g. tarball, request body) so
 /// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
-pub fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
+pub(crate) fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
     static ADOPTED: bun_threading::Guarded<Vec<Box<[u8]>>> =
         bun_threading::Guarded::new(Vec::new());
     let (ptr, len) = (b.as_ptr(), b.len());
@@ -487,7 +487,7 @@ pub fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
 /// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and
 /// return the C-string pointer (for argv/envp construction).
 #[inline]
-pub fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
+pub(crate) fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
     let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
     buf[..s.len()].copy_from_slice(s);
     // buf[s.len()] is already 0 (Default for u8).
@@ -495,7 +495,7 @@ pub fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
 }
 
 thread_local! {
-    pub static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
+    pub(crate) static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
 }
 
 /// `Cli.cmd` — set in `create_context_data` so crash reports / debug logging
@@ -507,7 +507,7 @@ thread_local! {
 /// startup.order cluster and faults a fresh page on every `bun` invocation.
 /// Zig used a plain `var cmd: ?Tag` here; the write happens before any
 /// thread is spawned, so a bare cell is the correct shape.
-pub static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
+pub(crate) static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
@@ -517,12 +517,14 @@ pub static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::n
 pub use bun_install::PRETEND_TO_BE_NODE;
 
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
-pub static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub(crate) static IS_BUNX_EXE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 bun_core::declare_scope!(CLI, hidden);
 
-pub type LoaderColonList = colon_list_type::ColonListType<bun_options_types::schema::api::Loader>;
-pub type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
+pub(crate) type LoaderColonList =
+    colon_list_type::ColonListType<bun_options_types::schema::api::Loader>;
+pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
 impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader {
     const IS_LOADER: bool = true;
@@ -538,7 +540,7 @@ impl colon_list_type::ColonListValue for &'static [u8] {
 }
 
 #[cold]
-pub fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
+pub(crate) fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
     let _ = diag.report(Output::error_writer(), bun_core::err!("InvalidTarget"));
     Global::exit(1);
 }
@@ -550,7 +552,7 @@ pub mod cli {
     pub use bun_options_types::compile_target::CompileTarget;
 
     // Zig `var log_: logger.Log = undefined;` — process-global, init in start().
-    pub static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
+    pub(crate) static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     /// `#[inline(never)]`: this is the first Rust call after `main()` (see
@@ -605,9 +607,9 @@ pub mod debug_flags {
     // PORT NOTE: `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
     // hand off ownership of the argv-borrowed list without leaking the backing
     // storage. Each `&'static [u8]` element is a process-lifetime argv slice.
-    pub static RESOLVE_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
+    pub(crate) static RESOLVE_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
         std::sync::OnceLock::new();
-    pub static PRINT_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
+    pub(crate) static PRINT_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
         std::sync::OnceLock::new();
 }
 
@@ -622,12 +624,12 @@ pub mod help_command {
     }
 
     #[cold]
-    pub fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> Result<(), bun_core::Error> {
         exec_with_reason(Reason::Explicit)
     }
 
     // someone will get mad at me for this
-    pub const PACKAGES_TO_REMOVE_FILLER: &[&str] = &[
+    pub(crate) const PACKAGES_TO_REMOVE_FILLER: &[&str] = &[
         "moment",
         "underscore",
         "jquery",
@@ -640,7 +642,7 @@ pub mod help_command {
         "babel-core",
         "@parcel/core",
     ];
-    pub const PACKAGES_TO_ADD_FILLER: &[&str] = &[
+    pub(crate) const PACKAGES_TO_ADD_FILLER: &[&str] = &[
         "elysia",
         "@shumai/shumai",
         "hono",
@@ -652,10 +654,10 @@ pub mod help_command {
         "zod",
         "tailwindcss",
     ];
-    pub const PACKAGES_TO_X_FILLER: &[&str] = &[
+    pub(crate) const PACKAGES_TO_X_FILLER: &[&str] = &[
         "bun-repl", "next", "vite", "prisma", "nuxi", "prettier", "eslint",
     ];
-    pub const PACKAGES_TO_CREATE_FILLER: &[&str] =
+    pub(crate) const PACKAGES_TO_CREATE_FILLER: &[&str] =
         &["next-app", "vite", "astro", "svelte", "elysia"];
 
     /// `cli_helptext_fmt` from cli.zig.
@@ -773,7 +775,7 @@ Join our Discord community:      <blue>https://bun.com/discord<r>\n"
     }
 
     #[cold]
-    pub fn exec_with_reason(reason: Reason) -> ! {
+    pub(crate) fn exec_with_reason(reason: Reason) -> ! {
         print_with_reason(reason, false);
         if reason == Reason::InvalidCommand {
             Global::exit(1);
@@ -787,7 +789,7 @@ pub mod reserved_command {
     use super::*;
 
     #[cold]
-    pub fn exec() -> Result<(), bun_core::Error> {
+    pub(crate) fn exec() -> Result<(), bun_core::Error> {
         let mut command_name: &[u8] = b"";
         for (i, arg) in bun::argv().iter().enumerate() {
             if i == 0 {
@@ -842,16 +844,6 @@ pub mod command {
     static CONTEXT_DATA: bun_core::RacyCell<core::mem::MaybeUninit<ContextData>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
-    /// Process-global CLI context. Only valid after `create_context_data` has run.
-    ///
-    /// # Safety
-    /// Caller must guarantee `create_context_data` has been called and no other
-    /// `&mut ContextData` is live (single-threaded CLI dispatch).
-    #[inline]
-    pub unsafe fn global_ctx() -> *mut ContextData {
-        bun_options_types::context::global_ptr()
-    }
-
     /// Zig: `pub fn get() Context` — process-global CLI context handle.
     #[inline]
     pub fn get() -> Context<'static> {
@@ -868,7 +860,7 @@ pub mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
-    pub fn is_bun_x(argv0: &[u8]) -> bool {
+    pub(crate) fn is_bun_x(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {
             return strings::ends_with(argv0, b"bunx.exe") || strings::ends_with(argv0, b"bunx");
@@ -879,7 +871,7 @@ pub mod command {
         }
     }
 
-    pub fn is_node(argv0: &[u8]) -> bool {
+    pub(crate) fn is_node(argv0: &[u8]) -> bool {
         #[cfg(windows)]
         {
             return strings::ends_with(argv0, b"node.exe") || strings::ends_with(argv0, b"node");
@@ -949,7 +941,7 @@ pub mod command {
     /// in) in the front-loaded startup window, rather than letting fat-LTO
     /// inline-and-scatter it through cold code.
     #[inline(never)]
-    pub fn which() -> Tag {
+    pub(crate) fn which() -> Tag {
         let argv = bun::argv();
         let mut iter = argv.iter();
         let Some(argv0) = iter.next() else {
@@ -2022,7 +2014,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         }
     }
 
-    pub fn tag_print_help(cmd: Tag, show_all_flags: bool) {
+    pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {
         // the output of --help uses the following syntax highlighting
         // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
         // use [foo] for multiple arguments or flags for foo.

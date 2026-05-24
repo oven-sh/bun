@@ -634,3 +634,58 @@ describe("zlib.zstd", () => {
     expect(all.length).toBeGreaterThanOrEqual(7);
   }, 15_000);
 });
+
+describe("async write buffer lifetime", () => {
+  it("keeps the input and output buffers attached while a native write is in flight", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const deflate = zlib.createDeflate();
+    try {
+      const handle = deflate._handle;
+
+      const input = new Uint8Array(new ArrayBuffer(64));
+      input.fill(97);
+      const out = new Uint8Array(new ArrayBuffer(1024));
+
+      // Mirror the bookkeeping processChunk() performs before calling
+      // handle.write(), so the native write callback can complete normally.
+      handle.buffer = input;
+      handle.cb = resolve;
+      handle.availOutBefore = out.byteLength;
+      handle.availInBefore = input.byteLength;
+      handle.inOff = 0;
+      handle.flushFlag = zlib.constants.Z_FINISH;
+
+      handle.write(
+        zlib.constants.Z_FINISH, // flush
+        input, // in
+        0, // in_off
+        input.byteLength, // in_len
+        out, // out
+        0, // out_off
+        out.byteLength, // out_len
+      );
+
+      // The native worker thread reads `input` and writes compressed bytes into
+      // `out` through raw pointers until the write completes. Transferring
+      // either ArrayBuffer must not detach the backing store out from under
+      // the worker -- both buffers must stay attached and full-length.
+      out.buffer.transfer();
+      input.buffer.transfer();
+      expect(out.buffer.detached).toBe(false);
+      expect(out.byteLength).toBe(1024);
+      expect(input.buffer.detached).toBe(false);
+      expect(input.byteLength).toBe(64);
+
+      await promise;
+
+      // Once the write completes the buffers are released and can be
+      // transferred again.
+      out.buffer.transfer();
+      input.buffer.transfer();
+      expect(out.buffer.detached).toBe(true);
+      expect(input.buffer.detached).toBe(true);
+    } finally {
+      deflate.close();
+    }
+  });
+});

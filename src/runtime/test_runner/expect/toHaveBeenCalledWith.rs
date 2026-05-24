@@ -5,7 +5,7 @@ use super::mock;
 use super::Expect;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_been_called_with(
+pub(crate) fn to_have_been_called_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,

@@ -434,7 +434,7 @@ pub struct Pipe {
 
 impl Pipe {
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.ctx.is_none() && self.on_pipe.is_none()
     }
 }
@@ -445,21 +445,21 @@ pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
 // generic argument, which stable Rust cannot express. Reshaped: callers implement `PipeHandler`
 // for their type instead of passing a free fn. TODO(refactor): audit call sites
 // (`Wrap(Foo, Foo.onPipe).init(self)` → `Wrap::<Foo>::init(self)`).
-pub trait PipeHandler {
+pub(crate) trait PipeHandler {
     fn on_pipe(&mut self, stream: streams::Result);
 }
 
-pub struct Wrap<T: PipeHandler>(core::marker::PhantomData<T>);
+pub(crate) struct Wrap<T: PipeHandler>(core::marker::PhantomData<T>);
 
 impl<T: PipeHandler> Wrap<T> {
-    pub fn pipe(self_: NonNull<()>, stream: streams::Result) {
+    pub(crate) fn pipe(self_: NonNull<()>, stream: streams::Result) {
         // SAFETY: `self_` was produced from `NonNull::from(&mut T)` in `init` below; caller
         // guarantees the pointee outlives the Pipe and is exclusively borrowed here.
         let this = unsafe { self_.cast::<T>().as_mut() };
         this.on_pipe(stream);
     }
 
-    pub fn init(self_: &mut T) -> Pipe {
+    pub(crate) fn init(self_: &mut T) -> Pipe {
         Pipe {
             ctx: Some(NonNull::from(self_).cast::<()>()),
             on_pipe: Some(Self::pipe),

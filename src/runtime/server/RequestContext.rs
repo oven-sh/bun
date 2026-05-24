@@ -184,6 +184,10 @@ pub struct RequestContext<
     pub request_body: Option<body::BodyHiveHandle>,
     pub request_body_buf: Vec<u8>,
     pub request_body_content_len: usize,
+    /// Total bytes forwarded to the request-body `ReadableStream`. The
+    /// up-front `maxRequestBodySize` check only sees Content-Length, so
+    /// chunked / H3 bodies consumed as a stream are capped against this.
+    pub request_body_streamed_len: usize,
 
     pub sink: Option<NonNull<ResponseStreamJSSink<SSL_ENABLED, HTTP3>>>,
     pub byte_stream: Option<NonNull<ByteStream>>,
@@ -253,14 +257,17 @@ use std::io::Write as _;
 mod NativePromiseContext {
     use super::{JSGlobalObject, JSValue};
     use crate::api::native_promise_context as npc;
-    pub use npc::NativePromiseContextType;
+    pub(super) use npc::NativePromiseContextType;
 
     #[inline]
-    pub fn create<T: NativePromiseContextType>(global: &JSGlobalObject, ctx: *mut T) -> JSValue {
+    pub(super) fn create<T: NativePromiseContextType>(
+        global: &JSGlobalObject,
+        ctx: *mut T,
+    ) -> JSValue {
         npc::create(global, ctx)
     }
     #[inline]
-    pub fn take<T>(cell: JSValue) -> Option<&'static mut T> {
+    pub(super) fn take<T>(cell: JSValue) -> Option<&'static mut T> {
         // SAFETY: the cell carried a +1 ref on `ctx`; ownership transfers back
         // to the caller, who immediately scopes it with a deref-on-drop guard.
         npc::take::<T>(cell).map(|p| unsafe { &mut *p.as_ptr() })
@@ -330,15 +337,18 @@ mod shim {
     use super::*;
 
     #[inline]
-    pub fn response_body_stream(r: &mut Response, g: &JSGlobalObject) -> Option<ReadableStream> {
+    pub(super) fn response_body_stream(
+        r: &mut Response,
+        g: &JSGlobalObject,
+    ) -> Option<ReadableStream> {
         r.get_body_readable_stream(g)
     }
     #[inline]
-    pub fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
+    pub(super) fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
         r.detach_readable_stream(g)
     }
     #[inline]
-    pub fn signal_aborted(s: NonNull<AbortSignal>) -> bool {
+    pub(super) fn signal_aborted(s: NonNull<AbortSignal>) -> bool {
         // `signal` is kept alive by the intrusive C++ refcount (+1 from
         // `AbortSignal::new()` / `ref_()`) plus `pending_activity_ref()` until
         // `signal_release` drops both — satisfies the `BackRef` outlives-holder
@@ -346,7 +356,11 @@ mod shim {
         bun_ptr::BackRef::from(s).aborted()
     }
     #[inline]
-    pub fn signal_fire(s: NonNull<AbortSignal>, g: &JSGlobalObject, r: jsc::CommonAbortReason) {
+    pub(super) fn signal_fire(
+        s: NonNull<AbortSignal>,
+        g: &JSGlobalObject,
+        r: jsc::CommonAbortReason,
+    ) {
         // See `signal_aborted` — counted ref keeps pointee live.
         bun_ptr::BackRef::from(s).signal(g, r)
     }
@@ -356,7 +370,7 @@ mod shim {
     /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
     /// be dereferenced after this call.
     #[inline]
-    pub fn signal_release(s: NonNull<AbortSignal>) {
+    pub(super) fn signal_release(s: NonNull<AbortSignal>) {
         // See `signal_aborted`. Order matches Zig: pending-activity first,
         // then the owning intrusive ref (which may free). `BackRef` is dropped
         // before `unref()` returns, so no dangling deref.
@@ -365,7 +379,7 @@ mod shim {
         signal.unref();
     }
     #[inline]
-    pub fn iec_trigger(
+    pub(super) fn iec_trigger(
         cb: &bun_jsc::JsCell<request::InternalJSEventCallback>,
         ev: request::EventType,
         g: &JSGlobalObject,
@@ -373,31 +387,31 @@ mod shim {
         cb.with_mut(|cb| cb.trigger(ev, g))
     }
     #[inline]
-    pub fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
+    pub(super) fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
         cb.with_mut(|cb| cb.deinit())
     }
     #[inline]
-    pub fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
+    pub(super) fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
         cb.get().has_callback()
     }
     /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
     /// (E0034); inline the body here.
     #[inline]
-    pub fn blob_is_s3(b: &Blob) -> bool {
+    pub(super) fn blob_is_s3(b: &Blob) -> bool {
         b.store
             .get()
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
     }
     #[inline]
-    pub fn blob_needs_to_read_file(b: &Blob) -> bool {
+    pub(super) fn blob_needs_to_read_file(b: &Blob) -> bool {
         b.store
             .get()
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
     #[inline]
-    pub fn byte_stream_unpipe(s: NonNull<ByteStream>) {
+    pub(super) fn byte_stream_unpipe(s: NonNull<ByteStream>) {
         // The lone caller has just `take()`n the pointer out of
         // `self.byte_stream`; the allocation is kept alive by
         // `response_body_readable_stream_ref` (BackRef invariant: pointee
@@ -1262,6 +1276,7 @@ where
                 request_body: None,
                 request_body_buf: Vec::new(),
                 request_body_content_len: 0,
+                request_body_streamed_len: 0,
                 sink: None,
                 byte_stream: None,
                 response_body_readable_stream_ref: readable_stream::Strong::default(),
@@ -2282,7 +2297,8 @@ where
             resp.write_header_int(b"content-length", pair.size as u64);
         }
         this.end_without_body(this.should_close_connection());
-        this.deref();
+        // `end_without_body` released the base ref; the caller
+        // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
     }
 
     /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>`.
@@ -3566,6 +3582,50 @@ where
         // we can no longer hold the strong reference from the body value ref.
         if let Some(readable) = this.request_body_readable_stream_ref.get(global_this) {
             debug_assert!(this.request_body_buf.is_empty());
+
+            // Cap streamed bytes against maxRequestBodySize too — the up-front
+            // check only sees Content-Length (see the buffering branch below).
+            this.request_body_streamed_len =
+                this.request_body_streamed_len.saturating_add(chunk.len());
+            if this.request_body_streamed_len > server.config().max_request_body_size {
+                this.resp.expect("infallible: resp bound").clear_on_data();
+                this.flags.set_is_waiting_for_request_body(false);
+
+                let _exit = vm.enter_event_loop_scope();
+
+                // Release the strong stream ref like the `last` arm does, then
+                // error the stream so a pending or future read rejects instead
+                // of hanging forever.
+                let _strong = core::mem::take(&mut this.request_body_readable_stream_ref);
+
+                readable.value.ensure_still_alive();
+                if let Some(bytes) = readable.ptr.bytes() {
+                    let mut err = Body::ValueError::Message(BunString::static_(
+                        "Request body exceeded maxRequestBodySize",
+                    ));
+                    let js_err = err.to_js(global_this);
+                    js_err.ensure_still_alive();
+                    // TODO: properly propagate exception upwards
+                    let _ = bytes.on_data(WebCore::streams::Result::Err(
+                        WebCore::streams::StreamError::JSValue(js_err),
+                    ));
+                    err.reset();
+                }
+
+                // Route through the normal end path so this.resp is detached
+                // and the base ref released (see the buffering branch below).
+                // SAFETY: FFI handle
+                if let Some(resp) = this.resp {
+                    if !resp.has_responded() {
+                        this.flags.set_has_written_status(true);
+                        // SAFETY: FFI handle
+                        resp.write_status(b"413 Payload Too Large");
+                    }
+                }
+                this.end_without_body(!HTTP3);
+                return;
+            }
+
             let _exit = vm.enter_event_loop_scope();
 
             // `RawSlice` is non-owning; ownership of `chunk` stays with the
@@ -3706,6 +3766,11 @@ where
         // This means we have received part of the body but not the whole thing
         if !self.request_body_buf.is_empty() {
             let emptied = core::mem::take(&mut self.request_body_buf);
+            // Count the drained pre-stream bytes against maxRequestBodySize so
+            // the streaming-path limit check sees the full body length, not
+            // just the chunks that arrive after the stream becomes active.
+            self.request_body_streamed_len =
+                self.request_body_streamed_len.saturating_add(emptied.len());
             let cap = emptied.capacity();
             return WebCore::DrainResult::Owned {
                 list: emptied,

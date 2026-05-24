@@ -6,7 +6,6 @@ use crate::Printer;
 use crate::PropertyHandlerContext;
 use crate::Result as CssResult;
 use crate::SmallList;
-use crate::properties::PropertyIdTag;
 use bun_alloc::ArenaVecExt as _;
 
 use crate::css_properties::Property;
@@ -33,29 +32,19 @@ pub struct Transition {
 }
 
 impl Transition {
-    // TODO(port): PropertyFieldMap was a Zig comptime anonymous struct mapping
-    // field names → PropertyIdTag, consumed by reflection-based shorthand helpers.
-    // Replace with a trait impl or const table once the shorthand machinery is ported.
-    pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
-        ("property", PropertyIdTag::TransitionProperty),
-        ("duration", PropertyIdTag::TransitionDuration),
-        ("delay", PropertyIdTag::TransitionDelay),
-        ("timing_function", PropertyIdTag::TransitionTimingFunction),
-    ];
-
-    pub fn eql(&self, rhs: &Self) -> bool {
+    pub(crate) fn eql(&self, rhs: &Self) -> bool {
         // Zig: css.implementEql(@This(), lhs, rhs) — field-by-field reflection.
         self == rhs
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // Zig: css.implementDeepClone(@This(), this, arena) — field-by-field
         // reflection. All four fields are POD/Copy or `Clone`-via-derive with no
         // arena indirections; #[derive(Clone)] is exact.
         self.clone()
     }
 
-    pub fn parse(parser: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse(parser: &mut Parser) -> CssResult<Self> {
         let mut property: Option<PropertyId> = None;
         let mut duration: Option<Time> = None;
         let mut delay: Option<Time> = None;
@@ -101,7 +90,7 @@ impl Transition {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.property.to_css(dest)?;
         if !self.duration.is_zero() || !self.delay.is_zero() {
             dest.write_char(b' ')?;
@@ -171,7 +160,7 @@ mod transition_handler_body {
     use crate::generics::CssEql as _;
     use crate::generics::DeepClone;
     impl TransitionHandler {
-        pub fn handle_property(
+        pub(crate) fn handle_property(
             &mut self,
             prop: &Property,
             dest: &mut DeclarationList,
@@ -325,7 +314,7 @@ mod transition_handler_body {
             true
         }
 
-        pub fn finalize(
+        pub(crate) fn finalize(
             &mut self,
             dest: &mut DeclarationList,
             context: &mut PropertyHandlerContext,
@@ -438,7 +427,7 @@ mod transition_handler_body {
             self.reset();
         }
 
-        pub fn reset(&mut self) {
+        pub(crate) fn reset(&mut self) {
             self.properties = None;
             self.durations = None;
             self.delays = None;

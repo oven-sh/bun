@@ -21,7 +21,7 @@ pub struct PageSelector {
 impl PageSelector {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         if let Some(name) = self.name {
-            dest.write_str(name)?;
+            dest.serialize_identifier(name)?;
         }
 
         for pseudo in &self.pseudo_classes {
@@ -57,7 +57,7 @@ impl PageSelector {
         loop {
             // Whitespace is not allowed between pseudo classes
             let state = input.state();
-            let is_colon = matches!(*input.next_including_whitespace()?, css::Token::Colon);
+            let is_colon = matches!(input.next_including_whitespace(), Ok(css::Token::Colon));
             if is_colon {
                 let vv = PagePseudoClass::parse(input)?;
                 pseudo_classes.push(vv);
@@ -89,7 +89,7 @@ pub struct PageMarginRule {
 }
 
 impl PageMarginRule {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -100,7 +100,7 @@ impl PageMarginRule {
 }
 
 impl PageMarginRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `PageMarginBox` is `Copy`.
         Self {
             margin_box: self.margin_box,
@@ -124,14 +124,14 @@ pub struct PageRule {
 }
 
 impl PageRule {
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         dest.write_str("@page")?;
         if self.selectors.len() >= 1 {
             let firstsel = &self.selectors[0];
             // Space is only required if the first selector has a name.
-            if !dest.minify && firstsel.name.is_some() {
+            if firstsel.name.is_some() {
                 dest.write_char(b' ')?;
             }
             dest.write_comma_separated(&self.selectors, |d, sel| sel.to_css(d))?;
@@ -186,7 +186,7 @@ impl PageRule {
 }
 
 impl PageRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
@@ -199,7 +199,7 @@ impl PageRule {
 
 // ─── PageRule parse ───────────────────────────────────────────────────────
 impl PageRule {
-    pub fn parse(
+    pub(crate) fn parse(
         selectors: ArrayList<PageSelector>,
         input: &mut css::Parser,
         loc: Location,
@@ -257,7 +257,7 @@ pub enum PagePseudoClass {
 
 impl PagePseudoClass {
     #[inline]
-    pub fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
         // `Copy` enum (generics.zig "simple copy types" → identity).
         self
     }
@@ -304,7 +304,7 @@ pub enum PageMarginBox {
     BottomRightCorner,
 }
 
-pub struct PageRuleParser<'a> {
+pub(crate) struct PageRuleParser<'a> {
     pub declarations: &'a mut DeclarationBlock<'static>,
     pub rules: &'a mut ArrayList<PageMarginRule>,
     pub options: &'a css::ParserOptions<'a>,

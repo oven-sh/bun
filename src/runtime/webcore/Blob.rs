@@ -1536,17 +1536,13 @@ impl BlobExt for Blob {
                 };
                 let sink = webcore::FileSink::init(
                     fd,
-                    // SAFETY: `global_this().bun_vm().event_loop()` is the live
-                    // per-thread `jsc::EventLoop`.
-                    unsafe {
-                        jsc::EventLoopHandle::init(
-                            self.global_this()
-                                .expect("Blob.global_this set at construction")
-                                .bun_vm()
-                                .as_mut()
-                                .event_loop() as *mut (),
-                        )
-                    },
+                    jsc::EventLoopHandle::init(
+                        self.global_this()
+                            .expect("Blob.global_this set at construction")
+                            .bun_vm()
+                            .as_mut()
+                            .event_loop() as *mut (),
+                    ),
                 );
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
                 unsafe {
@@ -1905,17 +1901,13 @@ impl BlobExt for Blob {
 
             let sink = webcore::FileSink::init(
                 fd,
-                // SAFETY: `global_this().bun_vm().event_loop()` is the live
-                // per-thread `jsc::EventLoop`.
-                unsafe {
-                    jsc::EventLoopHandle::init(
-                        self.global_this()
-                            .expect("Blob.global_this set at construction")
-                            .bun_vm()
-                            .as_mut()
-                            .event_loop() as *mut (),
-                    )
-                },
+                jsc::EventLoopHandle::init(
+                    self.global_this()
+                        .expect("Blob.global_this set at construction")
+                        .bun_vm()
+                        .as_mut()
+                        .event_loop() as *mut (),
+                ),
             );
             // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink; sole owner here.
             let sink_mut = unsafe { &mut *sink };
@@ -3504,6 +3496,48 @@ impl BlobExt for Blob {
                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
                     let mut iter = jsc::JSArrayIterator::init(current, global)?;
                     stack.reserve(iter.len as usize);
+
+                    // Decide up front whether processing any part (or any entry
+                    // still pending on `stack`) can re-enter user JS (toString /
+                    // Symbol.toPrimitive / proxy traps / getters) and detach a
+                    // borrowed buffer before `joiner.done()` copies it out. If
+                    // nothing can, typed-array parts are borrowed (`push_static`)
+                    // instead of cloned, which would double peak memory for
+                    // `new Blob(largeChunks)`. Non-fast arrays are conservatively
+                    // treated as able to run user JS.
+                    let mut parts_can_run_js = iter.fast.is_none() || !stack.is_empty();
+                    if !parts_can_run_js {
+                        let mut prescan = jsc::JSArrayIterator::init(current, global)?;
+                        while let Some(item) = prescan.next()? {
+                            if item.is_undefined_or_null() {
+                                continue;
+                            }
+                            match item.js_type_loose() {
+                                jsc::JSType::String
+                                | jsc::JSType::ArrayBuffer
+                                | jsc::JSType::Int8Array
+                                | jsc::JSType::Uint8Array
+                                | jsc::JSType::Uint8ClampedArray
+                                | jsc::JSType::Int16Array
+                                | jsc::JSType::Uint16Array
+                                | jsc::JSType::Int32Array
+                                | jsc::JSType::Uint32Array
+                                | jsc::JSType::Float16Array
+                                | jsc::JSType::Float32Array
+                                | jsc::JSType::Float64Array
+                                | jsc::JSType::BigInt64Array
+                                | jsc::JSType::BigUint64Array
+                                | jsc::JSType::DataView => {}
+                                jsc::JSType::DOMWrapper
+                                    if item.as_class_ref::<Blob>().is_some() => {}
+                                _ => {
+                                    parts_can_run_js = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     while let Some(item) = iter.next()? {
                         if item.is_undefined_or_null() {
                             continue;
@@ -3538,7 +3572,13 @@ impl BlobExt for Blob {
                                 | jsc::JSType::DataView => {
                                     could_have_non_ascii = true;
                                     let buf = item.as_array_buffer(global).unwrap();
-                                    joiner.push_static(buf.byte_slice());
+                                    if parts_can_run_js {
+                                        // A later part may run user JS that detaches
+                                        // or resizes this buffer before `done()`.
+                                        joiner.push_cloned(buf.byte_slice());
+                                    } else {
+                                        joiner.push_static(buf.byte_slice());
+                                    }
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
@@ -3549,7 +3589,13 @@ impl BlobExt for Blob {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                                        joiner.push_static(blob.shared_view());
+                                        // A later part may run user JS that drops the
+                                        // last ref to this Blob's Store before `done()`.
+                                        if parts_can_run_js {
+                                            joiner.push_cloned(blob.shared_view());
+                                        } else {
+                                            joiner.push_static(blob.shared_view());
+                                        }
                                         continue;
                                     } else {
                                         let sliced = current.to_slice_clone(global)?;
@@ -3571,7 +3617,10 @@ impl BlobExt for Blob {
                     if let Some(blob) = current.as_class_ref::<Blob>() {
                         could_have_non_ascii = could_have_non_ascii
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                        joiner.push_static(blob.shared_view());
+                        // This arm only handles entries deferred onto the walk
+                        // stack; other pending entries may still run user JS and
+                        // free this Blob's Store before `done()`, so always copy.
+                        joiner.push_cloned(blob.shared_view());
                     } else {
                         let sliced = current.to_slice_clone(global)?;
                         could_have_non_ascii = could_have_non_ascii || sliced.is_allocated();
@@ -3911,7 +3960,7 @@ fn escape_form_data_name(bytes: Vec<u8>) -> Box<[u8]> {
 }
 
 impl FormDataContext<'_> {
-    pub fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
+    pub(crate) fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
         if self.failed {
             return;
         }
@@ -4030,7 +4079,7 @@ struct StructuredCloneWriter {
 }
 
 impl StructuredCloneWriter {
-    pub fn write(&self, bytes: &[u8]) -> usize {
+    pub(crate) fn write(&self, bytes: &[u8]) -> usize {
         // SAFETY: ctx and impl_ are supplied by C++ SerializedScriptValue and valid
         // for the duration of on_structured_clone_serialize.
         unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
@@ -4245,7 +4294,7 @@ struct URLSearchParamsConverter {
 }
 
 impl URLSearchParamsConverter {
-    pub fn convert(&mut self, str: ZigString) {
+    pub(crate) fn convert(&mut self, str: ZigString) {
         self.buf = str.to_owned_slice();
     }
 }

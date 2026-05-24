@@ -124,13 +124,13 @@ impl Default for UpgradeCTX {
 impl UpgradeCTX {
     // this can be called multiple times
     // PORT NOTE: Zig `deinit` renamed `reset` — mid-lifetime reset, not a destructor (PORTING.md: never expose `pub fn deinit(&mut self)`).
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         // Dropping the taken value frees the old `Box<[u8]>` headers; raw
         // pointers are nulled. Nothing from the old value is reused.
         drop(core::mem::take(self));
     }
 
-    pub fn preserve_web_socket_headers_if_needed(&mut self) {
+    pub(crate) fn preserve_web_socket_headers_if_needed(&mut self) {
         if !self.request.is_null() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref. We
             // null `self.request` immediately after reading headers so it
@@ -318,7 +318,7 @@ impl NodeHTTPResponse {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    pub fn get_this_value(&self) -> JSValue {
+    pub(crate) fn get_this_value(&self) -> JSValue {
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
             return JSValue::ZERO;
@@ -329,7 +329,7 @@ impl NodeHTTPResponse {
         Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(&raw), raw.socket().cast())
     }
 
-    pub fn get_server_socket_value(&self) -> JSValue {
+    pub(crate) fn get_server_socket_value(&self) -> JSValue {
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
             return JSValue::ZERO;
@@ -340,7 +340,8 @@ impl NodeHTTPResponse {
         Bun__getNodeHTTPServerSocketThisValue(any_response_is_ssl(&raw), raw.socket().cast())
     }
 
-    pub fn pause_socket(&self) {
+    #[allow(dead_code)]
+    pub(crate) fn pause_socket(&self) {
         scoped_log!(NodeHTTPResponse, "pauseSocket");
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
@@ -355,7 +356,7 @@ impl NodeHTTPResponse {
         raw.pause();
     }
 
-    pub fn resume_socket(&self) {
+    pub(crate) fn resume_socket(&self) {
         scoped_log!(NodeHTTPResponse, "resumeSocket");
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
@@ -370,7 +371,7 @@ impl NodeHTTPResponse {
         raw.resume_();
     }
 
-    pub fn upgrade(
+    pub(crate) fn upgrade(
         &self,
         data_value: JSValue,
         sec_websocket_protocol: ZigString,
@@ -476,7 +477,7 @@ impl NodeHTTPResponse {
         true
     }
 
-    pub fn maybe_stop_reading_body(&self, vm: &mut VirtualMachine, this_value: JSValue) {
+    pub(crate) fn maybe_stop_reading_body(&self, vm: &mut VirtualMachine, this_value: JSValue) {
         self.upgrade_context.with_mut(|c| c.reset()); // we can discard the upgrade context now
 
         let flags = self.flags.get();
@@ -505,7 +506,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub fn should_request_be_pending(&self) -> bool {
+    pub(crate) fn should_request_be_pending(&self) -> bool {
         let flags = self.flags.get();
         // Once the socket is closed or has been adopted by the WebSocket
         // layer, the HTTP request/response cycle is over — no further uws
@@ -523,7 +524,7 @@ impl NodeHTTPResponse {
         true
     }
 
-    pub fn dump_request_body(
+    pub(crate) fn dump_request_body(
         &self,
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -600,7 +601,7 @@ impl NodeHTTPResponse {
         self.flags.get().is_requested_completed_or_ended()
     }
 
-    pub fn set_on_aborted_handler(&self) {
+    pub(crate) fn set_on_aborted_handler(&self) {
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) {
             return;
@@ -616,23 +617,23 @@ impl NodeHTTPResponse {
             .with_mut(|c| c.preserve_web_socket_headers_if_needed());
     }
 
-    pub fn get_ended(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_ended(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.get().contains(Flags::ENDED))
     }
 
-    pub fn get_finished(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_finished(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED))
     }
 
-    pub fn get_flags(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_flags(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::js_number_from_int32(self.flags.get().bits() as i32)
     }
 
-    pub fn get_aborted(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_aborted(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.get().contains(Flags::SOCKET_CLOSED))
     }
 
-    pub fn get_has_body(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_has_body(&self, _global: &JSGlobalObject) -> JSValue {
         let mut result: i32 = 0;
         match self.body_read_state.get() {
             BodyReadState::None => {}
@@ -653,7 +654,7 @@ impl NodeHTTPResponse {
         JSValue::js_number_from_int32(result)
     }
 
-    pub fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
         let flags = self.flags.get();
         if flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::SOCKET_CLOSED) {
             return JSValue::js_number_from_int32(0);
@@ -664,7 +665,7 @@ impl NodeHTTPResponse {
         JSValue::js_number_from_int32(0)
     }
 
-    pub fn js_ref(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
+    pub(crate) fn js_ref(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         if !self.is_done() {
             self.poll_ref
                 .with_mut(|r| r.r#ref(bun_vm_mut(global_object)));
@@ -672,7 +673,7 @@ impl NodeHTTPResponse {
         JSValue::UNDEFINED
     }
 
-    pub fn js_unref(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
+    pub(crate) fn js_unref(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         if !self.is_done() {
             self.poll_ref
                 .with_mut(|r| r.unref(bun_vm_mut(global_object)));
@@ -693,7 +694,7 @@ fn handle_ended_if_necessary(state: uws::State, global_object: &JSGlobalObject) 
 }
 
 impl NodeHTTPResponse {
-    pub fn write_head(
+    pub(crate) fn write_head(
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -880,7 +881,7 @@ fn write_head_internal(
 }
 
 impl NodeHTTPResponse {
-    pub fn write_continue(
+    pub(crate) fn write_continue(
         &self,
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
@@ -982,22 +983,22 @@ impl NodeHTTPResponse {
     }
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onClose")]
-    pub fn on_abort(&self, js_value: JSValue) {
+    pub(crate) fn on_abort(&self, js_value: JSValue) {
         scoped_log!(NodeHTTPResponse, "onAbort");
         self.handle_abort_or_timeout::<{ AbortEvent::Abort }>(js_value);
     }
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
-    pub fn set_closed(&self) {
+    pub(crate) fn set_closed(&self) {
         self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
     }
 
-    pub fn on_timeout(&self, _resp: uws::AnyResponse) {
+    pub(crate) fn on_timeout(&self, _resp: uws::AnyResponse) {
         scoped_log!(NodeHTTPResponse, "onTimeout");
         self.handle_abort_or_timeout::<{ AbortEvent::Timeout }>(JSValue::ZERO);
     }
 
-    pub fn do_pause(
+    pub(crate) fn do_pause(
         &self,
         _global: &JSGlobalObject,
         _frame: &CallFrame,
@@ -1026,7 +1027,7 @@ impl NodeHTTPResponse {
         Ok(JSValue::TRUE)
     }
 
-    pub fn drain_request_body(
+    pub(crate) fn drain_request_body(
         &self,
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
@@ -1064,7 +1065,7 @@ impl NodeHTTPResponse {
         None
     }
 
-    pub fn do_resume(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
+    pub(crate) fn do_resume(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
         scoped_log!(NodeHTTPResponse, "doResume");
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
@@ -1090,7 +1091,7 @@ impl NodeHTTPResponse {
         result
     }
 
-    pub fn on_request_complete(&self) {
+    pub(crate) fn on_request_complete(&self) {
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             return;
         }
@@ -1103,7 +1104,7 @@ impl NodeHTTPResponse {
 }
 
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onResolve")]
-pub fn node_http_request_on_resolve(
+pub(crate) fn node_http_request_on_resolve(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
@@ -1147,7 +1148,7 @@ pub fn node_http_request_on_resolve(
 }
 
 #[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onReject")]
-pub fn node_http_request_on_reject(
+pub(crate) fn node_http_request_on_reject(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
@@ -1198,7 +1199,7 @@ pub fn node_http_request_on_reject(
 }
 
 impl NodeHTTPResponse {
-    pub fn abort(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn abort(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         if self.is_done() {
             return Ok(JSValue::UNDEFINED);
         }
@@ -1329,9 +1330,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub const BUN_DEBUG_REFCOUNT_NAME: &'static str = "NodeHTTPServerResponse";
-
-    pub fn on_data(&self, chunk: &[u8], last: bool) {
+    pub(crate) fn on_data(&self, chunk: &[u8], last: bool) {
         scoped_log!(
             NodeHTTPResponse,
             "onData({} bytes, is_last = {})",
@@ -1607,7 +1606,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub fn set_on_writable(
+    pub(crate) fn set_on_writable(
         &self,
         this_value: JSValue,
         global_object: &JSGlobalObject,
@@ -1624,11 +1623,11 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub fn get_on_writable(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_writable(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
         js::on_writable_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub fn get_on_abort(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_abort(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
             return JSValue::UNDEFINED;
@@ -1636,7 +1635,7 @@ impl NodeHTTPResponse {
         js::on_aborted_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub fn set_on_abort(
+    pub(crate) fn set_on_abort(
         &self,
         this_value: JSValue,
         global_object: &JSGlobalObject,
@@ -1658,19 +1657,19 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub fn get_on_data(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_data(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
         js::on_data_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
 
-    pub fn get_has_custom_on_data(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_has_custom_on_data(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.get().contains(Flags::HAS_CUSTOM_ON_DATA))
     }
 
-    pub fn get_upgraded(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_upgraded(&self, _global: &JSGlobalObject) -> JSValue {
         JSValue::from(self.flags.get().contains(Flags::UPGRADED))
     }
 
-    pub fn set_has_custom_on_data(&self, _global: &JSGlobalObject, value: JSValue) {
+    pub(crate) fn set_has_custom_on_data(&self, _global: &JSGlobalObject, value: JSValue) {
         self.update_flags(|f| f.set(Flags::HAS_CUSTOM_ON_DATA, value.to_boolean()));
     }
 
@@ -1693,7 +1692,12 @@ impl NodeHTTPResponse {
         }
     }
 
-    pub fn set_on_data(&self, this_value: JSValue, global_object: &JSGlobalObject, value: JSValue) {
+    pub(crate) fn set_on_data(
+        &self,
+        this_value: JSValue,
+        global_object: &JSGlobalObject,
+        value: JSValue,
+    ) {
         // Only `.pending` accepts a callback. `.done` means either uSockets delivered last=true or JS
         // previously cleared `ondata` (which already called clearOnData()); either way, there is no
         // more body to read, so don't re-register with uSockets or churn refs.
@@ -1747,7 +1751,7 @@ impl NodeHTTPResponse {
         debug_assert!(self.body_read_ref.get().has);
     }
 
-    pub fn write(
+    pub(crate) fn write(
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1756,7 +1760,7 @@ impl NodeHTTPResponse {
         self.write_or_end::<false>(global_object, arguments, JSValue::ZERO)
     }
 
-    pub fn on_auto_flush(&self) -> bool {
+    pub(crate) fn on_auto_flush(&self) -> bool {
         // defer this.deref(); — moved to tail.
         let flags = self.flags.get();
         if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
@@ -1803,7 +1807,11 @@ impl NodeHTTPResponse {
         self.deref();
     }
 
-    pub fn flush_headers(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn flush_headers(
+        &self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let flags = self.flags.get();
         if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
             if let Some(raw_response) = self.raw_response.get() {
@@ -1818,14 +1826,22 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn end(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn end(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         // We dont wanna a paused socket when we call end, so is important to resume the socket
         self.resume_socket();
         self.write_or_end::<true>(global_object, arguments, callframe.this())
     }
 
-    pub fn get_bytes_written(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
+    pub(crate) fn get_bytes_written(
+        &self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JSValue {
         JSValue::js_number(self.bytes_written.get() as f64)
     }
 }
@@ -1847,7 +1863,7 @@ fn handle_corked(
 }
 
 impl NodeHTTPResponse {
-    pub fn set_timeout(&self, seconds: u8) {
+    pub(crate) fn set_timeout(&self, seconds: u8) {
         let flags = self.flags.get();
         let Some(raw) = self.raw_response.get() else {
             return;
@@ -1862,7 +1878,11 @@ impl NodeHTTPResponse {
         raw.timeout(seconds);
     }
 
-    pub fn cork(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn cork(
+        &self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         // PORT NOTE: borrow the `arguments()` slice (ptr+len) instead of
         // materialising `Arguments<1>` by value — `cork` runs on every
         // `res.end()`, so the small-aggregate copy + bounds branch are pure
@@ -1939,7 +1959,7 @@ impl NodeHTTPResponse {
         ret
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         bun_ptr::finalize_js_box_noop(self);
     }
 
@@ -1967,12 +1987,12 @@ impl NodeHTTPResponse {
 
     // Intrusive refcount helpers (mirrors Zig `bun.ptr.RefCount(@This(), ...)` mixin).
     #[inline]
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
     }
 
     #[inline]
-    pub fn deref(&self) {
+    pub(crate) fn deref(&self) {
         let n = self.ref_count.get() - 1;
         self.ref_count.set(n);
         if n == 0 {
@@ -2108,7 +2128,7 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
 
 impl NodeHTTPResponse {
     #[uws::uws_callback(export = "NodeHTTPResponse__setTimeout")]
-    pub fn ffi_set_timeout(&self, seconds: JSValue, global_this: &JSGlobalObject) -> bool {
+    pub(crate) fn ffi_set_timeout(&self, seconds: JSValue, global_this: &JSGlobalObject) -> bool {
         if !seconds.is_number() {
             let _: jsc::JsError =
                 global_this.throw_invalid_argument_type_value(b"timeout", b"number", seconds);

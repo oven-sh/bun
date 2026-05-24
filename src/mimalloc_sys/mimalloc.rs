@@ -110,12 +110,6 @@ bun_opaque::opaque_ffi! {
 
 impl Heap {
     #[inline]
-    pub fn new() -> *mut Heap {
-        // SAFETY: FFI call with no preconditions.
-        unsafe { mi_heap_new() }
-    }
-
-    #[inline]
     pub fn delete(&mut self) {
         // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
         unsafe { mi_heap_delete(self) }

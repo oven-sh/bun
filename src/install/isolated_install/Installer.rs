@@ -108,7 +108,11 @@ pub struct Installer<'a> {
     /// round-trip via `Method::from_u8` at the load sites below.
     pub supported_backend: AtomicU8,
 
-    pub trusted_dependencies_from_update_requests: ArrayHashMap<TruncatedPackageNameHash, ()>,
+    /// Value is the alias bytes the key hash was computed from; lookups must
+    /// compare it since truncated hashes can collide. Built before tasks
+    /// spawn and only read concurrently afterwards.
+    pub trusted_dependencies_from_update_requests:
+        ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>>,
 
     /// Absolute path to the global virtual store (`<cache_dir>/links`). When
     /// non-null, npm/git/tarball entries are materialized once into this
@@ -664,7 +668,7 @@ pub enum TaskError {
 }
 
 impl TaskError {
-    pub fn clone(&self) -> TaskError {
+    pub(crate) fn clone(&self) -> TaskError {
         match self {
             TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
@@ -733,7 +737,7 @@ impl Step {
     /// only ever stored via `Step::* as u32` (this file) so the value is
     /// always a valid discriminant.
     #[inline]
-    pub const fn from_u32(raw: u32) -> Step {
+    pub(crate) const fn from_u32(raw: u32) -> Step {
         match raw {
             0 => Step::LinkPackage,
             1 => Step::SymlinkDependencies,
@@ -1628,7 +1632,8 @@ impl Task {
                     let (is_trusted, is_trusted_through_update_request) = 'brk: {
                         if installer
                             .trusted_dependencies_from_update_requests
-                            .contains_key(&truncated_dep_name_hash)
+                            .get(&truncated_dep_name_hash)
+                            .is_some_and(|n| **n == *dep.name.slice(string_buf))
                         {
                             break 'brk (true, true);
                         }
@@ -1737,10 +1742,10 @@ impl Task {
                                 if trusted.is_none() {
                                     *trusted = Some(Default::default());
                                 }
-                                trusted
-                                    .as_mut()
-                                    .unwrap()
-                                    .insert(truncated_dep_name_hash, ());
+                                trusted.as_mut().unwrap().insert(
+                                    truncated_dep_name_hash,
+                                    Box::from(dep.name.slice(string_buf)),
+                                );
                             }
 
                             if first_index != 0 {

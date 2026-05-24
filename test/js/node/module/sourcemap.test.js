@@ -1,5 +1,6 @@
 const { test, expect } = require("bun:test");
 const { SourceMap } = require("node:module");
+const { bunEnv, bunExe } = require("harness");
 
 test("SourceMap class exists", () => {
   expect(SourceMap).toBeDefined();
@@ -174,4 +175,42 @@ test("SourceMap with invalid name index has undefined name property", () => {
       "originalSource": "test.js",
     }
   `);
+});
+
+test("SourceMap handles mappings with truncated VLQ segments without crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { SourceMap } = require("node:module");
+const truncated = [
+  // 'g' decodes to a base64 value with the VLQ continuation bit set, so the
+  // decoder expects more bytes than the 1-byte input provides.
+  { version: 3, sources: [], mappings: "g" },
+  // Both leading VLQ fields are consumed before the segment is complete, so
+  // the next field is decoded from an empty remainder.
+  { version: 3, sources: ["x.js"], mappings: "AA" },
+];
+for (const payload of truncated) {
+  try {
+    new SourceMap(payload);
+  } catch (err) {
+    // A clean SyntaxError for a malformed mapping is acceptable.
+    if (!(err instanceof SyntaxError)) throw err;
+  }
+}
+// A well-formed mapping still parses.
+const ok = new SourceMap({ version: 3, sources: ["test.js"], mappings: "AAAA" });
+console.log(ok.findEntry(0, 0).originalSource);
+console.log("done");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("test.js\ndone\n");
+  expect(exitCode).toBe(0);
 });

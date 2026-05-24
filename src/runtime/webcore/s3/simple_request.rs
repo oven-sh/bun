@@ -182,7 +182,7 @@ pub enum Callback {
 }
 
 impl Callback {
-    pub fn fail(
+    pub(crate) fn fail(
         &self,
         code: &[u8],
         message: &[u8],
@@ -203,7 +203,7 @@ impl Callback {
         Ok(())
     }
 
-    pub fn not_found(
+    pub(crate) fn not_found(
         &self,
         code: &[u8],
         message: &[u8],
@@ -525,8 +525,8 @@ impl Drop for S3HttpSimpleTask {
 // names for the request-options struct (`Options`, `S3RequestOptions`, `S3SimpleRequestOptions`)
 // and two for the callback enum. Alias them here so the call sites compile without churn.
 pub type Options<'a> = S3SimpleRequestOptions<'a>;
-pub type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
-pub type S3Callback = Callback;
+pub(crate) type S3RequestOptions<'a> = S3SimpleRequestOptions<'a>;
+pub(crate) type S3Callback = Callback;
 
 pub struct S3SimpleRequestOptions<'a> {
     // signing options
@@ -566,7 +566,7 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
     }
 }
 
-pub fn execute_simple_s3_request(
+pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     options: S3SimpleRequestOptions<'_>,
     callback: Callback,

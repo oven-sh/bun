@@ -8,18 +8,7 @@ pub struct TransactionStatusIndicator(pub u8);
 
 impl TransactionStatusIndicator {
     /// if idle (not in a transaction block)
-    pub const I: Self = Self(b'I');
-
-    /// if in a transaction block
-    pub const T: Self = Self(b'T');
-
-    /// if in a failed transaction block
-    pub const E: Self = Self(b'E');
-
-    #[inline]
-    pub const fn from_raw(n: u8) -> Self {
-        Self(n)
-    }
+    pub(crate) const I: Self = Self(b'I');
 }
 
 // ported from: src/sql/postgres/protocol/TransactionStatusIndicator.zig

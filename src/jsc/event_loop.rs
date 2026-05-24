@@ -213,8 +213,8 @@ impl Debug {
 }
 
 mod drain_result {
-    pub const SUCCESS: u8 = 0;
-    pub const JS_TERMINATED: u8 = 1;
+    pub(super) const SUCCESS: u8 = 0;
+    pub(super) const JS_TERMINATED: u8 = 1;
 }
 
 // TODO(port): move to jsc_sys
@@ -1416,7 +1416,7 @@ bun_event_loop::link_impl_JsEventLoop! {
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_js_event_loop_current() -> *mut () {
+pub(crate) fn __bun_js_event_loop_current() -> *mut () {
     // SAFETY: `VirtualMachine::get()` panics if no VM on this thread;
     // `event_loop()` returns the live `*mut EventLoop` self-pointer.
     VirtualMachine::get().as_mut().event_loop().cast()
@@ -1445,7 +1445,7 @@ fn vm_from_ptr<'a>(vm: *mut ()) -> &'a mut VirtualMachine {
 /// Heap-allocate a fresh `EventLoop` bound to `vm`; on Windows, store
 /// `uws_loop` in `event_loop.uws_loop`. Spec SpawnSyncEventLoop.zig:62-68.
 #[unsafe(no_mangle)]
-pub fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
+pub(crate) fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop) -> *mut () {
     let vm = vm_from_ptr(vm);
     let mut el = Box::new(EventLoop::default());
     el.global = NonNull::new(vm.global);
@@ -1462,7 +1462,7 @@ pub fn __bun_spawn_sync_create_event_loop(vm: *mut (), uws_loop: *mut uws::Loop)
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
+pub(crate) fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
     // SAFETY: paired with `heap::alloc` in `__bun_spawn_sync_create_event_loop`.
     drop(unsafe { bun_core::heap::take(el.cast::<EventLoop>()) });
 }
@@ -1470,7 +1470,7 @@ pub fn __bun_spawn_sync_destroy_event_loop(el: *mut ()) {
 /// Re-bind `event_loop.{global, virtual_machine}` to `vm` (prepare path).
 /// Spec SpawnSyncEventLoop.zig:93-95.
 #[unsafe(no_mangle)]
-pub fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ()) {
+pub(crate) fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ()) {
     let el = el_ref(el);
     let vm = vm_from_ptr(vm);
     el.global = NonNull::new(vm.global);
@@ -1478,19 +1478,19 @@ pub fn __bun_spawn_sync_event_loop_set_vm(el: *mut (), vm: *mut ()) {
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
+pub(crate) fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
     el_ref(el).tick_tasks_only();
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_spawn_sync_vm_get_event_loop_handle(
+pub(crate) fn __bun_spawn_sync_vm_get_event_loop_handle(
     vm: *mut (),
 ) -> bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle {
     vm_from_ptr(vm).event_loop_handle.and_then(NonNull::new)
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_spawn_sync_vm_set_event_loop_handle(
+pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
     vm: *mut (),
     h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
 ) {
@@ -1498,14 +1498,14 @@ pub fn __bun_spawn_sync_vm_set_event_loop_handle(
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
+pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
     // `el` is its previous `event_loop` pointer (a `*mut EventLoop` into
     // `regular_event_loop`/`macro_event_loop`).
     vm_from_ptr(vm).event_loop = el.cast::<EventLoop>();
 }
 
 #[unsafe(no_mangle)]
-pub fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
+pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
     vm_from_ptr(vm).suppress_microtask_drain.replace(v)
 }
 

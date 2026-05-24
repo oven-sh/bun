@@ -43,7 +43,7 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub fn js_get_mach_o_image_zero_offset(
+    pub(crate) fn js_get_mach_o_image_zero_offset(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -69,7 +69,7 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub fn js_segfault(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_segfault(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         // Zig: @setRuntimeSafety(false) — Rust has no per-fn equivalent; the raw-ptr write below
         // is already unchecked inside `unsafe`.
         crash_handler::suppress_core_dumps_if_necessary();
@@ -84,8 +84,7 @@ pub mod js_bindings {
         if Environment::ENABLE_ASAN {
             crash_handler::crash_handler(
                 crash_handler::CrashReason::SegmentationFault(0xDEADBEEF),
-                None,
-                Some(crash_handler::debug::return_address()),
+                crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
             );
         }
         // SAFETY: intentionally dereferencing an invalid address to trigger SIGSEGV for testing.
@@ -98,24 +97,27 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_panic(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
     }
 
     #[bun_jsc::host_fn]
-    pub fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_root_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::handle_root_error(bun_core::err!(Test), None);
     }
 
     #[bun_jsc::host_fn]
-    pub fn js_out_of_memory(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_out_of_memory(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         bun_core::out_of_memory();
     }
 
     #[bun_jsc::host_fn]
-    pub fn js_raise_ignoring_panic_handler(
+    pub(crate) fn js_raise_ignoring_panic_handler(
         _global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -124,7 +126,7 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub fn js_get_features_as_vlq(
+    pub(crate) fn js_get_features_as_vlq(
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
@@ -139,7 +141,10 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn]
-    pub fn js_get_feature_data(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn js_get_feature_data(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 5);
         let list = analytics::PACKED_FEATURES_LIST;
         let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {

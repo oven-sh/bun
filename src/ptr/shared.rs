@@ -11,7 +11,6 @@
 //! mapping for reviewers diffing against `src/ptr/shared.zig`.
 
 use std::rc::Rc;
-use std::sync::Arc;
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Options
@@ -70,11 +69,6 @@ impl Default for Options {
 // Shared / AtomicShared
 // ───────────────────────────────────────────────────────────────────────────────
 
-/// A shared pointer, allocated using the default allocator.
-///
-/// Zig's `Shared(*T)` and `Shared(?*T)` both map to `Rc<T>` in Rust:
-/// `Shared(?*T)` → `Option<Rc<T>>` at the field/param site (the optionality moves
-/// outside the smart pointer; `Rc<T>` is already null-pointer-optimized so
 /// `Option<Rc<T>>` is one word).
 ///
 /// This type is not thread-safe: all pointers to the same piece of data must live on the same
@@ -103,42 +97,17 @@ impl Default for Options {
 // PERF(port): Rc weak-count header — profile if hot (PORTING.md §Pointers).
 pub type Shared<T> = Rc<T>;
 
-/// A thread-safe shared pointer, allocated using the default allocator.
-///
-/// This type uses atomic operations to manage the ref count, but it does not provide any
-/// synchronization of the data itself. You must ensure proper concurrency using mutexes or
-/// atomics.
-///
-/// Same method map as `Shared` above, with `Arc` in place of `Rc`.
-pub type AtomicShared<T> = Arc<T>;
-
 /// A shared pointer allocated using a specific type of allocator.
 ///
 /// The requirements for `Allocator` are the same as `bun.ptr.OwnedIn`.
 /// `Allocator` may be `std.mem.Allocator` to allow any kind of allocator.
 //
-// TODO(port): `Rc::new_in` requires nightly `feature(allocator_api)`. The four
-// tree-wide call sites all pass `bun.DefaultAllocator`, which is the global
-// mimalloc — rewrite those call sites to plain `Rc::new` and delete this
-// alias. If a non-default allocator is ever needed, gate on the feature or
-// hand-roll an `RcIn<T, A>` then.
-pub type SharedIn<T /*, A */> = Rc<T>;
 
 /// A thread-safe shared pointer allocated using a specific type of allocator.
 //
-// TODO(port): same as `SharedIn` — `Arc::new_in` is nightly-only.
-pub type AtomicSharedIn<T /*, A */> = Arc<T>;
 
 /// Like `Shared`, but takes explicit options.
 //
-// TODO(port): Rust cannot accept a struct const-generic on stable
-// (`feature(adt_const_params)`). Every `WithOptions` instantiation in-tree is
-// covered by one of `Rc<T>` / `Arc<T>` / `Option<Rc<T>>` / `Option<Arc<T>>` /
-// `ManuallyDrop<T>` payload. TODO(refactor): rewrite each call site to the
-// concrete std type and delete this generic shim. The compile-time assertion
-// `allow_weak ⇒ deinit` from the Zig is moot because std `Rc`/`Arc` always
-// support weak and always run `Drop`.
-pub type WithOptions<T> = Rc<T>;
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Weak
@@ -162,9 +131,6 @@ pub type WithOptions<T> = Rc<T>;
 /// | `w.strongCount()`    | `w.strong_count()`                    |
 /// | `w.weakCount()`      | `w.weak_count()`                      |
 pub type Weak<T> = std::rc::Weak<T>;
-
-/// Thread-safe weak pointer (companion to `AtomicShared`).
-pub type AtomicWeak<T> = std::sync::Weak<T>;
 
 // ───────────────────────────────────────────────────────────────────────────────
 // FullData / NonAtomicCount / AtomicCount

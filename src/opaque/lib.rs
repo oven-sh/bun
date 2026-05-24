@@ -43,7 +43,7 @@
 /// bun_opaque::opaque_ffi! {
 ///     /// `struct ssl_st` (`typedef ... SSL`).
 ///     pub struct SSL;
-///     pub(crate) struct BIO;
+///     pub struct BIO;
 /// }
 /// ```
 ///

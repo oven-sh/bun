@@ -2,13 +2,13 @@
 
 pub type int4 = u32;
 pub type Int4 = int4;
-pub type PostgresInt32 = int4;
+pub(crate) type PostgresInt32 = int4;
 pub type int8 = i64;
 pub type Int8 = int8;
-pub type PostgresInt64 = int8;
+pub(crate) type PostgresInt64 = int8;
 pub type short = u16;
 pub type Short = short;
-pub type PostgresShort = u16;
+pub(crate) type PostgresShort = u16;
 // `Int32` is the encoding helper (`fn int32`), re-exported under both casings
 // since draft sites used either.
 pub use int32 as Int32;

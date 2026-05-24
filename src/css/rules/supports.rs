@@ -43,7 +43,7 @@ pub struct Declaration {
 }
 
 impl Declaration {
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // PORT NOTE: `css.implementDeepClone` field-walk. `PropertyId` is `Copy`;
         // `value: &'static [u8]` is an arena-owned slice → identity copy
         // (generics.zig "const strings" rule).
@@ -55,7 +55,7 @@ impl Declaration {
 }
 
 impl Declaration {
-    pub fn eql(&self, other: &Self) -> bool {
+    pub(crate) fn eql(&self, other: &Self) -> bool {
         // PORT NOTE: Zig `css.implementEql` field-walk, hand-expanded.
         // `PropertyId` carries its own tag+prefix `PartialEq` (see
         // properties_generated.rs `impl PartialEq for PropertyId`); `value` is

@@ -575,9 +575,9 @@ pub type Loop = PosixLoop;
 
 // ───────────────────────────── extern "C" ─────────────────────────────
 
-pub type LoopCb = unsafe extern "C" fn(*mut Loop);
-pub type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
-pub type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
+pub(crate) type LoopCb = unsafe extern "C" fn(*mut Loop);
+pub(crate) type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
+pub(crate) type DeferCb = unsafe extern "C" fn(ctx: *mut c_void);
 
 #[allow(non_snake_case)]
 mod c {
@@ -590,33 +590,33 @@ mod c {
     // `us_loop_close_all_groups`, …) dispatch Rust callbacks that touch the same
     // loop via `Loop::get()`. Keep all loop-taking decls as raw `*mut Loop`.
     unsafe extern "C" {
-        pub fn us_create_loop(
+        pub(super) fn us_create_loop(
             hint: *mut c_void,
             wakeup_cb: Option<LoopCb>,
             pre_cb: Option<LoopCb>,
             post_cb: Option<LoopCb>,
             ext_size: c_uint,
         ) -> *mut Loop;
-        pub fn us_loop_free(loop_: *mut Loop);
-        pub fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
+        pub(super) fn us_loop_free(loop_: *mut Loop);
+        pub(super) fn us_quic_loop_flush_if_pending(loop_: *mut Loop);
         pub fn us_loop_run(loop_: *mut Loop);
         #[cfg(windows)]
-        pub fn us_loop_pump(loop_: *mut Loop);
+        pub(super) fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
-        pub fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
+        pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
+        pub(super) fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
+        pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         #[cfg(not(windows))]
-        pub fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
-        pub fn us_internal_free_closed_sockets(loop_: *mut Loop);
-        pub fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
+        pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
+        pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
+        pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;
         #[cfg(not(windows))]
-        pub safe fn uws_get_loop() -> *mut Loop;
+        pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
-        pub fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
-        pub fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: DeferCb);
-        pub fn uws_res_clear_corked_socket(loop_: *mut Loop);
-        pub fn uws_loop_date_header_timer_update(loop_: *mut Loop);
+        pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
+        pub(super) fn uws_loop_defer(loop_: *mut Loop, ctx: *mut c_void, cb: DeferCb);
+        pub(super) fn uws_res_clear_corked_socket(loop_: *mut Loop);
+        pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
     }
 }
 // Re-exported raw externs for cross-thread callers (e.g. bun_http's

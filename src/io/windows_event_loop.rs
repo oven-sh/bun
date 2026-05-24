@@ -29,7 +29,7 @@ pub type Loop = uv::Loop;
 
 pub type Flags = posix::Flags;
 pub type FlagsSet = posix::FlagsSet;
-pub type FlagsStruct = posix::FlagsStruct;
+pub(crate) type FlagsStruct = posix::FlagsStruct;
 pub type Owner = posix::Owner;
 
 pub struct FilePoll {
@@ -88,19 +88,14 @@ impl FilePoll {
         owner: Owner,
     ) -> *mut FilePoll {
         // Crate-private backref-deref accessor — single live `&mut Store` borrow.
-        let poll = vm.file_polls_mut().get();
-        // SAFETY: `get()` returns a valid, uniquely-owned, *uninitialized* slot from the
-        // HiveArray pool. We must not materialize `&mut FilePoll` (validity invariant
-        // requires initialized memory); write the whole value through the raw pointer.
-        unsafe {
-            poll.write(FilePoll {
+        vm.file_polls_mut()
+            .get_init(FilePoll {
                 fd,
                 flags,
                 owner,
                 next_to_free: ptr::null_mut(),
-            });
-        }
-        poll
+            })
+            .as_ptr()
     }
 
     // PORT NOTE: not `impl Drop` — FilePoll lives in a HiveArray pool slot, not a Box;
@@ -150,8 +145,7 @@ impl FilePoll {
         // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
         // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
         // the `&mut Store` it produces is the sole unique borrow into the hive.
-        // SAFETY: `this` is the live hive slot derived from `&mut self` above.
-        unsafe { vm.file_polls_mut().put(this, vm, was_ever_registered) };
+        vm.file_polls_mut().put(this, vm, was_ever_registered);
     }
 
     pub fn is_readable(&mut self) -> bool {
@@ -290,8 +284,9 @@ impl Store {
         }
     }
 
-    pub fn get(&mut self) -> *mut FilePoll {
-        self.hive.get()
+    #[inline]
+    pub fn get_init(&mut self, value: FilePoll) -> ptr::NonNull<FilePoll> {
+        self.hive.get_init(value)
     }
 
     pub fn process_deferred_frees(&mut self) {

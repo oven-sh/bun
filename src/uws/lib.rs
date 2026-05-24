@@ -1,6 +1,5 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::ffi::{c_char, c_void};
 
 use bun_core::ZStr;
@@ -78,22 +77,10 @@ impl ResponseKind {
     }
 }
 
-pub const LIBUS_TIMEOUT_GRANULARITY: i32 = 4;
-pub const LIBUS_RECV_BUFFER_PADDING: i32 = 32;
-pub const LIBUS_EXT_ALIGNMENT: i32 = 16;
-
-pub const _COMPRESSOR_MASK: i32 = 255;
-pub const _DECOMPRESSOR_MASK: i32 = 3840;
-pub const DISABLED: i32 = 0;
+pub(crate) const _COMPRESSOR_MASK: i32 = 255;
+pub(crate) const _DECOMPRESSOR_MASK: i32 = 3840;
 pub const SHARED_COMPRESSOR: i32 = 1;
 pub const SHARED_DECOMPRESSOR: i32 = 256;
-pub const DEDICATED_DECOMPRESSOR_32KB: i32 = 3840;
-pub const DEDICATED_DECOMPRESSOR_16KB: i32 = 3584;
-pub const DEDICATED_DECOMPRESSOR_8KB: i32 = 3328;
-pub const DEDICATED_DECOMPRESSOR_4KB: i32 = 3072;
-pub const DEDICATED_DECOMPRESSOR_2KB: i32 = 2816;
-pub const DEDICATED_DECOMPRESSOR_1KB: i32 = 2560;
-pub const DEDICATED_DECOMPRESSOR_512B: i32 = 2304;
 pub const DEDICATED_DECOMPRESSOR: i32 = 3840;
 pub const DEDICATED_COMPRESSOR_3KB: i32 = 145;
 pub const DEDICATED_COMPRESSOR_4KB: i32 = 146;
@@ -139,7 +126,7 @@ pub fn on_thread_exit() {
 /// # Safety
 /// `filename` and `error_msg` must be valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
+pub(crate) unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     filename: *const c_char,
     error_msg: *const c_char,
 ) {
@@ -238,11 +225,22 @@ pub mod ssl_wrapper {
     /// writes we loop until we have no more data to write/backpressure.
     const BUFFER_SIZE: usize = 65536;
 
+    /// Cap on peer-initiated TLS renegotiations per
+    /// [`MAX_RENEGOTIATION_WINDOW`]. Mirrors the `us_reneg_policy` defaults in
+    /// the uSockets C path (openssl.c) and Node's
+    /// `CLIENT_RENEG_LIMIT`/`CLIENT_RENEG_WINDOW`. Unbounded renegotiation is
+    /// a CPU DoS (CVE-2011-1473).
+    const MAX_RENEGOTIATIONS: u8 = 3;
+    /// See [`MAX_RENEGOTIATIONS`].
+    const MAX_RENEGOTIATION_WINDOW: core::time::Duration = core::time::Duration::from_secs(600);
+
     pub struct SSLWrapper<T: Copy> {
         pub handlers: Handlers<T>,
         pub ssl: Option<NonNull<boring_sys::SSL>>,
         pub ctx: Option<NonNull<boring_sys::SSL_CTX>>,
         pub flags: Flags,
+        pub renegotiation_count: u8,
+        pub renegotiation_window_start: Option<std::time::Instant>,
     }
 
     /// CamelCase alias for callers that imported the Zig name through the
@@ -510,6 +508,8 @@ pub mod ssl_wrapper {
                 flags,
                 ctx: Some(ctx),
                 ssl: Some(ssl),
+                renegotiation_count: 0,
+                renegotiation_window_start: None,
             })
         }
 
@@ -980,8 +980,26 @@ pub mod ssl_wrapper {
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
                             self.flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
+                            // An over-limit renegotiation request is treated
+                            // like a failed SSL_renegotiate(). The count
+                            // resets each MAX_RENEGOTIATION_WINDOW, matching
+                            // the C path's `us_reneg_policy`.
+                            let now = std::time::Instant::now();
+                            match self.renegotiation_window_start {
+                                Some(start)
+                                    if now.duration_since(start) < MAX_RENEGOTIATION_WINDOW => {}
+                                _ => {
+                                    self.renegotiation_window_start = Some(now);
+                                    self.renegotiation_count = 0;
+                                }
+                            }
+                            let renegotiation_allowed =
+                                self.renegotiation_count < MAX_RENEGOTIATIONS;
+                            self.renegotiation_count = self.renegotiation_count.saturating_add(1);
                             // SAFETY: ssl is still valid.
-                            if unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } == 0 {
+                            let renegotiated = renegotiation_allowed
+                                && unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0;
+                            if !renegotiated {
                                 self.flags
                                     .set_handshake_state(HandshakeState::HandshakeCompleted);
                                 // we failed to renegotiate
@@ -1166,7 +1184,6 @@ pub mod ssl_wrapper {
 // version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
 pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
-pub type LoopCb = unsafe extern "C" fn(*mut Loop);
 
 /// Carrier trait so `set_parent_event_loop` can accept the higher-tier
 /// `EventLoopHandle` without depending on it. The event-loop crate impls this

@@ -26,14 +26,14 @@ const FILETYPE_REGULAR: u32 = 0o100000;
 
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
-pub enum Compression {
+pub(crate) enum Compression {
     #[default]
     None,
     Gzip(GzipOptions),
 }
 
 #[derive(Clone, Copy)]
-pub struct GzipOptions {
+pub(crate) struct GzipOptions {
     /// Compression level: 1 (fastest) to 12 (maximum compression). Default is 6.
     pub level: u8,
 }
@@ -782,12 +782,12 @@ impl<C: TaskContext> AsyncTask<C> {
 // ============================================================================
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-enum ExtractError {
+pub enum ExtractError {
     #[error("ReadError")]
     ReadError,
 }
 
-enum ExtractResult {
+pub enum ExtractResult {
     Success(u32),
     Err(ExtractError),
 }

@@ -1003,7 +1003,7 @@ fn epoch_to_utc_components(secs: u64) -> (u32, u32, u32, u32, u32, u32, u64) {
     (year, month, day, hours, minutes, seconds, day_seconds)
 }
 
-pub const DIGESTED_HMAC_256_LEN: usize = 32;
+pub(crate) const DIGESTED_HMAC_256_LEN: usize = 32;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SignResult
@@ -1321,7 +1321,7 @@ pub struct S3CredentialsWithOptions {
 // readability of `key.field` accesses in SignedHeaders/CanonicalRequest; could move to
 // bitflags!/`#[repr(transparent)] u8`. `bits()` below preserves the u7 layout.
 #[derive(Clone, Copy, Default)]
-pub struct SignedHeadersKey {
+pub(crate) struct SignedHeadersKey {
     pub content_disposition: bool,
     pub content_encoding: bool,
     pub content_md5: bool,
@@ -1329,19 +1329,6 @@ pub struct SignedHeadersKey {
     pub request_payer: bool,
     pub session_token: bool,
     pub storage_class: bool,
-}
-
-impl SignedHeadersKey {
-    #[inline]
-    pub const fn bits(self) -> u8 {
-        (self.content_disposition as u8)
-            | ((self.content_encoding as u8) << 1)
-            | ((self.content_md5 as u8) << 2)
-            | ((self.acl as u8) << 3)
-            | ((self.request_payer as u8) << 4)
-            | ((self.session_token as u8) << 5)
-            | ((self.storage_class as u8) << 6)
-    }
 }
 
 struct SignedHeaders;

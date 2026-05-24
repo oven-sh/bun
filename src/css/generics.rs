@@ -208,11 +208,11 @@ pub fn implement_eql<T: CssEql>(this: &T, other: &T) -> bool {
 }
 
 #[inline]
-pub fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
+pub(crate) fn eql<T: CssEql>(lhs: &T, rhs: &T) -> bool {
     lhs.eql(rhs)
 }
 
-pub fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bool {
+pub(crate) fn eql_list<T: CssEql>(lhs: &ArrayList<'_, T>, rhs: &ArrayList<'_, T>) -> bool {
     if lhs.len() != rhs.len() {
         return false;
     }
@@ -903,13 +903,13 @@ pub fn hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
     this.hash(hasher)
 }
 
-pub fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
+pub(crate) fn hash_array_list<V: CssHash>(this: &ArrayList<'_, V>, hasher: &mut Wyhash) {
     for item in this.iter() {
         item.hash(hasher);
     }
 }
 
-pub fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
+pub(crate) fn hash_baby_list<V: CssHash>(this: &Vec<V>, hasher: &mut Wyhash) {
     for item in this.slice_const() {
         item.hash(hasher);
     }
@@ -1094,7 +1094,7 @@ pub trait IsCompatible {
 pub use bun_css_derive::IsCompatible;
 
 #[inline]
-pub fn is_compatible<T: IsCompatible>(val: &T, browsers: &crate::targets::Browsers) -> bool {
+pub(crate) fn is_compatible<T: IsCompatible>(val: &T, browsers: &crate::targets::Browsers) -> bool {
     val.is_compatible(browsers)
 }
 
@@ -1351,7 +1351,7 @@ pub trait ToCss {
 }
 
 #[inline]
-pub fn to_css<T: ToCss>(this: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+pub(crate) fn to_css<T: ToCss>(this: &T, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
     this.to_css(dest)
 }
 
@@ -1512,11 +1512,6 @@ pub trait TryFromAngle: Sized {
     fn try_from_angle(angle: Angle) -> Option<Self>;
 }
 
-#[inline]
-pub fn try_from_angle<T: TryFromAngle>(angle: Angle) -> Option<T> {
-    T::try_from_angle(angle)
-}
-
 impl TryFromAngle for CSSNumber {
     #[inline]
     fn try_from_angle(angle: Angle) -> Option<Self> {
@@ -1526,11 +1521,6 @@ impl TryFromAngle for CSSNumber {
 
 pub trait TrySign {
     fn try_sign(&self) -> Option<f32>;
-}
-
-#[inline]
-pub fn try_sign<T: TrySign>(val: &T) -> Option<f32> {
-    val.try_sign()
 }
 
 impl TrySign for CSSNumber {
@@ -1547,11 +1537,6 @@ pub trait TryMap: Sized {
     fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self>;
 }
 
-#[inline]
-pub fn try_map<T: TryMap>(val: &T, map_fn: impl Fn(f32) -> f32) -> Option<T> {
-    val.try_map(map_fn)
-}
-
 impl TryMap for CSSNumber {
     #[inline]
     fn try_map(&self, map_fn: impl Fn(f32) -> f32) -> Option<Self> {
@@ -1564,16 +1549,6 @@ pub trait TryOpTo: Sized {
     // `R` is method-generic (not trait-generic) so `TryOpTo` can appear as a
     // supertrait bound without committing to a result type.
     fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R>;
-}
-
-#[inline]
-pub fn try_op_to<T: TryOpTo, R, C>(
-    lhs: &T,
-    rhs: &T,
-    ctx: C,
-    op_fn: impl Fn(C, f32, f32) -> R,
-) -> Option<R> {
-    lhs.try_op_to(rhs, ctx, op_fn)
 }
 
 impl TryOpTo for CSSNumber {
@@ -1595,16 +1570,6 @@ pub trait TryOp: Sized {
     fn try_op<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> f32) -> Option<Self>;
 }
 
-#[inline]
-pub fn try_op<T: TryOp, C>(
-    lhs: &T,
-    rhs: &T,
-    ctx: C,
-    op_fn: impl Fn(C, f32, f32) -> f32,
-) -> Option<T> {
-    lhs.try_op(rhs, ctx, op_fn)
-}
-
 impl TryOp for CSSNumber {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
@@ -1617,12 +1582,7 @@ pub trait PartialCmp {
 }
 
 #[inline]
-pub fn partial_cmp<T: PartialCmp>(lhs: &T, rhs: &T) -> Option<Ordering> {
-    lhs.partial_cmp(rhs)
-}
-
-#[inline]
-pub fn partial_cmp_f32(lhs: f32, rhs: f32) -> Option<Ordering> {
+pub(crate) fn partial_cmp_f32(lhs: f32, rhs: f32) -> Option<Ordering> {
     let lte = lhs <= rhs;
     let rte = lhs >= rhs;
     if !lte && !rte {

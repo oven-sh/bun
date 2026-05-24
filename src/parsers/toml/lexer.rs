@@ -1289,7 +1289,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
-pub fn is_identifier_part(code_point: CodePoint) -> bool {
+pub(crate) fn is_identifier_part(code_point: CodePoint) -> bool {
     matches!(code_point as u32 as u8 as char,
         '0'..='9'
         | 'a'..='z'
@@ -1301,30 +1301,6 @@ pub fn is_identifier_part(code_point: CodePoint) -> bool {
     ) && (0..=127).contains(&code_point)
     // PORT NOTE: Zig matched CodePoint directly against char ranges; Rust requires
     // bounding to ASCII before the byte cast above is sound.
-}
-
-pub fn is_latin1_identifier<B: Copy + Into<u32>>(name: &[B]) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-
-    // Match on the full-width value — Zig switches on u8/u16 directly against char
-    // ranges; truncating to u8 here would incorrectly accept e.g. U+0161 as 'a'.
-    match name[0].into() {
-        0x61..=0x7A | 0x41..=0x5A | 0x24 | 0x31..=0x39 | 0x5F | 0x2D => {}
-        _ => return false,
-    }
-
-    if !name.is_empty() {
-        for &c in &name[1..] {
-            match c.into() {
-                0x30..=0x39 | 0x61..=0x7A | 0x41..=0x5A | 0x24 | 0x5F | 0x2D => {}
-                _ => return false,
-            }
-        }
-    }
-
-    true
 }
 
 #[inline]

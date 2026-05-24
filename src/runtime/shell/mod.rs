@@ -138,8 +138,6 @@ pub mod dispatch_tasks;
 #[path = "subproc.rs"]
 pub mod subproc;
 
-pub const SUBSHELL_TODO_ERROR: &str = "Subshells are not implemented, please open GitHub issue!";
-
 // ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
 // Re-export so `crate::shell::*` callers resolve without duplicating the table.
 pub use bun_shell_parser::{
@@ -164,12 +162,12 @@ pub mod ast {
     pub type Script = p::Script<'static>;
     pub type Stmt = p::Stmt<'static>;
     pub type Expr = p::Expr<'static>;
-    pub type Binary = p::Binary<'static>;
+    pub(crate) type Binary = p::Binary<'static>;
     pub type Pipeline = p::Pipeline<'static>;
     pub type PipelineItem = p::PipelineItem<'static>;
     pub type Cmd = p::Cmd<'static>;
     pub type Redirect = p::Redirect<'static>;
-    pub type If = p::If<'static>;
+    pub(crate) type If = p::If<'static>;
     pub type Subshell = p::Subshell<'static>;
     pub type CondExpr = p::CondExpr<'static>;
     pub type Assign = p::Assign<'static>;

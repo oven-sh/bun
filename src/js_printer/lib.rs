@@ -6657,6 +6657,13 @@ pub mod __gated_printer {
         }
 
         pub fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc, tlmtlo: TopLevel) {
+            // `else if` chains recurse here directly without passing through
+            // `print_stmt`, so they need their own guard.
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return;
+            }
+
             self.print_space_before_identifier();
             self.add_source_mapping(loc);
             self.print(b"if");

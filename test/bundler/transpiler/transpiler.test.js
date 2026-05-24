@@ -4051,6 +4051,7 @@ it("deeply nested statement blocks error instead of crashing the process", () =>
       n => repeat("{", n) + 'class Test1 { static "prop1" = 0; }' + repeat("}", n),
       n => repeat("{", n) + "let x = 1;" + repeat("}", n),
       n => repeat("if (x) {", n) + "y();" + repeat("}", n),
+      n => "if (x) { y(); }" + repeat(" else if (x) { y(); }", n),
     ];
     const check = (transpiler, src) => {
       try {

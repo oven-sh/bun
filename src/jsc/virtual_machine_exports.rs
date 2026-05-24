@@ -25,6 +25,11 @@ pub fn is_shutting_down(this: &VirtualMachine) -> bool {
     this.is_shutting_down()
 }
 
+// HOST_EXPORT(Bun__VirtualMachine__isInPreload, c)
+pub fn is_in_preload(this: &VirtualMachine) -> bool {
+    this.is_in_preload
+}
+
 // HOST_EXPORT(Bun__getVM, c)
 pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()

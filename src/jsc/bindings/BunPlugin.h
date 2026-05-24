@@ -4,6 +4,7 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Strong.h>
+#include <wtf/HashSet.h>
 #include "helpers.h"
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
@@ -16,6 +17,7 @@ using namespace JSC;
 class BunPlugin {
 public:
     using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>>;
+    using PersistentMockPathSet = WTF::HashSet<String>;
 
     // This is a list of pairs of regexps and functions to match against
     class Group {
@@ -70,12 +72,17 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
+        /// Paths of `mock.module()` entries installed during `--preload` or
+        /// `Bun.plugin({ module })`. These survive per-test-file teardown in
+        /// `bun test`; transient entries added by a test file's top-level code
+        /// or during a running test are cleared between files.
+        PersistentMockPathSet* _Nullable persistentMockPaths = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
-        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock, bool persistent);
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
@@ -83,6 +90,9 @@ public:
         {
             if (virtualModules) {
                 delete virtualModules;
+            }
+            if (persistentMockPaths) {
+                delete persistentMockPaths;
             }
         }
     };

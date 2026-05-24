@@ -38,6 +38,7 @@
 namespace Zig {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
+extern "C" bool Bun__VirtualMachine__isInPreload(void* bunVM);
 using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
 
 static bool isValidNamespaceString(String& namespaceString)
@@ -145,12 +146,10 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
 
-    if (global->onLoadPlugins.virtualModules == nullptr) {
-        global->onLoadPlugins.virtualModules = new BunPlugin::VirtualModuleMap;
-    }
-    auto* virtualModules = global->onLoadPlugins.virtualModules;
-
-    virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, uncheckedDowncast<JSC::JSObject>(functionValue) });
+    // `Bun.plugin({ module })` virtual modules persist across per-file
+    // `bun test` teardown — they're process-level plugin registrations,
+    // not test-local mocks.
+    global->onLoadPlugins.addModuleMock(vm, moduleId, uncheckedDowncast<JSC::JSObject>(functionValue), /*persistent=*/ true);
 
     auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
@@ -395,7 +394,7 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
     return nullptr;
 }
 
-void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
+void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject, bool persistent)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
 
@@ -405,6 +404,13 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
     auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
 
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
+
+    if (persistent) {
+        if (globalObject->onLoadPlugins.persistentMockPaths == nullptr) {
+            globalObject->onLoadPlugins.persistentMockPaths = new BunPlugin::PersistentMockPathSet;
+        }
+        globalObject->onLoadPlugins.persistentMockPaths->add(path);
+    }
 }
 
 class JSModuleMock final : public JSC::JSNonFinalObject {
@@ -710,7 +716,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
+    // Mocks installed during `--preload` persist across `bun test`'s per-file
+    // teardown; a mock installed while running a test file is scoped to that
+    // file (cleared by `BunPlugin__clearTransientModuleMocks`).
+    bool persistent = Bun__VirtualMachine__isInPreload(globalObject->bunVM());
+    globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock, persistent);
 
     return JSValue::encode(jsUndefined());
 }
@@ -970,8 +980,89 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
 
     delete global->onLoadPlugins.virtualModules;
     global->onLoadPlugins.virtualModules = nullptr;
+    global->onLoadPlugins.mustDoExpensiveRelativeLookup = false;
+
+    delete global->onLoadPlugins.persistentMockPaths;
+    global->onLoadPlugins.persistentMockPaths = nullptr;
 
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+/// Clears all per-test-file `mock.module(...)` registrations and evicts the
+/// module loader / require cache entries for their paths, so the next test
+/// file sees the real modules. Preload-installed mocks (paths in
+/// `persistentMockPaths`) and `Bun.plugin({ module })` registrations are
+/// preserved. Called from Rust's per-file teardown in `bun test`.
+extern "C" void BunPlugin__clearTransientModuleMocks(Zig::GlobalObject* global)
+{
+    auto& onLoad = global->onLoadPlugins;
+    if (onLoad.virtualModules == nullptr) {
+        return;
+    }
+
+    auto& virtualModules = *onLoad.virtualModules;
+    const auto* persistent = onLoad.persistentMockPaths;
+
+    // Two-pass: collect transient paths first, then mutate the map and evict
+    // module-loader / require-map entries. `WTF::HashMap` iteration can alias
+    // with mutation and the eviction callbacks may run arbitrary JS.
+    WTF::Vector<WTF::String> transientPaths;
+    for (const auto& entry : virtualModules) {
+        if (persistent && persistent->contains(entry.key)) {
+            continue;
+        }
+        // Only clear `JSModuleMock` entries — `Bun.plugin({ module })`
+        // callbacks also live in this map and are always persistent.
+        if (!dynamicDowncast<Zig::JSModuleMock>(entry.value.get())) {
+            continue;
+        }
+        transientPaths.append(entry.key);
+    }
+
+    if (transientPaths.isEmpty()) {
+        return;
+    }
+
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* moduleLoader = global->moduleLoader();
+    auto* requireMap = global->requireMap();
+
+    for (const auto& path : transientPaths) {
+        virtualModules.remove(path);
+
+        // Drop the ESM registry entry so the next import re-executes the
+        // real source. `mock.module`'s install path mutates
+        // `JSModuleNamespaceObject::overrideExportValue`; without this
+        // eviction a sibling file that already imported the module would
+        // still see the mocked namespace after we removed the virtual-module
+        // shim.
+        auto ident = JSC::Identifier::fromString(vm, path);
+        moduleLoader->removeEntry(ident);
+
+        // CJS path — `globalObject->requireMap()` keys by specifier string.
+        auto* pathString = JSC::jsString(vm, path);
+        requireMap->remove(global, pathString);
+
+        // Swallow any non-termination exception; this runs during
+        // test-runner teardown where the reporter has already consumed
+        // results and has no scope to surface an exception through.
+        if (!scope.clearExceptionExceptTermination()) {
+            break;
+        }
+    }
+
+    // `mustDoExpensiveRelativeLookup` is set when a `file:` URL or
+    // unresolvable relative specifier is mocked (see lines ~555, ~583). If
+    // no virtual modules remain, drop the flag — `moduleLoaderResolve`
+    // asserts `!mustDoExpensiveRelativeLookup` when `hasVirtualModules()`
+    // is false (ZigGlobalObject.cpp:3393). If persistent entries still
+    // exist, leave it alone: we don't know which ones need the flag.
+    if (virtualModules.isEmpty()) {
+        delete onLoad.virtualModules;
+        onLoad.virtualModules = nullptr;
+        onLoad.mustDoExpensiveRelativeLookup = false;
+    }
 }
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

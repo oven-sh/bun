@@ -370,6 +370,7 @@ function parseArgs(argv: string[]): CliArgs {
     "fuzzilli",
     "unifiedSources",
     "archiveDeps",
+    "rustDirect",
     "timeTrace",
     "ci",
     "buildkite",

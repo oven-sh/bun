@@ -310,23 +310,26 @@ describe.concurrent("fetch-tls", () => {
 
   it("checkServerIdentity rejection prevents the request from being transmitted", async () => {
     // Records every plaintext (post-TLS-decryption) byte each connection
-    // delivers, and resolves a deferred once the first connection closes.
+    // delivers. Nothing here waits on the rejected connection's server-side
+    // lifecycle: the client tears that connection down as soon as
+    // checkServerIdentity rejects, and on Windows the RST can arrive before
+    // the server even accepts the socket, so its 'connection'/'close' events
+    // are not guaranteed to fire.
     const receivedPerConnection: Buffer[][] = [];
-    let rawConnections = 0;
-    const { promise: firstConnectionClosed, resolve: onFirstConnectionClosed } = Promise.withResolvers<void>();
     const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       const chunks: Buffer[] = [];
       receivedPerConnection.push(chunks);
-      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("data", chunk => {
+        chunks.push(chunk);
+        // Reply to any complete request so the control fetch below can
+        // round-trip.
+        if (Buffer.concat(chunks).includes("\r\n\r\n")) {
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
       socket.on("error", () => {});
     });
-    // Track teardown on the raw TCP connection rather than the TLS socket: the
-    // client tears the connection down as soon as checkServerIdentity rejects,
-    // so the server may never finish its side of the handshake and the
-    // secureConnection callback above may never fire.
     server.on("connection", rawSocket => {
-      rawConnections++;
-      rawSocket.on("close", onFirstConnectionClosed);
       rawSocket.on("error", () => {});
     });
     try {
@@ -353,18 +356,25 @@ describe.concurrent("fetch-tls", () => {
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toBe("pinned");
 
-      // The connection must be torn down without the request line, the
-      // Authorization header, or anything else ever reaching the server.
-      // `localhost` can resolve to both ::1 and 127.0.0.1, and the client
-      // races both, so more than one raw connection may be observed; only the
-      // total plaintext byte count matters.
-      await firstConnectionClosed;
-      expect(rawConnections).toBeGreaterThanOrEqual(1);
-      const decryptedBytesSeenByServer = receivedPerConnection.reduce(
-        (sum, chunks) => sum + Buffer.concat(chunks).byteLength,
-        0,
-      );
-      expect(decryptedBytesSeenByServer).toBe(0);
+      // Prove the rejected request never reached the server without waiting on
+      // that connection's events: complete a full round trip on a control
+      // request, then assert the control request is the only plaintext the
+      // server ever decrypted. Anything the rejected connection had
+      // transmitted would have been recorded long before the control response
+      // made it back.
+      const control = await fetch(`https://localhost:${port}/control`, {
+        keepalive: false,
+        tls: { ca: validTls.cert },
+      });
+      expect(await control.text()).toBe("ok");
+      expect(control.status).toBe(200);
+
+      // `localhost` can resolve to both ::1 and 127.0.0.1 and the client races
+      // both, so connections that delivered no plaintext (handshake aborted or
+      // race loser) are expected; none of them may have carried request bytes.
+      const nonEmpty = receivedPerConnection.map(chunks => Buffer.concat(chunks)).filter(b => b.byteLength > 0);
+      expect(nonEmpty.map(b => b.toString())).toEqual([expect.stringMatching(/^GET \/control HTTP\/1\.1\r\n/)]);
+      expect(nonEmpty[0].includes("super-secret-token")).toBe(false);
     } finally {
       server.close();
     }

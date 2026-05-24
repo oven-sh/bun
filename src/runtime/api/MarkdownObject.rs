@@ -64,7 +64,16 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
+    // Re-entrant JS (theme getters) can detach or resize the ArrayBuffer
+    // backing a TypedArray input before the parse runs over it; copy
+    // buffer-backed inputs into a runtime-owned allocation first.
+    let owned_input: Vec<u8>;
+    let input: &[u8] = if buffer.buffer().is_some() {
+        owned_input = buffer.slice().to_vec();
+        &owned_input
+    } else {
+        buffer.slice()
+    };
 
     let mut theme = md::AnsiTheme {
         colors: true,
@@ -134,7 +143,16 @@ pub(crate) fn render_to_html(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
+    // Re-entrant JS (option getters) can detach or resize the ArrayBuffer
+    // backing a TypedArray input before the parse runs over it; copy
+    // buffer-backed inputs into a runtime-owned allocation first.
+    let owned_input: Vec<u8>;
+    let input: &[u8] = if buffer.buffer().is_some() {
+        owned_input = buffer.slice().to_vec();
+        &owned_input
+    } else {
+        buffer.slice()
+    };
 
     let options = parse_options(global_this, opts_value)?;
 
@@ -242,7 +260,17 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
+    // Re-entrant JS (option getters and the render callbacks invoked for every
+    // node) can detach or resize the ArrayBuffer backing a TypedArray input
+    // while the parser still holds a raw slice into it; copy buffer-backed
+    // inputs into a runtime-owned allocation first.
+    let owned_input: Vec<u8>;
+    let input: &[u8] = if buffer.buffer().is_some() {
+        owned_input = buffer.slice().to_vec();
+        &owned_input
+    } else {
+        buffer.slice()
+    };
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
@@ -342,7 +370,17 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     };
 
-    let input = buffer.slice();
+    // Re-entrant JS (option getters, component getters, element construction)
+    // can detach or resize the ArrayBuffer backing a TypedArray input while
+    // the parser still holds a raw slice into it; copy buffer-backed inputs
+    // into a runtime-owned allocation first.
+    let owned_input: Vec<u8>;
+    let input: &[u8] = if buffer.buffer().is_some() {
+        owned_input = buffer.slice().to_vec();
+        &owned_input
+    } else {
+        buffer.slice()
+    };
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;

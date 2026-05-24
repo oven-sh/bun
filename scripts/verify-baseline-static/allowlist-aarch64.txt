@@ -5,7 +5,7 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (52 symbols)
+# (64 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
 _ZN3bun10N_SVE2_12815CopyU16ToU8ImplEPKtmPh                                   [SVE]
@@ -26,8 +26,12 @@ _ZN3bun10N_SVE2_12849IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh  [S
 _ZN3bun5N_SVE10MemMemImplEPKhmS2_m                                            [SVE]
 _ZN3bun5N_SVE15CopyU16ToU8ImplEPKtmPh                                         [SVE]
 _ZN3bun5N_SVE15IndexOfCharImplEPKhmh                                          [SVE]
+_ZN3bun5N_SVE18FirstNonAscii8ImplEPKhm                                        [SVE]
 _ZN3bun5N_SVE18IndexOfAnyCharImplEPKhmS2_m                                    [SVE]
+_ZN3bun5N_SVE19FirstNonAscii16ImplEPKtm                                       [SVE]
 _ZN3bun5N_SVE20FillWithSkipMaskImplEPKhmPhS2_mb                               [SVE]
+_ZN3bun5N_SVE22VisibleLatin1WidthImplEPKhm                                    [SVE]
+_ZN3bun5N_SVE25CountPrintableAscii16ImplEPKtm                                 [SVE]
 _ZN3bun5N_SVE28IndexOfNewlineOrNonASCIIImplEPKhm                              [SVE]
 _ZN3bun5N_SVE35IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                       [SVE]
 _ZN3bun5N_SVE36ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                      [SVE]
@@ -38,8 +42,12 @@ _ZN3bun5N_SVE49IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh        [S
 _ZN3bun6N_SVE210MemMemImplEPKhmS2_m                                           [SVE]
 _ZN3bun6N_SVE215CopyU16ToU8ImplEPKtmPh                                        [SVE]
 _ZN3bun6N_SVE215IndexOfCharImplEPKhmh                                         [SVE]
+_ZN3bun6N_SVE218FirstNonAscii8ImplEPKhm                                       [SVE]
 _ZN3bun6N_SVE218IndexOfAnyCharImplEPKhmS2_m                                   [SVE]
+_ZN3bun6N_SVE219FirstNonAscii16ImplEPKtm                                      [SVE]
 _ZN3bun6N_SVE220FillWithSkipMaskImplEPKhmPhS2_mb                              [SVE]
+_ZN3bun6N_SVE222VisibleLatin1WidthImplEPKhm                                   [SVE]
+_ZN3bun6N_SVE225CountPrintableAscii16ImplEPKtm                                [SVE]
 _ZN3bun6N_SVE228IndexOfNewlineOrNonASCIIImplEPKhm                             [SVE]
 _ZN3bun6N_SVE235IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                      [SVE]
 _ZN3bun6N_SVE236ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                     [SVE]
@@ -50,8 +58,12 @@ _ZN3bun6N_SVE249IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh       [S
 _ZN3bun9N_SVE_25610MemMemImplEPKhmS2_m                                        [SVE]
 _ZN3bun9N_SVE_25615CopyU16ToU8ImplEPKtmPh                                     [SVE]
 _ZN3bun9N_SVE_25615IndexOfCharImplEPKhmh                                      [SVE]
+_ZN3bun9N_SVE_25618FirstNonAscii8ImplEPKhm                                    [SVE]
 _ZN3bun9N_SVE_25618IndexOfAnyCharImplEPKhmS2_m                                [SVE]
+_ZN3bun9N_SVE_25619FirstNonAscii16ImplEPKtm                                   [SVE]
 _ZN3bun9N_SVE_25620FillWithSkipMaskImplEPKhmPhS2_mb                           [SVE]
+_ZN3bun9N_SVE_25622VisibleLatin1WidthImplEPKhm                                [SVE]
+_ZN3bun9N_SVE_25625CountPrintableAscii16ImplEPKtm                             [SVE]
 _ZN3bun9N_SVE_25628IndexOfNewlineOrNonASCIIImplEPKhm                          [SVE]
 _ZN3bun9N_SVE_25635IndexOfSpaceOrNewlineOrNonASCIIImplEPKhm                   [SVE]
 _ZN3bun9N_SVE_25636ContainsNewlineOrNonASCIIOrQuoteImplEPKhm                  [SVE]

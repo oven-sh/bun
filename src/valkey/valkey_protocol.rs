@@ -32,6 +32,7 @@ pub enum RedisError {
     ConnectionTimeout,
     IdleTimeout,
     NestingDepthExceeded,
+    LineTooLong,
 }
 
 bun_core::impl_tag_error!(RedisError);
@@ -249,12 +250,20 @@ impl<'a> ValkeyReader<'a> {
 
     pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
-        for (i, &byte) in buffer.iter().enumerate() {
+        // Only the first `MAX_LINE_LEN + 1` positions may legally start the
+        // terminating CRLF; bounding the search keeps the per-call cost
+        // constant when an unterminated line is rescanned on every socket
+        // read.
+        let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
+        for (i, &byte) in buffer[..limit].iter().enumerate() {
             if byte == b'\r' && buffer.len() > i + 1 && buffer[i + 1] == b'\n' {
                 let result = &buffer[0..i];
                 self.pos += i + 2;
                 return Ok(result);
             }
+        }
+        if buffer.len() > Self::MAX_LINE_LEN + 1 {
+            return Err(RedisError::LineTooLong);
         }
 
         Err(RedisError::InvalidResponse)
@@ -337,6 +346,14 @@ impl<'a> ValkeyReader<'a> {
     /// machine stops buffering instead of growing the read buffer toward an
     /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
+
+    /// Maximum accepted length for a single CRLF-terminated RESP line (scalar
+    /// payloads and aggregate length headers; bulk payloads are governed by
+    /// `MAX_BULK_LEN` instead). Real servers never send multi-megabyte simple
+    /// strings, errors, or numbers. Without a cap, a hostile server can stream
+    /// an unterminated line forever and force `read_until_crlf` to rescan the
+    /// whole accumulated line on every socket read — O(n^2) CPU in total.
+    const MAX_LINE_LEN: usize = 512 * 1024;
 
     /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
     /// across the whole parse — every nesting level combined — never exceed

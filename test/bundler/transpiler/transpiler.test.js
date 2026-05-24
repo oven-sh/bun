@@ -4366,3 +4366,48 @@ describe("minifyWhitespace keeps the space before keyword operators", () => {
     expect(minifier.transformSync("1 in y")).toBe("1 in y;");
   });
 });
+
+// A numeric literal property name like `1e999` overflows to the number Infinity, which the
+// printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
+// keys must be printed as computed properties instead.
+describe("numeric property keys that overflow to Infinity", () => {
+  const minifier = new Bun.Transpiler({ loader: "ts", minifyWhitespace: true });
+  const plain = new Bun.Transpiler({ loader: "ts" });
+
+  it("are printed as computed properties when minifying whitespace", () => {
+    expect(minifier.transformSync("x = { 1e999: 1 };")).toBe("x={[1/0]:1};");
+    expect(minifier.transformSync("x = { 1e999() {} };")).toBe("x={[1/0](){}};");
+    expect(minifier.transformSync("x = { get 1e999() {} };")).toBe("x={get[1/0](){}};");
+    expect(minifier.transformSync("x = { set 1e999(v) {} };")).toBe("x={set[1/0](v){}};");
+    expect(minifier.transformSync("x = class { 1e999() {} };")).toBe("x=class{[1/0](){}};");
+    expect(minifier.transformSync("x = class { static 1e999() {} };")).toBe("x=class{static[1/0](){}};");
+    expect(minifier.transformSync("x = class { 1e999 = 1 };")).toBe("x=class{[1/0]=1};");
+    expect(minifier.transformSync("x = class { static 1e999 = 1 };")).toBe("x=class{static[1/0]=1};");
+    expect(minifier.transformSync("const { 1e999: y } = x;")).toBe("const{[1/0]:y}=x;");
+    expect(minifier.transformSync("({ 1e999: x.y } = z);")).toBe("({[1/0]:x.y}=z);");
+  });
+
+  it("are printed as computed properties without minification", () => {
+    expect(plain.transformSync("x = { 1e999: 1 };")).toBe("x = { [1 / 0]: 1 };\n");
+    expect(plain.transformSync("x = class { 1e999() {} };")).toBe("x = class {\n  [1 / 0]() {}\n};\n");
+    expect(plain.transformSync("const { 1e999: y } = x;")).toBe("const { [1 / 0]: y } = x;\n");
+  });
+
+  it("handles a method name with hundreds of digits", () => {
+    const digits = Buffer.alloc(325, "9").toString();
+    expect(minifier.transformSync(`(class { ${digits}() {} });`)).toBe("(class{[1/0](){}});");
+  });
+
+  it("still refers to the same property at runtime", () => {
+    const out = minifier.transformSync(`
+      const obj = { 1e999: "object" };
+      const { 1e999: destructured } = { 1e999: "destructured" };
+      class C {
+        1e999() { return "method"; }
+        static 1e999 = "static";
+      }
+      var result = [obj[Infinity], destructured, new C()[Infinity](), C[Infinity]];
+    `);
+    expect(new Function(`${out}; return result;`)()).toEqual(["object", "destructured", "method", "static"]);
+  });
+});

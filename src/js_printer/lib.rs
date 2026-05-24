@@ -4664,6 +4664,15 @@ pub mod __gated_printer {
             self.prev_reg_exp_end = self.writer.written();
         }
 
+        /// Whether a number used as a non-computed property name must be printed as a
+        /// computed property instead, because `print_number` would render it as
+        /// something that is not a valid property name (e.g. "-1", "1/0", "1 / 0").
+        pub fn number_property_key_must_be_computed(&self, value: f64) -> bool {
+            value.is_sign_negative()
+                || (value == f64::INFINITY
+                    && (self.options.minify_syntax || !self.options.has_run_symbol_renamer))
+        }
+
         pub fn print_property(&mut self, item_in: &G::Property) {
             // PORT NOTE: Zig took G.Property by value (Copy in Zig). Rust's
             // G::Property isn't `Copy`, so take a borrow and shallow-copy the
@@ -4788,6 +4797,16 @@ pub mod __gated_printer {
             }
 
             let key = item.key.expect("infallible: prop has key");
+
+            // Automatically print numbers that would cause a syntax error as computed properties
+            if !IS_JSON
+                && !item.flags.contains(js_ast::flags::Property::IsComputed)
+                && matches!(&key.data, ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value))
+            {
+                // "{ -1: 0 }" must be printed as "{ [-1]: 0 }"
+                // "{ 1/0: 0 }" must be printed as "{ [1/0]: 0 }"
+                set_flag(&mut item.flags, js_ast::flags::Property::IsComputed, true);
+            }
 
             if !IS_JSON && item.flags.contains(js_ast::flags::Property::IsComputed) {
                 self.print(b"[");
@@ -5061,7 +5080,15 @@ pub mod __gated_printer {
                             if property.flags.contains(js_ast::flags::Property::IsSpread) {
                                 self.print(b"...");
                             } else {
-                                if property.flags.contains(js_ast::flags::Property::IsComputed) {
+                                // Automatically print numbers that would cause a syntax error as computed properties
+                                let key_must_be_computed = matches!(
+                                    &property.key.data,
+                                    ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value)
+                                );
+
+                                if property.flags.contains(js_ast::flags::Property::IsComputed)
+                                    || key_must_be_computed
+                                {
                                     self.print(b"[");
                                     self.print_expr(property.key, Level::Comma, ExprFlag::none());
                                     self.print(b"]:");

@@ -11,10 +11,22 @@ type vm_size_t = usize;
 // TODO(port): `enable_asan` mapped to a cargo feature; verify the build wires this the same way.
 pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
+/// Zig: `fn heapLabel(comptime T: type) [:0]const u8`
+///
+/// Uses `@hasDecl(T, "heap_label")` to optionally pick a custom label, else
+/// `bun.meta.typeBaseName(@typeName(T))`. In Rust types implement
+/// `HEAP_LABEL` explicitly.
 pub trait HeapLabel {
     const HEAP_LABEL: &'static str;
 }
 
+/// Zig: `pub fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator`
+///
+/// In Zig the `"Bun__" ++ name` concatenation and the per-name `static` happen
+/// at comptime via monomorphization. Rust cannot monomorphize on a `&'static str`
+/// const generic on stable, so the per-name `OnceLock` must be minted at the
+/// call site — see the `get_zone!` macro below. This function is a thin wrapper
+/// that defers to that macro at call sites; here we expose the runtime half.
 pub fn named_allocator(name: &'static str) -> &'static dyn crate::Allocator {
     // TODO(port): callers should prefer `named_allocator!("Name")` / `get_zone!` directly
     // so the OnceLock is per-name. This runtime path falls back to a process-global

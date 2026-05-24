@@ -100,6 +100,10 @@ function collectExports(crate: Crate): Export[] {
     // so grep cannot see their uses. Exclude everything inside impl/trait
     // blocks — only path-addressable free items are auditable here.
     const implStack: number[] = [];
+    // Set when an impl/trait header has no `{` on its own line (rustfmt wraps
+    // the brace onto a later line for long headers and where-clauses); the
+    // push happens on the first subsequent line that opens the block.
+    let pendingImpl = false;
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       // crude #[cfg(test)] mod skip — items only compiled for tests are not API
@@ -110,6 +114,11 @@ function collectExports(crate: Crate): Export[] {
       }
       const isImplOrTrait = /^\s*(unsafe\s+)?impl[\s<]/.test(l) || /^\s*(pub\s+)?(unsafe\s+)?trait\s/.test(l);
       if (isImplOrTrait && l.includes("{")) implStack.push(depth);
+      else if (isImplOrTrait && !l.includes(";")) pendingImpl = true;
+      else if (pendingImpl && l.includes("{")) {
+        implStack.push(depth);
+        pendingImpl = false;
+      }
       const opens = (l.match(/\{/g) ?? []).length;
       const closes = (l.match(/\}/g) ?? []).length;
       const inImpl = implStack.length > 0;

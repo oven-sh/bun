@@ -18,9 +18,9 @@
  * sysroot (headers + .tbd stubs + frameworks) is the only Apple bit required.
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
 import { basename, join, resolve } from "node:path";
 import { downloadWithRetry } from "./download.ts";
 import { BuildError } from "./error.ts";

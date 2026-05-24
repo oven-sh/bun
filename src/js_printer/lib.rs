@@ -5196,6 +5196,11 @@ pub mod __gated_printer {
         }
 
         pub fn print_stmt(&mut self, stmt: Stmt, tlmtlo: TopLevel) -> Result<(), bun_core::Error> {
+            if !self.stack_check.is_safe_to_recurse() {
+                self.stack_overflowed = true;
+                return Ok(());
+            }
+
             let prev_stmt_tag = self.prev_stmt_tag;
             // Zig: `defer { p.prev_stmt_tag = std.meta.activeTag(stmt.data); }`
             // PORT NOTE: reshaped for borrowck — scopeguard would hold `&mut self.prev_stmt_tag`

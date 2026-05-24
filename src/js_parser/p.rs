@@ -345,8 +345,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// out-of-line `t_*` fns; the `parse_stmt`→`t_for` cycle is only a few
     /// hundred bytes, so the 15k-level `lots-of-for-loop.js` fixture (~4 MB)
     /// never trips the 256 KB threshold on Windows' 18 MB worker stack — parse
-    /// completes, then the (uncapped) visitor/printer recurse 15k times and
-    /// hard-overflow. Same `MAX_STMT_DEPTH` rationale as `interchange/json.rs`.
+    /// would complete and hand a 15k-deep AST to the visitor/printer, whose
+    /// per-level frames are far larger (they carry their own stack checks in
+    /// `visit_and_append_stmt`/`print_stmt`, but the cap keeps the failure
+    /// deterministic). Same `MAX_STMT_DEPTH` rationale as `interchange/json.rs`.
     pub parse_stmt_depth: u32,
 
     pub reported_stack_overflow: core::cell::Cell<bool>,

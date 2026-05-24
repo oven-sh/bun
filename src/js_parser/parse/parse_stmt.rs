@@ -1897,8 +1897,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         // PORT NOTE: Zig only checks `stack_check`; the hard cap is added so
         // Windows' 18 MB worker stack (where the small Rust `parse_stmt`→`t_*`
-        // frames never exhaust it) still throws before the uncapped visitor/
-        // printer pass hard-overflows. See `P::parse_stmt_depth` field doc.
+        // frames never exhaust it) still rejects absurd nesting deterministically
+        // instead of deferring to the visitor/printer stack checks.
+        // See `P::parse_stmt_depth` field doc.
         if self.parse_stmt_depth >= MAX_STMT_DEPTH || !self.stack_check.is_safe_to_recurse() {
             // TODO(port): bun_core::throw_stack_overflow() not yet exported; map to a SyntaxError
             // until the StackOverflow error variant lands.
@@ -1941,6 +1942,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-/// See `P::parse_stmt_depth` — sized so the visitor/printer (larger per-level
-/// frames, no stack check) fit on the smallest 4 MB POSIX worker stack.
+/// See `P::parse_stmt_depth` — a deterministic upper bound; depths below it are
+/// still guarded by the per-level stack checks in the visitor/printer, whose
+/// frames are much larger than `parse_stmt`'s.
 const MAX_STMT_DEPTH: u32 = 1000;

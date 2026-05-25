@@ -4558,6 +4558,7 @@ it("transform() result is unaffected by detaching the input ArrayBuffer while th
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 });

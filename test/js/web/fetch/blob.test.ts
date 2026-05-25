@@ -326,20 +326,11 @@ test("dupe() preserves allocated content_type for Body clone", () => {
 });
 
 test("Bun.file(path, {type}).text() does not leak the duped content_type", async () => {
-  // Reading a file-backed Blob goes text() -> doReadFile -> Blob.dupe(),
-  // which deep-copies a heap-allocated (non-registry) content type into the
-  // read handler's context blob. That copy must be released when the handler's
-  // blob is dropped; otherwise every .text() on a typed Bun.file leaks the
-  // whole content-type allocation. A 64 KiB type makes the leak measurable in
-  // RSS: 1024 reads leak >= 64 MiB unfixed.
   using dir = tempDir("blob-text-content-type", {
     "data.txt": "hello",
   });
   const script = `
     const p = ${JSON.stringify(path.join(String(dir), "data.txt"))};
-    // Printable-ASCII non-registry type so the mime-table lookup misses and
-    // the content type is heap-allocated. Hoisted out of the loop: the source
-    // handle's own allocation happens exactly once.
     const type = "application/x-" + Buffer.alloc(64 * 1024, "a").toString();
     const file = Bun.file(p, { type });
     for (let i = 0; i < 100; i++) await file.text();
@@ -359,16 +350,11 @@ test("Bun.file(path, {type}).text() does not leak the duped content_type", async
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const { deltaMiB } = JSON.parse(stdout);
-  // On ASAN builds LeakSanitizer (not RSS) is the regression guard: an unfixed
-  // build leaks 1024 content-type copies, LSan reports them at exit, and the
-  // exit-code assertion below fails.
   expect(deltaMiB).toBeLessThan(isASAN ? 400 : 40);
   expect(exitCode).toBe(0);
 });
 
 test("reading a file-backed Blob does not free the source's content type", async () => {
-  // The read handler's context blob owns a *deep copy* of the content type;
-  // dropping it must not free the source Blob's allocation.
   using dir = tempDir("blob-text-keeps-type", {
     "data.txt": "hello",
   });
@@ -380,10 +366,6 @@ test("reading a file-backed Blob does not free the source's content type", async
 });
 
 test("Bun.write preserves a custom content type on the destination", async () => {
-  // Bun.file(...).write() / Bun.write(Bun.file(...), ...) passes the
-  // destination blob through PathOrBlob::Blob(borrowed_view()) and dupes it
-  // again inside write_file_internal. Both copies must own (and release) their
-  // own content type without freeing the source handle's allocation.
   using dir = tempDir("blob-write-keeps-type", {});
   const customType = "application/x-custom-type-not-in-registry-write";
   const dest = Bun.file(path.join(String(dir), "out.txt"), { type: customType });

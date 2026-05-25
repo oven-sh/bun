@@ -1439,9 +1439,6 @@ mod vm_loader_ctx {
                 core::slice::from_raw_parts(v.as_ptr(), v.len())
             },
             blob_deinit(b) => {
-                // `b` was produced by `resolve_blob` (heap::into_raw of a
-                // `dupe_with_content_type` clone). `Blob`'s drop glue releases
-                // the store/name refs and the deep-copied `content_type`.
                 // SAFETY: `b` is the live boxed `Blob`; sole owner.
                 drop(bun_core::heap::take(b.cast::<Blob>()))
             },

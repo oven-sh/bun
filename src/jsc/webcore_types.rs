@@ -262,8 +262,6 @@ impl Blob {
         } else {
             std::ptr::from_ref::<[u8]>(b"" as &'static [u8])
         };
-        // PORT NOTE: spelled out via `Default::default()` + `Cell::set` —
-        // `Blob: Drop` makes functional-record-update an E0509.
         let blob = Blob::default();
         blob.size.set(size);
         blob.store.set(Some(store));
@@ -333,16 +331,6 @@ impl Blob {
 
     /// Rust spelling of Zig's raw `blob.*` bitwise copy (e.g.
     /// `PathOrBlob.fromJSNoCopy`, `var blob_internal = .{ .blob = this.* }`).
-    ///
-    /// In Zig that copy bumps **no** refcounts and is never `deinit()`ed — it
-    /// just borrows `self`'s store/name/content_type for the caller's stack
-    /// frame. In Rust every field of the copy carries its own teardown
-    /// (`StoreRef`/`OwnedStringCell` drop glue, plus `Blob`'s `Drop` for an
-    /// owned `content_type`), so the sound translation is a full [`Blob::dupe`]:
-    /// each clone/deep-copy is balanced by the drop at the caller's scope exit.
-    ///
-    /// Kept as a distinct named entry point so the call sites still read as
-    /// "Zig took a borrowed view here".
     #[inline]
     pub fn borrowed_view(&self) -> Blob {
         self.dupe()
@@ -354,10 +342,6 @@ impl Blob {
     /// borrow path was removed because it dropped user-supplied parameters
     /// like multipart boundaries on a static-mime miss).
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
-        // If the source's content_type is heap-allocated, a bitwise copy would
-        // alias the same allocation and `Drop` would free it twice. Take our
-        // own copy *before* constructing the duplicate so no transient `Blob`
-        // ever claims ownership of the source's allocation (Blob.zig:3700).
         let content_type = if self.content_type_allocated.get() {
             let copy = self.content_type_slice().to_vec().into_boxed_slice();
             bun_core::heap::into_raw(copy).cast_const()
@@ -454,12 +438,6 @@ impl Blob {
 
     /// `Blob.deinit()` (Blob.zig:3720). Tear down owned resources; if
     /// heap-allocated, also frees the heap box.
-    ///
-    /// PORT NOTE: kept as an explicit method because `Blob` is the `m_ctx`
-    /// payload of a `.classes.ts` class — `finalize()` owns teardown, and many
-    /// call sites tear down stack copies explicitly. `Drop` covers the same
-    /// fields for by-value drops (every step here is idempotent, so running
-    /// both is safe), but only `deinit()` frees the heap box itself.
     pub fn deinit(&mut self) {
         self.detach();
         self.name.set(bun_core::String::dead());
@@ -474,15 +452,6 @@ impl Blob {
     }
 }
 
-/// The `store` and `name` fields already have their own drop glue
-/// (`StoreRef`/`OwnedStringCell`); `content_type` is a bare `Cell<*const [u8]>`
-/// and was the one owned resource a by-value drop leaked. Freeing it here makes
-/// every consumer that drops a `dupe()`d / `use_()`d / deserialized `Blob`
-/// without an explicit `deinit()` release the heap-allocated content type.
-///
-/// `free_content_type` only frees when `content_type_allocated` is set and
-/// resets the flag, so the existing explicit `deinit()` / `free_content_type()`
-/// call sites layered under this `Drop` cannot double-free.
 impl Drop for Blob {
     fn drop(&mut self) {
         self.free_content_type();

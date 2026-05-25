@@ -68,10 +68,6 @@ impl Drop for BlobOrStringOrBuffer {
     fn drop(&mut self) {
         match self {
             Self::Blob(blob) => {
-                // `.blob` is a self-owning `dupe()`: the `Box<Blob>` drop glue
-                // releases the store ref, the +1 `name`, and the deep-copied
-                // `content_type`. Taking the store first only mirrors Zig's
-                // explicit teardown order; the field drop then sees `None`.
                 let _ = blob.store.with_mut(|s| s.take());
             }
             Self::StringOrBuffer(_) => {
@@ -1984,12 +1980,6 @@ impl PathOrBlob {
             ));
         };
         if let Some(blob) = arg.as_class_ref::<Blob>() {
-            // Zig: `blob.*` — a raw bitwise copy with no ref bumps that callers
-            // never `deinit()`. `borrowed_view()` is the sound Rust spelling: a
-            // self-owning `dupe()` whose `StoreRef`/`name`/`content_type` are
-            // all released by drop glue at scope exit. `as_class_ref` is the
-            // safe shared-borrow downcast — the JS wrapper roots the payload
-            // while `arg` is on the stack.
             return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
         }
         Err(ctx.throw_invalid_argument_type_value(

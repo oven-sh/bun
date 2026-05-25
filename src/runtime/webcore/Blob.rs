@@ -1368,9 +1368,7 @@ impl BlobExt for Blob {
         }
         // Zig: `var blob_internal: PathOrBlob = .{ .blob = this.* }` — a raw
         // bitwise copy with NO ref bumps; `write_file_internal` then `dupe()`s
-        // its own owned `destination_blob` from it. `borrowed_view()` is the
-        // sound Rust spelling: a self-owning `dupe()` whose store/name/
-        // content_type are all released by drop glue at scope exit.
+        // its own owned `destination_blob` from it.
         let mut blob_internal = PathOrBlob::Blob(Box::new(self.borrowed_view()));
         write_file_internal(
             global_this,
@@ -2524,8 +2522,6 @@ impl BlobExt for Blob {
             unsafe { (*s.as_ptr()).is_all_ascii = Some(is_all_ascii) };
             store = Some(s);
         }
-        // PORT NOTE: spell out via `Default::default()` + `Cell::set` —
-        // `Blob: Drop` makes functional-record-update an E0509.
         let blob = Blob::default();
         blob.size.set(len as SizeType);
         blob.store.set(store);
@@ -2541,8 +2537,6 @@ impl BlobExt for Blob {
         was_string: bool,
     ) -> Blob {
         let len = bytes.len();
-        // PORT NOTE: spell out via `Default::default()` + `Cell::set` —
-        // `Blob: Drop` makes functional-record-update an E0509.
         let blob = Blob::default();
         blob.size.set(len as SizeType);
         blob.store.set(if len > 0 {
@@ -4685,13 +4679,7 @@ pub fn write_file_with_source_destination(
         }));
 
         // Zig passes `destination_blob.*` / `source_blob.*` (raw struct copy,
-        // +0 store ref) and `WriteFile.create` then calls `store.?.ref()`. The
-        // Rust port folds that pair into RAII: callers hand over a +1 `Blob`
-        // via `borrowed_view()` (a self-owning `dupe()`) and
-        // `WriteFile::create` does NOT re-bump (see PORT NOTE in
-        // `write_file.rs::create_with_ctx`); the matching deref runs when
-        // `heap::take` drops the embedded `StoreRef`/`name`/`content_type` in
-        // `then`/`deinit`. Net ref balance is identical.
+        // +0 store ref) and `WriteFile.create` then calls `store.?.ref()`.
         #[cfg(windows)]
         {
             let promise = JSPromise::create(ctx);
@@ -5229,10 +5217,6 @@ pub fn write_file_internal(
                             bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                                 global_this: bun_ptr::BackRef::new(global_this),
                                 // Zig moves `destination_blob` by value into the task
-                                // (single store ref transfers; outer local is dead after the
-                                // early return). Take the value and leave an empty blob
-                                // behind so the residual local owns no store and no extra
-                                // +1 is taken.
                                 file_blob: core::mem::replace(
                                     &mut destination_blob,
                                     Blob::init_empty(global_this),
@@ -6501,9 +6485,6 @@ impl Any {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
                     let internal = s.data_mut().as_bytes_mut().to_internal_blob();
                     // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
-                    // `Blob::drop` also frees `content_type` when `*self` is replaced
-                    // below; the explicit call mirrors Zig's teardown order and is
-                    // idempotent.
                     blob.free_content_type();
                     *self = Any::InternalBlob(internal);
                     return;
@@ -6803,9 +6784,6 @@ impl Any {
     pub fn detach(&mut self) {
         match self {
             Any::Blob(b) => {
-                // `Blob::drop` frees `content_type` when `*self` is overwritten
-                // below; the explicit call mirrors Zig's teardown order and is
-                // idempotent.
                 b.free_content_type();
                 b.detach();
                 *self = Any::Blob(Blob::default());

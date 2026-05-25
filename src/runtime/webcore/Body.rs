@@ -842,10 +842,6 @@ impl Value {
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
                 // Zig: `defer blob.detach()` — must run on every exit incl. `?` paths.
-                // `use_()` hands back a stack-owned `Blob`. `Blob::drop` also frees an
-                // owned `content_type`; the explicit `deinit()` (detach +
-                // free_content_type) mirrors Zig's teardown order and is idempotent
-                // under the guard payload's drop.
                 let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
                 blob.resolve_size();
                 let blob_size = blob.size.get();
@@ -1123,12 +1119,6 @@ impl Value {
                     Action::GetText => match new {
                         Value::WTFStringImpl(_) | Value::InternalBlob(_) /* | Value::InlineBlob(_) */ => {
                             let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                            // `to_string_transfer` moves the bytes into a JS string but
-                            // leaves the heap-owned `content_type` (from
-                            // `from_dom_form_data`) in the `Any::Blob` variant. The inner
-                            // `Blob`'s drop glue frees it; the explicit `detach()` mirrors
-                            // Zig's teardown order (same as the GetJSON / GetFormData
-                            // arms) and is idempotent.
                             let result = promise.wrap(global, |g| blob.to_string_transfer(g));
                             blob.detach();
                             result?;
@@ -1865,11 +1855,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        // `to_string(Transfer)` moves the bytes into the JS string but leaves the
-        // heap-owned `content_type` (e.g. the `multipart/form-data; boundary=…`
-        // string from `from_dom_form_data`) in `Any::Blob`. The inner `Blob`'s
-        // drop glue frees it; the explicit `detach()` mirrors Zig's teardown
-        // order and is idempotent.
         let result = JSPromise::wrap(global_object, |g| blob.to_string(g, Lifetime::Transfer));
         blob.detach();
         Ok(result?)

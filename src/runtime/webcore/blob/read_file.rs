@@ -103,11 +103,6 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         // Decay to a raw pointer so `handler` can be dropped before resolution.
         let promise: *mut jsc::JSPromise = handler.promise.swap();
         let blob = core::mem::take(&mut handler.context);
-        // `context` was populated via `this.dupe()` in doReadFile(), so it
-        // owns a store ref, a name ref, and possibly a deep-copied
-        // content_type. All three are released by drop glue when `blob` goes
-        // out of scope (`StoreRef`/`OwnedStringCell` field drops + `Blob`'s
-        // `Drop` freeing the owned content_type).
         let global_this = handler.global_this;
         drop(handler);
         match maybe_bytes {

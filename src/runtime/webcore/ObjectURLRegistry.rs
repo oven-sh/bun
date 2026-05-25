@@ -50,12 +50,6 @@ impl Entry {
 impl Drop for Entry {
     fn drop(&mut self) {
         // Zig `Entry.deinit`: `this.blob.deinit(); bun.destroy(this);`.
-        // `Blob`'s field/struct drop glue would also release the +1 `name` ref
-        // and the heap-allocated `content_type` taken by
-        // `dupe_with_content_type`; the explicit `deinit()` matches the Zig
-        // teardown order and is idempotent under the subsequent field drops.
-        // The duped blob's `ref_count == 0`, so `deinit`'s heap-free branch is
-        // skipped.
         self.blob.deinit();
         // `bun.destroy(this)` ↔ `Box<Entry>` drop.
     }

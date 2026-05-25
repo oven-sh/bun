@@ -130,10 +130,6 @@ impl FileRoute {
     fn deinit(this: *mut FileRoute) {
         // SAFETY: `this` was allocated via heap::alloc in init_from_blob/from_js and the
         // intrusive ref_count has reached 0.
-        // Mirror Zig FileRoute.zig:53 `this.blob.deinit()`. `Blob`'s drop glue
-        // also releases the store/name/content_type on Box auto-drop; the
-        // explicit `deinit()` matches the Zig teardown order and is idempotent
-        // under the subsequent field drops.
         // `headers` is freed by its own Drop when the Box is dropped.
         unsafe {
             (*this).blob.deinit();

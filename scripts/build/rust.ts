@@ -524,24 +524,19 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // of clang's — see workarounds.ts "rust-lld-for-crosslang-lto".
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
-    // C++ is built with -fwhole-program-vtables, which on ELF targets sets
-    // the EnableSplitLTOUnit module flag in every bitcode module's summary
-    // index. lld reads that flag from the SUMMARY (not the module-flags
-    // metadata) and errors with "inconsistent LTO Unit splitting" if any
-    // bitcode input disagrees. So Rust bitcode must (a) carry a summary
-    // index and (b) set the flag to 1 in it. -Zsplit-lto-unit handles (b);
-    // for (a), see the CARGO_PROFILE_RELEASE_LTO override below — `lto =
-    // "fat"` makes rustc pre-merge all crates into one summary-less blob,
-    // which lld then reads as EnableSplitLTOUnit=0.
+    // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
+    // splitting" if any summaried bitcode module disagrees with the others.
+    // The C/C++ side passes -fno-split-lto-unit everywhere (whole-program
+    // devirt uses the index-based mode via --lto-whole-program-visibility,
+    // not the hybrid split mode), so every C/C++ module is 0. rustc's
+    // default is also 0 — nothing to pass. Do NOT add -Zsplit-lto-unit
+    // here; it would make the Rust modules the inconsistent ones.
     //
-    // NOT on Mach-O: clang suppresses the split-LTO-unit machinery for
-    // Apple targets, so every C/C++ bitcode module in a darwin link reads
-    // as EnableSplitLTOUnit=0 (no summary at all). Passing -Zsplit-lto-unit
-    // there makes the *Rust* modules the inconsistent ones and the whole
-    // LTO link aborts before generating any code.
-    if (!cfg.darwin) {
-      rustflags.push("-Zsplit-lto-unit");
-    }
+    // The CARGO_PROFILE_RELEASE_LTO override below keeps the per-CGU
+    // ThinLTO summaries that the consistency check (and cross-language
+    // importing) reads — `lto = "fat"` would pre-merge all crates into one
+    // summary-less blob.
+    //
     // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
     // it doubles as making rustc's bitcode link go through the LTO-aware
     // linker our final link uses, not BFD `/usr/bin/ld`.)

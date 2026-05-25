@@ -477,17 +477,22 @@ export const globalFlags: Flag[] = [
     desc: "Enable devirtualization across whole program (LTO only)",
   },
   {
-    // -fwhole-program-vtables (above) makes clang set EnableSplitLTOUnit=1 in
-    // every C++ module's ThinLTO summary, but it's a cxx-only flag, so the C
-    // modules (zlib, c-ares, mimalloc, boringssl's .c files, ...) default to
-    // 0 and the link dies with "inconsistent LTO Unit splitting". Force the
-    // flag on for every language. The Rust side passes the equivalent
-    // -Zsplit-lto-unit (see rust.ts). Not on darwin: clang suppresses LTO
-    // unit splitting entirely for Apple targets, so everything is uniformly
-    // 0 there and forcing 1 would recreate the same mismatch.
-    flag: "-fsplit-lto-unit",
-    when: c => c.unix && !c.darwin && c.lto,
-    desc: "Consistent EnableSplitLTOUnit across C/C++/Rust ThinLTO summaries",
+    // Every summaried bitcode module in the link must agree on the
+    // EnableSplitLTOUnit flag or lld dies with "inconsistent LTO Unit
+    // splitting". -fwhole-program-vtables (above) defaults the split ON for
+    // C++ on ELF targets but it's a cxx-only flag, so the C modules (zlib,
+    // c-ares, mimalloc, boringssl's .c files, ...) would disagree. Force it
+    // OFF everywhere instead of on: split LTO units shunt every module's
+    // vtables + type metadata into a merged regular-LTO half — a serial
+    // merged module, which is exactly what ThinLTO is supposed to avoid.
+    // The type hierarchy goes into the per-module ThinLTO summaries instead
+    // (typeidCompatibleVTable entries) and whole-program devirtualization
+    // runs in index-based mode via --lto-whole-program-visibility at link
+    // time. 0 is also the default for rustc, for Apple targets, and for the
+    // WebKit -lto prebuilts, so this is the configuration that can't drift.
+    flag: "-fno-split-lto-unit",
+    when: c => c.unix && c.lto,
+    desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
   },
 
   // ─── PGO (compile-side) ───
@@ -799,6 +804,19 @@ export const linkerFlags: Flag[] = [
   },
 
   // ─── LTO (link-side) ───
+  {
+    // Whole-program devirtualization needs two things: the type hierarchy in
+    // the ThinLTO summaries (compile-side -fwhole-program-vtables with
+    // -fno-split-lto-unit) and the linker's assertion that every derived
+    // class is visible in this link — without the visibility upgrade WPD
+    // only fires for classes explicitly annotated [[clang::lto_visibility]],
+    // i.e. never. A static executable that only dlopens C-ABI addons (NAPI)
+    // satisfies the whole-program assumption. ld64.lld has no named option
+    // for this; -mllvm reaches the underlying cl::opt directly.
+    flag: c => (c.darwin ? ["-Wl,-mllvm,-whole-program-visibility"] : ["-Wl,--lto-whole-program-visibility"]),
+    when: c => c.unix && c.lto,
+    desc: "Enable index-based whole-program devirtualization at link time",
+  },
   {
     flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
     when: c => c.unix && c.lto,

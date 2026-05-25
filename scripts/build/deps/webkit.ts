@@ -6,7 +6,7 @@
 // oven-sh/WebKit main: macOS artifacts cross-compiled on Linux, all -lto
 // variants built with ThinLTO (per-module summaries, so bun's -flto=thin
 // link imports across the C++/Rust/JSC boundaries).
-export const WEBKIT_VERSION = "autobuild-acc39b5350f26fc6bc16c29670d9106c9fa5e66f";
+export const WEBKIT_VERSION = "acc39b5350f26fc6bc16c29670d9106c9fa5e66f";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

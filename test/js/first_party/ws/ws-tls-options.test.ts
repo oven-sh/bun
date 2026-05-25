@@ -75,4 +75,26 @@ describe("ws top-level TLS options", () => {
 
     await promise;
   });
+
+  // Node/`ws` accept `ALPNProtocols` as a string[], but Bun's native TLS parser
+  // only takes string/ArrayBuffer/null. Forwarding the array form used to throw
+  // a TypeError from the constructor; it must stay a no-op (WebSocket negotiates
+  // subprotocols over Sec-WebSocket-Protocol, not TLS ALPN) so the rest of the
+  // options still apply and the connection proceeds.
+  it("ignores a string[] ALPNProtocols instead of throwing", async () => {
+    await using server = serveTls();
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+
+    const ws = new WebSocket(`wss://localhost:${server.port}`, {
+      rejectUnauthorized: false,
+      ALPNProtocols: ["http/1.1"],
+    });
+    ws.on("open", () => {
+      ws.close();
+      resolve();
+    });
+    ws.on("error", reject);
+
+    await promise;
+  });
 });

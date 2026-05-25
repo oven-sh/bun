@@ -1458,6 +1458,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
+        // Storage WeakMaps of private auto-accessors whose names are referenced
+        // from code that gets moved out of the class body. Unlike
+        // `private_lowered_map`, these members keep their declaration on the
+        // class, so this map is only applied to the moved code (extracted
+        // static blocks, suffix expressions, …) and never to code retained in
+        // the class body.
+        let mut extracted_accessor_map: PrivateLoweredMap = PrivateLoweredMap::default();
         let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
@@ -1502,8 +1509,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // of the class body below so they run after decoration. If they
             // reference a private name declared on this class, the reference
             // would end up outside the class and be a syntax error, so those
-            // privates must be lowered to runtime helper calls as well.
-            if !lower_all_private && has_any_private {
+            // privates must be lowered to runtime helper calls as well. This
+            // runs even when privates are already being lowered because of a
+            // decorated member: private auto-accessors keep their declaration
+            // on the class and only get storage entries when extracted code
+            // actually references them.
+            if has_any_private {
                 let mut declared_privates: HashMap<u32, ()> = HashMap::default();
                 for cprop in cprops.iter() {
                     if cprop.kind == PropertyKind::ClassStaticBlock {
@@ -1669,14 +1680,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // auto-accessors too so that references like `#x in obj` inside
                     // the extracted code can be rewritten into runtime helper calls.
                     // The getter/setter pair stays declared on the class, so
-                    // references elsewhere are left alone otherwise (the rewriter
-                    // does not handle update or compound-assignment expressions on
-                    // private members).
+                    // references in retained class code are left alone (native
+                    // access keeps working there, including update and compound
+                    // assignment, which the rewriter does not handle).
                     if private_ref_in_extracted_code
                         && let Some(k) = prop.key
                         && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
                     {
-                        private_lowered_map
+                        extracted_accessor_map
                             .insert(pi.ref_.inner_index(), PrivateLoweredInfo::new(wm_ref));
                     }
                     let wme = p.new_weak_map_expr(loc);
@@ -2152,6 +2163,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             p.rewrite_private_accesses_in_stmts(&mut pre_eval_stmts, &private_lowered_map);
             p.rewrite_private_accesses_in_stmts(&mut prefix_stmts, &private_lowered_map);
+        }
+
+        // Private auto-accessors referenced from moved code keep their
+        // declaration on the class, so only the code that ends up outside the
+        // class body needs their references rewritten; retained class code
+        // keeps native access.
+        if !extracted_accessor_map.is_empty() {
+            for entry in static_init_entries.iter_mut() {
+                if let Some(ini) = &mut entry.prop.initializer {
+                    p.rewrite_private_accesses_in_expr(ini, &extracted_accessor_map);
+                }
+            }
+            for sb_ptr in extracted_static_blocks.iter_mut() {
+                // `StoreRef::DerefMut` — arena-owned, safe under the StoreRef invariant.
+                let sb = &mut **sb_ptr;
+                p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &extracted_accessor_map);
+            }
+            for elem in static_non_field_elements.iter_mut() {
+                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
+            }
+            for elem in instance_non_field_elements.iter_mut() {
+                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
+            }
+            for elem in static_field_decorate.iter_mut() {
+                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
+            }
+            for elem in instance_field_decorate.iter_mut() {
+                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
+            }
+            for elem in suffix_exprs.iter_mut() {
+                p.rewrite_private_accesses_in_expr(elem, &extracted_accessor_map);
+            }
+            p.rewrite_private_accesses_in_stmts(&mut pre_eval_stmts, &extracted_accessor_map);
+            p.rewrite_private_accesses_in_stmts(&mut prefix_stmts, &extracted_accessor_map);
         }
 
         // ── Phase 6: Emit suffix ─────────────────────────

@@ -955,6 +955,57 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("decorated member with private auto-accessor brand check in static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(fn, ctx) {
+          return fn;
+        }
+        class Foo {
+          @dec m() {}
+          accessor #x = 0;
+          static {
+            console.log(#x in new Foo(), #x in {});
+          }
+          inc() {
+            return this.#x++;
+          }
+          get x() {
+            return this.#x;
+          }
+        }
+        const f = new Foo();
+        f.inc();
+        f.inc();
+        console.log(f.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true false\n2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private auto-accessor referenced in static block keeps native update expressions in methods", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Foo {
+          accessor #x = 0;
+          static {
+            console.log(#x in new Foo());
+          }
+          inc() {
+            return this.#x++;
+          }
+          getX() {
+            return this.#x;
+          }
+        }
+        const f = new Foo();
+        f.inc();
+        console.log(f.inc(), f.getX());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\n1 2\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("Bun.Transpiler output with private name in static block reparses", () => {
       // Fuzzer-found: "#a in _" used to be printed after the class body, which does not parse.
       const transpiler = new Bun.Transpiler({

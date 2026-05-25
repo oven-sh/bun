@@ -418,7 +418,21 @@ impl ArrayBuffer {
         }
     }
 
-    pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
+    /// Wrap a borrowed slice's pointer in an `ArrayBuffer` without taking
+    /// ownership. The returned struct (and any JS object created from it)
+    /// stores `bytes.as_mut_ptr()` with no lifetime parameter.
+    ///
+    /// Prefer [`ArrayBuffer::from_owned_bytes`] / [`ArrayBuffer::from_owned_vec`]
+    /// — they make the ownership transfer visible in the type system.
+    ///
+    /// # Safety
+    /// The allocation backing `bytes` must outlive every use of the returned
+    /// `ArrayBuffer`, including the GC finalizer of any JS object created from
+    /// it. If a deallocator is installed (`to_js`, `to_js_unchecked`,
+    /// `to_js_with_context`), that deallocator becomes the sole owner of the
+    /// allocation: it must be valid to free `bytes.as_mut_ptr()` with it
+    /// exactly once, and nothing else may free or reuse the allocation.
+    pub unsafe fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
         ArrayBuffer {
             len: u32::try_from(bytes.len()).expect("int cast") as usize,
             byte_len: u32::try_from(bytes.len()).expect("int cast") as usize,
@@ -446,6 +460,24 @@ impl ArrayBuffer {
             byte_len: u32::try_from(len).expect("int cast") as usize,
             typed_array_type,
             ptr,
+            ..Default::default()
+        }
+    }
+
+    /// [`ArrayBuffer::from_owned_bytes`] for a `Vec<u8>` whose capacity may
+    /// exceed its length. The excess capacity is discarded without
+    /// reallocating: the deallocator installed by `to_js*` frees the whole
+    /// allocation from its data pointer, so the capacity is not needed.
+    pub fn from_owned_vec(bytes: Vec<u8>, typed_array_type: JSType) -> ArrayBuffer {
+        // Ownership transfers to JSC (see `from_owned_bytes`); suppress the
+        // Vec's Drop and keep only ptr/len.
+        let mut bytes = core::mem::ManuallyDrop::new(bytes);
+        let len = bytes.len();
+        ArrayBuffer {
+            len: u32::try_from(len).expect("int cast") as usize,
+            byte_len: u32::try_from(len).expect("int cast") as usize,
+            typed_array_type,
+            ptr: bytes.as_mut_ptr(),
             ..Default::default()
         }
     }
@@ -932,15 +964,13 @@ impl MarkedArrayBuffer {
     }
 
     pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
-        // allocator.dupe(u8, str) → Box::<[u8]>::from(str), but we need a raw
-        // pointer because the buffer is later freed via the default allocator
-        // (`MarkedArrayBuffer_deallocator` → `default_alloc::free`).
-        let buf: Box<[u8]> = Box::from(str);
-        let len = buf.len();
-        let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
-        // SAFETY: ptr/len from heap::alloc; backed by the global allocator.
-        let bytes = unsafe { bun_core::ffi::slice_mut(ptr, len) };
-        Ok(MarkedArrayBuffer::from_bytes(bytes, JSType::Uint8Array))
+        // allocator.dupe(u8, str) → Box::<[u8]>::from(str); the buffer is later
+        // freed via the default allocator (`MarkedArrayBuffer_deallocator` →
+        // `default_alloc::free`).
+        Ok(MarkedArrayBuffer::from_owned_bytes(
+            Box::from(str),
+            JSType::Uint8Array,
+        ))
     }
 
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
@@ -951,9 +981,13 @@ impl MarkedArrayBuffer {
         })
     }
 
-    pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> MarkedArrayBuffer {
+    /// Take ownership of a default-allocator `Box<[u8]>` and wrap it as an
+    /// owning `MarkedArrayBuffer`. The buffer is freed exactly once: either by
+    /// [`MarkedArrayBuffer::destroy`] or by the deallocator installed when the
+    /// buffer is handed to JSC (`to_js` / `to_node_buffer`).
+    pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
-            buffer: ArrayBuffer::from_bytes(bytes, typed_array_type),
+            buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
             owns_buffer: true,
         }
     }
@@ -974,7 +1008,7 @@ impl MarkedArrayBuffer {
     }
 
     /// Releases the owned byte buffer if this `MarkedArrayBuffer` was created with an
-    /// allocator (e.g. via `from_string`/`from_bytes`). Does not free the struct itself;
+    /// allocator (e.g. via `from_string`/`from_owned_bytes`). Does not free the struct itself;
     /// `MarkedArrayBuffer` is passed and stored by value, so callers own its storage.
     pub fn destroy(&mut self) {
         if self.owns_buffer {

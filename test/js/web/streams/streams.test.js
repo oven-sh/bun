@@ -1127,6 +1127,21 @@ it("Bun.file().stream() read text from large file", async () => {
   }
 });
 
+it("Bun.file().stream() chunks survive GC and round-trip", async () => {
+  // The native reader hands each chunk's heap allocation to JSC
+  // (ArrayBuffer::from_owned_vec → MarkedArrayBuffer_deallocator). If the
+  // ownership transfer regressed to a borrowed/dangling pointer, the bytes
+  // would be corrupted after the source buffer is freed or reused.
+  const expected = Buffer.alloc(512 * 1024, "bun-streams-roundtrip!").toString();
+  using dir = tempDir("streams-roundtrip", { "data.txt": expected });
+  const chunks = [];
+  for await (const chunk of Bun.file(join(String(dir), "data.txt")).stream()) {
+    chunks.push(chunk);
+  }
+  Bun.gc(true);
+  expect(Buffer.concat(chunks).toString()).toBe(expected);
+});
+
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
   for (let i = 0; i < 10; i++) {
     const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));

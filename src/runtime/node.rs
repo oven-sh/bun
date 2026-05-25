@@ -410,12 +410,10 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
                 // `ArrayBuffer.fromBytes` and ownership transfers to JSC — the
                 // GC-installed deallocator (`MarkedArrayBuffer_deallocator`)
                 // calls `mi_free` on the buffer when the JS object is
-                // collected. Leak the `Vec` here to hand the allocation to
-                // JSC; Bun's global allocator is mimalloc, so `to_js`'s
+                // collected. Bun's global allocator is mimalloc, so `to_js`'s
                 // `mi_is_in_heap_region` check succeeds and the buffer is
                 // freed by JSC, not Rust.
-                let bytes: &mut [u8] = Vec::leak(r.into());
-                bun_jsc::ArrayBuffer::from_bytes(bytes, bun_jsc::JSType::ArrayBuffer)
+                bun_jsc::ArrayBuffer::from_owned_vec(r.into(), bun_jsc::JSType::ArrayBuffer)
                     .to_js(global_object)
             }
             Err(e) => Ok(e.to_js(global_object)),
@@ -643,8 +641,8 @@ impl MaybeToJs for Vec<u8> {
         // PORT NOTE: ownership transfers to JSC (freed via
         // `MarkedArrayBuffer_deallocator` → `mi_free`); see
         // `MaybeSysExt::to_array_buffer` above for the full rationale.
-        let bytes: &mut [u8] = Vec::leak(self);
-        bun_jsc::ArrayBuffer::from_bytes(bytes, bun_jsc::JSType::ArrayBuffer).to_js(global_object)
+        bun_jsc::ArrayBuffer::from_owned_vec(self, bun_jsc::JSType::ArrayBuffer)
+            .to_js(global_object)
     }
 }
 

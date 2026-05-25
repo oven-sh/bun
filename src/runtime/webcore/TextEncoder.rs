@@ -51,8 +51,8 @@ pub(crate) unsafe extern "C" fn TextEncoder__encode8(
             return global_this.throw_out_of_memory_value();
         };
         debug_assert!(bytes.len() >= slice.len());
-        // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
-        ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
+        // Ownership of the Vec's allocation transfers to JSC via to_js_unchecked.
+        ArrayBuffer::from_owned_vec(bytes, JSType::Uint8Array)
             .to_js_unchecked(global_this)
             .unwrap_or(JSValue::ZERO)
     }
@@ -104,8 +104,8 @@ pub(crate) unsafe extern "C" fn TextEncoder__encode16(
         uint8array
     } else {
         let bytes = strings::to_utf8_alloc_with_type(slice);
-        // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
-        ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
+        // Ownership of the Vec's allocation transfers to JSC via to_js_unchecked.
+        ArrayBuffer::from_owned_vec(bytes, JSType::Uint8Array)
             .to_js_unchecked(global_this)
             .unwrap_or(JSValue::ZERO)
     }
@@ -157,8 +157,8 @@ pub(crate) unsafe extern "C" fn c(
         uint8array
     } else {
         let bytes = strings::to_utf8_alloc_with_type(slice);
-        // PORT NOTE: ownership transfers to JSC via to_js_unchecked; leak the Vec.
-        ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
+        // Ownership of the Vec's allocation transfers to JSC via to_js_unchecked.
+        ArrayBuffer::from_owned_vec(bytes, JSType::Uint8Array)
             .to_js_unchecked(global_this)
             .unwrap_or(JSValue::ZERO)
     }

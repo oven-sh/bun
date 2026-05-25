@@ -670,9 +670,12 @@ pub(crate) fn to_array_buffer(
                 }
             }
 
-            // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory.
+            // SAFETY: ptr/len came from get_ptr_slice; the memory is owned by the
+            // FFI caller, who promises (per the `toArrayBuffer` API contract) that
+            // it stays valid until the optional finalization callback runs.
             let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer).to_js_with_context(
+            // SAFETY: see above — lifetime/ownership is the FFI caller's contract.
+            unsafe { ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer) }.to_js_with_context(
                 global_this,
                 ctx.unwrap_or(core::ptr::null_mut()),
                 callback,

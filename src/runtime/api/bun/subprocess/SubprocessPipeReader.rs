@@ -316,13 +316,14 @@ impl PipeReader {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
                 // `defer this.state = .{ .done = &.{} }` — state.done is now empty via take().
-                // PORT NOTE: `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
-                // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
-                // boxed slice so JS becomes the owner — same pattern as
-                // `MarkedArrayBuffer::from_string`.
-                let slice: &'static mut [u8] = Box::leak(bytes.into_boxed_slice());
-                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
-                    .to_node_buffer(global_this)
+                // `MarkedArrayBuffer::from_owned_bytes` adopts the allocation with
+                // `owns_buffer = true` (freed via mimalloc on the JS side) — same
+                // pattern as `MarkedArrayBuffer::from_string`.
+                MarkedArrayBuffer::from_owned_bytes(
+                    bytes.into_boxed_slice(),
+                    jsc::JSType::Uint8Array,
+                )
+                .to_node_buffer(global_this)
             }
             _ => JSValue::UNDEFINED,
         }

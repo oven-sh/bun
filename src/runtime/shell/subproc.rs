@@ -2363,12 +2363,9 @@ impl PipeReader {
     pub fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
         match &mut self.state {
             PipeReaderState::Done(bytes) => {
-                // `MarkedArrayBuffer::from_bytes` adopts the allocation (freed
-                // by the JSC ArrayBuffer destructor). `heap::release` names that
-                // FFI hand-off — it is `Box::leak` under the hood; the JSC
-                // ArrayBuffer destructor is the reclaim, not this scope.
-                let slice: &'static mut [u8] = bun_core::heap::release(core::mem::take(bytes));
-                MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
+                // `MarkedArrayBuffer::from_owned_bytes` adopts the allocation
+                // (freed by the JSC ArrayBuffer destructor).
+                MarkedArrayBuffer::from_owned_bytes(core::mem::take(bytes), jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
             }
             _ => JSValue::UNDEFINED,

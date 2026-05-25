@@ -3125,9 +3125,10 @@ impl BlobExt for Blob {
                 let store = self.store().expect("infallible: store present").clone();
                 // SAFETY: `from_bytes` only records ptr+len into the FFI struct; the
                 // pointer is then handed to JSC as an external buffer backing whose
-                // lifetime is the cloned `store` ref above. No Rust-side `&` to the
-                // Store bytes is live across this reborrow. Mirrors Zig `@constCast`.
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
+                // lifetime is the cloned `store` ref above (released by the
+                // deallocator on GC). No Rust-side `&` to the Store bytes is live
+                // across this reborrow. Mirrors Zig `@constCast`.
+                unsafe { jsc::ArrayBuffer::from_bytes(&mut *buf, TYPED_ARRAY_VIEW) }
                     .to_js_with_context(
                         global,
                         store.into_raw().cast::<c_void>(),
@@ -3146,7 +3147,7 @@ impl BlobExt for Blob {
                 let store = self.take_store().expect("transfer with null store");
                 // SAFETY: see `Share` arm. After `take()` the store ref is moved
                 // out of `self`, so JSC becomes the sole owner via the deallocator.
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
+                unsafe { jsc::ArrayBuffer::from_bytes(&mut *buf, TYPED_ARRAY_VIEW) }
                     .to_js_with_context(
                         global,
                         store.into_raw().cast::<c_void>(),
@@ -3162,11 +3163,15 @@ impl BlobExt for Blob {
                     return Err(global.throw_out_of_memory());
                 }
                 // SAFETY: `Temporary` ⇒ `buf` is a leaked `Box<[u8]>` we exclusively own;
-                // ownership is transferred to JSC (Zig: `JSC.MarkedArrayBuffer.fromBytes`).
+                // reclaim it and transfer ownership to JSC (Zig:
+                // `JSC.MarkedArrayBuffer.fromBytes`).
                 // `to_js_unchecked`: `to_js`'s heap-region probe would skip the deallocator
                 // for a non-mimalloc buffer, but `Temporary` is always default-allocator.
-                jsc::ArrayBuffer::from_bytes(unsafe { &mut *buf }, TYPED_ARRAY_VIEW)
-                    .to_js_unchecked(global)
+                jsc::ArrayBuffer::from_owned_bytes(
+                    unsafe { bun_core::heap::take(buf) },
+                    TYPED_ARRAY_VIEW,
+                )
+                .to_js_unchecked(global)
             }
         }
     }

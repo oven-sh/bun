@@ -611,8 +611,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // intra-Rust inlining. With `-Clinker-plugin-lto` that pre-merge is
     // wasted work — the linker re-merges everything anyway — and it strips
     // the per-module summary index lld needs for the EnableSplitLTOUnit
-    // consistency check (see -Zsplit-lto-unit above). Override to `off` so
-    // each crate's bitcode reaches lld with its summary intact.
+    // consistency check (see the EnableSplitLTOUnit note above). Override to
+    // `off` so each crate's bitcode reaches lld with its summary intact.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this

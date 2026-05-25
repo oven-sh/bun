@@ -344,16 +344,10 @@ function getEc2Agent(platform, options, ec2Options) {
  * @returns {string}
  */
 function getCppAgent(platform, options) {
-  const { os, arch, crossCompile } = platform;
+  const { os, arch } = platform;
 
-  if (os === "darwin" && !crossCompile) {
-    return {
-      queue: `build-${os}`,
-      os,
-      arch,
-    };
-  }
-
+  // Every build lane (including darwin, which is cross-compiled) runs on the
+  // EC2/Azure fleet — the mac fleet only runs tests.
   return getEc2Agent(platform, options, {
     instanceType: os === "windows" ? getAzureVmSize(os, arch) : arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
@@ -365,15 +359,7 @@ function getCppAgent(platform, options) {
  * @returns {string}
  */
 function getLinkBunAgent(platform, options) {
-  const { os, arch, crossCompile } = platform;
-
-  if (os === "darwin" && !crossCompile) {
-    return {
-      queue: `build-${os}`,
-      os,
-      arch,
-    };
-  }
+  const { os, arch } = platform;
 
   if (os === "windows") {
     return getEc2Agent(platform, options, {
@@ -423,21 +409,10 @@ function getRustAgent(platform, options) {
     });
   }
 
-  // Darwin (native lanes): keep the cargo build on a mac agent so the
-  // shipped artifacts stay bit-for-bit products of the native toolchain.
-  // The `-cross` lanes skip this branch and share the Linux rust box —
-  // `aarch64/x86_64-apple-darwin` are Tier 2 targets with prebuilt std and
-  // a staticlib needs no Mach-O link (see rustCanCrossFromLinux()).
-  if (os === "darwin" && !platform.crossCompile) {
-    return {
-      queue: `build-${os}`,
-      os,
-      arch,
-    };
-  }
-
-  // Linux (gnu/musl/android), FreeBSD, and macOS-cross: cross-compile from
-  // one Linux aarch64 box. cargo build is wide (1 codegen unit per crate ×
+  // Linux (gnu/musl/android), FreeBSD, and macOS: cross-compile from one
+  // Linux aarch64 box. `aarch64/x86_64-apple-darwin` are Tier 2 targets with
+  // prebuilt std and a staticlib needs no Mach-O link (see
+  // rustCanCrossFromLinux()). cargo build is wide (1 codegen unit per crate ×
   // ~80 crates), so size for cores. ASAN doubles the IR — bigger box.
   return getEc2Agent(getRustPlatform(), options, {
     instanceType: platform.profile === "asan" ? "r8g.4xlarge" : "r8g.2xlarge",
@@ -960,13 +935,11 @@ function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
-  const releasePlatforms = buildPlatforms;
-
   // When signing ran, depend on windows-sign instead of the raw Windows builds
   // so we wait for signed artifacts before releasing.
   const depends_on = signed
-    ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
-    : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
+    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
 
   return {
     key: "release",

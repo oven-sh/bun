@@ -871,8 +871,11 @@ export const linkerFlags: Flag[] = [
     // darwin cross link uses lld's Mach-O port (ld64.lld). Native darwin
     // links go through Apple's ld, which rejects unknown double-dash options,
     // so they keep the driver's default LTO codegen level.
+    // arm64 only: O3 codegen costs +0.3 MB there but +3.1 MB on x64 (the
+    // higher inline threshold is much more expensive in x86-64's
+    // variable-length encoding); x64 stays at lld's default --lto-O2/CGO2.
     flag: ["-Wl,--lto-O3", "-Wl,--lto-CGO3"],
-    when: c => c.darwin && c.crossTarget !== undefined && c.lto && c.release && !c.smol,
+    when: c => c.darwin && c.arm64 && c.crossTarget !== undefined && c.lto && c.release && !c.smol,
     desc: "LTO codegen at -O3 + aggressive isel (Darwin driver forwards no -O to ld64.lld)",
   },
   {

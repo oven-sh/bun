@@ -4438,13 +4438,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
     ) -> Result<js_ast::LocRef, bun_core::Error> {
-        // PORT NOTE: Zig `try p.source.path.name.nonUniqueNameString(arena)` allocates the
-        // sanitized identifier, then `allocPrint` formats `{s}_default`. bun_paths::fs::PathName<'static>
-        // exposes the same sanitizer as a Display formatter (`fmt_identifier()`), so format once
-        // and copy into the bump arena.
+        // Zig `createDefaultName` formats `{s}_default` from `nonUniqueNameString`, which is
+        // `MutableString.ensureValidIdentifier(nonUniqueNameStringBase())`. That sanitizer
+        // prepends `_` when the name starts with a non-identifier-start char (e.g. a digit from
+        // `1.ts`) per https://github.com/oven-sh/bun/issues/2946 — the non-allocating
+        // `fmt_identifier()` formatter does not, so it would emit an invalid identifier like
+        // `1_default` on the no-renamer (transpile / `bun run`) path.
         let identifier: &'a [u8] = {
-            let s = format!("{}_default", self.source.path.name().fmt_identifier());
-            self.arena.alloc_slice_copy(s.as_bytes())
+            let base = self.source.path.name().non_unique_name_string_base();
+            let sanitized = bun_core::MutableString::ensure_valid_identifier(base)?;
+            const SUFFIX: &[u8] = b"_default";
+            let out = self
+                .arena
+                .alloc_slice_fill_copy(sanitized.len() + SUFFIX.len(), 0u8);
+            out[..sanitized.len()].copy_from_slice(&sanitized);
+            out[sanitized.len()..].copy_from_slice(SUFFIX);
+            out
         };
 
         let name = js_ast::LocRef {

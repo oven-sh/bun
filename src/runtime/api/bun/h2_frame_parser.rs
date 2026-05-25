@@ -1322,10 +1322,7 @@ pub struct H2FrameParser {
     // late frame for a just-closed stream can still be in flight.
     recently_evicted: JsCell<[u32; RECENTLY_EVICTED_LEN]>,
     recently_evicted_pos: Cell<u8>,
-    // Stream id of a *discarded* header block (HEADERS for an evicted stream)
-    // whose END_HEADERS has not arrived yet; 0 = none. A CONTINUATION for an
-    // evicted id is only legal while this matches it (RFC 9113 §6.10).
-    discarded_block_stream_id: Cell<u32>,
+    discarded_block: JsCell<Vec<u8>>,
 }
 
 /// Capacity of `H2FrameParser::recently_evicted`.
@@ -2386,14 +2383,41 @@ impl H2FrameParser {
             }
         }
         let end = payload.len() - padding;
-        self.discard_header_block(&payload[offset..end]);
-        self.discarded_block_stream_id.set(
-            if frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0 {
-                frame.stream_identifier
-            } else {
-                0
-            },
-        );
+        let fragment = &payload[offset..end];
+        if !IS_CONTINUATION {
+            self.discarded_block.with_mut(|b| b.clear());
+        }
+        if frame.flags & HeadersFrameFlags::END_HEADERS as u8 != 0
+            && self.discarded_block.get().is_empty()
+        {
+            self.expecting_continuation.set(0);
+            self.discard_header_block(fragment);
+            return Ok(end_);
+        }
+        if self.discarded_block.get().len() + fragment.len()
+            > self.local_settings.get().max_header_list_size as usize
+        {
+            self.discarded_block.with_mut(|b| b.clear());
+            self.expecting_continuation.set(0);
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                b"ENHANCE_YOUR_CALM",
+                self.last_stream_id.get(),
+                true,
+            );
+            return Ok(end_);
+        }
+        if frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0 {
+            self.discarded_block
+                .with_mut(|b| b.extend_from_slice(fragment));
+            self.expecting_continuation.set(frame.stream_identifier);
+            return Ok(end_);
+        }
+        self.expecting_continuation.set(0);
+        let mut block = self.discarded_block.replace(Vec::new());
+        block.extend_from_slice(fragment);
+        self.discard_header_block(&block);
         Ok(end_)
     }
 
@@ -4355,7 +4379,7 @@ impl H2FrameParser {
                 // table stays in sync, but dispatch nothing. A stray
                 // CONTINUATION with no such block in progress is a connection
                 // error (RFC 9113 §6.10).
-                if self.discarded_block_stream_id.get() == frame.stream_identifier {
+                if self.expecting_continuation.get() == frame.stream_identifier {
                     return self.discard_headers_frame::<true>(frame, data);
                 }
                 self.send_go_away(
@@ -8008,7 +8032,7 @@ impl H2FrameParser {
             has_closed_streams: Cell::new(false),
             recently_evicted: JsCell::new([0u32; RECENTLY_EVICTED_LEN]),
             recently_evicted_pos: Cell::new(0),
-            discarded_block_stream_id: Cell::new(0),
+            discarded_block: JsCell::new(Vec::new()),
         };
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {

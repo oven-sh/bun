@@ -143,7 +143,6 @@ describe("multipart serialization (new Response(formData))", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) console.error(stderr);
-    expect(exitCode).toBe(0);
 
     const { deltaMB, alive } = JSON.parse(stdout.trim());
     expect(alive).toBe(true);
@@ -151,5 +150,6 @@ describe("multipart serialization (new Response(formData))", () => {
     expect(deltaMB).toBeGreaterThan(blobSizeMB * 0.5);
     // An extra copy of the blob bytes would put this at ~2x the blob size.
     expect(deltaMB).toBeLessThan(blobSizeMB * 1.5);
+    expect(exitCode).toBe(0);
   });
 });

@@ -57,6 +57,34 @@ const tlsValueKeys = [...tlsScalarKeys, ...tlsFileKeys];
 const agentTlsValueKeys = ["ca", "cert", "key", "passphrase"];
 
 /**
+ * A file/identity value SSLConfig.fromJS can parse: string | ArrayBuffer | Blob,
+ * or an array of those. Node/`ws` also accept the `key`/`cert` array-of-objects
+ * form (`[{ pem, passphrase }]`) for per-key passphrases, but the native parser
+ * has no arm for it and throws. Skip that shape so it stays a no-op (as it was
+ * before top-level TLS options were forwarded) instead of becoming a throw.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isForwardableFileValue(value) {
+  if (!value) return false;
+  if (Array.isArray(value)) {
+    for (const element of value) {
+      // A string/ArrayBuffer/TypedArray/Blob element is representable; a plain
+      // `{ pem, passphrase }` object is not, so don't forward such an array.
+      if (
+        $isObject(element) &&
+        !ArrayBuffer.isView(element) &&
+        !(element instanceof Blob) &&
+        !(element instanceof ArrayBuffer)
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
  * Collects the TLS options the native WebSocket understands from a source
  * object. `valueKeys` narrows the set for callers that can't pass the full set
  * (see {@link agentTlsValueKeys}). Scalar keys (see {@link tlsScalarKeys})
@@ -76,8 +104,9 @@ function extractTlsOptions(source, valueKeys = tlsValueKeys) {
   }
   for (const key of valueKeys) {
     // Scalars forward an explicit falsy value (0, "") like `options.tls` would;
-    // file/identity keys treat a falsy value (e.g. `ca: ""`) as absent.
-    const keep = tlsScalarKeys.includes(key) ? source[key] != null : source[key];
+    // file/identity keys treat a falsy value (e.g. `ca: ""`) as absent and skip
+    // the object-array form the native parser can't represent.
+    const keep = tlsScalarKeys.includes(key) ? source[key] != null : isForwardableFileValue(source[key]);
     if (keep) {
       (tls ??= {})[key] = source[key];
     }

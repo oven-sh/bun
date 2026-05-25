@@ -139,7 +139,8 @@ static int us_sni_ex_idx = -1;
 static int us_ctx_cache_ex_idx = -1;
 /* Marks an SSL_CTX whose verification store holds user-provided CAs (the
  * ca/caFile options or a later addCACert): the per-socket client attach must
- * not replace such a store with the process-shared default roots. */
+ * not replace such a store with the process-shared default roots, and
+ * tls.setDefaultCACertificates() must not override it either. */
 static int us_ctx_user_ca_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 /* Per-connection async-SNI suspension state (select_certificate_cb retry). */
@@ -1164,9 +1165,9 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
      * bundle without touching the CTX (servers using the same CTX never pay
      * the ~150-root build). us_verify_callback returns 1 so the handshake
      * never aborts here — JS reads verify_error and decides. */
+    us_ex_idx_ensure();
     if (SSL_CTX_get_verify_mode(ctx) == SSL_VERIFY_NONE) {
       SSL_set_verify(ssl, SSL_VERIFY_PEER, us_verify_callback);
-      us_ex_idx_ensure();
       if (!SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
         /* Default context: give this socket the process-shared root bundle.
          * A context whose store holds user-provided CAs (ca/caFile options or
@@ -1175,6 +1176,16 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
         X509_STORE *roots = us_get_shared_default_ca_store();
         if (roots) SSL_set0_verify_cert_store(ssl, roots);
       }
+    } else if (us_has_user_root_certs()
+               && !SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx)) {
+      /* CTX was built against the process defaults (request_cert without an
+       * explicit `ca`), but tls.setDefaultCACertificates() has since replaced
+       * those defaults. Override the verify store for this SSL only so the
+       * new roots take effect without rebuilding the cached SSL_CTX
+       * (fetch()/https.request() cache their HTTPS context for the process
+       * lifetime). CTXs with user CAs are left alone. */
+      X509_STORE *roots = us_get_shared_default_ca_store();
+      if (roots) SSL_set0_verify_cert_store(ssl, roots);
     }
   } else {
     SSL_set_accept_state(ssl);

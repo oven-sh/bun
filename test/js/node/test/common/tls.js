@@ -197,12 +197,12 @@ function extractMetadata(cert) {
 exports.extractMetadata = extractMetadata;
 
 // To compare two certificates, we can just compare serialNumber, issuer,
-// and subject like X509_comp(). We can't just compare two strings because
+// and subject like X509_cmp(). We can't just compare two strings because
 // the line endings or order of the fields may differ after PEM serdes by
 // OpenSSL.
 exports.assertEqualCerts = function assertEqualCerts(a, b) {
-  const setA = new Set(a.map(extractMetadata));
-  const setB = new Set(b.map(extractMetadata));
+  const setA = new Set(a.map(extractMetadata).map(JSON.stringify));
+  const setB = new Set(b.map(extractMetadata).map(JSON.stringify));
   assert.deepStrictEqual(setA, setB);
 };
 

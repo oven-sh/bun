@@ -19,6 +19,8 @@ const { Server: NetServer, Socket: NetSocket } = net;
 const getBundledRootCertificates = $newCppFunction("NodeTLS.cpp", "getBundledRootCertificates", 1);
 const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertificates", 1);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
+const resetRootCertStore = $newCppFunction("NodeTLS.cpp", "resetRootCertStore", 1);
+const getUserRootCertificates = $newCppFunction("NodeTLS.cpp", "getUserRootCertificates", 0);
 const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 const getTLSDefaultCiphers = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
@@ -758,14 +760,6 @@ var InternalSecureContext = class SecureContext {
   servername;
 
   constructor(options, cached = true) {
-    // When tls.setDefaultCACertificates() has installed an override and no
-    // explicit `ca` was given, use the override as the default CA set so the
-    // process-wide default applies on every construction path (the public
-    // createSecureContext(), the connect/TLSSocket path, addContext and
-    // setSecureContext), matching Node's secure-context default.
-    if (_defaultCACertificatesOverride !== undefined && (options == null || options.ca == null)) {
-      options = { ...options, ca: _defaultCACertificatesOverride };
-    }
     if (options) {
       validateSecureContextOptions(options);
       if (options.cert) throwOnInvalidTLSArray("options.cert", options.cert);
@@ -806,8 +800,6 @@ function SecureContext(options): void {
 
 function createSecureContext(options) {
   if (options instanceof InternalSecureContext) return options;
-  // The setDefaultCACertificates() override is applied inside the
-  // InternalSecureContext constructor so every construction path honors it.
   // The native handle (SSL_CTX) is memoised inside `NativeSecureContext.intern`
   // by the per-VM `SSLContextCache`, so no JS-side hashing here. The JS wrapper
   // is built fresh because it carries the per-call `servername`.
@@ -1320,15 +1312,6 @@ function Server(options, secureConnectionListener): void {
       }
 
       let ca = options.ca;
-      // The process-wide default-CA override (tls.setDefaultCACertificates)
-      // applies here too when no explicit `ca` was given: this path hands raw
-      // {key, cert, ca} to the native listener and never goes through
-      // InternalSecureContext, so without this an mTLS server would verify
-      // client certificates against the bundled roots instead of the
-      // overridden defaults.
-      if (_defaultCACertificatesOverride !== undefined && ca == null) {
-        ca = _defaultCACertificatesOverride;
-      }
       // PKCS#12-embedded CAs are stashed separately so createSecureContext can
       // extend (not replace) the default trust set via addCACert. The server
       // path hands raw {key, cert, ca} to the native listener and has no
@@ -1597,6 +1580,17 @@ const getUseSystemCA = $newZigFunction("bun.zig", "getUseSystemCA", 0);
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
+  // The override is process-global (see root_certs.cpp), so ask native
+  // first: another Worker may have installed it and this VM's module
+  // state wouldn't know. undefined means "no override" — fall through to
+  // the (per-VM-cached) bundled/system/extra merge. A frozen array (maybe
+  // empty) means "override installed" — return it uncached so subsequent
+  // setDefaultCACertificates() calls from any Worker are reflected.
+  const override = getUserRootCertificates() as string[] | undefined;
+  if (override !== undefined) {
+    return override;
+  }
+
   if (defaultCACertificates) return defaultCACertificates;
   defaultCACertificates = [];
 
@@ -1662,86 +1656,11 @@ function maybeWarnAboutExtraCACerts() {
   }
 }
 
-// Runtime override for the "default" CA certificate set, installed by
-// tls.setDefaultCACertificates(). undefined = no override (use the real
-// bundled/system default). Only affects type "default"/implicit — "bundled",
-// "system" and "extra" are unchanged.
-// https://github.com/nodejs/node/blob/main/lib/internal/tls/secure-context.js
-let _defaultCACertificatesOverride: Array<string> | undefined;
-
-type CACertInput = string | NodeJS.ArrayBufferView;
-interface X509CertificateLike {
-  readonly fingerprint256: string;
-  toString(): string;
-}
-type X509CertificateCtor = new (cert: CACertInput) => X509CertificateLike;
-let _X509CertificateClass: X509CertificateCtor | undefined;
-
-// tls.setDefaultCACertificates(certs)
-// https://github.com/nodejs/node/blob/v25.2.1/lib/tls.js#L202
-// Node validates `certs` as an Array (its ERR_INVALID_ARG_TYPE renders the
-// 'Array' name as "an instance of Array"; Bun's validateArray renders the same
-// name as "of type Array", so build the error directly to match Node here),
-// then hands the certs to the native root store. Bun has no equivalent native
-// store override, so keep a JS-side override that getCACertificates('default')
-// and createSecureContext() read.
-function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
-  if (!$isArray(certs)) {
-    let received: string;
-    if (certs === null) received = "null";
-    else if (typeof certs === "object") received = `an instance of ${(certs as object).constructor?.name ?? "Object"}`;
-    else if (typeof certs === "string") received = `type string ('${certs}')`;
-    else received = `type ${typeof certs} (${String(certs)})`;
-    const error = new TypeError(`The "certs" argument must be an instance of Array. Received ${received}`) as Error & {
-      code: string;
-    };
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
-  }
-  _X509CertificateClass ??= require("node:crypto").X509Certificate as X509CertificateCtor;
-  // Parse each cert and de-duplicate by fingerprint so getCACertificates()
-  // returns a normalized, unique PEM set (matching Node, whose native store
-  // collapses duplicates). Build into a temp array and only commit on success,
-  // so an invalid element leaves the previous default untouched.
-  const seen = new Set<string>();
-  const normalized: Array<string> = [];
-  for (let i = 0; i < certs.length; i++) {
-    const cert = certs[i];
-    if (typeof cert !== "string" && !isArrayBufferView(cert)) {
-      throw $ERR_INVALID_ARG_TYPE(`certs[${i}]`, "string or an instance of ArrayBufferView", cert);
-    }
-    // An element may be a concatenated PEM bundle; Node adds every certificate
-    // it contains, so split on certificate boundaries before parsing (a single
-    // X509Certificate parse only consumes the first block).
-    const text =
-      typeof cert === "string" ? cert : Buffer.from(cert.buffer, cert.byteOffset, cert.byteLength).toString("latin1");
-    const blocks = text.includes("-----BEGIN")
-      ? // Keep only the blocks that actually start a PEM certificate: bundle
-        // files routinely begin with comment headers (curl's cacert.pem,
-        // RHEL's ca-bundle.crt) that the lookahead split leaves as a leading
-        // non-PEM element.
-        text.split(/(?=-----BEGIN [A-Z0-9 ]*CERTIFICATE-----)/).filter(block => block.includes("CERTIFICATE-----"))
-      : [cert];
-    for (const block of blocks) {
-      const x509 = new _X509CertificateClass(block as CACertInput);
-      const fingerprint = x509.fingerprint256;
-      if (!seen.has(fingerprint)) {
-        seen.add(fingerprint);
-        normalized.push(x509.toString());
-      }
-    }
-  }
-  _defaultCACertificatesOverride = normalized;
-}
-
 function getCACertificates(type = "default") {
   validateString(type, "type");
 
   switch (type) {
     case "default":
-      if (_defaultCACertificatesOverride !== undefined) {
-        return _defaultCACertificatesOverride.slice();
-      }
       return cacheDefaultCACertificates();
     case "bundled":
       return cacheBundledRootCertificates();
@@ -1752,6 +1671,44 @@ function getCACertificates(type = "default") {
     default:
       throw $ERR_INVALID_ARG_VALUE("type", type);
   }
+}
+
+// tls.setDefaultCACertificates(certs)
+// https://github.com/nodejs/node/blob/v25.2.1/lib/tls.js#L202
+//
+// Validation mirrors Node, then the certificate set is handed to the native
+// default-CA store (root_certs.cpp) so every consumer — createSecureContext,
+// fetch(), https.request()'s cached HTTPS SSL_CTX, Bun.connect — sees it,
+// including connections on SSL_CTXs built before the override was installed
+// (us_internal_ssl_attach refreshes the verify store per-SSL).
+function setDefaultCACertificates(certs) {
+  if (!$isJSArray(certs)) {
+    // Node's ERR_INVALID_ARG_TYPE renders a capitalised type name as
+    // "an instance of X" whereas Bun's $ERR_INVALID_ARG_TYPE always says
+    // "of type X", so build the message directly to match Node's wording
+    // (parallel/test-tls-set-default-ca-certificates-error.js asserts it).
+    let received: string;
+    if (certs === null) received = "null";
+    else if (certs === undefined) received = "undefined";
+    else if (typeof certs === "object") received = `an instance of ${(certs as object).constructor?.name ?? "Object"}`;
+    else received = `type ${typeof certs} (${typeof certs === "string" ? `'${certs}'` : String(certs)})`;
+    const error = new TypeError(`The "certs" argument must be an instance of Array. Received ${received}`) as Error & {
+      code: string;
+    };
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  for (let i = 0; i < certs.length; i++) {
+    if (typeof certs[i] !== "string" && !isArrayBufferView(certs[i])) {
+      throw $ERR_INVALID_ARG_TYPE(`certs[${i}]`, "string or an instance of ArrayBufferView", certs[i]);
+    }
+  }
+
+  resetRootCertStore(certs);
+  // Drop any cached bundled+system+extra merge in THIS VM; other Workers'
+  // caches are bypassed on their next query because getUserRootCertificates()
+  // now returns the override (see cacheDefaultCACertificates).
+  defaultCACertificates = undefined;
 }
 
 function tlsCipherFilter(a: string) {
@@ -1800,7 +1757,6 @@ export default {
     DEFAULT_MIN_VERSION = value;
   },
   getCiphers,
-  setDefaultCACertificates,
   parseCertString,
   SecureContext,
   Server,
@@ -1810,4 +1766,5 @@ export default {
     return cacheBundledRootCertificates();
   },
   getCACertificates,
+  setDefaultCACertificates,
 } as any as typeof import("node:tls");

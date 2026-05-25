@@ -3824,8 +3824,13 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
         if (nextTick && nextTick.isObject())
             nextTickFn = asObject(nextTick);
         else {
-            throwVMError(globalObject, scope, "Failed to call nextTick"_s);
-            return;
+            constructNextTickFn(vm, defaultGlobalObject(this->globalObject()));
+            RETURN_IF_EXCEPTION(scope, void());
+            nextTickFn = this->m_nextTickFunction.get();
+            if (!nextTickFn) {
+                throwVMError(globalObject, scope, "Failed to call nextTick"_s);
+                return;
+            }
         }
     }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
@@ -3913,6 +3918,7 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = JSNextTickQueue::create(globalObject);
@@ -3930,6 +3936,10 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return jsUndefined();
+    }
     if (nextTickFunction && nextTickFunction.isObject()) {
         this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
     }

@@ -2,6 +2,7 @@
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
 import { expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 const isBun = !!process.versions.bun;
 
 it("process.nextTick", async () => {
@@ -1035,4 +1036,64 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 
   expect(call1).toBe(true);
   expect(call2).toBe(true);
+});
+
+// The first use of process.nextTick lazily initializes it by calling a JS builtin. If that first
+// use happens while the stack is nearly exhausted (here via the Worker constructor, which queues a
+// process 'worker' event on nextTick), the initialization used to leave a pending stack overflow
+// exception behind and cache a bogus nextTick function, crashing debug builds and permanently
+// breaking Worker construction afterwards.
+it("first use of process.nextTick during stack exhaustion does not break nextTick", async () => {
+  using dir = tempDir("nexttick-stack-exhaustion", {
+    "worker.js": `postMessage("ready");`,
+    "main.js": `
+      const workerPath = new URL("./worker.js", import.meta.url).href;
+
+      let done = false;
+      function attemptWorker() {
+        try {
+          const w = new Worker(workerPath);
+          w.terminate();
+          return true;
+        } catch (e) {
+          // Out of stack; retry in a shallower frame.
+          if (e instanceof RangeError) return false;
+          return true;
+        }
+      }
+
+      function dive() {
+        try {
+          dive();
+        } catch {}
+        if (!done) done = attemptWorker();
+      }
+      dive();
+
+      // With a healthy stack, constructing a Worker must succeed again.
+      const w = new Worker(workerPath);
+      w.onmessage = () => {
+        console.log("WORKER_OK");
+        w.terminate();
+        process.exit(0);
+      };
+      w.onerror = e => {
+        console.error("WORKER_ERROR", e.message);
+        process.exit(1);
+      };
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout).toContain("WORKER_OK");
+  expect(exitCode).toBe(0);
 });

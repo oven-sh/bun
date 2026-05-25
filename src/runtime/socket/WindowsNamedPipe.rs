@@ -1219,6 +1219,14 @@ impl WindowsNamedPipe {
                     unsafe { (*this).wrapper = None };
                 }
             }
+        } else {
+            // Plain (non-TLS) named pipe: half-close the write side so the peer
+            // observes EOF. Without this, `Socket.prototype.end()` over a
+            // Windows named pipe (endNT → shutdown()) never signals the peer,
+            // and an `allowHalfOpen` peer waiting on 'end' hangs. `writer.end()`
+            // is idempotent, mirroring `close`'s unconditional writer teardown.
+            // SAFETY: `this` aliases the live `&mut self`; single JS thread.
+            unsafe { (*this).writer.end() };
         }
     }
 

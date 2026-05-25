@@ -558,7 +558,31 @@ TLSSocket.prototype._final = function _final(callback) {
   // callback would never fire.
   if (!this._handle) return callback();
   if (this.secureConnecting) {
-    return this.once("secureConnect", NetSocket.prototype._final.bind(this, callback));
+    // Handshake may fail instead of succeeding (peer rejected, cert error,
+    // socket hang up, ...); in that case 'secureConnect' never fires but 'end'
+    // / 'close' / 'error' do. Pair the secureConnect listener with one-shot
+    // cleanup so the _final callback is never stranded and neither listener
+    // outlives the one that fires.
+    const onSecure = () => {
+      this.removeListener("end", onEnd);
+      this.removeListener("error", onErr);
+      NetSocket.prototype._final.$call(this, callback);
+    };
+    const onEnd = () => {
+      this.removeListener("secureConnect", onSecure);
+      this.removeListener("error", onErr);
+      // Socket is already half/fully closed on the wire — nothing to flush.
+      callback();
+    };
+    const onErr = err => {
+      this.removeListener("secureConnect", onSecure);
+      this.removeListener("end", onEnd);
+      callback(err);
+    };
+    this.once("secureConnect", onSecure);
+    this.once("end", onEnd);
+    this.once("error", onErr);
+    return;
   }
   return NetSocket.prototype._final.$call(this, callback);
 };

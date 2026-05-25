@@ -508,6 +508,13 @@ pub fn close(this: *WindowsNamedPipe) void {
 pub fn shutdown(this: *WindowsNamedPipe) void {
     if (this.wrapper) |*wrapper| {
         _ = wrapper.shutdown(false);
+    } else {
+        // Plain (non-TLS) named pipe: half-close the write side so the peer
+        // observes EOF. Without this, `Socket.prototype.end()` over a Windows
+        // named pipe (endNT → shutdown()) never signals the peer, and an
+        // `allowHalfOpen` peer waiting on 'end' hangs. `writer.end()` is
+        // idempotent, mirroring `close`'s unconditional writer teardown.
+        this.writer.end();
     }
 }
 

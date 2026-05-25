@@ -675,14 +675,17 @@ impl MySQLConnection {
         self.auth_data.clear();
         self.auth_data.shrink_to_fit();
 
-        // Store auth data
-        self.auth_data.reserve(
-            handshake.auth_plugin_data_part_1.len() + handshake.auth_plugin_data_part_2.len(),
-        );
-        self.auth_data
-            .extend_from_slice(&handshake.auth_plugin_data_part_1[..]);
-        self.auth_data
-            .extend_from_slice(&handshake.auth_plugin_data_part_2[..]);
+        // `auth_plugin_data_part_2` carries a trailing NUL per the wire
+        // protocol. caching_sha2_password's RSA path XORs the password
+        // cyclically against the full nonce, so an unstripped 21-byte nonce
+        // leaves byte 20 of the password unmasked (#26195). Drop the NUL so
+        // the stored nonce is the expected 20 bytes.
+        let part_1 = &handshake.auth_plugin_data_part_1[..];
+        let part_2 = &handshake.auth_plugin_data_part_2[..];
+        let part_2 = part_2.strip_suffix(&[0]).unwrap_or(part_2);
+        self.auth_data.reserve(part_1.len() + part_2.len());
+        self.auth_data.extend_from_slice(part_1);
+        self.auth_data.extend_from_slice(part_2);
 
         // Get auth plugin
         if !handshake.auth_plugin_name.slice().is_empty() {

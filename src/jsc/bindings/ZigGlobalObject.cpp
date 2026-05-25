@@ -3488,7 +3488,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     auto referrerKeyFromSourceOrigin = [&]() -> JSC::Identifier {
         const auto& url = sourceOrigin.url();
         if (url.isEmpty())
-            return { };
+            return {};
         String keyString;
         if (url.protocolIsFile()) {
             keyString = url.fileSystemPath();
@@ -3504,7 +3504,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             keyString = url.string();
         }
         if (keyString.isEmpty())
-            return { };
+            return {};
         return JSC::Identifier::fromString(vm, keyString);
     };
 

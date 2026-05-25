@@ -902,14 +902,16 @@ export const linkerFlags: Flag[] = [
     desc: "18MB stack, skip compact unwind",
   },
   {
-    // Force the linker to reserve + emit LC_CODE_SIGNATURE on every darwin
-    // cross link. ld64.lld only ad-hoc-signs arm64 by default; the post-link
-    // fixup (shims/macho-postlink.c) replaces an *existing* signature — it
-    // never grows the load-command area to add one — so the slot must always
-    // be there, on x64 too.
+    // Force the linker to reserve + emit LC_CODE_SIGNATURE on arm64 cross
+    // links so the post-link fixup (shims/macho-postlink.c) has a signature
+    // to replace after patching the stack size — arm64 macOS refuses to exec
+    // unsigned binaries. x64 deliberately ships UNSIGNED, matching the
+    // native x64 build (Apple's ld only auto-signs arm64; x64 macOS runs
+    // unsigned binaries fine, an ad-hoc signature buys nothing there, and
+    // the CodeDirectory costs 32 bytes per 4 KB page ≈ 0.8% of the binary).
     flag: "-Wl,-adhoc_codesign",
-    when: c => c.darwin && c.crossTarget !== undefined,
-    desc: "macOS cross-link: always emit an ad-hoc LC_CODE_SIGNATURE for macho-postlink to replace",
+    when: c => c.darwin && c.crossTarget !== undefined && c.arm64,
+    desc: "macOS arm64 cross-link: emit an ad-hoc LC_CODE_SIGNATURE for macho-postlink to replace",
   },
   {
     // `bun build --compile` grows the __BUN placeholder segment in place and

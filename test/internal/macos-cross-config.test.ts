@@ -123,12 +123,14 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(flags.ldflags).not.toContain("-Wl,-ld_new");
   });
 
-  test("cross links always reserve an ad-hoc code signature for macho-postlink to replace", () => {
-    // ld64.lld only ad-hoc-signs arm64 by default; the post-link fixup can
-    // only *replace* an existing LC_CODE_SIGNATURE, so the flag must be
-    // present on both arches.
+  test("arm64 cross links reserve an ad-hoc code signature; x64 ships unsigned", () => {
+    // arm64 macOS refuses to exec unsigned binaries, so the linker must emit
+    // an LC_CODE_SIGNATURE for macho-postlink to replace after the stack-size
+    // patch. x64 deliberately ships unsigned, matching the native x64 build
+    // (Apple's ld only auto-signs arm64) — the CodeDirectory would cost ~0.8%
+    // of the binary for nothing.
     expect(computeFlags(resolveDarwin()).ldflags).toContain("-Wl,-adhoc_codesign");
-    expect(computeFlags(resolveDarwin({ arch: "x64" })).ldflags).toContain("-Wl,-adhoc_codesign");
+    expect(computeFlags(resolveDarwin({ arch: "x64" })).ldflags).not.toContain("-Wl,-adhoc_codesign");
   });
 
   test("cross release links get safe ICF backed by the address-significance table", () => {
@@ -160,6 +162,12 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     // The linker flag stays (it self-obsoletes the workaround once ld64.lld
     // implements it) and must agree with what the patcher writes.
     expect(computeFlags(release).ldflags).toContain(`-Wl,-stack_size,${DARWIN_STACK_SIZE}`);
+
+    // x64 ships unsigned: the stack size is still patched but no
+    // entitlements are embedded (there is no signature to embed them into).
+    const x64Cmd = machoPostlinkCommand(resolveDarwin({ arch: "x64" }));
+    expect(x64Cmd).toContain(`macho-postlink $out --stack-size=${DARWIN_STACK_SIZE}`);
+    expect(x64Cmd).not.toContain("--entitlements");
 
     // Debug builds sign with the debug entitlements (adds get-task-allow /
     // cs.debugger so lldb can attach), mirroring scripts/trace.sh.

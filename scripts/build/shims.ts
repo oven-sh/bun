@@ -36,12 +36,14 @@ const ASAN_DYLD_SHIM = "asan-dyld-shim.dylib";
  *     "not yet implemented"), so LC_MAIN.stacksize stays 0 → the 8 MB
  *     default instead of the 18 MB JSC needs. Tracked in workarounds.ts
  *     ("darwin-cross-stack-size").
- *   - The ad-hoc signature the linker emits has no entitlements, and any
- *     header edit (the stack-size patch) invalidates it anyway. The release
- *     pipeline signs native darwin binaries with `codesign --entitlements
- *     entitlements.plist`; the cross build replicates that (minus the
- *     Developer ID / hardened-runtime parts, which need Apple tooling) by
- *     regenerating the ad-hoc signature with the entitlements embedded.
+ *   - arm64 only: the ad-hoc signature the linker emits has no entitlements,
+ *     and any header edit (the stack-size patch) invalidates it anyway —
+ *     arm64 macOS refuses to exec a binary with a stale CodeDirectory. The
+ *     fixup regenerates the ad-hoc signature with the entitlements embedded
+ *     (matching what `codesign --sign - --entitlements` produces). x64 ships
+ *     unsigned, like the native x64 build: Apple's ld only auto-signs arm64,
+ *     x64 macOS runs unsigned binaries fine, and the CodeDirectory costs
+ *     ~0.8% of the binary (32-byte SHA-256 per 4 KB page).
  *
  * `shims/macho-postlink.c` is a standalone host tool that does both in
  * place. It's compiled for the BUILD HOST (no --target/-isysroot), then
@@ -74,7 +76,12 @@ export function machoEntitlementsPlist(cfg: Config): string {
 export function machoPostlinkCommand(cfg: Config): string {
   if (!needsMachoPostlink(cfg)) return "";
   const q = (p: string) => quote(p, false);
-  return ` && ${q(machoPostlinkToolPath(cfg))} $out --stack-size=${DARWIN_STACK_SIZE} --entitlements=${q(machoEntitlementsPlist(cfg))}`;
+  // x64 has no LC_CODE_SIGNATURE to re-sign (see the -adhoc_codesign flag
+  // entry) — only the stack size is patched. macho-postlink errors if asked
+  // to embed entitlements into an unsigned binary, which is the safety net
+  // that keeps arm64 from ever silently shipping unsigned.
+  const entitlements = cfg.arm64 ? ` --entitlements=${q(machoEntitlementsPlist(cfg))}` : "";
+  return ` && ${q(machoPostlinkToolPath(cfg))} $out --stack-size=${DARWIN_STACK_SIZE}${entitlements}`;
 }
 
 /**
@@ -84,6 +91,7 @@ export function machoPostlinkCommand(cfg: Config): string {
  */
 export function machoPostlinkImplicitInputs(cfg: Config): string[] {
   if (!needsMachoPostlink(cfg)) return [];
+  if (!cfg.arm64) return [machoPostlinkToolPath(cfg)];
   return [machoPostlinkToolPath(cfg), machoEntitlementsPlist(cfg)];
 }
 

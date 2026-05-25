@@ -98,6 +98,31 @@ describe("ws top-level TLS options", () => {
     await promise;
   });
 
+  // Node/`ws` accept `key`/`cert` as an array of `{ pem, passphrase }` objects
+  // (per-key passphrases), but Bun's native parser only understands
+  // string/ArrayBuffer/Blob (or arrays of those). Forwarding the object-array
+  // form used to throw a TypeError from the constructor; it must stay a no-op
+  // (as it was before top-level TLS forwarding) so construction doesn't throw.
+  it("ignores an object-array key instead of throwing", async () => {
+    await using server = serveTls();
+    const { resolve, reject, promise } = Promise.withResolvers<void>();
+
+    // The server doesn't request a client cert, so dropping the unparseable key
+    // is harmless and the connection still opens with rejectUnauthorized: false.
+    const ws = new WebSocket(`wss://localhost:${server.port}`, {
+      rejectUnauthorized: false,
+      key: [{ pem: tlsCert.key, passphrase: "" }],
+      cert: tlsCert.cert,
+    });
+    ws.on("open", () => {
+      ws.close();
+      resolve();
+    });
+    ws.on("error", reject);
+
+    await promise;
+  });
+
   // An explicit Bun `tls` object is a hard override: an agent's connect options
   // (which target the proxy hop) must not leak into it. Here the explicit `tls`
   // leaves `rejectUnauthorized` at its default (true) while the agent carries
